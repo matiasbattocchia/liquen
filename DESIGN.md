@@ -852,19 +852,30 @@ constraint, and render derives it **from the window's shape**:
 
 ### Media (the same collapse pattern, applied to bytes)
 
-A `FilePart` renders as a `<media kind name path/>` marker in EVERY region — the durable
-handle: the path is the file in the conversation's media shelf
+`FilePart.uri` is a real URI, and the SCHEME is the whole distinction: `file://` = local
+bytes (the canonical form; bare paths tolerated on input), `http(s)://` = an external
+link, passed through untouched — never downloaded nor uploaded broker-side (`size` is
+unknowable there, hence nullable). Inbound uris are always local — ingest downloads
+BROKER-side with the connection's credential into the conversation's media shelf
 (`conversations/<safe(address)>/media/<content-hash>.<ext>`, §8 — content-named, so
-re-downloads and the dispatch echo converge on one file), re-viewable any time via
-`aread`/bash. In the TRAILING region only, inlineable files (images, PDFs) additionally
-render as REAL base64 image/document blocks after their element — the model sees the
-picture while it's current, the marker once it's history. Two caps keep requests sane:
-per-file (3MB raw) and a per-request budget (12MB raw, NEWEST first) — a long session
+re-downloads and the dispatch echo converge on one file; platform URL + token never
+cross the frontier, §9). Outbound uris are local or public: `send` takes
+`files: string[]` — paths statted broker-side, links kept as-is (no secret in a public
+URL, the frontier rule is untouched).
+
+A `FilePart` renders as a `<media kind name path/>` marker in EVERY region — the durable
+handle (local: the plain path, re-viewable via `aread`/bash; external: the url). In the
+TRAILING region only, inlineable files (images, PDFs) additionally render as REAL API
+blocks after their element — local bytes as base64, external links as url-source blocks
+(the API fetches those itself) — the model sees the picture while it's current, the
+marker once it's history. Two caps keep the base64 sane: per-file (3MB raw) and a
+per-request budget (12MB raw, NEWEST first; url blocks are budget-free) — a long session
 full of images carries only its trailing burst as bytes, and each closing collapses them
-back to markers (requests get LIGHTER after an answer, like tool pairs). Ingest downloads
-BROKER-side with the connection's credential (§9 — platform URL + token never cross the
-frontier); `send` takes `files: string[]` (workspace/media paths, statted broker-side);
-Slack dispatch uploads via the `files.uploadV2` flow with the text as the share comment.
+back to markers (requests get LIGHTER after an answer, like tool pairs).
+
+Dispatch is per-connector capability: Slack uploads local files via the `files.uploadV2`
+flow with the text as the share comment, and external links join the text as lines
+(Slack's own idiom — the client unfurls them); WhatsApp (future) passes links natively.
 
 ### Batch order (observed before optimized)
 

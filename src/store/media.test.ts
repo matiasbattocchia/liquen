@@ -14,9 +14,10 @@ Deno.test("saveMedia: content-named and idempotent — same bytes, same path, on
     const b = await saveMedia(root, "C1", bytes, { mime_type: "image/png", name: "shot.png" });
     assertEquals(a.uri, b.uri);
     assertEquals(a.size, bytes.length);
+    assert(a.uri.startsWith("file://")); // the canonical local scheme
     assert(a.uri.endsWith(".png"));
     assert(a.uri.includes("/conversations/C1/media/"));
-    assertEquals(await Deno.readTextFile(a.uri), "the same bytes");
+    assertEquals(await Deno.readTextFile(new URL(a.uri)), "the same bytes");
     // a conversation address with unsafe chars slugs into a directory name
     const c = await saveMedia(root, "dm:ana:bo", bytes, { name: "x.pdf" });
     assert(c.uri.includes("/conversations/dm_ana_bo/media/"));
@@ -45,7 +46,16 @@ Deno.test("filePartOf: a real path stats and classifies; a missing one throws (t
     assertEquals(p.file.mime_type, "application/pdf");
     assertEquals(p.file.name, "report.pdf");
     assertEquals(p.file.size, 9);
+    assert(p.file.uri.startsWith("file://")); // bare path in, canonical uri out
+    assertEquals(filePartOf(p.file.uri).file.uri, p.file.uri); // file:// in is idempotent
     assertThrows(() => filePartOf(`${root}/gone.png`));
+    // an http(s) link passes through UNTOUCHED: no fetch, no size, mime from the extension
+    const ext = filePartOf("https://example.com/pics/cat.jpg");
+    assertEquals(ext.file.uri, "https://example.com/pics/cat.jpg");
+    assertEquals(ext.kind, "image");
+    assertEquals(ext.file.mime_type, "image/jpeg");
+    assertEquals(ext.file.name, "cat.jpg");
+    assertEquals(ext.file.size, undefined);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -59,6 +69,8 @@ Deno.test("loadMediaBlock: images/PDFs inline as base64; other kinds and missing
     const block = loadMediaBlock(img);
     assertEquals(block?.media_type, "image/png");
     assertEquals(block?.data, "AQID");
+    assertEquals(loadMediaBlock(`file://${img}`)?.data, "AQID"); // canonical form too
+    assertEquals(loadMediaBlock("https://x.com/a.png"), null); // external: url block, not bytes
     const audio = `${root}/note.mp3`;
     await Deno.writeFile(audio, new Uint8Array([1]));
     assertEquals(loadMediaBlock(audio), null); // not inlineable — the marker stands alone

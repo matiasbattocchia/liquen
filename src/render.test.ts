@@ -664,3 +664,28 @@ Deno.test("media: the newest-first request budget — an oversize file keeps its
   assertEquals(blocks.filter((b) => b.type === "image").length, 1); // the small one only
   assertStringIncludes(JSON.stringify(messages), "/m/huge.png"); // the marker still stands
 });
+
+Deno.test("media: an external link renders a url-source block — no bytes, no budget (§5)", () => {
+  const events: Event[] = [
+    fileMsg("e1", "2026-07-21T10:00:00Z", "https://example.com/pics/cat.jpg", { text: "mira" }),
+  ];
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    now: "2026-07-21T10:01:00Z",
+    // loadMedia untouched by externals — prove it by making it explode
+    loadMedia: () => {
+      throw new Error("never");
+    },
+  });
+  const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+  const img = blocks.find((b) => b.type === "image");
+  assertEquals(
+    (img as { source: { type: string; url: string } }).source,
+    { type: "url", url: "https://example.com/pics/cat.jpg" },
+  );
+  // the marker shows the url itself as the handle
+  assertStringIncludes(JSON.stringify(messages), 'path=\\"https://example.com/pics/cat.jpg\\"');
+});

@@ -15,7 +15,20 @@
 
 import { encodeBase64 } from "@std/encoding/base64";
 import { basename, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { FilePart, MediaKind } from "../types.ts";
+
+/** The scheme IS the distinction: `http(s)` = an external link (no local bytes, never
+ *  fetched broker-side); everything else is local — canonically `file://`, bare paths
+ *  tolerated on input. */
+export function isExternal(uri: string): boolean {
+  return /^https?:\/\//.test(uri);
+}
+
+/** A local uri → its filesystem path (`file://` unwrapped, bare passed through). */
+export function pathOf(uri: string): string {
+  return uri.startsWith("file://") ? fileURLToPath(uri) : uri;
+}
 
 /** ext ↔ mime, the small closed set the harness cares to name; everything else is a
  *  generic document (`.bin` / octet-stream) — the bytes still land and the path still works. */
@@ -86,23 +99,35 @@ export async function saveMedia(
   }
   return {
     mime_type: mime,
-    uri: path,
+    uri: pathToFileURL(path).toString(),
     ...(meta.name ? { name: meta.name } : {}),
     size: bytes.length,
   };
 }
 
-/** A local path → a `FilePart` (the send side: the agent names workspace/media paths,
- *  the harness stats and classifies them). Throws when the path doesn't exist — the
- *  tool_result carries that back as the error it is. */
-export function filePartOf(path: string): FilePart {
-  const abs = resolve(path);
+/** A file reference → a `FilePart` (the send side). A local path (bare or `file://`)
+ *  is statted and classified — throws when it doesn't exist, and the tool_result
+ *  carries that back as the error it is. An `http(s)` link passes through UNTOUCHED
+ *  (no fetch, no size — mime guessed from the URL's extension): the platforms that
+ *  take links send it as-is. */
+export function filePartOf(ref: string): FilePart {
+  if (isExternal(ref)) {
+    const path = new URL(ref).pathname;
+    const mime = mimeOf(path) ?? "application/octet-stream";
+    const name = basename(path);
+    return {
+      type: "file",
+      kind: kindOf(mime),
+      file: { mime_type: mime, uri: ref, ...(name && name !== "/" ? { name } : {}) },
+    };
+  }
+  const abs = resolve(pathOf(ref));
   const size = Deno.statSync(abs).size;
   const mime = mimeOf(abs) ?? "application/octet-stream";
   return {
     type: "file",
     kind: kindOf(mime),
-    file: { mime_type: mime, uri: abs, name: basename(abs), size },
+    file: { mime_type: mime, uri: pathToFileURL(abs).toString(), name: basename(abs), size },
   };
 }
 
@@ -117,10 +142,12 @@ const inlineable = (mime: string): boolean =>
  *  (not inlineable, over the cap, missing). Sync — render stays free of async plumbing;
  *  only TRAILING-region files ever hit this, so the reads are few and recent. */
 export function loadMediaBlock(uri: string): { media_type: string; data: string } | null {
-  const mime = mimeOf(uri);
+  if (isExternal(uri)) return null; // external links inline as url-source blocks, not bytes
+  const path = pathOf(uri);
+  const mime = mimeOf(path);
   if (!mime || !inlineable(mime)) return null;
   try {
-    const bytes = Deno.readFileSync(uri);
+    const bytes = Deno.readFileSync(path);
     if (bytes.length > INLINE_CAP) return null;
     return { media_type: mime, data: encodeBase64(bytes) };
   } catch {

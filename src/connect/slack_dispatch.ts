@@ -13,6 +13,7 @@
  */
 
 import type { ChatPostMessageResponse } from "@slack/web-api";
+import { isExternal, pathOf } from "../store/media.ts";
 import type { DeliveryPatch, Subscriber } from "../store/log.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../types.ts";
 
@@ -162,13 +163,19 @@ if (import.meta.main) {
     const token = user?.value.token ?? bot?.value.token ?? Deno.env.get("SLACK_BOT_TOKEN");
     if (!token) throw new Error(`no token for connection ${connection}`);
 
-    if (files?.length) {
+    // Slack doesn't take media-by-link: LOCAL uris upload; external links join the text
+    // as lines instead — Slack's own idiom (the client unfurls them). Never fetched here.
+    const local = files?.filter((f) => !isExternal(f.file.uri)) ?? [];
+    const links = files?.filter((f) => isExternal(f.file.uri)).map((f) => f.file.uri) ?? [];
+    const body = [text, ...links].filter((s) => s.length > 0).join("\n");
+
+    if (local.length) {
       // the files.uploadV2 flow, broker-side reads (§5 media): an upload URL per file,
       // POST the bytes, complete into the channel with the text as the share comment —
       // one Slack message carrying every attachment
       const ids: { id: string; title?: string }[] = [];
-      for (const f of files) {
-        const bytes = await Deno.readFile(f.file.uri);
+      for (const f of local) {
+        const bytes = await Deno.readFile(pathOf(f.file.uri));
         const name = f.file.name ?? f.file.uri.slice(f.file.uri.lastIndexOf("/") + 1);
         const up = await api<{ ok: boolean; error?: string; upload_url: string; file_id: string }>(
           "files.getUploadURLExternal",
@@ -190,7 +197,7 @@ if (import.meta.main) {
       >("files.completeUploadExternal", token, {
         files: JSON.stringify(ids),
         channel_id: channel,
-        ...(text ? { initial_comment: text } : {}),
+        ...(body ? { initial_comment: body } : {}),
       });
       // the share's ts when the response carries one; absent, the echo lands as its own row
       const shares = done.files?.[0]?.shares;
@@ -200,7 +207,7 @@ if (import.meta.main) {
     const res = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ channel, text }),
+      body: JSON.stringify({ channel, text: body }),
     });
     const out = await res.json() as ChatPostMessageResponse;
     if (!out.ok) throw new Error(`chat.postMessage: ${out.error}`);

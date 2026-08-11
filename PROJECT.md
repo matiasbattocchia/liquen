@@ -94,7 +94,11 @@ when). Status as of 2026-08-12 (Slack live, both directions, model in the loop).
   grant's token → env; dispatch uploads via `files.getUploadURLExternal` +
   `files.completeUploadExternal` with the text as `initial_comment`, best-effort ts from
   the share for the echo merge — absent, the echo lands as its own row. Deliberately NOT
-  echo-deduped by content; revisit if live dupes annoy.) Original plan:
+  echo-deduped by content; revisit if live dupes annoy. Same day: `uri` is a real URI —
+  `file://` local (canonical), `http(s)://` external, passed through untouched (no
+  broker fetch/upload; `size` nullable). External images/PDFs reach the model as
+  url-source blocks — the API fetches them itself, budget-free; Slack dispatch folds
+  links into the text (unfurl), WhatsApp will pass them natively.) Original plan:
   1. *Types*: `FilePart` already exists (open-bsp shape: `kind: MediaKind`, `file:
      {mime_type, uri, name?, size}`, `text?` caption) — `uri` becomes a LOCAL path; no
      new types.

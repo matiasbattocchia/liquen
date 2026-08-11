@@ -14,6 +14,7 @@
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
+import { isExternal, pathOf } from "./store/media.ts"; // pure uri helpers — no I/O
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
   Conversation,
@@ -226,13 +227,21 @@ function renderMessages(
   const out: MessageParam[] = [];
   let cur: { role: Role; content: ContentBlockParam[] } | null = null;
 
-  // a trailing message's inlineable attachments → real API blocks (image / PDF document),
-  // gated by the request-level budget below
+  // a trailing message's inlineable attachments → real API blocks. Local bytes become
+  // base64 (budget-gated below); external links become url-source blocks — the API
+  // fetches them itself, no broker download, no budget spent.
   const mediaBlocks = (e: Event): ContentBlockParam[] => {
-    if (!loadMedia) return [];
     const blocks: ContentBlockParam[] = [];
     for (const p of filesOf(e)) {
-      if (!inlineBudget.has(p.file.uri)) continue;
+      if (isExternal(p.file.uri) && inlineable(p.file.mime_type)) {
+        blocks.push(
+          p.file.mime_type === "application/pdf"
+            ? { type: "document", source: { type: "url", url: p.file.uri } }
+            : { type: "image", source: { type: "url", url: p.file.uri } },
+        );
+        continue;
+      }
+      if (!loadMedia || !inlineBudget.has(p.file.uri)) continue;
       const b = loadMedia(p.file.uri);
       if (!b) continue; // not inlineable / over the cap / gone — the marker stands alone
       blocks.push(
@@ -337,6 +346,8 @@ function renderMessages(
     for (const e of [...trailing].reverse()) {
       if (e.type !== "message" || isSelf(e, session)) continue;
       for (const p of filesOf(e)) {
+        // local bytes only — external links inline as url-source blocks, budget-free
+        if (isExternal(p.file.uri) || p.file.size === undefined) continue;
         if (!inlineable(p.file.mime_type) || p.file.size > budget) continue;
         budget -= p.file.size;
         inlineBudget.add(p.file.uri);
@@ -564,11 +575,13 @@ function filesOf(e: Event): FilePart[] {
 }
 
 /** A file part's `<media/>` marker (§5) — the durable face of an attachment in every
- *  region: kind + name + the LOCAL path the agent can re-view (`aread`/bash). Untrusted
- *  strings (a wire filename) are attribute-escaped like everything else. */
+ *  region: kind + name + the handle. Local uris show the PLAIN path (what `aread`/bash
+ *  take); external links show the url itself. Untrusted strings (a wire filename) are
+ *  attribute-escaped like everything else. */
 function mediaMarker(p: FilePart): string {
   const name = p.file.name ? ` name="${escAttr(p.file.name)}"` : "";
-  return `<media kind="${p.kind}"${name} path="${escAttr(p.file.uri)}"/>`;
+  const handle = isExternal(p.file.uri) ? p.file.uri : pathOf(p.file.uri);
+  return `<media kind="${p.kind}"${name} path="${escAttr(handle)}"/>`;
 }
 
 /** A message's body for HOME rendering (plain text turns): text, then one marker per
