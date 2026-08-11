@@ -14,7 +14,7 @@
 
 import type { ChatPostMessageResponse } from "@slack/web-api";
 import type { DeliveryPatch, Subscriber } from "../store/log.ts";
-import type { Event, EventId, MessageEvent } from "../types.ts";
+import type { Event, EventId, FilePart, MessageEvent } from "../types.ts";
 
 export interface SlackTarget {
   connection: string; // the workspace the conversation anchors to (§4)
@@ -28,12 +28,14 @@ export function teamOf(connection: string): string {
   return at < 0 ? connection : connection.slice(0, at);
 }
 
-/** Post `text` to a channel; returns the created message `ts` (→ external_id, §4).
+/** Post `text` (and any attachments) to a channel; returns the created message `ts`
+ *  (→ external_id, §4 — file shares may not surface one; the echo still lands, §5).
  *  `author` is the sending agent's registry name — the token resolver's key. */
 export type SlackPost = (
   target: SlackTarget,
   text: string,
   author?: string,
+  files?: FilePart[],
 ) => Promise<string | undefined>;
 
 export interface SlackDispatchDeps {
@@ -52,10 +54,10 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => void {
     (e) => {
       const out = outbound(e);
       if (!out) return;
-      const { target, text, event } = out;
+      const { target, text, files, event } = out;
       chain = chain.then(async () => {
         try {
-          const ts = await deps.post(target, text, event.agent?.id);
+          const ts = await deps.post(target, text, event.agent?.id, files);
           await deps.setDelivery?.(event.id, {
             ...(ts !== undefined
               ? { external_id: `slack:${teamOf(target.connection)}:${target.channel}:${ts}` }
@@ -95,6 +97,7 @@ function isOutboundSlack(e: Event): boolean {
 interface Outbound {
   target: SlackTarget;
   text: string;
+  files: FilePart[];
   event: MessageEvent;
 }
 
@@ -105,8 +108,14 @@ function outbound(e: Event): Outbound | null {
   const channel = e.envelope.conversation.address;
   if (!connection || !channel) return null;
   const text = textOf(e);
-  if (!text) return null;
-  return { target: { connection, channel }, text, event: e as MessageEvent };
+  const files = filesOf(e);
+  if (!text && files.length === 0) return null;
+  return { target: { connection, channel }, text, files, event: e as MessageEvent };
+}
+
+function filesOf(e: Event): FilePart[] {
+  const parts = (e as MessageEvent).parts ?? [];
+  return parts.filter((p): p is FilePart => p.type === "file");
 }
 
 function textOf(e: Event): string {
@@ -128,7 +137,23 @@ if (import.meta.main) {
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
 
-  const post: SlackPost = async ({ connection, channel }, text, author) => {
+  // one form-encoded Web-API call (the upload endpoints don't take JSON)
+  const api = async <T extends { ok?: boolean; error?: string }>(
+    method: string,
+    token: string,
+    params: Record<string, string>,
+  ): Promise<T> => {
+    const res = await fetch(`https://slack.com/api/${method}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: new URLSearchParams(params),
+    });
+    const out = await res.json() as T;
+    if (!out.ok) throw new Error(`${method}: ${out.error}`);
+    return out;
+  };
+
+  const post: SlackPost = async ({ connection, channel }, text, author, files) => {
     // the token resolver (§4, dispatcher-internal): the author's own grant (alter-ego)
     // → the workspace bot — vault keys follow the connector's convention (§4)
     const team = teamOf(connection);
@@ -136,6 +161,42 @@ if (import.meta.main) {
     const bot = user?.value.token ? null : await creds.get(`slack:${team}:org`);
     const token = user?.value.token ?? bot?.value.token ?? Deno.env.get("SLACK_BOT_TOKEN");
     if (!token) throw new Error(`no token for connection ${connection}`);
+
+    if (files?.length) {
+      // the files.uploadV2 flow, broker-side reads (§5 media): an upload URL per file,
+      // POST the bytes, complete into the channel with the text as the share comment —
+      // one Slack message carrying every attachment
+      const ids: { id: string; title?: string }[] = [];
+      for (const f of files) {
+        const bytes = await Deno.readFile(f.file.uri);
+        const name = f.file.name ?? f.file.uri.slice(f.file.uri.lastIndexOf("/") + 1);
+        const up = await api<{ ok: boolean; error?: string; upload_url: string; file_id: string }>(
+          "files.getUploadURLExternal",
+          token,
+          { filename: name, length: String(bytes.length) },
+        );
+        const putRes = await fetch(up.upload_url, { method: "POST", body: bytes });
+        if (!putRes.ok) throw new Error(`upload ${name}: HTTP ${putRes.status}`);
+        await putRes.body?.cancel();
+        ids.push({ id: up.file_id, title: name });
+      }
+      type Shares = Record<string, Record<string, { ts?: string }[]>>;
+      const done = await api<
+        {
+          ok: boolean;
+          error?: string;
+          files?: { shares?: { public?: Shares[string]; private?: Shares[string] } }[];
+        }
+      >("files.completeUploadExternal", token, {
+        files: JSON.stringify(ids),
+        channel_id: channel,
+        ...(text ? { initial_comment: text } : {}),
+      });
+      // the share's ts when the response carries one; absent, the echo lands as its own row
+      const shares = done.files?.[0]?.shares;
+      return (shares?.public?.[channel] ?? shares?.private?.[channel])?.[0]?.ts;
+    }
+
     const res = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },

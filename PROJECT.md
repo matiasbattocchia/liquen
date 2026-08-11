@@ -87,7 +87,14 @@ when). Status as of 2026-08-12 (Slack live, both directions, model in the loop).
   only EMIT XML, never parse it, so escaping-on-encode is the entire surface — a closed,
   exhaustively-testable rule, no dependency.
 
-- **Media, both directions (PLAN, 2026-08-13)** — receive and send files, model-visible:
+- **Media, both directions — LANDED 2026-08-11** (plan of 2026-08-13, implemented as
+  written, plus a request-level inline budget: 12MB raw NEWEST-first across the trailing
+  region, so an attachment burst can't outgrow the API request cap — older files keep
+  their markers; and per-file 3MB. Slack ingest downloads via org token → any authorized
+  grant's token → env; dispatch uploads via `files.getUploadURLExternal` +
+  `files.completeUploadExternal` with the text as `initial_comment`, best-effort ts from
+  the share for the echo merge — absent, the echo lands as its own row. Deliberately NOT
+  echo-deduped by content; revisit if live dupes annoy.) Original plan:
   1. *Types*: `FilePart` already exists (open-bsp shape: `kind: MediaKind`, `file:
      {mime_type, uri, name?, size}`, `text?` caption) — `uri` becomes a LOCAL path; no
      new types.

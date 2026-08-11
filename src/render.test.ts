@@ -565,3 +565,102 @@ Deno.test("ambient env lines join the trailing anchor block after now:", () => {
   assertStringIncludes(text, "git: main · 3 uncommitted");
   assertStringIncludes(text, "background jobs (1): server (2m)");
 });
+
+/* ── media (§5): markers everywhere, real blocks in the TRAILING region only ── */
+
+function fileMsg(
+  id: string,
+  ts: string,
+  uri: string,
+  opts: { mime?: string; name?: string; size?: number; text?: string } = {},
+): MessageEvent {
+  const mime = opts.mime ?? "image/png";
+  return {
+    id,
+    ts,
+    type: "message",
+    envelope: {
+      service: "slack",
+      connection_address: "T1",
+      conversation: { address: "C1", kind: "channel" },
+      sender: { address: "U7", name: "ana" },
+    },
+    parts: [
+      ...(opts.text ? [{ type: "text", kind: "text", text: opts.text } as const] : []),
+      {
+        type: "file",
+        kind: mime === "application/pdf" ? "document" : "image",
+        file: { mime_type: mime, uri, name: opts.name ?? "shot.png", size: opts.size ?? 3 },
+      },
+    ],
+  } as MessageEvent;
+}
+
+Deno.test("media: trailing attachments inline as base64 blocks; closed keep markers only (§5)", () => {
+  const loadMedia = (uri: string) =>
+    uri.endsWith(".pdf")
+      ? { media_type: "application/pdf", data: "UERG" }
+      : { media_type: "image/png", data: "AQID" };
+  const events: Event[] = [
+    fileMsg("e1", "2026-07-21T10:00:00Z", "/m/old.png", { text: "vieja" }),
+    homeMsg("e2", "2026-07-21T10:01:00Z", "listo", true), // the closing — e1 is CLOSED
+    fileMsg("e3", "2026-07-21T10:02:00Z", "/m/new.png", { text: "mira" }),
+    fileMsg("e4", "2026-07-21T10:03:00Z", "/m/doc.pdf", { mime: "application/pdf", name: "r.pdf" }),
+  ];
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    now: "2026-07-21T10:04:00Z",
+    loadMedia,
+  });
+  const dump = JSON.stringify(messages);
+  // the marker is every attachment's durable face — closed and trailing alike
+  assertStringIncludes(dump, 'media kind=\\"image\\" name=\\"shot.png\\" path=\\"/m/old.png\\"');
+  assertStringIncludes(dump, 'path=\\"/m/new.png\\"');
+  assertStringIncludes(dump, 'media kind=\\"document\\" name=\\"r.pdf\\" path=\\"/m/doc.pdf\\"');
+  // real blocks: only the TRAILING files — one image, one PDF document; the closed one never
+  const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+  const images = blocks.filter((b) => b.type === "image");
+  const documents = blocks.filter((b) => b.type === "document");
+  assertEquals(images.length, 1);
+  assertEquals(documents.length, 1);
+  assertEquals(
+    (images[0] as { source: { data: string } }).source.data,
+    "AQID",
+  );
+});
+
+Deno.test("media: without loadMedia (edge / closed-only) markers render, no blocks", () => {
+  const events: Event[] = [fileMsg("e1", "2026-07-21T10:00:00Z", "/m/a.png", { text: "hola" })];
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    now: "2026-07-21T10:01:00Z",
+  });
+  const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+  assertEquals(blocks.filter((b) => b.type === "image").length, 0);
+  assertStringIncludes(JSON.stringify(messages), "/m/a.png");
+});
+
+Deno.test("media: the newest-first request budget — an oversize file keeps its marker, no block", () => {
+  const loadMedia = () => ({ media_type: "image/png", data: "AQID" });
+  const events: Event[] = [
+    fileMsg("e1", "2026-07-21T10:00:00Z", "/m/huge.png", { size: 13 * 1024 * 1024 }),
+    fileMsg("e2", "2026-07-21T10:01:00Z", "/m/small.png", { size: 10 }),
+  ];
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    now: "2026-07-21T10:02:00Z",
+    loadMedia,
+  });
+  const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+  assertEquals(blocks.filter((b) => b.type === "image").length, 1); // the small one only
+  assertStringIncludes(JSON.stringify(messages), "/m/huge.png"); // the marker still stands
+});

@@ -19,6 +19,7 @@ import type {
   Conversation,
   ErrorEvent as HarnessErrorEvent, // aliased: `ErrorEvent` is a DOM global in Deno's lib
   Event,
+  FilePart,
   MessageEvent,
   SessionId,
   TextPart,
@@ -94,6 +95,15 @@ function renderIndex(pointers: DocEntry[]): string {
 
 const GAP_MINUTES = 5; // elapsed-time separator threshold
 
+/** Raw bytes of media a single request may inline (base64 ≈ ×4/3; the API caps requests
+ *  well above this) — the newest-first budget in `renderMessages`. */
+const MEDIA_BUDGET = 12 * 1024 * 1024;
+
+/** What the model can SEE inline (§5): images (not svg) and PDFs — same rule the loader
+ *  enforces on bytes; render applies it to the KNOWN mime to budget without reading. */
+const inlineable = (mime: string): boolean =>
+  mime.startsWith("image/") && mime !== "image/svg+xml" || mime === "application/pdf";
+
 export interface RenderInput {
   events: Event[]; // the log window — render derives what's closed vs trailing itself
   docs: DocEntry[];
@@ -104,6 +114,12 @@ export interface RenderInput {
    *  plane — joined into the trailing anchor block (§5). Deployment-specific: empty on edge
    *  (no persistent exec env). */
   ambient?: string[];
+  /** Base64 payload for a stored media file (images/PDFs, size-capped) — xi injects
+   *  `store/media.loadMediaBlock`. Only TRAILING-region messages resolve through it: the
+   *  model sees the picture while it's current, the `<media/>` marker once it's history
+   *  (§5 — the tool-pair collapse pattern; the path is the durable re-viewable handle).
+   *  Absent ⇒ markers only. */
+  loadMedia?: (uri: string) => { media_type: string; data: string } | null;
 }
 
 /** The Anthropic request halves render produces — the seam between render and `mu`. */
@@ -204,11 +220,39 @@ function byConversation(run: Event[]): Event[] {
 const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 
 function renderMessages(
-  { events: window, session, home, now, ambient }: RenderInput,
+  { events: window, session, home, now, ambient, loadMedia }: RenderInput,
 ): MessageParam[] {
   const events = byEventTime(applySummary(window));
   const out: MessageParam[] = [];
   let cur: { role: Role; content: ContentBlockParam[] } | null = null;
+
+  // a trailing message's inlineable attachments → real API blocks (image / PDF document),
+  // gated by the request-level budget below
+  const mediaBlocks = (e: Event): ContentBlockParam[] => {
+    if (!loadMedia) return [];
+    const blocks: ContentBlockParam[] = [];
+    for (const p of filesOf(e)) {
+      if (!inlineBudget.has(p.file.uri)) continue;
+      const b = loadMedia(p.file.uri);
+      if (!b) continue; // not inlineable / over the cap / gone — the marker stands alone
+      blocks.push(
+        b.media_type === "application/pdf"
+          ? {
+            type: "document",
+            source: { type: "base64", media_type: "application/pdf", data: b.data },
+          }
+          : {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: b.media_type as Anthropic.Base64ImageSource["media_type"],
+              data: b.data,
+            },
+          },
+      );
+    }
+    return blocks;
+  };
 
   const flush = () => {
     if (cur) out.push({ role: cur.role, content: cur.content });
@@ -284,6 +328,22 @@ function renderMessages(
       .map((u) => u.turnId),
   );
 
+  // The request-level media budget: which trailing attachments inline, NEWEST first — a
+  // burst of images can't stack base64 past the API's request cap; older ones keep their
+  // markers (the path is re-viewable, §5). Sized on the KNOWN raw size, no reads here.
+  const inlineBudget = new Set<string>();
+  {
+    let budget = MEDIA_BUDGET;
+    for (const e of [...trailing].reverse()) {
+      if (e.type !== "message" || isSelf(e, session)) continue;
+      for (const p of filesOf(e)) {
+        if (!inlineable(p.file.mime_type) || p.file.size > budget) continue;
+        budget -= p.file.size;
+        inlineBudget.add(p.file.uri);
+      }
+    }
+  }
+
   // CLOSED — collapse: messages survive; errors stay visible as system blocks (§2);
   // thinking + tool pairs drop (§5).
   for (const e of events.slice(0, boundary + 1)) {
@@ -303,7 +363,7 @@ function renderMessages(
     separate(e.ts);
     if (e.envelope.conversation.address === home) {
       // home: the plain user/assistant chat every LLM API means (§5)
-      place(isSelf(e, session) ? "assistant" : "user", { type: "text", text: textOf(e) });
+      place(isSelf(e, session) ? "assistant" : "user", { type: "text", text: bodyOf(e) });
     } else {
       world(e);
     }
@@ -329,13 +389,20 @@ function renderMessages(
       // a directed send caused by a welded tool_use is already in the block — skip it
       if (e.cause && welded.has(e.cause)) continue;
       if (isSelf(e, session) && e.envelope.conversation.address === home) {
-        place("assistant", { type: "text", text: textOf(e) }); // mid-chain assistant text
+        place("assistant", { type: "text", text: bodyOf(e) }); // mid-chain assistant text
       } else if (e.envelope.conversation.address === home) {
         separate(e.ts);
-        place("user", { type: "text", text: textOf(e) });
+        place("user", { type: "text", text: bodyOf(e) });
       } else {
         separate(e.ts);
         world(e);
+      }
+      // TRAILING media (§5): after the marker, the picture itself — a real base64
+      // image/document block in a user turn (which also closes any open cluster). The
+      // agent's own attachments aren't re-shown; the closed region keeps markers only.
+      if (!isSelf(e, session)) {
+        const blocks = mediaBlocks(e);
+        if (blocks.length) place("user", ...blocks);
       }
     }
     // thinking/uses of incomplete groups, orphan results, other types: skipped defensively
@@ -433,7 +500,10 @@ function msgLine(e: MessageEvent, session: SessionId): string {
     ? "self"
     : (e.envelope.sender?.name ?? e.envelope.sender?.address ?? "peer");
   const failed = e.envelope.status === "failed" ? ' status="failed"' : "";
-  return `<msg from="${escAttr(from)}" at="${hhmm(e.ts)}"${failed}>${escText(textOf(e))}</msg>`;
+  // body text is escaped (untrusted); the media markers are render's own, appended after
+  const body = [escText(textOf(e)), ...filesOf(e).map(mediaMarker)]
+    .filter((s) => s.length > 0).join(" ");
+  return `<msg from="${escAttr(from)}" at="${hhmm(e.ts)}"${failed}>${body}</msg>`;
 }
 
 /** XML escaping — THE injection boundary (§5): every untrusted string that lands in a text
@@ -486,6 +556,25 @@ function isSelf(e: Event, session: SessionId): boolean {
 function textOf(e: Event): string {
   const parts = (e as MessageEvent).parts ?? [];
   return parts.filter((p): p is TextPart => p.type === "text").map((p) => p.text).join(" ");
+}
+
+function filesOf(e: Event): FilePart[] {
+  const parts = (e as MessageEvent).parts ?? [];
+  return parts.filter((p): p is FilePart => p.type === "file");
+}
+
+/** A file part's `<media/>` marker (§5) — the durable face of an attachment in every
+ *  region: kind + name + the LOCAL path the agent can re-view (`aread`/bash). Untrusted
+ *  strings (a wire filename) are attribute-escaped like everything else. */
+function mediaMarker(p: FilePart): string {
+  const name = p.file.name ? ` name="${escAttr(p.file.name)}"` : "";
+  return `<media kind="${p.kind}"${name} path="${escAttr(p.file.uri)}"/>`;
+}
+
+/** A message's body for HOME rendering (plain text turns): text, then one marker per
+ *  attachment. World lines compose the same pieces inside `msgLine` (escaped there). */
+function bodyOf(e: Event): string {
+  return [textOf(e), ...filesOf(e).map(mediaMarker)].filter((s) => s.length > 0).join("\n");
 }
 
 function hhmm(ts: string): string {

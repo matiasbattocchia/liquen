@@ -34,7 +34,11 @@ async function sign(ts: string, body: string): Promise<string> {
   return `v0=${[...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function harness(secret?: string, store?: SlackWebhookDeps["store"]) {
+function harness(
+  secret?: string,
+  store?: SlackWebhookDeps["store"],
+  media?: SlackWebhookDeps["media"],
+) {
   const published: Event[] = [];
   const handler: WebhookHandler = createSlackWebhook({
     // the store's `publish` in miniature: it mints the id (§3). Cast because the fake only
@@ -45,6 +49,7 @@ function harness(secret?: string, store?: SlackWebhookDeps["store"]) {
       return Promise.resolve(stored);
     }) as Appender["publish"],
     store,
+    media,
     signingSecret: secret,
   });
   return { handler, published };
@@ -352,4 +357,61 @@ Deno.test("slack: unsigned accepted when no secret (the Socket Mode carrier path
   );
   assertEquals(res.status, 202);
   assertEquals(published.length, 1);
+});
+
+Deno.test("slack: file attachments land through the media seam — file-only messages publish", async () => {
+  const fetched: { file: unknown; ctx: unknown }[] = [];
+  const media: SlackWebhookDeps["media"] = (file, ctx) => {
+    fetched.push({ file, ctx });
+    return Promise.resolve({
+      type: "file",
+      kind: "image",
+      file: { mime_type: "image/png", uri: "/data/conversations/C1/media/ab12.png", size: 3 },
+    });
+  };
+  const { handler, published } = harness(SECRET, undefined, media);
+  const res = await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        subtype: "file_share",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U7",
+        text: "", // caption-less share: the file alone is the message
+        ts: "333.444",
+        files: [{ id: "F1", name: "shot.png", mimetype: "image/png", url_private: "https://x/y" }],
+      },
+    })),
+  );
+  assertEquals(res.status, 202);
+  const m = published[0] as MessageEvent;
+  assertEquals(m.parts.length, 1); // no empty text part
+  assertEquals(m.parts[0].type, "file");
+  assertEquals((m.parts[0] as { file: { uri: string } }).file.uri.endsWith("ab12.png"), true);
+  assertEquals(m.envelope.external_id, "slack:T1:C1:333.444"); // same merge key as any message
+  // the seam got the delivery's authorized users — the token-resolution candidates
+  assertEquals((fetched[0].ctx as { users: string[] }).users, ["U1", "U2"]);
+});
+
+Deno.test("slack: a failed download drops the file, keeps the text; no media seam ⇒ text only", async () => {
+  const media: SlackWebhookDeps["media"] = () => Promise.resolve(null);
+  const { handler, published } = harness(SECRET, undefined, media);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        subtype: "file_share",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U7",
+        text: "mira esto",
+        ts: "555.666",
+        files: [{ id: "F1", name: "shot.png", mimetype: "image/png", url_private: "https://x/y" }],
+      },
+    })),
+  );
+  const m = published[0] as MessageEvent;
+  assertEquals(m.parts.length, 1);
+  assertEquals((m.parts[0] as { text: string }).text, "mira esto");
 });

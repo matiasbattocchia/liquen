@@ -30,14 +30,36 @@
  * lookup of its GRANT row (`<team>:<user>`, owned) on the connections map — any sender
  * classifies; and memberships MIRROR the wire — join/leave events plus the passive leg
  * (every bound user in a delivery's `authorizations` is a member of the conversation).
- * Event shapes are Slack's OWN (`@slack/types` — the open-bsp lesson: hand-rolled API
- * types encode assumptions the API never promised).
+ * File attachments go through the MEDIA seam (§5): downloaded broker-side with the
+ * connection's credential into the conversation's media shelf; the message carries
+ * `FilePart`s pointing at local paths — `url_private` and the token never cross the
+ * frontier. Event shapes are Slack's OWN (`@slack/types` — the open-bsp lesson:
+ * hand-rolled API types encode assumptions the API never promised).
  */
 
 import type { MemberJoinedChannelEvent, MemberLeftChannelEvent, SlackEvent } from "@slack/types";
 import type { Appender } from "../store/log.ts";
 import type { Connections } from "../store/connections.ts";
-import type { Conversation, Draft, MessageEvent } from "../types.ts";
+import type { Conversation, Draft, FilePart, MessageEvent, Part } from "../types.ts";
+
+/** The wire's file attachment — only the fields the media seam reads. */
+export interface SlackFileRef {
+  id?: string;
+  name?: string;
+  mimetype?: string;
+  url_private?: string;
+  size?: number;
+}
+
+/** The media seam (§9): download BROKER-side with the connection's credential and land
+ *  the bytes in the media store — the platform URL + token never cross the frontier.
+ *  `users` = the delivery's authorized user ids (the token-resolution candidates).
+ *  Returns the local `FilePart`, or null (no credential, fetch failed) — the message
+ *  still publishes with whatever parts it has. */
+export type SlackMedia = (
+  file: SlackFileRef,
+  ctx: { team: string; conversation: string; users: string[] },
+) => Promise<FilePart | null>;
 
 export interface SlackWebhookDeps {
   /** → the EventLog (the connection's only write). */
@@ -46,6 +68,8 @@ export interface SlackWebhookDeps {
    *  owner); memberships mirror joins/leaves and event visibility. Absent ⇒ pure mapping
    *  (an edge tier serving without the store). */
   store?: Pick<Connections, "connection" | "upsertMemberships" | "deleteMemberships">;
+  /** File attachments → the media store (absent ⇒ files are dropped, text still flows). */
+  media?: SlackMedia;
   /** App signing secret. If set, `X-Slack-Signature` is REQUIRED and verified; absent ⇒
    *  unsigned accepted (dev / the Socket Mode carrier, already authed by `xapp`). */
   signingSecret?: string;
@@ -96,7 +120,15 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     if (e.type !== "message") return text(202, `ignored: ${e.type}`);
 
     const anchor = anchorOf(team, payload.authorizations);
-    const msg = mapMessage(e, team, anchor, payload.authorizations, deps.store, { now });
+    const msg = await mapMessage(
+      e,
+      team,
+      anchor,
+      payload.authorizations,
+      deps.store,
+      deps.media,
+      { now },
+    );
     if (!msg) return text(202, "ignored");
     try {
       await deps.publish(msg);
@@ -141,18 +173,21 @@ const KIND: Record<string, NonNullable<Conversation["kind"]>> = {
   channel: "channel",
 };
 
-function mapMessage(
+async function mapMessage(
   e: Extract<SlackEvent, { type: "message" }>,
   team: string,
   anchor: string,
   authorizations: Authorization[] | undefined,
   store: Store | undefined,
+  media: SlackMedia | undefined,
   ctx: MapCtx,
-): Draft<MessageEvent> | null {
-  // plain message, or an edit (message_changed nests the message; same ts ⇒ same row)
+): Promise<Draft<MessageEvent> | null> {
+  // plain message, an edit (message_changed nests the message; same ts ⇒ same row), or a
+  // file share (file_share is a plain message carrying `files` — same row semantics)
   const inner = e.subtype === "message_changed" ? e.message : e;
-  const m = inner.subtype === undefined ? inner : null;
-  if (!m?.ts || !e.channel || !m.text) return null;
+  const m = inner.subtype === undefined || inner.subtype === "file_share" ? inner : null;
+  const files = (m as { files?: SlackFileRef[] } | null)?.files;
+  if (!m?.ts || !e.channel || (!m.text && !files?.length)) return null;
 
   const conversation = e.channel; // the platform's own id — service/connection ride the envelope (§3)
   const who = ownerOf(store, team, m.user);
@@ -168,6 +203,22 @@ function mapMessage(
     if (members.length) store.upsertMemberships(members);
   }
 
+  // body: the text (when any), then each attachment the media seam could land — a file
+  // that fails to download drops silently (the path is re-fetchable; the message isn't)
+  const parts: Part[] = [];
+  if (m.text) parts.push({ type: "text", kind: "text", text: m.text });
+  if (media && files) {
+    for (const f of files) {
+      const p = await media(f, {
+        team,
+        conversation,
+        users: (authorizations ?? []).filter((a) => !a.is_bot && a.user_id).map((a) => a.user_id),
+      });
+      if (p) parts.push(p);
+    }
+  }
+  if (parts.length === 0) return null;
+
   const kind = KIND[e.channel_type];
   return {
     ts: ctx.now(),
@@ -180,7 +231,7 @@ function mapMessage(
       // the upsert/merge key: Slack's ts is the per-channel message id (§3, §4)
       external_id: `slack:${team}:${e.channel}:${m.ts}`,
     },
-    parts: [{ type: "text", kind: "text", text: m.text }],
+    parts,
     // the wire-derived sidecar (§3): only what the envelope has no slot for — the wire's
     // event shape and the delivery's authorization entries verbatim (`is_bot` included:
     // the org-readability ingredient the acl refinement reads later; memberships hold
@@ -323,12 +374,49 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => vo
  * Env: MU_DIR · SLACK_APP_TOKEN (socket mode) · SLACK_SIGNING_SECRET (HTTP mode) · PORT. */
 if (import.meta.main) {
   const { openLog } = await import("../store/log.ts");
+  const { openCredentials } = await import("../store/credentials.ts");
+  const { kindOf, saveMedia } = await import("../store/media.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
   const log = await openLog(`${dir}/log`);
+  const creds = await openCredentials(dir);
   const appToken = Deno.env.get("SLACK_APP_TOKEN");
+
+  // the media seam, broker-side (§9): resolve a token that can read `url_private`
+  // (the org bot → any authorized grant → env), download, land in the media store —
+  // the URL and the token stay on this side of the frontier
+  const tokenFor = async (team: string, users: string[]): Promise<string | null> => {
+    const org = await creds.get(`slack:${team}:org`);
+    if (org?.value.token) return org.value.token;
+    for (const u of users) {
+      const key = log.connection("slack", `${team}:${u}`)?.credentialKey;
+      const c = key ? await creds.get(key) : null;
+      if (c?.value.token) return c.value.token;
+    }
+    return Deno.env.get("SLACK_BOT_TOKEN") ?? null;
+  };
+  const media: SlackMedia = async (f, ctx) => {
+    if (!f.url_private) return null;
+    const token = await tokenFor(ctx.team, ctx.users);
+    if (!token) return null;
+    try {
+      const res = await fetch(f.url_private, { headers: { authorization: `Bearer ${token}` } });
+      if (!res.ok) return null;
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const file = await saveMedia(dir, ctx.conversation, bytes, {
+        mime_type: f.mimetype,
+        name: f.name,
+      });
+      return { type: "file", kind: kindOf(file.mime_type), file };
+    } catch (err) {
+      console.error("[slack] media download failed:", err instanceof Error ? err.message : err);
+      return null;
+    }
+  };
+
   const handler = createSlackWebhook({
     publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
     store: log, // identities + memberships live on the Log (§4) — the wire fills the map
+    media,
     signingSecret: appToken ? undefined : Deno.env.get("SLACK_SIGNING_SECRET") || undefined,
   });
   if (appToken) {

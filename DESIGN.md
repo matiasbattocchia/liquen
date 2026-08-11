@@ -850,6 +850,22 @@ constraint, and render derives it **from the window's shape**:
 - Three regions: **trailing** (faithful) · **recent** (collapsed) · **distant** (`summary`
   events + top-level `system`).
 
+### Media (the same collapse pattern, applied to bytes)
+
+A `FilePart` renders as a `<media kind name path/>` marker in EVERY region — the durable
+handle: the path is the file in the conversation's media shelf
+(`conversations/<safe(address)>/media/<content-hash>.<ext>`, §8 — content-named, so
+re-downloads and the dispatch echo converge on one file), re-viewable any time via
+`aread`/bash. In the TRAILING region only, inlineable files (images, PDFs) additionally
+render as REAL base64 image/document blocks after their element — the model sees the
+picture while it's current, the marker once it's history. Two caps keep requests sane:
+per-file (3MB raw) and a per-request budget (12MB raw, NEWEST first) — a long session
+full of images carries only its trailing burst as bytes, and each closing collapses them
+back to markers (requests get LIGHTER after an answer, like tool pairs). Ingest downloads
+BROKER-side with the connection's credential (§9 — platform URL + token never cross the
+frontier); `send` takes `files: string[]` (workspace/media paths, statted broker-side);
+Slack dispatch uploads via the `files.uploadV2` flow with the text as the share comment.
+
 ### Batch order (observed before optimized)
 
 Within a batch, render keeps **chronological order** — no priority reordering. Steering
@@ -1132,9 +1148,10 @@ Registers (same substrate, different rules):
   as index pointers only; **mu pulls a body on demand via the substrate read** (`aread`/`sql`
   — "doc-read = the substrate read", §9). nu stays dumb (no relevance matching); mu decides
   what to pull. Keeps the prompt (and its cache prefix) lean as doc volume grows.
-- Media/voice **deferred to openbsp** at the producer boundary: the media-preprocessor
-  normalizes raw media → model-digestible parts (voice→transcription, image→native/
-  described) before events hit the log. (Anthropic API: images + PDFs, not audio.)
+- Media lands NATIVE (§5): images/PDFs the model reads directly, everything else a
+  marker + path. The PREPROCESSOR step (voice→transcription, image→described for
+  non-vision paths) stays deferred to openbsp at the producer boundary. (Anthropic API:
+  images + PDFs, not audio.)
 - Eviction = an **un-anchored maintenance step** (cron sweep): merge/supersede, size
   budget per scope, every eviction logged with cause.
 

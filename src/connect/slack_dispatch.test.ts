@@ -1,7 +1,7 @@
 import { assertEquals } from "@std/assert";
 import { createSlackDispatch, type SlackTarget } from "./slack_dispatch.ts";
 import { openLog } from "../store/log.ts";
-import type { MessageEvent } from "../types.ts";
+import type { FilePart, MessageEvent } from "../types.ts";
 
 /** An agent reply as the anchor produces it: BARE address, service/connection on the
  *  envelope (routing is the service field now — no prefix, §3). */
@@ -42,7 +42,7 @@ function worldMsg(id: string, conversation: string, text: string): MessageEvent 
 async function withDispatch(
   fn: (t: {
     publish: (e: MessageEvent) => Promise<unknown>;
-    posts: { target: SlackTarget; text: string; author?: string }[];
+    posts: { target: SlackTarget; text: string; author?: string; files?: FilePart[] }[];
     read: () => Promise<MessageEvent[]>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
   }) => Promise<void>,
@@ -56,11 +56,11 @@ async function withDispatch(
     { service: "slack", address: "T1" },
     { service: "github", address: "gh-app" },
   ]);
-  const posts: { target: SlackTarget; text: string; author?: string }[] = [];
+  const posts: { target: SlackTarget; text: string; author?: string; files?: FilePart[] }[] = [];
   const stop = createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
-    post: (target, text, author) => {
-      posts.push({ target, text, author });
+    post: (target, text, author, files) => {
+      posts.push({ target, text, author, files });
       if (opts.failWith) return Promise.reject(new Error(opts.failWith));
       return Promise.resolve("999.111");
     },
@@ -133,5 +133,35 @@ Deno.test("slack dispatch: agent messages on other services (local, github) are 
     );
     await new Promise((r) => setTimeout(r, 400));
     assertEquals(posts.length, 0);
+  });
+});
+
+Deno.test("slack dispatch: attachments ride the post — text as the share comment (§5 media)", async () => {
+  await withDispatch(async ({ publish, posts, waitFor }) => {
+    const msg = agentMsg("01", "el reporte");
+    msg.parts.push({
+      type: "file",
+      kind: "document",
+      file: { mime_type: "application/pdf", uri: "/m/r.pdf", name: "r.pdf", size: 9 },
+    });
+    await publish(msg);
+    await waitFor(() => posts.length === 1);
+    assertEquals(posts[0].text, "el reporte");
+    assertEquals(posts[0].files?.length, 1);
+    assertEquals(posts[0].files?.[0].file.uri, "/m/r.pdf");
+  });
+});
+
+Deno.test("slack dispatch: a file-only send (no text) still dispatches", async () => {
+  await withDispatch(async ({ publish, posts, waitFor }) => {
+    const msg = agentMsg("01", "");
+    msg.parts = [{
+      type: "file",
+      kind: "image",
+      file: { mime_type: "image/png", uri: "/m/a.png", size: 3 },
+    }];
+    await publish(msg);
+    await waitFor(() => posts.length === 1);
+    assertEquals(posts[0].files?.length, 1);
   });
 });

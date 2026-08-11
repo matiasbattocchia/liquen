@@ -54,6 +54,9 @@ export interface TurnInput {
   /** Lazy source for the checkpoint instruction (the `harness/instruction/compaction` doc) —
    *  xi resolves the I/O, nu only calls it when a checkpoint actually runs (§5). */
   compactPrompt?: () => Promise<string | null>;
+  /** Media resolver for the trailing-region blocks (§5) — xi injects
+   *  `store/media.loadMediaBlock`; render decides which uris to resolve. */
+  loadMedia?: (uri: string) => { media_type: string; data: string } | null;
 }
 
 /** nu's output IS events (the symmetry: events in → events out). The turn's outcome is not a
@@ -114,6 +117,7 @@ export async function nu(
     home: config.home,
     now: ts(),
     ambient: input.ambient,
+    loadMedia: input.loadMedia,
   });
 
   let res: StepResult = { ok: false, error: "not attempted" };

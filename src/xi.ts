@@ -42,6 +42,7 @@ import type { Registry } from "./store/agents.ts";
 import type { Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import type { Locker } from "./store/lock.ts";
+import { filePartOf, loadMediaBlock } from "./store/media.ts";
 import { type ModelTransport, nu, type TurnConfig } from "./nu.ts";
 
 /* ── the poke, the class filter, and the owed-derivation ──────────────── */
@@ -317,6 +318,8 @@ async function think(
       tools: specsOf(ports),
       config,
       ambient,
+      // trailing-region media → real image/document blocks (§5); the store loads, render picks
+      loadMedia: loadMediaBlock,
       // the checkpoint instruction is a DOC (§5/§8) — editable like any instruction
       compactPrompt: () =>
         ports.docs.read({ agent: config.agentId, conversation: config.home }, {
@@ -474,13 +477,17 @@ async function execute(
         connection_address: "agent",
         conversation: { address: to },
       };
+    // attachments (§5 media): paths → FileParts, statted and classified broker-side; a
+    // missing path throws here and the tool_result carries the error back to the model
+    const files = Array.isArray(args.files) ? args.files.map((f) => filePartOf(String(f))) : [];
+    const body = String(args.text);
     const msg: Draft<MessageEvent> = {
       ts: new Date().toISOString(),
       type: "message",
       cause: use.id,
       agent: self,
       envelope,
-      parts: [{ type: "text", kind: "text", text: String(args.text) }],
+      parts: [...(body ? [{ type: "text", kind: "text", text: body } as const] : []), ...files],
     };
     const sent = await ports.log.publish(msg);
     return { queued: true, event_id: sent.id };
@@ -524,6 +531,11 @@ function specsOf(ports: XiPorts): Anthropic.Tool[] {
               "target conversation address (as shown in its conv element), or a peer agent's name to DM them",
           },
           text: { type: "string" },
+          files: {
+            type: "array",
+            items: { type: "string" },
+            description: "file paths to attach (workspace or media-store paths)",
+          },
         },
         required: ["to", "text"],
       },
