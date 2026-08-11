@@ -81,6 +81,29 @@ export function isBytes(mime: string): boolean {
  *  FileParts (§5). */
 export const MEDIA_MARK = "__MU_MEDIA__:";
 
+/** Magic-byte signatures — the FALLBACK when the extension says nothing (extension
+ *  first: it's free and rarely lies). 16 bytes decide every format the mime map names. */
+export function sniffMime(bytes: Uint8Array): string | null {
+  const at = (i: number, ...sig: number[]) => sig.every((b, j) => bytes[i + j] === b);
+  const ascii = (i: number, s: string) => at(i, ...[...s].map((c) => c.charCodeAt(0)));
+  if (at(0, 0x89, 0x50, 0x4e, 0x47)) return "image/png";
+  if (at(0, 0xff, 0xd8, 0xff)) return "image/jpeg";
+  if (ascii(0, "GIF8")) return "image/gif";
+  if (ascii(0, "RIFF") && ascii(8, "WEBP")) return "image/webp";
+  if (ascii(0, "RIFF") && ascii(8, "WAVE")) return "audio/wav";
+  if (ascii(0, "%PDF")) return "application/pdf";
+  if (ascii(0, "ID3") || at(0, 0xff, 0xfb) || at(0, 0xff, 0xf3)) return "audio/mpeg";
+  if (ascii(0, "OggS")) return "audio/ogg";
+  if (ascii(4, "ftyp")) return "video/mp4"; // the isobmff family (mp4/mov/m4a)
+  return null;
+}
+
+/** The git/grep heuristic: a NUL in the head ⇒ not text. The last-resort classifier —
+ *  an unknown binary reads as `[binary …]`, never as mojibake. */
+export function looksBinary(bytes: Uint8Array): boolean {
+  return bytes.includes(0);
+}
+
 /** A conversation address as a directory name — one-way slug, filesystem-safe. */
 function safe(address: string): string {
   return address.replace(/[^A-Za-z0-9._-]/g, "_");
@@ -136,12 +159,28 @@ export function filePartOf(ref: string): FilePart {
   }
   const abs = resolve(pathOf(ref));
   const size = Deno.statSync(abs).size;
-  const mime = mimeOf(abs) ?? "application/octet-stream";
+  const mime = mimeOf(abs) ?? sniffMime(headSync(abs)) ?? "application/octet-stream";
   return {
     type: "file",
     kind: kindOf(mime),
     file: { mime_type: mime, uri: pathToFileURL(abs).toString(), name: basename(abs), size },
   };
+}
+
+/** The first bytes of a file (sniffing window) — never the whole thing. */
+function headSync(path: string, n = 16): Uint8Array {
+  const f = Deno.openSync(path, { read: true });
+  try {
+    const buf = new Uint8Array(n);
+    let at = 0;
+    for (;;) {
+      const r = f.readSync(buf.subarray(at));
+      if (r === null || (at += r) >= n) break;
+    }
+    return buf.subarray(0, at);
+  } finally {
+    f.close();
+  }
 }
 
 /** Raw-byte cap for inlining into a request (base64 ≈ ×4/3; the API caps ~5MB/image). */
@@ -157,11 +196,13 @@ const inlineable = (mime: string): boolean =>
 export function loadMediaBlock(uri: string): { media_type: string; data: string } | null {
   if (isExternal(uri)) return null; // external links inline as url-source blocks, not bytes
   const path = pathOf(uri);
-  const mime = mimeOf(path);
-  if (!mime || !inlineable(mime)) return null;
+  const named = mimeOf(path); // extension first; a nameless file sniffs from its bytes below
+  if (named && !inlineable(named)) return null;
   try {
     const bytes = Deno.readFileSync(path);
     if (bytes.length > INLINE_CAP) return null;
+    const mime = named ?? sniffMime(bytes);
+    if (!mime || !inlineable(mime)) return null;
     return { media_type: mime, data: encodeBase64(bytes) };
   } catch {
     return null;

@@ -79,3 +79,31 @@ Deno.test("loadMediaBlock: images/PDFs inline as base64; other kinds and missing
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("sniffMime/looksBinary: magic bytes decide when the extension says nothing", async () => {
+  const { looksBinary, sniffMime } = await import("./media.ts");
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  assertEquals(sniffMime(png), "image/png");
+  assertEquals(sniffMime(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), "image/jpeg");
+  assertEquals(sniffMime(new TextEncoder().encode("%PDF-1.7")), "application/pdf");
+  assertEquals(sniffMime(new TextEncoder().encode("GIF89a")), "image/gif");
+  assertEquals(sniffMime(new TextEncoder().encode("plain prose")), null);
+  assertEquals(looksBinary(new Uint8Array([104, 0, 108])), true); // a NUL ⇒ not text
+  assertEquals(looksBinary(new TextEncoder().encode("hola")), false);
+});
+
+Deno.test("extension-less media classifies by its bytes — whole pipeline, not just aread", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2]);
+    const path = `${root}/snapshot`; // no extension at all
+    await Deno.writeFile(path, png);
+    const p = filePartOf(path);
+    assertEquals(p.kind, "image"); // sniffed
+    assertEquals(p.file.mime_type, "image/png");
+    const block = loadMediaBlock(path);
+    assertEquals(block?.media_type, "image/png"); // inlines despite the nameless path
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

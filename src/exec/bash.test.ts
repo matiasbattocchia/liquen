@@ -282,3 +282,24 @@ Deno.test("exec plane: aread on a bytes file returns an ExecOutcome — path pee
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("exec plane: aread classifies by bytes when the extension says nothing", async () => {
+  const dir = await Deno.makeTempDir();
+  const { exec, reap } = await installExecPlane(dir);
+  try {
+    // an extension-less PNG: sniffed → media mark → attachment
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await Deno.writeFile(`${dir}/workspace/snapshot`, png);
+    const out = await exec.bash.execute({ command: "aread snapshot" }, live());
+    const outcome = out as { output: string; files: string[] };
+    assertEquals(outcome.files, [`${dir}/workspace/snapshot`]);
+    assert(outcome.output.includes("[media image/png"));
+    // an unknown binary (NUL bytes, no signature): a notice, never mojibake, no attachment
+    await Deno.writeFile(`${dir}/workspace/blob.xyz`, new Uint8Array([1, 0, 2, 0, 3]));
+    const blob = await exec.bash.execute({ command: "aread blob.xyz" }, live());
+    assertEquals(blob, "[binary · 5 bytes — not a text file]");
+  } finally {
+    await reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

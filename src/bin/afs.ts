@@ -22,7 +22,23 @@
 import { resolve } from "node:path";
 import { applyEdits, parseEdits } from "../exec/edit.ts";
 import { truncateHead } from "../exec/truncate.ts";
-import { isBytes, MEDIA_MARK, mimeOf } from "../store/media.ts";
+import { isBytes, looksBinary, MEDIA_MARK, mimeOf, sniffMime } from "../store/media.ts";
+
+/** The first bytes of a file (the sniffing window) — never the whole thing. */
+async function headOf(path: string, n = 1024): Promise<Uint8Array> {
+  const f = await Deno.open(path, { read: true });
+  try {
+    const buf = new Uint8Array(n);
+    let at = 0;
+    for (;;) {
+      const r = await f.read(buf.subarray(at));
+      if (r === null || (at += r) >= n) break;
+    }
+    return buf.subarray(0, at);
+  } finally {
+    f.close();
+  }
+}
 
 async function readStdin(): Promise<string> {
   const chunks: Uint8Array[] = [];
@@ -45,10 +61,19 @@ async function read(
   maxBytes?: number,
 ): Promise<string> {
   // bytes files (§5 media): no useful text form — hand back a media mark instead of
-  // mojibake; bash peels it and the file rides the tool_result as an attachment
-  const mime = mimeOf(path);
+  // mojibake; bash peels it and the file rides the tool_result as an attachment.
+  // Classification cascade: extension → magic bytes → the NUL heuristic → text.
+  let mime = mimeOf(path);
+  if (!mime) {
+    const head = await headOf(path); // a missing file still throws here
+    mime = sniffMime(head);
+    if (!mime && looksBinary(head)) {
+      const size = (await Deno.stat(path)).size;
+      return `[binary · ${size} bytes — not a text file]`;
+    }
+  }
   if (mime && isBytes(mime)) {
-    const size = (await Deno.stat(path)).size; // stat first — a missing file still throws
+    const size = (await Deno.stat(path)).size;
     return `[media ${mime} · ${size} bytes]\n${MEDIA_MARK}${resolve(path)}`;
   }
   const content = await Deno.readTextFile(path);
