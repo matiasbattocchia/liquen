@@ -1,0 +1,407 @@
+import { assertEquals, assertRejects } from "@std/assert";
+import { type Log, openLog } from "./log.ts";
+import type { Event, MessageEvent } from "../types.ts";
+
+function msg(id: string, conversation: string, text: string, sender?: string): MessageEvent {
+  return {
+    id,
+    ts: `2026-07-16T00:00:${id.padStart(2, "0")}Z`,
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "org",
+      conversation: { address: conversation },
+      ...(sender ? { sender: { address: sender } } : {}),
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  };
+}
+
+async function withLog(fn: (log: Log, dir: string) => Promise<void>): Promise<void> {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  try {
+    await fn(log, dir);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+/** Resolve once `n` events are delivered to a subscription, else reject. */
+function take(log: Log, n: number, from?: string, ms = 2000): Promise<Event[]> {
+  return new Promise((resolve, reject) => {
+    const got: Event[] = [];
+    const timer = setTimeout(() => {
+      off();
+      reject(new Error(`timeout: got ${got.length}/${n}`));
+    }, ms);
+    const off = log.subscribe((e) => {
+      got.push(e);
+      if (got.length >= n) {
+        clearTimeout(timer);
+        off();
+        resolve(got);
+      }
+    }, from === undefined ? {} : { from });
+  });
+}
+
+/* ── publish + read ─────────────────────────────────────────────────── */
+
+Deno.test("publish returns the event; read replays it in append order", async () => {
+  await withLog(async (log) => {
+    await log.publish(msg("01", "c1", "hello"));
+    const returned = await log.publish(msg("02", "c1", "world"));
+    assertEquals(returned.id, "02");
+    assertEquals((await log.read()).map((e) => e.id), ["01", "02"]);
+  });
+});
+
+Deno.test("published events persist across reopen (recovery = replay)", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const a = await openLog(dir);
+    await a.publish(msg("01", "c1", "a"));
+    await a.publish(msg("02", "c2", "b"));
+    await a.close();
+
+    const b = await openLog(dir);
+    assertEquals((await b.read()).map((e) => e.id), ["01", "02"]);
+    await b.close();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("read filters by conversation, sender, and case-insensitive text (§6)", async () => {
+  await withLog(async (log) => {
+    await log.publish(msg("01", "c1", "Refund please", "cust"));
+    await log.publish(msg("02", "c2", "unrelated", "cust"));
+    await log.publish(msg("03", "c1", "another REFUND", "other"));
+
+    assertEquals((await log.read({ conversation: "c1" })).map((e) => e.id), ["01", "03"]);
+    assertEquals((await log.read({ from: "cust" })).map((e) => e.id), ["01", "02"]);
+    assertEquals((await log.read({ text: "refund" })).map((e) => e.id), ["01", "03"]);
+  });
+});
+
+Deno.test("read `conversations` scopes to a set — the readable filter at source (§6)", async () => {
+  await withLog(async (log) => {
+    await log.publish(msg("01", "c1", "a"));
+    await log.publish(msg("02", "c2", "b"));
+    await log.publish(msg("03", "c3", "c"));
+    // a principal permitted only c1+c3 never loads c2 out of the store (WHERE IN, not post-filter)
+    assertEquals((await log.read({ conversations: ["c1", "c3"] })).map((e) => e.id), ["01", "03"]);
+  });
+});
+
+Deno.test("after/before bound the id range; limit keeps the most recent N", async () => {
+  await withLog(async (log) => {
+    for (const id of ["01", "02", "03", "04", "05"]) await log.publish(msg(id, "c1", id));
+    // after/before are EVENT-TIME bounds (§6) — ISO timestamps against the timestamp column,
+    // never ids (an ISO string vs a uuid compares lexically into nonsense)
+    assertEquals(
+      (await log.read({ after: "2026-07-16T00:00:02Z", before: "2026-07-16T00:00:05Z" }))
+        .map((e) => e.id),
+      ["03", "04"],
+    );
+    assertEquals((await log.read({ limit: 2 })).map((e) => e.id), ["04", "05"]);
+  });
+});
+
+Deno.test("concurrent cross-process publishes serialize (SQLite WAL + busy_timeout)", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    // two independent Log handles = two connections contending for the same db
+    const w1 = await openLog(dir);
+    const w2 = await openLog(dir);
+    const writes: Promise<unknown>[] = [];
+    for (let i = 0; i < 20; i++) {
+      const id = String(i).padStart(2, "0");
+      writes.push((i % 2 === 0 ? w1 : w2).publish(msg(id, "c1", id)));
+    }
+    await Promise.all(writes);
+
+    const reader = await openLog(dir);
+    const all = await reader.read();
+    assertEquals(all.length, 20); // every row committed, none lost to contention
+    assertEquals(new Set(all.map((e) => e.id)).size, 20);
+    await Promise.all([w1.close(), w2.close(), reader.close()]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+const keyed = (id: string, key: string, text = id): MessageEvent => {
+  const e = msg(id, "c1", text);
+  return { ...e, envelope: { ...e.envelope, external_id: key } };
+};
+
+Deno.test("subscribe's cursor is seeded synchronously: no publish falls in the arming gap", async () => {
+  await withLog(async (log) => {
+    const got: Event[] = [];
+    const off = log.subscribe((e) => got.push(e));
+    // no await between subscribe and publish — the guarantee is that `subscribe()` RETURNING
+    // is the cut, not whenever the watcher happens to arm (a lazy seed loses this one)
+    await log.publish(msg("01", "c1", "immediately after"));
+    try {
+      const t0 = Date.now();
+      while (got.length === 0 && Date.now() - t0 < 2000) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      assertEquals(got.map((e) => e.id), ["01"]);
+    } finally {
+      off();
+    }
+  });
+});
+
+Deno.test("publishAndRelease: the batch and the lease release commit together (§2)", async () => {
+  await withLog(async (log) => {
+    const lock = log.lock("turn-a1");
+    assertEquals(await lock.acquire(), "acquired");
+    const draft = (text: string) => {
+      const { id: _, ...rest } = msg("00", "c1", text);
+      return rest;
+    };
+    const stored = await log.publishAndRelease([draft("one"), draft("two")], "turn-a1");
+    assertEquals(stored.length, 2);
+    assertEquals((await log.read()).map((e) => e.id), stored.map((e) => e.id)); // in order
+    // the lease is gone in the SAME transaction: a wake fired by those inserts can never
+    // find it still held — that was the stalled-cycle bug (§2)
+    assertEquals(await lock.held(), false);
+    assertEquals(await log.lock("turn-a1").acquire(), "acquired"); // clean, not a steal
+  });
+});
+
+Deno.test("publishAndRelease is atomic: a bad draft leaves neither events nor a freed lease", async () => {
+  await withLog(async (log) => {
+    const lock = log.lock("turn-a1");
+    await lock.acquire();
+    const ok = { ...msg("01", "c1", "fine") } as Record<string, unknown>;
+    delete ok.id;
+    const bad = { ...ok, type: undefined }; // NOT NULL violation on `type`
+    let threw = false;
+    try {
+      await log.publishAndRelease([ok, bad] as never, "turn-a1");
+    } catch {
+      threw = true;
+    }
+    assertEquals(threw, true);
+    assertEquals((await log.read()).length, 0); // the first insert rolled back with it
+    assertEquals(await lock.held(), true); // and the lease is still ours to release
+  });
+});
+
+Deno.test("the store owns the id: a draft gets a UUIDv7, minted in append order (§3)", async () => {
+  await withLog(async (log) => {
+    const draft = (text: string) => {
+      const { id: _, ...rest } = msg("00", "c1", text);
+      return rest;
+    };
+    const a = await log.publish(draft("first"));
+    const b = await log.publish(draft("second"));
+    // v7: version nibble 7, variant 8‥b — the same shape Postgres's `DEFAULT uuidv7()` mints
+    for (const e of [a, b]) {
+      assertEquals(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(e.id),
+        true,
+      );
+    }
+    assertEquals(a.id < b.id, true); // lexical order = mint order = append order
+    assertEquals((await log.read()).map((e) => e.id), [a.id, b.id]);
+  });
+});
+
+Deno.test("a MERGE returns the surviving row's id, not the caller's", async () => {
+  await withLog(async (log) => {
+    const first = await log.publish(keyed("01", "x1", "original"));
+    const merged = await log.publish(keyed("02", "x1", "edited"));
+    assertEquals(merged.id, first.id); // "02" never became a row — the caller learns that
+    assertEquals((await log.read()).length, 1);
+  });
+});
+
+Deno.test("publish upserts on external_id: a known key MERGES (retry/edit), a new one inserts", async () => {
+  await withLog(async (log) => {
+    await log.publish(keyed("01", "x1", "original"));
+    await log.publish(keyed("02", "x1", "edited")); // same key → merge into 01, no new row
+    await log.publish(keyed("03", "x2")); // new key → kept
+    await log.publish(msg("04", "c1", "no key")); // no key → always kept
+    const all = await log.read();
+    assertEquals(all.map((e) => e.id), ["01", "03", "04"]);
+    // the merge applied: 01 now carries the edited parts (json_patch, open-bsp merge trigger)
+    const first = all[0] as MessageEvent;
+    assertEquals((first.parts[0] as { text: string }).text, "edited");
+  });
+});
+
+Deno.test("echo-reconciliation: setDelivery backfills external_id; the loopback merges, no wake", async () => {
+  await withLog(async (log) => {
+    // 1. the agent's outbound send — no external_id yet
+    await log.publish(msg("01", "gh:a/w#1", "on it"));
+    // 2. dispatch posted it; backfill the platform id + dispatched_at
+    await log.setDelivery("01", {
+      external_id: "gh:555",
+      status: { dispatched_at: "2026-07-24T00:00:00Z" },
+    });
+    // a subscriber armed BEFORE the echo — the loopback must not wake it
+    const woken: Event[] = [];
+    const off = log.subscribe((e) => woken.push(e));
+    await new Promise((r) => setTimeout(r, 50));
+    // 3. the webhook echoes our own comment back, carrying the same external_id
+    await log.publish(keyed("02", "gh:555", "on it"));
+    await new Promise((r) => setTimeout(r, 400));
+    off();
+    assertEquals(woken.length, 0); // merged into 01 — an UPDATE, not an insert
+    const all = await log.read();
+    assertEquals(all.map((e) => e.id), ["01"]); // still one row
+    assertEquals(all[0].envelope.external_id, "gh:555");
+  });
+});
+
+Deno.test("echo race: the echo arrives BEFORE the backfill — setDelivery absorbs it into one row", async () => {
+  await withLog(async (log) => {
+    // 1. the agent's outbound send — dispatch is posting, no external_id yet
+    await log.publish(msg("01", "gh:a/w#1", "on it"));
+    // 2. the webhook wins the race: our own comment echoes in FIRST (a new row — it wakes)
+    await log.publish(keyed("02", "gh:555", "on it"));
+    assertEquals((await log.read()).length, 2); // the race really happened
+    // 3. the late backfill reconciles: absorb the echo row into ours, converge to ONE row
+    await log.setDelivery("01", {
+      external_id: "gh:555",
+      status: { dispatched_at: "2026-07-24T00:00:00Z" },
+    });
+    const all = await log.read();
+    assertEquals(all.map((e) => e.id), ["01"]); // the echo row is gone
+    assertEquals(all[0].envelope.external_id, "gh:555");
+    // the already-fired wake now finds a quiescent window — nothing owed, no self-reply (§2)
+  });
+});
+
+/* ── subscribe ──────────────────────────────────────────────────────── */
+
+Deno.test("subscribe delivers events published after subscribe (live)", async () => {
+  await withLog(async (log) => {
+    const pending = take(log, 2);
+    await new Promise((r) => setTimeout(r, 50)); // let the watcher arm
+    await log.publish(msg("01", "c1", "a"));
+    await log.publish(msg("02", "c1", "b"));
+    assertEquals((await pending).map((e) => e.id), ["01", "02"]);
+  });
+});
+
+Deno.test("subscribe reads the db, not writer memory (cross-process path)", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const writer = await openLog(dir);
+    const consumer = await openLog(dir); // a *different* handle, as another process would
+    const pending = take(consumer, 1);
+    await new Promise((r) => setTimeout(r, 50));
+    await writer.publish(msg("01", "c1", "x"));
+    assertEquals((await pending).map((e) => e.id), ["01"]);
+    await Promise.all([writer.close(), consumer.close()]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("subscribe filter narrows the stream", async () => {
+  await withLog(async (log) => {
+    const got: Event[] = [];
+    const off = log.subscribe((e) => got.push(e), {
+      filter: (e) => e.envelope.conversation.address === "c2",
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    await log.publish(msg("01", "c1", "a"));
+    await log.publish(msg("02", "c2", "b"));
+    await new Promise((r) => setTimeout(r, 300));
+    off();
+    assertEquals(got.map((e) => e.id), ["02"]);
+  });
+});
+
+Deno.test("subscribe `from` replays the backlog after a known id (id is the cursor)", async () => {
+  await withLog(async (log) => {
+    await log.publish(msg("01", "c1", "a"));
+    await log.publish(msg("02", "c1", "b"));
+    await log.publish(msg("03", "c1", "c"));
+    const got = await take(log, 2, "01"); // exclusive: expect 02, 03
+    assertEquals(got.map((e) => e.id), ["02", "03"]);
+  });
+});
+
+Deno.test("unsubscribe stops delivery and leaks no watcher", async () => {
+  await withLog(async (log) => {
+    const got: Event[] = [];
+    const off = log.subscribe((e) => got.push(e));
+    await new Promise((r) => setTimeout(r, 50));
+    off();
+    await log.publish(msg("01", "c1", "a"));
+    await new Promise((r) => setTimeout(r, 300));
+    assertEquals(got.length, 0);
+  });
+});
+
+Deno.test("conversation.kind round-trips (direct | group | channel — ingest-stamped, §3)", async () => {
+  await withLog(async (log) => {
+    const e = msg("01", "C123", "in a channel");
+    e.envelope.conversation.kind = "channel";
+    await log.publish(e);
+    const [back] = await log.read();
+    assertEquals(back.envelope.conversation.kind, "channel");
+    const plain = await log.publish(msg("02", "c2", "no kind"));
+    assertEquals(plain.envelope.conversation.kind, undefined);
+    const [, p] = await log.read();
+    assertEquals(p.envelope.conversation.kind, undefined);
+  });
+});
+
+Deno.test("the publish gate: only a registered, live connection may log (§4); local is exempt", async () => {
+  await withLog(async (log) => {
+    const slack = msg("01", "C1", "hola");
+    slack.envelope.service = "slack";
+    slack.envelope.connection_address = "T1:U7";
+
+    // unregistered ⇒ refused before anything lands
+    await assertRejects(() => log.publish(slack), Error, "connection not registered");
+    assertEquals((await log.read()).length, 0);
+
+    log.upsertConnections([{ service: "slack", address: "T1:U7", agentId: "matias" }]);
+    await log.publish(slack); // the grant opens the log
+
+    // a soft-deleted grant closes it again — and a re-grant reopens
+    log.deleteConnections([{ service: "slack", address: "T1:U7" }]);
+    const more = msg("02", "C1", "sigo acá");
+    more.envelope.service = "slack";
+    more.envelope.connection_address = "T1:U7";
+    await assertRejects(() => log.publish(more), Error, "connection not registered");
+    log.upsertConnections([{ service: "slack", address: "T1:U7" }]);
+    await log.publish(more);
+
+    await log.publish(msg("03", "mind:m", "local needs no grant")); // the exempt service
+    assertEquals((await log.read()).length, 3);
+  });
+});
+
+Deno.test("events.extra: wire sidecar round-trips and MERGES on the external-id upsert (§3)", async () => {
+  await withLog(async (log) => {
+    const e = msg("01", "C1", "hola");
+    e.envelope.external_id = "x:1";
+    e.extra = { slack: { subtype: "me_message" }, raw: "hola" };
+    await log.publish(e);
+
+    const edit = msg("01b", "C1", "hola (edited)");
+    edit.envelope.external_id = "x:1";
+    edit.extra = { slack: { authorizations: ["U7"] }, edited: true };
+    await log.publish(edit); // same merge key ⇒ same row, extra json_patched
+
+    const [back] = await log.read();
+    assertEquals(back.extra, {
+      slack: { subtype: "me_message", authorizations: ["U7"] },
+      raw: "hola",
+      edited: true,
+    });
+  });
+});

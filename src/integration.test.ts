@@ -1,0 +1,487 @@
+/**
+ * End-to-end scenarios over the real SQLite log: a main-shaped fan-out (subscribe → invoke
+ * `handle` per event, serialized per agent, boot alarm at start), scripted mu, everything
+ * else live — verdicts, lock, acts, gates, recovery. The log is the continuation engine.
+ */
+
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { type AgentConfig, xi, type XiPorts } from "./xi.ts";
+import { type Log, openLog } from "./store/log.ts";
+import { openFileDocs } from "./store/docs.ts";
+import type Anthropic from "@anthropic-ai/sdk";
+import type { Emission, ModelTransport } from "./mu.ts";
+import { canned, scripted } from "./testing.ts";
+import type { Draft, Event, MessageEvent, ToolUseEvent } from "./types.ts";
+
+const CONFIG: AgentConfig = {
+  agentId: "a1",
+  sessionId: "s1",
+  home: "home",
+  model: "claude-x",
+  maxTokens: 1024,
+  gate: () => false, // gating off unless a test opts in
+  retryDelaysMs: [0, 0],
+};
+
+/** A scripted model edge: each turn consumes the next response; when empty, closes quietly. */
+const ok = (emissions: Emission[], stop: Anthropic.StopReason = "end_turn") =>
+  canned(emissions, stop);
+
+/** The exec-plane tool the scenarios use — injected via ports (bash's stand-in). */
+const echoTool = {
+  spec: {
+    name: "echo",
+    description: "echoes its input",
+    input_schema: { type: "object" as const },
+  },
+  execute: (input: unknown) => Promise.resolve({ echoed: input } as never),
+};
+
+function principalMsg(text: string): Draft<MessageEvent> {
+  return {
+    ts: new Date().toISOString(),
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "home" },
+      sender: { address: "ana", name: "Ana" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  };
+}
+
+async function waitFor(cond: () => Promise<boolean> | boolean, ms = 4000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    if (await cond()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error("waitFor timeout");
+}
+
+/** main's shape, miniature: one tail, one invocation per change, a boot invoke. No filter and
+ *  no queue — the turn lock is the concurrency control (§2); `outstanding` is only so stop()
+ *  can await what's in flight. */
+function fanOut(config: AgentConfig, log: Log, ports: XiPorts): { stop(): Promise<void> } {
+  let stopped = false;
+  const outstanding = new Set<Promise<void>>();
+  const invoke = (trigger?: Event) => {
+    if (stopped) return;
+    const run = xi(config, ports, trigger).catch(() => {}).finally(() => outstanding.delete(run));
+    outstanding.add(run);
+  };
+  const unsubscribe = log.subscribe(invoke); // the event goes straight through to xi
+  invoke(); // boot: no trigger ⇒ look at whatever the log already owes
+  return {
+    async stop() {
+      stopped = true;
+      unsubscribe();
+      await Promise.all([...outstanding]);
+    },
+  };
+}
+
+async function scenario(
+  script: Anthropic.Message[],
+  fn: (t: {
+    calls: () => number;
+    read: (type?: Event["type"]) => Promise<Event[]>;
+    publish: (e: Draft<Event>) => Promise<Event>;
+    preloaded: Event[]; // as STORED — the store minted their ids (§3)
+  }) => Promise<void>,
+  config: Partial<AgentConfig> = {},
+  preload: Draft<Event>[] = [], // events in the log before the fan-out starts (recovery)
+): Promise<void> {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  const preloaded: Event[] = [];
+  for (const e of preload) preloaded.push(await log.publish(e));
+  const { transport, calls } = scripted(script);
+  const main = fanOut({ ...CONFIG, ...config }, log, {
+    log,
+    docs: openFileDocs(`${dir}/docs`),
+    transport,
+    exec: { echo: echoTool },
+  });
+  try {
+    await fn({
+      calls,
+      read: (type?: Event["type"]) => log.read(type ? { types: [type] } : undefined),
+      publish: (e) => log.publish(e),
+      preloaded,
+    });
+  } finally {
+    await main.stop();
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+Deno.test("a principal message spawns a turn; stamped events are published", async () => {
+  await scenario(
+    [ok([
+      { kind: "thinking", thinking: "easy one", signature: "sig" },
+      { kind: "assistant", text: "¡Hola Ana!" },
+    ], "end_turn")],
+    async ({ publish, read, calls }) => {
+      await publish(principalMsg("hola"));
+      await waitFor(async () => (await read("thinking")).length === 1);
+
+      const replies = (await read("message")).filter((e) => e.agent?.session_id === "s1");
+      assertEquals(replies.length, 1);
+      assertEquals(replies[0].envelope.conversation.address, "home");
+      assertEquals(typeof replies[0].meta?.turnId, "string");
+      assertEquals(calls(), 1);
+    },
+  );
+});
+
+Deno.test("max_tokens: the cut-off turn CONTINUES (not a dead-end) and warns the model", async () => {
+  const partial = ok([{ kind: "assistant", text: "here is the first half" }], "max_tokens");
+  await scenario(
+    [partial, ok([{ kind: "assistant", text: "…and the rest" }], "end_turn")],
+    async ({ publish, read, calls }) => {
+      await publish(principalMsg("write me a long thing"));
+      // the loop must re-enter after max_tokens → a SECOND step → the closing turn
+      await waitFor(async () =>
+        (await read("message")).some((e) =>
+          e.agent?.session_id === "s1" &&
+          (e as MessageEvent).parts.some((p) => p.type === "text" && p.text === "…and the rest")
+        )
+      );
+      assertEquals(calls(), 2); // continued, did not stop at the ceiling
+      // the advisory rode along so the model knows it was truncated
+      const errs = await read("error");
+      assert(errs.length === 1);
+      assertStringIncludes(
+        (errs[0] as { parts: [{ data: { error: string } }] }).parts[0].data.error,
+        "output token limit",
+      );
+    },
+  );
+});
+
+Deno.test("tool cycle: use → act → result → closing turn; then quiescence", async () => {
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "echo", input: { v: 42 } }], "tool_use"),
+      ok([{ kind: "assistant", text: "done: 42" }], "end_turn"),
+    ],
+    async ({ publish, read, calls }) => {
+      await publish(principalMsg("run the tool"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+
+      const [use] = await read("tool_use") as ToolUseEvent[];
+      const [result] = await read("tool_result");
+      assert(result.type === "tool_result");
+      assertEquals(result.cause, use.id);
+      assertEquals(result.parts[0].data.output, { echoed: { v: 42 } });
+
+      await waitFor(async () =>
+        (await read("message")).some((e) =>
+          e.agent?.session_id === "s1" && JSON.stringify(e.parts).includes("done: 42")
+        )
+      );
+      await new Promise((r) => setTimeout(r, 300)); // run-to-quiescence: no extra turns
+      assertEquals(calls(), 2);
+    },
+  );
+});
+
+Deno.test("coalescing: messages landing mid-turn batch into ONE follow-up, not one each", async () => {
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "echo", input: {} }], "tool_use"),
+      ok([{ kind: "assistant", text: "first" }], "end_turn"),
+      ok([{ kind: "assistant", text: "SPURIOUS" }], "end_turn"), // must never be consumed
+    ],
+    async ({ publish, read, calls }) => {
+      await publish(principalMsg("uno"));
+      await publish(principalMsg("dos")); // lands while the first turn is owed/in flight
+      // one closing turn answers dos + the tool result together (the batch a turn consumes)
+      await waitFor(async () =>
+        (await read("message")).some((e) => JSON.stringify(e.parts).includes("first"))
+      );
+      await new Promise((r) => setTimeout(r, 400)); // quiescence: nothing respawns
+      assertEquals(calls(), 2); // NOT three — dos never got its own spawn
+      assertEquals(
+        (await read("message")).some((e) => JSON.stringify(e.parts).includes("SPURIOUS")),
+        false,
+      );
+    },
+  );
+});
+
+Deno.test("send: directed message + queued result, both cause-linked", async () => {
+  await scenario(
+    [
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "wa:mariana", text: "hola!" } }],
+        "tool_use",
+      ),
+      ok([{ kind: "assistant", text: "le escribí" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("escribile a mariana"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+
+      const [use] = await read("tool_use") as ToolUseEvent[];
+      const directed = (await read("message")).filter((e) =>
+        e.envelope.conversation.address === "wa:mariana"
+      );
+      assertEquals(directed.length, 1);
+      assertEquals(directed[0].cause, use.id);
+    },
+  );
+});
+
+Deno.test("gating: request surfaces instead of executing; allow runs; deny errors", async () => {
+  const respond = (request_id: string, behavior: "allow" | "deny"): Draft<Event> => ({
+    ts: new Date().toISOString(),
+    type: "permission_response",
+    envelope: { service: "local", connection_address: "agent", conversation: { address: "home" } },
+    parts: [{
+      type: "data",
+      kind: "permission_response",
+      data: {
+        behavior,
+        scope: "once",
+        ...(behavior === "deny" ? { reason: "not now" } : {}),
+        request_id,
+      },
+    }],
+  });
+
+  // allow
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok([], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("mandale"));
+      await waitFor(async () => (await read("permission_request")).length === 1);
+      const [req] = await read("permission_request");
+      assert(req.type === "permission_request");
+      assertEquals(req.envelope.conversation.address, "home");
+      assertEquals(
+        (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
+        0,
+      );
+
+      await publish(respond(req.parts[0].data.request_id, "allow"));
+      await waitFor(async () =>
+        (await read("message")).some((e) => e.envelope.conversation.address === "wa:x")
+      );
+    },
+    { gate: (name) => name === "send" },
+  );
+
+  // deny
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok([], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("mandale"));
+      await waitFor(async () => (await read("permission_request")).length === 1);
+      const [req] = await read("permission_request");
+      assert(req.type === "permission_request");
+
+      await publish(respond(req.parts[0].data.request_id, "deny"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+      const [res] = await read("tool_result");
+      assert(res.type === "tool_result");
+      assertEquals(res.parts[0].data.is_error, true);
+      assertEquals(String(res.parts[0].data.output).includes("not now"), true);
+      assertEquals(
+        (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
+        0,
+      );
+    },
+    { gate: (name) => name === "send" },
+  );
+});
+
+/* ── recovery: the boot poke does whatever the log owes ───────────────── */
+
+const orphanUse = (): Draft<Event> => ({
+  ts: new Date().toISOString(),
+  type: "tool_use",
+  turnId: "T-crashed",
+  agent: { id: "a1", session_id: "s1" },
+  envelope: { service: "local", connection_address: "agent", conversation: { address: "mind:a1" } },
+  parts: [{ type: "data", kind: "tool_use", data: { name: "echo", input: { v: 1 } } }],
+});
+
+Deno.test("no duplicate turn: the decision is re-derived under the lease, not before it", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  const { transport, calls } = scripted([
+    ok([{ kind: "assistant", text: "ya contesté" }], "end_turn"),
+    ok([{ kind: "assistant", text: "DUPLICATE" }], "end_turn"), // must never be consumed
+  ]);
+  const ports = { log, docs: openFileDocs(`${dir}/docs`), transport, exec: { echo: echoTool } };
+  try {
+    await log.publish(principalMsg("hola"));
+    // TWO invocations for the same event — both would have decided "think" before the lease
+    // existed; the second must re-decide against a window that already holds the answer
+    await xi(CONFIG, ports, undefined);
+    await xi(CONFIG, ports, undefined);
+    assertEquals(calls(), 1);
+    const replies = (await log.read({ types: ["message"] }))
+      .filter((e) => e.agent?.session_id === "s1");
+    assertEquals(replies.length, 1);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the gate is free: a spectator event takes no lease and reads nothing", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  const { transport, calls } = scripted([ok([{ kind: "assistant", text: "no" }], "end_turn")]);
+  const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("hola")); // real work IS owed…
+    const thinking = await log.publish({
+      ts: new Date().toISOString(),
+      type: "thinking",
+      turnId: "T",
+      agent: { id: "a1", session_id: "s1" },
+      envelope: {
+        service: "local",
+        connection_address: "agent",
+        conversation: { address: "mind:a1" },
+      },
+      parts: [{ type: "data", kind: "thinking", data: { thinking: "…", signature: "s" } }],
+    });
+    // …but a `thinking` trigger never gets far enough to find out
+    await xi(CONFIG, ports, thinking);
+    assertEquals(calls(), 0);
+    assertEquals(await log.lock("turn-a1").held(), false); // the lease was never taken
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("recovery: a stale lock (crashed holder) → pending uses swept, then the closing turn", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.publish(principalMsg("seguís ahí?"));
+  const use = await log.publish(orphanUse());
+  // the crashed holder left its lease in the store; age it past the TTL
+  assertEquals(await log.lock("turn-a1", 50).acquire(), "acquired");
+  await new Promise((r) => setTimeout(r, 80));
+
+  const { transport, calls } = scripted([
+    ok([{ kind: "assistant", text: "acá estoy" }], "end_turn"),
+  ]);
+  const main = fanOut({ ...CONFIG, lockTtlMs: 50 }, log, {
+    log,
+    docs: openFileDocs(`${dir}/docs`),
+    transport,
+    exec: { echo: echoTool },
+  });
+  try {
+    await waitFor(async () => (await log.read({ types: ["tool_result"] })).length === 1);
+    const [swept] = await log.read({ types: ["tool_result"] });
+    assert(swept.type === "tool_result");
+    assertEquals(swept.cause, use.id);
+    assertEquals(swept.parts[0].data.cancelled, true); // swept, NOT re-run — state unknown
+    await waitFor(() => calls() >= 1); // the completed barrier then owes the closing think
+  } finally {
+    await main.stop();
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("recovery: a pending use with a cleanly released lock is simply run at boot", async () => {
+  // no lock left behind ⇒ nothing crashed mid-flight — the act just never ran; execute it
+  await scenario(
+    [ok([{ kind: "assistant", text: "hecho" }], "end_turn")],
+    async ({ read, calls, preloaded }) => {
+      await waitFor(async () => (await read("tool_result")).length === 1);
+      const [res] = await read("tool_result");
+      assert(res.type === "tool_result");
+      assertEquals(res.cause, preloaded[1].id);
+      assertEquals(res.parts[0].data.output, { echoed: { v: 1 } });
+      assertEquals(res.parts[0].data.cancelled, undefined);
+      await waitFor(() => calls() >= 1);
+    },
+    {},
+    [principalMsg("seguís ahí?"), orphanUse()],
+  );
+});
+
+Deno.test("compaction: an over-threshold window is checkpointed before the think (§5)", async () => {
+  await scenario(
+    [
+      ok([{ kind: "assistant", text: "respuesta uno" }], "end_turn"),
+      ok([{ kind: "assistant", text: "## checkpoint viejo" }], "end_turn"), // the checkpoint TURN
+      ok([{ kind: "assistant", text: "respuesta dos" }], "end_turn"),
+    ],
+    async ({ publish, read, calls }) => {
+      await publish(principalMsg("uno"));
+      await waitFor(async () => (await read("message")).some((e) => e.agent !== undefined));
+      await publish(principalMsg("dos"));
+
+      await waitFor(async () => (await read("summary")).length === 1);
+      const [sum] = await read("summary");
+      assert(sum.type === "summary");
+      assertEquals(JSON.stringify(sum.parts).includes("checkpoint viejo"), true);
+      // covers exactly the first closed exchange: [uno, respuesta uno]
+      const msgs = await read("message");
+      assertEquals(sum.meta.covers[0], msgs[0].id);
+      assertEquals(sum.meta.covers[1], msgs[1].id);
+
+      await waitFor(async () =>
+        (await read("message")).some((e) => JSON.stringify(e.parts).includes("respuesta dos"))
+      );
+      await new Promise((r) => setTimeout(r, 300)); // quiescence
+      // THREE model calls — the checkpoint being its own invocation didn't add any: reply,
+      // checkpoint (displacing a turn; its insert wakes the think), the displaced think
+      assertEquals(calls(), 3);
+    },
+    { compactAt: 1, keepRecent: 0 },
+  );
+});
+
+Deno.test("coalescing race: a message landing between window-read and closing publish is still answered", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  let release!: () => void;
+  const hold = new Promise<void>((r) => (release = r));
+  let n = 0;
+  const transport: ModelTransport = async () => {
+    n++;
+    if (n === 1) {
+      await hold; // keep turn 1 in flight — its window was already read
+      return ok([{ kind: "assistant", text: "uno listo" }]);
+    }
+    return ok([{ kind: "assistant", text: "dos listo" }]);
+  };
+  const main = fanOut(CONFIG, log, { log, docs: openFileDocs(`${dir}/docs`), transport });
+  try {
+    await log.publish(principalMsg("uno"));
+    await waitFor(() => n >= 1); // turn 1 read its window and is mid-flight
+    await log.publish(principalMsg("dos")); // BEFORE the closing lands in the log
+    release();
+    // the closing's consumed-horizon exposes "dos" as unanswered → a second turn answers it
+    await waitFor(async () =>
+      (await log.read({ types: ["message"] })).some((e) =>
+        JSON.stringify(e.parts).includes("dos listo")
+      )
+    );
+    assertEquals(n, 2);
+  } finally {
+    await main.stop();
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

@@ -1,0 +1,36 @@
+{
+  "exclude": [
+    "pi",
+    "nanoclaw",
+    "claude-agent-sdk-typescript",
+    "open-bsp-reference",
+    "**/*.md"
+  ],
+  "tasks": {
+    "check": "deno fmt --check && deno lint && deno check src bench",
+    "fix": "deno fmt && deno lint",
+    "test": "deno test -A",
+    "smoke": "deno test -A --env-file=.env src/transport.test.ts",
+    "cli": "deno run -A --env-file=.env src/cli.ts",
+    "bench": "deno run -A --env-file=.env bench/run.ts",
+    "ingest:github": "deno run -A --env-file=.env src/connect/github.ts",
+    "dispatch:github": "deno run -A --env-file=.env src/connect/github_dispatch.ts",
+    "oauth:slack": "deno run -A --env-file=.env src/connect/slack_oauth.ts",
+    "connect:slack": "deno run -A --env-file=.env src/connect/slack_connect.ts",
+    "status": "deno run -A --env-file=.env src/connect/status.ts",
+    "ingest:slack": "deno run -A --env-file=.env src/connect/slack.ts",
+    "dispatch:slack": "deno run -A --env-file=.env src/connect/slack_dispatch.ts",
+    "compile:task": "deno compile -A --include seed/docs -o dist/mu-task src/task.ts"
+  },
+  "fmt": {
+    "lineWidth": 100
+  },
+  "imports": {
+    "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.112.0",
+    "@slack/types": "npm:@slack/types@^2",
+    "@slack/web-api": "npm:@slack/web-api@^7",
+    "@std/assert": "jsr:@std/assert@^1",
+    "@std/streams": "jsr:@std/streams@^1",
+    "@std/yaml": "jsr:@std/yaml@^1"
+  }
+}
