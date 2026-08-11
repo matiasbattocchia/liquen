@@ -9,7 +9,8 @@
     "jsr:@std/yaml@1": "1.1.2",
     "npm:@anthropic-ai/sdk@0.112": "0.112.3",
     "npm:@slack/types@2": "2.22.0",
-    "npm:@slack/web-api@7": "7.19.0"
+    "npm:@slack/web-api@7": "7.19.0",
+    "npm:qrcode-terminal@0.12": "0.12.0"
   },
   "jsr": {
     "@std/assert@1.0.12": {
@@ -282,6 +283,10 @@
     "proxy-from-env@2.1.0": {
       "integrity": "sha512-cJ+oHTW1VAEa8cJslgmUZrc+sjRKgAKl3Zyse6+PV38hZe/V6Z14TbCuXcan9F9ghlz4QrFr2c92TNF82UkYHA=="
     },
+    "qrcode-terminal@0.12.0": {
+      "integrity": "sha512-EXtzRZmC+YGmGlDFbXKxQiMZNwCLEO6BANKXG4iCtSIM0yqc/pappSx3RIKr4r0uh5JsBckOXeKrB3Iz7mdQpQ==",
+      "bin": true
+    },
     "retry@0.13.1": {
       "integrity": "sha512-XQBQ3I8W1Cge0Seh+6gjj03LbmRFWuoszgK9ooCpwYIrhhoO80pfq4cUkU5DkknwfOfFteRwlZ56PYOGYyFWdg=="
     },
@@ -307,7 +312,8 @@
       "jsr:@std/yaml@1",
       "npm:@anthropic-ai/sdk@0.112",
       "npm:@slack/types@2",
-      "npm:@slack/web-api@7"
+      "npm:@slack/web-api@7",
+      "npm:qrcode-terminal@0.12"
     ]
   }
 }
