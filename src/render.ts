@@ -344,7 +344,9 @@ function renderMessages(
   {
     let budget = MEDIA_BUDGET;
     for (const e of [...trailing].reverse()) {
-      if (e.type !== "message" || isSelf(e, session)) continue;
+      // world/home attachments, and tool-result attachments (the model asked to see those)
+      if (e.type !== "message" && e.type !== "tool_result") continue;
+      if (e.type === "message" && isSelf(e, session)) continue;
       for (const p of filesOf(e)) {
         // local bytes only — external links inline as url-source blocks, budget-free
         if (isExternal(p.file.uri) || p.file.size === undefined) continue;
@@ -395,7 +397,7 @@ function renderMessages(
       place("assistant", thinkingBlock(e));
     } else if (e.type === "tool_use" && welded.has(e.id)) place("assistant", toolUseBlock(e));
     else if (e.type === "tool_result" && e.cause && welded.has(e.cause)) {
-      place("user", toolResultBlock(e));
+      place("user", toolResultBlock(e, mediaBlocks(e)));
     } else if (e.type === "message") {
       // a directed send caused by a welded tool_use is already in the block — skip it
       if (e.cause && welded.has(e.cause)) continue;
@@ -545,12 +547,21 @@ function toolUseBlock(e: ToolUseEvent): Anthropic.ToolUseBlockParam {
   return { type: "tool_use", id: e.id, name, input };
 }
 
-function toolResultBlock(e: ToolResultEvent): Anthropic.ToolResultBlockParam {
+/** `media` = the result's rendered attachments (§5) — image/document blocks INSIDE the
+ *  tool_result content (the API allows text · image · document · search_result there),
+ *  so an `aread` on a picture answers with the picture. Empty ⇒ plain string content. */
+function toolResultBlock(
+  e: ToolResultEvent,
+  media: ContentBlockParam[],
+): Anthropic.ToolResultBlockParam {
   const { output, is_error } = e.parts[0].data;
+  const text = typeof output === "string" ? output : JSON.stringify(output);
   return {
     type: "tool_result",
     tool_use_id: e.cause ?? e.turnId, // `cause` = the specific tool_use this result answers
-    content: typeof output === "string" ? output : JSON.stringify(output),
+    content: media.length
+      ? [{ type: "text", text }, ...media as Anthropic.ImageBlockParam[]]
+      : text,
     ...(is_error ? { is_error: true } : {}),
   };
 }

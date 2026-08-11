@@ -121,9 +121,10 @@ export interface Conversation {
   thread?: string;
   /** direct = member-defined identity (im AND mpim: the member set IS the address — our
    *  `dm:<sorted names>` makes that literal) · group = private room · channel = public
-   *  room. Stamped by ingest from platform facts (Slack types, WA jid shape) — never
-   *  derived from counting members (§3). */
-  kind?: "direct" | "group" | "channel";
+   *  room · broadcast = fan-out, not a room anyone is in (WA broadcast lists — open-bsp
+   *  carries them in production). Stamped by ingest from platform facts (Slack types,
+   *  WA jid shape) — never derived from counting members (§3). */
+  kind?: "direct" | "group" | "channel" | "broadcast";
 }
 
 /** External identity on the wire. */
@@ -257,11 +258,15 @@ export interface ToolUseEvent extends EventBase {
   parts: [DataPart<"tool_use", ToolCall>];
 }
 
-/** nu's tool outcome. The barrier completes when results === uses for a `turnId` (§2). */
+/** nu's tool outcome. The barrier completes when results === uses for a `turnId` (§2).
+ *  FileParts after the data part are the tool's ATTACHMENTS (§5 media — `aread` on an
+ *  image): generic here; the TRANSPORT shapes them into provider blocks (Anthropic:
+ *  image/document blocks inside the tool_result content) — switching providers touches
+ *  render, never the log. */
 export interface ToolResultEvent extends EventBase {
   type: "tool_result";
   turnId: string;
-  parts: [DataPart<"tool_result", ToolOutput>];
+  parts: [DataPart<"tool_result", ToolOutput>, ...FilePart[]];
 }
 
 /**

@@ -262,3 +262,23 @@ Deno.test("exec plane: ambient() reports cwd, git, and live background jobs", as
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("exec plane: aread on a bytes file returns an ExecOutcome — path peeled, no mojibake", async () => {
+  const dir = await Deno.makeTempDir();
+  const { exec, reap } = await installExecPlane(dir);
+  try {
+    const png = `${dir}/workspace/dot.png`;
+    await Deno.writeFile(png, new Uint8Array([137, 80, 78, 71]));
+    const out = await exec.bash.execute({ command: "aread dot.png" }, live());
+    const outcome = out as { output: string; files: string[] };
+    assertEquals(outcome.files, [png]);
+    assert(outcome.output.includes("[media image/png · 4 bytes]"));
+    assert(!outcome.output.includes("__MU_MEDIA__")); // the mark never reaches the model
+    // a text file stays a plain string result — no outcome wrapper
+    await Deno.writeTextFile(`${dir}/workspace/a.txt`, "hola");
+    assertEquals(await exec.bash.execute({ command: "aread a.txt" }, live()), "hola");
+  } finally {
+    await reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

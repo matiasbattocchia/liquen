@@ -512,14 +512,16 @@ ownership) only if double-answers show up.
   into the mind; agent → echo/coexistence. With connections + credentials + the registry
   the machinery is complete — N principals on one workspace are N owned legs, nothing
   shared to fight over.
-- **`conversation.kind` = `direct | group | channel`** (landed 2026-08-05, column
-  `conversation_kind`): *direct* = member-DEFINED identity (Slack im AND mpim — the member
-  set is the address; local `dm:<sorted names>` makes that literal, and it scales to n
-  parties unchanged); *group* = private room; *channel* = public room (room-defined:
-  identity survives membership churn). Stamped by INGEST from platform facts (Slack
-  conversation types, WA jid shape) — never derived from counting members. Parked idea:
-  a "public direct" (members write, anyone reads) is a read/write asymmetry on MEMBERSHIP
-  rows if ever wanted, not a fourth kind.
+- **`conversation.kind` = `direct | group | channel | broadcast`** (landed 2026-08-05,
+  column `conversation_kind`; broadcast added 2026-08-11 with the WhatsApp connector):
+  *direct* = member-DEFINED identity (Slack im AND mpim — the member set is the address;
+  local `dm:<sorted names>` makes that literal, and it scales to n parties unchanged);
+  *group* = private room; *channel* = public room (room-defined: identity survives
+  membership churn); *broadcast* = fan-out, not a room anyone is in (a WA broadcast list
+  — replies land in the individual chats; open-bsp carries `…@broadcast` in production).
+  Stamped by INGEST from platform facts (Slack conversation types, WA jid shape) — never
+  derived from counting members. Parked idea: a "public direct" (members write, anyone
+  reads) is a read/write asymmetry on MEMBERSHIP rows if ever wanted, not a fifth kind.
 - **Echo-dedup (loopback)**: dispatcher records the platform id at send (`external_id`);
   inbound matching `(channel, external_id)` = echo → **merge**, never insert. Own-identity
   inbound *not* matching any dispatch = **coexistence** (the human typed from the shared
@@ -876,6 +878,17 @@ back to markers (requests get LIGHTER after an answer, like tool pairs).
 Dispatch is per-connector capability: Slack uploads local files via the `files.uploadV2`
 flow with the text as the share comment, and external links join the text as lines
 (Slack's own idiom — the client unfurls them); WhatsApp (future) passes links natively.
+
+Tool results carry attachments the same way (the model-initiated half of the loop —
+Claude Code's Read pattern): `aread` on a bytes file (image/audio/video/PDF) prints a
+`[media …]` line plus a `MEDIA_MARK` sentinel; bash peels the mark (the CWD_MARK
+pattern) into an `ExecOutcome {output, files}`, xi stamps the paths onto the
+tool_result event as FileParts — GENERIC in the log — and render (the Anthropic-shaped
+transform) inlines them INSIDE the tool_result content as image/document blocks (the
+API allows text · image · document · search_result blocks there), under the same
+newest-first budget. So the harness shows what's current, and the model pulls anything
+from history back by its marker path. Switching providers touches render, never the
+events.
 
 ### Batch order (observed before optimized)
 

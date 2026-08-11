@@ -98,7 +98,11 @@ when). Status as of 2026-08-12 (Slack live, both directions, model in the loop).
   `file://` local (canonical), `http(s)://` external, passed through untouched (no
   broker fetch/upload; `size` nullable). External images/PDFs reach the model as
   url-source blocks — the API fetches them itself, budget-free; Slack dispatch folds
-  links into the text (unfurl), WhatsApp will pass them natively.) Original plan:
+  links into the text (unfurl), WhatsApp will pass them natively. Same day, the
+  model-initiated half: `aread` on a bytes file → `MEDIA_MARK` sentinel → bash peels it
+  into `ExecOutcome {output, files}` → FileParts on the tool_result event (generic; the
+  transport shapes provider blocks) → render inlines them inside the tool_result
+  content — the aread-a-picture loop, Claude Code's Read pattern.) Original plan:
   1. *Types*: `FilePart` already exists (open-bsp shape: `kind: MediaKind`, `file:
      {mime_type, uri, name?, size}`, `text?` caption) — `uri` becomes a LOCAL path; no
      new types.

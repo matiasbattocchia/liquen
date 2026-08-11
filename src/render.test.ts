@@ -689,3 +689,31 @@ Deno.test("media: an external link renders a url-source block — no bytes, no b
   // the marker shows the url itself as the handle
   assertStringIncludes(JSON.stringify(messages), 'path=\\"https://example.com/pics/cat.jpg\\"');
 });
+
+Deno.test("media: a tool_result's attachment renders INSIDE its block — aread answers with the picture", () => {
+  const t = "2026-07-21T10:00:00Z";
+  const use = toolUseE("u1", t, "turn1", "bash", { command: "aread dot.png" });
+  const res = toolResultE("r1", t, "turn1", "[media image/png · 4 bytes]", "u1");
+  res.parts.push({
+    type: "file",
+    kind: "image",
+    file: { mime_type: "image/png", uri: "file:///w/dot.png", name: "dot.png", size: 4 },
+  });
+  const { messages } = render({
+    events: [homeMsg("e1", t, "mira la imagen", false), use, res],
+    docs: [],
+    session: "s1",
+    home: "home",
+    now: t,
+    loadMedia: (uri) =>
+      uri === "file:///w/dot.png" ? { media_type: "image/png", data: "AQID" } : null,
+  });
+  const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+  const result = blocks.find((b) => b.type === "tool_result") as Anthropic.ToolResultBlockParam;
+  const content = result.content as Anthropic.ContentBlockParam[];
+  assertEquals(content[0], { type: "text", text: "[media image/png · 4 bytes]" });
+  assertEquals(
+    (content[1] as { source: { data: string } }).source.data,
+    "AQID",
+  );
+});

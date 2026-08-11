@@ -13,9 +13,10 @@
  *     self-correction path)
  */
 
-import type { ExecTool } from "../xi.ts";
+import type { ExecOutcome, ExecTool } from "../xi.ts";
 import type { Json } from "../types.ts";
 import { newId } from "../store/id.ts";
+import { MEDIA_MARK } from "../store/media.ts";
 import { MAX_BYTES, MAX_LINES, truncateTail } from "./truncate.ts";
 
 /** A background job the agent left running: its process group + a hint of what it is. */
@@ -108,7 +109,7 @@ export function bashTool(opts: BashOptions): ExecTool {
       },
     },
 
-    async execute(input: Json, signal: AbortSignal): Promise<Json> {
+    async execute(input: Json, signal: AbortSignal): Promise<Json | ExecOutcome> {
       const { command, timeout, max_lines, max_bytes } = input as {
         command: string;
         timeout?: number;
@@ -222,7 +223,18 @@ export function bashTool(opts: BashOptions): ExecTool {
         if (signal.aborted) throw new Error(`${text}\n\nCommand aborted`);
         if (timedOut) throw new Error(`${text}\n\nCommand timed out after ${timeoutMs / 1000}s`);
         if (exitCode !== 0) throw new Error(`${text}\n\nCommand exited with code ${exitCode}`);
-        return text;
+
+        // peel media marks (`aread` on a bytes file, §5 — the CWD_MARK pattern): the mark
+        // line carries the path; the file rides the tool_result as an attachment
+        const files: string[] = [];
+        const kept = text.split("\n").filter((line) => {
+          if (!line.startsWith(MEDIA_MARK)) return true;
+          files.push(line.slice(MEDIA_MARK.length));
+          return false;
+        });
+        if (files.length === 0) return text;
+        const outcome: ExecOutcome = { output: kept.join("\n").trimEnd() || "(no output)", files };
+        return outcome;
       } finally {
         clearTimeout(timer);
         signal.removeEventListener("abort", onAbort);

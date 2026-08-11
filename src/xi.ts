@@ -230,10 +230,23 @@ export interface AgentConfig extends TurnConfig {
   lockTtlMs?: number; // turn-lease TTL; a lease older than this is STOLEN (the crash signal)
 }
 
+/** A tool outcome carrying ATTACHMENTS (§5 media): `files` are local paths the result
+ *  hands the model — they ride the tool_result event as FileParts, and render shows the
+ *  inlineable ones as real blocks (the `aread`-an-image loop). Plain Json = no files. */
+export interface ExecOutcome {
+  output: Json;
+  files: string[];
+}
+
 /** An exec-plane tool: its API spec + its executor. Executors should throw on failure. */
 export interface ExecTool {
   spec: Anthropic.Tool;
-  execute: (input: Json, signal: AbortSignal) => Promise<Json>;
+  execute: (input: Json, signal: AbortSignal) => Promise<Json | ExecOutcome>;
+}
+
+function isOutcome(x: Json | ExecOutcome): x is ExecOutcome {
+  return typeof x === "object" && x !== null && !Array.isArray(x) &&
+    "output" in x && Array.isArray((x as { files?: unknown }).files);
 }
 
 export interface XiPorts {
@@ -358,17 +371,30 @@ async function act(
 
   const resultOf = (
     use: ToolUseEvent,
-    output: Json,
+    outcome: Json | ExecOutcome,
     flags?: Partial<{ is_error: boolean; cancelled: boolean }>,
-  ): Draft<ToolResultEvent> => ({
-    ts: ts(),
-    type: "tool_result",
-    turnId: use.turnId,
-    cause: use.id,
-    agent: self,
-    envelope: mind,
-    parts: [{ type: "data", kind: "tool_result", data: { output, ...flags } }],
-  });
+  ): Draft<ToolResultEvent> => {
+    const { output, files } = isOutcome(outcome) ? outcome : { output: outcome, files: [] };
+    return {
+      ts: ts(),
+      type: "tool_result",
+      turnId: use.turnId,
+      cause: use.id,
+      agent: self,
+      envelope: mind,
+      parts: [
+        { type: "data", kind: "tool_result", data: { output, ...flags } },
+        // the tool's attachments (§5 media) — a path that vanished mid-turn just drops
+        ...files.flatMap((f) => {
+          try {
+            return [filePartOf(f)];
+          } catch {
+            return [];
+          }
+        }),
+      ],
+    };
+  };
 
   // every write this act produces is collected and committed ONCE, with the lease release
   // (§2) — the barrier completes atomically, and no half-batch can wake anyone
@@ -437,7 +463,7 @@ async function execute(
   signal: AbortSignal,
   self: { id: string; session_id: string },
   ports: XiPorts,
-): Promise<Json> {
+): Promise<Json | ExecOutcome> {
   const { name, input } = use.parts[0].data;
   const args = input as Record<string, Json>;
   if (name === "send") {

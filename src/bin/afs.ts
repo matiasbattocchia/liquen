@@ -19,8 +19,10 @@
  * can never leave a truncated file — preserving the original file's mode.
  */
 
+import { resolve } from "node:path";
 import { applyEdits, parseEdits } from "../exec/edit.ts";
 import { truncateHead } from "../exec/truncate.ts";
+import { isBytes, MEDIA_MARK, mimeOf } from "../store/media.ts";
 
 async function readStdin(): Promise<string> {
   const chunks: Uint8Array[] = [];
@@ -42,6 +44,13 @@ async function read(
   limit?: number,
   maxBytes?: number,
 ): Promise<string> {
+  // bytes files (§5 media): no useful text form — hand back a media mark instead of
+  // mojibake; bash peels it and the file rides the tool_result as an attachment
+  const mime = mimeOf(path);
+  if (mime && isBytes(mime)) {
+    const size = (await Deno.stat(path)).size; // stat first — a missing file still throws
+    return `[media ${mime} · ${size} bytes]\n${MEDIA_MARK}${resolve(path)}`;
+  }
   const content = await Deno.readTextFile(path);
   const lines = content.split("\n");
   if (content.endsWith("\n")) lines.pop();

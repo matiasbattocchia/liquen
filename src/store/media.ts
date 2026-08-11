@@ -68,6 +68,19 @@ export function kindOf(mime: string): MediaKind {
   return "document";
 }
 
+/** Mimes whose BYTES are the content — no useful text form: what `aread` hands back as
+ *  an attachment (a media mark) instead of dumping mojibake. */
+export function isBytes(mime: string): boolean {
+  return (mime.startsWith("image/") && mime !== "image/svg+xml") ||
+    mime.startsWith("audio/") || mime.startsWith("video/") || mime === "application/pdf";
+}
+
+/** The afs→bash wire protocol for attachments (the CWD_MARK pattern): `aread` on a bytes
+ *  file prints `MEDIA_MARK<abs path>` as a line; bash peels those lines off the text and
+ *  returns the paths as the tool outcome's `files` — which ride the tool_result event as
+ *  FileParts (§5). */
+export const MEDIA_MARK = "__MU_MEDIA__:";
+
 /** A conversation address as a directory name — one-way slug, filesystem-safe. */
 function safe(address: string): string {
   return address.replace(/[^A-Za-z0-9._-]/g, "_");
