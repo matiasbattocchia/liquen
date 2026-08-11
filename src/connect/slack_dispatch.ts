@@ -10,10 +10,17 @@
  * know a bot exists). Policy: the AUTHOR's principal user token (xoxp) when the vault holds
  * one — the alter-ego leg (§4: the agent posts as its principal) — else the workspace bot.
  * Tokens come from the credential store — broker-side, never the agent's exec context (§9).
+ *
+ * A failed post stamps `state = "failed"`, `failed_at`, `error`, `error_code` (§5): the
+ * real HTTP status when the transport surfaces one (a 429, a 5xx on the upload URL), else
+ * assigned from Slack's error NAME (`slackErrorCode` — the API answers HTTP 200 `ok: false`).
+ * No retry loop here (the scheduler's job, PROJECT #10); the code is the class a retrier
+ * reads off the log: 4xx permanent, 5xx/429 transient, absent = never reached Slack.
  */
 
 import type { ChatPostMessageResponse } from "@slack/web-api";
 import { isExternal, pathOf } from "../store/media.ts";
+import { DispatchError, failedStatus } from "./errors.ts";
 import type { DeliveryPatch, Subscriber } from "../store/log.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../types.ts";
 
@@ -27,6 +34,16 @@ export interface SlackTarget {
 export function teamOf(connection: string): string {
   const at = connection.indexOf(":");
   return at < 0 ? connection : connection.slice(0, at);
+}
+
+const TRANSIENT_NAMES = new Set(["fatal_error", "internal_error", "service_unavailable"]);
+
+/** The HTTP class for a NAMED Slack API error (the `ok: false` body rides HTTP 200, so
+ *  the code is assigned): `ratelimited` → 429, Slack's self-declared retryables → 503,
+ *  every other named refusal → 400 — the same request is refused again. */
+export function slackErrorCode(error?: string): number {
+  if (error === "ratelimited") return 429;
+  return TRANSIENT_NAMES.has(error ?? "") ? 503 : 400;
 }
 
 /** Post `text` (and any attachments) to a channel; returns the created message `ts`
@@ -67,17 +84,11 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => void {
           });
           deps.onSent?.(event, ts);
         } catch (err) {
-          // permanent failure (the API refused, or the post threw and nothing retries):
-          // stamp `status.state = failed` so the message renders with its delivery dead —
-          // the agent's only way to know a queued send never arrived (§5)
+          // no retry here (the scheduler's job, PROJECT #10) — the stamp tags the class
+          // via `error_code`, and renders the message with its delivery dead: the agent's
+          // only way to know a queued send never arrived (§5)
           try {
-            await deps.setDelivery?.(event.id, {
-              status: {
-                state: "failed",
-                failed_at: new Date().toISOString(),
-                error: String(err),
-              },
-            });
+            await deps.setDelivery?.(event.id, { status: failedStatus(err) });
           } catch { /* the stamp failed too — onError still reports */ }
           deps.onError?.(event, err);
         }
@@ -138,7 +149,9 @@ if (import.meta.main) {
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
 
-  // one form-encoded Web-API call (the upload endpoints don't take JSON)
+  // one form-encoded Web-API call (the upload endpoints don't take JSON); a non-2xx
+  // transport answer (429, 5xx) keeps its real status, a named `ok: false` gets its
+  // class assigned (`slackErrorCode`)
   const api = async <T extends { ok?: boolean; error?: string }>(
     method: string,
     token: string,
@@ -149,8 +162,12 @@ if (import.meta.main) {
       headers: { authorization: `Bearer ${token}` },
       body: new URLSearchParams(params),
     });
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new DispatchError(`${method}: HTTP ${res.status}`, res.status);
+    }
     const out = await res.json() as T;
-    if (!out.ok) throw new Error(`${method}: ${out.error}`);
+    if (!out.ok) throw new DispatchError(`${method}: ${out.error}`, slackErrorCode(out.error));
     return out;
   };
 
@@ -183,7 +200,9 @@ if (import.meta.main) {
           { filename: name, length: String(bytes.length) },
         );
         const putRes = await fetch(up.upload_url, { method: "POST", body: bytes });
-        if (!putRes.ok) throw new Error(`upload ${name}: HTTP ${putRes.status}`);
+        if (!putRes.ok) {
+          throw new DispatchError(`upload ${name}: HTTP ${putRes.status}`, putRes.status);
+        }
         await putRes.body?.cancel();
         ids.push({ id: up.file_id, title: name });
       }
@@ -209,8 +228,14 @@ if (import.meta.main) {
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ channel, text: body }),
     });
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new DispatchError(`chat.postMessage: HTTP ${res.status}`, res.status);
+    }
     const out = await res.json() as ChatPostMessageResponse;
-    if (!out.ok) throw new Error(`chat.postMessage: ${out.error}`);
+    if (!out.ok) {
+      throw new DispatchError(`chat.postMessage: ${out.error}`, slackErrorCode(out.error));
+    }
     return out.ts;
   };
 

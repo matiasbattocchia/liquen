@@ -1,6 +1,7 @@
 import { assertEquals } from "@std/assert";
-import { createSlackDispatch, type SlackTarget } from "./slack_dispatch.ts";
-import { openLog } from "../store/log.ts";
+import { createSlackDispatch, slackErrorCode, type SlackTarget } from "./slack_dispatch.ts";
+import { DispatchError } from "./errors.ts";
+import { type DeliveryPatch, openLog } from "../store/log.ts";
 import type { FilePart, MessageEvent } from "../types.ts";
 
 /** An agent reply as the anchor produces it: BARE address, service/connection on the
@@ -43,10 +44,11 @@ async function withDispatch(
   fn: (t: {
     publish: (e: MessageEvent) => Promise<unknown>;
     posts: { target: SlackTarget; text: string; author?: string; files?: FilePart[] }[];
+    patches: DeliveryPatch[];
     read: () => Promise<MessageEvent[]>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
   }) => Promise<void>,
-  opts: { failWith?: string } = {},
+  opts: { failWith?: Error } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -57,14 +59,18 @@ async function withDispatch(
     { service: "github", address: "gh-app" },
   ]);
   const posts: { target: SlackTarget; text: string; author?: string; files?: FilePart[] }[] = [];
+  const patches: DeliveryPatch[] = [];
   const stop = createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     post: (target, text, author, files) => {
       posts.push({ target, text, author, files });
-      if (opts.failWith) return Promise.reject(new Error(opts.failWith));
+      if (opts.failWith) return Promise.reject(opts.failWith);
       return Promise.resolve("999.111");
     },
-    setDelivery: (id, patch) => log.setDelivery(id, patch),
+    setDelivery: (id, patch) => {
+      patches.push(patch);
+      return log.setDelivery(id, patch);
+    },
   });
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 3000) => {
     const t0 = Date.now();
@@ -79,6 +85,7 @@ async function withDispatch(
     await fn({
       publish: (e) => log.publish(e),
       posts,
+      patches,
       read: async () => (await log.read({ types: ["message"] })) as MessageEvent[],
       waitFor,
     });
@@ -101,14 +108,42 @@ Deno.test("slack dispatch: outbound send is posted, parsed, ts backfilled as ext
   });
 });
 
-Deno.test("slack dispatch: a permanent failure stamps envelope.status = failed (§5)", async () => {
-  await withDispatch(async ({ publish, posts, read, waitFor }) => {
+Deno.test("slack dispatch: a permanent failure stamps failed + its 4xx error_code (§5)", async () => {
+  await withDispatch(async ({ publish, posts, patches, read, waitFor }) => {
     await publish(agentMsg("01", "on it"));
     await waitFor(() => posts.length === 1);
     // the stamp is what render shows the agent: <msg … status="failed">
     await waitFor(async () => (await read())[0]?.envelope.status === "failed");
     assertEquals((await read())[0].envelope.external_id, undefined); // no ts — never arrived
-  }, { failWith: "chat.postMessage: channel_not_found" });
+    assertEquals(patches[0].status?.state, "failed");
+    assertEquals(patches[0].status?.error_code, 400); // named refusal — permanent class
+  }, {
+    failWith: new DispatchError(
+      "chat.postMessage: channel_not_found",
+      slackErrorCode("channel_not_found"),
+    ),
+  });
+});
+
+Deno.test("slack dispatch: a transient failure carries its class in error_code", async () => {
+  await withDispatch(async ({ publish, posts, patches, waitFor }) => {
+    await publish(agentMsg("01", "on it"));
+    await waitFor(() => posts.length === 1);
+    await waitFor(() => patches.length === 1);
+    assertEquals(patches[0].status?.error_code, 429); // rate limited — retry later
+  }, {
+    failWith: new DispatchError("chat.postMessage: ratelimited", slackErrorCode("ratelimited")),
+  });
+});
+
+Deno.test("slackErrorCode assigns the class from the error name", () => {
+  assertEquals(slackErrorCode("ratelimited"), 429);
+  assertEquals(slackErrorCode("internal_error"), 503); // Slack's self-declared retryables
+  assertEquals(slackErrorCode("fatal_error"), 503);
+  assertEquals(slackErrorCode("service_unavailable"), 503);
+  assertEquals(slackErrorCode("channel_not_found"), 400); // every named refusal
+  assertEquals(slackErrorCode("invalid_auth"), 400);
+  assertEquals(slackErrorCode(undefined), 400);
 });
 
 Deno.test("slack dispatch: inbound (world) messages are never re-sent", async () => {

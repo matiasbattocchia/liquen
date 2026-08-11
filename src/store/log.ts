@@ -71,7 +71,7 @@ export interface SubscribeOptions {
 /** The mutable delivery lifecycle (open-bsp): timestamps per stage, merged on update (§3). */
 export interface DeliveryPatch {
   external_id?: string; // backfilled by the dispatcher (echo-reconciliation key, §4)
-  status?: Record<string, string>; // e.g. { dispatched_at: iso } — json-merged into `status`
+  status?: Record<string, string | number>; // e.g. { dispatched_at: iso, error_code: 503 } — json-merged into `status`
 }
 
 /** Capability slices — a consumer can depend on exactly what it's allowed (RLS parity, §6). */
