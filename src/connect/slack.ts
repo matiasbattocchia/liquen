@@ -182,6 +182,24 @@ async function mapMessage(
   media: SlackMedia | undefined,
   ctx: MapCtx,
 ): Promise<Draft<MessageEvent> | null> {
+  // a delete marks, never removes (the log is append-only — same policy as WhatsApp
+  // revokes): a MERGE-ONLY draft — no `parts` key, so the upsert's `json_patch` leaves
+  // the stored payload untouched and only `extra.slack.deleted_at` lands
+  if (e.subtype === "message_deleted") {
+    if (!e.deleted_ts || !e.channel) return null;
+    return {
+      ts: ctx.now(),
+      type: "message",
+      envelope: {
+        service: "slack",
+        connection_address: anchor,
+        conversation: { address: e.channel },
+        external_id: `slack:${team}:${e.channel}:${e.deleted_ts}`,
+      },
+      extra: { slack: { deleted_at: e.event_ts ?? ctx.now() } },
+    } as unknown as Draft<MessageEvent>; // partless by design — see above
+  }
+
   // plain message, an edit (message_changed nests the message; same ts ⇒ same row), or a
   // file share (file_share is a plain message carrying `files` — same row semantics)
   const inner = e.subtype === "message_changed" ? e.message : e;

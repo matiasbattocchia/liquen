@@ -415,3 +415,23 @@ Deno.test("slack: a failed download drops the file, keeps the text; no media sea
   assertEquals(m.parts.length, 1);
   assertEquals((m.parts[0] as { text: string }).text, "mira esto");
 });
+
+Deno.test("slack: message_deleted is merge-only — no parts, deleted_at in extra", async () => {
+  const { handler, published } = harness(SECRET);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        subtype: "message_deleted",
+        channel: "C1",
+        deleted_ts: "111.222",
+        event_ts: "111.999",
+      },
+    })),
+  );
+  assertEquals(published.length, 1);
+  const m = published[0] as MessageEvent;
+  assertEquals(m.envelope.external_id, "slack:T1:C1:111.222"); // the deleted row's key
+  assertEquals("parts" in m, false); // the json_patch no-op — stored parts survive (§3)
+  assertEquals((m.extra?.slack as { deleted_at: string }).deleted_at, "111.999");
+});
