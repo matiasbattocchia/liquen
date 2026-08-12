@@ -258,10 +258,16 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
    `[sent via whatsapp]` (input displayed as output; fan-out over fan-in's own copy is
    what cross-syncs surfaces, and a REPL line CCs everywhere tagged `[sent via repl]`).
    Each CC is an ordinary outbound event: the dispatchers post it unchanged and the
-   platform echo merges by its own `external_id` — no per-surface delivery rows needed;
-   fan-in settles (`settleMs`, default 1s) and re-reads before copying so an echo the
-   backfill absorbs copies nothing (the 小-window one layer up; an echo whose backfill
-   never comes can still slip through — accepted, like the window it generalizes).
+   platform echo merges by its own `external_id` — no per-surface delivery rows needed.
+   Fan-in guards the echo on both sides of that merge: it settles (`settleMs`, default 1s)
+   and re-reads before copying, so an echo the backfill absorbs copies nothing (the
+   小-window one layer up); and when the backfill NEVER comes (a dispatcher that crashed
+   between posting and stamping, a Slack file share that returned no `ts`), the same words
+   sitting on a CC that still has no `external_id` identify the echo as ours — the mirror
+   stamps that CC (`claimMs`, default 60s), which absorbs the echo exactly as `setDelivery`
+   would have. Measured before the guard existed: with two alias surfaces the slip is not a
+   duplicate but a runaway — each phantom copy fans out to the other surface, echoes again,
+   and the mind grew 1 → 23 messages in ten seconds with the quoting nesting (`> > …`).
    Bindings (`log.aliases()`; `aliasOf` matches envelopes on the workspace root, so
    events anchored to the team/bot still hit the grant's binding) are DERIVED where
    platform structure gives them away and RECORDED where the id is opaque: an owned WA

@@ -590,9 +590,15 @@ cli/ui: native local conversations
     principal's own words as `> quoted` + `[sent via <surface>]` (input displayed as
     output — fan-out over fan-in's own copy is what cross-syncs surfaces), tool calls as
     redacted one-liners (`● bash(git status)`). A CC is an ordinary outbound event on its
-    service — the dispatchers post it, the platform echo merges into it (§4 echo-dedup;
-    fan-in settles briefly and re-reads so an early echo the backfill absorbs copies
-    nothing — the 小-window, one layer up).
+    service — the dispatchers post it, the platform echo merges into it (§4 echo-dedup).
+    Fan-in guards that echo twice, because in an alias conversation an unmerged one reads
+    as the principal speaking and cross-broadcasts to the other surfaces, which echo in
+    turn: it settles briefly and re-reads, so an early echo the backfill absorbs copies
+    nothing (the 小-window, one layer up); and since an inbound always carries the
+    platform's id, a CC of the same words still holding NONE is that post returning
+    unrecognized — the mirror stamps it, absorbing the echo the way the dispatcher would
+    have, when a claim never lands (a crash between post and backfill, an API that
+    returned no id).
   The alias conversation itself is **invisible to its own agent** (policy, §6): the
   copies are its face in the window — nothing to hide from the world render, and `send`
   can't reach it. **No backfill**: the mirror tails live — a surface connected

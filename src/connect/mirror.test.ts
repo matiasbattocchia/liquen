@@ -27,6 +27,7 @@ async function withMirror(
     publish: log.publish,
     read: (q) => log.read(q),
     aliases: () => log.aliases(),
+    setDelivery: (id, patch) => log.setDelivery(id, patch),
     settleMs: opts.settleMs ?? 30,
   });
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 3000) => {
@@ -197,6 +198,44 @@ Deno.test("mirror fan-in settles: an echo absorbed by the dispatch backfill copi
     assertEquals((await inConv("mind:ana")).length, 1);
     assertEquals((await inConv("D1")).length, 1);
   }, { settleMs: 150 });
+});
+
+Deno.test("mirror fan-in: an echo whose claim never lands is absorbed by the CC it came from", async () => {
+  await withMirror(async ({ publish, inConv, waitFor }) => {
+    // the agent speaks → a CC to the self-DM, which a dispatcher posts and then dies on:
+    // no `setDelivery`, so the row never gets the id its own post came back with
+    await publish(mindMsg("done!", { agent: { id: "ana", session_id: "ana" } }));
+    await waitFor(async () => (await inConv("D1")).length === 1);
+    const [cc] = await inConv("D1");
+    assertEquals(cc.envelope.external_id, undefined);
+
+    // the platform hands the post back: same words, a real id, nothing to merge into
+    await publish(aliasInbound("[agent] done!", { external_id: "slack:T1:D1:333.3" }));
+
+    // the guard: an inbound always carries an id, so a CC of these words holding none IS
+    // this post — the mirror stamps it (absorbing the echo) instead of copying it home
+    await waitFor(async () => (await inConv("D1"))[0].envelope.external_id !== undefined);
+    await new Promise((r) => setTimeout(r, 200));
+    assertEquals((await inConv("D1")).length, 1); // the echo row is gone, absorbed
+    assertEquals((await inConv("D1"))[0].envelope.external_id, "slack:T1:D1:333.3");
+    assertEquals((await inConv("mind:ana")).length, 1); // the mind never heard itself
+    assertEquals((await inConv("549")).length, 1); // …and nothing crossed to the other surface
+  });
+});
+
+Deno.test("mirror fan-in: a CLAIMED CC never swallows the principal repeating its words", async () => {
+  await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
+    await publish(mindMsg("done!", { agent: { id: "ana", session_id: "ana" } }));
+    await waitFor(async () => (await inConv("D1")).length === 1);
+    const [cc] = await inConv("D1");
+    await setDelivery(cc.id, { external_id: "slack:T1:D1:444.4" }); // a healthy dispatcher
+
+    // the principal, typing the same words a moment later — a different id, and the CC is
+    // claimed: the guard's whole safety is that an unstamped row is otherwise unobservable
+    await publish(aliasInbound("[agent] done!", { external_id: "slack:T1:D1:555.5" }));
+    await waitFor(async () => (await inConv("mind:ana")).length === 2);
+    assertEquals(textOf((await inConv("mind:ana"))[1]), "[agent] done!");
+  });
 });
 
 Deno.test("mirror: imported history never mirrors (no backfill — the REPL alone reads history)", async () => {

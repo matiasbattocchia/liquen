@@ -26,17 +26,29 @@
  *
  * NO BACKFILL: the mirror tails LIVE and skips imported history — a surface that connects
  * mid-conversation starts mid-stream; only the REPL reads the log, so only the REPL has
- * history. And the 小-window, one layer up (§4): a platform echo can insert BEFORE the
- * dispatcher's backfill absorbs it — fan-in therefore settles (`settleMs`), then re-reads
- * the origin row; an absorbed echo is gone and copies nothing. An echo whose backfill
- * never comes (dispatcher down) can still slip through — the residual race is accepted,
- * same as the window it generalizes.
+ * history.
+ *
+ * THE ECHO, twice over (§4). Every CC we write is posted, and the platform hands it back
+ * through the ingest as an ordinary inbound — in an alias conversation that reads as the
+ * principal speaking, so fan-in would copy our own words into the mind, fan them out to the
+ * other surfaces, and let two aliases feed each other. Reconciliation is by id, never by
+ * author (a self-conversation shows the same account both ways — that is what `[agent]` is
+ * for), and it has two failure modes, each with its own defence:
+ *
+ *   the echo lands EARLY, before the dispatcher's backfill claims the CC (the 小-window) —
+ *     fan-in settles (`settleMs`) and re-reads the origin row; the backfill has absorbed it
+ *     by then, and a row that is gone copies nothing.
+ *   the claim NEVER lands — the dispatcher died between posting and backfilling, or the API
+ *     returned no id to stamp (a Slack file share). Then the echo stays a first-class
+ *     inbound forever. But an inbound always carries the platform's id, so a CC of the same
+ *     words still holding NONE can only be that post: fan-in stamps it (`unclaimed`), which
+ *     absorbs the echo exactly as the dispatcher would have, and copies nothing.
  */
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { backfilled } from "../render.ts";
-import type { Appender, Reader, Subscriber } from "../store/log.ts";
-import type { Draft, Event, MessageEvent, Part, Service, ToolUseEvent } from "../types.ts";
+import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
+import type { Draft, Event, EventId, MessageEvent, Part, Service, ToolUseEvent } from "../types.ts";
 
 export interface MirrorDeps {
   subscribe: Subscriber["subscribe"];
@@ -46,8 +58,13 @@ export interface MirrorDeps {
   read: Reader["read"];
   /** The live bindings (§4): connect flows write them, the mirror reads through. */
   aliases: () => AliasRow[];
+  /** The unclaimed-CC repair: stamp a CC with the id its own post came back carrying —
+   *  the dispatcher's `setDelivery`, run late by the mirror (it absorbs the echo row). */
+  setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
   /** How long fan-in waits for a dispatch backfill to absorb an early echo. */
   settleMs?: number;
+  /** How far back the unclaimed-CC guard looks for an echo's twin (default 60s). */
+  claimMs?: number;
   now?: () => string;
   onError?: (event: Event, err: unknown) => void;
 }
@@ -72,7 +89,12 @@ export function createMirror(deps: MirrorDeps): () => void {
     if (e.type !== "message" || e.agent || viaOf(e)) return; // CCs and copies never re-enter
     const { service, connection_address, conversation } = e.envelope;
     const binding = aliasOf(deps.aliases(), service, connection_address, conversation.address);
-    if (binding) enqueue(e, () => fanIn(deps, e as MessageEvent, binding, settleMs, now));
+    if (binding) {
+      enqueue(
+        e,
+        () => fanIn(deps, e as MessageEvent, binding, settleMs, deps.claimMs ?? 60_000, now),
+      );
+    }
   });
 }
 
@@ -83,6 +105,7 @@ async function fanIn(
   e: MessageEvent,
   binding: AliasRow,
   settleMs: number,
+  claimMs: number,
   now: () => string,
 ): Promise<void> {
   // settle, then re-read: an early echo of our own CC is absorbed by the dispatcher's
@@ -95,6 +118,21 @@ async function fanIn(
     limit: 1,
   });
   if (still.length === 0) return;
+
+  // still there — but is it US? An inbound always carries the platform's id (the ingests
+  // refuse to mint an event without one), so a CC of the same words still holding NONE is
+  // a post whose claim never happened: the dispatcher died between posting and backfilling,
+  // or the API returned no id to stamp (a Slack file share). Repair what it missed — the
+  // stamp absorbs this row into the CC — and copy nothing. Without it the echo reads as the
+  // principal speaking, and fan-out sends that reading to the OTHER surfaces, which echo in
+  // turn: two aliases feed each other and the mind fills with its own words (§4).
+  const twin = await unclaimed(deps, e, claimMs);
+  if (twin) {
+    if (e.envelope.external_id) {
+      await deps.setDelivery?.(twin.id, { external_id: e.envelope.external_id });
+    }
+    return;
+  }
 
   await deps.publish({
     ts: now(),
@@ -119,6 +157,27 @@ async function fanIn(
       },
     },
   } as Draft<MessageEvent>);
+}
+
+/** Our own post, returning unrecognized: a CC on this surface carrying the same words and
+ *  no `external_id`. A healthy dispatcher stamps its row in milliseconds, so an unstamped
+ *  one means the claim never landed — the state is otherwise unobservable, which is what
+ *  makes the match safe. Newest first: the last thing we said is what just came back. */
+async function unclaimed(
+  deps: MirrorDeps,
+  e: MessageEvent,
+  claimMs: number,
+): Promise<Event | undefined> {
+  const words = textOf(e);
+  const rows = await deps.read({
+    conversation: e.envelope.conversation.address,
+    types: ["message"],
+    after: new Date(Date.parse(e.ts) - claimMs).toISOString(),
+    filter: (x) =>
+      x.agent !== undefined && x.envelope.external_id === undefined &&
+      textOf(x as MessageEvent) === words,
+  });
+  return rows.at(-1);
 }
 
 /* ── fan-out: the mind → every alias surface but the origin ───────────── */
@@ -163,7 +222,7 @@ function ccParts(e: Event): Part[] | null {
   if (e.type !== "message") return null;
   const m = e as MessageEvent;
   const parts = m.parts ?? [];
-  const text = parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
+  const text = textOf(m);
   if (e.agent) {
     // the voice — tagged: in a self-conversation BOTH speakers are the same account on
     // the surface (everything renders as the principal), so the tag is the only thing
@@ -181,6 +240,11 @@ function ccParts(e: Event): Part[] | null {
     { type: "text", kind: "text", text: `${quoted}\n[sent via ${tag}]` },
     ...parts.filter((p) => p.type === "file"),
   ];
+}
+
+/** The message's words — what a surface shows and what an echo comes back carrying. */
+function textOf(e: MessageEvent): string {
+  return (e.parts ?? []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
 }
 
 /** One redacted line per tool call, Claude-Code style: `● bash(git status)`. */
@@ -233,6 +297,7 @@ if (import.meta.main) {
     publish: log.publish,
     read: (q) => log.read(q),
     aliases: () => log.aliases(),
+    setDelivery: (id, patch) => log.setDelivery(id, patch),
     onError: (e, err) =>
       console.error(`[mirror] FAILED on ${e.envelope.conversation.address}:`, err),
   });
