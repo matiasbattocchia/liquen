@@ -389,6 +389,16 @@ interface Row {
   status: string | null;
 }
 
+/** ONE clock in the column (§3): whatever offset the producer wrote — WhatsApp stamps
+ *  `-03:00`, the harness stamps `Z` — the stored sort key is UTC, because lexical order
+ *  (`byTs`, the before/after bounds) only means time on a single zone. The producer's
+ *  offset is presentation, and presentation is render's job (org config `timezone`, §5).
+ *  Unparseable stamps pass through: an odd row beats a thrown insert. */
+function utcOf(ts: string): string {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? ts : d.toISOString();
+}
+
 /** Flatten a draft into columns + the type-shaped payload remainder. `id` is null unless the
  *  caller named one — the INSERT coalesces null to the column's `uuidv7()` default. */
 function rowOf(e: Draft) {
@@ -411,7 +421,7 @@ function rowOf(e: Draft) {
     sender_address: envelope.sender?.address ?? null,
     sender_name: envelope.sender?.name ?? null,
     agent_id: agent?.id ?? null,
-    timestamp: e.ts,
+    timestamp: utcOf(e.ts),
     text: textOf(e),
     payload: JSON.stringify(payload),
     extra: extra !== undefined ? JSON.stringify(extra) : null,
@@ -540,8 +550,8 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
   // time bounds compare EVENT time (the `timestamp` column), not ids: the callers that
   // filter by time (search, §6) mean the world's clock, and an ISO string compared against
   // a uuid would silently match everything or nothing (a real bug this replaced)
-  if (q.after !== undefined) (where.push("timestamp > ?"), params.push(q.after));
-  if (q.before !== undefined) (where.push("timestamp < ?"), params.push(q.before));
+  if (q.after !== undefined) (where.push("timestamp > ?"), params.push(utcOf(q.after)));
+  if (q.before !== undefined) (where.push("timestamp < ?"), params.push(utcOf(q.before)));
   if (q.types && q.types.length > 0) {
     where.push(`type IN (${q.types.map(() => "?").join(",")})`);
     params.push(...q.types);

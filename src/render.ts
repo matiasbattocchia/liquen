@@ -108,6 +108,9 @@ export interface RenderInput {
   session: SessionId; // tells the agent's own output from the world
   home: string; // the principal-DM conversation id (home vs world)
   now: string; // ISO — the `now:` anchor
+  /** IANA timezone for every rendered stamp (`at=`, `now:`) — org config's `timezone`.
+   *  Unset ⇒ the deployment's own zone. Stored `ts` is UTC either way (§3). */
+  zone?: string;
   /** Volatile environment lines (cwd · git · background jobs) composed by xi from the exec
    *  plane — joined into the trailing anchor block (§5). Deployment-specific: empty on edge
    *  (no persistent exec env). */
@@ -337,7 +340,7 @@ function byConversation(run: Event[]): Event[] {
 const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 
 function renderMessages(
-  { events: window, session, home, now, ambient, loadMedia }: RenderInput,
+  { events: window, session, home, now, zone, ambient, loadMedia }: RenderInput,
 ): MessageParam[] {
   const { events, elisions } = byEventTime(applySummary(window.filter((e) => !backfilled(e))));
   const out: MessageParam[] = [];
@@ -435,7 +438,7 @@ function renderMessages(
       const earlier = elisions.earlier.get(e);
       if (earlier) cluster.lines.push(`… ${earlier} earlier, not shown`);
     }
-    cluster.lines.push(msgLine(e, session));
+    cluster.lines.push(msgLine(e, session, zone));
   };
 
   // No separators (§5). They went through `place()`, so every date break and gap marker
@@ -571,7 +574,7 @@ function renderMessages(
 
   // the trailing anchor: `now:` + the volatile environment lines (cwd · git · bg jobs).
   // Kept as ONE block, last, so the whole prefix stays cache-stable (§5).
-  const anchor = [`now: ${nowStamp(now)}`, ...(ambient ?? [])].join("\n");
+  const anchor = [`now: ${nowStamp(now, zone)}`, ...(ambient ?? [])].join("\n");
   place("user", sys(anchor));
   // the API rejects a user turn whose content is ONLY system blocks — if nothing else
   // landed in this turn, carry the anchor as plain text instead (valid content, same info)
@@ -656,7 +659,7 @@ function conversationEl(
  *  user turn); `status="failed"` = the dispatcher gave up on delivery (§5). Body and
  *  sender name are attacker-controlled — escaped, so no message can close its own element
  *  or forge a mark. */
-function msgLine(e: MessageEvent, session: SessionId): string {
+function msgLine(e: MessageEvent, session: SessionId, zone?: string): string {
   // `self` for both hands, because on the wire there IS only one: the account. WhatsApp
   // coexistence is unattributable from the platform (§4) — but not from the LOG, and the
   // two are told apart without asking anyone. `agent` set ⇒ we published it (a `send`, or
@@ -672,7 +675,7 @@ function msgLine(e: MessageEvent, session: SessionId): string {
   // body text is escaped (untrusted); the media markers are render's own, appended after
   const body = [escText(textOf(e)), ...filesOf(e).map(mediaMarker)]
     .filter((s) => s.length > 0).join(" ");
-  return `<msg from="${escAttr(from)}" at="${hhmm(e.ts)}"${failed}>${body}</msg>`;
+  return `<msg from="${escAttr(from)}" at="${hhmm(e.ts, zone)}"${failed}>${body}</msg>`;
 }
 
 /** XML escaping — THE injection boundary (§5): every untrusted string that lands in a text
@@ -766,17 +769,14 @@ function bodyOf(e: Event): string {
 
 /* ── clocks (§5) ────────────────────────────────────────────────────────────────────
  *
- * Times are read LITERALLY off the ISO string, never through `Date`. An ISO stamp already
- * carries the offset it was written in — WhatsApp says `2026-08-11T20:01:56-03:00`, and
- * 20:01 is the hour the two humans experienced. `new Date(...)` normalizes that to UTC, so
- * the old `getUTCHours()` rendered it 23:01: every conversation in this deployment was
- * three hours in the future, and nothing said so.
- *
- * So: no timezone database, no config. The producer's offset IS the local time, and a
- * literal parse preserves it. `Z` stamps (the harness's own) read as written too.
+ * Stored `ts` is UTC — ONE clock in the column (store/log.ts normalizes on insert), which
+ * is what makes lexical `byTs` real time across services. Render is where wall-clock
+ * returns: `zone` (IANA, org config's `timezone`) formats every stamp in the org's local
+ * time, so `at=` reads as the hour the humans experienced; unset ⇒ the deployment's own
+ * zone. `Intl` does the zone math — no timezone database of our own.
  */
-// English until there is an i18n seam: the locale belongs in org config beside the
-// timezone, not in a constant here.
+// English until there is an i18n seam: the `locale` slot already sits beside `timezone`
+// in org config; these constants are what it will replace.
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTHS_LONG = [
   "January",
@@ -792,15 +792,6 @@ const MONTHS_LONG = [
   "November",
   "December",
 ];
-const WEEKDAYS = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
 
 interface Clock {
   year: number;
@@ -808,35 +799,61 @@ interface Clock {
   day: number;
   hour: number;
   minute: number;
+  weekday: string;
 }
 
-/** The fields as WRITTEN in the stamp — offset applied by the producer, not by us. */
-function clockOf(ts: string): Clock | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(ts);
-  if (!m) return null;
+/** One formatter per zone for the whole process — construction is the expensive part. */
+const fmts = new Map<string, Intl.DateTimeFormat>();
+function fmtFor(zone?: string): Intl.DateTimeFormat {
+  const key = zone ?? "";
+  let f = fmts.get(key);
+  if (!f) {
+    fmts.set(
+      key,
+      f = new Intl.DateTimeFormat("en-US", {
+        ...(zone ? { timeZone: zone } : {}),
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+        hour: "numeric",
+        minute: "numeric",
+        hourCycle: "h23",
+        weekday: "long",
+      }),
+    );
+  }
+  return f;
+}
+
+/** The stamp's wall-clock fields IN `zone`. Unparseable ⇒ null (callers print the raw ts). */
+function clockOf(ts: string, zone?: string): Clock | null {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  const p: Partial<Record<Intl.DateTimeFormatPartTypes, string>> = {};
+  for (const part of fmtFor(zone).formatToParts(d)) p[part.type] = part.value;
   return {
-    year: +m[1],
-    month: +m[2] - 1,
-    day: +m[3],
-    hour: +m[4],
-    minute: +m[5],
+    year: +p.year!,
+    month: +p.month! - 1,
+    day: +p.day!,
+    hour: +p.hour!,
+    minute: +p.minute!,
+    weekday: p.weekday!,
   };
 }
 
-/** A message's stamp: `12 ago 9:50`. Absolute on every line — separators are gone, so the
+/** A message's stamp: `12 Aug 9:50`. Absolute on every line — separators are gone, so the
  *  line itself has to say when, and a bare `HH:mm` under a `now:` anchor reads as today. */
-function hhmm(ts: string): string {
-  const c = clockOf(ts);
+function hhmm(ts: string, zone?: string): string {
+  const c = clockOf(ts, zone);
   if (!c) return ts;
   return `${c.day} ${MONTHS[c.month]} ${c.hour}:${pad(c.minute)}`;
 }
 
 /** The `now:` anchor, spelled out — the one place a full date is worth its width. */
-function nowStamp(ts: string): string {
-  const c = clockOf(ts);
+function nowStamp(ts: string, zone?: string): string {
+  const c = clockOf(ts, zone);
   if (!c) return ts;
-  const weekday = WEEKDAYS[new Date(Date.UTC(c.year, c.month, c.day)).getUTCDay()];
-  return `${weekday} ${c.day} ${MONTHS_LONG[c.month]}, ${c.year} - ${c.hour}:${pad(c.minute)}`;
+  return `${c.weekday} ${c.day} ${MONTHS_LONG[c.month]}, ${c.year} - ${c.hour}:${pad(c.minute)}`;
 }
 
 function pad(n: number): string {

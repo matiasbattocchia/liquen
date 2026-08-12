@@ -38,6 +38,11 @@ export interface TurnConfig {
   model: string;
   maxTokens: number;
   effort?: Effort;
+  /** IANA timezone every rendered stamp formats through (org config; §5). Unset ⇒ the
+   *  deployment's own zone. Stored `ts` stays UTC — that one is a sort key (§3). */
+  timezone?: string;
+  /** Parked until the i18n seam — org config carries it; render is English for now (§5). */
+  locale?: string;
   /** Slow OUTER retries for mu failures. The SDK client already retries fast (2×, backoff +
    *  jitter, honors retry-after on 429/5xx); this layer covers persistent failure (§2). */
   retryDelaysMs?: number[];
@@ -84,17 +89,6 @@ export async function nu(
     conversation: { address: config.home },
   };
   const ts = () => new Date().toISOString();
-  // The `now:` anchor is READ, not stored, so it is written in the deployment's own zone:
-  // a UTC anchor over conversations stamped `-03:00` would put the agent three hours in
-  // the future of everyone it is talking to. Stored `ts` stays UTC — that one is a sort key.
-  const localNow = () => {
-    const d = new Date(), off = -d.getTimezoneOffset();
-    const sign = off < 0 ? "-" : "+", abs = Math.abs(off);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T` +
-      `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
-      `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
-  };
   const errorEvent = (error: string): Draft<Event> => ({
     ts: ts(),
     type: "error",
@@ -126,7 +120,8 @@ export async function nu(
     docs: input.docs,
     session: config.sessionId,
     home: config.home,
-    now: localNow(),
+    now: ts(),
+    zone: config.timezone,
     ambient: input.ambient,
     loadMedia: input.loadMedia,
   });

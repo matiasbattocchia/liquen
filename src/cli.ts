@@ -14,7 +14,7 @@
 
 import { TextLineStream } from "@std/streams";
 import { userInfo } from "node:os";
-import { type MainConfig, start } from "./main.ts";
+import { type MainConfig, readOrgConfig, start } from "./main.ts";
 import type { Draft, Event, MessageEvent, PermissionResponseEvent } from "./types.ts";
 
 const DIM = "\x1b[2m";
@@ -45,7 +45,9 @@ const username = (() => {
 const target = Deno.env.get("MU_AGENT") ?? username;
 const session = target; // session_id ≈ agent id in v0 (§7)
 const home = `mind:${target}`; // the home IS the mind session (§4): steer where the tools live
-const model = Deno.env.get("MU_MODEL") ?? "claude-opus-4-8";
+// resolved here (not just in scanAgents) so the banner names the model that will run
+const model = Deno.env.get("MU_MODEL") ??
+  (await readOrgConfig(`${dir}/org/config.json`)).model ?? "claude-opus-4-8";
 
 // the framework way: running IS scaffolding — a blank org bootstraps your alter-ego
 await Deno.mkdir(`${dir}/agents/${target}`, { recursive: true });

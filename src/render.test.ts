@@ -216,7 +216,14 @@ Deno.test("renderMessages reproduces the clinic scenario (§5) from ONE flat win
     toolResultE("e13", t11, "T3", "queued", "e11"),
   ];
 
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t11 });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t11,
+  });
   const c = (i: number) => messages[i].content as Anthropic.ContentBlockParam[];
 
   // 7 messages, alternating exactly as the artifact shows
@@ -277,7 +284,14 @@ Deno.test("parallel tools weld by cause — each result links to its own use, or
     toolResultE("r1", t, "T", "3 hits", "u1"),
   ];
 
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
   const c = (i: number) => messages[i].content as Anthropic.ContentBlockParam[];
 
   // assistant: [thinking, tool_use u1, tool_use u2] — both uses welded, in emit order
@@ -304,7 +318,14 @@ Deno.test("a world message landing between use and result floats AFTER the weld 
     toolResultE("r", t, "T", "3 hits", "u"),
   ];
 
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
   const c = (i: number) => messages[i].content as Anthropic.ContentBlockParam[];
 
   assertEquals(messages.map((m) => m.role), ["user", "assistant", "user"]);
@@ -326,6 +347,7 @@ Deno.test("out-of-order inbound messages render in `ts` order, not append order 
     docs: [],
     session: "s1",
     home: "home",
+    zone: "UTC",
     now: "2026-07-19T14:06:00Z",
   });
   const texts = (messages[0].content as Anthropic.ContentBlockParam[])
@@ -341,7 +363,14 @@ Deno.test("the ts sort never crosses the machine: an agent turn pins what follow
     homeMsg("a1", t, "ya te contesto", true, "T"), // the agent already answered
     homeMsg("h2", "2026-07-19T15:02:00Z", "straggler", false), // earlier, but arrived after
   ];
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
   // three turns: the straggler stays AFTER the reply — history isn't rewritten
   assertEquals(messages.map((m) => m.role), ["user", "assistant", "user"]);
   const last = (messages[2].content as Anthropic.ContentBlockParam[])
@@ -361,7 +390,14 @@ Deno.test("error events render as [harness] text — the model stays aware (§2)
       parts: [{ type: "data", kind: "error", data: { error: "model overloaded, gave up" } }],
     },
   ];
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
   const dump = JSON.stringify(messages);
   assertEquals(dump.includes("[harness] error: model overloaded, gave up"), true);
 });
@@ -374,7 +410,14 @@ Deno.test("thinking of an incomplete group (open barrier) is not rendered", () =
     toolUseE("u", t, "T", "bash", { cmd: "sleep 99" }), // no result yet
   ];
 
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
   const dump = JSON.stringify(messages);
   assertEquals(dump.includes("thinking"), false); // no dangling thinking-only assistant turn
   assertEquals(dump.includes("tool_use"), false); // unpaired use never rendered
@@ -401,7 +444,14 @@ Deno.test("a summary hides what it covers and renders as the leading checkpoint 
       parts: [{ type: "text", kind: "text", text: "## Ongoing threads\n- hilo viejo" }],
     },
   ];
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
   const dump = JSON.stringify(messages);
   assertEquals(dump.includes("viejo uno"), false); // covered — gone
   assertEquals(dump.includes("vieja respuesta"), false);
@@ -421,7 +471,14 @@ Deno.test("horizon split: messages the closing never consumed render as trailing
     homeMsg("e03", t, "tres", false), // unconsumed
     closing,
   ];
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
   // history: user(uno) → assistant(closing); INPUT: user(dos, tres, …now)
   const last = messages.at(-1)!;
   assertEquals(last.role, "user");
@@ -463,7 +520,14 @@ Deno.test("one cache breakpoint closes the collapsed region — the volatile anc
     homeMsg("e02", t(1), "dos", false),
     homeMsg("e03", t(2), "listo", true, "T1"), // the closing — end of the closed region
   ];
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t(3) });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t(3),
+  });
   const marks = marked(messages);
   assertEquals(marks.length, 1);
   assertEquals(txt(marks[0]), "listo");
@@ -479,13 +543,17 @@ Deno.test("the cached prefix survives the tool loop, and the boundary only moves
     homeMsg("e03", t(2), "listo", true, "T1"),
   ];
   const base = { docs: [] as DocEntry[], session: "s1", home: "home" };
-  const one = render({ ...base, events: closed, now: t(3) }).messages;
+  const one = render({ ...base, events: closed, zone: "UTC", now: t(3) }).messages;
 
   // a tool round-trip: trailing grows, `now` advances — the cached prefix must not move,
   // or every call in a 19-tool turn re-pays the whole history
-  const two =
-    render({ ...base, events: [...closed, homeMsg("e04", t(4), "tres", false)], now: t(5) })
-      .messages;
+  const two = render({
+    ...base,
+    events: [...closed, homeMsg("e04", t(4), "tres", false)],
+    zone: "UTC",
+    now: t(5),
+  })
+    .messages;
   assertEquals(prefixOf(two), prefixOf(one));
 
   // next turn closes: `tres` collapses into history and the breakpoint advances — but
@@ -497,6 +565,7 @@ Deno.test("the cached prefix survives the tool loop, and the boundary only moves
       homeMsg("e04", t(4), "tres", false),
       homeMsg("e05", t(6), "vale", true, "T2"),
     ],
+    zone: "UTC",
     now: t(7),
   }).messages;
   assertEquals(txt(marked(three)[0]), "vale"); // moved forward
@@ -516,7 +585,7 @@ Deno.test("mid-turn the tool chain gets its own breakpoint — the loop stops re
     toolUseE("u1", t(3), "T2", "bash", { command: "ls" }),
     toolResultE("r1", t(3), "T2", "a.txt", "u1"),
   ];
-  const one = render({ ...base, events: [...history, ...chain], now: t(4) }).messages;
+  const one = render({ ...base, events: [...history, ...chain], zone: "UTC", now: t(4) }).messages;
   const marks = marked(one);
   assertEquals(marks.length, 2); // the collapsed boundary, and the live chain
   assertEquals(txt(marks[0]), "listo");
@@ -532,6 +601,7 @@ Deno.test("mid-turn the tool chain gets its own breakpoint — the loop stops re
       toolUseE("u2", t(5), "T3", "bash", { command: "cat a.txt" }), // a NEW step: the loop
       toolResultE("r2", t(5), "T3", "hola", "u2"), // re-enters, so the chain appends
     ],
+    zone: "UTC",
     now: t(6),
   }).messages;
   const paid = prefixOf(one, 1); // through the chain mark — the whole request bar the anchor
@@ -575,7 +645,14 @@ Deno.test("a conversation's messages cluster into ONE element — interleaved ro
     worldMsg("e3", t("2"), group, { address: "549:dani", name: "Dani" }, "yo estoy"),
     worldMsg("e4", t("2"), group, { address: "549:caro", name: "Caro" }, "dale, en 10"),
   ];
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t("3") });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t("3"),
+  });
   const texts = (messages[0].content as Anthropic.ContentBlockParam[])
     .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text);
   // two elements (first-arrival order), the group's three lines adjacent despite Ana between
@@ -613,7 +690,14 @@ Deno.test("forged marks are inert: bodies and names are escaped, the principal s
     ),
     homeMsg("e2", t, "estás ahí?", false), // the REAL principal — plain, outside any element
   ];
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
   const texts = (messages[0].content as Anthropic.ContentBlockParam[])
     .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text);
   assertEquals(
@@ -640,7 +724,14 @@ Deno.test("envelope.status failed renders on the line — the agent sees the del
       "failed",
     ),
   ];
-  const { messages } = render({ events, docs: [], session: "s1", home: "home", now: t });
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
   const dump = JSON.stringify(messages);
   assertStringIncludes(
     dump,
@@ -662,6 +753,7 @@ Deno.test("ambient env lines join the trailing anchor block after now:", () => {
     docs: [],
     session: "s1",
     home: "home",
+    zone: "UTC",
     now: t,
     ambient: ["cwd: /app", "git: main · 3 uncommitted", "background jobs (1): server (2m)"],
   });
@@ -719,6 +811,7 @@ Deno.test("media: trailing attachments inline as base64 blocks; closed keep mark
     docs: [],
     session: "s1",
     home: "home",
+    zone: "UTC",
     now: "2026-07-21T10:04:00Z",
     loadMedia,
   });
@@ -746,6 +839,7 @@ Deno.test("media: without loadMedia (edge / closed-only) markers render, no bloc
     docs: [],
     session: "s1",
     home: "home",
+    zone: "UTC",
     now: "2026-07-21T10:01:00Z",
   });
   const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
@@ -764,6 +858,7 @@ Deno.test("media: the newest-first request budget — an oversize file keeps its
     docs: [],
     session: "s1",
     home: "home",
+    zone: "UTC",
     now: "2026-07-21T10:02:00Z",
     loadMedia,
   });
@@ -781,6 +876,7 @@ Deno.test("media: an external link renders a url-source block — no bytes, no b
     docs: [],
     session: "s1",
     home: "home",
+    zone: "UTC",
     now: "2026-07-21T10:01:00Z",
     // loadMedia untouched by externals — prove it by making it explode
     loadMedia: () => {
@@ -811,6 +907,7 @@ Deno.test("media: a tool_result's attachment renders INSIDE its block — aread 
     docs: [],
     session: "s1",
     home: "home",
+    zone: "UTC",
     now: t,
     loadMedia: (uri) =>
       uri === "file:///w/dot.png" ? { media_type: "image/png", data: "AQID" } : null,
@@ -896,6 +993,7 @@ Deno.test("a capped burst renders with its redaction lines, and the counts are r
     docs: [],
     session: "s1",
     home: "home",
+    zone: "UTC",
     now: "2026-08-11T10:40:00Z",
   });
   const text = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []))
@@ -922,6 +1020,7 @@ Deno.test("backfilled events reach NO prompt — a sync is invisible, search is 
     docs: [],
     session: "s1",
     home: "home",
+    zone: "UTC",
     now: "2026-08-12T10:05:00Z",
   });
   const text = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []))
@@ -930,12 +1029,14 @@ Deno.test("backfilled events reach NO prompt — a sync is invisible, search is 
   assertStringIncludes(text, "wa#2"); // the news
 });
 
-Deno.test("times read LITERALLY off the stamp — the producer's offset IS the local hour", () => {
-  // WhatsApp stamps -03:00. Through `new Date()` this rendered 23:01 — every conversation
-  // three hours in the future, silently. The offset in the string is the humans' own clock.
+Deno.test("stamps format through the org's zone — the humans' clock, not the store's", () => {
+  // The store keeps UTC (one clock in the column, §3); `zone` is where wall-clock returns.
+  // WhatsApp's 20:01 in Buenos Aires is 23:01Z — and must render 20:01 again, because
+  // that is the hour the two humans experienced. An offset-carrying input (a pre-migration
+  // row, a producer's raw stamp) lands on the same instant, so it renders the same.
   const e = worldMsg(
     "e1",
-    "2026-08-11T20:01:56-03:00",
+    "2026-08-11T23:01:56Z",
     { address: "wa:sol", kind: "direct" },
     { address: "549", name: "sol" },
     "ya no queda lugar",
@@ -945,6 +1046,7 @@ Deno.test("times read LITERALLY off the stamp — the producer's offset IS the l
     docs: [],
     session: "s1",
     home: "home",
+    zone: "America/Argentina/Buenos_Aires",
     now: "2026-08-11T20:15:00-03:00",
   });
   const dump = JSON.stringify(messages);
@@ -972,6 +1074,7 @@ Deno.test("self is ONE identity, two hands: (you) is ours, (principal) is the ph
     docs: [],
     session: "s1",
     home: "home",
+    zone: "UTC",
     now: t,
   });
   const dump = JSON.stringify(messages);

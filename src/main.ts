@@ -166,7 +166,7 @@ export async function start(
 type Principal = AgentConfig & Policy & { provider?: string; email?: string; phone?: string };
 
 /** `agents/<name>/config.json` — the human-declared side of an agent (§9): runtime
- *  settings overriding the MainConfig defaults, and the handles a human knows. Everything
+ *  settings overriding the org defaults, and the handles a human knows. Everything
  *  else about the agent is discovered (by connect flows) or derived (from the folder). */
 interface AgentFileConfig {
   provider?: string;
@@ -174,6 +174,20 @@ interface AgentFileConfig {
   effort?: AgentConfig["effort"];
   email?: string;
   phone?: string;
+}
+
+/** `org/config.json` — the org-wide defaults every agent inherits (§9): the model
+ *  settings nothing should hardcode, and the deployment's clock (`timezone` formats every
+ *  rendered stamp, §5; `locale` is parked until the i18n seam). Resolution, most specific
+ *  wins: agent config.json → MainConfig (the process: env, tests) → org config.json →
+ *  built-in fallback. */
+interface OrgFileConfig {
+  provider?: string;
+  model?: string;
+  effort?: AgentConfig["effort"];
+  maxTokens?: number;
+  locale?: string;
+  timezone?: string; // IANA, e.g. "America/Argentina/Buenos_Aires"
 }
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -189,6 +203,7 @@ async function scanAgents(
   dir: string,
   defaults: Pick<MainConfig, "model" | "effort" | "maxTokens">,
 ): Promise<Principal[]> {
+  const org = await readOrgConfig(`${dir}/org/config.json`);
   await Deno.mkdir(`${dir}/agents`, { recursive: true });
   const found: Principal[] = [];
   for await (const entry of Deno.readDir(`${dir}/agents`)) {
@@ -198,10 +213,12 @@ async function scanAgents(
       agentId: entry.name,
       sessionId: entry.name,
       home: `mind:${entry.name}`,
-      model: cfg.model ?? defaults.model ?? "claude-opus-4-8",
-      effort: cfg.effort ?? defaults.effort,
-      maxTokens: defaults.maxTokens ?? 64_000,
-      provider: cfg.provider,
+      model: cfg.model ?? defaults.model ?? org.model ?? "claude-opus-4-8",
+      effort: cfg.effort ?? defaults.effort ?? org.effort,
+      maxTokens: defaults.maxTokens ?? org.maxTokens ?? 64_000,
+      timezone: org.timezone,
+      locale: org.locale,
+      provider: cfg.provider ?? org.provider,
       email: cfg.email,
       phone: cfg.phone,
     });
@@ -212,15 +229,35 @@ async function scanAgents(
 /** Absent file ⇒ all defaults; a present file must parse and carry a known effort — a
  *  silent fallback would run the org on settings the human believes overridden. */
 async function readAgentConfig(path: string): Promise<AgentFileConfig> {
+  return await readConfigFile<AgentFileConfig>(path);
+}
+
+/** Same strictness as the agent file, plus the timezone must be one `Intl` knows — a typo
+ *  discovered at boot, not as a RangeError inside a turn's render. */
+export async function readOrgConfig(path: string): Promise<OrgFileConfig> {
+  const cfg = await readConfigFile<OrgFileConfig>(path);
+  if (cfg.timezone !== undefined) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: cfg.timezone });
+    } catch {
+      throw new Error(`${path}: unknown timezone "${cfg.timezone}" (IANA name expected)`);
+    }
+  }
+  return cfg;
+}
+
+async function readConfigFile<T extends { effort?: AgentConfig["effort"] }>(
+  path: string,
+): Promise<T> {
   let raw: string;
   try {
     raw = await Deno.readTextFile(path);
   } catch {
-    return {};
+    return {} as T;
   }
-  let cfg: AgentFileConfig;
+  let cfg: T;
   try {
-    cfg = JSON.parse(raw) as AgentFileConfig;
+    cfg = JSON.parse(raw) as T;
   } catch (err) {
     throw new Error(`${path}: ${err instanceof Error ? err.message : err}`);
   }
