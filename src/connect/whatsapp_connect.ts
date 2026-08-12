@@ -134,8 +134,17 @@ export async function connectWhatsApp(
 
 /* ── local entry: drive the pairing against the bridge, QR in the terminal ──────────
  *
- *   deno task connect:whatsapp             # QR flow: scan with the phone
- *   deno task connect:whatsapp -- <phone>  # pairing-code flow (international digits)
+ *   deno task connect:whatsapp          # QR flow: scan with the phone
+ *   deno task connect:whatsapp <phone>  # pairing-code flow (international digits, no `+`)
+ *
+ * No `--` before the number: `deno task` forwards it verbatim, so it arrives as args[0]
+ * and the bridge answers "phone number too short". The flow is chosen by the number's
+ * presence because the code flow CANNOT exist without it (whatsmeow's PairPhone mints the
+ * code for that specific number), while the QR flow needs nothing.
+ *
+ * A phone code is short-lived: WhatsApp ends the pairing stream ~3 minutes after minting,
+ * and the bridge fails the pending session then (events.go) rather than idling to its TTL.
+ * Expired ⇒ run the door again for a fresh one.
  *
  * Env: MU_DIR · MU_AGENT (principal override) · WA_BRIDGE_URL (default
  *      http://localhost:8081) · WA_BRIDGE_TOKEN · WA_ORG (default mu) · WA_PHONE. */
