@@ -44,15 +44,13 @@ export type Json =
 export type JsonSchema = { [key: string]: Json };
 
 /* ─────────────────────────────── parts ──────────────────────────────── */
-// The content model (open-bsp): text · file · data, each with a finer `kind`, and
-// optional nested `artifacts` (e.g. a voice note carrying its transcription).
+// The content model (open-bsp): text · file · data, each with a finer `kind`.
 // `parts` is the uniform body of every event (§3).
 
 export interface TextPart {
   type: "text";
-  kind: "text" | "reaction" | "caption" | "transcription" | "description";
+  kind: "text" | "reaction";
   text: string;
-  artifacts?: Part[];
 }
 
 /** File kinds (open-bsp MediaTypes): WhatsApp media + Instagram native/story types. */
@@ -79,7 +77,6 @@ export interface FilePart {
    *  url-source block). `size` is unknowable for external uris. */
   file: { mime_type: string; uri: string; name?: string; size?: number };
   text?: string; // caption
-  artifacts?: Part[];
 }
 
 /** Structured payload (tool io, permissions, alarms). `K` names the shape, `T` its data. */
@@ -88,7 +85,6 @@ export interface DataPart<K extends string = string, T = Json> {
   kind: K;
   data: T;
   text?: string;
-  artifacts?: Part[];
 }
 
 /**

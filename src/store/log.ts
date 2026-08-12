@@ -574,10 +574,12 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
 function textOf(event: Draft): string | null {
   const parts = (event as { parts?: unknown }).parts;
   if (!Array.isArray(parts)) return null;
+  // ANY part's `text`, not only a TextPart's: a caption rides `FilePart.text` and a data
+  // part may describe itself the same way. Filtering on `type === "text"` left every
+  // WhatsApp caption out of the search column — 5,419 file rows, none of them findable.
   const t = parts
-    .filter((p) => (p as { type?: unknown }).type === "text")
     .map((p) => (p as { text?: unknown }).text)
-    .filter((x): x is string => typeof x === "string")
+    .filter((x): x is string => typeof x === "string" && x.length > 0)
     .join(" ");
   return t.length ? t : null;
 }

@@ -23,7 +23,6 @@ import type {
   FilePart,
   MessageEvent,
   SessionId,
-  TextPart,
   ThinkingEvent,
   ToolResultEvent,
   ToolUseEvent,
@@ -723,7 +722,9 @@ function toolResultBlock(
   };
 }
 
-/** An `error` event's message — rendered as a system block so the model knows (§2). */
+/** An `error` event's message — rendered as a plain `[harness] error:` text block: it
+ *  PRECEDES what it marks, and the API takes `mid_conv_system` only in trailing position
+ *  (§5, live-smoke finding). */
 function errorTextOf(e: HarnessErrorEvent): string {
   return e.parts[0]?.data?.error ?? "unknown error";
 }
@@ -732,9 +733,14 @@ function isSelf(e: Event, session: SessionId): boolean {
   return e.agent?.session_id === session;
 }
 
+/** Every part's `text`, not only a TextPart's — a caption rides `FilePart.text`. Filtering
+ *  on `type === "text"` meant the model never saw a single caption: the picture arrived as
+ *  a bare `<media/>` marker and the words that came with it were dropped on the floor. */
 function textOf(e: Event): string {
   const parts = (e as MessageEvent).parts ?? [];
-  return parts.filter((p): p is TextPart => p.type === "text").map((p) => p.text).join(" ");
+  return parts.map((p) => (p as { text?: unknown }).text)
+    .filter((t): t is string => typeof t === "string" && t.length > 0)
+    .join(" ");
 }
 
 function filesOf(e: Event): FilePart[] {
