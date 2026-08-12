@@ -24,6 +24,7 @@ function harness() {
     published,
     deps: {
       principal: "matias",
+      openSelfIm: () => Promise.resolve<string | undefined>("D0SELF"),
       creds: {
         put: (row: CredentialRow) => {
           credentials.push(row);
@@ -55,7 +56,14 @@ Deno.test("connect: a verified paste registers the workspace + the owned grant +
   // grant `<team>:<user>` (identity + credential edge, §4)
   assertEquals(h.connections, [
     { service: "slack", address: "T1" },
-    { service: "slack", address: "T1:U7", agentId: "matias", credentialKey: "slack:T1:matias" },
+    {
+      service: "slack",
+      address: "T1:U7",
+      agentId: "matias",
+      credentialKey: "slack:T1:matias",
+      // the mind-alias binding (§4): the self-DM, resolved with the grant in hand
+      extra: { self_conversation: "D0SELF" },
+    },
   ]);
   assertEquals(h.credentials, [
     { key: "slack:T1:matias", value: { token: "xoxp-secret" }, agentId: "matias" },
@@ -65,6 +73,22 @@ Deno.test("connect: a verified paste registers the workspace + the owned grant +
     { service: "slack", connection: "T1", conversation: "connect", agentId: "matias" },
   ]);
   assertEquals(h.published.length, 1); // the grant crossed the frontier as an event
+});
+
+Deno.test("connect: an unresolvable self-DM still grants — just without the alias binding", async () => {
+  const h = harness();
+  await connectSlackUser("xoxp-secret", {
+    ...h.deps,
+    authTest: () => Promise.resolve({ ok: true, team_id: "T1", user_id: "U7" }),
+    openSelfIm: () => Promise.reject(new Error("missing_scope")),
+  });
+  assertEquals(h.connections[1], {
+    service: "slack",
+    address: "T1:U7",
+    agentId: "matias",
+    credentialKey: "slack:T1:matias",
+  });
+  assertEquals(h.published.length, 1); // the note still crosses (and says the alias is unbound)
 });
 
 Deno.test("connect: a BOT token paste is refused by shape — auth.test would vouch for it", async () => {

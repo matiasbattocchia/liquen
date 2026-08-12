@@ -34,6 +34,9 @@ export interface SlackConnectDeps {
   publish: Appender["publish"];
   /** auth.test — injectable for tests; default POSTs with the pasted token. */
   authTest?: (token: string) => Promise<AuthTestResponse>;
+  /** conversations.open on the granting user's own id → the self-DM channel (the
+   *  mind-alias binding, §4). Injectable; undefined result ⇒ no binding recorded. */
+  openSelfIm?: (token: string, user: string) => Promise<string | undefined>;
   now?: () => string;
 }
 
@@ -69,9 +72,20 @@ export async function connectSlackUser(
   // identity/credential edge the classifier and dispatch resolve through
   const leg = `${team}:${user}`;
   const credentialKey = `slack:${team}:${deps.principal}`;
+  // the mind-alias binding (§4): the self-DM (notes-to-self) IS the mind on this surface —
+  // resolved here, once, with the grant in hand; recorded on the grant row where the
+  // ownership edge already names the principal. Unresolvable ⇒ the grant still lands,
+  // just without the alias (the note below says which).
+  const selfIm = await (deps.openSelfIm ?? defaultOpenSelfIm)(token, user).catch(() => undefined);
   deps.store.upsertConnections([
     { service: "slack", address: team },
-    { service: "slack", address: leg, agentId: deps.principal, credentialKey },
+    {
+      service: "slack",
+      address: leg,
+      agentId: deps.principal,
+      credentialKey,
+      ...(selfIm ? { extra: { self_conversation: selfIm } } : {}),
+    },
   ]);
   // the grant note below is the principal's to see — on a personal-only workspace the
   // anchor row is a stub (§6), so membership is what carries it into their view
@@ -98,7 +112,10 @@ export async function connectSlackUser(
     parts: [{
       type: "text",
       kind: "text",
-      text: `Slack connected on workspace ${team}: ${deps.principal} (slack user ${user})`,
+      text: `Slack connected on workspace ${team}: ${deps.principal} (slack user ${user})` +
+        (selfIm
+          ? ` — mind-alias bound to self-DM ${selfIm}`
+          : " — self-DM unresolved, no mind-alias"),
     }],
   };
   await deps.publish(note);
@@ -128,6 +145,19 @@ export function manifestUrl(manifest: unknown): string {
   return `https://api.slack.com/apps?new_app=1&manifest_json=${
     encodeURIComponent(JSON.stringify(manifest))
   }`;
+}
+
+/** The self-DM by `conversations.open` on one's OWN user id — direct (no listing, no
+ *  pagination), and it re-opens a closed one. Any refusal ⇒ undefined: the binding is
+ *  optional, the grant is not. */
+async function defaultOpenSelfIm(token: string, user: string): Promise<string | undefined> {
+  const res = await fetch("https://slack.com/api/conversations.open", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ users: user }),
+  });
+  const out = await res.json() as { ok: boolean; channel?: { id?: string } };
+  return out.ok ? out.channel?.id : undefined;
 }
 
 async function defaultAuthTest(token: string): Promise<AuthTestResponse> {

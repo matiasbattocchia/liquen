@@ -50,6 +50,37 @@ export interface MembershipRow {
   agentId: string;
 }
 
+/** A mind-alias binding (§4): an OWNED connection's principal-identified conversation
+ *  (self-talk). DERIVED where platform structure gives it away (a WA self-chat is
+ *  addressed by the connection's own number), RECORDED (`extra.self_conversation`, the
+ *  connect flow's discovery) where the platform's id is opaque (the Slack self-DM). */
+export interface AliasRow {
+  service: string;
+  connection: string; // the binding row's own address (grant / paired number)
+  conversation: string; // the self-conversation on the wire
+  agentId: string;
+}
+
+/** Does this envelope land in an alias conversation? Events may anchor to a sibling of the
+ *  binding row (Slack: the workspace or bot anchor vs the grant `<team>:<user>`), so the
+ *  connection matches on its workspace part — the address up to the first `:` (addresses
+ *  without one, like a WA number, compare whole). */
+export function aliasOf(
+  rows: AliasRow[],
+  service: string,
+  connection: string,
+  conversation: string,
+): AliasRow | undefined {
+  const root = (a: string) => {
+    const at = a.indexOf(":");
+    return at < 0 ? a : a.slice(0, at);
+  };
+  return rows.find((r) =>
+    r.service === service && r.conversation === conversation &&
+    root(r.connection) === root(connection)
+  );
+}
+
 export interface Connections {
   /** Bind/update/REVIVE connected accounts. Upsert only — a restart never erases a
    *  binding; absent `agentId`/`credentialKey` preserve, `extra` merges. */
@@ -61,6 +92,10 @@ export interface Connections {
   /** Point lookup for policy and the ingest classifier (live — the RLS-join emulation).
    *  Deletion does not hide the row here; only the gate checks `deleted_at`. */
   connection(service: string, address: string): ConnectionRow | null;
+  /** The mind-alias bindings (§4): every owned connection's self-conversation, derived
+   *  or recorded. Soft-deleted rows KEEP answering — a revocation closes
+   *  the gate, never the hiding: the mind copies are that surface's record. */
+  aliases(): AliasRow[];
   /** Enroll agents in conversations. Upsert only — a re-enroll REVIVES a left row. */
   upsertMemberships(rows: MembershipRow[]): void;
   /** Soft-delete: a channel LEAVE ends the membership's lifetime — `isMember` keeps
@@ -119,6 +154,17 @@ export function createConnections(db: DatabaseSync): Connections {
     `SELECT service, address, agent_id, credential_key, extra FROM connections
      WHERE service = ? AND address = ?`,
   );
+  // a binding is DERIVED where platform structure gives it away — an owned WhatsApp
+  // connection's self-chat IS its own address, nothing stored — and RECORDED where it
+  // can't be (Slack's self-DM id is opaque: resolved once at connect, `extra.self_conversation`)
+  const getAliases = db.prepare(
+    `SELECT service, address, agent_id,
+            coalesce(json_extract(extra, '$.self_conversation'),
+                     CASE service WHEN 'whatsapp' THEN address END) AS conversation
+     FROM connections
+     WHERE agent_id IS NOT NULL
+       AND (json_extract(extra, '$.self_conversation') IS NOT NULL OR service = 'whatsapp')`,
+  );
   const putM = db.prepare(
     `INSERT INTO memberships (service, connection_address, conversation_address, agent_id, created_at)
      VALUES (?, ?, ?, ?, ?)
@@ -175,6 +221,21 @@ export function createConnections(db: DatabaseSync): Connections {
         ...(r.credential_key ? { credentialKey: r.credential_key } : {}),
         ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
       };
+    },
+
+    aliases(): AliasRow[] {
+      const rows = getAliases.all() as unknown as {
+        service: string;
+        address: string;
+        agent_id: string;
+        conversation: string;
+      }[];
+      return rows.map((r) => ({
+        service: r.service,
+        connection: r.address,
+        conversation: r.conversation,
+        agentId: r.agent_id,
+      }));
     },
 
     upsertMemberships(rows: MembershipRow[]): void {

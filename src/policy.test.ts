@@ -190,3 +190,22 @@ Deno.test("policyFor is LIVE: a mid-run bind is visible to the same closure (no 
     assert(bo.writable!(at("whatsapp", "+549", "wa:c") as Draft)); // same predicate, WITH CHECK side
   });
 });
+
+Deno.test("policyFor: the mind-alias conversation is invisible to its own agent (§4)", async () => {
+  await withLog((log) => {
+    log.upsertConnections([
+      { service: "slack", address: "T1" }, // the workspace anchor inbound events carry
+      { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
+    ]);
+    const ana = policyFor("ana", log);
+
+    // the self-DM is the mind's surface, not a world conversation: the mirror's copies are
+    // ana's view of it — the wire events (anchored to the workspace OR the grant) are not,
+    // and `send` can't reach it either (the principal is never a send target)
+    assert(!ana.readable!(at("slack", "T1", "D1")));
+    assert(!ana.readable!(at("slack", "T1:U1", "D1")));
+    assert(!ana.writable!(at("slack", "T1", "D1") as Draft));
+    // the rest of the owned account view is untouched
+    assert(ana.readable!(at("slack", "T1:U1", "C7")));
+  });
+});

@@ -89,9 +89,18 @@ function paint(e: Event): void {
   const self = e.agent?.session_id === session;
   switch (e.type) {
     case "message": {
-      if (!self) return; // the principal typed it — already on screen
+      const via = (e.extra?.via ?? undefined) as { service?: string } | undefined;
       const text = e.parts.filter((p) => p.type === "text")
         .map((p) => (p as { text: string }).text).join(" ");
+      if (!self) {
+        // the principal spoke — locally it's already on screen; through a mind-alias
+        // surface (§4) the mirror's copy is the only sighting, so paint it, tagged
+        if (via && e.envelope.conversation.address === home) {
+          write(`\n${CYAN}[via ${via.service}]${RESET} ${text}\n> `);
+        }
+        return;
+      }
+      if (via) return; // an alias CC is plumbing — its mind original already painted
       if (e.envelope.conversation.address === home) write("\n> "); // body already streamed
       else write(`\n${CYAN}→ ${e.envelope.conversation.address}:${RESET} ${text}\n> `);
       return;

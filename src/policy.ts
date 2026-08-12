@@ -23,7 +23,7 @@
 
 import type { Draft, Envelope, Event } from "./types.ts";
 import type { Appender, Filter, Log } from "./store/log.ts";
-import type { Connections } from "./store/connections.ts";
+import { aliasOf, type Connections } from "./store/connections.ts";
 
 export interface Policy {
   /** RLS `USING`: may the agent see this event? Applied at every read (before the window
@@ -63,10 +63,17 @@ export interface Policy {
  */
 export function policyFor(
   agentId: string,
-  map: Pick<Connections, "connection" | "isMember">,
+  map: Pick<Connections, "connection" | "isMember" | "aliases">,
 ): Policy {
   const visible = (e: { ts?: string; envelope: Envelope }): boolean => {
     const { service, connection_address: connection, conversation } = e.envelope;
+    // the mind-alias (§4): an agent's own alias conversation is INVISIBLE to it — the
+    // mirror's mind copies are its face in the window, and hiding the wire conversation
+    // is what keeps the surface out of the world render and out of `send`'s reach (the
+    // principal is never a send target). One predicate, reads and writes alike.
+    if (aliasOf(map.aliases(), service, connection, conversation.address)?.agentId === agentId) {
+      return false;
+    }
     if (map.isMember(service, connection, conversation.address, agentId, e.ts)) return true;
     const conn = map.connection(service, connection);
     if (conn === null) return false;
