@@ -84,6 +84,17 @@ export async function nu(
     conversation: { address: config.home },
   };
   const ts = () => new Date().toISOString();
+  // The `now:` anchor is READ, not stored, so it is written in the deployment's own zone:
+  // a UTC anchor over conversations stamped `-03:00` would put the agent three hours in
+  // the future of everyone it is talking to. Stored `ts` stays UTC — that one is a sort key.
+  const localNow = () => {
+    const d = new Date(), off = -d.getTimezoneOffset();
+    const sign = off < 0 ? "-" : "+", abs = Math.abs(off);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T` +
+      `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
+      `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+  };
   const errorEvent = (error: string): Draft<Event> => ({
     ts: ts(),
     type: "error",
@@ -115,7 +126,7 @@ export async function nu(
     docs: input.docs,
     session: config.sessionId,
     home: config.home,
-    now: ts(),
+    now: localNow(),
     ambient: input.ambient,
     loadMedia: input.loadMedia,
   });
