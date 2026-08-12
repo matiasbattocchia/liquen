@@ -51,6 +51,11 @@ export interface ReadQuery {
   before?: string; // events before this TIMESTAMP
   text?: string; // case-insensitive substring over text parts
   types?: Event["type"][]; // restrict to these event types
+  /** `false` ⇒ drop imported history (`extra.backfill`). The TURN WINDOW passes it: those
+   *  rows reach no prompt (render drops them), so reading them would spend the window's N
+   *  slots on rows that are then thrown away — a window of pure history renders empty.
+   *  Omitted ⇒ included, which is what `search` wants: history is the point of a search. */
+  backfill?: boolean;
   limit?: number; // keep only the most recent N (still returned in append order)
   /** Row-level predicate applied BEFORE `limit` — RLS `USING` semantics: the window fills
    *  with N *visible* events, never N-minus-the-private-ones. `scoped()` (§6) pins it; on
@@ -545,6 +550,9 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
     where.push("text IS NOT NULL AND lower(text) LIKE '%' || lower(?) || '%'");
     params.push(q.text);
   }
+  // in SQL, not in a `filter`: that field is the §6 scope's, and it runs in JS over every
+  // materialized row — an import would be paged into memory only to be dropped
+  if (q.backfill === false) where.push("json_extract(extra, '$.backfill') IS NOT 1");
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   // append order = `id` (store-minted UUIDv7 — lexical order is mint order, §3).
   // limit ⇒ the most recent N: fetch DESC and reverse in read(); else natural append order.

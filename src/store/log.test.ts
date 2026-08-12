@@ -405,3 +405,31 @@ Deno.test("events.extra: wire sidecar round-trips and MERGES on the external-id 
     });
   });
 });
+
+Deno.test("read({backfill:false}) drops imported history — and spends the LIMIT on news", async () => {
+  await withLog(async (log) => {
+    // an import, then the one live message behind it
+    for (let i = 0; i < 5; i++) {
+      const e = msg(`h${i}`, "C1", `history ${i}`);
+      e.extra = { backfill: true, whatsapp: { re: "x" } }; // beside the sidecar, not in it
+      await log.publish(e);
+    }
+    await log.publish(msg("live", "C1", "the news"));
+
+    const all = await log.read();
+    assertEquals(all.length, 6); // search still sees everything — history is its point
+
+    const news = await log.read({ backfill: false });
+    assertEquals(news.map((e) => (e as MessageEvent).parts[0]), [{
+      type: "text",
+      kind: "text",
+      text: "the news",
+    }]);
+
+    // the point of doing it in SQL: a window of 3 fills with 3 LIVE rows, not 3 dropped ones
+    for (let i = 0; i < 3; i++) await log.publish(msg(`n${i}`, "C1", `news ${i}`));
+    const window = await log.read({ backfill: false, limit: 3 });
+    assertEquals(window.length, 3);
+    assertEquals(window.every((e) => e.extra?.backfill === undefined), true);
+  });
+});

@@ -131,6 +131,30 @@ Deno.test("relevant: another session's tool events are not ours", () => {
   assertEquals(relevant(CONFIG, ev("tool_result", other)), false);
 });
 
+/* ── backfill: imported history is readable, but owes nothing ─────────── */
+
+const oldMsg = () => ev("message", { extra: { backfill: true } } as Partial<Event>);
+
+Deno.test("relevant: a backfilled message never pokes — a pairing sync is not the work", () => {
+  assertEquals(relevant(CONFIG, oldMsg()), false);
+  assertEquals(relevant(CONFIG, peerMsg()), true); // live traffic is untouched
+  // the flag is service-neutral and rides beside the sidecar, not inside it
+  assertEquals(
+    relevant(CONFIG, ev("message", { extra: { whatsapp: { re: "x" } } } as Partial<Event>)),
+    true,
+  );
+});
+
+Deno.test("decide: backfilled peers are not unanswered — the NEXT live event sees past them", () => {
+  // the import alone owes nothing, however much of it lands
+  assertEquals(decide([oldMsg(), oldMsg(), oldMsg()], SESSION, HOME, OPEN), "ignore");
+  // and a later live message is answered on its own terms, not the backlog's
+  assertEquals(decide([oldMsg(), peerMsg()], SESSION, HOME, OPEN), "think");
+  assertEquals(decide([oldMsg(), peerMsg(), selfMsg()], SESSION, HOME, OPEN), "ignore");
+  // …including after a closing, where the horizon branch does the asking
+  assertEquals(decide([selfMsg(), oldMsg()], SESSION, HOME, OPEN), "ignore");
+});
+
 /* ── idle-after-error: the one policy the event-class filter used to hold ── */
 
 Deno.test("decide: order-independent — a truncated turn continues, a failed one idles", () => {

@@ -43,6 +43,7 @@ import type { Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import type { Locker } from "./store/lock.ts";
 import { filePartOf, loadMediaBlock } from "./store/media.ts";
+import { backfilled } from "./render.ts"; // one predicate: what never wakes never renders
 import { type ModelTransport, nu, type TurnConfig } from "./nu.ts";
 
 /* ── the poke, the class filter, and the owed-derivation ──────────────── */
@@ -116,7 +117,7 @@ function justFailed(events: Event[]): boolean {
 export function relevant(config: AgentConfig, event: Event): boolean {
   switch (event.type) {
     case "message": // a peer's IS the work; our own closing message is the self-poke that
-      return true; //   catches whatever landed mid-turn (§2)
+      return !backfilled(event); //   catches whatever landed mid-turn (§2)
     case "tool_use":
     case "tool_result":
       return event.agent?.session_id === config.sessionId; // never react to others' tools
@@ -188,14 +189,16 @@ function unanswered(events: Event[], session: Session, home: string): boolean {
     ) last = i;
   }
   if (last === -1) {
-    return events.some((e) => e.type === "message" && e.agent?.session_id !== session.id);
+    return events.some((e) =>
+      e.type === "message" && e.agent?.session_id !== session.id && !backfilled(e)
+    );
   }
   // resolve the horizon to a POSITION — the window may be re-sorted for display (§5)
   const horizon = events[last].meta?.consumed;
   const h = typeof horizon === "string" ? events.findIndex((e) => e.id === horizon) : -1;
   const from = h !== -1 ? h : last; // no/stale horizon → fall back to the closing's position
   return events.slice(from + 1).some((e) =>
-    e.type === "message" && e.agent?.session_id !== session.id
+    e.type === "message" && e.agent?.session_id !== session.id && !backfilled(e)
   );
 }
 
@@ -289,7 +292,10 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
   //    (another holder may have finished this very work while we were being invoked).
   //    The port is scoped (§6): visibility applies inside the read, BEFORE the limit, so the
   //    window holds N visible events — xi never sees, nor re-checks, what policy hides.
-  const events = await ports.log.read({ limit: config.windowLimit ?? DEFAULT_WINDOW }); // the
+  const events = await ports.log.read({
+    limit: config.windowLimit ?? DEFAULT_WINDOW,
+    backfill: false, // imported history is not news: it wakes nothing and renders nowhere
+  }); // the
   //    ONE read: the work's input as well as the decision's (§2)
   const v = decide(events, session, config.home, gate);
   if (v === "ignore") {
@@ -533,7 +539,10 @@ async function execute(
       ts: e.ts,
       conversation: e.envelope.conversation.address,
       sender: e.envelope.sender?.name ?? e.envelope.sender?.address ?? "self",
-      text: (e as MessageEvent).parts.filter((p) => p.type === "text")
+      // `?? []` because a row's payload may legitimately carry no parts — a merge-only
+      // draft that found no target inserts one (§3). Render already defends here; search
+      // threw, which took the whole query down over a single malformed row.
+      text: ((e as MessageEvent).parts ?? []).filter((p) => p.type === "text")
         .map((p) => (p as { text: string }).text).join(" "),
     }));
   }
