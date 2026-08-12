@@ -94,8 +94,6 @@ function renderIndex(pointers: DocEntry[]): string {
 
 /* ─────────────────────── (b) the messages tail (§5) ─────────────────────── */
 
-const GAP_MINUTES = 5; // elapsed-time separator threshold
-
 /** Raw bytes of media a single request may inline (base64 ≈ ×4/3; the API caps requests
  *  well above this) — the newest-first budget in `renderMessages`. */
 const MEDIA_BUDGET = 12 * 1024 * 1024;
@@ -191,20 +189,139 @@ export function applySummary(events: Event[]): Event[] {
  *  which the API constrains and the weld depends on — is never touched. Nor is history
  *  rewritten: a straggler that arrives after the agent already answered stays where it
  *  landed, because the answer breaks the run. */
-function byEventTime(events: Event[]): Event[] {
+function byEventTime(events: Event[]): { events: Event[]; elisions: Elisions } {
   const out = [...events];
+  const elisions: Elisions = { earlier: new Map(), rest: new Map() };
   const inbound = (e: Event) => e.type === "message" && !e.agent;
   for (let i = 0; i < out.length; i++) {
     if (!inbound(out[i])) continue;
     let j = i;
     while (j + 1 < out.length && inbound(out[j + 1])) j++;
     // stable sort ⇒ same-`ts` messages keep append order
-    if (j > i) {
-      out.splice(i, j - i + 1, ...byConversation(out.slice(i, j + 1).sort(byTs)));
-    }
-    i = j;
+    // the run IS one WUM (§5): sorted, grouped, then CAPPED — the burst does not get to
+    // decide the prompt's size, and what the caps leave out is stated where it was cut
+    const run = capRun(byConversation(out.slice(i, j + 1).sort(byTs)));
+    for (const [e, n] of run.elisions.earlier) elisions.earlier.set(e, n);
+    for (const [e, r] of run.elisions.rest) elisions.rest.set(e, r);
+    out.splice(i, j - i + 1, ...run.kept);
+    i = i + run.kept.length - 1;
   }
-  return out;
+  return { events: out, elisions };
+}
+
+/* ── WUM caps (§5) ──────────────────────────────────────────────────────────────────
+ *
+ * A run of world messages between two agent turns is ONE world-user-message, and its size
+ * is decided by the world, not by us: a busy hour, a group that wakes up, a history import
+ * mid-conversation. Unbounded, the burst decides the prompt — and a burst is exactly when
+ * the agent can least afford to be reading a thousand lines to find the one that matters.
+ *
+ * So a WUM is CAPPED and, past the cap, REDACTED — never silently truncated. What is left
+ * out is stated in place, with its count, because the log still holds it and `search`
+ * reaches it: the prompt carries the news, the log stays the record.
+ *
+ * Two caps, in this order, because they fail differently:
+ *   per conversation — one loud room cannot crowd out the other nine
+ *   per WUM          — and ten rooms cannot crowd out the turn
+ *
+ * Both keep the MOST RECENT, which is what a burst means: the tail is the state. And both
+ * are pure functions of the run, so a WUM the agent has already answered renders
+ * byte-identically forever — the property the cached prefix is built on.
+ */
+
+/** Most recent messages kept per conversation inside one WUM. */
+export const WUM_PER_CONVERSATION = 8;
+/** Most recent messages kept per WUM, across all conversations. */
+export const WUM_TOTAL = 50;
+
+/** What a cap left out, addressed to the events that survived it. `earlier` hangs on the
+ *  first kept message of a conversation ("what came before this one"); `rest` on the first
+ *  kept message of the whole run ("conversations you are not seeing at all"). */
+export interface Elisions {
+  earlier: Map<Event, number>;
+  rest: Map<Event, { conversations: number; messages: number }>;
+}
+
+/** Bound one run to the caps. `run` arrives ts-sorted and conversation-partitioned, so
+ *  "most recent" is its tail — per group for the first cap, per group-recency for the
+ *  second (whole conversations, never half a cluster: a room cut in the middle reads as if
+ *  that IS the conversation). */
+export function capRun(
+  run: Event[],
+  perConversation = WUM_PER_CONVERSATION,
+  total = WUM_TOTAL,
+): { kept: Event[]; elisions: Elisions } {
+  const elisions: Elisions = { earlier: new Map(), rest: new Map() };
+  if (run.length <= perConversation && run.length <= total) return { kept: run, elisions };
+
+  const groups = new Map<string, Event[]>();
+  for (const e of run) {
+    const key = (e as MessageEvent).envelope.conversation.address;
+    let g = groups.get(key);
+    if (!g) groups.set(key, g = []);
+    g.push(e);
+  }
+
+  // cap 1: the tail of each conversation
+  const trimmed = [...groups.values()].map((g) => ({
+    kept: g.slice(-perConversation),
+    dropped: Math.max(0, g.length - perConversation),
+  }));
+
+  // cap 2: whole conversations, most recently active first — the budget buys the rooms
+  // that just spoke. Ties keep arrival order (`groups` is insertion-ordered), so the
+  // choice is total and stable.
+  const byRecency = [...trimmed].sort((a, b) => {
+    const at = a.kept.at(-1)!.ts, bt = b.kept.at(-1)!.ts;
+    return at < bt ? 1 : at > bt ? -1 : 0;
+  });
+  const chosen = new Set<typeof trimmed[number]>();
+  let budget = total;
+  for (const g of byRecency) {
+    if (g.kept.length > budget) continue; // a room that doesn't fit is left whole, not split
+    chosen.add(g);
+    budget -= g.kept.length;
+  }
+  // never render an EMPTY WUM: if the caps are set so that not even one conversation fits,
+  // the newest one still gets through (trimmed to the total) — silence would read as "the
+  // world said nothing", which is the one thing that is certainly false here
+  if (chosen.size === 0 && byRecency.length > 0) {
+    const first = byRecency[0];
+    first.dropped += Math.max(0, first.kept.length - total);
+    first.kept = first.kept.slice(-total);
+    chosen.add(first);
+  }
+
+  const dropped = trimmed.filter((g) => !chosen.has(g));
+  // re-emit in the run's own order, so the caps never reorder what survives them
+  const kept = trimmed.filter((g) => chosen.has(g)).flatMap((g) => {
+    if (g.dropped > 0) elisions.earlier.set(g.kept[0], g.dropped);
+    return g.kept;
+  });
+
+  if (dropped.length > 0 && kept.length > 0) {
+    elisions.rest.set(kept[0], {
+      conversations: dropped.length,
+      messages: dropped.reduce((n, g) => n + g.kept.length + g.dropped, 0),
+    });
+  }
+  return { kept, elisions };
+}
+
+/**
+ * A BACKFILLED row: history a connector imported (WhatsApp's post-pairing sync), not
+ * something that just happened. Connectors stamp it service-neutrally — `extra.backfill`,
+ * beside the per-service sidecar — so one predicate serves every frontier.
+ *
+ * It is real history: readable, searchable, part of the log. It is simply not NEWS, and so
+ * it appears in no prompt — not as a wake (the gates in xi ask this too), and not in a WUM.
+ * The deciding reason is determinism, not size: an import streams in over minutes, and an
+ * OPEN WUM that carried it would be rewritten on every batch — its elision count walking
+ * 4 → 812 → 8,512 — churning the prompt's tail exactly when there is most of it. Hidden,
+ * a sync is invisible to the prompt and `search` is the door.
+ */
+export function backfilled(event: Event): boolean {
+  return event.extra?.backfill === true;
 }
 
 /** Stable-partition a run by conversation id, groups in first-arrival order. */
@@ -223,7 +340,7 @@ const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 function renderMessages(
   { events: window, session, home, now, ambient, loadMedia }: RenderInput,
 ): MessageParam[] {
-  const events = byEventTime(applySummary(window));
+  const { events, elisions } = byEventTime(applySummary(window.filter((e) => !backfilled(e))));
   const out: MessageParam[] = [];
   let cur: { role: Role; content: ContentBlockParam[] } | null = null;
 
@@ -288,7 +405,26 @@ function renderMessages(
     closeCluster();
     emit(role, ...blocks);
   };
+
+  /** Set a cache breakpoint on a block. It is metadata, not content: the cached prefix is
+   *  the blocks themselves, so moving the mark forward never invalidates what it covered. */
+  const mark = (b: ContentBlockParam | undefined) => {
+    if (b && b.type !== "mid_conv_system") {
+      (b as { cache_control?: { type: "ephemeral" } }).cache_control = { type: "ephemeral" };
+    }
+  };
   const world = (e: MessageEvent) => {
+    // what the WUM caps left out, said where it was cut — the count is the useful part:
+    // it tells the agent whether `search` is worth a call before it answers
+    const rest = elisions.rest.get(e);
+    if (rest) {
+      place("user", {
+        type: "text",
+        text: `— ${rest.messages} more message${rest.messages === 1 ? "" : "s"} in ` +
+          `${rest.conversations} other conversation${rest.conversations === 1 ? "" : "s"} ` +
+          `not shown — search to read them —`,
+      });
+    }
     if (cluster && cluster.conv.address !== e.envelope.conversation.address) closeCluster();
     if (!cluster) {
       cluster = {
@@ -297,22 +433,19 @@ function renderMessages(
         conv: e.envelope.conversation,
         lines: [],
       };
+      const earlier = elisions.earlier.get(e);
+      if (earlier) cluster.lines.push(`… ${earlier} earlier, not shown`);
     }
     cluster.lines.push(msgLine(e, session));
   };
 
-  // separators: a date break on day-change, else an elapsed-gap marker (§5). Plain text —
-  // the API allows `mid_conv_system` blocks only in TRAILING position within a turn, and
-  // separators precede what they separate; timestamps carry no authority anyway.
-  let prevTs: string | undefined;
-  const separate = (ts: string) => {
-    if (prevTs === undefined || dayOf(ts) !== dayOf(prevTs)) {
-      place("user", { type: "text", text: `— ${dayOf(ts)} —` });
-    } else if (gapMinutes(prevTs, ts) >= GAP_MINUTES) {
-      place("user", { type: "text", text: `— ${gapMinutes(prevTs, ts)} min later —` });
-    }
-    prevTs = ts;
-  };
+  // No separators (§5). They went through `place()`, so every date break and gap marker
+  // CLOSED the open cluster — one room came out as four `<conv>` elements the moment its
+  // messages spanned any time at all. And they were measured in render order, which after
+  // the per-conversation partition is not a timeline: a gap computed across two different
+  // rooms said `— 680 min later —` about a message that had just arrived, while a jump
+  // backwards printed nothing. Each `<msg>` now carries its own absolute stamp instead:
+  // one fact per line, no cross-message state to get wrong, clusters intact.
 
   // No turns, no nu state (§2 unrolled): render derives everything from the window's shape.
   // Everything the boundary step CONSUMED is CLOSED (collapsed); after it — including
@@ -373,7 +506,6 @@ function renderMessages(
       continue;
     }
     if (e.type !== "message") continue;
-    separate(e.ts);
     if (e.envelope.conversation.address === home) {
       // home: the plain user/assistant chat every LLM API means (§5)
       place(isSelf(e, session) ? "assistant" : "user", { type: "text", text: bodyOf(e) });
@@ -381,6 +513,16 @@ function renderMessages(
       world(e);
     }
   }
+
+  // The cache breakpoint (§5): the closed region is the stable prefix — collapsed once and
+  // then byte-identical on every later turn, since the boundary only ever moves FORWARD and
+  // all volatility (now, cwd, jobs, inlined media) lives after it. Marking it makes the whole
+  // history a cache READ (0.1x input) with only the turn's delta written, which is what the
+  // tool loop needs: every tool round-trip re-sends this same prefix seconds apart.
+  // The cluster must close here — a `<conv>` element spanning the boundary would absorb
+  // trailing messages and rewrite the prefix's last block on every turn.
+  closeCluster();
+  mark((cur as { content: ContentBlockParam[] } | null)?.content.at(-1));
 
   // TRAILING — weld faithfully. `weldOrder` makes each group contiguous (uses, then results)
   // and floats intervening events after it, so a tool_result is always FIRST in its user
@@ -404,10 +546,8 @@ function renderMessages(
       if (isSelf(e, session) && e.envelope.conversation.address === home) {
         place("assistant", { type: "text", text: bodyOf(e) }); // mid-chain assistant text
       } else if (e.envelope.conversation.address === home) {
-        separate(e.ts);
         place("user", { type: "text", text: bodyOf(e) });
       } else {
-        separate(e.ts);
         world(e);
       }
       // TRAILING media (§5): after the marker, the picture itself — a real base64
@@ -421,9 +561,18 @@ function renderMessages(
     // thinking/uses of incomplete groups, orphan results, other types: skipped defensively
   }
 
+  // The within-turn breakpoint: while a turn runs there is no closing yet, so its whole tool
+  // chain is TRAILING — and it only ever grows (each request appends the last use/result
+  // pair). Marking here lets the next round-trip read back everything it already paid for;
+  // without it a 19-call turn re-sends its own accumulated tool output 19 times. Across
+  // turns the chain collapses and this entry dies — the boundary mark above is the durable
+  // one. A miss (a message landing mid-turn reorders the tail) costs only a normal write.
+  closeCluster();
+  mark((cur as { content: ContentBlockParam[] } | null)?.content.at(-1));
+
   // the trailing anchor: `now:` + the volatile environment lines (cwd · git · bg jobs).
   // Kept as ONE block, last, so the whole prefix stays cache-stable (§5).
-  const anchor = [`now: ${now}`, ...(ambient ?? [])].join("\n");
+  const anchor = [`now: ${nowStamp(now)}`, ...(ambient ?? [])].join("\n");
   place("user", sys(anchor));
   // the API rejects a user turn whose content is ONLY system blocks — if nothing else
   // landed in this turn, carry the anchor as plain text instead (valid content, same info)
@@ -509,9 +658,17 @@ function conversationEl(
  *  sender name are attacker-controlled — escaped, so no message can close its own element
  *  or forge a mark. */
 function msgLine(e: MessageEvent, session: SessionId): string {
+  // `self` for both hands, because on the wire there IS only one: the account. WhatsApp
+  // coexistence is unattributable from the platform (§4) — but not from the LOG, and the
+  // two are told apart without asking anyone. `agent` set ⇒ we published it (a `send`, or
+  // the echo that merged into its row). No sender at all ⇒ the account spoke and it did
+  // not come through us: the principal, typing on their own phone. Before this, that row
+  // fell through to `peer` — the principal's own messages arrived labelled as a stranger's.
   const from = isSelf(e, session)
-    ? "self"
-    : (e.envelope.sender?.name ?? e.envelope.sender?.address ?? "peer");
+    ? "self (you)"
+    : e.envelope.sender === undefined
+    ? "self (principal)"
+    : (e.envelope.sender.name ?? e.envelope.sender.address ?? "peer");
   const failed = e.envelope.status === "failed" ? ' status="failed"' : "";
   // body text is escaped (untrusted); the media markers are render's own, appended after
   const body = [escText(textOf(e)), ...filesOf(e).map(mediaMarker)]
@@ -601,17 +758,79 @@ function bodyOf(e: Event): string {
   return [textOf(e), ...filesOf(e).map(mediaMarker)].filter((s) => s.length > 0).join("\n");
 }
 
+/* ── clocks (§5) ────────────────────────────────────────────────────────────────────
+ *
+ * Times are read LITERALLY off the ISO string, never through `Date`. An ISO stamp already
+ * carries the offset it was written in — WhatsApp says `2026-08-11T20:01:56-03:00`, and
+ * 20:01 is the hour the two humans experienced. `new Date(...)` normalizes that to UTC, so
+ * the old `getUTCHours()` rendered it 23:01: every conversation in this deployment was
+ * three hours in the future, and nothing said so.
+ *
+ * So: no timezone database, no config. The producer's offset IS the local time, and a
+ * literal parse preserves it. `Z` stamps (the harness's own) read as written too.
+ */
+// English until there is an i18n seam: the locale belongs in org config beside the
+// timezone, not in a constant here.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS_LONG = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+const WEEKDAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+interface Clock {
+  year: number;
+  month: number; // 0-based
+  day: number;
+  hour: number;
+  minute: number;
+}
+
+/** The fields as WRITTEN in the stamp — offset applied by the producer, not by us. */
+function clockOf(ts: string): Clock | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(ts);
+  if (!m) return null;
+  return {
+    year: +m[1],
+    month: +m[2] - 1,
+    day: +m[3],
+    hour: +m[4],
+    minute: +m[5],
+  };
+}
+
+/** A message's stamp: `12 ago 9:50`. Absolute on every line — separators are gone, so the
+ *  line itself has to say when, and a bare `HH:mm` under a `now:` anchor reads as today. */
 function hhmm(ts: string): string {
-  const d = new Date(ts);
-  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  const c = clockOf(ts);
+  if (!c) return ts;
+  return `${c.day} ${MONTHS[c.month]} ${c.hour}:${pad(c.minute)}`;
 }
 
-function dayOf(ts: string): string {
-  return new Date(ts).toISOString().slice(0, 10);
-}
-
-function gapMinutes(a: string, b: string): number {
-  return Math.floor((new Date(b).getTime() - new Date(a).getTime()) / 60000);
+/** The `now:` anchor, spelled out — the one place a full date is worth its width. */
+function nowStamp(ts: string): string {
+  const c = clockOf(ts);
+  if (!c) return ts;
+  const weekday = WEEKDAYS[new Date(Date.UTC(c.year, c.month, c.day)).getUTCDay()];
+  return `${weekday} ${c.day} ${MONTHS_LONG[c.month]}, ${c.year} - ${c.hour}:${pad(c.minute)}`;
 }
 
 function pad(n: number): string {
