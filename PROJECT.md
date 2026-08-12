@@ -87,6 +87,23 @@ when). Status as of 2026-08-12 (Slack live, both directions, model in the loop).
   only EMIT XML, never parse it, so escaping-on-encode is the entire surface — a closed,
   exhaustively-testable rule, no dependency.
 
+- **Prompt-cache breakpoints on the conversation — LANDED 2026-08-11**: the request now
+  carries three marks, not one. The system prefix (already there), the **closed/trailing
+  boundary** (collapsed history: written once, then read forever), and the **last block
+  before the anchor** (the live tool chain, which only grows while a turn runs). Caching is
+  opt-in per breakpoint — nothing is cached without a `cache_control` mark, so the whole
+  conversation was previously re-sent at full price on every tool round-trip. Transport
+  needed no change (it passes `params` straight through) and `metered()` already recorded
+  `cache_read_tokens`/`cache_write_tokens`, so the effect was measurable immediately.
+  Measured on a 5-round-trip task: fresh input pinned at **84 tokens** (the anchor alone)
+  for every request after the first, 9316 input tokens → **1834 billed-equivalent, 80%
+  saved** — and the ratio improves with turn length, so a 19-tool bench task gains far
+  more. Two invariants this rests on, both now tested: a `<conv>` element must not span the
+  boundary (trailing messages joining it would rewrite the prefix's last block), and the
+  chain appends across round-trips because each re-entry is a NEW step — `weldOrder` only
+  groups uses-before-results *within* one turn (parallel calls), which is a single request
+  anyway. A mid-turn message landing out of order costs a miss, i.e. a normal write.
+
 - **Media, both directions — LANDED 2026-08-11** (plan of 2026-08-13, implemented as
   written, plus a request-level inline budget: 12MB raw NEWEST-first across the trailing
   region, so an attachment burst can't outgrow the API request cap — older files keep
@@ -227,21 +244,48 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
    (`deleteMemberships`: a leave is a revocation, policy is live) and each event's
    `authorizations` passively enrolls bound identities; dispatch picks the author's xoxp
    (alter-ego) before the org bot. Live-verified end to end 2026-08-12 (item 7).
-   Remaining: **the mind-alias** — decided 2026-08-13 (§4 "self-talk is special"): an
-   envelope identified as the principal maps to AND from the mind — ingest aliases the
-   self-conversation onto `mind:<agent>` (wire envelope in `meta.via`), render shows it
-   as the plain home chat, and the mind's voice mirrors back out via the latest
-   inbound's `meta.via`; `send` exteriorizes the mind (world only, never the principal).
-   Implementation notes: (a) the TWO legs ship together — aliasing ingest alone strands
-   the reply (bare assistant text reaches only the REPL; today the agent reaches the
-   self-DM as a world conversation via `send`, which the alias removes); (b) mirror to
-   the ORIGIN surface, not fan-out — one event holds one `external_id`, so echo-merge
-   only works against a single mirrored post (fan-out needs per-surface delivery rows);
-   (c) self-conversation identification per service: WA jid == own number (derivable at
-   ingest), Slack self-DM via `conversations.list(types: im)` where `user == the
-   granting user` — resolved once at connect (the flow holds the xoxp; the smoke probe
-   did exactly this) and recorded on the connection row's `meta`, beside the ownership
-   edge that names the principal — no new table.
+   **The mind-alias — LANDED 2026-08-12** (§4 "self-talk is special"): a
+   principal-identified conversation (WA self-chat, Slack self-DM) maps to AND from the
+   mind by **COPY, never rewrite** — an event with the right envelope must exist in the
+   log to be dispatched, and the wire original stays honest where it landed. One
+   broker-side component, `connect/mirror.ts` (`deno task mirror`), two rules: fan-in
+   copies an alias inbound into `mind:<agent>` (provenance in `extra.via`; the agent
+   wakes on it like a REPL line); fan-out CCs **every mind event the REPL shows** to
+   every binding except the origin surface — the voice as `[agent] …` (a
+   self-conversation renders both speakers as the principal; the tag is the surface's
+   only input/output distinction), tool calls as redacted
+   one-liners (`● bash(git status)`), and the principal's own words as `> quoted` +
+   `[sent via whatsapp]` (input displayed as output; fan-out over fan-in's own copy is
+   what cross-syncs surfaces, and a REPL line CCs everywhere tagged `[sent via repl]`).
+   Each CC is an ordinary outbound event: the dispatchers post it unchanged and the
+   platform echo merges by its own `external_id` — no per-surface delivery rows needed;
+   fan-in settles (`settleMs`, default 1s) and re-reads before copying so an echo the
+   backfill absorbs copies nothing (the 小-window one layer up; an echo whose backfill
+   never comes can still slip through — accepted, like the window it generalizes).
+   Bindings (`log.aliases()`; `aliasOf` matches envelopes on the workspace root, so
+   events anchored to the team/bot still hit the grant's binding) are DERIVED where
+   platform structure gives them away and RECORDED where the id is opaque: an owned WA
+   connection's self-chat IS its own address — nothing stored (don't record the
+   derivable); the Slack paste door resolves the
+   self-DM via `conversations.open` on the granting user's own id (no listing, no
+   pagination — supersedes the `conversations.list` plan; the oauth door doesn't bind
+   yet, backlog) and records it as `extra.self_conversation` on the grant row. Hiding is POLICY (§6): the alias conversation is invisible to its own
+   agent, reads and writes alike — the copies are its face in the window, the world
+   render never sees the surface, and `send` can't reach the principal. NO BACKFILL:
+   the mirror tails live; only the REPL reads the log. The REPL paints alias-borne
+   principal lines as `[via slack]` and stays silent on CC plumbing. Not mirrored v0:
+   permission cards, edits/deletes of already-copied messages, mirror-downtime gaps.
+   **Minds are user-scoped — decided 2026-08-12**: self-talk on an owned connection is
+   the ONLY alias source. The declared-handle × shared-connection derivation (org-number
+   DM as the principal's mind) was REJECTED on the secretary counterexample: a shared
+   account has other humans behind it — the secretary holding the org WA would see the
+   mind's traffic and could write into it as a third participant; those DMs are world
+   conversations the agent serves. Explicit bindings (a `mu alias` door — what Teams'
+   1:1 bot chat would need) deferred until wanted. Side fact for the CLASSIFIER (not
+   aliases): Slack ids never need declaring — grants carry them (`auth.test`); an
+   ungranted principal could resolve by declared email via `users.info` /
+   `users.lookupByEmail` (`users:read.email` scope) if bot-tier recognition ever wants
+   it.
    **The resource-shaped tables — LANDED 2026-08-13** (the recap that killed identities):
    agents and connections are RESOURCES, and every table is either mirrored-from-files or
    written-by-flows, never hand-edited. (a) `agents` absorbed `config.json`: columns
@@ -327,8 +371,9 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
    hand (or regenerate) and the code ships clean DDL only; the guarded-ALTER chains
    were deleted and the last old-shape residue (meta.slack in pre-refactor events)
    hand-moved to `extra`. Deferred from the same pass: local as a real team chat (a
-   conversations table — agents chatting is the missing piece); mind-alias
-   ingest-rewrite vs read-time aliasing (next discussion; `extra.via` untouched).
+   conversations table — agents chatting is the missing piece). The mind-alias
+   aliasing question resolved 2026-08-12: neither rewrite nor read-time — COPY
+   (the landed entry in item 6).
    **Memberships soft-delete — LANDED 2026-08-11**: a membership is a lifetime, not a
    flag. A channel leave stamps `deleted_at` (first stamp wins); `isMember` takes the
    event's `ts`, so a left row keeps granting events up to the stamp — agents keep

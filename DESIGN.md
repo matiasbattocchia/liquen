@@ -271,7 +271,8 @@ think: re-triggered; model continues (multi-send: "working on it" → work → r
 
 - **Invariant: dispatch to a *peer* is always the `send` tool; the agent's voice to its
   *principal* is bare `assistant` text** (auto-delivered to the principal-DM — no tool, like
-  Claude Code answering). Three channels: **think** (`thinking`, private), **assistant** (bare
+  Claude Code answering; the mirror CCs it to every bound alias surface, §4). Three channels:
+  **think** (`thinking`, private), **assistant** (bare
   text → principal), **send** (tool → peer). `send` is never principal-directed. (§5)
 - **The closing call**: because `stop_reason=tool_use` never ends a turn, a think that sends
   needs a follow-up `end_turn` call — the model reacts if a send failed, then closes with its
@@ -508,8 +509,8 @@ ownership) only if double-answers show up.
   bindings ARE connections: a user grant is its own owned connection whose address
   carries the wire user (`<team>:<user>`, written by the connect flow from `auth.test`),
   so a sender matching the leg's own user IS the owner — the ownership edge and the
-  handle binding are one row. Ingest's classifier (§3) reads both: principal → alias
-  into the mind; agent → echo/coexistence. With connections + credentials + the registry
+  handle binding are one row. Ingest's classifier (§3) reads both: principal → the
+  mind-alias (the mirror copies it home, below); agent → echo/coexistence. With connections + credentials + the registry
   the machinery is complete — N principals on one workspace are N owned legs, nothing
   shared to fight over.
 - **`conversation.kind` = `direct | group | channel | broadcast`** (landed 2026-08-05,
@@ -534,9 +535,10 @@ ownership) only if double-answers show up.
   quiescent window and no-ops.
 - WhatsApp coexistence is unattributable from the wire (platform doesn't say which human)
   — keep `sender` honest, infer softly to `meta.inferred_sender`.
-- Principal↔own-agent conversations are **canonicalized across channels** via alias map:
-  one `local` conversation per principal. Original wire in `meta.via`; replies via the
-  latest inbound's binding. (General bindings/fan-out parked.)
+- Principal↔own-agent conversations are **canonicalized across channels** via the alias
+  bindings: one `local` conversation per principal (the mind), kept in sync with every
+  bound surface by the mirror — copy in, CC out ("self-talk is special", below). Original
+  wire in `extra.via`.
 - **The log is the frontier (delivery identity is connector-internal).** Above the log an
   agent knows only *conversations and messages* — it addresses a conversation, never a
   token, a bot, or a transport. Below it, the connection owns credentials and delivery
@@ -550,11 +552,18 @@ ownership) only if double-answers show up.
 
 ### Principal-DM bindings per platform
 
+**Mind flows are user-scoped**: only a conversation whose counterpart can be NOBODY but
+the principal binds as a mind surface — in practice, self-talk on an OWNED connection.
+A shared/org account never hosts a mind, however well the sender classifies: other
+humans stand behind a shared account (the secretary running the org WhatsApp would see
+the mind's traffic, and could write into it as a third participant). Their DMs with the
+org are world conversations the agent serves, not surfaces of its steering channel.
+
 ```
 slack:  self-DM (agent posts via the principal's xoxp — true alter-ego in notes-to-self)
-teams:  1:1 bot chat (v0; self-chat exists but Graph delegated posting unverified)
-wa:     principal's personal number ↔ org number (no self-talk in Cloud API — headless)
-email:  principal's account (shared/personal)
+wa:     self-chat ("Message Yourself") on the principal's own paired number (whatsmeow)
+teams:  later — the 1:1 bot chat is user-scoped but not self-talk: needs a binding door
+email:  not a mind surface
 cli/ui: native local conversations
         → all alias to the canonical local principal-DM (the agent's own DM)
 ```
@@ -565,17 +574,37 @@ cli/ui: native local conversations
   conversation is a peer conversation reached via connectors.
 - **Self-talk is special, even across connections.** An envelope identified as the
   principal — a conversation whose counterpart IS the agent's principal (the WA self-chat,
-  the Slack self-DM, the REPL) — maps **to and from the mind**: ingest aliases it onto
-  `mind:<agent>` (wire envelope in `meta.via`), so in the agent's context these are the
-  same **plain** user/assistant chat as the REPL (§5 home mode — one voice, one thread,
-  whatever surface the principal picked up); and the mind's own voice (bare assistant
-  text) mirrors back out through the same binding — replies via the latest inbound's
-  `meta.via`. Per-service identification of the self-conversation: WA, the jid equals the
-  connection's own number (derivable); Slack, the self-DM channel is resolved once at
-  connect (`conversations.list(types: im)`, peer == the granting user) and recorded on
-  the **connection row** (`meta`), beside the ownership edge that already names the
-  principal — the same "who a wire address IS" semantics as the sender check; local,
-  native.
+  the Slack self-DM, the REPL) — maps **to and from the mind**, by COPY, never rewrite
+  (an event with the right envelope must exist in the log for a dispatcher to carry it,
+  and the wire original stays honest where it landed). The **mirror**
+  (`connect/mirror.ts`, broker-side, one per org) holds both legs:
+  - **fan-in**: an inbound on an alias conversation copies into `mind:<agent>` — the agent
+    wakes on it exactly as on a REPL line (provenance in `extra.via`: origin event id +
+    wire coordinates); in the agent's context every surface is the same **plain**
+    user/assistant chat (§5 home mode — one voice, one thread, whatever surface the
+    principal picked up).
+  - **fan-out**: every mind event the REPL would show CCs to every alias binding except
+    the origin surface (read off `extra.via`): the agent's voice as `[agent] …` (a
+    self-conversation renders both speakers as the principal — the tag is the surface's
+    only input/output distinction; the log needs none, authorship is the bit), the
+    principal's own words as `> quoted` + `[sent via <surface>]` (input displayed as
+    output — fan-out over fan-in's own copy is what cross-syncs surfaces), tool calls as
+    redacted one-liners (`● bash(git status)`). A CC is an ordinary outbound event on its
+    service — the dispatchers post it, the platform echo merges into it (§4 echo-dedup;
+    fan-in settles briefly and re-reads so an early echo the backfill absorbs copies
+    nothing — the 小-window, one layer up).
+  The alias conversation itself is **invisible to its own agent** (policy, §6): the
+  copies are its face in the window — nothing to hide from the world render, and `send`
+  can't reach it. **No backfill**: the mirror tails live — a surface connected
+  mid-conversation starts mid-stream; only the REPL reads the log, so only the REPL has
+  history. Per-service identification of the self-conversation (`aliases()`): **derived
+  where platform structure gives it away, recorded where the id is opaque** — WA, the
+  self-chat is addressed by the connection's own number, so an owned connection IS the
+  binding, nothing stored; Slack, the self-DM channel is resolved once at
+  connect (`conversations.open` on the granting user's own id) and recorded as
+  `extra.self_conversation` on the **grant row**,
+  beside the ownership edge that already names the principal — the same "who a wire
+  address IS" semantics as the sender check; local, native.
   The agent must never treat its own principal as a peer/customer.
 - **`send` exteriorizes the mind.** The one door from the mind to the world: `send`
   targets peer conversations only — the principal is never a send target, on any surface,
@@ -786,10 +815,10 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
 
 - **Home (principal-DM)** — a bare `user`/`assistant` chat: no marks, no grouping, no
   per-line time (time comes from separators). The agent's console; `send` never appears
-  here. Every principal-identified envelope lands here (§4 self-talk): the WA self-chat
-  and the Slack self-DM alias onto the mind at ingest, so the principal is plain in this
-  mode whichever surface they typed from — the surface lives in `meta.via`, invisible to
-  the model.
+  here. Every principal-identified conversation reaches here (§4 self-talk): the mirror
+  copies the WA self-chat and the Slack self-DM into the mind, so the principal is plain
+  in this mode whichever surface they typed from — the surface lives in `extra.via`
+  (painted as a `[via slack]` tag in the REPL, invisible to the model).
 - **World (peer convos)** — one `<conv service connection address kind name thread>`
   element per run of a conversation's messages, one `<msg from at>` line each.
   Every non-null `Conversation` field is an attribute, plus the envelope's
@@ -851,6 +880,13 @@ constraint, and render derives it **from the window's shape**:
   recovery re-renders the same window and gets the same request.
 - Three regions: **trailing** (faithful) · **recent** (collapsed) · **distant** (`summary`
   events + top-level `system`).
+- **The boundary is also the cache breakpoint** — a closed event collapses once and then
+  renders identically forever, and the boundary only moves forward, so everything up to it is
+  a stable prefix (all volatility — `now`, ambient env, inlined media — sits after it by
+  construction). Marking it makes the history a cache **read** (0.1× input) with only the
+  turn's delta written. That is what makes the tool loop affordable: every tool round-trip
+  re-sends this same prefix, seconds apart. A `<conv>` element never spans the boundary —
+  trailing messages joining it would rewrite the prefix's last block.
 
 ### Media (the same collapse pattern, applied to bytes)
 
@@ -903,7 +939,8 @@ to get lost in busy batches, the fix is ordering groups by class with the **home
 Built by render from `docs.list()` (§8): **instructions** = the bodies of `load:always` docs
 (system → org → agent), inlined; **skill / memory index** = pointers (name + description) for
 the rest, which the agent pulls via `aread` on demand; **cron / projections** = always-on.
-Ordered most-stable → most-volatile, one cache breakpoint at the end (revisit, §9).
+Ordered most-stable → most-volatile, with a cache breakpoint at the end — the first of the
+two the request carries; the second closes the collapsed history (above).
 
 ### Inline system blocks (the narrator)
 
@@ -1021,7 +1058,10 @@ Returns **raw events, type-filtered** (messages; never tool/permission noise).
   seen, §4)
   ∨ connection ownerless AND org-credentialed (branch 1: the org's — the bot/org
   account IS the shared inbox) ∨ `connection.agent_id → agent` (branch 2: owned ⇒
-  private). **Ownership is the privacy switch**; an ownerless row WITHOUT an org
+  private) — all under one guard: an agent's own **mind-alias conversation is invisible
+  to it** (§4 self-talk: the mirror's copies are its face in the window; the same
+  predicate on the write side is what keeps the principal out of `send`'s reach).
+  **Ownership is the privacy switch**; an ownerless row WITHOUT an org
   credential is a registration stub — like no row at all (the local service),
   membership is the only door; a soft-deleted grant KEEPS its visibility (revocation
   closes the publish gate, never a session's window) — and the write side is harder
