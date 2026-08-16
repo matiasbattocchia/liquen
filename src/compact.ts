@@ -159,7 +159,7 @@ export async function buildSummary(
       connection_address: "agent",
       conversation: { address: `mind:${input.agentId}` },
     },
-    meta: { covers: span.covers },
+    payload: { covers: span.covers },
     parts: [{ type: "text", kind: "text", text: summary }],
   };
 }

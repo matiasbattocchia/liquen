@@ -168,8 +168,8 @@ async function runTask(instruction: string): Promise<number> {
         console.error(`[mu-trace] ${e.type} ${head.replaceAll("\n", "⏎").slice(0, 140)}`);
       }
       const turns = new Set(
-        events.filter((e) => "turnId" in e || typeof e.meta?.turnId === "string")
-          .map((e) => (e as { turnId?: string }).turnId ?? e.meta?.turnId),
+        events.filter((e) => typeof e.payload?.turn_id === "string")
+          .map((e) => e.payload!.turn_id),
       ).size;
       const tools = events.filter((e) => e.type === "tool_use").length;
       console.error(`[mu-trace] totals: turns=${turns} tools=${tools} events=${events.length}`);

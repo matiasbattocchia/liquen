@@ -103,7 +103,7 @@ Deno.test("mirror fan-in: an alias inbound copies to the mind and cross-CCs the 
     assertEquals(copy.agent, undefined);
     assertEquals(copy.envelope.sender?.address, "U1");
     assertEquals(textOf(copy), "pick up milk");
-    assertEquals(copy.cause, origin.id);
+    assertEquals(copy.payload?.ref_id, origin.id);
     assertEquals(copy.extra?.via, {
       event: origin.id,
       service: "slack",
@@ -112,11 +112,11 @@ Deno.test("mirror fan-in: an alias inbound copies to the mind and cross-CCs the 
       external_id: "slack:T1:D1:111.1",
     });
 
-    // the cross-broadcast: fan-out over the copy reaches WA — quoted, tagged, agent-legged
+    // the cross-broadcast: fan-out over the copy reaches WA — tagged, agent-legged
     await waitFor(async () => (await inConv("549")).length === 1);
     const [cc] = await inConv("549");
     assertEquals(cc.agent?.id, "ana");
-    assertEquals(textOf(cc), "> pick up milk\n[sent via slack]");
+    assertEquals(textOf(cc), "[you via slack] pick up milk");
     // …and never back to the origin surface
     await new Promise((r) => setTimeout(r, 150));
     assertEquals((await inConv("D1")).length, 1);
@@ -136,7 +136,7 @@ Deno.test("mirror fan-out: the agent's voice CCs tagged to every alias, and CCs 
       // the tag is what tells the agent's output from the principal's input there
       assertEquals(textOf(cc), "[agent] done!");
       assertEquals(cc.agent?.id, "ana");
-      assertEquals(cc.extra?.via, { event: cc.cause, service: "local", conversation: "mind:ana" });
+      assertEquals(cc.extra?.via, { event: cc.payload?.ref_id, service: "local", conversation: "mind:ana" });
     }
     // the loop guard: the CCs are copies (agent + via) — nothing fans back in or out again
     await new Promise((r) => setTimeout(r, 200));
@@ -146,12 +146,12 @@ Deno.test("mirror fan-out: the agent's voice CCs tagged to every alias, and CCs 
   });
 });
 
-Deno.test("mirror fan-out: a REPL-typed principal line CCs quoted with the repl tag", async () => {
+Deno.test("mirror fan-out: a REPL-typed principal line CCs tagged with where it was typed", async () => {
   await withMirror(async ({ publish, inConv, waitFor }) => {
     await publish(mindMsg("hola"));
     await waitFor(async () => (await inConv("D1")).length === 1);
-    assertEquals(textOf((await inConv("D1"))[0]), "> hola\n[sent via repl]");
-    assertEquals(textOf((await inConv("549"))[0]), "> hola\n[sent via repl]");
+    assertEquals(textOf((await inConv("D1"))[0]), "[you via repl] hola");
+    assertEquals(textOf((await inConv("549"))[0]), "[you via repl] hola");
   });
 });
 
@@ -160,7 +160,7 @@ Deno.test("mirror fan-out: a tool call crosses as one redacted line", async () =
     const use: Draft<ToolUseEvent> = {
       ts: new Date().toISOString(),
       type: "tool_use",
-      turnId: "t1",
+      payload: { turn_id: "t1" },
       agent: { id: "ana", session_id: "ana" },
       envelope: {
         service: "local",
@@ -175,7 +175,7 @@ Deno.test("mirror fan-out: a tool call crosses as one redacted line", async () =
     };
     await publish(use);
     await waitFor(async () => (await inConv("D1")).length === 1);
-    assertEquals(textOf((await inConv("D1"))[0]), "● bash(git status # extra)");
+    assertEquals(textOf((await inConv("D1"))[0]), "[agent tool] bash(git status # extra)");
   });
 });
 

@@ -131,7 +131,7 @@ Deno.test("a principal message spawns a turn; stamped events are published", asy
       const replies = (await read("message")).filter((e) => e.agent?.session_id === "s1");
       assertEquals(replies.length, 1);
       assertEquals(replies[0].envelope.conversation.address, "home");
-      assertEquals(typeof replies[0].meta?.turnId, "string");
+      assertEquals(typeof replies[0].payload?.turn_id, "string");
       assertEquals(calls(), 1);
     },
   );
@@ -175,7 +175,7 @@ Deno.test("tool cycle: use → act → result → closing turn; then quiescence"
       const [use] = await read("tool_use") as ToolUseEvent[];
       const [result] = await read("tool_result");
       assert(result.type === "tool_result");
-      assertEquals(result.cause, use.id);
+      assertEquals(result.payload.ref_id, use.id);
       assertEquals(result.parts[0].data.output, { echoed: { v: 42 } });
 
       await waitFor(async () =>
@@ -231,15 +231,16 @@ Deno.test("send: directed message + queued result, both cause-linked", async () 
         e.envelope.conversation.address === "wa:mariana"
       );
       assertEquals(directed.length, 1);
-      assertEquals(directed[0].cause, use.id);
+      assertEquals((directed[0] as Event).payload?.ref_id, use.id);
     },
   );
 });
 
 Deno.test("gating: request surfaces instead of executing; allow runs; deny errors", async () => {
-  const respond = (request_id: string, behavior: "allow" | "deny"): Draft<Event> => ({
+  const respond = (refId: string, behavior: "allow" | "deny"): Draft<Event> => ({
     ts: new Date().toISOString(),
     type: "permission_response",
+    payload: { ref_id: refId },
     envelope: { service: "local", connection_address: "agent", conversation: { address: "home" } },
     parts: [{
       type: "data",
@@ -248,7 +249,6 @@ Deno.test("gating: request surfaces instead of executing; allow runs; deny error
         behavior,
         scope: "once",
         ...(behavior === "deny" ? { reason: "not now" } : {}),
-        request_id,
       },
     }],
   });
@@ -270,7 +270,7 @@ Deno.test("gating: request surfaces instead of executing; allow runs; deny error
         0,
       );
 
-      await publish(respond(req.parts[0].data.request_id, "allow"));
+      await publish(respond(req.payload.ref_id, "allow"));
       await waitFor(async () =>
         (await read("message")).some((e) => e.envelope.conversation.address === "wa:x")
       );
@@ -290,7 +290,7 @@ Deno.test("gating: request surfaces instead of executing; allow runs; deny error
       const [req] = await read("permission_request");
       assert(req.type === "permission_request");
 
-      await publish(respond(req.parts[0].data.request_id, "deny"));
+      await publish(respond(req.payload.ref_id, "deny"));
       await waitFor(async () => (await read("tool_result")).length === 1);
       const [res] = await read("tool_result");
       assert(res.type === "tool_result");
@@ -310,7 +310,7 @@ Deno.test("gating: request surfaces instead of executing; allow runs; deny error
 const orphanUse = (): Draft<Event> => ({
   ts: new Date().toISOString(),
   type: "tool_use",
-  turnId: "T-crashed",
+  payload: { turn_id: "T-crashed" },
   agent: { id: "a1", session_id: "s1" },
   envelope: { service: "local", connection_address: "agent", conversation: { address: "mind:a1" } },
   parts: [{ type: "data", kind: "tool_use", data: { name: "echo", input: { v: 1 } } }],
@@ -350,7 +350,7 @@ Deno.test("the gate is free: a spectator event takes no lease and reads nothing"
     const thinking = await log.publish({
       ts: new Date().toISOString(),
       type: "thinking",
-      turnId: "T",
+      payload: { turn_id: "T" },
       agent: { id: "a1", session_id: "s1" },
       envelope: {
         service: "local",
@@ -391,7 +391,7 @@ Deno.test("recovery: a stale lock (crashed holder) → pending uses swept, then 
     await waitFor(async () => (await log.read({ types: ["tool_result"] })).length === 1);
     const [swept] = await log.read({ types: ["tool_result"] });
     assert(swept.type === "tool_result");
-    assertEquals(swept.cause, use.id);
+    assertEquals(swept.payload.ref_id, use.id);
     assertEquals(swept.parts[0].data.cancelled, true); // swept, NOT re-run — state unknown
     await waitFor(() => calls() >= 1); // the completed barrier then owes the closing think
   } finally {
@@ -409,7 +409,7 @@ Deno.test("recovery: a pending use with a cleanly released lock is simply run at
       await waitFor(async () => (await read("tool_result")).length === 1);
       const [res] = await read("tool_result");
       assert(res.type === "tool_result");
-      assertEquals(res.cause, preloaded[1].id);
+      assertEquals(res.payload.ref_id, preloaded[1].id);
       assertEquals(res.parts[0].data.output, { echoed: { v: 1 } });
       assertEquals(res.parts[0].data.cancelled, undefined);
       await waitFor(() => calls() >= 1);
@@ -437,8 +437,8 @@ Deno.test("compaction: an over-threshold window is checkpointed before the think
       assertEquals(JSON.stringify(sum.parts).includes("checkpoint viejo"), true);
       // covers exactly the first closed exchange: [uno, respuesta uno]
       const msgs = await read("message");
-      assertEquals(sum.meta.covers[0], msgs[0].id);
-      assertEquals(sum.meta.covers[1], msgs[1].id);
+      assertEquals(sum.payload.covers[0], msgs[0].id);
+      assertEquals(sum.payload.covers[1], msgs[1].id);
 
       await waitFor(async () =>
         (await read("message")).some((e) => JSON.stringify(e.parts).includes("respuesta dos"))

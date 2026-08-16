@@ -219,7 +219,7 @@ Deno.test("file content maps to a FilePart with caption; data to a DataPart", as
   });
 });
 
-Deno.test("reaction + reply ref: kind reaction, re in extra.whatsapp (prefixed)", async () => {
+Deno.test("reaction + reply ref: the target is payload.ref_external_id, action add", async () => {
   const { handler, published } = harness();
   await handler(
     post(
@@ -240,7 +240,8 @@ Deno.test("reaction + reply ref: kind reaction, re in extra.whatsapp (prefixed)"
   );
   const e = published[0] as MessageEvent;
   assertEquals(e.parts[0], { type: "text", kind: "reaction", text: "👍" });
-  assertEquals((e.extra?.whatsapp as { re?: string }).re, externalId("wmw.orig.1"));
+  assertEquals(e.payload?.ref_external_id, externalId("wmw.orig.1"));
+  assertEquals(e.payload?.action, "add"); // a reaction ADDS a part to its referent (§3)
 });
 
 Deno.test("an edit republishes on the original id with new parts + edited_at", async () => {
@@ -266,7 +267,7 @@ Deno.test("an edit republishes on the original id with new parts + edited_at", a
   );
 });
 
-Deno.test("a revoke is merge-only: no parts key, revoked_at in extra", async () => {
+Deno.test("a revoke is merge-only: no parts key, status.deleted_at stamps it", async () => {
   const { handler, published } = harness();
   await handler(
     post(
@@ -279,13 +280,10 @@ Deno.test("a revoke is merge-only: no parts key, revoked_at in extra", async () 
   const e = published[0] as MessageEvent;
   assertEquals(e.envelope.external_id, externalId("wmw.orig.1"));
   assertEquals("parts" in e, false); // the json_patch no-op — stored parts survive
-  assertEquals(
-    (e.extra?.whatsapp as { revoked_at?: string }).revoked_at,
-    "2026-08-11T12:06:00Z",
-  );
+  assertEquals(e.status?.deleted_at, "2026-08-11T12:06:00Z");
 });
 
-Deno.test("a receipt maps to a merge-only status draft: furthest state + raw map", async () => {
+Deno.test("a receipt maps to a merge-only status draft: state + read_at map", async () => {
   const { handler, published } = harness();
   await handler(
     post(
@@ -301,15 +299,12 @@ Deno.test("a receipt maps to a merge-only status draft: furthest state + raw map
   );
   const e = published[0] as MessageEvent;
   assertEquals(e.envelope.external_id, externalId("wmw.orig.1"));
-  assertEquals(e.envelope.status, "read");
+  assertEquals(e.status?.state, "read");
   assertEquals("parts" in e, false);
-  assertEquals(
-    (e.extra?.whatsapp as { status?: Record<string, unknown> }).status,
-    { read: { "5491177777777": "2026-08-11T12:07:00Z" } },
-  );
+  assertEquals(e.status?.read_at, { "5491177777777": "2026-08-11T12:07:00Z" });
 });
 
-Deno.test("a history batch stamps extra.backfill beside the whatsapp sidecar", async () => {
+Deno.test("a history batch stamps extra.backfill; the reply ref rides payload", async () => {
   const { handler, published } = harness();
   await handler(
     post(
@@ -338,8 +333,9 @@ Deno.test("a history batch stamps extra.backfill beside the whatsapp sidecar", a
   );
   const [h1, h2, live] = published as MessageEvent[];
   assertEquals(h1.extra?.backfill, true);
-  assertEquals(h2.extra?.backfill, true); // service-neutral key BESIDE the sidecar…
-  assertEquals((h2.extra?.whatsapp as { re?: string }).re, externalId("wmw.orig.1")); // …which survives
+  assertEquals(h2.extra?.backfill, true); // the service-neutral key…
+  assertEquals(h2.payload?.ref_external_id, externalId("wmw.orig.1")); // …beside the typed ref
+  assertEquals(h2.payload?.action, "reply");
   assertEquals(live.extra?.backfill, undefined);
 });
 

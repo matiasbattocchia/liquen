@@ -260,6 +260,7 @@ Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls
     await main.log.publish({
       ts: new Date().toISOString(),
       type: "permission_response",
+      payload: { ref_id: (req as { payload: { ref_id: string } }).payload.ref_id },
       envelope: {
         service: "local",
         connection_address: "agent",
@@ -268,11 +269,7 @@ Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls
       parts: [{
         type: "data",
         kind: "permission_response",
-        data: {
-          behavior: "allow",
-          scope: "once",
-          request_id: (req.parts[0] as { data: { request_id: string } }).data.request_id,
-        },
+        data: { behavior: "allow", scope: "once" },
       }],
     } as Draft<Event>);
     await waitFor(async () => (await main.log.read({ conversation: "dm:ana:bo" })).length > 0);
@@ -320,6 +317,7 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
     await main.log.publish({
       ts: new Date().toISOString(),
       type: "permission_response",
+      payload: { ref_id: (req as { payload: { ref_id: string } }).payload.ref_id },
       envelope: {
         service: "local",
         connection_address: "agent",
@@ -328,11 +326,7 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
       parts: [{
         type: "data",
         kind: "permission_response",
-        data: {
-          behavior: "allow",
-          scope: "once",
-          request_id: (req.parts[0] as { data: { request_id: string } }).data.request_id,
-        },
+        data: { behavior: "allow", scope: "once" },
       }],
     } as Draft<Event>);
     await waitFor(async () =>

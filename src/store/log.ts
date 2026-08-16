@@ -34,7 +34,7 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import type { Conversation, DeliveryStatus, Draft, Envelope, Event, EventId } from "../types.ts";
+import type { Conversation, Draft, Envelope, Event, EventId } from "../types.ts";
 import { newId } from "./id.ts";
 import { createLocker, type Locker, LOCKS_DDL, RELEASE_SQL } from "./lock.ts";
 import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
@@ -154,9 +154,10 @@ export async function openLog(dir: string): Promise<Log> {
        timestamp            TEXT NOT NULL,     -- event time (platform inbound / append internal)
        created_at           TEXT NOT NULL,
        updated_at           TEXT NOT NULL,
-       text                 TEXT,              -- derived from payload parts — the search column
-       payload              TEXT NOT NULL,     -- type-shaped JSON (parts, re, cause, meta…)
-       extra                TEXT,              -- wire-derived sidecar JSON, json_patch-merged (§3)
+       text                 TEXT,              -- derived from parts — the search column
+       parts                TEXT,              -- the event body (JSON array); absent = merge-only
+       payload              TEXT NOT NULL,     -- what the event MEANS: action · refs · turn keys (§3)
+       extra                TEXT,              -- sidecar JSON, json_patch-merged (§3)
        status               TEXT               -- delivery lifecycle JSON, json_patch-merged
      );
      CREATE UNIQUE INDEX IF NOT EXISTS events_external
@@ -177,15 +178,17 @@ export async function openLog(dir: string): Promise<Log> {
      ${AGENTS_DDL}
      ${CONNECTIONS_DDL}`,
   );
+  migrate(db); // schema versions below the current one are rewritten in place, exactly once
   const connections = createConnections(db); // the gate below reads its table
 
   const upsert = db.prepare(
     `INSERT INTO events (id, external_id, type, service, connection_address,
        conversation_address, conversation_name, conversation_thread, conversation_kind, session_id,
        sender_address, sender_name, agent_id, timestamp, created_at, updated_at,
-       text, payload, extra, status)
-     VALUES (coalesce(?, uuidv7()), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       text, parts, payload, extra, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(external_id) WHERE external_id IS NOT NULL DO UPDATE SET
+       parts      = coalesce(excluded.parts, events.parts),
        payload    = json_patch(events.payload, excluded.payload),
        extra      = CASE WHEN excluded.extra IS NULL THEN events.extra
                          ELSE json_patch(coalesce(events.extra, '{}'), excluded.extra) END,
@@ -193,7 +196,7 @@ export async function openLog(dir: string): Promise<Log> {
                          ELSE json_patch(coalesce(events.status, '{}'), excluded.status) END,
        text       = coalesce(excluded.text, events.text),
        updated_at = excluded.updated_at
-     RETURNING id`, // the STORED id: minted here, or the surviving row's on a merge
+     RETURNING id`, // the STORED id: minted in write(), or the surviving row's on a merge
   );
   // the frontier gate (§4): only a REGISTERED (and live) connection may log — an event on
   // an unknown or soft-deleted account is refused before anything lands. `local` is the
@@ -212,6 +215,7 @@ export async function openLog(dir: string): Promise<Log> {
   const byExternal = db.prepare("SELECT id FROM events WHERE external_id = ?");
   const absorb = db.prepare(
     `UPDATE events SET
+       parts      = coalesce((SELECT parts FROM events WHERE id = ?1), parts),
        payload    = json_patch(payload, (SELECT payload FROM events WHERE id = ?1)),
        status     = CASE WHEN (SELECT status FROM events WHERE id = ?1) IS NULL THEN status
                          ELSE json_patch(coalesce(status, '{}'),
@@ -222,12 +226,17 @@ export async function openLog(dir: string): Promise<Log> {
   const drop = db.prepare("DELETE FROM events WHERE id = ?");
   const unlock = db.prepare(RELEASE_SQL);
 
-  /** One upsert. Returns the STORED id (minted here, or the surviving row's on a merge). */
+  /** One upsert. Returns the STORED id (minted here, or the surviving row's on a merge).
+   *  The id is minted in JS, not by the column default: on LOCAL events it doubles as the
+   *  external_id, so references live in ONE space (§3). Wire-service events keep NULL until
+   *  their platform names them — absence IS the "never confirmed" signal the dispatcher's
+   *  echo-dedup and the mirror's absorb guard read. */
   const write = (event: Draft, now: string): Event => {
     const r = rowOf(event);
+    const id = r.id ?? newId();
     const stored = upsert.get(
-      r.id,
-      r.external_id,
+      id,
+      r.external_id ?? (event.envelope.service === "local" ? id : null),
       r.type,
       r.service,
       r.connection_address,
@@ -243,6 +252,7 @@ export async function openLog(dir: string): Promise<Log> {
       now,
       now,
       r.text,
+      r.parts,
       r.payload,
       r.extra,
       r.status,
@@ -384,9 +394,114 @@ interface Row {
   agent_id: string | null;
   timestamp: string;
   text: string | null;
+  parts: string | null;
   payload: string;
   extra: string | null;
   status: string | null;
+}
+
+/* ── migration: the typed-payload split (§3) ────────────────────────────────────────────
+ *
+ * v0 rows carried ONE residual bag in `payload` — {parts, re?, cause?, meta?, turnId?} —
+ * with wire refs hiding in the service sidecar. v1 splits it: `parts` its own column,
+ * `payload` the typed object (action · refs · turn keys), `extra` keeps {backfill,
+ * consumed, <service>}, receipts move to `status`, and every row gets an external_id (its
+ * own id when the wire never named it). One pass in a transaction, gated on PRAGMA
+ * user_version, so it runs exactly once per database. */
+function migrate(db: DatabaseSync) {
+  const v = db.prepare("PRAGMA user_version").get() as { user_version: number };
+  if (v.user_version >= 1) return;
+  const cols = db.prepare("SELECT name FROM pragma_table_info('events')").all() as {
+    name: string;
+  }[];
+  if (!cols.some((c) => c.name === "parts")) db.exec("ALTER TABLE events ADD COLUMN parts TEXT");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const rows = db.prepare("SELECT id, external_id, service, payload, extra, status FROM events")
+      .all() as {
+        id: string;
+        external_id: string | null;
+        service: string | null;
+        payload: string;
+        extra: string | null;
+        status: string | null;
+      }[];
+    const put = db.prepare(
+      "UPDATE events SET external_id = ?, parts = ?, payload = ?, extra = ?, status = ? WHERE id = ?",
+    );
+    type Bag = Record<string, unknown>;
+    for (const r of rows) {
+      const old = JSON.parse(r.payload) as Bag;
+      const extra = r.extra ? JSON.parse(r.extra) as Bag : {};
+      const status = r.status ? JSON.parse(r.status) as Bag : {};
+      const meta = (old.meta ?? {}) as Bag;
+      const parts = old.parts as Bag[] | undefined;
+      const p: Bag = {};
+      if (old.turnId) p.turn_id = old.turnId;
+      if (old.cause) p.ref_id = old.cause;
+      else if (old.re) p.ref_id = old.re;
+      if (meta.stop) p.stop_reason = meta.stop;
+      if (meta.covers) p.covers = meta.covers;
+      if (meta.control) p.control = meta.control;
+      if (meta.consumed) extra.consumed = meta.consumed;
+      // permission pairing: the request_id in the data part WAS the tool_use id
+      for (const part of parts ?? []) {
+        const data = part.data as Bag | undefined;
+        if (part.type === "data" && data && typeof data.request_id === "string") {
+          p.ref_id ??= data.request_id;
+          delete data.request_id;
+        }
+      }
+      // the whatsapp sidecar lift: refs, mentions, forwarded → payload; receipts → status
+      const wa = extra.whatsapp as Bag | undefined;
+      if (wa) {
+        if (typeof wa.re === "string") {
+          p.ref_external_id = wa.re;
+          delete wa.re;
+        }
+        if (wa.forwarded) {
+          p.action ??= "forward";
+          delete wa.forwarded;
+        }
+        if (wa.mentions) {
+          p.mentions = wa.mentions;
+          delete wa.mentions;
+        }
+        const s = wa.status as Bag | undefined;
+        if (s) {
+          if (s.delivered !== undefined) status.delivered_at = s.delivered;
+          if (s.read !== undefined) status.read_at = s.read;
+          delete wa.status;
+        }
+        if (typeof wa.revoked_at === "string") {
+          status.deleted_at = wa.revoked_at;
+          delete wa.revoked_at;
+        }
+        if (Object.keys(wa).length === 0) delete extra.whatsapp;
+      }
+      // a reaction part names the event's action; a plain wire ref is a reply
+      const reaction = (parts ?? []).find((x) => x.type === "data" && x.kind === "reaction");
+      if (reaction) {
+        const data = reaction.data as Bag;
+        p.action = data.action === "removed" ? "remove" : "add";
+        delete data.action;
+      } else if (p.ref_external_id && !p.action) p.action = "reply";
+      put.run(
+        // LOCAL events adopt their id as external_id; wire rows keep NULL (never confirmed)
+        r.external_id ?? (r.service === "local" ? r.id : null),
+        parts !== undefined ? JSON.stringify(parts) : null,
+        JSON.stringify(p),
+        Object.keys(extra).length ? JSON.stringify(extra) : null,
+        Object.keys(status).length ? JSON.stringify(status) : null,
+        r.id,
+      );
+    }
+    db.exec("PRAGMA user_version = 1");
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 /** ONE clock in the column (§3): whatever offset the producer wrote — WhatsApp stamps
@@ -399,14 +514,15 @@ function utcOf(ts: string): string {
   return Number.isNaN(d.getTime()) ? ts : d.toISOString();
 }
 
-/** Flatten a draft into columns + the type-shaped payload remainder. `id` is null unless the
- *  caller named one — the INSERT coalesces null to the column's `uuidv7()` default. */
+/** Flatten a draft into columns. `id` is null unless the caller named one — `write` mints
+ *  it otherwise. `envelope.status` is the shorthand for `status.state`: both land in the
+ *  same lifecycle column, the explicit object carrying the stamps (§3). */
 function rowOf(e: Draft) {
-  // everything not a column travels in payload: parts, re, cause, meta…
-  const { id: _i, ts: _t, type: _y, envelope, agent, extra, ...payload } = e as
-    & Draft
-    & Record<string, unknown>;
-  const status = envelope.status ? { state: envelope.status } : null;
+  const { envelope } = e;
+  const status = (e.status || envelope.status)
+    ? { ...e.status, ...(envelope.status ? { state: envelope.status } : {}) }
+    : null;
+  const parts = (e as { parts?: unknown }).parts;
   return {
     id: e.id ?? null,
     external_id: envelope.external_id ?? null,
@@ -417,22 +533,25 @@ function rowOf(e: Draft) {
     conversation_name: envelope.conversation?.name ?? null,
     conversation_thread: envelope.conversation?.thread ?? null,
     conversation_kind: envelope.conversation?.kind ?? null,
-    session_id: agent?.session_id ?? null,
+    session_id: e.agent?.session_id ?? null,
     sender_address: envelope.sender?.address ?? null,
     sender_name: envelope.sender?.name ?? null,
-    agent_id: agent?.id ?? null,
+    agent_id: e.agent?.id ?? null,
     timestamp: utcOf(e.ts),
     text: textOf(e),
-    payload: JSON.stringify(payload),
-    extra: extra !== undefined ? JSON.stringify(extra) : null,
+    parts: parts !== undefined ? JSON.stringify(parts) : null,
+    payload: JSON.stringify(e.payload ?? {}),
+    extra: e.extra !== undefined ? JSON.stringify(e.extra) : null,
     status: status ? JSON.stringify(status) : null,
   };
 }
 
-/** Rebuild the runtime Event from a row (nulls omitted, payload spread back to the top). */
+/** Rebuild the runtime Event from a row (nulls omitted). `envelope.status` mirrors
+ *  `status.state` — one column, two views. */
 function eventOf(r: Row): Event {
   const payload = JSON.parse(r.payload) as Record<string, unknown>;
-  const state = r.status ? (JSON.parse(r.status) as { state?: DeliveryStatus }).state : undefined;
+  const status = r.status ? JSON.parse(r.status) as Event["status"] : undefined;
+  const state = status?.state;
   const envelope: Envelope = {
     service: r.service as Envelope["service"],
     connection_address: r.connection_address ?? "",
@@ -454,8 +573,10 @@ function eventOf(r: Row): Event {
     type: r.type,
     envelope,
     ...(r.agent_id ? { agent: { id: r.agent_id, session_id: r.session_id ?? "" } } : {}),
+    ...(Object.keys(payload).length ? { payload } : {}),
+    ...(r.parts ? { parts: JSON.parse(r.parts) } : {}),
     ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
-    ...payload,
+    ...(status ? { status } : {}),
   } as Event;
 }
 

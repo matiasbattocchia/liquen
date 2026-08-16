@@ -138,18 +138,18 @@ export function render(input: RenderInput): RenderedRequest {
  *  with compaction: only events at or before this index may ever be summarized away. */
 export function closingBoundary(events: Event[], session: SessionId, home: string): number {
   const toolTurnIds = new Set(
-    events.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => u.turnId),
+    events.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => u.payload.turn_id),
   );
   return findLastIndex(
     events,
     (e) =>
       e.type === "message" && isSelf(e, session) && e.envelope.conversation.address === home &&
-      !(typeof e.meta?.turnId === "string" && toolTurnIds.has(e.meta.turnId)),
+      !(typeof e.payload?.turn_id === "string" && toolTurnIds.has(e.payload.turn_id)),
   );
 }
 
 /** Non-self messages positioned at or before `boundary` that the boundary step never
- *  CONSUMED (per its `meta.consumed` horizon) — the race window: a message landing between
+ *  CONSUMED (per its `extra.consumed` horizon) — the race window: a message landing between
  *  the window-read and the closing's publish sits before the closing in the log yet is
  *  unprocessed INPUT, not history. Shared with compaction (never checkpoint these away). */
 export function deferredInput(
@@ -159,7 +159,7 @@ export function deferredInput(
 ): Set<Event> {
   const out = new Set<Event>();
   if (boundary < 0) return out;
-  const horizon = events[boundary].meta?.consumed;
+  const horizon = events[boundary].extra?.consumed;
   const h = typeof horizon === "string" ? events.findIndex((e) => e.id === horizon) : boundary;
   const from = h === -1 ? boundary : h;
   for (let i = from + 1; i < boundary; i++) {
@@ -177,7 +177,7 @@ export function deferredInput(
 export function applySummary(events: Event[]): Event[] {
   const latest = [...events].reverse().find((e) => e.type === "summary");
   if (!latest || latest.type !== "summary") return events;
-  const toId = latest.meta.covers[1];
+  const toId = latest.payload.covers[1];
   return [latest, ...events.filter((e) => e !== latest && e.id > toId)];
 }
 
@@ -455,21 +455,21 @@ function renderMessages(
   const boundary = closingBoundary(events, session, home);
   const deferred = deferredInput(events, session, boundary);
 
-  // Trailing weld sets — pairing is per *use* (a result's `cause` = its tool_use id), so
+  // Trailing weld sets — pairing is per *use* (a result's `ref_id` = its tool_use id), so
   // parallel tools weld order-independently and a half-filled barrier never leaves an
   // unpaired block for the API to reject.
   const trailing = [...deferred, ...events.slice(boundary + 1)];
   const usePresent = new Set(
     trailing.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => u.id),
   );
-  const resultCauses = new Set(
+  const resultRefs = new Set(
     trailing.filter((e): e is ToolResultEvent => e.type === "tool_result")
-      .map((r) => r.cause).filter((c): c is string => c !== undefined),
+      .map((r) => r.payload.ref_id),
   );
-  const welded = new Set([...usePresent].filter((id) => resultCauses.has(id)));
+  const welded = new Set([...usePresent].filter((id) => resultRefs.has(id)));
   const weldedTurns = new Set(
     trailing.filter((e): e is ToolUseEvent => e.type === "tool_use" && welded.has(e.id))
-      .map((u) => u.turnId),
+      .map((u) => u.payload.turn_id),
   );
 
   // The request-level media budget: which trailing attachments inline, NEWEST first — a
@@ -537,14 +537,14 @@ function renderMessages(
       });
     } else if (e.type === "error") {
       place("user", { type: "text", text: `[harness] error: ${errorTextOf(e)}` });
-    } else if (e.type === "thinking" && weldedTurns.has(e.turnId)) {
+    } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
       place("assistant", thinkingBlock(e));
     } else if (e.type === "tool_use" && welded.has(e.id)) place("assistant", toolUseBlock(e));
-    else if (e.type === "tool_result" && e.cause && welded.has(e.cause)) {
+    else if (e.type === "tool_result" && welded.has(e.payload.ref_id)) {
       place("user", toolResultBlock(e, mediaBlocks(e)));
     } else if (e.type === "message") {
-      // a directed send caused by a welded tool_use is already in the block — skip it
-      if (e.cause && welded.has(e.cause)) continue;
+      // a directed send dispatched by a welded tool_use is already in the block — skip it
+      if (e.payload?.ref_id && welded.has(e.payload.ref_id)) continue;
       if (isSelf(e, session) && e.envelope.conversation.address === home) {
         place("assistant", { type: "text", text: bodyOf(e) }); // mid-chain assistant text
       } else if (e.envelope.conversation.address === home) {
@@ -623,11 +623,15 @@ function weldOrder(trailing: Event[], weldedTurns: Set<string>): Event[] {
   return out;
 }
 
-/** The step a trailing event belongs to: `turnId` on tool/thinking events, `meta.turnId` on
- *  mu-emitted messages. Directed sends (cause→tool_use) stay outside — they're skipped anyway. */
+/** The step a trailing event belongs to: `payload.turn_id`, on every emission that carries
+ *  one. Directed sends (ref_id→tool_use) stay outside — they're skipped anyway. */
 function turnOf(e: Event): string | undefined {
-  if (e.type === "thinking" || e.type === "tool_use" || e.type === "tool_result") return e.turnId;
-  if (e.type === "message" && !e.cause && typeof e.meta?.turnId === "string") return e.meta.turnId;
+  if (e.type === "thinking" || e.type === "tool_use" || e.type === "tool_result") {
+    return e.payload.turn_id;
+  }
+  if (e.type === "message" && !e.payload?.ref_id && typeof e.payload?.turn_id === "string") {
+    return e.payload.turn_id;
+  }
   return undefined;
 }
 
@@ -717,7 +721,8 @@ function toolResultBlock(
   const text = typeof output === "string" ? output : JSON.stringify(output);
   return {
     type: "tool_result",
-    tool_use_id: e.cause ?? e.turnId, // `cause` = the specific tool_use this result answers
+    tool_use_id: e.payload.ref_id, // the specific tool_use this result answers — REQUIRED:
+    // the old `?? turnId` fallback emitted an id matching no tool_use block (a certain 400)
     content: media.length
       ? [{ type: "text", text }, ...media as Anthropic.ImageBlockParam[]]
       : text,

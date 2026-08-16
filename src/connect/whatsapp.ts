@@ -42,9 +42,11 @@ import type {
   DeliveryStatus,
   Draft,
   FilePart,
+  Lifecycle,
   MediaKind,
   MessageEvent,
   Part,
+  Payload,
 } from "../types.ts";
 
 /* ── the bridge's wire shapes (openbsp.go is the source of truth — the bridge's own
@@ -227,13 +229,25 @@ function partOf(c: WAContent): Part | null {
   }
 }
 
-/** The wire-derived sidecar (§3): only what the envelope has no slot for. */
-function extraOf(c: WAContent): Record<string, unknown> | undefined {
-  const wa: Record<string, unknown> = {};
-  if (c.re_message_id) wa.re = externalId(c.re_message_id); // external ref — resolution deferred
-  if (c.forwarded) wa.forwarded = true;
-  if (c.mentions?.length) wa.mentions = c.mentions;
-  return Object.keys(wa).length ? { whatsapp: wa } : undefined;
+/** What the message MEANS beyond its parts (§3 payload): the wire reference and the
+ *  action. A quoted reply and a reaction both carry their target in `re_message_id`; the
+ *  reaction's part names it a reaction, and openbsp's `data.action` (added/removed) is
+ *  really the EVENT's action — lifted to `add`/`remove`, the data keeps {name, unicode}.
+ *  With ref, action and mentions typed, the whatsapp sidecar has nothing left to say. */
+function payloadOf(c: WAContent, part: Part): Payload | undefined {
+  const p: Payload = {};
+  if (c.re_message_id) p.ref_external_id = externalId(c.re_message_id);
+  if (part.kind === "reaction") {
+    // data shape (openbsp): action rides data · text shape (legacy): empty text = un-react
+    const data = part.type === "data" ? part.data as { action?: string } | null : null;
+    const removed = data ? data.action === "removed" : !(part as { text?: string }).text;
+    p.action = removed ? "remove" : "add";
+    if (data) delete data.action;
+  } else if (p.ref_external_id) p.action = "reply";
+  else if (c.forwarded) p.action = "forward";
+  const mentioned = (c.mentions ?? []).map((m) => m.address).filter((a): a is string => !!a);
+  if (mentioned.length) p.mentions = mentioned;
+  return Object.keys(p).length ? p : undefined;
 }
 
 /** The delivery state a bridge status map amounts to: the FURTHEST stage present. */
@@ -281,12 +295,10 @@ function mapMessage(
       ...(state ? { status: state } : {}),
     },
     parts: [part],
-    // `backfill` is SERVICE-NEUTRAL, so it sits beside the `whatsapp` sidecar, not in
-    // it: a consumer skipping history (the wake/automation gate) reads one key across
-    // every connector instead of per-service paths
-    ...((extraOf(m.content) || backfill)
-      ? { extra: { ...(extraOf(m.content) ?? {}), ...(backfill ? { backfill: true } : {}) } }
-      : {}),
+    ...(payloadOf(m.content, part) ? { payload: payloadOf(m.content, part) } : {}),
+    // `backfill` is SERVICE-NEUTRAL (§3 extra): a consumer skipping history (the
+    // wake/automation gate) reads one key across every connector
+    ...(backfill ? { extra: { backfill: true } } : {}),
   };
 }
 
@@ -320,7 +332,7 @@ function mergeOnly(
   connection: string,
   wmwId: string,
   ts: string,
-  over: { extra?: Record<string, unknown>; status?: DeliveryStatus },
+  over: { extra?: Record<string, unknown>; status?: Lifecycle },
 ): Draft<MessageEvent> {
   return {
     ts,
@@ -330,13 +342,14 @@ function mergeOnly(
       connection_address: connection,
       conversation: { address: "" },
       external_id: externalId(wmwId),
-      ...(over.status ? { status: over.status } : {}),
     },
+    ...(over.status ? { status: over.status } : {}),
     ...(over.extra ? { extra: over.extra } : {}),
   } as unknown as Draft<MessageEvent>; // partless by design — see above
 }
 
-/** A revoke marks, never deletes: the log is append-only, the content stays auditable. */
+/** A revoke marks, never deletes: the log is append-only, the content stays auditable —
+ *  `status.deleted_at` is the lifecycle stamp (§3). */
 function mapRevoke(
   r: NonNullable<WABatch["revokes"]>[number],
   connection: string,
@@ -345,23 +358,27 @@ function mapRevoke(
   if (!r.original_message_id) return null;
   const ts = r.timestamp || now();
   return mergeOnly(connection, r.original_message_id, ts, {
-    extra: { whatsapp: { revoked_at: ts } },
+    status: { deleted_at: ts },
   });
 }
 
-/** Delivery/read receipts (and typing) → the row's status: `state` takes the furthest
- *  stage; the RAW map (per-participant in groups) accumulates under `extra.whatsapp.
- *  status`, where `json_patch` merges reader by reader. */
+/** Delivery/read receipts → the row's `status` lifecycle (§3): `state` takes the furthest
+ *  stage; the stamps land on delivered_at/read_at — scalars in a direct chat, and in
+ *  groups per-participant maps that `json_patch` accumulates reader by reader. */
 function mapStatus(
   s: NonNullable<WABatch["statuses"]>[number],
   connection: string,
   now: () => string,
 ): Draft<MessageEvent> | null {
   if (!s.external_id) return null;
-  return mergeOnly(connection, s.external_id, now(), {
-    status: stateOf(s.status),
-    extra: { whatsapp: { status: s.status } },
-  });
+  const st: Lifecycle = {};
+  const state = stateOf(s.status);
+  if (state) st.state = state;
+  if (s.status.delivered !== undefined) {
+    st.delivered_at = s.status.delivered as Lifecycle["delivered_at"];
+  }
+  if (s.status.read !== undefined) st.read_at = s.status.read as Lifecycle["read_at"];
+  return mergeOnly(connection, s.external_id, now(), { status: st });
 }
 
 /* ── the /media route: multipart bytes → the media store → {uri} ─────────────────── */

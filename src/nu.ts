@@ -153,7 +153,7 @@ export async function nu(
       const e: Draft<ThinkingEvent> = {
         ts: ts(),
         type: "thinking",
-        turnId,
+        payload: { turn_id: turnId },
         agent: self,
         envelope: mind,
         parts: [{
@@ -169,9 +169,11 @@ export async function nu(
         type: "message",
         agent: self,
         envelope: home,
-        // turnId: render's boundary rule (§5) · consumed: the coalescing horizon —
-        // what this step actually read; xi's `unanswered` measures against it (§2)
-        meta: { turnId, ...(input.events.at(-1) ? { consumed: input.events.at(-1)!.id } : {}) },
+        // turn_id: render's boundary rule (§5). consumed: the coalescing horizon — what
+        // this step actually read; xi's `unanswered` measures against it (§2). It rides
+        // `extra` (harness sidecar), not payload: nothing about the MESSAGE depends on it.
+        payload: { turn_id: turnId },
+        ...(input.events.at(-1) ? { extra: { consumed: input.events.at(-1)!.id } } : {}),
         parts: [{ type: "text", kind: "text", text: em.text }],
       };
       events.push(e);
@@ -179,7 +181,7 @@ export async function nu(
       const e: Draft<ToolUseEvent> = {
         ts: ts(),
         type: "tool_use",
-        turnId,
+        payload: { turn_id: turnId },
         agent: self,
         envelope: mind,
         parts: [{ type: "data", kind: "tool_use", data: { name: em.name, input: em.input } }],
@@ -205,6 +207,6 @@ export async function nu(
   // Stamping it here is what lets the log carry that, instead of a loop in xi (§2). The
   // transport-failure path above returns before this: an unstamped error is a real stop.
   const last = events.at(-1);
-  if (last) last.meta = { ...last.meta, stop: res.stop };
+  if (last) last.payload = { ...last.payload, stop_reason: res.stop };
   return events;
 }

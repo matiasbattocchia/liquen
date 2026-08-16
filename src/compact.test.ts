@@ -25,7 +25,7 @@ const summaryEv = (covers: [string, string], text: string): SummaryEvent => ({
   type: "summary",
   agent: { id: "a1", session_id: "s1" },
   envelope: { service: "local", connection_address: "agent", conversation: { address: "mind:a1" } },
-  meta: { covers },
+  payload: { covers },
   parts: [{ type: "text", kind: "text", text }],
 });
 
@@ -82,7 +82,7 @@ Deno.test("buildSummary: mints a summary event; the checkpoint prompt carries th
   }, transport);
   assert(out !== null);
   assertEquals(out.type, "summary");
-  assertEquals(out.meta.covers[0], events[0].id);
+  assertEquals(out.payload.covers[0], events[0].id);
   assertStringIncludes(out.parts[0].text, "informe viernes");
   const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
   assertStringIncludes(prompt, "[Ana @ home] necesito el informe");
@@ -117,7 +117,7 @@ Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", asyn
   const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
   assertStringIncludes(prompt, "<previous-summary>\n## Ongoing threads\n- viejo hilo");
   assertStringIncludes(prompt, "PRESERVE everything still relevant");
-  assertEquals(out.meta.covers[0], old.id); // chains from the previous summary's position
+  assertEquals(out.payload.covers[0], old.id); // chains from the previous summary's position
 });
 
 Deno.test("buildSummary: a failed model call → null (silent; the next think retries)", async () => {

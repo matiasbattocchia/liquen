@@ -129,8 +129,8 @@ function mapEvent(event: string, p: GhPayload, ctx: MapCtx): Draft<MessageEvent>
         : `ghd:${ctx.delivery}`,
     },
     parts: [{ type: "text", kind: "text", text: body }],
-    meta: {
-      // the dispatch side reads meta.github to know WHERE and HOW to reply (§4)
+    extra: {
+      // the dispatch side reads extra.github to know WHERE and HOW to reply (§4)
       github: {
         event,
         action: p.action,

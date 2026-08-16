@@ -11,14 +11,17 @@
  *             wakes on it exactly as on a REPL line. `extra.via` holds the provenance
  *             (origin event id + wire coordinates); `cause` points home.
  *   fan-out   every mind event the REPL would show → a CC to every alias binding EXCEPT
- *             the origin surface (read off `extra.via`): the agent's voice as `[agent] …`
- *             (a self-conversation renders both speakers as the principal — the tag is
- *             the surface's only input/output distinction); the principal's own words as
- *             `> quoted` + `[sent via <surface>]` (input displayed as output); tool calls
- *             as redacted one-liners (`● bash(git status)`).
+ *             the origin surface (read off `extra.via`). Every crossing line opens with
+ *             WHO, because a self-conversation renders both speakers as the same account
+ *             and the tag is the surface's only input/output distinction: the agent's
+ *             voice as `[agent] …`, its tool calls as `[agent tool] bash(git status)`
+ *             (redacted to one line), the principal's own words as
+ *             `[you via <surface>] …` — input replayed as output. The log needs no tag:
+ *             authorship is the bit.
  *
  * Fan-out applied to fan-in's own mind copy is what cross-broadcasts surfaces: a WA line
- * copies to the mind, and that copy CCs — quoted — to Slack, origin skipped. A CC is a
+ * copies to the mind, and that copy CCs — tagged `[you via whatsapp]` — to Slack, origin
+ * skipped. A CC is a
  * plain outbound event on its service: the dispatchers post it and backfill `external_id`,
  * so the platform echo MERGES into it like any other send (§4). The loop is closed by
  * construction: CCs are agent-authored AND carry `extra.via`, so fan-in skips them; they
@@ -137,7 +140,7 @@ async function fanIn(
   await deps.publish({
     ts: now(),
     type: "message",
-    cause: e.id,
+    payload: { ref_id: e.id },
     envelope: {
       service: "local",
       connection_address: "agent",
@@ -198,7 +201,7 @@ async function fanOut(
   await deps.publish(targets.map((a): Draft<MessageEvent> => ({
     ts: now(),
     type: "message",
-    cause: e.id,
+    payload: { ref_id: e.id },
     // the CC is the agent's leg speaking on that surface (dispatch resolves the author's
     // alter-ego token off `agent.id`); v0 session ≈ agent (§7)
     agent: { id: agentId, session_id: agentId },
@@ -212,12 +215,14 @@ async function fanOut(
   })));
 }
 
-/** What a mind event looks like on a surface — exactly what the REPL shows (§4): the
- *  voice verbatim, the principal quoted (input displayed as output), tools redacted.
- *  Null ⇒ this event kind never crosses (thinking, results, permission plumbing). */
+/** What a mind event looks like on a surface — exactly what the REPL shows (§4). Every
+ *  line opens with WHO, because a self-conversation renders both speakers as the same
+ *  account: `[agent] …` for the voice, `[agent tool] …` for a redacted tool call,
+ *  `[you via <surface>] …` for the principal's own words replayed as output. Null ⇒ this
+ *  event kind never crosses (thinking, results, permission plumbing). */
 function ccParts(e: Event): Part[] | null {
   if (e.type === "tool_use") {
-    return [{ type: "text", kind: "text", text: redact(e as ToolUseEvent) }];
+    return [{ type: "text", kind: "text", text: `[agent tool] ${redact(e as ToolUseEvent)}` }];
   }
   if (e.type !== "message") return null;
   const m = e as MessageEvent;
@@ -234,10 +239,11 @@ function ccParts(e: Event): Part[] | null {
     ];
   }
   if (!text) return null;
-  const tag = viaOf(e)?.service ?? "repl";
-  const quoted = text.split("\n").map((l) => `> ${l}`).join("\n");
+  // the principal's own line, coming back as output on another surface: same tag shape as
+  // the voice, naming where it was typed — the REPL when the mind itself is where it landed
+  const where = viaOf(e)?.service ?? "repl";
   return [
-    { type: "text", kind: "text", text: `${quoted}\n[sent via ${tag}]` },
+    { type: "text", kind: "text", text: `[you via ${where}] ${text}` },
     ...parts.filter((p) => p.type === "file"),
   ];
 }
@@ -247,7 +253,8 @@ function textOf(e: MessageEvent): string {
   return (e.parts ?? []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
 }
 
-/** One redacted line per tool call, Claude-Code style: `● bash(git status)`. */
+/** One redacted line per tool call, Claude-Code style: `bash(git status)` (the
+ *  `[agent tool]` tag is the caller's — every crossing line opens with who). */
 function redact(e: ToolUseEvent): string {
   const { name, input } = e.parts[0].data;
   const args = (input ?? {}) as Record<string, unknown>;
@@ -259,7 +266,7 @@ function redact(e: ToolUseEvent): string {
       .filter(([, v]) => typeof v === "string" && v !== "")
       .map(([k, v]) => `${k}: ${v}`)
       .join(", ");
-  const line = `● ${name}(${detail.replace(/\s+/g, " ").trim()})`;
+  const line = `${name}(${detail.replace(/\s+/g, " ").trim()})`;
   return line.length > 120 ? `${line.slice(0, 119)}…` : line;
 }
 

@@ -27,14 +27,14 @@ Deno.test("nu stamps emissions: thinking→mind, assistant→home(+meta.turnId),
     ], "tool_use"),
   );
 
-  assertEquals(out.at(-1)?.meta?.stop, "tool_use"); // the outcome rides the last event
+  assertEquals(out.at(-1)?.payload?.stop_reason, "tool_use"); // the outcome rides the last event
   const [th, msg, use] = out as [ThinkingEvent, MessageEvent, ToolUseEvent];
   assertEquals(th.type, "thinking");
   assertEquals(th.envelope.conversation.address, "mind:a1");
   assertEquals(th.agent, { id: "a1", session_id: "s1" });
   assertEquals(msg.envelope.conversation.address, "home");
-  assertEquals(msg.meta?.turnId, th.turnId); // one turnId per step, on the message's meta
-  assertEquals(use.turnId, th.turnId);
+  assertEquals(msg.payload?.turn_id, th.payload.turn_id); // one turn_id per step
+  assertEquals(use.payload.turn_id, th.payload.turn_id);
   assertEquals(use.envelope.conversation.address, "mind:a1");
 });
 

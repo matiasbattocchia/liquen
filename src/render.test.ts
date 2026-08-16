@@ -114,7 +114,7 @@ function homeMsg(
     parts: [{ type: "text", kind: "text", text }],
   };
   if (self) e.agent = SELF;
-  if (turnId !== undefined) e.meta = { turnId }; // nu stamps the emitting step (§5 boundary)
+  if (turnId !== undefined) e.payload = { turn_id: turnId }; // nu stamps the emitting step (§5)
   return e;
 }
 
@@ -132,7 +132,7 @@ function waMsg(id: string, ts: string, text: string, self: boolean, cause?: stri
     parts: [{ type: "text", kind: "text", text }],
   };
   if (self) e.agent = SELF;
-  if (cause !== undefined) e.cause = cause; // a directed send: caused by its tool_use
+  if (cause !== undefined) e.payload = { ref_id: cause }; // a directed send: its tool_use
   return e;
 }
 
@@ -153,7 +153,7 @@ function thinkingE(
     id,
     ts,
     type: "thinking",
-    turnId,
+    payload: { turn_id: turnId },
     envelope: inbox,
     agent: SELF,
     parts: [{ type: "data", kind: "thinking", data: { thinking: text, signature: sig } }],
@@ -165,7 +165,7 @@ function toolUseE(id: string, ts: string, turnId: string, name: string, input: J
     id,
     ts,
     type: "tool_use",
-    turnId,
+    payload: { turn_id: turnId },
     envelope: inbox,
     agent: SELF,
     parts: [{ type: "data", kind: "tool_use", data: { name, input } }],
@@ -183,8 +183,7 @@ function toolResultE(
     id,
     ts,
     type: "tool_result",
-    turnId,
-    cause, // the tool_use this result answers
+    payload: { turn_id: turnId, ref_id: cause }, // the tool_use this result answers
     envelope: inbox,
     agent: SELF,
     parts: [{ type: "data", kind: "tool_result", data: { output } }],
@@ -440,7 +439,7 @@ Deno.test("a summary hides what it covers and renders as the leading checkpoint 
         connection_address: "agent",
         conversation: { address: "mind:a1" },
       },
-      meta: { covers: ["e01", "e02"] },
+      payload: { covers: ["e01", "e02"] },
       parts: [{ type: "text", kind: "text", text: "## Ongoing threads\n- hilo viejo" }],
     },
   ];
@@ -464,7 +463,7 @@ Deno.test("a summary hides what it covers and renders as the leading checkpoint 
 Deno.test("horizon split: messages the closing never consumed render as trailing INPUT", () => {
   const t = "2026-07-20T10:00:00Z";
   const closing = homeMsg("e04", t, "respuesta a uno", true, "T1");
-  closing.meta = { turnId: "T1", consumed: "e01" }; // the step's window ended at e01
+  closing.extra = { consumed: "e01" }; // the step's window ended at e01
   const events: Event[] = [
     homeMsg("e01", t, "uno", false),
     homeMsg("e02", t, "dos", false), // landed mid-turn — unconsumed

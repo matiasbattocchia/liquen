@@ -74,7 +74,9 @@ const MAX_OVERFLOWS = 3;
  *  nu stamps the outcome on the turn's last event, which is what puts this continuation in
  *  the LOG rather than in a loop inside xi — one invocation, one turn. */
 function cutOff(events: Event[]): boolean {
-  const stops = events.map((e) => e.meta?.stop).filter((s): s is string => s !== undefined);
+  const stops = events.map((e) => e.payload?.stop_reason).filter((s): s is string =>
+    s !== undefined
+  );
   const last = stops.at(-1);
   if (last === "pause_turn") return true; // the server's own pacing — it says when to stop
   if (last !== "max_tokens") return false; // end_turn · tool_use · refusal are all endings
@@ -148,7 +150,7 @@ interface Pending {
 /** Our tool uses without a result, each annotated with its gate state (all log queries). */
 function pendingOf(events: Event[], session: Session, gate: Gate): Pending[] {
   const answered = new Set(
-    events.filter((e) => e.type === "tool_result").map((e) => e.cause),
+    events.filter((e) => e.type === "tool_result").map((e) => e.payload?.ref_id),
   );
   return events
     .filter((e): e is ToolUseEvent =>
@@ -160,11 +162,12 @@ function pendingOf(events: Event[], session: Session, gate: Gate): Pending[] {
       return {
         use,
         gated,
+        // request and response both point ref_id at the USE — a star, not a chain (§3)
         requested: gated &&
-          events.some((e) => e.type === "permission_request" && e.cause === use.id),
+          events.some((e) => e.type === "permission_request" && e.payload?.ref_id === use.id),
         response: gated
           ? events.find((e): e is PermissionResponseEvent =>
-            e.type === "permission_response" && e.parts[0].data.request_id === use.id
+            e.type === "permission_response" && e.payload?.ref_id === use.id
           )?.parts[0].data
           : undefined,
       };
@@ -194,7 +197,7 @@ function unanswered(events: Event[], session: Session, home: string): boolean {
     );
   }
   // resolve the horizon to a POSITION — the window may be re-sorted for display (§5)
-  const horizon = events[last].meta?.consumed;
+  const horizon = events[last].extra?.consumed;
   const h = typeof horizon === "string" ? events.findIndex((e) => e.id === horizon) : -1;
   const from = h !== -1 ? h : last; // no/stale horizon → fall back to the closing's position
   return events.slice(from + 1).some((e) =>
@@ -214,7 +217,7 @@ function unclosedChain(events: Event[], session: Session, home: string): boolean
   let lastResult = -1;
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
-    if (e.type === "tool_result" && e.cause !== undefined && uses.has(e.cause)) lastResult = i;
+    if (e.type === "tool_result" && uses.has(e.payload.ref_id)) lastResult = i;
   }
   if (lastResult < 0) return false;
   return !events.slice(lastResult + 1).some((e) =>
@@ -384,8 +387,7 @@ async function act(
     return {
       ts: ts(),
       type: "tool_result",
-      turnId: use.turnId,
-      cause: use.id,
+      payload: { turn_id: use.payload.turn_id, ref_id: use.id },
       agent: self,
       envelope: mind,
       parts: [
@@ -414,7 +416,7 @@ async function act(
       const req: Draft<PermissionRequestEvent> = {
         ts: ts(),
         type: "permission_request",
-        cause: p.use.id,
+        payload: { ref_id: p.use.id },
         agent: self,
         envelope: homeEnv,
         parts: [{
@@ -423,7 +425,6 @@ async function act(
           data: {
             tool: name,
             args_preview: JSON.stringify(input).slice(0, 200),
-            request_id: p.use.id,
           },
         }],
       };
@@ -516,7 +517,7 @@ async function execute(
     const msg: Draft<MessageEvent> = {
       ts: new Date().toISOString(),
       type: "message",
-      cause: use.id,
+      payload: { ref_id: use.id }, // the send tool_use that dispatched it
       agent: self,
       envelope,
       parts: [...(body ? [{ type: "text", kind: "text", text: body } as const] : []), ...files],

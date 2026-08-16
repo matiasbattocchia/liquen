@@ -32,11 +32,11 @@ const use = (id: string) =>
   ev("tool_use", {
     ...SELF,
     id,
-    turnId: "T1",
+    payload: { turn_id: "T1" },
     parts: [{ type: "data", kind: "tool_use", data: { name: "echo", input: {} } }],
   } as Partial<Event>);
-const result = (cause: string) =>
-  ev("tool_result", { ...SELF, cause, turnId: "T1" } as Partial<Event>);
+const result = (refId: string) =>
+  ev("tool_result", { ...SELF, payload: { turn_id: "T1", ref_id: refId } } as Partial<Event>);
 
 /* ── owed: the one derivation every poke shares ───────────────────────── */
 
@@ -68,16 +68,17 @@ Deno.test("decide: a closed chain with nothing new → quiescence (a poke that f
 Deno.test("decide: all pending uses waiting on a human → nothing (the response is the wake)", () => {
   const gated: Gate = () => true;
   const u = use("u1");
-  const req = ev("permission_request", { ...SELF, cause: "u1" } as Partial<Event>);
+  const req = ev("permission_request", { ...SELF, payload: { ref_id: "u1" } } as Partial<Event>);
   assertEquals(decide([peerMsg(), u, req], SESSION, HOME, gated), "ignore");
   // unrequested gate → act (the request must be surfaced)
   assertEquals(decide([peerMsg(), use("u2")], SESSION, HOME, gated), "act");
   // responded gate → act (settle it: run or deny-result)
   const resp = ev("permission_response", {
+    payload: { ref_id: "u1" },
     parts: [{
       type: "data",
       kind: "permission_response",
-      data: { behavior: "allow", scope: "once", request_id: "u1" },
+      data: { behavior: "allow", scope: "once" },
     }],
   } as Partial<Event>);
   assertEquals(decide([peerMsg(), u, req, resp], SESSION, HOME, gated), "act");
@@ -86,7 +87,7 @@ Deno.test("decide: all pending uses waiting on a human → nothing (the response
 Deno.test("decide: another session's unresolved uses are not ours", () => {
   const other = ev("tool_use", {
     agent: { id: "a2", session_id: "s2" },
-    turnId: "TX",
+    payload: { turn_id: "TX" },
     parts: [{ type: "data", kind: "tool_use", data: { name: "echo", input: {} } }],
   } as Partial<Event>);
   assertEquals(decide([other], SESSION, HOME, OPEN), "ignore");
@@ -159,7 +160,7 @@ Deno.test("decide: backfilled peers are not unanswered — the NEXT live event s
 
 Deno.test("decide: order-independent — a truncated turn continues, a failed one idles", () => {
   const advisory = ev("error", {
-    meta: { stop: "max_tokens" }, // nu stamps the turn's outcome on its last event
+    payload: { stop_reason: "max_tokens" }, // nu stamps the turn's outcome on its last event
     parts: [{ type: "data", kind: "error", data: { error: "cut off mid-generation" } }],
   } as Partial<Event>);
   const failed = ev("error", {
@@ -174,7 +175,7 @@ Deno.test("decide: order-independent — a truncated turn continues, a failed on
 Deno.test("decide: the max_tokens continuation is bounded — 3 overflows and it stops", () => {
   const cut = () =>
     ev("error", {
-      meta: { stop: "max_tokens" },
+      payload: { stop_reason: "max_tokens" },
       parts: [{ type: "data", kind: "error", data: { error: "cut off" } }],
     } as Partial<Event>);
   assertEquals(decide([peerMsg(), cut(), cut()], SESSION, HOME, OPEN), "think");

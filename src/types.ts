@@ -97,6 +97,12 @@ export type SharePart = DataPart<"share", {
   title?: string;
 }>;
 
+/** A reaction (open-bsp convention): the part an `action: add`/`remove` message adds to or
+ *  removes from its referent. `name` is the platform's name (Slack `thumbsup`; WhatsApp
+ *  the emoji itself), `unicode` the rendered glyph when the platform gives one. Whether it
+ *  was added or removed is the EVENT's `payload.action`, not the part's business. */
+export type ReactionPart = DataPart<"reaction", { name: string; unicode?: string }>;
+
 export type Part = TextPart | FilePart | DataPart | SharePart;
 
 /* ────────────────────────────── envelope ────────────────────────────── */
@@ -107,6 +113,17 @@ export type Service = "local" | "slack" | "whatsapp" | "instagram" | "email" | "
 
 /** Delivery bookkeeping — a mutable field, not events (§3). Render marks pending/failed only. */
 export type DeliveryStatus = "pending" | "sent" | "delivered" | "read" | "failed";
+
+/** The delivery LIFECYCLE (§3): one mutable, `json_patch`-merged column beside the event —
+ *  receipts and revocations move it, never new events. `state` is the furthest stage
+ *  (`envelope.status` is its shorthand view); the stamps are scalars in a direct chat and
+ *  per-participant maps in groups (`{reader: ts}` accumulates reader by reader). */
+export interface Lifecycle {
+  state?: DeliveryStatus;
+  delivered_at?: string | Record<string, string>;
+  read_at?: string | Record<string, string>;
+  deleted_at?: string;
+}
 
 // Naming rule (§3): `address` = a WIRE address (what the platform calls the thing);
 // `id` is reserved for store pkeys (event ids, future conversations-row ids).
@@ -138,7 +155,7 @@ export interface Envelope {
   status?: DeliveryStatus;
 }
 
-/* ─────────────────── authorship · meta (§3) ──────────────────────────── */
+/* ─────────────────── authorship · payload · extra (§3) ───────────────── */
 
 /**
  * Internal authorship — present iff a handler (mu/nu) authored the event.
@@ -150,25 +167,44 @@ export interface Authorship {
   session_id: SessionId;
 }
 
-/** HARNESS correlation sidecar (§3): keys the turn machinery mints and reads — never
- *  wire-derived (that's `extra`). Known keys documented, open for growth. */
-export interface Meta {
-  turnId?: string; // on mu-emitted messages: the step that produced it (render's boundary rule, §5)
-  /** On the LAST event of a turn: how that turn ended (`Anthropic.StopReason`). `pause_turn`
-   *  and `max_tokens` are continuations, not endings — `decide` reads this to re-enter (§2). */
-  stop?: string;
-  /** On the agent's home messages: the last event id in the window its step consumed — the
-   *  coalescing horizon. `unanswered` compares against THIS, not log position: a message
-   *  landing between the window-read and the closing's publish must still count as owed. */
-  consumed?: EventId;
-  [key: string]: unknown;
+/** What a message DOES to its referent's parts — absent = create. `edit` replaces them ·
+ *  `add`/`remove` add or remove some (a reaction is a part somebody added to someone
+ *  else's message) · `delete` removes them all · `reply`/`forward` are relational, not
+ *  mutational. */
+export type Action = "edit" | "add" | "remove" | "delete" | "reply" | "forward";
+
+/**
+ * What the event MEANS beside its parts (§3): the action, the reference, and the turn
+ * machinery's keys. The reference rule: `ref_external_id` when the referent lives on a
+ * wire (the platform id is the only stable name at ingest time), `ref_id` when both ends
+ * are ours (the log id exists before the effect does — a reference always crosses an
+ * invocation boundary, so the referent is stored by construction).
+ */
+export interface Payload {
+  action?: Action;
+  ref_external_id?: string;
+  ref_id?: EventId;
+  /** Groups one step's emissions (thinking · tool_use · the assistant message): render's
+   *  boundary rule (§5) and the tool barrier (§2) read it. Minted, not an event id. */
+  turn_id?: string;
+  /** On the LAST event of a turn: the provider's stop reason verbatim. `pause_turn` and
+   *  `max_tokens` are continuations, not endings — `decide` reads this to re-enter (§2). */
+  stop_reason?: string;
+  /** On a summary: the id range the checkpoint stands for (§5 compaction). */
+  covers?: [EventId, EventId];
+  /** Wire mentions, canonical addresses. */
+  mentions?: string[];
+  /** Ingest-classified reserved word from the agent's principal (§3 classifier). */
+  control?: ControlKind;
 }
 
-/** WIRE-derived sidecar (§3): what the frontier yielded beyond the envelope — auditable,
- *  droppable, shallow-merged on echo-merge. Known keys: `raw` (original wire text, so a
- *  misclassification stays reversible), `via` (alias original wire envelope, §4), `edits`
- *  (edit history), `inferred_sender` (soft attribution), per-service provenance under the
- *  service name (`slack: {subtype, authorizations}`). */
+/** The event's SIDECAR (§3): auditable, droppable, `json_patch`-merged on echo-merge —
+ *  the machine never branches on service keys. Known keys: `backfill` (imported history —
+ *  wakes nothing, renders nowhere, §2), `consumed` (on the agent's home messages: the last
+ *  event id the step's window read — the coalescing horizon `unanswered` measures against,
+ *  §2), `via` (mirror provenance, §4), and per-service provenance under the service name —
+ *  how the wire said it, not what the event means (`slack: {subtype, authorizations}`,
+ *  `raw`, `inferred_sender`). */
 export type Extra = Record<string, unknown>;
 
 /* ─────────────────────────────── events ─────────────────────────────── */
@@ -194,10 +230,10 @@ export interface EventBase {
   ts: Timestamp;
   type: EventType;
   envelope: Envelope;
-  cause?: EventId; // provenance (openhands-style)
   agent?: Authorship; // present iff a handler authored it
-  meta?: Meta;
+  payload?: Payload;
   extra?: Extra;
+  status?: Lifecycle; // the mutable delivery column, exposed on read; drafts may seed it
 }
 
 /* payloads carried as a single data part */
@@ -219,14 +255,12 @@ export type PermissionScope = "once" | "always";
 export interface PermissionAsk {
   tool: string;
   args_preview: string;
-  request_id: string;
 }
 
 export interface PermissionVerdict {
   behavior: PermissionBehavior;
   scope: PermissionScope;
   reason?: string; // on deny
-  request_id: string;
 }
 
 /** ingest-classified reserved word from the agent's principal (§3 classifier). */
@@ -237,55 +271,60 @@ export type ControlKind = "stop" | "cancel";
 export interface MessageEvent extends EventBase {
   type: "message";
   parts: Part[];
-  re?: EventId;
 }
 
 /** A principal reserved word reclassified at ingest → nu hard-stop (§2, §3). */
 export interface ControlEvent extends EventBase {
   type: "control";
   parts: Part[];
-  meta: Meta & { control: ControlKind };
+  payload: Payload & { control: ControlKind };
 }
 
-/** mu's tool request. `turnId` groups a parallel batch for the barrier (§2). */
+/** mu's tool request. `turn_id` groups a parallel batch for the barrier (§2). */
 export interface ToolUseEvent extends EventBase {
   type: "tool_use";
-  turnId: string;
+  payload: Payload & { turn_id: string };
   parts: [DataPart<"tool_use", ToolCall>];
 }
 
-/** nu's tool outcome. The barrier completes when results === uses for a `turnId` (§2).
+/** nu's tool outcome — `ref_id` names the tool_use it answers, so parallel tools weld
+ *  order-independently; the barrier completes when results === uses for a `turn_id` (§2).
  *  FileParts after the data part are the tool's ATTACHMENTS (§5 media — `aread` on an
  *  image): generic here; the TRANSPORT shapes them into provider blocks (Anthropic:
  *  image/document blocks inside the tool_result content) — switching providers touches
  *  render, never the log. */
 export interface ToolResultEvent extends EventBase {
   type: "tool_result";
-  turnId: string;
+  payload: Payload & { turn_id: string; ref_id: EventId };
   parts: [DataPart<"tool_result", ToolOutput>, ...FilePart[]];
 }
 
 /**
  * mu's extended-thinking block — logged **with its signature** so the unrolled next step can
- * replay it verbatim, which the API requires within a tool cycle (§2, §5). `turnId` ties it
+ * replay it verbatim, which the API requires within a tool cycle (§2, §5). `turn_id` ties it
  * to the assistant response it belongs to. Rendered inline in the live turn, dropped once the
  * turn closes; only the streaming *deltas* go to the Stream.
  */
 export interface ThinkingEvent extends EventBase {
   type: "thinking";
-  turnId: string;
+  payload: Payload & { turn_id: string };
   parts: [DataPart<"thinking", { thinking: string; signature: string }>];
 }
 
-/** nu asks an approver before running a gated tool (§2, §9). n/a to the model. */
+/** nu asks an approver before running a gated tool (§2, §9) — `ref_id` = the tool_use.
+ *  n/a to the model. */
 export interface PermissionRequestEvent extends EventBase {
   type: "permission_request";
+  payload: Payload & { ref_id: EventId };
   parts: [DataPart<"permission_request", PermissionAsk>];
 }
 
-/** The approver's structured verdict — auto (nu) or human (ingest id-match) (§3). */
+/** The approver's structured verdict — auto (nu) or human (ingest id-match) (§3).
+ *  `ref_id` = the tool_use it settles (the star's center, not a chain: request and
+ *  response both point at the use, one hop for the barrier query). */
 export interface PermissionResponseEvent extends EventBase {
   type: "permission_response";
+  payload: Payload & { ref_id: EventId };
   parts: [DataPart<"permission_response", PermissionVerdict>];
 }
 
@@ -293,7 +332,7 @@ export interface PermissionResponseEvent extends EventBase {
 export interface SummaryEvent extends EventBase {
   type: "summary";
   parts: TextPart[];
-  meta: Meta & { covers: [EventId, EventId] };
+  payload: Payload & { covers: [EventId, EventId] };
 }
 
 /** A delayed, harness-delivered effect the agent scheduled — system-authored, so it wakes (§2). */

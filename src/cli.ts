@@ -69,19 +69,20 @@ const principalMsg = (text: string): Draft<MessageEvent> => ({
 });
 
 const respond = (
-  request_id: string,
+  refId: string, // the gated tool_use — request and response both point at it (§3)
   behavior: "allow" | "deny",
   reason?: string,
-): Draft<Event> => ({
+): Draft<PermissionResponseEvent> => ({
   ts: new Date().toISOString(),
   type: "permission_response",
+  payload: { ref_id: refId },
   envelope: homeEnv,
   parts: [{
     type: "data",
     kind: "permission_response",
-    data: { behavior, scope: "once", ...(reason ? { reason } : {}), request_id },
+    data: { behavior, scope: "once", ...(reason ? { reason } : {}) },
   }],
-} as PermissionResponseEvent);
+});
 
 const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
 
@@ -118,8 +119,8 @@ function paint(e: Event): void {
       return;
     }
     case "permission_request": {
-      const { tool, args_preview, request_id } = e.parts[0].data;
-      pendingRequest = request_id;
+      const { tool, args_preview } = e.parts[0].data;
+      pendingRequest = e.payload?.ref_id;
       write(`\n${YELLOW}? approve ${tool} ${args_preview}${RESET}\n  /y [note] · /n [reason]\n> `);
       return;
     }

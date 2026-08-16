@@ -85,8 +85,8 @@ Deno.test("github: a signed issue_comment maps to a message in owner/repo#N", as
   assertEquals(m.envelope.conversation.address, "ana/widgets#42");
   assertEquals(m.envelope.sender?.name, "ana");
   assertStringIncludes((m.parts[0] as { text: string }).text, "look at this");
-  assertEquals((m.meta?.github as { event: string }).event, "issue_comment");
-  assertEquals((m.meta?.github as { delivery: string }).delivery, "d1");
+  assertEquals((m.extra?.github as { event: string }).event, "issue_comment");
+  assertEquals((m.extra?.github as { delivery: string }).delivery, "d1");
 });
 
 Deno.test("github: a bad signature is rejected before the log (401, nothing published)", async () => {
