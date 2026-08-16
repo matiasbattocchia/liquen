@@ -41,12 +41,12 @@ function harness(
 ) {
   const published: Event[] = [];
   const handler: WebhookHandler = createSlackWebhook({
-    // the store's `publish` in miniature: it mints the id (§3). Cast because the fake only
-    // implements the single-draft overload — a connection never publishes a batch.
-    publish: ((e: Draft) => {
-      const stored = { ...e, id: e.id ?? newId() } as Event;
-      published.push(stored);
-      return Promise.resolve(stored);
+    // the store's `publish` in miniature: it mints ids (§3), both overloads
+    publish: ((one: Draft | Draft[]) => {
+      const drafts = Array.isArray(one) ? one : [one];
+      const stored = drafts.map((e) => ({ ...e, id: e.id ?? newId() } as Event));
+      published.push(...stored);
+      return Promise.resolve(Array.isArray(one) ? stored : stored[0]);
     }) as Appender["publish"],
     store,
     media,
@@ -109,7 +109,7 @@ Deno.test("slack: a signed message maps to a bare channel address with the ts me
   ]);
 });
 
-Deno.test("slack: message_changed carries the SAME external_id — an edit merges, never inserts", async () => {
+Deno.test("slack: message_changed is its OWN event — action edit + ref to the original", async () => {
   const { handler, published } = harness(SECRET);
   await handler(
     await signedReq(messageEvent({
@@ -117,13 +117,16 @@ Deno.test("slack: message_changed carries the SAME external_id — an edit merge
         type: "message",
         subtype: "message_changed",
         channel: "C1",
+        event_ts: "111.900",
         message: { ts: "111.222", user: "U7", text: "hola equipo (edited)" },
       },
     })),
   );
   assertEquals(published.length, 1);
   const m = published[0] as MessageEvent;
-  assertEquals(m.envelope.external_id, "slack:T1:C1:111.222"); // same row at the store
+  assertEquals(m.envelope.external_id, "slack:T1:C1:111.900"); // its OWN identity
+  assertEquals(m.payload?.action, "edit");
+  assertEquals(m.payload?.ref_external_id, "slack:T1:C1:111.222"); // the original, untouched
   assertEquals((m.parts[0] as { text: string }).text, "hola equipo (edited)");
 });
 
@@ -416,7 +419,7 @@ Deno.test("slack: a failed download drops the file, keeps the text; no media sea
   assertEquals((m.parts[0] as { text: string }).text, "mira esto");
 });
 
-Deno.test("slack: message_deleted is merge-only — no parts, deleted_at in extra", async () => {
+Deno.test("slack: message_deleted is TWO drafts — the delete event + the deleted_at stamp", async () => {
   const { handler, published } = harness(SECRET);
   await handler(
     await signedReq(messageEvent({
@@ -429,9 +432,13 @@ Deno.test("slack: message_deleted is merge-only — no parts, deleted_at in extr
       },
     })),
   );
-  assertEquals(published.length, 1);
-  const m = published[0] as MessageEvent;
-  assertEquals(m.envelope.external_id, "slack:T1:C1:111.222"); // the deleted row's key
-  assertEquals("parts" in m, false); // the json_patch no-op — stored parts survive (§3)
-  assertEquals((m.extra?.slack as { deleted_at: string }).deleted_at, "111.999");
+  assertEquals(published.length, 2);
+  const [del, stamp] = published as MessageEvent[];
+  assertEquals(del.envelope.external_id, "slack:T1:C1:111.999"); // the delivery's own ts
+  assertEquals(del.payload?.action, "delete");
+  assertEquals(del.payload?.ref_external_id, "slack:T1:C1:111.222");
+  assertEquals(del.parts, []);
+  assertEquals(stamp.envelope.external_id, "slack:T1:C1:111.222"); // the deleted row's key
+  assertEquals("parts" in stamp, false); // the json_patch no-op — stored parts survive (§3)
+  assertEquals(stamp.status?.deleted_at, "111.999");
 });

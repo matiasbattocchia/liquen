@@ -85,8 +85,21 @@ export interface WABatch {
   }[];
   contacts?: { address: string; extra?: { name?: string } }[];
   groups?: { address: string; name?: string }[];
-  edits?: { original_message_id: string; text: string; timestamp: string }[];
-  revokes?: { original_message_id: string; timestamp: string }[];
+  edits?: {
+    external_id?: string; // the edit's OWN protocol-message id (newer bridges)
+    original_message_id: string;
+    conversation_address?: string;
+    sender_address?: string;
+    text: string;
+    timestamp: string;
+  }[];
+  revokes?: {
+    external_id?: string;
+    original_message_id: string;
+    conversation_address?: string;
+    sender_address?: string;
+    timestamp: string;
+  }[];
 }
 
 export interface WASessionEvent {
@@ -169,7 +182,7 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
         mapMessage(m, connection, deps.store, groupNames, pushnames, now, batch.history === true)
       ),
       ...(batch.edits ?? []).map((e) => mapEdit(e, connection, now)),
-      ...(batch.revokes ?? []).map((r) => mapRevoke(r, connection, now)),
+      ...(batch.revokes ?? []).flatMap((r) => mapRevoke(r, connection, now)),
       ...(batch.statuses ?? []).map((s) => mapStatus(s, connection, now)),
     ].filter((d): d is Draft<MessageEvent> => d !== null);
 
@@ -304,23 +317,33 @@ function mapMessage(
 
 /** An edit REPLACES parts on the original row (a `json_patch` array replaces — the same
  *  row semantics as Slack's `message_changed`); the mark rides `extra`. */
+/** An edit is its OWN event (§3): `action: "edit"` + the original's wire id in
+ *  `ref_external_id`, parts carrying the new content in the original's part types. The
+ *  original row is never touched — sealed WUMs stay invariant, and the edit renders in a
+ *  LATER one. Its identity is the edit's own protocol-message id; an older bridge that
+ *  doesn't send one gets a deterministic synthetic id so retries still dedupe. */
 function mapEdit(
   e: NonNullable<WABatch["edits"]>[number],
   connection: string,
   now: () => string,
 ): Draft<MessageEvent> | null {
   if (!e.original_message_id) return null;
+  const ts = e.timestamp || now();
   return {
-    ts: e.timestamp || now(),
+    ts,
     type: "message",
+    payload: { action: "edit", ref_external_id: externalId(e.original_message_id) },
     envelope: {
       service: SERVICE,
       connection_address: connection,
-      conversation: { address: "" }, // merge-keyed on external_id; the row keeps its own
-      external_id: externalId(e.original_message_id),
+      conversation: {
+        address: e.conversation_address ?? "",
+        ...(e.conversation_address ? { kind: kindOf(e.conversation_address) } : {}),
+      },
+      ...(e.sender_address ? { sender: { address: e.sender_address } } : {}),
+      external_id: externalId(e.external_id ?? `edit.${e.original_message_id}.${ts}`),
     },
     parts: [{ type: "text", kind: "text", text: e.text }],
-    extra: { whatsapp: { edited_at: e.timestamp || now() } },
   };
 }
 
@@ -348,18 +371,38 @@ function mergeOnly(
   } as unknown as Draft<MessageEvent>; // partless by design — see above
 }
 
-/** A revoke marks, never deletes: the log is append-only, the content stays auditable —
- *  `status.deleted_at` is the lifecycle stamp (§3). */
+/** A revoke marks, never deletes — two drafts (§3): the delete EVENT (`action: "delete"`,
+ *  empty parts, the original in ref_external_id — what a later WUM renders), and the
+ *  merge-only `status.deleted_at` stamp on the original row (the lifecycle fact; the
+ *  content itself survives, auditable). */
 function mapRevoke(
   r: NonNullable<WABatch["revokes"]>[number],
   connection: string,
   now: () => string,
-): Draft<MessageEvent> | null {
-  if (!r.original_message_id) return null;
+): Draft<MessageEvent>[] {
+  if (!r.original_message_id) return [];
   const ts = r.timestamp || now();
-  return mergeOnly(connection, r.original_message_id, ts, {
-    status: { deleted_at: ts },
-  });
+  return [
+    {
+      ts,
+      type: "message",
+      payload: { action: "delete", ref_external_id: externalId(r.original_message_id) },
+      envelope: {
+        service: SERVICE,
+        connection_address: connection,
+        conversation: {
+          address: r.conversation_address ?? "",
+          ...(r.conversation_address ? { kind: kindOf(r.conversation_address) } : {}),
+        },
+        ...(r.sender_address ? { sender: { address: r.sender_address } } : {}),
+        external_id: externalId(r.external_id ?? `del.${r.original_message_id}.${ts}`),
+      },
+      parts: [],
+    },
+    mergeOnly(connection, r.original_message_id, ts, {
+      status: { deleted_at: ts },
+    }),
+  ];
 }
 
 /** Delivery/read receipts → the row's `status` lifecycle (§3): `state` takes the furthest

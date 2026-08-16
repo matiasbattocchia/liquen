@@ -244,7 +244,7 @@ Deno.test("reaction + reply ref: the target is payload.ref_external_id, action a
   assertEquals(e.payload?.action, "add"); // a reaction ADDS a part to its referent (§3)
 });
 
-Deno.test("an edit republishes on the original id with new parts + edited_at", async () => {
+Deno.test("an edit is its OWN event: action edit + ref to the original, new parts", async () => {
   const { handler, published } = harness();
   await handler(
     post(
@@ -259,15 +259,15 @@ Deno.test("an edit republishes on the original id with new parts + edited_at", a
     ),
   );
   const e = published[0] as MessageEvent;
-  assertEquals(e.envelope.external_id, externalId("wmw.orig.1"));
+  // its own identity (synthetic here — an older-bridge batch without external_id),
+  // NEVER the original's: the original row stays sealed, the edit renders later (§3)
+  assertEquals(e.envelope.external_id?.includes("edit.wmw.orig.1"), true);
+  assertEquals(e.payload?.action, "edit");
+  assertEquals(e.payload?.ref_external_id, externalId("wmw.orig.1"));
   assertEquals(e.parts, [{ type: "text", kind: "text", text: "hola (corregido)" }]);
-  assertEquals(
-    (e.extra?.whatsapp as { edited_at?: string }).edited_at,
-    "2026-08-11T12:05:00Z",
-  );
 });
 
-Deno.test("a revoke is merge-only: no parts key, status.deleted_at stamps it", async () => {
+Deno.test("a revoke is TWO drafts: the delete event + deleted_at on the original", async () => {
   const { handler, published } = harness();
   await handler(
     post(
@@ -277,10 +277,13 @@ Deno.test("a revoke is merge-only: no parts key, status.deleted_at stamps it", a
       }),
     ),
   );
-  const e = published[0] as MessageEvent;
-  assertEquals(e.envelope.external_id, externalId("wmw.orig.1"));
-  assertEquals("parts" in e, false); // the json_patch no-op — stored parts survive
-  assertEquals(e.status?.deleted_at, "2026-08-11T12:06:00Z");
+  const [del, stamp] = published as MessageEvent[];
+  assertEquals(del.payload?.action, "delete");
+  assertEquals(del.payload?.ref_external_id, externalId("wmw.orig.1"));
+  assertEquals(del.parts, []); // delete removes ALL parts — the event carries none
+  assertEquals(stamp.envelope.external_id, externalId("wmw.orig.1"));
+  assertEquals("parts" in stamp, false); // the json_patch no-op — stored parts survive
+  assertEquals(stamp.status?.deleted_at, "2026-08-11T12:06:00Z");
 });
 
 Deno.test("a receipt maps to a merge-only status draft: state + read_at map", async () => {

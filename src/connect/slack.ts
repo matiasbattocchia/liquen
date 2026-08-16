@@ -120,7 +120,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     if (e.type !== "message") return text(202, `ignored: ${e.type}`);
 
     const anchor = anchorOf(team, payload.authorizations);
-    const msg = await mapMessage(
+    const msgs = await mapMessage(
       e,
       team,
       anchor,
@@ -129,9 +129,9 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       deps.media,
       { now },
     );
-    if (!msg) return text(202, "ignored");
+    if (msgs.length === 0) return text(202, "ignored");
     try {
-      await deps.publish(msg);
+      await deps.publish(msgs);
     } catch {
       return text(500, "publish failed");
     }
@@ -181,31 +181,47 @@ async function mapMessage(
   store: Store | undefined,
   media: SlackMedia | undefined,
   ctx: MapCtx,
-): Promise<Draft<MessageEvent> | null> {
+): Promise<Draft<MessageEvent>[]> {
   // a delete marks, never removes (the log is append-only — same policy as WhatsApp
-  // revokes): a MERGE-ONLY draft — no `parts` key, so the upsert's `json_patch` leaves
-  // the stored payload untouched and only `extra.slack.deleted_at` lands
+  // revokes) — TWO drafts (§3): the delete EVENT (action delete, empty parts, the
+  // original in ref_external_id — what a later WUM renders; its own id is the delivery's
+  // event_ts), and the merge-only `status.deleted_at` stamp on the original row
   if (e.subtype === "message_deleted") {
-    if (!e.deleted_ts || !e.channel) return null;
-    return {
-      ts: ctx.now(),
+    if (!e.deleted_ts || !e.channel) return [];
+    const originalId = `slack:${team}:${e.channel}:${e.deleted_ts}`;
+    const ts = ctx.now();
+    return [{
+      ts,
+      type: "message",
+      payload: { action: "delete", ref_external_id: originalId },
+      envelope: {
+        service: "slack",
+        connection_address: anchor,
+        conversation: { address: e.channel },
+        external_id: `slack:${team}:${e.channel}:${e.event_ts ?? `del.${e.deleted_ts}`}`,
+      },
+      parts: [],
+    }, {
+      ts,
       type: "message",
       envelope: {
         service: "slack",
         connection_address: anchor,
         conversation: { address: e.channel },
-        external_id: `slack:${team}:${e.channel}:${e.deleted_ts}`,
+        external_id: originalId,
       },
-      extra: { slack: { deleted_at: e.event_ts ?? ctx.now() } },
-    } as unknown as Draft<MessageEvent>; // partless by design — see above
+      status: { deleted_at: e.event_ts ?? ts },
+    } as unknown as Draft<MessageEvent>]; // the stamp is partless by design
   }
 
-  // plain message, an edit (message_changed nests the message; same ts ⇒ same row), or a
-  // file share (file_share is a plain message carrying `files` — same row semantics)
-  const inner = e.subtype === "message_changed" ? e.message : e;
+  // plain message, an edit (message_changed nests the new content — its OWN event, the
+  // original row untouched), or a file share (file_share is a plain message carrying
+  // `files` — same row semantics)
+  const edit = e.subtype === "message_changed";
+  const inner = edit ? e.message : e;
   const m = inner.subtype === undefined || inner.subtype === "file_share" ? inner : null;
   const files = (m as { files?: SlackFileRef[] } | null)?.files;
-  if (!m?.ts || !e.channel || (!m.text && !files?.length)) return null;
+  if (!m?.ts || !e.channel || (!m.text && !files?.length)) return [];
 
   const conversation = e.channel; // the platform's own id — service/connection ride the envelope (§3)
   const who = ownerOf(store, team, m.user);
@@ -235,19 +251,32 @@ async function mapMessage(
       if (p) parts.push(p);
     }
   }
-  if (parts.length === 0) return null;
+  if (parts.length === 0) return [];
 
   const kind = KIND[e.channel_type];
-  return {
+  return [{
     ts: ctx.now(),
     type: "message",
+    // an edit is its own event (§3): action + the original's id; the delivery's event_ts
+    // is its identity, so retries dedupe and the original's row never re-opens
+    ...(edit
+      ? {
+        payload: {
+          action: "edit" as const,
+          ref_external_id: `slack:${team}:${e.channel}:${m.ts}`,
+        },
+      }
+      : {}),
     envelope: {
       service: "slack",
       connection_address: anchor,
       conversation: { address: conversation, ...(kind ? { kind } : {}) },
       sender: m.user ? { address: m.user, ...(who ? { name: who } : {}) } : undefined,
-      // the upsert/merge key: Slack's ts is the per-channel message id (§3, §4)
-      external_id: `slack:${team}:${e.channel}:${m.ts}`,
+      // the upsert/merge key: Slack's ts is the per-channel message id (§3, §4) — for an
+      // edit, the change delivery's own ts
+      external_id: edit
+        ? `slack:${team}:${e.channel}:${e.event_ts ?? `edit.${m.ts}`}`
+        : `slack:${team}:${e.channel}:${m.ts}`,
     },
     parts,
     // the wire-derived sidecar (§3): only what the envelope has no slot for — the wire's
@@ -264,7 +293,7 @@ async function mapMessage(
         },
       }
       : {}),
-  };
+  }];
 }
 
 /** Join/leave → the membership row moves when the mover is a bound user. Unbound movers
