@@ -22,6 +22,7 @@ import type {
   Event,
   FilePart,
   MessageEvent,
+  ReactionPart,
   SessionId,
   ThinkingEvent,
   ToolResultEvent,
@@ -344,6 +345,14 @@ function renderMessages(
 ): MessageParam[] {
   const { events, elisions } = byEventTime(applySummary(window.filter((e) => !backfilled(e))));
   const out: MessageParam[] = [];
+
+  // ref resolution for <del> bodies (§5): the WHOLE window, backfill included — a delete
+  // often lands long after its referent, and the referent being history doesn't unsay it
+  const byExternal = new Map<string, Event>();
+  for (const e of window) {
+    if (e.envelope.external_id) byExternal.set(e.envelope.external_id, e);
+  }
+  const resolve = (id: string) => byExternal.get(id);
   let cur: { role: Role; content: ContentBlockParam[] } | null = null;
 
   // a trailing message's inlineable attachments → real API blocks. Local bytes become
@@ -438,7 +447,7 @@ function renderMessages(
       const earlier = elisions.earlier.get(e);
       if (earlier) cluster.lines.push(`… ${earlier} earlier, not shown`);
     }
-    cluster.lines.push(msgLine(e, session, zone));
+    cluster.lines.push(msgLine(e, session, zone, resolve));
   };
 
   // No separators (§5). They went through `place()`, so every date break and gap marker
@@ -659,11 +668,19 @@ function conversationEl(
   return `<conv ${attrs.join(" ")}>\n${c.lines.join("\n")}\n</conv>`;
 }
 
-/** One world message line. `from="self"` = the agent's own send (its author label inside a
- *  user turn); `status="failed"` = the dispatcher gave up on delivery (§5). Body and
- *  sender name are attacker-controlled — escaped, so no message can close its own element
- *  or forge a mark. */
-function msgLine(e: MessageEvent, session: SessionId, zone?: string): string {
+/** One world message line — the element is the ACTION (§3, §5): `<msg>` = create, `<edit>`
+ *  new content, `<del>` the removed content (resolved against the window when the original
+ *  is present — no ref attribute; the model reads it by context), `<react>` the glyph
+ *  (`removed="true"` = an un-react). `from="self"` = the agent's own send (its author
+ *  label inside a user turn); `status="failed"` = the dispatcher gave up on delivery (§5).
+ *  Body and sender name are attacker-controlled — escaped, so no message can close its own
+ *  element or forge a mark. */
+function msgLine(
+  e: MessageEvent,
+  session: SessionId,
+  zone?: string,
+  resolve?: (externalId: string) => Event | undefined,
+): string {
   // `self` for both hands, because on the wire there IS only one: the account. WhatsApp
   // coexistence is unattributable from the platform (§4) — but not from the LOG, and the
   // two are told apart without asking anyone. `agent` set ⇒ we published it (a `send`, or
@@ -675,11 +692,31 @@ function msgLine(e: MessageEvent, session: SessionId, zone?: string): string {
     : e.envelope.sender === undefined
     ? "self (principal)"
     : (e.envelope.sender.name ?? e.envelope.sender.address ?? "peer");
+  const head = `from="${escAttr(from)}" at="${hhmm(e.ts, zone)}"`;
+
+  const action = e.payload?.action;
+  if (action === "edit") {
+    return `<edit ${head}>${escText(textOf(e))}</edit>`;
+  }
+  if (action === "delete") {
+    const orig = e.payload?.ref_external_id ? resolve?.(e.payload.ref_external_id) : undefined;
+    return `<del ${head}>${orig ? escText(textOf(orig)) : ""}</del>`;
+  }
+  if (action === "add" || action === "remove") {
+    const r = e.parts.find((p): p is ReactionPart => p.type === "data" && p.kind === "reaction");
+    const glyph = r ? (r.data.unicode ?? r.data.name) : textOf(e);
+    const removed = action === "remove" ? ' removed="true"' : "";
+    return `<react ${head}${removed}>${escText(glyph)}</react>`;
+  }
+
   const failed = e.envelope.status === "failed" ? ' status="failed"' : "";
+  const mentions = e.payload?.mentions?.length
+    ? ` mentions="${escAttr(e.payload.mentions.join(" "))}"`
+    : "";
   // body text is escaped (untrusted); the media markers are render's own, appended after
   const body = [escText(textOf(e)), ...filesOf(e).map(mediaMarker)]
     .filter((s) => s.length > 0).join(" ");
-  return `<msg from="${escAttr(from)}" at="${hhmm(e.ts, zone)}"${failed}>${body}</msg>`;
+  return `<msg ${head}${failed}${mentions}>${body}</msg>`;
 }
 
 /** XML escaping — THE injection boundary (§5): every untrusted string that lands in a text

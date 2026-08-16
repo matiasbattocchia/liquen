@@ -1081,3 +1081,55 @@ Deno.test("self is ONE identity, two hands: (you) is ours, (principal) is the ph
   assertStringIncludes(dump, 'from=\\"self (principal)\\" at=\\"12 Aug 9:00\\">disculpá');
   assertEquals(dump.includes('from=\\"peer\\"'), false); // never a stranger
 });
+
+Deno.test("the element is the action (§5): <edit>, <del> resolved, <react>, mentions", () => {
+  const t = "2026-08-16T12:00:00Z";
+  const conv = { address: "wa:sol", kind: "direct" as const };
+  const sol = { address: "549", name: "sol" };
+  const original = worldMsg("e1", t, conv, sol, "hay dos lugares");
+  original.envelope.external_id = "whatsapp:wmw.x.orig";
+  const edit: MessageEvent = {
+    ...worldMsg("e2", t, conv, sol, "me confirmaron: hay UN lugar"),
+    payload: { action: "edit", ref_external_id: "whatsapp:wmw.x.orig" },
+  };
+  const del: MessageEvent = {
+    ...worldMsg("e3", t, conv, sol, ""),
+    parts: [],
+    payload: { action: "delete", ref_external_id: "whatsapp:wmw.x.orig" },
+  };
+  const react: MessageEvent = {
+    ...worldMsg("e4", t, conv, sol, ""),
+    parts: [{ type: "data", kind: "reaction", data: { name: "😮", unicode: "😮" } }],
+    payload: { action: "add", ref_external_id: "whatsapp:wmw.x.orig" },
+  };
+  const unreact: MessageEvent = {
+    ...react,
+    id: "e5",
+    payload: { action: "remove", ref_external_id: "whatsapp:wmw.x.orig" },
+  };
+  const mentioned: MessageEvent = {
+    ...worldMsg("e6", t, conv, sol, "che @matias mirá esto"),
+    payload: { mentions: ["5491133585694"] },
+  };
+  const { messages } = render({
+    events: [original, edit, del, react, unreact, mentioned],
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
+  const dump = JSON.stringify(messages);
+  assertStringIncludes(
+    dump,
+    '<edit from=\\"sol\\" at=\\"16 Aug 12:00\\">me confirmaron: hay UN lugar</edit>',
+  );
+  // the del body is the ORIGINAL's text, resolved against the window — no ref attribute
+  assertStringIncludes(dump, '<del from=\\"sol\\" at=\\"16 Aug 12:00\\">hay dos lugares</del>');
+  assertStringIncludes(dump, '<react from=\\"sol\\" at=\\"16 Aug 12:00\\">😮</react>');
+  assertStringIncludes(
+    dump,
+    '<react from=\\"sol\\" at=\\"16 Aug 12:00\\" removed=\\"true\\">😮</react>',
+  );
+  assertStringIncludes(dump, 'mentions=\\"5491133585694\\">che @matias mirá esto</msg>');
+});
