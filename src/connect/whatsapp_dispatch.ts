@@ -26,7 +26,7 @@
 import { isExternal } from "../store/media.ts";
 import { DispatchError, failedStatus } from "./errors.ts";
 import type { DeliveryPatch, Subscriber } from "../store/log.ts";
-import type { Event, EventId, FilePart, MessageEvent, TextPart } from "../types.ts";
+import type { Event, EventId, FilePart, MessageEvent, ReactionPart, TextPart } from "../types.ts";
 import { externalId, SERVICE, type WAContent } from "./whatsapp.ts";
 
 /** The bridge's dispatch request (server.go `dispatchRequest`) — record verbatim. */
@@ -120,17 +120,28 @@ function outbound(e: Event): Outbound | null {
   const re = reOf(event);
   const texts = event.parts.filter((p): p is TextPart => p.type === "text");
   const files = event.parts.filter((p): p is FilePart => p.type === "file");
-  const reaction = texts.find((p) => p.kind === "reaction");
+  // the canonical reaction is the DataPart (§3: what was added/removed rides the part,
+  // add vs remove is the event's action); a text-kind reaction is tolerated on input
+  const reactData = event.parts.find((p): p is ReactionPart =>
+    p.type === "data" && p.kind === "reaction"
+  );
+  const reactText = texts.find((p) => p.kind === "reaction");
   const text = texts.filter((p) => p.kind !== "reaction").map((p) => p.text).join("\n");
 
   const contents: { content: WAContent }[] = [];
-  if (reaction && re) {
+  if ((reactData || reactText) && re) {
+    // WhatsApp un-reacts with an EMPTY reaction — `action: "remove"` maps to that
+    const glyph = event.payload?.action === "remove"
+      ? ""
+      : reactData
+      ? (reactData.data.unicode ?? reactData.data.name)
+      : reactText!.text;
     contents.push({
       content: {
         version: "1",
         type: "text",
         kind: "reaction",
-        text: reaction.text,
+        text: glyph,
         re_message_id: re,
       },
     });
@@ -166,9 +177,9 @@ function outbound(e: Event): Outbound | null {
   return contents.length ? { event, contents } : null;
 }
 
-/** The `whatsapp:`-prefixed external ref from extra → the bridge's raw wmw id. */
+/** The `whatsapp:`-prefixed external ref from `payload` (§3) → the bridge's raw wmw id. */
 function reOf(e: MessageEvent): string | undefined {
-  const re = (e.extra?.whatsapp as { re?: string } | undefined)?.re;
+  const re = e.payload?.ref_external_id;
   return typeof re === "string" ? re.replace(/^whatsapp:/, "") : undefined;
 }
 

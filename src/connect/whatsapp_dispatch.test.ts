@@ -152,12 +152,18 @@ Deno.test("a reaction maps to its own content with the raw wmw re_message_id", a
     records.push(r);
     return Promise.resolve("wmw.out.1");
   });
+  // the canonical shape (§3): ReactionPart + the ref/action on the event's payload
   log.push(outboundMessage({
-    parts: [{ type: "text", kind: "reaction", text: "👍" }],
-    extra: { whatsapp: { re: externalId("wmw.orig.7") } },
+    parts: [{ type: "data", kind: "reaction", data: { name: "👍", unicode: "👍" } }],
+    payload: { action: "add", ref_external_id: externalId("wmw.orig.7") },
+  }));
+  // action: "remove" un-reacts — WhatsApp's wire form is an EMPTY reaction
+  log.push(outboundMessage({
+    parts: [{ type: "data", kind: "reaction", data: { name: "👍", unicode: "👍" } }],
+    payload: { action: "remove", ref_external_id: externalId("wmw.orig.7") },
   }));
   await settle();
-  assertEquals(records.length, 1);
+  assertEquals(records.length, 2);
   assertEquals(records[0].content, {
     version: "1",
     type: "text",
@@ -165,6 +171,7 @@ Deno.test("a reaction maps to its own content with the raw wmw re_message_id", a
     text: "👍",
     re_message_id: "wmw.orig.7", // prefix stripped back to the bridge's id
   });
+  assertEquals(records[1].content.text, "");
 });
 
 Deno.test("a bridge refusal stamps failed with the HTTP status as error_code", async () => {

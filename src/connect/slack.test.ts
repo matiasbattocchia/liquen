@@ -419,6 +419,39 @@ Deno.test("slack: a failed download drops the file, keeps the text; no media sea
   assertEquals((m.parts[0] as { text: string }).text, "mira esto");
 });
 
+Deno.test("slack: reaction_added/_removed are action events carrying a ReactionPart", async () => {
+  const { handler, published } = harness(SECRET);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "reaction_added",
+        user: "U7",
+        reaction: "thumbsup",
+        item: { type: "message", channel: "C1", ts: "111.222" },
+        event_ts: "111.500",
+      },
+    })),
+  );
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "reaction_removed",
+        user: "U7",
+        reaction: "thumbsup",
+        item: { type: "message", channel: "C1", ts: "111.222" },
+        event_ts: "111.600",
+      },
+    })),
+  );
+  assertEquals(published.length, 2);
+  const [added, removed] = published as MessageEvent[];
+  assertEquals(added.payload?.action, "add");
+  assertEquals(added.payload?.ref_external_id, "slack:T1:C1:111.222");
+  assertEquals(added.envelope.external_id, "slack:T1:C1:111.500"); // the delivery dedupes
+  assertEquals(added.parts, [{ type: "data", kind: "reaction", data: { name: "thumbsup" } }]);
+  assertEquals(removed.payload?.action, "remove");
+});
+
 Deno.test("slack: message_deleted is TWO drafts — the delete event + the deleted_at stamp", async () => {
   const { handler, published } = harness(SECRET);
   await handler(

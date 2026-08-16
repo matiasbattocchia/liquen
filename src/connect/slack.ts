@@ -117,6 +117,36 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       mirrorMember(e, team, deps.store);
       return text(202, "membership");
     }
+    // a reaction is an ACTION event (§3): add/remove + the reacted message's id in
+    // ref_external_id, the ReactionPart carrying what changed; identity is the
+    // delivery's event_ts, so retries dedupe
+    if (e.type === "reaction_added" || e.type === "reaction_removed") {
+      const item = e.item;
+      if (item?.type !== "message" || !item.channel || !item.ts) return text(202, "ignored");
+      const anchor = anchorOf(team, payload.authorizations);
+      const who = ownerOf(deps.store, team, e.user);
+      try {
+        await deps.publish({
+          ts: now(),
+          type: "message",
+          payload: {
+            action: e.type === "reaction_added" ? "add" : "remove",
+            ref_external_id: `slack:${team}:${item.channel}:${item.ts}`,
+          },
+          envelope: {
+            service: "slack",
+            connection_address: anchor,
+            conversation: { address: item.channel },
+            ...(e.user ? { sender: { address: e.user, ...(who ? { name: who } : {}) } } : {}),
+            external_id: `slack:${team}:${item.channel}:${e.event_ts}`,
+          },
+          parts: [{ type: "data", kind: "reaction", data: { name: e.reaction } }],
+        });
+      } catch {
+        return text(500, "publish failed");
+      }
+      return text(202, "accepted");
+    }
     if (e.type !== "message") return text(202, `ignored: ${e.type}`);
 
     const anchor = anchorOf(team, payload.authorizations);
