@@ -135,7 +135,7 @@ decide(window) →
   pending uses (ours, no result):
     any actionable (ungated · unrequested gate · responded gate)   → act
     all waiting on a human (requested, unanswered)                 → ignore (the response pokes)
-  last turn's `meta.stop` was pause_turn / max_tokens (≤3)         → think (CONTINUE it)
+  last turn's `payload.stop_reason` was pause_turn / max_tokens (≤3) → think (CONTINUE it)
   trailing harness `error` (the last event in the window)          → ignore (idle-after-error)
   unclosed chain (all uses resolved, no turn output after)         → think (the closing turn)
   unanswered (non-self msgs beyond the last closing's CONSUMED horizon) → think
@@ -160,7 +160,7 @@ The derivations are **position-aware**, so a late invocation that arrives after 
 already done resolves to nothing — quiescence is a poke that finds nothing owed.
 
 **The consumed horizon** (live-bench find, 2026-07-20): the closing message carries
-`meta.consumed` — the last event id in the window its step actually read. `unanswered`
+`extra.consumed` — the last event id in the window its step actually read. `unanswered`
 measures against the horizon's POSITION, not the closing's: a message landing between the
 window-read and the closing's publish sits before the closing in the log yet was never
 seen. render honors the same horizon (unconsumed messages render as trailing INPUT, not
@@ -214,7 +214,7 @@ before acquiring would run a duplicate turn.
   also render's boundary event and the public end-of-turn signal — one event, three
   jobs). Mid-turn messages therefore batch into ONE follow-up, never one spawn each.
   Quiescence is a poke that finds nothing owed. `pause_turn` and `max_tokens` are the
-  continuation, and they run through the log like everything else: nu stamps `meta.stop` on
+  continuation, and they run through the log like everything else: nu stamps `payload.stop_reason` on
   the turn's last event, `decide` reads it, and the next invocation continues — one invocation,
   ONE model turn, no loop in xi. The server paced ONE turn (`pause_turn`) or cut it off at the
   output ceiling (`max_tokens`); the partial turn is committed, so re-entering CONTINUES it,
@@ -340,8 +340,8 @@ acts self-timeout), cron (a **peripheral producer**, like a webhook).
 rows fire by **inserting `alarm` events**. An `alarm` is a *delayed,
 harness-delivered effect* — the agent **scheduled** it (a `tool_use`), the **harness
 fired** it (the sender), so it's `system`-authored (which is *required* — a self-authored
-alarm would be ignored by the relational rule and never wake). Provenance lives in `cause`
-(→ the `schedule_wake`) + the payload. Invariants: anchored
+alarm would be ignored by the relational rule and never wake). Provenance lives in
+`payload.ref_id` (→ the `schedule_wake`) + the data part. Invariants: anchored
 where scheduled (self-wakes) or in the principal-DM (config crons); `timers` table is the
 one non-log fact about the future (recovery = re-arm). Scheduling = a **timer-row write**
 (control-plane SQL/RLS) or `at`/cron (files/OS), **skill-guided — no dedicated tool**;
@@ -377,23 +377,50 @@ makes every lost wake self-healing; that is the scheduler's first job, not its l
     external_id?: string          // backfilled by dispatcher on send
     status?: Status               // mutable field; dispatcher delivery bookkeeping
   }
-  cause?: EventId   // provenance (openhands-style)
   agent?: { id, session_id }      // internal authorship (present iff a handler authored it)
-  meta?: {}         // edits[] history, via (alias original wire), raw, etc.
+  payload?: {       // what the event MEANS beside its parts — its own column
+    action?: "edit" | "add" | "remove" | "delete" | "reply" | "forward"
+    ref_external_id? | ref_id?    // the referent (the reference rule, below)
+    turn_id?          // groups one step's emissions (boundary rule §5, tool barrier §2)
+    stop_reason?      // on a turn's LAST event: the provider's verbatim stop (decide reads it)
+    covers?           // on a summary: [from,to] — the id range the checkpoint stands for
+    mentions?         // wire mentions, canonical addresses
+    control?          // ingest-classified reserved word (stop | cancel)
+  }
+  extra?: {}        // the sidecar: backfill, consumed, via, <service> provenance, raw
+  status?: {        // delivery lifecycle — ONE mutable json_patch-merged column, never events
+    state?          // furthest stage (envelope.status is its shorthand view)
+    delivered_at? · read_at?   // scalars in a DM; {participant: ts} maps in groups
+    deleted_at?     // a revoke stamps, never removes — content stays auditable
+  }
 }
 ```
+
+**The action vocabulary** — what a message DOES to its referent's parts; absent = create:
+`edit` replaces them · `add`/`remove` add or remove some (a reaction is a part somebody
+added to someone else's message) · `delete` removes them all · `reply`/`forward` are
+relational, not mutational. Edits and deletes are their OWN events (own external_id = the
+carrier protocol message's id): the original row stays sealed, past WUMs stay invariant,
+and the change renders in a later one (§5).
+
+**The reference rule** — `ref_external_id` when the referent lives on a wire (the platform
+id is the only stable name at ingest time); `ref_id` when both ends are ours (the log id
+exists before the effect does: a reference always crosses an invocation boundary, so the
+referent is stored by construction). LOCAL events adopt their own id as `external_id`, so
+references live in one space; wire rows keep it NULL until their platform names them —
+absence IS the "never confirmed" signal echo-dedup and the mirror's absorb guard read.
 
 **Type-specific fields:**
 
 ```ts
 message:  + parts: Part[]      // text | data | file, each with kind (open-bsp / A2A / MCP)
-          + re?: EventId       // (visibility: PARKED — returns with the subagent tree, §10)
-tool_use: + parts(data: {name, input}) + turnId   // implicitly internal
-thinking: + parts(data: {thinking, signature}) + turnId   // replayed in-cycle, dropped after
-tool_result: + parts(data: {output, is_error?, cancelled?}) + turnId + cause→tool_use
-permission_request:  + parts(data: {tool, args_preview, request_id})
-permission_response: + parts(data: {behavior, scope, reason?, request_id})
-summary:  + parts(text) + meta{covers:[from,to]}
+tool_use: + parts(data: {name, input}) + payload{turn_id}   // implicitly internal
+thinking: + parts(data: {thinking, signature}) + payload{turn_id}  // replayed in-cycle, dropped after
+tool_result: + parts(data: {output, is_error?, cancelled?}) + payload{turn_id, ref_id→tool_use}
+permission_request:  + parts(data: {tool, args_preview}) + payload{ref_id→tool_use}
+permission_response: + parts(data: {behavior, scope, reason?}) + payload{ref_id→tool_use}
+          // request and response BOTH point at the use — a star, not a chain
+summary:  + parts(text) + payload{covers:[from,to]}
 alarm/error: + parts(data)  // harness signals; no `agent` (harness-authored)
 ```
 
@@ -419,14 +446,15 @@ Decisions:
   `mind:`/`dm:` names) are disjoint in practice.
 - **`envelope` is on the base** — every event belongs to a conversation (internal events
   carry the conversation's own coordinates; `visibility` keeps them off the wire).
-- **Two sidecars, one admission rule — `meta` vs `extra`**: `payload.meta` is HARNESS
-  correlation (`turnId`, `stop`, `consumed` — minted by the turn machinery, never
-  wire-derived); `events.extra` is the WIRE-derived annotation column (`raw`, `edits`,
-  `via`, per-service provenance like `slack: {subtype, authorizations}`) — mergeable
-  JSON, like every `extra` across the store. Admission test: dropping the key must cost
-  only auditability, never correctness — what queries or policy enforce on is a COLUMN
-  (envelope coordinates, kind, external_id, status), what a table owns stays in the
-  table (the map is the truth, extra is provenance), secrets go to the vault only.
+- **`payload` vs `extra`, one admission rule**: `payload` is what the event MEANS — the
+  action, the reference, the turn keys — typed, and the machine branches on it. `extra` is
+  the sidecar — how the wire said it plus harness bookkeeping (`backfill`, `consumed`,
+  `via`, `raw`, per-service provenance like `slack: {subtype, authorizations}`) —
+  mergeable JSON the machine never branches on service keys of. Admission test: dropping
+  an `extra` key must cost only auditability, never correctness — what queries or policy
+  enforce on is a COLUMN (envelope coordinates, kind, external_id, status, payload), what
+  a table owns stays in the table (the map is the truth, extra is provenance), secrets go
+  to the vault only. With refs, action and mentions typed, WhatsApp's sidecar is empty.
 - **Store-wide column conventions**: `created_at` on every table (a datetime; integer
   clocks keep their own names — `locks.born`, `oauth_states.born`); `updated_at` only
   where update operations exist; `agent_id` nullable with null meaning the org's;
@@ -454,19 +482,19 @@ Decisions:
 
 ### Event-type table
 
-Common base = `id · ts · type · envelope · cause? · agent? · meta?`.
+Common base = `id · ts · type · envelope · agent? · payload? · extra? · status?`.
 
 | type | producer *(model→role)* | consumer *(→ LLM role)* | xi | type-specific fields |
 |---|---|---|---|---|
-| `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · re? |
-| `control` | ingest (reclassified) | **user** (context; nu acts) | **act** (hard-stop) | parts(raw) · meta{control, scope} |
-| `tool_use` | **model → assistant** | **assistant** *(live only)* | act (ungated) / await (gated) | parts(data:{name,input}) · turnId |
-| `tool_result` | nu | **user** *(live only)* | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · turnId · cause→tool_use |
-| `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · turnId |
-| `permission_request` | nu | approver card; *n/a to model* | ignore | parts(data:{tool,args_preview,request_id}) |
-| `permission_response` | nu (auto) · ingest (human) | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?}) |
-| `summary` | nu (the checkpoint IS the turn, §5) | leading text block (§5) | **think** (it displaced one) | parts(text) · meta{covers} |
-| `alarm` | main (boot) · task · timer (§10) | *(v0: a pure poke — not rendered; "a wake that informs" is the §10 open question)* | **think** | parts(payload) · cause→schedule_wake |
+| `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
+| `control` | ingest (reclassified) | **user** (context; nu acts) | **act** (hard-stop) | parts(raw) · payload{control} |
+| `tool_use` | **model → assistant** | **assistant** *(live only)* | act (ungated) / await (gated) | parts(data:{name,input}) · payload{turn_id} |
+| `tool_result` | nu | **user** *(live only)* | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use} |
+| `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
+| `permission_request` | nu | approver card; *n/a to model* | ignore | parts(data:{tool,args_preview}) · payload{ref_id→tool_use} |
+| `permission_response` | nu (auto) · ingest (human) | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?}) · payload{ref_id→tool_use} |
+| `summary` | nu (the checkpoint IS the turn, §5) | leading text block (§5) | **think** (it displaced one) | parts(text) · payload{covers} |
+| `alarm` | main (boot) · task · timer (§10) | *(v0: a pure poke — not rendered; "a wake that informs" is the §10 open question)* | **think** | parts(payload) |
 | `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
 
 - **mu emits 3**: `message` (say) + `tool_use` + `thinking`. Everything else is world + runtime.
@@ -479,13 +507,13 @@ Every inbound passes through ingest, which does identity resolution **and** may 
 | outcome | when | produces |
 |---|---|---|
 | pass through | ordinary text | `message` (+ resolved authorship) |
-| `control` | reserved word from the agent's principal in self-talk | `control` + parsed `meta` |
-| `permission_response` | text matches an **open** `permission_request` id | structured verdict |
+| `control` | reserved word from the agent's principal in self-talk | `control` + `payload.control` |
+| `permission_response` | text matches an **open** `permission_request` | structured verdict, `payload.ref_id` = the tool_use |
 
-- Raw text always preserved (`parts` + `meta.raw`) — misclassification auditable/reversible.
-- **Control vocab (v0)**: `stop`/`cancel` (+ `meta.scope`).
+- Raw text always preserved (`parts` + `extra.raw`) — misclassification auditable/reversible.
+- **Control vocab (v0)**: `stop`/`cancel`.
 - **Permission vocab (v0)**: `yes`/`allow` · `no`/`deny` · scope `once`/`always` · `reason`
-  (on deny) → structured `{behavior, scope, reason?, request_id}`. Never leave the decision
+  (on deny) → structured `{behavior, scope, reason?}` + the ref. Never leave the decision
   as free text (Claude-Code discipline; its channels-relay does the same id-match).
 - A customer typing "stop"/"yes" is **not** reclassified (wrong author/context) — stays a
   `message` (e.g. "stop" = unsubscribe).
@@ -534,7 +562,7 @@ ownership) only if double-answers show up.
   The log converges to one row per artifact either way; the wake the echo fired finds a
   quiescent window and no-ops.
 - WhatsApp coexistence is unattributable from the wire (platform doesn't say which human)
-  — keep `sender` honest, infer softly to `meta.inferred_sender`.
+  — keep `sender` honest, infer softly to `extra.inferred_sender`.
 - Principal↔own-agent conversations are **canonicalized across channels** via the alias
   bindings: one `local` conversation per principal (the mind), kept in sync with every
   bound surface by the mirror — copy in, CC out ("self-talk is special", below). Original
@@ -587,10 +615,10 @@ cli/ui: native local conversations
     the origin surface (read off `extra.via`): the agent's voice as `[agent] …` (a
     self-conversation renders both speakers as the principal — the tag is the surface's
     only input/output distinction; the log needs none, authorship is the bit), the
-    principal's own words as `> quoted` + `[sent via <surface>]` (input displayed as
-    output — fan-out over fan-in's own copy is what cross-syncs surfaces), tool calls as
-    redacted one-liners (`● bash(git status)`). A CC is an ordinary outbound event on its
-    service — the dispatchers post it, the platform echo merges into it (§4 echo-dedup).
+    principal's own words as `[you via <surface>] …` (input replayed as output — fan-out
+    over fan-in's own copy is what cross-syncs surfaces), tool calls as redacted
+    one-liners under a tag of their own (`[agent tool] bash(git status)`). A CC is an ordinary
+    outbound event on its service — the dispatchers post it, the platform echo merges into it (§4 echo-dedup).
     Fan-in guards that echo twice, because in an alias conversation an unmerged one reads
     as the principal speaking and cross-broadcasts to the other surfaces, which echo in
     turn: it settles briefly and re-reads, so an early echo the backfill absorbs copies
@@ -749,7 +777,7 @@ The 3×2 grid, each cell real and distinct:
   `conversation.kind` (im/mpim → direct); the sender resolves through the LEG's
   ownership (`connection()` on the anchor ingest stamped — a sender matching the leg's
   own user is the owner; the wire id stays honest in `sender.address`, the registry
-  name rides `sender.name` + `meta.slack.owner`); `member_joined_channel`/
+  name rides `sender.name` + `extra.slack.owner`); `member_joined_channel`/
   `member_left_channel` move membership rows when the mover is the leg's own user — a
   leave stamps the membership's `deleted_at` (the lifetime ends; seen history stays
   visible, §6) — and every delivery on an owned leg passively
@@ -820,7 +848,7 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
 ### Two rendering modes, by conversation
 
 - **Home (principal-DM)** — a bare `user`/`assistant` chat: no marks, no grouping, no
-  per-line time (time comes from separators). The agent's console; `send` never appears
+  per-line time (the trailing `now:` anchor is the clock). The agent's console; `send` never appears
   here. Every principal-identified conversation reaches here (§4 self-talk): the mirror
   copies the WA self-chat and the Slack self-DM into the mind, so the principal is plain
   in this mode whichever surface they typed from — the surface lives in `extra.via`
@@ -833,11 +861,19 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   `connection` disambiguates multi-account services, `kind` (§3, stamped at ingest) tells
   a public channel from a DM, `thread` the subthread.
   `name`/`from` are display strings — attacker-controlled, hence attribute-escaped (a
-  WhatsApp contact can name themself `Ana" from="matias`). The agent's own sends appear
-  inside the same element as `from="self"` — the reply sits with what it answers. A dead
-  delivery carries `status="failed"` (see below). Clustering: inbound runs are ts-sorted,
-  then partitioned per conversation in first-arrival order — cross-conversation
-  interleaving is arrival noise, not meaning; within a conversation, event time stands.
+  WhatsApp contact can name themself `Ana" from="matias`). The account's own messages are
+  `self`, told apart by authorship: `from="self (you)"` = the agent published it (a
+  `send`, or its echo), `from="self (principal)"` = the account spoke and it did not come
+  through us (the principal on their own phone — WhatsApp; the Slack leg needs the grant
+  lookup, pending). The reply sits with what it answers. A dead delivery carries
+  `status="failed"`; wire mentions ride a `mentions=` attribute. **The element is the
+  action** (§3): `<edit>` renders the new content, `<del>` the removed content (resolved
+  against the window when the original is present; no ref attribute — the model reads the
+  target by context), `<react>` the glyph (`removed="true"` = un-react). Stamps format
+  through the org's timezone (org config; stored ts is UTC, §3). Clustering: inbound runs
+  are ts-sorted, then partitioned per conversation in first-arrival order —
+  cross-conversation interleaving is arrival noise, not meaning; within a conversation,
+  event time stands.
 - **Open — XML for the principal too, when "multiplayer" arrives.** Plain-principal works
   because the mind has ONE untagged voice. Multiple principals talking to one mind (the
   real meaning of "multiplayer AI") breaks that: two plain voices are indistinguishable,
@@ -867,11 +903,11 @@ constraint, and render derives it **from the window's shape**:
   world-authored messages, so it never reorders the machine (tool cycles, thinking, the weld)
   and never rewrites history — a straggler arriving after the agent already answered stays
   put, because the answer breaks the run.
-- **Boundary** — the last self-authored *home* message whose step (`meta.turnId`, stamped by
-  nu) emitted no `tool_use`: a closing assistant text. Everything before it is **closed**.
+- **Boundary** — the last self-authored *home* message whose step (`payload.turn_id`, stamped
+  by nu) emitted no `tool_use`: a closing assistant text. Everything before it is **closed**.
 - **Trailing chain** (after the boundary) is **welded API-faithfully** — `thinking` (replayed
-  verbatim, with signature) + text + `tool_use`/`tool_result` pairs (per-use `cause` linkage).
-  A directed send caused by a welded `tool_use` is **skipped** (its content is in the block);
+  verbatim, with signature) + text + `tool_use`/`tool_result` pairs (per-use `ref_id` linkage).
+  A directed send dispatched by a welded `tool_use` is **skipped** (its content is in the block);
   once its group falls behind the boundary, the pair drops and the *message* renders — same
   event, two ages, zero bookkeeping.
 - **Closed events collapse** — a `send` → its `from="self"` world line; tool pairs
@@ -957,9 +993,11 @@ want anyway: **cache** (it sits *after* the cached history, so volatile system-i
 invalidates nothing) and **authority** (the non-spoofable operator channel — unlike
 `<system-reminder>` text a peer could forge). So the narrator splits by position:
 
-- **separators** — plain *text* blocks in place (`— miércoles 17 jul —`, `— 9 min
-  después —`), and **`[harness] error:` markers** likewise: they precede what they mark,
-  so they can't be system blocks; timestamps carry no authority anyway.
+- **time** — every `<msg>` line carries its own absolute stamp (`at="12 Aug 9:50"`), so
+  there are NO separator blocks: separators were cross-message state measured in render
+  order (not a timeline after the per-conversation partition) and they broke `<conv>`
+  clustering. One fact per line. **`[harness] error:` markers** are plain text likewise:
+  they precede what they mark, so they can't be (trailing-only) system blocks.
 - **summaries** — `summary` events aging out distant messages; rendered as the window's
   LEADING plain-text block (the trailing-only rule bars a leading system block). See
   "Compaction" below.
@@ -994,7 +1032,7 @@ Two layers, one of which we already had: **pruning** is render's closed-region c
 compaction proper is only pi's **checkpoint layer**:
 
 - **The `summary` event** = pi's `CompactionEntry` in log clothes: agent-authored,
-  `meta.covers: [fromId, toId]`, appended like everything else. The log stays append-only;
+  `payload.covers: [fromId, toId]`, appended like everything else. The log stays append-only;
   compaction is just another event.
 - **Trigger — nu, and the checkpoint IS the turn.** nu is the layer that formats the
   window, so nu is the one that knows what the turn will weigh: when the **visible**
@@ -1511,9 +1549,10 @@ upsert/merge key, mutable) · `type` · `service` · `connection_address` ·
 `conversation_address`/`_name`/`_thread` · `session_id` (harness session) · `sender_address`/
 `_name` · `agent_id` (null ⇒ the world wrote it; ≠ mine ⇒ a peer agent) · `timestamp` (event
 time) · `created_at`/`updated_at` · `text` (derived from parts — the search column) ·
-`payload` (the type-shaped JSON remainder: parts, re, cause, turnId, meta…) · `status` (the
-delivery-lifecycle JSON: `{pending_at, dispatched_at, sent_at?, delivered_at?, read_at?,
-failed_at?}`, json-merged on update). Wire ids are `*_address` columns; `id` stays internal.
+`parts` (the event body, JSON array; absent = a merge-only draft) · `payload` (what the
+event MEANS: action · refs · turn keys, §3) · `extra` (the sidecar) · `status` (the
+delivery-lifecycle JSON: `{state, delivered_at?, read_at?, deleted_at?}` — scalars in a DM,
+per-participant maps in groups, json_patch-merged on update). Wire ids are `*_address` columns; `id` stays internal.
 
 **The store owns `id`.** The column is `id uuid DEFAULT uuidv7()` on Postgres, and the SQLite
 adapter is the *same DDL* (it binds a `uuidv7()` function, so the default is real there too).

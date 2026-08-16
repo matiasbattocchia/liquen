@@ -254,9 +254,10 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
    every binding except the origin surface — the voice as `[agent] …` (a
    self-conversation renders both speakers as the principal; the tag is the surface's
    only input/output distinction), tool calls as redacted
-   one-liners (`● bash(git status)`), and the principal's own words as `> quoted` +
-   `[sent via whatsapp]` (input displayed as output; fan-out over fan-in's own copy is
-   what cross-syncs surfaces, and a REPL line CCs everywhere tagged `[sent via repl]`).
+   one-liners under a tag of their own (`[agent tool] bash(git status)`), and the principal's own
+   words as `[you via whatsapp] …` (input replayed as output; fan-out over fan-in's own
+   copy is what cross-syncs surfaces, and a REPL line CCs everywhere as `[you via repl]`).
+   Every crossing line opens with WHO — one tag shape, no quoting.
    Each CC is an ordinary outbound event: the dispatchers post it unchanged and the
    platform echo merges by its own `external_id` — no per-surface delivery rows needed.
    Fan-in guards the echo on both sides of that merge: it settles (`settleMs`, default 1s)
@@ -439,7 +440,20 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
 
 ## v0.2 — WhatsApp + maturity
 
-10. **WhatsApp connection** (coexistence, steering-from-anywhere).
+10. **WhatsApp connection** — **LIVE since 2026-08-12** (paired +5491133585694 →
+    `matias`, phone-code flow; ~28k messages / 434 conversations imported as
+    `extra.backfill`). The live test drove the schema settlement (2026-08-16, all
+    landed): the typed `payload` column (action · refs · turn keys — DESIGN §3), UTC
+    in the store + org-config timezone at render, org `config.json` defaults,
+    edits/deletes as first-class events, ReactionPart both directions (Slack reaction
+    ingest was simply missing), the `<edit>`/`<del>`/`<react>` render elements, and
+    two bridge fixes with live body counts: phone-pairing died at ~2 min (the QR
+    channel's timeout), and receipts NEVER merged — self receipts (the phone reading
+    the peer's messages) minted ids with our own address as author segment, 811 ghost
+    stubs against 303 merges before the fix. Pending: live receipt-merge verification
+    (needs organic traffic), the Slack `self (principal)` grant lookup, merge-only
+    drafts still INSERT stubs for unknown referents (deferred), and a send-tool
+    surface for the model to author reactions.
 11. **Background completion** — early-return for long tools and the **non-blocking
     gates** fix parked in DESIGN §10; `escalation` as its first instance.
 12. **Postgres substrate** — the same ports as SQL: events table + LISTEN/NOTIFY (log),
