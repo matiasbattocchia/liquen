@@ -61,6 +61,61 @@ export type SlackMedia = (
   ctx: { team: string; conversation: string; users: string[] },
 ) => Promise<FilePart | null>;
 
+/** The name directory (§3): `sender.name` is the SERVICE's display fact, and Slack's
+ *  events carry none — so the connector asks the service itself (`users.info`) and
+ *  remembers the answer. The moral twin of WhatsApp's pushname: same fact, pulled
+ *  instead of broadcast. Nothing of OURS — identity resolution stays the classifier's. */
+export interface SlackNames {
+  /** Display name for a user id — cached after the first hit; null = unresolvable right
+   *  now (no token, API miss) and UNCACHED, so a later delivery retries. `via` = the
+   *  delivery's token-resolution candidates (same role as SlackMedia's `users`). */
+  nameOf(team: string, user: string, via?: string[]): Promise<string | null>;
+  /** The push leg: `user_change` deliveries carry the fresh profile — no call needed. */
+  learn(team: string, user: string, name: string): void;
+}
+
+/** Build the directory over a token source (same shape the media seam resolves with):
+ *  `users.info` per first sight, one in-flight call per user, successes cached for the
+ *  process lifetime (fill-merge in the store means one resolution per user is all a
+ *  name ever needs). */
+export function slackNames(
+  tokenFor: (team: string, users: string[]) => Promise<string | null>,
+): SlackNames {
+  const cache = new Map<string, string>();
+  const inflight = new Map<string, Promise<string | null>>();
+  const nameOf = (team: string, user: string, via: string[] = []): Promise<string | null> => {
+    const key = `${team}:${user}`;
+    const hit = cache.get(key);
+    if (hit !== undefined) return Promise.resolve(hit);
+    const going = inflight.get(key);
+    if (going) return going;
+    const p = (async () => {
+      try {
+        const token = await tokenFor(team, [user, ...via]);
+        if (!token) return null;
+        const res = await fetch(`https://slack.com/api/users.info?user=${user}`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        const body = await res.json() as {
+          ok: boolean;
+          user?: { name?: string; profile?: { display_name?: string; real_name?: string } };
+        };
+        const u = body.ok ? body.user : undefined;
+        const name = u?.profile?.display_name || u?.profile?.real_name || u?.name || null;
+        if (name) cache.set(key, name);
+        return name;
+      } catch {
+        return null;
+      } finally {
+        inflight.delete(key);
+      }
+    })();
+    inflight.set(key, p);
+    return p;
+  };
+  return { nameOf, learn: (team, user, name) => cache.set(`${team}:${user}`, name) };
+}
+
 export interface SlackWebhookDeps {
   /** → the EventLog (the connection's only write). */
   publish: Appender["publish"];
@@ -70,6 +125,8 @@ export interface SlackWebhookDeps {
   store?: Pick<Connections, "connection" | "upsertMemberships" | "deleteMemberships">;
   /** File attachments → the media store (absent ⇒ files are dropped, text still flows). */
   media?: SlackMedia;
+  /** The name directory (absent ⇒ senders ship bare ids, mentions decode to `@<id>`). */
+  names?: SlackNames;
   /** App signing secret. If set, `X-Slack-Signature` is REQUIRED and verified; absent ⇒
    *  unsigned accepted (dev / the Socket Mode carrier, already authed by `xapp`). */
   signingSecret?: string;
@@ -112,6 +169,20 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     const e = payload.event;
     if (!team || !e) return text(202, "ignored");
 
+    // the name directory's push leg: profile changes arrive as events — the fresh fact
+    // lands in the cache, nothing published
+    if (e.type === "user_change") {
+      const u = (e as {
+        user?: {
+          id?: string;
+          name?: string;
+          profile?: { display_name?: string; real_name?: string };
+        };
+      }).user;
+      const name = u?.profile?.display_name || u?.profile?.real_name || u?.name;
+      if (u?.id && name) deps.names?.learn(team, u.id, name);
+      return text(202, "user");
+    }
     // the membership mirror, active leg (§4): joins/leaves move rows, nothing published
     if (e.type === "member_joined_channel" || e.type === "member_left_channel") {
       mirrorMember(e, team, deps.store);
@@ -124,6 +195,9 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       const item = e.item;
       if (item?.type !== "message" || !item.channel || !item.ts) return text(202, "ignored");
       const anchor = anchorOf(team, payload.authorizations);
+      const who = e.user
+        ? await deps.names?.nameOf(team, e.user, boundUsers(payload.authorizations))
+        : undefined;
       try {
         await deps.publish({
           ts: now(),
@@ -136,7 +210,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
             service: "slack",
             connection_address: anchor,
             conversation: { address: item.channel },
-            ...(e.user ? { sender: { address: e.user } } : {}),
+            ...(e.user ? { sender: { address: e.user, ...(who ? { name: who } : {}) } } : {}),
             external_id: `slack:${team}:${item.channel}:${e.event_ts}`,
           },
           parts: [{ type: "data", kind: "reaction", data: { name: e.reaction } }],
@@ -156,6 +230,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       payload.authorizations,
       deps.store,
       deps.media,
+      deps.names,
       { now },
     );
     if (msgs.length === 0) return text(202, "ignored");
@@ -181,6 +256,11 @@ type Store = NonNullable<SlackWebhookDeps["store"]>;
 function anchorOf(team: string, auths: Authorization[] | undefined): string {
   const bot = auths?.find((a) => a.is_bot && a.user_id);
   return bot ? `${team}:${bot.user_id}` : team;
+}
+
+/** The delivery's token-resolution candidates: its bound (non-bot) authorized users. */
+function boundUsers(auths: Authorization[] | undefined): string[] {
+  return (auths ?? []).filter((a) => !a.is_bot && a.user_id).map((a) => a.user_id);
 }
 
 /** The classifier (§3): who a wire user IS — a point lookup of the sender's grant row
@@ -209,6 +289,7 @@ async function mapMessage(
   authorizations: Authorization[] | undefined,
   store: Store | undefined,
   media: SlackMedia | undefined,
+  names: SlackNames | undefined,
   ctx: MapCtx,
 ): Promise<Draft<MessageEvent>[]> {
   // a delete marks, never removes (the log is append-only — same policy as WhatsApp
@@ -266,42 +347,47 @@ async function mapMessage(
   }
 
   // body: the text (when any), then each attachment the media seam could land — a file
-  // that fails to download drops silently (the path is re-fetchable; the message isn't)
+  // that fails to download drops silently (the path is re-fetchable; the message isn't).
+  // Mentions live INLINE in mrkdwn (`<@U…>`) — an encoding no Slack client ever shows:
+  // decode to display form, lift the addresses to payload.mentions (§3)
+  const via = boundUsers(authorizations);
   const parts: Part[] = [];
-  if (m.text) parts.push({ type: "text", kind: "text", text: m.text });
+  let mentions: string[] = [];
+  if (m.text) {
+    const d = await decodeMentions(m.text, team, names, via);
+    mentions = d.mentions;
+    parts.push({ type: "text", kind: "text", text: d.text });
+  }
   if (media && files) {
     for (const f of files) {
-      const p = await media(f, {
-        team,
-        conversation,
-        users: (authorizations ?? []).filter((a) => !a.is_bot && a.user_id).map((a) => a.user_id),
-      });
+      const p = await media(f, { team, conversation, users: via });
       if (p) parts.push(p);
     }
   }
   if (parts.length === 0) return [];
 
   const kind = KIND[e.channel_type];
+  // an edit is its own event (§3): action + the original's id; the delivery's event_ts
+  // is its identity, so retries dedupe and the original's row never re-opens
+  const payload = {
+    ...(edit
+      ? { action: "edit" as const, ref_external_id: `slack:${team}:${e.channel}:${m.ts}` }
+      : {}),
+    ...(mentions.length ? { mentions } : {}),
+  };
+  // sender.name is the SERVICE's display fact — Slack's events carry none, so the name
+  // directory asks the service itself (users.info / user_change); still nothing of ours:
+  // identity resolution is the classifier's business (§3)
+  const who = m.user ? await names?.nameOf(team, m.user, via) : undefined;
   return [{
     ts: ctx.now(),
     type: "message",
-    // an edit is its own event (§3): action + the original's id; the delivery's event_ts
-    // is its identity, so retries dedupe and the original's row never re-opens
-    ...(edit
-      ? {
-        payload: {
-          action: "edit" as const,
-          ref_external_id: `slack:${team}:${e.channel}:${m.ts}`,
-        },
-      }
-      : {}),
+    ...(Object.keys(payload).length ? { payload } : {}),
     envelope: {
       service: "slack",
       connection_address: anchor,
       conversation: { address: conversation, ...(kind ? { kind } : {}) },
-      // sender.name is the SERVICE's display fact, and Slack's event carries none — no
-      // lookups of ours: identity resolution is the classifier's business (§3)
-      sender: m.user ? { address: m.user } : undefined,
+      sender: m.user ? { address: m.user, ...(who ? { name: who } : {}) } : undefined,
       // the upsert/merge key: Slack's ts is the per-channel message id (§3, §4) — for an
       // edit, the change delivery's own ts
       external_id: edit
@@ -324,6 +410,31 @@ async function mapMessage(
       }
       : {}),
   }];
+}
+
+/** Slack's mention encoding → display text + the address list. `<@U123>` (rarely
+ *  `<@U123|label>`) decodes to `@<display name>` — resolved name first (the label is
+ *  legacy and can be stale; Slack's own guidance is to resolve the id), then the label,
+ *  then the bare id. The addresses keep the wire fact the decode spends. */
+const MENTION = /<@([A-Z0-9]+)(?:\|([^>]+))?>/g;
+
+async function decodeMentions(
+  text: string,
+  team: string,
+  names: SlackNames | undefined,
+  via: string[],
+): Promise<{ text: string; mentions: string[] }> {
+  const ids = [...new Set([...text.matchAll(MENTION)].map((m) => m[1]))];
+  if (ids.length === 0) return { text, mentions: [] };
+  const resolved = new Map<string, string>();
+  for (const id of ids) {
+    const n = await names?.nameOf(team, id, via);
+    if (n) resolved.set(id, n);
+  }
+  return {
+    text: text.replace(MENTION, (_, id, label) => `@${resolved.get(id) ?? label ?? id}`),
+    mentions: ids,
+  };
 }
 
 /** Join/leave → the membership row moves when the mover is a bound user. Unbound movers
@@ -490,10 +601,15 @@ if (import.meta.main) {
     }
   };
 
+  // the name directory reads with the same resolution the media seam uses (org bot →
+  // any authorized grant → env) — a display name is a workspace fact any grant can read
+  const names = slackNames(tokenFor);
+
   const handler = createSlackWebhook({
     publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
     store: log, // identities + memberships live on the Log (§4) — the wire fills the map
     media,
+    names,
     signingSecret: appToken ? undefined : Deno.env.get("SLACK_SIGNING_SECRET") || undefined,
   });
   if (appToken) {

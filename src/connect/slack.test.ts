@@ -34,10 +34,25 @@ async function sign(ts: string, body: string): Promise<string> {
   return `v0=${[...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
+/** The name directory in miniature: a seeded map, learns recorded. */
+function fakeNames(seed: Record<string, string> = {}) {
+  const known = new Map(Object.entries(seed)); // key: `${team}:${user}`
+  const learned: string[] = [];
+  const names: NonNullable<SlackWebhookDeps["names"]> = {
+    nameOf: (team, user) => Promise.resolve(known.get(`${team}:${user}`) ?? null),
+    learn: (team, user, name) => {
+      known.set(`${team}:${user}`, name);
+      learned.push(`${team}:${user}=${name}`);
+    },
+  };
+  return { names, learned };
+}
+
 function harness(
   secret?: string,
   store?: SlackWebhookDeps["store"],
   media?: SlackWebhookDeps["media"],
+  names?: SlackWebhookDeps["names"],
 ) {
   const published: Event[] = [];
   const handler: WebhookHandler = createSlackWebhook({
@@ -50,6 +65,7 @@ function harness(
     }) as Appender["publish"],
     store,
     media,
+    names,
     signingSecret: secret,
   });
   return { handler, published };
@@ -474,4 +490,67 @@ Deno.test("slack: message_deleted is TWO drafts — the delete event + the delet
   assertEquals(stamp.envelope.external_id, "slack:T1:C1:111.222"); // the deleted row's key
   assertEquals("parts" in stamp, false); // the json_patch no-op — stored parts survive (§3)
   assertEquals(stamp.status?.deleted_at, "111.999");
+});
+
+Deno.test("slack: the name directory stamps sender.name and decodes inline mentions", async () => {
+  const { names } = fakeNames({ "T1:U7": "Rocío", "T1:U9": "Marco" });
+  const { handler, published } = harness(SECRET, undefined, undefined, names);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U7",
+        text: "hola <@U9> y <@UX|viejo alias>, miren <@U9>",
+        ts: "111.222",
+      },
+    })),
+  );
+  assertEquals(published.length, 1);
+  const m = published[0] as MessageEvent;
+  // sender.name is the service's fact, pulled through the directory
+  assertEquals(m.envelope.sender, { address: "U7", name: "Rocío" });
+  // <@U9> decodes to the resolved name; <@UX|label> falls back to the wire's label;
+  // the ADDRESSES ride payload.mentions (deduped) — the decode spends no wire fact
+  assertEquals((m.parts[0] as { text: string }).text, "hola @Marco y @viejo alias, miren @Marco");
+  assertEquals(m.payload?.mentions, ["U9", "UX"]);
+});
+
+Deno.test("slack: user_change is the directory's push leg — learned, nothing published", async () => {
+  const { names, learned } = fakeNames();
+  const { handler, published } = harness(SECRET, undefined, undefined, names);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "user_change",
+        user: { id: "U7", name: "rocio", profile: { display_name: "Rocío" } },
+      },
+    })),
+  );
+  assertEquals(published.length, 0);
+  assertEquals(learned, ["T1:U7=Rocío"]); // display_name wins over the handle
+  // the next delivery reads the learned fact
+  await handler(await signedReq(messageEvent()));
+  assertEquals((published[0] as MessageEvent).envelope.sender?.name, "Rocío");
+});
+
+Deno.test("slack: no directory ⇒ bare ids — sender unnamed, mentions decode to @<id>", async () => {
+  const { handler, published } = harness(SECRET);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U7",
+        text: "ping <@U9>",
+        ts: "111.222",
+      },
+    })),
+  );
+  const m = published[0] as MessageEvent;
+  assertEquals(m.envelope.sender, { address: "U7" });
+  assertEquals((m.parts[0] as { text: string }).text, "ping @U9");
+  assertEquals(m.payload?.mentions, ["U9"]);
 });
