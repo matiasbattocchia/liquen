@@ -710,8 +710,14 @@ function msgLine(
   }
 
   const failed = e.envelope.status === "failed" ? ' status="failed"' : "";
+  // canonical addresses (the text wears the display form) — `#` keeps its sigil,
+  // a person's address rides bare
   const mentions = e.payload?.mentions?.length
-    ? ` mentions="${escAttr(e.payload.mentions.join(" "))}"`
+    ? ` mentions="${
+      escAttr(
+        e.payload.mentions.map((m) => m.type === "#" ? `#${m.address}` : m.address).join(" "),
+      )
+    }"`
     : "";
   // body text is escaped (untrusted); the media markers are render's own, appended after
   const body = [escText(textOf(e)), ...filesOf(e).map(mediaMarker)]

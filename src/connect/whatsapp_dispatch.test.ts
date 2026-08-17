@@ -198,3 +198,25 @@ Deno.test("an error without an HTTP class stamps failed with NO error_code", asy
   assertEquals(status.state, "failed");
   assertEquals("error_code" in status, false); // never reached the bridge — no class
 });
+
+Deno.test("the directory claims @Name tokens — content.mentions for the bridge encoder", async () => {
+  const records: WADispatchRecord[] = [];
+  const { log } = harness((record) => {
+    records.push(record);
+    return Promise.resolve("wmw.out.9");
+  }, {
+    directory: (service, conversation) => {
+      assertEquals([service, conversation], ["whatsapp", "5491199999999"]);
+      return Promise.resolve([{ address: "5492604560911", name: "Euge" }]);
+    },
+  });
+  log.push(outboundMessage({
+    parts: [{ type: "text", kind: "text", text: "@Euge te paso la dirección" }],
+  }));
+  await settle();
+
+  assertEquals(records.length, 1);
+  // text ships as the agent wrote it — the BRIDGE rewrites @Name → @digits + MentionedJID
+  assertEquals(records[0].content.text, "@Euge te paso la dirección");
+  assertEquals(records[0].content.mentions, [{ address: "5492604560911", name: "Euge" }]);
+});

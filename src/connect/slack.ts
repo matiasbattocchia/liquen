@@ -352,7 +352,7 @@ async function mapMessage(
   // decode to display form, lift the addresses to payload.mentions (§3)
   const via = boundUsers(authorizations);
   const parts: Part[] = [];
-  let mentions: string[] = [];
+  let mentions: MentionEntry[] = [];
   if (m.text) {
     const d = await decodeMentions(m.text, team, names, via);
     mentions = d.mentions;
@@ -412,29 +412,51 @@ async function mapMessage(
   }];
 }
 
-/** Slack's mention encoding → display text + the address list. `<@U123>` (rarely
- *  `<@U123|label>`) decodes to `@<display name>` — resolved name first (the label is
- *  legacy and can be stale; Slack's own guidance is to resolve the id), then the label,
- *  then the bare id. The addresses keep the wire fact the decode spends. */
+/** Slack's mention encodings → display text + `payload.mentions` entries. `<@U123>`
+ *  (rarely `<@U123|label>`) decodes to `@<display name>` — resolved name first (the
+ *  label is legacy and can be stale; Slack's own guidance is to resolve the id), then
+ *  the label, then the bare id. `<#C123|general>` decodes to `#general` (`type: "#"`;
+ *  the label rides the delivery, no lookup). `<!here>` etc decode to `@here` — control
+ *  words, not addresses: text only. The entries keep the wire facts the decode spends,
+ *  each address paired with the display the text now wears. */
 const MENTION = /<@([A-Z0-9]+)(?:\|([^>]+))?>/g;
+const CHANNEL = /<#([A-Z0-9]+)(?:\|([^>]*))?>/g;
+const SPECIAL = /<!(here|channel|everyone)>/g;
+
+type MentionEntry = { address: string; name?: string; type?: "#" };
 
 async function decodeMentions(
   text: string,
   team: string,
   names: SlackNames | undefined,
   via: string[],
-): Promise<{ text: string; mentions: string[] }> {
+): Promise<{ text: string; mentions: MentionEntry[] }> {
   const ids = [...new Set([...text.matchAll(MENTION)].map((m) => m[1]))];
-  if (ids.length === 0) return { text, mentions: [] };
   const resolved = new Map<string, string>();
   for (const id of ids) {
     const n = await names?.nameOf(team, id, via);
     if (n) resolved.set(id, n);
   }
-  return {
-    text: text.replace(MENTION, (_, id, label) => `@${resolved.get(id) ?? label ?? id}`),
-    mentions: ids,
+  const mentions: MentionEntry[] = [];
+  const seen = new Set<string>();
+  const claim = (e: MentionEntry) => {
+    if (!seen.has(e.address)) {
+      seen.add(e.address);
+      mentions.push(e);
+    }
   };
+  const out = text
+    .replace(MENTION, (_, id, label) => {
+      const name = resolved.get(id) ?? label;
+      claim({ address: id, ...(name ? { name } : {}) });
+      return `@${name ?? id}`;
+    })
+    .replace(CHANNEL, (_, id, label) => {
+      claim({ address: id, ...(label ? { name: label } : {}), type: "#" });
+      return `#${label || id}`;
+    })
+    .replace(SPECIAL, "@$1");
+  return { text: out, mentions };
 }
 
 /** Join/leave → the membership row moves when the mover is a bound user. Unbound movers

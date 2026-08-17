@@ -1109,7 +1109,7 @@ Deno.test("the element is the action (§5): <edit>, <del> resolved, <react>, men
   };
   const mentioned: MessageEvent = {
     ...worldMsg("e6", t, conv, sol, "che @matias mirá esto"),
-    payload: { mentions: ["5491133585694"] },
+    payload: { mentions: [{ address: "5491133585694", name: "matias" }] },
   };
   const { messages } = render({
     events: [original, edit, del, react, unreact, mentioned],

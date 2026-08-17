@@ -259,7 +259,9 @@ function payloadOf(c: WAContent, part: Part): Payload | undefined {
     if (data) delete data.action;
   } else if (p.ref_external_id) p.action = "reply";
   else if (c.forwarded) p.action = "forward";
-  const mentioned = (c.mentions ?? []).map((m) => m.address).filter((a): a is string => !!a);
+  const mentioned = (c.mentions ?? [])
+    .filter((m): m is { address: string; name?: string } => !!m.address)
+    .map((m) => ({ address: m.address, ...(m.name ? { name: m.name } : {}) }));
   if (mentioned.length) p.mentions = mentioned;
   return Object.keys(p).length ? p : undefined;
 }

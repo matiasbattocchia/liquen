@@ -1,5 +1,10 @@
 import { assertEquals } from "@std/assert";
-import { createSlackDispatch, slackErrorCode, type SlackTarget } from "./slack_dispatch.ts";
+import {
+  createSlackDispatch,
+  type SlackDispatchDeps,
+  slackErrorCode,
+  type SlackTarget,
+} from "./slack_dispatch.ts";
 import { DispatchError } from "./errors.ts";
 import { type DeliveryPatch, openLog } from "../store/log.ts";
 import type { FilePart, MessageEvent } from "../types.ts";
@@ -48,7 +53,7 @@ async function withDispatch(
     read: () => Promise<MessageEvent[]>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
   }) => Promise<void>,
-  opts: { failWith?: Error } = {},
+  opts: { failWith?: Error; directory?: SlackDispatchDeps["directory"] } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -71,6 +76,7 @@ async function withDispatch(
       patches.push(patch);
       return log.setDelivery(id, patch);
     },
+    directory: opts.directory,
   });
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 3000) => {
     const t0 = Date.now();
@@ -198,5 +204,21 @@ Deno.test("slack dispatch: a file-only send (no text) still dispatches", async (
     await publish(msg);
     await waitFor(() => posts.length === 1);
     assertEquals(posts[0].files?.length, 1);
+  });
+});
+
+Deno.test("slack dispatch: @Name and @here encode at the frontier; unclaimed stays literal", async () => {
+  await withDispatch(async ({ publish, posts, waitFor }) => {
+    await publish(agentMsg("01", "@matias dale, aviso con @here — y @Nadie queda como está"));
+    await waitFor(() => posts.length === 1);
+    assertEquals(
+      posts[0].text,
+      "<@U0BKTGTB65C> dale, aviso con <!here> — y @Nadie queda como está",
+    );
+  }, {
+    directory: (service, conversation) => {
+      assertEquals([service, conversation], ["slack", "C1"]);
+      return Promise.resolve([{ address: "U0BKTGTB65C", name: "matias" }]);
+    },
   });
 });

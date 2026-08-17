@@ -28,6 +28,7 @@ import { DispatchError, failedStatus } from "./errors.ts";
 import type { DeliveryPatch, Subscriber } from "../store/log.ts";
 import type { Event, EventId, FilePart, MessageEvent, ReactionPart, TextPart } from "../types.ts";
 import { externalId, SERVICE, type WAContent } from "./whatsapp.ts";
+import { type Directory, whatsappMentions } from "./mentions.ts";
 
 /** The bridge's dispatch request (server.go `dispatchRequest`) — record verbatim. */
 export interface WADispatchRecord {
@@ -54,6 +55,10 @@ export interface WhatsAppDispatchDeps {
   subscribe: Subscriber["subscribe"];
   send: WASend;
   mediaUrl?: WAMediaUrl;
+  /** The conversation's name directory (§3 mentions): lets the agent's `@Name` tokens
+   *  claim addresses — the bridge does the wire encoding (`@digits` + MentionedJID).
+   *  Absent ⇒ mentions ship as literal text. */
+  directory?: Directory;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
   from?: EventId;
   onError?: (event: MessageEvent, err: unknown) => void;
@@ -70,6 +75,19 @@ export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => void {
       chain = chain.then(async () => {
         const { event, contents } = out;
         try {
+          // the agent mentions as a human (`@Name`) — the directory claims the tokens,
+          // the BRIDGE encodes (its `encodeMentions`: text messages only, so the caption
+          // seat ships literal). Unclaimed tokens stay literal text — the honest nothing.
+          if (deps.directory) {
+            const dir = await deps.directory(SERVICE, event.envelope.conversation.address);
+            for (const c of contents) {
+              if (c.content.type !== "text" || c.content.kind !== "text" || !c.content.text) {
+                continue;
+              }
+              const claimed = whatsappMentions(c.content.text, dir);
+              if (claimed.length) c.content.mentions = claimed;
+            }
+          }
           let first: string | undefined;
           for (const c of contents) {
             const mediaUrl = await urlFor(c.content, deps.mediaUrl);
@@ -259,10 +277,12 @@ if (import.meta.main) {
     return out.external_id;
   };
 
+  const { logDirectory } = await import("./mentions.ts");
   createWhatsAppDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     send,
     mediaUrl,
+    directory: logDirectory((q) => log.read(q)),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onSent: (e, id) =>
       console.error(`[wa-dispatch] sent → ${e.envelope.conversation.address} (${id})`),

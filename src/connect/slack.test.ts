@@ -514,7 +514,10 @@ Deno.test("slack: the name directory stamps sender.name and decodes inline menti
   // <@U9> decodes to the resolved name; <@UX|label> falls back to the wire's label;
   // the ADDRESSES ride payload.mentions (deduped) — the decode spends no wire fact
   assertEquals((m.parts[0] as { text: string }).text, "hola @Marco y @viejo alias, miren @Marco");
-  assertEquals(m.payload?.mentions, ["U9", "UX"]);
+  assertEquals(m.payload?.mentions, [
+    { address: "U9", name: "Marco" },
+    { address: "UX", name: "viejo alias" },
+  ]);
 });
 
 Deno.test("slack: user_change is the directory's push leg — learned, nothing published", async () => {
@@ -552,5 +555,5 @@ Deno.test("slack: no directory ⇒ bare ids — sender unnamed, mentions decode 
   const m = published[0] as MessageEvent;
   assertEquals(m.envelope.sender, { address: "U7" });
   assertEquals((m.parts[0] as { text: string }).text, "ping @U9");
-  assertEquals(m.payload?.mentions, ["U9"]);
+  assertEquals(m.payload?.mentions, [{ address: "U9" }]);
 });

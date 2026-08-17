@@ -192,8 +192,11 @@ export interface Payload {
   stop_reason?: string;
   /** On a summary: the id range the checkpoint stands for (§5 compaction). */
   covers?: [EventId, EventId];
-  /** Wire mentions, canonical addresses. */
-  mentions?: string[];
+  /** Wire mentions: canonical address + the display name the stored text uses for it
+   *  (absent when the text fell back to the bare address). `type` is the sigil the text
+   *  wears: `@` a person (the default when absent), `#` a conversation. Unordered —
+   *  pair by name, not position. */
+  mentions?: { address: string; name?: string; type?: "@" | "#" }[];
   /** Ingest-classified reserved word from the agent's principal (§3 classifier). */
   control?: ControlKind;
 }

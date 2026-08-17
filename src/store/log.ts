@@ -518,10 +518,12 @@ function migrate(db: DatabaseSync) {
           delete wa.forwarded;
         }
         if (Array.isArray(wa.mentions)) {
-          // sidecar mentions were objects ({address, …}) — payload.mentions is addresses
-          const addrs = (wa.mentions as { address?: string }[])
-            .map((m) => m.address).filter((a): a is string => !!a);
-          if (addrs.length) p.mentions = addrs;
+          // sidecar entries carried {address, agent_id?, name?} — payload.mentions keeps
+          // the wire facts (address + name), never our classification (§3)
+          const lifted = (wa.mentions as { address?: string; name?: string }[])
+            .filter((m): m is { address: string; name?: string } => !!m.address)
+            .map((m) => ({ address: m.address, ...(m.name ? { name: m.name } : {}) }));
+          if (lifted.length) p.mentions = lifted;
           delete wa.mentions;
         }
         const s = wa.status as Bag | undefined;

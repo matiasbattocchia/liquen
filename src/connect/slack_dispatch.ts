@@ -23,6 +23,7 @@ import { isExternal, pathOf } from "../store/media.ts";
 import { DispatchError, failedStatus } from "./errors.ts";
 import type { DeliveryPatch, Subscriber } from "../store/log.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../types.ts";
+import { type Directory, encodeSlackText } from "./mentions.ts";
 
 export interface SlackTarget {
   connection: string; // the workspace the conversation anchors to (§4)
@@ -59,6 +60,10 @@ export type SlackPost = (
 export interface SlackDispatchDeps {
   subscribe: Subscriber["subscribe"];
   post: SlackPost;
+  /** The conversation's name directory (§3 mentions): lets the agent's `@Name` tokens
+   *  claim user ids for the wire encoding. Specials (`@here`) and bare ids encode
+   *  regardless; unclaimed names stay literal text. */
+  directory?: Directory;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
   from?: EventId;
   onError?: (event: MessageEvent, err: unknown) => void;
@@ -75,7 +80,11 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => void {
       const { target, text, files, event } = out;
       chain = chain.then(async () => {
         try {
-          const ts = await deps.post(target, text, event.agent?.id, files);
+          // the agent mentions as a human (`@Name`, `@here`) — encode to the wire's
+          // forms here at the frontier; unclaimed names stay literal text
+          const dir = text.includes("@") ? await deps.directory?.("slack", target.channel) : null;
+          const encoded = text ? encodeSlackText(text, dir ?? []) : text;
+          const ts = await deps.post(target, encoded, event.agent?.id, files);
           await deps.setDelivery?.(event.id, {
             ...(ts !== undefined
               ? { external_id: `slack:${teamOf(target.connection)}:${target.channel}:${ts}` }
@@ -239,9 +248,11 @@ if (import.meta.main) {
     return out.ts;
   };
 
+  const { logDirectory } = await import("./mentions.ts");
   createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     post,
+    directory: logDirectory((q) => log.read(q)),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onSent: (e, ts) =>
       console.error(`[slack-dispatch] sent → ${e.envelope.conversation.address} (ts ${ts})`),
