@@ -446,7 +446,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
     landed): the typed `payload` column (action · refs · turn keys — DESIGN §3), UTC
     in the store + org-config timezone at render, org `config.json` defaults,
     edits/deletes as first-class events, ReactionPart both directions (Slack reaction
-    ingest was simply missing), the `<edit>`/`<del>`/`<react>` render elements, and
+    ingest was simply missing), action-attributed `<msg>`/`<react>` rendering, and
     two bridge fixes with live body counts: phone-pairing died at ~2 min (the QR
     channel's timeout), and receipts NEVER merged — self receipts (the phone reading
     the peer's messages) minted ids with our own address as author segment, 811 ghost

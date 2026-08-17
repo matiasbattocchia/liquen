@@ -867,12 +867,14 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   WhatsApp contact can name themself `Ana" from="matias`). The account's own messages are
   `self`, told apart by authorship: `from="self (you)"` = the agent published it (a
   `send`, or its echo), `from="self (principal)"` = the account spoke and it did not come
-  through us (the principal on their own phone — WhatsApp; the Slack leg needs the grant
-  lookup, pending). The reply sits with what it answers. A dead delivery carries
-  `status="failed"`; wire mentions ride a `mentions=` attribute. **The element is the
-  action** (§3): `<edit>` renders the new content, `<del>` the removed content (resolved
-  against the window when the original is present; no ref attribute — the model reads the
-  target by context), `<react>` the glyph (`removed="true"` = un-react). Stamps format
+  through us (the principal on their own device — the ingest classifier stamps `agent.id`
+  from the sender's grant row on both wires, §3). The reply sits with what it answers. A dead delivery carries
+  `status="failed"`; wire mentions ride a `mentions=` attribute. **Two elements, the
+  deviation marked** (§3): `<msg>` carries text — `action="edit"` renders the new
+  content, `action="delete"` the removed content (resolved against the window when the
+  original is present; no ref attribute — the model reads the target by context);
+  `<react>` carries the glyph — `action="remove"` = un-react. Bare defaults: create and
+  add wear no attribute. Stamps format
   through the org's timezone (org config; stored ts is UTC, §3). Clustering: inbound runs
   are ts-sorted, then partitioned per conversation in first-arrival order —
   cross-conversation interleaving is arrival noise, not meaning; within a conversation,

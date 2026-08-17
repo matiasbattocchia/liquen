@@ -346,7 +346,7 @@ function renderMessages(
   const { events, elisions } = byEventTime(applySummary(window.filter((e) => !backfilled(e))));
   const out: MessageParam[] = [];
 
-  // ref resolution for <del> bodies (§5): the WHOLE window, backfill included — a delete
+  // ref resolution for delete bodies (§5): the WHOLE window, backfill included — a delete
   // often lands long after its referent, and the referent being history doesn't unsay it
   const byExternal = new Map<string, Event>();
   for (const e of window) {
@@ -668,10 +668,11 @@ function conversationEl(
   return `<conv ${attrs.join(" ")}>\n${c.lines.join("\n")}\n</conv>`;
 }
 
-/** One world message line — the element is the ACTION (§3, §5): `<msg>` = create, `<edit>`
- *  new content, `<del>` the removed content (resolved against the window when the original
- *  is present — no ref attribute; the model reads it by context), `<react>` the glyph
- *  (`removed="true"` = an un-react). `from="self"` = the agent's own send (its author
+/** One world message line — two elements, the deviation marked (§3, §5): `<msg>` carries
+ *  text (`action="edit"` = replacement content, `action="delete"` = the removed content,
+ *  resolved against the window when the original is present — no ref attribute; the model
+ *  reads it by context), `<react>` carries the glyph (`action="remove"` = an un-react).
+ *  Bare defaults: create and add wear no attribute. `from="self"` = the agent's own send (its author
  *  label inside a user turn); `status="failed"` = the dispatcher gave up on delivery (§5).
  *  Body and sender name are attacker-controlled — escaped, so no message can close its own
  *  element or forge a mark. */
@@ -700,16 +701,16 @@ function msgLine(
 
   const action = e.payload?.action;
   if (action === "edit") {
-    return `<edit ${head}>${escText(textOf(e))}</edit>`;
+    return `<msg ${head} action="edit">${escText(textOf(e))}</msg>`;
   }
   if (action === "delete") {
     const orig = e.payload?.ref_external_id ? resolve?.(e.payload.ref_external_id) : undefined;
-    return `<del ${head}>${orig ? escText(textOf(orig)) : ""}</del>`;
+    return `<msg ${head} action="delete">${orig ? escText(textOf(orig)) : ""}</msg>`;
   }
   if (action === "add" || action === "remove") {
     const r = e.parts.find((p): p is ReactionPart => p.type === "data" && p.kind === "reaction");
     const glyph = r ? (r.data.unicode ?? r.data.name) : textOf(e);
-    const removed = action === "remove" ? ' removed="true"' : "";
+    const removed = action === "remove" ? ' action="remove"' : "";
     return `<react ${head}${removed}>${escText(glyph)}</react>`;
   }
 

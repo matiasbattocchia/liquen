@@ -1136,7 +1136,7 @@ Deno.test("authorship labels (§3): turn_id = (you); the stamp alone = (principa
   assertStringIncludes(dump, 'from=\\"robo\\" at=\\"12 Aug 9:00\\">puedo ayudar');
 });
 
-Deno.test("the element is the action (§5): <edit>, <del> resolved, <react>, mentions", () => {
+Deno.test("actions on the element (§5): <msg action>, delete resolved, <react>, mentions", () => {
   const t = "2026-08-16T12:00:00Z";
   const conv = { address: "wa:sol", kind: "direct" as const };
   const sol = { address: "549", name: "sol" };
@@ -1176,14 +1176,18 @@ Deno.test("the element is the action (§5): <edit>, <del> resolved, <react>, men
   const dump = JSON.stringify(messages);
   assertStringIncludes(
     dump,
-    '<edit from=\\"sol\\" at=\\"16 Aug 12:00\\">me confirmaron: hay UN lugar</edit>',
+    '<msg from=\\"sol\\" at=\\"16 Aug 12:00\\" action=\\"edit\\">me confirmaron: hay UN lugar</msg>',
   );
-  // the del body is the ORIGINAL's text, resolved against the window — no ref attribute
-  assertStringIncludes(dump, '<del from=\\"sol\\" at=\\"16 Aug 12:00\\">hay dos lugares</del>');
+  // the delete body is the ORIGINAL's text, resolved against the window — no ref attribute
+  assertStringIncludes(
+    dump,
+    '<msg from=\\"sol\\" at=\\"16 Aug 12:00\\" action=\\"delete\\">hay dos lugares</msg>',
+  );
+  // bare defaults: create and add wear no action attribute
   assertStringIncludes(dump, '<react from=\\"sol\\" at=\\"16 Aug 12:00\\">😮</react>');
   assertStringIncludes(
     dump,
-    '<react from=\\"sol\\" at=\\"16 Aug 12:00\\" removed=\\"true\\">😮</react>',
+    '<react from=\\"sol\\" at=\\"16 Aug 12:00\\" action=\\"remove\\">😮</react>',
   );
   assertStringIncludes(dump, 'mentions=\\"5491133585694\\">che @matias mirá esto</msg>');
 });
