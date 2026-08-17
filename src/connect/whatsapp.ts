@@ -61,7 +61,9 @@ export interface WAContent {
   data?: unknown;
   re_message_id?: string;
   forwarded?: boolean;
-  mentions?: { address?: string; agent_id?: string; name?: string }[];
+  // lid = the hidden-user digits WhatsApp wrote inline ("@<lid>") in lid-addressed
+  // groups, shipped beside the canonical address so the token can be decoded (§3)
+  mentions?: { address?: string; agent_id?: string; name?: string; lid?: string }[];
 }
 
 export interface WAMessage {
@@ -278,6 +280,27 @@ function payloadOf(c: WAContent, part: Part): Payload | undefined {
   return Object.keys(p).length ? p : undefined;
 }
 
+/** Decode WhatsApp's inline mention tokens (§3): the composer wrote `@<digits>` — lid
+ *  digits in lid-addressed groups, phone digits elsewhere — while `mentions[]` carries
+ *  the canonical address. Rewrite to `@<display>` (batch pushname, else the mention's
+ *  own name, else the canonical digits) so the model reads a name, mirroring outbound
+ *  where it writes `@Name` and the frontier encodes. */
+function decodeMentionTokens(
+  text: string,
+  mentions: NonNullable<WAContent["mentions"]>,
+  pushnames: Map<string, string>,
+): string {
+  let out = text;
+  for (const m of mentions) {
+    if (!m.address) continue;
+    const display = pushnames.get(m.address) ?? m.name ?? m.address;
+    for (const token of new Set([m.lid, m.address])) {
+      if (token) out = out.replaceAll(`@${token}`, `@${display}`);
+    }
+  }
+  return out;
+}
+
 /** The delivery state a bridge status map amounts to: the FURTHEST stage present. */
 function stateOf(status: Record<string, unknown>): DeliveryStatus | undefined {
   for (const key of ["failed", "read", "delivered", "sent"] as const) {
@@ -296,6 +319,9 @@ function mapMessage(
 ): Draft<MessageEvent> | null {
   const part = partOf(m.content);
   if (!part || !m.external_id || !m.conversation_address) return null;
+  if (m.content.mentions?.length && part.type !== "data" && part.text) {
+    part.text = decodeMentionTokens(part.text, m.content.mentions, pushnames);
+  }
 
   const address = m.conversation_address;
   const name = groupNames.get(address);

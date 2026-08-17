@@ -243,6 +243,38 @@ Deno.test("file content maps to a FilePart with caption; data to a DataPart", as
   });
 });
 
+Deno.test("inline mention tokens decode: @<lid> and @<digits> → @name (else digits)", async () => {
+  const { handler, published } = harness();
+  await handler(post(
+    "/whatsapp-web-webhook",
+    batch({
+      contacts: [{ address: "5492604560911", extra: { name: "Euge" } }],
+      messages: [textMessage({
+        conversation_address: "123456-789@g.us",
+        content: {
+          version: "1",
+          type: "text",
+          kind: "text",
+          // the composer's wire form: lid digits for Euge, phone digits for the unnamed peer
+          text: "@236302099558894 y @5491177777777 vengan",
+          mentions: [
+            { address: "5492604560911", lid: "236302099558894" },
+            { address: "5491177777777" },
+          ],
+        },
+      })],
+    }),
+  ));
+  const e = published[0] as MessageEvent;
+  // named mention decodes to the pushname; the unnamed one keeps its canonical digits
+  assertEquals(e.parts, [{ type: "text", kind: "text", text: "@Euge y @5491177777777 vengan" }]);
+  // payload.mentions keeps canonical addresses — the lid is a wire artifact, not stored
+  assertEquals(e.payload?.mentions, [
+    { address: "5492604560911" },
+    { address: "5491177777777" },
+  ]);
+});
+
 Deno.test("reaction + reply ref: the target is payload.ref_external_id, action add", async () => {
   const { handler, published } = harness();
   await handler(
