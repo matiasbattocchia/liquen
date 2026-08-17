@@ -198,10 +198,13 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       const who = e.user
         ? await deps.names?.nameOf(team, e.user, boundUsers(payload.authorizations))
         : undefined;
+      // same classifier stamp as messages (§3): the reactor's grant row names the mind
+      const owner = e.user && deps.store ? ownerOf(deps.store, team, e.user) : null;
       try {
         await deps.publish({
           ts: now(),
           type: "message",
+          ...(owner ? { agent: { id: owner } } : {}),
           payload: {
             action: e.type === "reaction_added" ? "add" : "remove",
             ref_external_id: `slack:${team}:${item.channel}:${item.ts}`,
@@ -379,9 +382,14 @@ async function mapMessage(
   // directory asks the service itself (users.info / user_change); still nothing of ours:
   // identity resolution is the classifier's business (§3)
   const who = m.user ? await names?.nameOf(team, m.user, via) : undefined;
+  // the classifier's authorship stamp (§3): a sender whose grant row names a mind is that
+  // principal — `agent.id` alone (a Slack client is not the harness, so no session_id);
+  // turn_id, never this stamp, marks the model's voice
+  const owner = m.user && store ? ownerOf(store, team, m.user) : null;
   return [{
     ts: ctx.now(),
     type: "message",
+    ...(owner ? { agent: { id: owner } } : {}),
     ...(Object.keys(payload).length ? { payload } : {}),
     envelope: {
       service: "slack",

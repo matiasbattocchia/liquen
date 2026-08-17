@@ -71,11 +71,13 @@ export function createGithubDispatch(deps: GithubDispatchDeps): () => void {
   );
 }
 
-/** A `message` authored by a handler (`agent` present) on the github service — routing
- *  reads `envelope.service` (§3). */
+/** OURS and not yet on the wire (§3, §4): `agent` present AND no `external_id` at insert —
+ *  classifier-stamped principal rows always carry a platform id, so they never re-dispatch.
+ *  Routing reads `envelope.service` (§3). */
 function isOutboundGh(e: Event): boolean {
   return e.type === "message" &&
     e.agent !== undefined &&
+    e.envelope.external_id === undefined &&
     e.envelope.service === "github";
 }
 

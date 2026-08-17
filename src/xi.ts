@@ -43,7 +43,9 @@ import type { Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import type { Locker } from "./store/lock.ts";
 import { filePartOf, loadMediaBlock } from "./store/media.ts";
-import { backfilled } from "./render.ts"; // one predicate: what never wakes never renders
+import { backfilled, ownVoice } from "./render.ts"; // shared predicates: backfill never wakes;
+// ownVoice (§3) tells the model's output from EVERYTHING else — including its own
+// principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { type ModelTransport, nu, type TurnConfig } from "./nu.ts";
 
 /* ── the poke, the class filter, and the owed-derivation ──────────────── */
@@ -183,26 +185,24 @@ const waiting = (p: Pending) => p.gated && p.requested && !p.response;
  *  sits BEFORE the closing in the log yet was never seen (the live-bench coalescing race).
  *  Position is the fallback for messages without a horizon (pre-horizon logs). */
 function unanswered(events: Event[], session: Session, home: string): boolean {
+  // news = a message our side didn't produce (§3 ownVoice) — which now includes the
+  // principal's rows: they carry agent.id (and, typed into the session, session_id),
+  // but input never carries a turn_id, so it stays answerable
+  const news = (e: Event) => e.type === "message" && !ownVoice(e, session.id) && !backfilled(e);
   let last = -1;
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
     if (
-      e.type === "message" && e.agent?.session_id === session.id &&
+      e.type === "message" && ownVoice(e, session.id) &&
       e.envelope.conversation.address === home
     ) last = i;
   }
-  if (last === -1) {
-    return events.some((e) =>
-      e.type === "message" && e.agent?.session_id !== session.id && !backfilled(e)
-    );
-  }
+  if (last === -1) return events.some(news);
   // resolve the horizon to a POSITION — the window may be re-sorted for display (§5)
   const horizon = events[last].extra?.consumed;
   const h = typeof horizon === "string" ? events.findIndex((e) => e.id === horizon) : -1;
   const from = h !== -1 ? h : last; // no/stale horizon → fall back to the closing's position
-  return events.slice(from + 1).some((e) =>
-    e.type === "message" && e.agent?.session_id !== session.id && !backfilled(e)
-  );
+  return events.slice(from + 1).some(news);
 }
 
 /** All our uses have results but no turn output followed ⇒ the closing think is owed.
@@ -221,7 +221,7 @@ function unclosedChain(events: Event[], session: Session, home: string): boolean
   }
   if (lastResult < 0) return false;
   return !events.slice(lastResult + 1).some((e) =>
-    e.agent?.session_id === session.id &&
+    ownVoice(e, session.id) &&
     (e.type === "thinking" || e.type === "tool_use" ||
       (e.type === "message" && e.envelope.conversation.address === home))
   );
@@ -517,7 +517,9 @@ async function execute(
     const msg: Draft<MessageEvent> = {
       ts: new Date().toISOString(),
       type: "message",
-      payload: { ref_id: use.id }, // the send tool_use that dispatched it
+      // the send tool_use that dispatched it — whose turn_id rides along: the send IS
+      // turn output, and turn_id presence is what marks it the model's voice (§3)
+      payload: { turn_id: use.payload.turn_id, ref_id: use.id },
       agent: self,
       envelope,
       parts: [...(body ? [{ type: "text", kind: "text", text: body } as const] : []), ...files],

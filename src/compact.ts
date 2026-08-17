@@ -12,7 +12,7 @@
  */
 
 import type { Draft, Event, SummaryEvent } from "./types.ts";
-import { applySummary, closingBoundary, deferredInput } from "./render.ts";
+import { applySummary, closingBoundary, deferredInput, ownVoice } from "./render.ts";
 import { type ModelTransport, mu, type StepInput } from "./mu.ts";
 
 export const DEFAULT_COMPACT_AT = 150_000; // est. tokens — matches the API's own server-side compaction trigger
@@ -104,7 +104,7 @@ function transcript(covered: Event[], sessionId: string): { text: string; previo
     if (e.type === "summary") {
       previous = e.parts.map((p) => p.text).join("\n");
     } else if (e.type === "message") {
-      const who = e.agent?.session_id === sessionId
+      const who = ownVoice(e, sessionId)
         ? "me"
         : e.envelope.sender?.name ?? e.envelope.sender?.address ?? "?";
       const text = e.parts.filter((p) => p.type === "text")

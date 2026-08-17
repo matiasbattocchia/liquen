@@ -187,6 +187,18 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
       ...(batch.statuses ?? []).map((s) => mapStatus(s, connection, now)),
     ].filter((d): d is Draft<MessageEvent> => d !== null);
 
+    // the classifier (§3): a sender whose GRANT row names a mind is that principal —
+    // stamp `agent.id` (whose complex authored it; no session_id — a phone is not the
+    // harness). Presence-not-equality: turn_id, never this stamp, marks the model's voice.
+    if (deps.store) {
+      for (const d of drafts) {
+        const s = d.envelope.sender?.address;
+        if (!s || d.agent) continue;
+        const owner = deps.store.connection(SERVICE, s)?.agentId;
+        if (owner) d.agent = { id: owner };
+      }
+    }
+
     if (drafts.length) {
       try {
         await deps.publish(drafts); // one transaction: the whole batch lands, or none

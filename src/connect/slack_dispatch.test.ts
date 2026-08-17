@@ -70,7 +70,7 @@ async function withDispatch(
     post: (target, text, author, files) => {
       posts.push({ target, text, author, files });
       if (opts.failWith) return Promise.reject(opts.failWith);
-      return Promise.resolve("999.111");
+      return Promise.resolve({ ts: "999.111", user: "UBOT1" });
     },
     setDelivery: (id, patch) => {
       patches.push(patch);
@@ -101,6 +101,28 @@ async function withDispatch(
     await Deno.remove(dir, { recursive: true });
   }
 }
+
+Deno.test("slack dispatch: a classifier-stamped inbound never re-dispatches (§3)", async () => {
+  await withDispatch(async ({ publish, posts, waitFor }) => {
+    // the principal's echo: agent.id stamped by the classifier, external_id from the wire
+    const echo = worldMsg("10", "C1", "typed on my phone");
+    echo.agent = { id: "a1" };
+    echo.envelope.external_id = "slack:T1:C1:777.1";
+    await publish(echo);
+    await publish(agentMsg("11", "and this one ships"));
+    await waitFor(() => posts.length === 1); // only the agent's send posted
+    assertEquals(posts[0].text, "and this one ships");
+  });
+});
+
+Deno.test("slack dispatch: the send response stamps sender beside dispatched_at (§4)", async () => {
+  await withDispatch(async ({ publish, patches, waitFor }) => {
+    await publish(agentMsg("12", "hola"));
+    await waitFor(() => patches.length === 1);
+    assertEquals(patches[0].sender, { address: "UBOT1" }); // chat.postMessage's message.user
+    assertEquals(typeof patches[0].status?.dispatched_at, "string");
+  });
+});
 
 Deno.test("slack dispatch: outbound send is posted, parsed, ts backfilled as external_id", async () => {
   await withDispatch(async ({ publish, posts, read, waitFor }) => {

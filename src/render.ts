@@ -681,14 +681,18 @@ function msgLine(
   zone?: string,
   resolve?: (externalId: string) => Event | undefined,
 ): string {
-  // `self` for both hands, because on the wire there IS only one: the account. WhatsApp
-  // coexistence is unattributable from the platform (§4) — but not from the LOG, and the
-  // two are told apart without asking anyone. `agent` set ⇒ we published it (a `send`, or
-  // the echo that merged into its row). No sender at all ⇒ the account spoke and it did
-  // not come through us: the principal, typing on their own phone. Before this, that row
-  // fell through to `peer` — the principal's own messages arrived labelled as a stranger's.
+  // `self` for both hands, because on the wire there IS only one: the account — the halves
+  // are told apart by AUTHORSHIP (§3): turn_id ⇒ the model's voice; the classifier's
+  // `agent.id` stamp without one ⇒ the principal (their grant named the mind, whichever
+  // device they typed on). A DIFFERENT agent.id is a peer agent's voice (team chat). The
+  // sender-less fallback keeps pre-classifier coexistence rows labelled: no sender means
+  // the account spoke and it did not come through us — the principal, on their own phone.
   const from = isSelf(e, session)
     ? "self (you)"
+    : ownComplex(e, session)
+    ? "self (principal)"
+    : e.agent !== undefined
+    ? e.agent.id
     : e.envelope.sender === undefined
     ? "self (principal)"
     : (e.envelope.sender.name ?? e.envelope.sender.address ?? "peer");
@@ -780,8 +784,29 @@ function errorTextOf(e: HarnessErrorEvent): string {
   return e.parts[0]?.data?.error ?? "unknown error";
 }
 
+/** OUR SIDE produced this row (§3 authorship — presence, not equality): the model's turn
+ *  output (`payload.turn_id`), or a mirror CC replaying mind content outward
+ *  (`extra.via.service === "local"`). A principal's rows carry `agent.id` — and, typed
+ *  through the harness, `session_id` — yet never a turn_id: they are input, not voice.
+ *  THE predicate for the LLM role here, the xi verdict (§2), and the self labels; v0
+ *  session ≈ agent, so `session` matches `agent.id` (§7). */
+export function ownVoice(e: Event, session: SessionId): boolean {
+  if (!ownComplex(e, session)) return false;
+  if (e.payload?.turn_id !== undefined) return true;
+  const via = e.extra?.via;
+  return typeof via === "object" && via !== null &&
+    (via as { service?: string }).service === "local";
+}
+
+/** OUR COMPLEX authored it — either half. Matched on `session_id` when stamped (harness
+ *  rows), else `agent.id` (the classifier's echo stamp carries no session — and v0
+ *  session ≈ agent, §7, so the id answers the same question). */
+export function ownComplex(e: Event, session: SessionId): boolean {
+  return e.agent !== undefined && (e.agent.session_id ?? e.agent.id) === session;
+}
+
 function isSelf(e: Event, session: SessionId): boolean {
-  return e.agent?.session_id === session;
+  return ownVoice(e, session);
 }
 
 /** Every part's `text`, not only a TextPart's — a caption rides `FilePart.text`. Filtering

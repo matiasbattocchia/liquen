@@ -15,6 +15,7 @@
 import { TextLineStream } from "@std/streams";
 import { userInfo } from "node:os";
 import { type MainConfig, readOrgConfig, start } from "./main.ts";
+import { ownVoice } from "./render.ts";
 import type { Draft, Event, MessageEvent, PermissionResponseEvent } from "./types.ts";
 
 const DIM = "\x1b[2m";
@@ -61,6 +62,11 @@ const homeEnv = {
 const principalMsg = (text: string): Draft<MessageEvent> => ({
   ts: new Date().toISOString(),
   type: "message",
+  // the principal's stamp (§3): agent.id = whose mind, session_id = entered through the
+  // harness (deterministic in v0, so it stamps at append — even the session's first line).
+  // No turn_id, ever: that is the model's mark, and its absence is what keeps this row
+  // input. One complex, two halves, told apart by turn_id alone.
+  agent: { id: target, session_id: session },
   envelope: {
     ...homeEnv,
     sender: { address: username, name: username },
@@ -89,7 +95,8 @@ const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
 let pendingRequest: string | undefined; // the last approval card — what /y and /n answer
 
 function paint(e: Event): void {
-  const self = e.agent?.session_id === session;
+  const self = ownVoice(e, session); // the model's output (§3) — the principal's own
+  // stamped lines stay non-self: locally they're already on screen
   switch (e.type) {
     case "message": {
       const via = (e.extra?.via ?? undefined) as { service?: string } | undefined;

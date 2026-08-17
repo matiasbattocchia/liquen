@@ -221,6 +221,9 @@ Deno.test("slack: a bound sender enrolls; sender stays the bare wire id — no n
   const m = published[0] as MessageEvent;
   assertEquals(m.envelope.connection_address, "T1"); // events anchor to the workspace (§4)
   assertEquals(m.envelope.sender, { address: "U7" }); // the wire id, nothing of ours
+  // the classifier's authorship stamp (§3): the grant names the mind — id alone (no
+  // session: a Slack client is not the harness; no turn_id: input, not voice)
+  assertEquals(m.agent, { id: "matias" });
   assertEquals((m.extra?.slack as { authorizations: unknown }).authorizations, [
     { user_id: "U7" },
   ]);
@@ -253,6 +256,7 @@ Deno.test("slack: an unbound sender stays unclassified; the authorized grant sti
   );
   const m = published[0] as MessageEvent;
   assertEquals(m.envelope.sender, { address: "U2" }); // no name — the sender isn't ours
+  assertEquals(m.agent, undefined); // and no grant ⇒ no authorship stamp (§3)
   // the delivery itself proves the authorized user sees this conversation
   assertEquals(upserts, [
     { service: "slack", connection: "T1", conversation: "C1", agentId: "matias" },

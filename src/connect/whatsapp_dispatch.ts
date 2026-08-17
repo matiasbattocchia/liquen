@@ -92,8 +92,14 @@ export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => void {
             const wmwId = await deps.send(recordOf(event, c.content), mediaUrl);
             first ??= wmwId;
           }
+          // the wire names its own side IN THE SEND RESPONSE (§4): the returned id is
+          // `wmw.<own>.<chat>.<sender>.<id>` — lift <own> into sender alongside
+          // dispatched_at, so sender-presence means "on the wire" without waiting for the
+          // echo (which still fill-merges what only it knows: the pushname)
+          const own = first?.split(".")[1];
           await deps.setDelivery?.(event.id, {
             ...(first !== undefined ? { external_id: externalId(first) } : {}),
+            ...(own ? { sender: { address: own } } : {}),
             status: { dispatched_at: new Date().toISOString() },
           });
           deps.onSent?.(event, first);
@@ -112,10 +118,13 @@ export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => void {
   );
 }
 
-/** A `message` authored by a handler (`agent` present) on the whatsapp service (§3). */
+/** OURS and not yet on the wire (§3, §4): `agent` present (our side authored it) AND no
+ *  `external_id` at insert (a platform id means it already crossed — the classifier stamps
+ *  `agent.id` on the principal's inbound rows too, and those must never re-dispatch). */
 function isOutboundWhatsApp(e: Event): boolean {
   return e.type === "message" &&
     e.agent !== undefined &&
+    e.envelope.external_id === undefined &&
     e.envelope.service === SERVICE;
 }
 

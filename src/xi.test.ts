@@ -27,7 +27,13 @@ function ev(type: Event["type"], over: Partial<Event> & { conv?: string } = {}):
   } as Event;
 }
 const peerMsg = () => ev("message");
-const selfMsg = (conv = HOME) => ev("message", { ...SELF, conv });
+// a self message is turn OUTPUT: turn_id is the voice mark (§3 — the stamp alone no
+// longer says which half, so ownVoice reads the turn)
+const selfMsg = (conv = HOME) =>
+  ev(
+    "message",
+    { ...SELF, conv, payload: { turn_id: "T0" } } as Partial<Event> & { conv?: string },
+  );
 const use = (id: string) =>
   ev("tool_use", {
     ...SELF,
@@ -44,6 +50,19 @@ Deno.test("decide: an unanswered peer message → think; answered → nothing", 
   assertEquals(decide([peerMsg()], SESSION, HOME, OPEN), "think");
   assertEquals(decide([peerMsg(), selfMsg()], SESSION, HOME, OPEN), "ignore");
   assertEquals(decide([selfMsg(), peerMsg()], SESSION, HOME, OPEN), "think"); // a new one after
+});
+
+Deno.test("decide: the principal's stamped line is INPUT — agent + session, no turn_id (§3)", () => {
+  // a repl line / alias mind copy: the harness stamps both authorship fields, and only
+  // the missing turn_id keeps it answerable — session equality would call it ours
+  const principal = () =>
+    ev("message", {
+      agent: { id: "a1", session_id: "s1" },
+      envelope: { ...env(HOME), sender: { address: "matias", name: "matias" } },
+    } as Partial<Event>);
+  assertEquals(decide([principal()], SESSION, HOME, OPEN), "think");
+  assertEquals(decide([principal(), selfMsg()], SESSION, HOME, OPEN), "ignore");
+  assertEquals(decide([selfMsg(), principal()], SESSION, HOME, OPEN), "think");
 });
 
 Deno.test("decide: a directed peer send is not a closing — the answer is still owed", () => {

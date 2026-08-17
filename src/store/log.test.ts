@@ -261,6 +261,19 @@ Deno.test("echo-reconciliation: setDelivery backfills external_id; the loopback 
   });
 });
 
+Deno.test("setDelivery sender: fills when empty, never overwrites — the echo's fact wins first (§4)", async () => {
+  await withLog(async (log) => {
+    await log.publish(msg("01", "wa:x", "hola"));
+    // the send response names our side — sender lands WITH dispatched_at
+    await log.setDelivery("01", { sender: { address: "5491" } });
+    assertEquals((await log.read())[0].envelope.sender, { address: "5491" });
+    // a later stamp (the echo already merged a fuller fact) cannot overwrite the address —
+    // but the name FILLS, first non-empty wins per field
+    await log.setDelivery("01", { sender: { address: "other", name: "matias" } });
+    assertEquals((await log.read())[0].envelope.sender, { address: "5491", name: "matias" });
+  });
+});
+
 Deno.test("echo race: the echo arrives BEFORE the backfill — setDelivery absorbs it into one row", async () => {
   await withLog(async (log) => {
     // 1. the agent's outbound send — dispatch is posting, no external_id yet

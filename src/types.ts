@@ -158,13 +158,23 @@ export interface Envelope {
 /* ─────────────────── authorship · payload · extra (§3) ───────────────── */
 
 /**
- * Internal authorship — present iff a handler (mu/nu) authored the event.
- * `session_id === this session` is THE bit: it assigns the LLM role (§5) *and* the
- * xi verdict (§2). One bit, two derivations.
+ * Internal authorship — presence, not equality (§3, §4):
+ *
+ *   `id`          which MIND-COMPLEX authored the event — the model *or its principal*
+ *                 (the classifier stamps a principal's rows from their grant: the sender's
+ *                 owned connection names the mind). It answers *whose*, never *which half*.
+ *   `session_id`  entered THROUGH THE HARNESS: turn output, a repl line, an alias copy.
+ *                 A principal typing into the live session carries it too — so it cannot
+ *                 discriminate the halves. Absent on a principal's wire echo (phone in
+ *                 hand). Deterministic in v0 (session ≈ agent), so it stamps at append.
+ *
+ * The half-discriminator is `payload.turn_id`: only rows PRODUCED BY a model turn carry
+ * one. `render.ownVoice` is the predicate — it assigns the LLM role (§5), the xi verdict
+ * (§2), and the render labels (self(you) vs self(principal)).
  */
 export interface Authorship {
   id: AgentId;
-  session_id: SessionId;
+  session_id?: SessionId;
 }
 
 /** What a message DOES to its referent's parts — absent = create. `edit` replaces them ·
@@ -184,8 +194,10 @@ export interface Payload {
   action?: Action;
   ref_external_id?: string;
   ref_id?: EventId;
-  /** Groups one step's emissions (thinking · tool_use · the assistant message): render's
-   *  boundary rule (§5) and the tool barrier (§2) read it. Minted, not an event id. */
+  /** Groups one step's emissions (thinking · tool_use · the assistant message · the sends
+   *  its tools dispatch): render's boundary rule (§5) and the tool barrier (§2) read it.
+   *  Minted, not an event id. Presence is AUTHORSHIP's half-discriminator (§3): only rows
+   *  a model turn produced carry one — a principal's rows never do, however stamped. */
   turn_id?: string;
   /** On the LAST event of a turn: the provider's stop reason verbatim. `pause_turn` and
    *  `max_tokens` are continuations, not endings — `decide` reads this to re-enter (§2). */

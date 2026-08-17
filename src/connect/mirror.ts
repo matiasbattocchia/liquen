@@ -89,7 +89,11 @@ export function createMirror(deps: MirrorDeps): () => void {
       if (parts) enqueue(e, () => fanOut(deps, e, mind, parts, now));
       return;
     }
-    if (e.type !== "message" || e.agent || viaOf(e)) return; // CCs and copies never re-enter
+    // CCs and copies never re-enter. A CC is OURS-not-yet-on-the-wire: agent-stamped with
+    // no external_id at insert (§4). Agent presence ALONE no longer means ours — the
+    // classifier stamps the principal's inbound rows too, and those (external_id always
+    // present: ingests refuse to mint without one) must still fan in.
+    if (e.type !== "message" || (e.agent && !e.envelope.external_id) || viaOf(e)) return;
     const { service, connection_address, conversation } = e.envelope;
     const binding = aliasOf(deps.aliases(), service, connection_address, conversation.address);
     if (binding) {
@@ -141,6 +145,10 @@ async function fanIn(
     ts: now(),
     type: "message",
     payload: { ref_id: e.id },
+    // the principal's stamp (§3): whose mind + entered through the harness — session_id
+    // is deterministic in v0 (session ≈ agent), so even a first-message copy stamps at
+    // append. No turn_id: input, not voice — exactly a REPL line in wire clothing.
+    agent: { id: binding.agentId, session_id: binding.agentId },
     envelope: {
       service: "local",
       connection_address: "agent",
@@ -228,10 +236,11 @@ function ccParts(e: Event): Part[] | null {
   const m = e as MessageEvent;
   const parts = m.parts ?? [];
   const text = textOf(m);
-  if (e.agent) {
-    // the voice — tagged: in a self-conversation BOTH speakers are the same account on
-    // the surface (everything renders as the principal), so the tag is the only thing
-    // that tells output from input there. The log needs none — authorship is the bit.
+  if (e.payload?.turn_id !== undefined) {
+    // the voice — turn_id is the mark (§3: the principal's rows carry `agent` too, so
+    // presence alone can't tell the halves). Tagged: in a self-conversation BOTH speakers
+    // are the same account on the surface (everything renders as the principal), so the
+    // tag is the only thing that tells output from input there.
     if (!text && parts.length === 0) return null;
     return [
       ...(text ? [{ type: "text", kind: "text", text: `[agent] ${text}` } as const] : []),

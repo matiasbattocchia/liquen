@@ -114,7 +114,9 @@ function homeMsg(
     parts: [{ type: "text", kind: "text", text }],
   };
   if (self) e.agent = SELF;
-  if (turnId !== undefined) e.payload = { turn_id: turnId }; // nu stamps the emitting step (§5)
+  // nu stamps the emitting step (§5) — and turn_id is the voice mark (§3), so every
+  // self message carries one
+  if (turnId !== undefined || self) e.payload = { turn_id: turnId ?? `t-${id}` };
   return e;
 }
 
@@ -131,8 +133,11 @@ function waMsg(id: string, ts: string, text: string, self: boolean, cause?: stri
     },
     parts: [{ type: "text", kind: "text", text }],
   };
-  if (self) e.agent = SELF;
-  if (cause !== undefined) e.payload = { ref_id: cause }; // a directed send: its tool_use
+  if (self) {
+    e.agent = SELF;
+    // a directed send: its tool_use in ref_id, whose turn_id rides along (§3 voice mark)
+    e.payload = { turn_id: `t-${id}`, ...(cause !== undefined ? { ref_id: cause } : {}) };
+  }
   return e;
 }
 
@@ -630,7 +635,10 @@ function worldMsg(
     },
     parts: [{ type: "text", kind: "text", text }],
   };
-  if (!sender) e.agent = SELF;
+  if (!sender) {
+    e.agent = SELF;
+    e.payload = { turn_id: `t-${id}` }; // sender-less fixture = our send (§3 voice mark)
+  }
   return e;
 }
 
@@ -1080,6 +1088,52 @@ Deno.test("self is ONE identity, two hands: (you) is ours, (principal) is the ph
   assertStringIncludes(dump, 'from=\\"self (you)\\" at=\\"12 Aug 9:00\\">ya te paso');
   assertStringIncludes(dump, 'from=\\"self (principal)\\" at=\\"12 Aug 9:00\\">disculpá');
   assertEquals(dump.includes('from=\\"peer\\"'), false); // never a stranger
+});
+
+Deno.test("authorship labels (§3): turn_id = (you); the stamp alone = (principal); another id = that agent", () => {
+  const t = "2026-08-12T09:00:00Z";
+  const base = {
+    ts: t,
+    type: "message" as const,
+    envelope: {
+      service: "whatsapp" as const,
+      connection_address: "org",
+      conversation: { address: "wa:sol", kind: "direct" as const },
+    },
+  };
+  const voice: MessageEvent = {
+    ...base,
+    id: "e1",
+    agent: { id: "ana", session_id: "ana" }, // v0: session ≈ agent
+    payload: { turn_id: "T1" },
+    parts: [{ type: "text", kind: "text", text: "yo me encargo" }],
+  };
+  const principal: MessageEvent = {
+    ...base,
+    id: "e2",
+    agent: { id: "ana" }, // the classifier's echo stamp: id alone
+    envelope: { ...base.envelope, sender: { address: "5491", name: "ana" } },
+    parts: [{ type: "text", kind: "text", text: "mejor lo veo yo" }],
+  };
+  const peerAgent: MessageEvent = {
+    ...base,
+    id: "e3",
+    agent: { id: "robo", session_id: "robo" },
+    payload: { turn_id: "T2" },
+    parts: [{ type: "text", kind: "text", text: "puedo ayudar" }],
+  };
+  const { messages } = render({
+    events: [voice, principal, peerAgent],
+    docs: [],
+    session: "ana",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
+  const dump = JSON.stringify(messages);
+  assertStringIncludes(dump, 'from=\\"self (you)\\" at=\\"12 Aug 9:00\\">yo me encargo');
+  assertStringIncludes(dump, 'from=\\"self (principal)\\" at=\\"12 Aug 9:00\\">mejor lo veo yo');
+  assertStringIncludes(dump, 'from=\\"robo\\" at=\\"12 Aug 9:00\\">puedo ayudar');
 });
 
 Deno.test("the element is the action (§5): <edit>, <del> resolved, <react>, mentions", () => {

@@ -121,6 +121,30 @@ Deno.test("an echo (no sender, explicit status) keeps envelope.status, no sender
   assertEquals(e.envelope.status, "sent");
 });
 
+Deno.test("the classifier stamps the principal (§3): a granted sender gets agent.id alone", async () => {
+  const { store } = fakeStore({
+    service: "whatsapp",
+    address: "5491100000000",
+    agentId: "matias",
+  });
+  const { handler, published } = harness({ store });
+  await handler(
+    post(
+      "/whatsapp-web-webhook",
+      batch({
+        messages: [
+          textMessage({ sender_address: "5491100000000" }), // own side: the principal's phone
+          textMessage({ external_id: "wmw.x.y.z.2" }), // a peer — no grant row
+        ],
+      }),
+    ),
+  );
+  // id alone — a phone is not the harness, so no session_id; and never a turn_id
+  assertEquals((published[0] as MessageEvent).agent, { id: "matias" });
+  assertEquals((published[0] as MessageEvent).payload?.turn_id, undefined);
+  assertEquals((published[1] as MessageEvent).agent, undefined);
+});
+
 Deno.test("sender.name is the SERVICE's display fact: the pushname, never a lookup", async () => {
   const { store } = fakeStore({
     service: "whatsapp",

@@ -100,7 +100,10 @@ Deno.test("mirror fan-in: an alias inbound copies to the mind and cross-CCs the 
     // the mind copy: wakes like a REPL line — sender kept, provenance in `via`, cause home
     await waitFor(async () => (await inConv("mind:ana")).length === 1);
     const [copy] = await inConv("mind:ana");
-    assertEquals(copy.agent, undefined);
+    // the principal's stamp (§3): whose mind + through the harness — and no turn_id,
+    // which is what keeps the copy input rather than voice
+    assertEquals(copy.agent, { id: "ana", session_id: "ana" });
+    assertEquals(copy.payload?.turn_id, undefined);
     assertEquals(copy.envelope.sender?.address, "U1");
     assertEquals(textOf(copy), "pick up milk");
     assertEquals(copy.payload?.ref_id, origin.id);
@@ -125,7 +128,9 @@ Deno.test("mirror fan-in: an alias inbound copies to the mind and cross-CCs the 
 
 Deno.test("mirror fan-out: the agent's voice CCs tagged to every alias, and CCs never re-enter", async () => {
   await withMirror(async ({ publish, inConv, waitFor }) => {
-    await publish(mindMsg("done!", { agent: { id: "ana", session_id: "ana" } }));
+    await publish(
+      mindMsg("done!", { agent: { id: "ana", session_id: "ana" }, payload: { turn_id: "t9" } }),
+    );
 
     await waitFor(async () =>
       (await inConv("D1")).length === 1 && (await inConv("549")).length === 1
@@ -136,7 +141,11 @@ Deno.test("mirror fan-out: the agent's voice CCs tagged to every alias, and CCs 
       // the tag is what tells the agent's output from the principal's input there
       assertEquals(textOf(cc), "[agent] done!");
       assertEquals(cc.agent?.id, "ana");
-      assertEquals(cc.extra?.via, { event: cc.payload?.ref_id, service: "local", conversation: "mind:ana" });
+      assertEquals(cc.extra?.via, {
+        event: cc.payload?.ref_id,
+        service: "local",
+        conversation: "mind:ana",
+      });
     }
     // the loop guard: the CCs are copies (agent + via) — nothing fans back in or out again
     await new Promise((r) => setTimeout(r, 200));
@@ -182,7 +191,9 @@ Deno.test("mirror fan-out: a tool call crosses as one redacted line", async () =
 Deno.test("mirror fan-in settles: an echo absorbed by the dispatch backfill copies nothing", async () => {
   await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
     // the agent speaks → a CC to the self-DM lands (what a dispatcher would then post)
-    await publish(mindMsg("done!", { agent: { id: "ana", session_id: "ana" } }));
+    await publish(
+      mindMsg("done!", { agent: { id: "ana", session_id: "ana" }, payload: { turn_id: "t9" } }),
+    );
     await waitFor(async () => (await inConv("D1")).length === 1);
     const [cc] = await inConv("D1");
 
@@ -204,7 +215,9 @@ Deno.test("mirror fan-in: an echo whose claim never lands is absorbed by the CC 
   await withMirror(async ({ publish, inConv, waitFor }) => {
     // the agent speaks → a CC to the self-DM, which a dispatcher posts and then dies on:
     // no `setDelivery`, so the row never gets the id its own post came back with
-    await publish(mindMsg("done!", { agent: { id: "ana", session_id: "ana" } }));
+    await publish(
+      mindMsg("done!", { agent: { id: "ana", session_id: "ana" }, payload: { turn_id: "t9" } }),
+    );
     await waitFor(async () => (await inConv("D1")).length === 1);
     const [cc] = await inConv("D1");
     assertEquals(cc.envelope.external_id, undefined);
@@ -225,7 +238,9 @@ Deno.test("mirror fan-in: an echo whose claim never lands is absorbed by the CC 
 
 Deno.test("mirror fan-in: a CLAIMED CC never swallows the principal repeating its words", async () => {
   await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
-    await publish(mindMsg("done!", { agent: { id: "ana", session_id: "ana" } }));
+    await publish(
+      mindMsg("done!", { agent: { id: "ana", session_id: "ana" }, payload: { turn_id: "t9" } }),
+    );
     await waitFor(async () => (await inConv("D1")).length === 1);
     const [cc] = await inConv("D1");
     await setDelivery(cc.id, { external_id: "slack:T1:D1:444.4" }); // a healthy dispatcher

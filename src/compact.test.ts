@@ -9,7 +9,8 @@ const msg = (text: string, self: boolean, conv = "home"): MessageEvent => ({
   id: `e${String(++n).padStart(3, "0")}`,
   ts: "2026-07-20T10:00:00Z",
   type: "message",
-  ...(self ? { agent: { id: "a1", session_id: "s1" } } : {}),
+  // turn_id is the voice mark (§3): a self message is turn output
+  ...(self ? { agent: { id: "a1", session_id: "s1" }, payload: { turn_id: `T${n}` } } : {}),
   envelope: {
     service: "local",
     connection_address: "agent",

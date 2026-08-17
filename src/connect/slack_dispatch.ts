@@ -48,14 +48,16 @@ export function slackErrorCode(error?: string): number {
 }
 
 /** Post `text` (and any attachments) to a channel; returns the created message `ts`
- *  (→ external_id, §4 — file shares may not surface one; the echo still lands, §5).
+ *  (→ external_id, §4 — file shares may not surface one; the echo still lands, §5) and,
+ *  when the API names it, the posting identity `user` — the wire stating its own side in
+ *  the send response, which stamps `sender` beside `dispatched_at` (§4).
  *  `author` is the sending agent's registry name — the token resolver's key. */
 export type SlackPost = (
   target: SlackTarget,
   text: string,
   author?: string,
   files?: FilePart[],
-) => Promise<string | undefined>;
+) => Promise<{ ts?: string; user?: string }>;
 
 export interface SlackDispatchDeps {
   subscribe: Subscriber["subscribe"];
@@ -84,11 +86,15 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => void {
           // wire's forms here at the frontier; unclaimed names stay literal text
           const dir = /[@#]/.test(text) ? await deps.directory?.("slack", target.channel) : null;
           const encoded = text ? encodeSlackText(text, dir ?? []) : text;
-          const ts = await deps.post(target, encoded, event.agent?.id, files);
+          const { ts, user } = await deps.post(target, encoded, event.agent?.id, files);
+          // sender stamps WITH dispatched_at when the response names the posting identity
+          // (§4): the wire states its own side twice, and we take the first statement —
+          // the echo's merge still fills what only it knows (the display name)
           await deps.setDelivery?.(event.id, {
             ...(ts !== undefined
               ? { external_id: `slack:${teamOf(target.connection)}:${target.channel}:${ts}` }
               : {}),
+            ...(user ? { sender: { address: user } } : {}),
             status: { dispatched_at: new Date().toISOString() },
           });
           deps.onSent?.(event, ts);
@@ -107,11 +113,14 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => void {
   );
 }
 
-/** A `message` authored by a handler (`agent` present) on the slack service — routing
- *  reads `envelope.service` (§3). */
+/** OURS and not yet on the wire (§3, §4): `agent` present AND no `external_id` at insert —
+ *  the classifier stamps `agent.id` on the principal's inbound rows too, and those always
+ *  arrive carrying a platform id, so they never re-dispatch. Routing reads
+ *  `envelope.service` (§3). */
 function isOutboundSlack(e: Event): boolean {
   return e.type === "message" &&
     e.agent !== undefined &&
+    e.envelope.external_id === undefined &&
     e.envelope.service === "slack";
 }
 
@@ -227,9 +236,10 @@ if (import.meta.main) {
         channel_id: channel,
         ...(body ? { initial_comment: body } : {}),
       });
-      // the share's ts when the response carries one; absent, the echo lands as its own row
+      // the share's ts when the response carries one; absent, the echo lands as its own
+      // row. No posting identity in this response shape — the echo stamps sender (§4)
       const shares = done.files?.[0]?.shares;
-      return (shares?.public?.[channel] ?? shares?.private?.[channel])?.[0]?.ts;
+      return { ts: (shares?.public?.[channel] ?? shares?.private?.[channel])?.[0]?.ts };
     }
 
     const res = await fetch("https://slack.com/api/chat.postMessage", {
@@ -245,7 +255,8 @@ if (import.meta.main) {
     if (!out.ok) {
       throw new DispatchError(`chat.postMessage: ${out.error}`, slackErrorCode(out.error));
     }
-    return out.ts;
+    // `message.user` = the wire naming who posted — the send-response sender fact (§4)
+    return { ts: out.ts, user: out.message?.user };
   };
 
   const { logDirectory } = await import("./mentions.ts");

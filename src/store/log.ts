@@ -77,6 +77,10 @@ export interface SubscribeOptions {
 export interface DeliveryPatch {
   external_id?: string; // backfilled by the dispatcher (echo-reconciliation key, §4)
   status?: Record<string, string | number>; // e.g. { dispatched_at: iso, error_code: 503 } — json-merged into `status`
+  /** The wire naming its own side in the SEND RESPONSE (§4) — stamped with `dispatched_at`,
+   *  so sender-presence means "on the wire", not "echo arrived". Fill-only: the echo's
+   *  later merge still contributes what only it knows (the pushname). */
+  sender?: { address: string; name?: string };
 }
 
 /** Capability slices — a consumer can depend on exactly what it's allowed (RLS parity, §6). */
@@ -250,6 +254,12 @@ export async function openLog(dir: string): Promise<Log> {
        external_id = coalesce(?, external_id),
        status      = CASE WHEN ?2 IS NULL THEN status
                           ELSE json_patch(coalesce(status, '{}'), ?2) END,
+       -- sender FILLS, never overwrites (§3 identity rule) — the dispatcher's send-response
+       -- stamp and the echo's later merge share one law: first non-empty wins
+       sender_address = CASE WHEN coalesce(sender_address, '') = ''
+                             THEN coalesce(?5, sender_address) ELSE sender_address END,
+       sender_name    = CASE WHEN coalesce(sender_name, '') = ''
+                             THEN coalesce(?6, sender_name) ELSE sender_name END,
        updated_at  = ?3
      WHERE id = ?4`,
   );
@@ -414,6 +424,8 @@ export async function openLog(dir: string): Promise<Log> {
           patch.status ? JSON.stringify(patch.status) : null,
           now,
           id,
+          patch.sender?.address ?? null,
+          patch.sender?.name ?? null,
         );
         db.exec("COMMIT");
       } catch (err) {
@@ -463,8 +475,12 @@ interface Row {
  * own id when the wire never named it). One pass in a transaction, gated on PRAGMA
  * user_version, so it runs exactly once per database. */
 function migrate(db: DatabaseSync) {
-  const v = db.prepare("PRAGMA user_version").get() as { user_version: number };
-  if (v.user_version >= 1) return;
+  const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+  if (v < 1) migrateV1(db);
+  if (v < 2) migrateV2(db);
+}
+
+function migrateV1(db: DatabaseSync) {
   const cols = db.prepare("SELECT name FROM pragma_table_info('events')").all() as {
     name: string;
   }[];
@@ -563,6 +579,38 @@ function migrate(db: DatabaseSync) {
   }
 }
 
+/** v2 — `turn_id` joins authorship (§3): the discriminator promotion (self(you) ⇔ turn_id
+ *  present) re-reads any agent-authored message WITHOUT one as the principal's. Historical
+ *  tool-dispatched sends and mirror voice-CCs carried only `ref_id`; backfill each with its
+ *  referent's turn_id (the send's tool_use, the CC's mind original). Rows whose referent
+ *  has none — a principal-replay CC — correctly stay unstamped. */
+function migrateV2(db: DatabaseSync) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(
+      `UPDATE events SET payload = json_set(coalesce(payload, '{}'), '$.turn_id',
+         (SELECT json_extract(u.payload, '$.turn_id') FROM events u
+           WHERE u.id = json_extract(events.payload, '$.ref_id')))
+       WHERE type = 'message' AND agent_id IS NOT NULL
+         AND json_extract(payload, '$.turn_id') IS NULL
+         AND (SELECT json_extract(u.payload, '$.turn_id') FROM events u
+               WHERE u.id = json_extract(events.payload, '$.ref_id')) IS NOT NULL`,
+    );
+    // the referent-less remainder: pre-v2 a stamped message could ONLY be the voice (no
+    // classifier, no principal stamps existed), so the reading is unambiguous — synthesize
+    db.exec(
+      `UPDATE events SET payload = json_set(coalesce(payload, '{}'), '$.turn_id', 'v2:' || id)
+       WHERE type = 'message' AND agent_id IS NOT NULL AND session_id IS NOT NULL
+         AND json_extract(payload, '$.turn_id') IS NULL`,
+    );
+    db.exec("PRAGMA user_version = 2");
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
 /** ONE clock in the column (§3): whatever offset the producer wrote — WhatsApp stamps
  *  `-03:00`, the harness stamps `Z` — the stored sort key is UTC, because lexical order
  *  (`byTs`, the before/after bounds) only means time on a single zone. The producer's
@@ -631,7 +679,9 @@ function eventOf(r: Row): Event {
     ts: r.timestamp,
     type: r.type,
     envelope,
-    ...(r.agent_id ? { agent: { id: r.agent_id, session_id: r.session_id ?? "" } } : {}),
+    ...(r.agent_id
+      ? { agent: { id: r.agent_id, ...(r.session_id ? { session_id: r.session_id } : {}) } }
+      : {}),
     ...(Object.keys(payload).length ? { payload } : {}),
     ...(r.parts ? { parts: JSON.parse(r.parts) } : {}),
     ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),

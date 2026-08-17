@@ -96,8 +96,28 @@ Deno.test("non-whatsapp and world-authored events never dispatch", async () => {
     ...outboundMessage(),
     envelope: { ...outboundMessage().envelope, service: "slack" },
   } as Draft<MessageEvent>);
+  // the principal's echo: classifier-stamped (agent.id) but already on the wire
+  // (external_id present) — never re-dispatched (§3)
+  log.push(outboundMessage({
+    agent: { id: "matias" },
+    envelope: {
+      ...outboundMessage().envelope,
+      external_id: externalId("wmw.5491100000000.549.5491100000000.X"),
+    },
+  }));
   await settle();
   assertEquals(records.length, 0);
+});
+
+Deno.test("the send response names our side: sender rides the backfill patch (§4)", async () => {
+  const { log } = harness(() =>
+    Promise.resolve("wmw.5491100000000.5491199999999.5491100000000.OUT")
+  );
+  log.push(outboundMessage());
+  await settle();
+  // segment <own> of the returned id → sender.address, stamped WITH dispatched_at —
+  // sender-presence now means "on the wire", no waiting for the echo
+  assertEquals(log.patches[0].patch.sender, { address: "5491100000000" });
 });
 
 Deno.test("files: one call each, caption on the first, first id backfills", async () => {
