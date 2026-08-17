@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { type Log, openLog } from "./log.ts";
-import type { Event, MessageEvent } from "../types.ts";
+import type { Draft, Event, MessageEvent } from "../types.ts";
 
 function msg(id: string, conversation: string, text: string, sender?: string): MessageEvent {
   return {
@@ -52,7 +52,7 @@ function take(log: Log, n: number, from?: string, ms = 2000): Promise<Event[]> {
 Deno.test("publish returns the event; read replays it in append order", async () => {
   await withLog(async (log) => {
     await log.publish(msg("01", "c1", "hello"));
-    const returned = await log.publish(msg("02", "c1", "world"));
+    const returned = (await log.publish(msg("02", "c1", "world")))!;
     assertEquals(returned.id, "02");
     assertEquals((await log.read()).map((e) => e.id), ["01", "02"]);
   });
@@ -200,8 +200,8 @@ Deno.test("the store owns the id: a draft gets a UUIDv7, minted in append order 
       const { id: _, ...rest } = msg("00", "c1", text);
       return rest;
     };
-    const a = await log.publish(draft("first"));
-    const b = await log.publish(draft("second"));
+    const a = (await log.publish(draft("first")))!;
+    const b = (await log.publish(draft("second")))!;
     // v7: version nibble 7, variant 8‥b — the same shape Postgres's `DEFAULT uuidv7()` mints
     for (const e of [a, b]) {
       assertEquals(
@@ -216,8 +216,8 @@ Deno.test("the store owns the id: a draft gets a UUIDv7, minted in append order 
 
 Deno.test("a MERGE returns the surviving row's id, not the caller's", async () => {
   await withLog(async (log) => {
-    const first = await log.publish(keyed("01", "x1", "original"));
-    const merged = await log.publish(keyed("02", "x1", "edited"));
+    const first = (await log.publish(keyed("01", "x1", "original")))!;
+    const merged = (await log.publish(keyed("02", "x1", "edited")))!;
     assertEquals(merged.id, first.id); // "02" never became a row — the caller learns that
     assertEquals((await log.read()).length, 1);
   });
@@ -351,7 +351,7 @@ Deno.test("conversation.kind round-trips (direct | group | channel — ingest-st
     await log.publish(e);
     const [back] = await log.read();
     assertEquals(back.envelope.conversation.kind, "channel");
-    const plain = await log.publish(msg("02", "c2", "no kind"));
+    const plain = (await log.publish(msg("02", "c2", "no kind")))!;
     assertEquals(plain.envelope.conversation.kind, undefined);
     const [, p] = await log.read();
     assertEquals(p.envelope.conversation.kind, undefined);
@@ -431,5 +431,48 @@ Deno.test("read({backfill:false}) drops imported history — and spends the LIMI
     const window = await log.read({ backfill: false, limit: 3 });
     assertEquals(window.length, 3);
     assertEquals(window.every((e) => e.extra?.backfill === undefined), true);
+  });
+});
+
+Deno.test("identity FILLS, never overwrites (§3): first non-empty writer wins", async () => {
+  await withLog(async (log) => {
+    // the agent's send: authored, senderless (the account speaks through us)
+    const sent = keyed("01", "x1", "hola");
+    sent.agent = { id: "a1", session_id: "s1" };
+    await log.publish(sent);
+    // the platform echo: peer-shaped (sender = the account), same external id
+    const echo = keyed("02", "x1", "hola");
+    echo.envelope.sender = { address: "5491", name: "matias" };
+    await log.publish(echo);
+    const [row] = await log.read();
+    assertEquals(row.agent?.id, "a1"); // authorship survives the echo — the Instagram lesson
+    assertEquals(row.envelope.sender?.address, "5491"); // …and the blank got filled
+  });
+});
+
+Deno.test("a PARTLESS draft is merge-only: no referent ⇒ NOTHING stored (§3)", async () => {
+  await withLog(async (log) => {
+    const stamp = (key: string): Draft => ({
+      ts: "2026-08-17T00:00:00Z",
+      type: "message",
+      envelope: {
+        service: "local",
+        connection_address: "org",
+        conversation: { address: "" },
+        external_id: key,
+      },
+      status: { deleted_at: "2026-08-17T00:00:00Z" },
+    } as unknown as Draft);
+    // the referent doesn't exist: nothing lands — no message-shaped ghost
+    assertEquals(await log.publish(stamp("x9")), null);
+    assertEquals((await log.read()).length, 0);
+    // the referent exists: the stamp merges into it
+    await log.publish(keyed("01", "x9", "original"));
+    const merged = await log.publish(stamp("x9"));
+    assertEquals(merged !== null, true);
+    const [row] = await log.read();
+    assertEquals((await log.read()).length, 1);
+    assertEquals(row.status?.deleted_at, "2026-08-17T00:00:00Z");
+    assertEquals((row as MessageEvent).parts.length, 1); // the content survived the stamp
   });
 });

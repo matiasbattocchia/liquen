@@ -192,7 +192,7 @@ Deno.test("slack: channel_type stamps conversation.kind — im/mpim are direct (
   }
 });
 
-Deno.test("slack: a bound sender classifies — named, enrolled; the anchor is the WORKSPACE", async () => {
+Deno.test("slack: a bound sender enrolls; sender stays the bare wire id — no name of ours", async () => {
   const { store, upserts } = fakeStore({
     // the paste door's write: the user GRANT `<team>:<user>` — the identity map
     service: "slack",
@@ -204,7 +204,7 @@ Deno.test("slack: a bound sender classifies — named, enrolled; the anchor is t
 
   const m = published[0] as MessageEvent;
   assertEquals(m.envelope.connection_address, "T1"); // events anchor to the workspace (§4)
-  assertEquals(m.envelope.sender, { address: "U7", name: "matias" }); // wire id stays honest
+  assertEquals(m.envelope.sender, { address: "U7" }); // the wire id, nothing of ours
   assertEquals((m.extra?.slack as { authorizations: unknown }).authorizations, [
     { user_id: "U7" },
   ]);
@@ -284,7 +284,7 @@ Deno.test("slack: a bot-witnessed delivery anchors to the BOT's grant — the sh
   );
   const m = published[0] as MessageEvent;
   assertEquals(m.envelope.connection_address, "T1:UBOT"); // the workspace reads as the org here
-  assertEquals(m.envelope.sender, { address: "U7", name: "matias" });
+  assertEquals(m.envelope.sender, { address: "U7" });
   // the bound human still enrolls (under the workspace); the bot never does — not an agent
   assertEquals(upserts, [
     { service: "slack", connection: "T1", conversation: "C1", agentId: "matias" },

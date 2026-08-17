@@ -121,7 +121,7 @@ Deno.test("an echo (no sender, explicit status) keeps envelope.status, no sender
   assertEquals(e.envelope.status, "sent");
 });
 
-Deno.test("classifier: a bound grant row names the sender; else the pushname", async () => {
+Deno.test("sender.name is the SERVICE's display fact: the pushname, never a lookup", async () => {
   const { store } = fakeStore({
     service: "whatsapp",
     address: "5491199999999",
@@ -145,7 +145,7 @@ Deno.test("classifier: a bound grant row names the sender; else the pushname", a
       }),
     ),
   );
-  assertEquals((published[0] as MessageEvent).envelope.sender?.name, "matias"); // grant wins
+  assertEquals((published[0] as MessageEvent).envelope.sender?.name, undefined); // no lookup
   assertEquals((published[1] as MessageEvent).envelope.sender?.name, "Ana"); // pushname
 });
 

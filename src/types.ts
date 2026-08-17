@@ -204,7 +204,7 @@ export interface Payload {
  *  event id the step's window read — the coalescing horizon `unanswered` measures against,
  *  §2), `via` (mirror provenance, §4), and per-service provenance under the service name —
  *  how the wire said it, not what the event means (`slack: {subtype, authorizations}`,
- *  `raw`, `inferred_sender`). */
+ *  `raw`). */
 export type Extra = Record<string, unknown>;
 
 /* ─────────────────────────────── events ─────────────────────────────── */

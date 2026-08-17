@@ -561,8 +561,12 @@ ownership) only if double-answers show up.
   transaction **absorbs** it — merges its payload/status into our row and drops it (§9).
   The log converges to one row per artifact either way; the wake the echo fired finds a
   quiescent window and no-ops.
-- WhatsApp coexistence is unattributable from the wire (platform doesn't say which human)
-  — keep `sender` honest, infer softly to `extra.inferred_sender`.
+- `sender` is the wire's fact, both fields: `address` — if we know it, we stamp it (the
+  whatsmeow bridge knows its own number and says so; a Cloud-API-shaped service can't name
+  its own side in the contact space, and only there absence remains) — and `name`, the
+  service's display string (pushname), never a registry lookup of ours. Identity
+  resolution (which grant binds a sender) is the classifier's business, not the
+  envelope's.
 - Principal↔own-agent conversations are **canonicalized across channels** via the alias
   bindings: one `local` conversation per principal (the mind), kept in sync with every
   bound surface by the mirror — copy in, CC out ("self-talk is special", below). Original
@@ -774,10 +778,9 @@ The 3×2 grid, each cell real and distinct:
   ships no type for it; it's Bolt's, not the platform package's).
 - **The wire fills the map (landed 2026-08-12 — the Slack messaging half).** Ingest is
   the classifier §3 promised *and* the membership mirror: `channel_type` stamps
-  `conversation.kind` (im/mpim → direct); the sender resolves through the LEG's
-  ownership (`connection()` on the anchor ingest stamped — a sender matching the leg's
-  own user is the owner; the wire id stays honest in `sender.address`, the registry
-  name rides `sender.name` + `extra.slack.owner`); `member_joined_channel`/
+  `conversation.kind` (im/mpim → direct); the wire id stays honest in `sender.address`
+  and `sender.name` carries nothing of ours (Slack's events send no display name —
+  identity resolution is the classifier's, not the envelope's); `member_joined_channel`/
   `member_left_channel` move membership rows when the mover is the leg's own user — a
   leave stamps the membership's `deleted_at` (the lifetime ends; seen history stays
   visible, §6) — and every delivery on an owned leg passively

@@ -96,7 +96,7 @@ async function scenario(
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   const preloaded: Event[] = [];
-  for (const e of preload) preloaded.push(await log.publish(e));
+  for (const e of preload) preloaded.push((await log.publish(e))!);
   const { transport, calls } = scripted(script);
   const main = fanOut({ ...CONFIG, ...config }, log, {
     log,
@@ -108,7 +108,7 @@ async function scenario(
     await fn({
       calls,
       read: (type?: Event["type"]) => log.read(type ? { types: [type] } : undefined),
-      publish: (e) => log.publish(e),
+      publish: (e) => log.publish(e) as Promise<Event>, // scenario drafts always store
       preloaded,
     });
   } finally {
@@ -360,7 +360,7 @@ Deno.test("the gate is free: a spectator event takes no lease and reads nothing"
       parts: [{ type: "data", kind: "thinking", data: { thinking: "…", signature: "s" } }],
     });
     // …but a `thinking` trigger never gets far enough to find out
-    await xi(CONFIG, ports, thinking);
+    await xi(CONFIG, ports, thinking!);
     assertEquals(calls(), 0);
     assertEquals(await log.lock("turn-a1").held(), false); // the lease was never taken
   } finally {
@@ -373,7 +373,7 @@ Deno.test("recovery: a stale lock (crashed holder) → pending uses swept, then 
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   await log.publish(principalMsg("seguís ahí?"));
-  const use = await log.publish(orphanUse());
+  const use = (await log.publish(orphanUse()))!;
   // the crashed holder left its lease in the store; age it past the TTL
   assertEquals(await log.lock("turn-a1", 50).acquire(), "acquired");
   await new Promise((r) => setTimeout(r, 80));

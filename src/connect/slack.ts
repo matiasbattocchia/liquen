@@ -124,7 +124,6 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       const item = e.item;
       if (item?.type !== "message" || !item.channel || !item.ts) return text(202, "ignored");
       const anchor = anchorOf(team, payload.authorizations);
-      const who = ownerOf(deps.store, team, e.user);
       try {
         await deps.publish({
           ts: now(),
@@ -137,7 +136,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
             service: "slack",
             connection_address: anchor,
             conversation: { address: item.channel },
-            ...(e.user ? { sender: { address: e.user, ...(who ? { name: who } : {}) } } : {}),
+            ...(e.user ? { sender: { address: e.user } } : {}),
             external_id: `slack:${team}:${item.channel}:${e.event_ts}`,
           },
           parts: [{ type: "data", kind: "reaction", data: { name: e.reaction } }],
@@ -254,7 +253,6 @@ async function mapMessage(
   if (!m?.ts || !e.channel || (!m.text && !files?.length)) return [];
 
   const conversation = e.channel; // the platform's own id — service/connection ride the envelope (§3)
-  const who = ownerOf(store, team, m.user);
   // the membership mirror, passive leg (§4): the delivery's `authorizations` are the
   // users this event is visible to — every BOUND one is a member of this conversation;
   // messages fill the map
@@ -301,7 +299,9 @@ async function mapMessage(
       service: "slack",
       connection_address: anchor,
       conversation: { address: conversation, ...(kind ? { kind } : {}) },
-      sender: m.user ? { address: m.user, ...(who ? { name: who } : {}) } : undefined,
+      // sender.name is the SERVICE's display fact, and Slack's event carries none — no
+      // lookups of ours: identity resolution is the classifier's business (§3)
+      sender: m.user ? { address: m.user } : undefined,
       // the upsert/merge key: Slack's ts is the per-channel message id (§3, §4) — for an
       // edit, the change delivery's own ts
       external_id: edit

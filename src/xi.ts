@@ -523,7 +523,7 @@ async function execute(
       parts: [...(body ? [{ type: "text", kind: "text", text: body } as const] : []), ...files],
     };
     const sent = await ports.log.publish(msg);
-    return { queued: true, event_id: sent.id };
+    return { queued: true, event_id: sent!.id }; // a full draft (parts present) always stores
   }
   if (name === "search") {
     const rows = await ports.log.read({

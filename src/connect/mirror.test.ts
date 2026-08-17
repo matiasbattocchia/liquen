@@ -41,7 +41,7 @@ async function withMirror(
   try {
     await new Promise((r) => setTimeout(r, 50)); // let the subscription arm
     await fn({
-      publish: (e) => log.publish(e),
+      publish: (e) => log.publish(e) as Promise<Event>, // mirror drafts always store
       inConv: async (conversation) =>
         (await log.read({ conversation, types: ["message"] })) as MessageEvent[],
       setDelivery: (id, patch) => log.setDelivery(id, patch),

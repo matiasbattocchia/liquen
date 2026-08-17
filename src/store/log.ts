@@ -82,15 +82,17 @@ export interface DeliveryPatch {
 /** Capability slices — a consumer can depend on exactly what it's allowed (RLS parity, §6). */
 export interface Appender {
   /** PUBLISH. Durably append; the write itself is the trigger. Upsert on `external_id`:
-   *  known id ⇒ merge (no wake) · new/absent ⇒ insert (wakes). Takes `Draft`s — the store
-   *  mints event ids — and returns the STORED events, so callers read `.id` off the result.
-   *  A batch is ONE transaction: all of it lands, or none. */
-  publish(event: Draft): Promise<Event>;
+   *  known id ⇒ merge (no wake) · new/absent ⇒ insert (wakes). A PARTLESS draft is
+   *  merge-ONLY (§3): it patches the row its external_id names, and when that row doesn't
+   *  exist NOTHING is stored — null (single) or omitted (batch). Takes `Draft`s — the
+   *  store mints event ids — and returns the STORED events, so callers read `.id` off the
+   *  result. A batch is ONE transaction: all of it lands, or none. */
+  publish(event: Draft): Promise<Event | null>;
   publish(events: Draft[]): Promise<Event[]>;
   /** PUBLISH, and DROP A LEASE, in one transaction (§2). This is how a turn ends: its last
    *  events and its turn-lease release become visible together, so the wake they fire can
    *  never find the lease still held — that bounced wake was a real stalled-cycle bug. */
-  publishAndRelease(event: Draft, lock: string): Promise<Event>;
+  publishAndRelease(event: Draft, lock: string): Promise<Event | null>;
   publishAndRelease(events: Draft[], lock: string): Promise<Event[]>;
 }
 export interface Reader {
@@ -195,8 +197,47 @@ export async function openLog(dir: string): Promise<Log> {
        status     = CASE WHEN excluded.status IS NULL THEN events.status
                          ELSE json_patch(coalesce(events.status, '{}'), excluded.status) END,
        text       = coalesce(excluded.text, events.text),
+       -- identity FILLS, never overwrites (§3): write-once facts — the first NON-EMPTY
+       -- writer wins. Overwrite is the openbsp Instagram-echo bug (the wire's view of our
+       -- own message is peer-shaped, and merging it flipped direction — their
+       -- preserve_message_direction trigger is the scar); pure insert-only was the
+       -- inherited overcorrection that froze a stub's empty envelope onto the real
+       -- message. Empty string counts as empty (stubs wrote '').
+       sender_address = CASE WHEN coalesce(events.sender_address, '') = ''
+                             THEN excluded.sender_address ELSE events.sender_address END,
+       sender_name    = CASE WHEN coalesce(events.sender_name, '') = ''
+                             THEN excluded.sender_name ELSE events.sender_name END,
+       conversation_address = CASE WHEN coalesce(events.conversation_address, '') = ''
+                             THEN excluded.conversation_address ELSE events.conversation_address END,
+       conversation_name    = CASE WHEN coalesce(events.conversation_name, '') = ''
+                             THEN excluded.conversation_name ELSE events.conversation_name END,
+       conversation_thread  = CASE WHEN coalesce(events.conversation_thread, '') = ''
+                             THEN excluded.conversation_thread ELSE events.conversation_thread END,
+       conversation_kind    = CASE WHEN coalesce(events.conversation_kind, '') = ''
+                             THEN excluded.conversation_kind ELSE events.conversation_kind END,
+       agent_id   = CASE WHEN events.agent_id IS NULL THEN excluded.agent_id
+                         ELSE events.agent_id END,
+       session_id = CASE WHEN events.session_id IS NULL THEN excluded.session_id
+                         ELSE events.session_id END,
        updated_at = excluded.updated_at
      RETURNING id`, // the STORED id: minted in write(), or the surviving row's on a merge
+  );
+  // the merge-only path (§3): a PARTLESS draft is a patch, not an event — receipts and
+  // lifecycle stamps reference a message; if the message isn't here, there is nothing to
+  // stamp and NOTHING is stored (out-of-order tolerance dropped on purpose: a delivery
+  // stamp for a message never seen is worth nothing, and the stub it used to insert was
+  // a message-shaped ghost that polluted search and froze its empty envelope onto the
+  // real row when the message finally arrived)
+  const patch = db.prepare(
+    `UPDATE events SET
+       payload    = json_patch(payload, ?1),
+       extra      = CASE WHEN ?2 IS NULL THEN extra
+                         ELSE json_patch(coalesce(extra, '{}'), ?2) END,
+       status     = CASE WHEN ?3 IS NULL THEN status
+                         ELSE json_patch(coalesce(status, '{}'), ?3) END,
+       updated_at = ?4
+     WHERE external_id = ?5
+     RETURNING id`,
   );
   // the frontier gate (§4): only a REGISTERED (and live) connection may log — an event on
   // an unknown or soft-deleted account is refused before anything lands. `local` is the
@@ -226,13 +267,21 @@ export async function openLog(dir: string): Promise<Log> {
   const drop = db.prepare("DELETE FROM events WHERE id = ?");
   const unlock = db.prepare(RELEASE_SQL);
 
-  /** One upsert. Returns the STORED id (minted here, or the surviving row's on a merge).
-   *  The id is minted in JS, not by the column default: on LOCAL events it doubles as the
-   *  external_id, so references live in ONE space (§3). Wire-service events keep NULL until
-   *  their platform names them — absence IS the "never confirmed" signal the dispatcher's
-   *  echo-dedup and the mirror's absorb guard read. */
-  const write = (event: Draft, now: string): Event => {
+  /** One upsert — or, for a PARTLESS draft, one patch (merge-only: nothing stored when the
+   *  referenced row doesn't exist ⇒ null). Returns the STORED id (minted here, or the
+   *  surviving row's on a merge). The id is minted in JS, not by the column default: on
+   *  LOCAL events it doubles as the external_id, so references live in ONE space (§3).
+   *  Wire-service events keep NULL until their platform names them — absence IS the
+   *  "never confirmed" signal the dispatcher's echo-dedup and the mirror's absorb guard
+   *  read. */
+  const write = (event: Draft, now: string): Event | null => {
     const r = rowOf(event);
+    if (r.parts === null && r.external_id !== null) {
+      const hit = patch.get(r.payload, r.extra, r.status, now, r.external_id) as
+        | { id: string }
+        | undefined;
+      return hit ? { ...event, id: hit.id } as Event : null;
+    }
     const id = r.id ?? newId();
     const stored = upsert.get(
       id,
@@ -261,8 +310,12 @@ export async function openLog(dir: string): Promise<Log> {
   };
 
   /** Both writers, in one transaction: the batch (all or none) and, optionally, the lease
-   *  release that ends a turn. Singles in ⇒ single out; a batch in ⇒ a batch out. */
-  const commit = (one: Draft | Draft[], lock?: string): Promise<Event | Event[]> => {
+   *  release that ends a turn. Singles in ⇒ single (or null) out; a batch in ⇒ a batch
+   *  out with unstored merge-only drafts omitted. */
+  const commit = (
+    one: Draft | Draft[],
+    lock?: string,
+  ): Promise<Event | Event[] | null> => {
     const drafts = Array.isArray(one) ? one : [one];
     for (const d of drafts) {
       const { service, connection_address: address } = d.envelope;
@@ -273,10 +326,10 @@ export async function openLog(dir: string): Promise<Log> {
     const now = new Date().toISOString();
     db.exec("BEGIN IMMEDIATE");
     try {
-      const stored = drafts.map((e) => write(e, now));
+      const stored = drafts.map((e) => write(e, now)).filter((e): e is Event => e !== null);
       if (lock !== undefined) unlock.run(lock);
       db.exec("COMMIT");
-      return Promise.resolve(Array.isArray(one) ? stored : stored[0]);
+      return Promise.resolve(Array.isArray(one) ? stored : stored[0] ?? null);
     } catch (err) {
       db.exec("ROLLBACK");
       throw err;
@@ -313,6 +366,7 @@ export async function openLog(dir: string): Promise<Log> {
     async publishAndRelease(one: Draft | Draft[], lock: string): Promise<Event & Event[]> {
       return await (commit(one, lock) as Promise<Event & Event[]>);
     },
+    // (the casts above serve the overload pairs; commit itself is honest about null)
 
     read(query: ReadQuery = {}): Promise<Event[]> {
       const { sql, params } = build(query);

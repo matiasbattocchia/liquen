@@ -67,7 +67,8 @@ export interface WAContent {
 export interface WAMessage {
   external_id: string;
   conversation_address: string;
-  sender_address?: string; // absent/empty = the account itself spoke (echo, history)
+  sender_address?: string; // if the wire knows it, it stamps it — newer bridges name their
+  // own account too; absent/empty only where the platform can't name its own side
   content: WAContent;
   status?: Record<string, unknown>; // explicit on echoes/history; absent on live inbound
   timestamp: string;
@@ -179,7 +180,7 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
 
     const drafts: Draft<MessageEvent>[] = [
       ...(batch.messages ?? []).map((m) =>
-        mapMessage(m, connection, deps.store, groupNames, pushnames, now, batch.history === true)
+        mapMessage(m, connection, groupNames, pushnames, now, batch.history === true)
       ),
       ...(batch.edits ?? []).map((e) => mapEdit(e, connection, now)),
       ...(batch.revokes ?? []).flatMap((r) => mapRevoke(r, connection, now)),
@@ -274,7 +275,6 @@ function stateOf(status: Record<string, unknown>): DeliveryStatus | undefined {
 function mapMessage(
   m: WAMessage,
   connection: string,
-  store: Store | undefined,
   groupNames: Map<string, string>,
   pushnames: Map<string, string>,
   now: () => string,
@@ -285,11 +285,10 @@ function mapMessage(
 
   const address = m.conversation_address;
   const name = groupNames.get(address);
-  const sender = m.sender_address || undefined; // "" = the account spoke (echo/history)
-  // the classifier (§3): a bound grant row names the owner; else the wire's pushname
-  const who = sender
-    ? store?.connection(SERVICE, sender)?.agentId ?? pushnames.get(sender)
-    : undefined;
+  const sender = m.sender_address || undefined; // "" = the wire couldn't name the account side
+  // sender.name is the SERVICE's display fact — the pushname, nothing of ours: identity
+  // resolution (who a grant binds) is the classifier's business and lands elsewhere (§3)
+  const who = sender ? pushnames.get(sender) : undefined;
   const state = m.status ? stateOf(m.status) : undefined;
 
   return {
