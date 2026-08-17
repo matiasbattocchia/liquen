@@ -517,8 +517,11 @@ function migrate(db: DatabaseSync) {
           p.action ??= "forward";
           delete wa.forwarded;
         }
-        if (wa.mentions) {
-          p.mentions = wa.mentions;
+        if (Array.isArray(wa.mentions)) {
+          // sidecar mentions were objects ({address, …}) — payload.mentions is addresses
+          const addrs = (wa.mentions as { address?: string }[])
+            .map((m) => m.address).filter((a): a is string => !!a);
+          if (addrs.length) p.mentions = addrs;
           delete wa.mentions;
         }
         const s = wa.status as Bag | undefined;
