@@ -76,14 +76,12 @@ export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => void {
         const { event, contents } = out;
         try {
           // the agent mentions as a human (`@Name`) — the directory claims the tokens,
-          // the BRIDGE encodes (its `encodeMentions`: text messages only, so the caption
-          // seat ships literal). Unclaimed tokens stay literal text — the honest nothing.
+          // the BRIDGE encodes (its `encodeMentions`: text messages and captions alike).
+          // Unclaimed tokens stay literal text — the honest nothing.
           if (deps.directory) {
             const dir = await deps.directory(SERVICE, event.envelope.conversation.address);
             for (const c of contents) {
-              if (c.content.type !== "text" || c.content.kind !== "text" || !c.content.text) {
-                continue;
-              }
+              if (c.content.kind === "reaction" || !c.content.text) continue;
               const claimed = whatsappMentions(c.content.text, dir);
               if (claimed.length) c.content.mentions = claimed;
             }

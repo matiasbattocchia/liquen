@@ -220,3 +220,29 @@ Deno.test("the directory claims @Name tokens — content.mentions for the bridge
   assertEquals(records[0].content.text, "@Euge te paso la dirección");
   assertEquals(records[0].content.mentions, [{ address: "5492604560911", name: "Euge" }]);
 });
+
+Deno.test("the caption seat claims mentions too — the bridge encodes captions as well", async () => {
+  const records: WADispatchRecord[] = [];
+  const { log } = harness((record) => {
+    records.push(record);
+    return Promise.resolve("wmw.out.10");
+  }, {
+    directory: () => Promise.resolve([{ address: "5492604560911", name: "Euge" }]),
+  });
+  log.push(outboundMessage({
+    parts: [
+      { type: "text", kind: "text", text: "@Euge mirá la foto" },
+      {
+        type: "file",
+        kind: "image",
+        file: { mime_type: "image/jpeg", uri: "https://x/y.jpg" },
+      },
+    ],
+  }));
+  await settle();
+
+  assertEquals(records.length, 1); // one file → the text rides as its caption
+  assertEquals(records[0].content.type, "file");
+  assertEquals(records[0].content.text, "@Euge mirá la foto");
+  assertEquals(records[0].content.mentions, [{ address: "5492604560911", name: "Euge" }]);
+});

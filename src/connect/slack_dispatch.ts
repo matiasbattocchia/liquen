@@ -80,9 +80,9 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => void {
       const { target, text, files, event } = out;
       chain = chain.then(async () => {
         try {
-          // the agent mentions as a human (`@Name`, `@here`) — encode to the wire's
-          // forms here at the frontier; unclaimed names stay literal text
-          const dir = text.includes("@") ? await deps.directory?.("slack", target.channel) : null;
+          // the agent mentions as a human (`@Name`, `#chan`, `@here`) — encode to the
+          // wire's forms here at the frontier; unclaimed names stay literal text
+          const dir = /[@#]/.test(text) ? await deps.directory?.("slack", target.channel) : null;
           const encoded = text ? encodeSlackText(text, dir ?? []) : text;
           const ts = await deps.post(target, encoded, event.agent?.id, files);
           await deps.setDelivery?.(event.id, {

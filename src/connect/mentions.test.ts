@@ -40,24 +40,40 @@ Deno.test("mentions: whatsappMentions — claims for the bridge encoder, deduped
   ]);
 });
 
-Deno.test("mentions: logDirectory — the conversation's senders, freshest fact wins", async () => {
-  const rows = [
-    { sender: { address: "111", name: "Vieja" } },
-    { sender: { address: "222" } },
-    { sender: { address: "111", name: "Nueva" } }, // renamed — newest name wins
-  ].map((e, i) => ({
+Deno.test("mentions: logDirectory — conversation senders + service-wide channels, freshest wins", async () => {
+  const row = (i: number, e: Record<string, unknown>, payload?: Record<string, unknown>) => ({
     id: `e${i}`,
     ts: `2026-08-0${i + 1}T00:00:00Z`,
     type: "message",
-    envelope: { service: "whatsapp", conversation: { address: "g1" }, ...e },
+    envelope: { service: "slack", conversation: { address: "C1" }, ...e },
+    ...(payload ? { payload } : {}),
     parts: [],
-  } as unknown as Event));
-  const dir = logDirectory((q) => {
-    assertEquals(q.conversation, "g1");
-    return Promise.resolve(rows);
-  });
-  assertEquals(await dir("whatsapp", "g1"), [
+  } as unknown as Event);
+  const local = [
+    row(1, { sender: { address: "111", name: "Vieja" } }),
+    row(2, { sender: { address: "222" } }),
+    row(3, { sender: { address: "111", name: "Nueva" } }), // renamed — newest name wins
+  ];
+  const wide = [
+    row(4, {}, { mentions: [{ address: "C9", name: "old-name", type: "#" }] }),
+    row(5, {}, { mentions: [{ address: "C9", name: "general", type: "#" }, { address: "U5" }] }),
+  ];
+  const dir = logDirectory((q) => Promise.resolve(q.conversation === "C1" ? local : wide));
+  assertEquals(await dir("slack", "C1"), [
     { address: "111", name: "Nueva" },
     { address: "222" },
+    { address: "C9", name: "general", type: "#" }, // person entries in payload never join
+  ]);
+});
+
+Deno.test("mentions: #channel claims and bare channel ids encode; WhatsApp skips them", () => {
+  const dir = [...DIR, { address: "C061EG9T25", name: "general", type: "#" as const }];
+  assertEquals(
+    encodeSlackText("avisen en #general o #C0AAAAAAAA1, gracias @matias", dir),
+    "avisen en <#C061EG9T25> o <#C0AAAAAAAA1>, gracias <@U0BKTGTB65C>",
+  );
+  assertEquals(encodeSlackText("nada que ver: #hashtag", dir), "nada que ver: #hashtag");
+  assertEquals(whatsappMentions("mirá #general @Euge", dir), [
+    { address: "5492604560911", name: "Euge" },
   ]);
 });
