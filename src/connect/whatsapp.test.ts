@@ -243,7 +243,7 @@ Deno.test("file content maps to a FilePart with caption; data to a DataPart", as
   });
 });
 
-Deno.test("inline mention tokens decode: @<lid> and @<digits> → @name (else digits)", async () => {
+Deno.test("inline mention tokens get named: @<digits> → @name, unnamed stays digits", async () => {
   const { handler, published } = harness();
   await handler(post(
     "/whatsapp-web-webhook",
@@ -255,20 +255,17 @@ Deno.test("inline mention tokens decode: @<lid> and @<digits> → @name (else di
           version: "1",
           type: "text",
           kind: "text",
-          // the composer's wire form: lid digits for Euge, phone digits for the unnamed peer
-          text: "@236302099558894 y @5491177777777 vengan",
-          mentions: [
-            { address: "5492604560911", lid: "236302099558894" },
-            { address: "5491177777777" },
-          ],
+          // canonical digits both in the text and in mentions — the bridge already put
+          // the token in our namespace (a lid group's lids never reach us)
+          text: "@5492604560911 y @5491177777777 vengan",
+          mentions: [{ address: "5492604560911" }, { address: "5491177777777" }],
         },
       })],
     }),
   ));
   const e = published[0] as MessageEvent;
-  // named mention decodes to the pushname; the unnamed one keeps its canonical digits
+  // the known one wears its pushname; nobody has named the other, so digits stand
   assertEquals(e.parts, [{ type: "text", kind: "text", text: "@Euge y @5491177777777 vengan" }]);
-  // payload.mentions keeps canonical addresses — the lid is a wire artifact, not stored
   assertEquals(e.payload?.mentions, [
     { address: "5492604560911" },
     { address: "5491177777777" },
