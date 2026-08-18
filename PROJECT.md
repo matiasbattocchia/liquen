@@ -450,10 +450,20 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
     two bridge fixes with live body counts: phone-pairing died at ~2 min (the QR
     channel's timeout), and receipts NEVER merged — self receipts (the phone reading
     the peer's messages) minted ids with our own address as author segment, 811 ghost
-    stubs against 303 merges before the fix. Pending: live receipt-merge verification
-    (needs organic traffic), the Slack `self (principal)` grant lookup, merge-only
-    drafts still INSERT stubs for unknown referents (deferred), and a send-tool
-    surface for the model to author reactions.
+    stubs against 303 merges before the fix. **Mentions — LANDED 2026-08-17**: the
+    bridge owns the wire namespace both directions, so mu only ever sees canonical
+    addresses (DESIGN §3). A lid-addressed chat (Communities, the LID rollout) names
+    people by an opaque per-account id instead of their phone — inbound the bridge
+    rewrites the inline `@digits` token and the mention list to canonical, outbound
+    `encodeMentions` maps back through `Store.LIDs`, choosing the namespace from
+    `AddressingMode` learned free off inbound traffic (`GetGroupInfo` only for a
+    never-seen group). Before this, an outbound `@Euge` in a lid group both failed to
+    bind AND published a phone number into a chat whose addressing exists to hide it.
+    mu's ingest just names what arrives: `@<digits>` → `@<pushname>`. Pending: live
+    receipt-merge verification (needs organic traffic), merge-only drafts still INSERT
+    stubs for unknown referents (deferred), reference rendering (`ref_external_id` is
+    ingested but never rendered — replies and reactions reach the model with no
+    referent), and the send-tool surface to author a reply or a reaction.
 11. **Background completion** — early-return for long tools and the **non-blocking
     gates** fix parked in DESIGN §10; `escalation` as its first instance.
 12. **Postgres substrate** — the same ports as SQL: events table + LISTEN/NOTIFY (log),
