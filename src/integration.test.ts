@@ -11,7 +11,8 @@ import { openFileDocs } from "./store/docs.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
-import type { Draft, Event, MessageEvent, ToolUseEvent } from "./types.ts";
+import { shortId } from "./render.ts";
+import type { Draft, Event, Json, MessageEvent, ToolUseEvent } from "./types.ts";
 
 const CONFIG: AgentConfig = {
   agentId: "a1",
@@ -481,6 +482,71 @@ Deno.test("coalescing race: a message landing between window-read and closing pu
     assertEquals(n, 2);
   } finally {
     await main.stop();
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("send `re`: the window's id resolves to the wire's name — reply, react, and a miss", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  log.upsertConnections([{ service: "whatsapp", address: "org" }]); // the publish gate
+  try {
+    // what the model will point at: a peer message that already crossed a wire, so it has
+    // the only name the platform will accept back — its external_id (§3)
+    const peer = await log.publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "org",
+        external_id: "whatsapp:wmw.abc",
+        conversation: { address: "wa:g1", kind: "group" },
+        sender: { address: "549:caro", name: "Caro" },
+      },
+      parts: [{ type: "text", kind: "text", text: "quién trae el proyector?" }],
+    }) as Event;
+
+    // the handles are filled in after the store minted the id — exactly what render would
+    // have shown the model on that line
+    const reply: Record<string, Json> = { to: "wa:g1", text: "yo lo llevo" };
+    const react: Record<string, Json> = { to: "wa:g1", react: "👍" };
+    const miss: Record<string, Json> = { to: "wa:g1", text: "?", re: "zzzzzz" };
+    const { transport } = scripted([
+      ok([{ kind: "tool_use", name: "send", input: reply }], "tool_use"),
+      ok([{ kind: "tool_use", name: "send", input: react }], "tool_use"),
+      ok([{ kind: "tool_use", name: "send", input: miss }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ]);
+    reply.re = shortId(peer.id);
+    react.re = shortId(peer.id);
+
+    const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+    for (let i = 0; i < 6; i++) await xi(CONFIG, ports); // one turn per call; extras idle
+
+    const ours = (await log.read({ types: ["message"] }))
+      .filter((e) => e.agent !== undefined) as MessageEvent[];
+    assertEquals(ours.length, 2); // the miss published nothing
+
+    const [answered, reacted] = ours;
+    // the reference travels as the WIRE's name, and the send says what it does to it
+    assertEquals(answered.payload?.ref_external_id, "whatsapp:wmw.abc");
+    assertEquals(answered.payload?.action, "reply");
+    assertEquals(reacted.payload?.ref_external_id, "whatsapp:wmw.abc");
+    assertEquals(reacted.payload?.action, "add");
+    assertEquals(reacted.parts[0], {
+      type: "data",
+      kind: "reaction",
+      data: { name: "👍", unicode: "👍" },
+    });
+
+    // an id that names nothing fails LOUDLY, in the model's own tool_result — a reply to
+    // the wrong message would be silent
+    const errors = (await log.read({ types: ["tool_result"] }))
+      .filter((e) => JSON.stringify(e.parts).includes("is_error"));
+    assertEquals(errors.length, 1);
+    assertStringIncludes(JSON.stringify(errors[0].parts), 'no message \\"zzzzzz\\" in wa:g1');
+  } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
   }

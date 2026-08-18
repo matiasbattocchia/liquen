@@ -2,6 +2,7 @@ import { assertEquals } from "@std/assert";
 import {
   createSlackDispatch,
   type SlackDispatchDeps,
+  slackEmojiName,
   slackErrorCode,
   type SlackTarget,
 } from "./slack_dispatch.ts";
@@ -45,15 +46,35 @@ function worldMsg(id: string, conversation: string, text: string): MessageEvent 
   };
 }
 
+interface Post {
+  target: SlackTarget;
+  text: string;
+  author?: string;
+  files?: FilePart[];
+  threadTs?: string;
+}
+interface Reaction {
+  target: SlackTarget;
+  ts: string;
+  glyph: string;
+  remove: boolean;
+}
+
 async function withDispatch(
   fn: (t: {
     publish: (e: MessageEvent) => Promise<unknown>;
-    posts: { target: SlackTarget; text: string; author?: string; files?: FilePart[] }[];
+    posts: Post[];
+    reactions: Reaction[];
     patches: DeliveryPatch[];
     read: () => Promise<MessageEvent[]>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
   }) => Promise<void>,
-  opts: { failWith?: Error; directory?: SlackDispatchDeps["directory"] } = {},
+  opts: {
+    failWith?: Error;
+    directory?: SlackDispatchDeps["directory"];
+    /** a deployment with no reaction leg — the send must stamp failed, not vanish */
+    noReact?: boolean;
+  } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -63,15 +84,22 @@ async function withDispatch(
     { service: "slack", address: "T1" },
     { service: "github", address: "gh-app" },
   ]);
-  const posts: { target: SlackTarget; text: string; author?: string; files?: FilePart[] }[] = [];
+  const posts: Post[] = [];
+  const reactions: Reaction[] = [];
   const patches: DeliveryPatch[] = [];
   const stop = createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
-    post: (target, text, author, files) => {
-      posts.push({ target, text, author, files });
+    post: (target, text, author, files, threadTs) => {
+      posts.push({ target, text, author, files, threadTs });
       if (opts.failWith) return Promise.reject(opts.failWith);
       return Promise.resolve({ ts: "999.111", user: "UBOT1" });
     },
+    ...(opts.noReact ? {} : {
+      react: (target, react) => {
+        reactions.push({ target, ...react });
+        return opts.failWith ? Promise.reject(opts.failWith) : Promise.resolve();
+      },
+    }),
     setDelivery: (id, patch) => {
       patches.push(patch);
       return log.setDelivery(id, patch);
@@ -91,6 +119,7 @@ async function withDispatch(
     await fn({
       publish: (e) => log.publish(e),
       posts,
+      reactions,
       patches,
       read: async () => (await log.read({ types: ["message"] })) as MessageEvent[],
       waitFor,
@@ -243,4 +272,59 @@ Deno.test("slack dispatch: @Name and @here encode at the frontier; unclaimed sta
       return Promise.resolve([{ address: "U0BKTGTB65C", name: "matias" }]);
     },
   });
+});
+
+Deno.test("slack dispatch: `re` posts into the referent's thread (§5)", async () => {
+  await withDispatch(async ({ publish, posts, waitFor }) => {
+    const reply: MessageEvent = {
+      ...agentMsg("e1", "voy yo"),
+      payload: { ref_external_id: "slack:T1:C1:111.222", action: "reply" },
+    };
+    await publish(reply);
+    await waitFor(() => posts.length === 1);
+    assertEquals(posts[0].threadTs, "111.222"); // the ts, dug out of the external id
+  });
+});
+
+Deno.test("slack dispatch: a reaction lands as reactions.add — no ts to backfill", async () => {
+  await withDispatch(async ({ publish, posts, reactions, patches, waitFor }) => {
+    const react: MessageEvent = {
+      ...agentMsg("e1", ""),
+      parts: [{ type: "data", kind: "reaction", data: { name: "👍", unicode: "👍" } }],
+      payload: { ref_external_id: "slack:T1:C1:111.222", action: "add" },
+    };
+    await publish(react);
+    await waitFor(() => reactions.length === 1);
+    assertEquals(posts.length, 0); // a reaction is not a message
+    assertEquals(reactions[0], {
+      target: { connection: "T1", channel: "C1" },
+      ts: "111.222",
+      glyph: "👍",
+      remove: false,
+    });
+    // dispatched, but nothing to converge on: a reaction has no id of its own
+    assertEquals(patches[0].external_id, undefined);
+    assertEquals(typeof patches[0].status?.dispatched_at, "string");
+  });
+});
+
+Deno.test("slack dispatch: a reaction with no reaction leg FAILS — it never just vanishes", async () => {
+  await withDispatch(async ({ publish, patches, waitFor }) => {
+    const react: MessageEvent = {
+      ...agentMsg("e1", ""),
+      parts: [{ type: "data", kind: "reaction", data: { name: "👍", unicode: "👍" } }],
+      payload: { ref_external_id: "slack:T1:C1:111.222", action: "add" },
+    };
+    await publish(react);
+    await waitFor(() => patches.length === 1);
+    assertEquals(patches[0].status?.state, "failed");
+  }, { noReact: true });
+});
+
+Deno.test("slackEmojiName: glyphs translate, names pass, the unknown gets no guess", () => {
+  assertEquals(slackEmojiName("👍"), "thumbsup");
+  assertEquals(slackEmojiName("❤️"), "heart"); // the presentation selector is dropped
+  assertEquals(slackEmojiName(":tada:"), "tada");
+  assertEquals(slackEmojiName("party_parrot"), "party_parrot"); // custom workspace emoji
+  assertEquals(slackEmojiName("🫥"), undefined);
 });

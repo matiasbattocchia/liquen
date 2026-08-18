@@ -43,7 +43,7 @@ import type { Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import type { Locker } from "./store/lock.ts";
 import { filePartOf, loadMediaBlock } from "./store/media.ts";
-import { backfilled, ownVoice } from "./render.ts"; // shared predicates: backfill never wakes;
+import { backfilled, ownVoice, shortId } from "./render.ts"; // shared predicates: backfill never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { type ModelTransport, nu, type TurnConfig } from "./nu.ts";
@@ -513,16 +513,33 @@ async function execute(
     // attachments (§5 media): paths → FileParts, statted and classified broker-side; a
     // missing path throws here and the tool_result carries the error back to the model
     const files = Array.isArray(args.files) ? args.files.map((f) => filePartOf(String(f))) : [];
-    const body = String(args.text);
+    const body = args.text === undefined ? "" : String(args.text);
+    const glyph = args.react === undefined ? "" : String(args.react);
+    // the reference (§5): the model points with the `id` its window showed. Resolving it
+    // to the referent — and the referent to the name the WIRE knows it by — is the whole
+    // job; a miss throws, and the tool_result sends the model back to its window rather
+    // than letting it answer the wrong message.
+    const target = args.re === undefined ? undefined : await referent(ports, to, String(args.re));
+    if (glyph && !target) throw new Error("a reaction needs `re`: the message it lands on");
+    if (!glyph && !body && files.length === 0) throw new Error("nothing to send");
     const msg: Draft<MessageEvent> = {
       ts: new Date().toISOString(),
       type: "message",
       // the send tool_use that dispatched it — whose turn_id rides along: the send IS
       // turn output, and turn_id presence is what marks it the model's voice (§3)
-      payload: { turn_id: use.payload.turn_id, ref_id: use.id },
+      payload: {
+        turn_id: use.payload.turn_id,
+        ref_id: use.id,
+        ...(target ? { ref_external_id: target.envelope.external_id } : {}),
+        // what the send DOES to its referent (§3): a glyph is a part added to someone
+        // else's message; text beside a reference is relational, not mutational
+        ...(glyph ? { action: "add" as const } : target ? { action: "reply" as const } : {}),
+      },
       agent: self,
       envelope,
-      parts: [...(body ? [{ type: "text", kind: "text", text: body } as const] : []), ...files],
+      parts: glyph
+        ? [{ type: "data", kind: "reaction", data: { name: glyph, unicode: glyph } } as const]
+        : [...(body ? [{ type: "text", kind: "text", text: body } as const] : []), ...files],
     };
     const sent = await ports.log.publish(msg);
     return { queued: true, event_id: sent!.id }; // a full draft (parts present) always stores
@@ -554,6 +571,33 @@ async function execute(
   return await tool.execute(input, signal);
 }
 
+/** How far back a reference may point: a superset of any render window, so every `id` the
+ *  model can still read resolves, and the scan stays one conversation's recent rows. */
+const REF_REACH = 500;
+
+/**
+ * `re` → the event it names (§5). The handle is render's `shortId`, so this walks the
+ * conversation's recent rows for the one whose id ends that way — scoped to the target
+ * conversation, which is what makes six hex enough. Every failure is loud and lands in the
+ * tool_result: an unknown handle, an ambiguous one (the model re-reads rather than us
+ * guessing), and a referent that has no wire name yet — our own send still in flight,
+ * which no platform can be asked to quote.
+ */
+async function referent(ports: XiPorts, conversation: string, re: string): Promise<Event> {
+  const matches = await ports.log.read({
+    conversation,
+    limit: REF_REACH,
+    filter: (e) => shortId(e.id) === re,
+  });
+  if (matches.length === 0) throw new Error(`no message "${re}" in ${conversation}`);
+  if (matches.length > 1) throw new Error(`"${re}" names ${matches.length} messages — ambiguous`);
+  const target = matches[0];
+  if (!target.envelope.external_id) {
+    throw new Error(`message "${re}" has not reached the wire yet — nothing to point at`);
+  }
+  return target;
+}
+
 function specsOf(ports: XiPorts): Anthropic.Tool[] {
   return [
     {
@@ -568,14 +612,24 @@ function specsOf(ports: XiPorts): Anthropic.Tool[] {
             description:
               "target conversation address (as shown in its conv element), or a peer agent's name to DM them",
           },
-          text: { type: "string" },
+          text: { type: "string", description: "the message body — omit only when reacting" },
+          re: {
+            type: "string",
+            description:
+              "the id of the message you are answering, exactly as its line shows it — quotes it on the wire",
+          },
+          react: {
+            type: "string",
+            description:
+              "an emoji to land on the `re` message instead of sending a message of your own",
+          },
           files: {
             type: "array",
             items: { type: "string" },
             description: "file paths to attach (workspace or media-store paths)",
           },
         },
-        required: ["to", "text"],
+        required: ["to"],
       },
     },
     {

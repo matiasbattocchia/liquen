@@ -20,6 +20,7 @@ import type {
   Conversation,
   ErrorEvent as HarnessErrorEvent, // aliased: `ErrorEvent` is a DOM global in Deno's lib
   Event,
+  EventId,
   FilePart,
   MessageEvent,
   ReactionPart,
@@ -346,13 +347,22 @@ function renderMessages(
   const { events, elisions } = byEventTime(applySummary(window.filter((e) => !backfilled(e))));
   const out: MessageParam[] = [];
 
-  // ref resolution for delete bodies (§5): the WHOLE window, backfill included — a delete
-  // often lands long after its referent, and the referent being history doesn't unsay it
+  // ref resolution (§5): the WHOLE window, backfill included — a delete or a reply often
+  // lands long after its referent, and the referent being history doesn't unsay it. Only
+  // the RENDERED events wear an `id` though, so `re` can point at a line the model can
+  // actually read; a resolvable-but-unrendered referent is a reference to elsewhere (`?`).
   const byExternal = new Map<string, Event>();
   for (const e of window) {
     if (e.envelope.external_id) byExternal.set(e.envelope.external_id, e);
   }
-  const resolve = (id: string) => byExternal.get(id);
+  const rendered = new Set(events.map((e) => e.id));
+  const refOf = (e: Event): Ref => {
+    const id = e.payload?.ref_external_id;
+    if (!id) return { attr: "" };
+    const target = byExternal.get(id);
+    const shown = target !== undefined && rendered.has(target.id);
+    return { attr: ` re="${shown ? shortId(target.id) : "?"}"`, target, shown };
+  };
   let cur: { role: Role; content: ContentBlockParam[] } | null = null;
 
   // a trailing message's inlineable attachments → real API blocks. Local bytes become
@@ -447,7 +457,7 @@ function renderMessages(
       const earlier = elisions.earlier.get(e);
       if (earlier) cluster.lines.push(`… ${earlier} earlier, not shown`);
     }
-    cluster.lines.push(msgLine(e, session, zone, resolve));
+    cluster.lines.push(msgLine(e, session, zone, refOf(e)));
   };
 
   // No separators (§5). They went through `place()`, so every date break and gap marker
@@ -669,19 +679,25 @@ function conversationEl(
 }
 
 /** One world message line — two elements, the deviation marked (§3, §5): `<msg>` carries
- *  text (`action="edit"` = replacement content, `action="delete"` = the removed content,
- *  resolved against the window when the original is present — no ref attribute; the model
- *  reads it by context), `<react>` carries the glyph (`action="remove"` = an un-react).
- *  Bare defaults: create and add wear no attribute. `from="self"` = the agent's own send (its author
- *  label inside a user turn); `status="failed"` = the dispatcher gave up on delivery (§5).
+ *  text (`action="edit"` = replacement content, `action="delete"` = the removed content),
+ *  `<react>` carries the glyph (`action="remove"` = an un-react). Bare defaults: create and
+ *  add wear no attribute. `from="self"` = the agent's own send (its author label inside a
+ *  user turn); `status="failed"` = the dispatcher gave up on delivery (§5).
+ *
+ *  **References** (§5): every `<msg>` wears an `id` — the handle a reply, a reaction or a
+ *  delete points back at with `re`, and the one `send` takes to author them. It is derived
+ *  from the event id, so it names the same message in every render; `re="?"` = the referent
+ *  is outside this window. Nothing can point at a `<react>`, so reactions spend no id.
+ *
  *  Body and sender name are attacker-controlled — escaped, so no message can close its own
  *  element or forge a mark. */
 function msgLine(
   e: MessageEvent,
   session: SessionId,
   zone?: string,
-  resolve?: (externalId: string) => Event | undefined,
+  ref: Ref = { attr: "" },
 ): string {
+  const re = ref.attr;
   // `self` for both hands, because on the wire there IS only one: the account — the halves
   // are told apart by AUTHORSHIP (§3): turn_id ⇒ the model's voice; the classifier's
   // `agent.id` stamp without one ⇒ the principal (their grant named the mind, whichever
@@ -697,21 +713,25 @@ function msgLine(
     : e.envelope.sender === undefined
     ? "self (principal)"
     : (e.envelope.sender.name ?? e.envelope.sender.address ?? "peer");
-  const head = `from="${escAttr(from)}" at="${hhmm(e.ts, zone)}"`;
+  const head = `id="${shortId(e.id)}" from="${escAttr(from)}" at="${hhmm(e.ts, zone)}"`;
 
   const action = e.payload?.action;
   if (action === "edit") {
-    return `<msg ${head} action="edit">${escText(textOf(e))}</msg>`;
+    return `<msg ${head}${re} action="edit">${escText(textOf(e))}</msg>`;
   }
   if (action === "delete") {
-    const orig = e.payload?.ref_external_id ? resolve?.(e.payload.ref_external_id) : undefined;
-    return `<msg ${head} action="delete">${orig ? escText(textOf(orig)) : ""}</msg>`;
+    // the removed content, spelled out only when the original is NOT a line the model can
+    // read: `re` already points there when it is, and a delete says nothing twice
+    const body = ref.target && !ref.shown ? escText(textOf(ref.target)) : "";
+    return `<msg ${head}${re} action="delete">${body}</msg>`;
   }
   if (action === "add" || action === "remove") {
     const r = e.parts.find((p): p is ReactionPart => p.type === "data" && p.kind === "reaction");
     const glyph = r ? (r.data.unicode ?? r.data.name) : textOf(e);
     const removed = action === "remove" ? ' action="remove"' : "";
-    return `<react ${head}${removed}>${escText(glyph)}</react>`;
+    // no `id`: a reaction is a leaf — nothing in the vocabulary can point back at one
+    const react = `from="${escAttr(from)}" at="${hhmm(e.ts, zone)}"`;
+    return `<react ${react}${re}${removed}>${escText(glyph)}</react>`;
   }
 
   const failed = e.envelope.status === "failed" ? ' status="failed"' : "";
@@ -727,7 +747,24 @@ function msgLine(
   // body text is escaped (untrusted); the media markers are render's own, appended after
   const body = [escText(textOf(e)), ...filesOf(e).map(mediaMarker)]
     .filter((s) => s.length > 0).join(" ");
-  return `<msg ${head}${failed}${mentions}>${body}</msg>`;
+  return `<msg ${head}${re}${failed}${mentions}>${body}</msg>`;
+}
+
+/** What a line's `ref_external_id` resolved to against the window (§5): the attribute to
+ *  print, and the referent itself when the window holds it — `shown` says whether it is a
+ *  line the model can actually read, which is what makes `re` a pointer instead of a name. */
+interface Ref {
+  attr: string;
+  target?: Event;
+  shown?: boolean;
+}
+
+/** The public handle for an event (§5): the tail of its uuidv7. Derived, so it is the same
+ *  string in every render of the same message — the model can carry it across turns — and
+ *  short enough to spend on every line. uuidv7's tail is the random block: six hex is one
+ *  chance in ~17M per pair, and `xi` refuses an ambiguous match rather than guessing. */
+export function shortId(id: EventId): string {
+  return id.replaceAll("-", "").slice(-6);
 }
 
 /** XML escaping — THE injection boundary (§5): every untrusted string that lands in a text

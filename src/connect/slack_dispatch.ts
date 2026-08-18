@@ -47,6 +47,53 @@ export function slackErrorCode(error?: string): number {
   return TRANSIENT_NAMES.has(error ?? "") ? 503 : 400;
 }
 
+/** Slack names its reactions (`thumbsup`), WhatsApp draws them (👍) — and the log carries
+ *  whichever the composer wrote. The common glyphs translate; a name passes through (it is
+ *  what a Slack reaction the agent SAW already looks like); anything else gets no guess,
+ *  because a wrong emoji is a wrong statement. Custom workspace emoji arrive as names. */
+const EMOJI_NAMES: Record<string, string> = {
+  "👍": "thumbsup",
+  "👎": "thumbsdown",
+  "❤": "heart",
+  "🙏": "pray",
+  "🎉": "tada",
+  "😂": "joy",
+  "🤣": "rolling_on_the_floor_laughing",
+  "😄": "smile",
+  "😊": "blush",
+  "😮": "open_mouth",
+  "😢": "cry",
+  "😅": "sweat_smile",
+  "🤔": "thinking_face",
+  "👀": "eyes",
+  "✅": "white_check_mark",
+  "❌": "x",
+  "🔥": "fire",
+  "💯": "100",
+  "🚀": "rocket",
+  "🙌": "raised_hands",
+  "👏": "clap",
+  "💪": "muscle",
+  "🤝": "handshake",
+  "⚡": "zap",
+  "⭐": "star",
+  "💡": "bulb",
+  "📌": "pushpin",
+  "🥳": "partying_face",
+  "😍": "heart_eyes",
+  "😡": "rage",
+  "🤯": "exploding_head",
+  "👌": "ok_hand",
+  "🫡": "saluting_face",
+};
+
+export function slackEmojiName(glyph: string): string | undefined {
+  const bare = glyph.replaceAll("️", "").replaceAll(":", "").trim(); // presentation selector
+  if (bare.length === 0) return undefined;
+  if (/^[a-z0-9_+-]+$/.test(bare)) return bare; // already a name (or a custom one)
+  return EMOJI_NAMES[bare];
+}
+
 /** Post `text` (and any attachments) to a channel; returns the created message `ts`
  *  (→ external_id, §4 — file shares may not surface one; the echo still lands, §5) and,
  *  when the API names it, the posting identity `user` — the wire stating its own side in
@@ -57,11 +104,25 @@ export type SlackPost = (
   text: string,
   author?: string,
   files?: FilePart[],
+  /** The message being answered (§5 `re`): Slack's reply IS a thread, so a reference posts
+   *  into the referent's thread — the parent's `ts` when it has one, else its own. */
+  threadTs?: string,
 ) => Promise<{ ts?: string; user?: string }>;
+
+/** Land (or lift) a glyph on a message — `reactions.add`/`remove`. A reaction is not a
+ *  message: it gets no `ts` of its own, so nothing backfills and no echo merges. */
+export type SlackReact = (
+  target: SlackTarget,
+  react: { ts: string; glyph: string; remove: boolean },
+  author?: string,
+) => Promise<void>;
 
 export interface SlackDispatchDeps {
   subscribe: Subscriber["subscribe"];
   post: SlackPost;
+  /** Absent = this deployment cannot react: the send stamps `failed` rather than
+   *  disappearing, because a reaction nobody sees is the worst kind of success. */
+  react?: SlackReact;
   /** The conversation's name directory (§3 mentions): lets the agent's `@Name` tokens
    *  claim user ids for the wire encoding. Specials (`@here`) and bare ids encode
    *  regardless; unclaimed names stay literal text. */
@@ -79,14 +140,30 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => void {
     (e) => {
       const out = outbound(e);
       if (!out) return;
-      const { target, text, files, event } = out;
+      const { target, text, files, event, re, glyph } = out;
       chain = chain.then(async () => {
         try {
+          if (glyph !== undefined) {
+            if (!re) throw new DispatchError("a reaction needs the message it lands on", 400);
+            if (!deps.react) throw new DispatchError("this connection cannot react", 400);
+            await deps.react(target, {
+              ts: re,
+              glyph,
+              remove: event.payload?.action === "remove",
+            }, event.agent?.id);
+            // no `ts` of its own to backfill: the reaction is on the wire, and that is all
+            // the log can ever learn about it
+            await deps.setDelivery?.(event.id, {
+              status: { dispatched_at: new Date().toISOString() },
+            });
+            deps.onSent?.(event, undefined);
+            return;
+          }
           // the agent mentions as a human (`@Name`, `#chan`, `@here`) — encode to the
           // wire's forms here at the frontier; unclaimed names stay literal text
           const dir = /[@#]/.test(text) ? await deps.directory?.("slack", target.channel) : null;
           const encoded = text ? encodeSlackText(text, dir ?? []) : text;
-          const { ts, user } = await deps.post(target, encoded, event.agent?.id, files);
+          const { ts, user } = await deps.post(target, encoded, event.agent?.id, files, re);
           // sender stamps WITH dispatched_at when the response names the posting identity
           // (§4): the wire states its own side twice, and we take the first statement —
           // the echo's merge still fills what only it knows (the display name)
@@ -129,6 +206,10 @@ interface Outbound {
   text: string;
   files: FilePart[];
   event: MessageEvent;
+  /** The referent's `ts` — a thread to post into, or the message a glyph lands on. */
+  re?: string;
+  /** Present ⇒ this send is a reaction, not a message (empty on a remove). */
+  glyph?: string;
 }
 
 /** Target = the envelope's coordinates: the workspace is the connection, channel the address. */
@@ -137,10 +218,27 @@ function outbound(e: Event): Outbound | null {
   const connection = e.envelope.connection_address;
   const channel = e.envelope.conversation.address;
   if (!connection || !channel) return null;
+  const event = e as MessageEvent;
   const text = textOf(e);
   const files = filesOf(e);
+  const re = tsOf(event.payload?.ref_external_id);
+  const reaction = (event.parts ?? []).find((p) => p.type === "data" && p.kind === "reaction") as {
+    data?: { unicode?: string; name?: string };
+  } | undefined;
+  if (reaction) {
+    const glyph = reaction.data?.unicode ?? reaction.data?.name ?? "";
+    return { target: { connection, channel }, text: "", files: [], event, re, glyph };
+  }
   if (!text && files.length === 0) return null;
-  return { target: { connection, channel }, text, files, event: e as MessageEvent };
+  return { target: { connection, channel }, text, files, event, re };
+}
+
+/** `slack:<team>:<channel>:<ts>` → the `ts` the API takes. A reference minted anywhere else
+ *  (another service, a local row) names nothing here and is dropped rather than guessed at. */
+function tsOf(externalId?: string): string | undefined {
+  if (!externalId?.startsWith("slack:")) return undefined;
+  const ts = externalId.slice(externalId.lastIndexOf(":") + 1);
+  return ts.length > 0 ? ts : undefined;
 }
 
 function filesOf(e: Event): FilePart[] {
@@ -189,14 +287,19 @@ if (import.meta.main) {
     return out;
   };
 
-  const post: SlackPost = async ({ connection, channel }, text, author, files) => {
-    // the token resolver (§4, dispatcher-internal): the author's own grant (alter-ego)
-    // → the workspace bot — vault keys follow the connector's convention (§4)
+  // the token resolver (§4, dispatcher-internal): the author's own grant (alter-ego)
+  // → the workspace bot — vault keys follow the connector's convention (§4)
+  const tokenFor = async (connection: string, author?: string): Promise<string> => {
     const team = teamOf(connection);
     const user = author ? await creds.get(`slack:${team}:${author}`) : null;
     const bot = user?.value.token ? null : await creds.get(`slack:${team}:org`);
     const token = user?.value.token ?? bot?.value.token ?? Deno.env.get("SLACK_BOT_TOKEN");
     if (!token) throw new Error(`no token for connection ${connection}`);
+    return token;
+  };
+
+  const post: SlackPost = async ({ connection, channel }, text, author, files, threadTs) => {
+    const token = await tokenFor(connection, author);
 
     // Slack doesn't take media-by-link: LOCAL uris upload; external links join the text
     // as lines instead — Slack's own idiom (the client unfurls them). Never fetched here.
@@ -235,6 +338,7 @@ if (import.meta.main) {
         files: JSON.stringify(ids),
         channel_id: channel,
         ...(body ? { initial_comment: body } : {}),
+        ...(threadTs ? { thread_ts: threadTs } : {}),
       });
       // the share's ts when the response carries one; absent, the echo lands as its own
       // row. No posting identity in this response shape — the echo stamps sender (§4)
@@ -245,7 +349,7 @@ if (import.meta.main) {
     const res = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ channel, text: body }),
+      body: JSON.stringify({ channel, text: body, ...(threadTs ? { thread_ts: threadTs } : {}) }),
     });
     if (!res.ok) {
       await res.body?.cancel();
@@ -259,10 +363,27 @@ if (import.meta.main) {
     return { ts: out.ts, user: out.message?.user };
   };
 
+  const react: SlackReact = async ({ connection, channel }, { ts, glyph, remove }, author) => {
+    const token = await tokenFor(connection, author);
+    const name = slackEmojiName(glyph);
+    if (!name) throw new DispatchError(`Slack has no name for ${glyph}`, 400);
+    const method = remove ? "reactions.remove" : "reactions.add";
+    const out = await api<{ ok: boolean; error?: string }>(method, token, {
+      channel,
+      timestamp: ts,
+      name,
+    });
+    // already there / already gone is the state we wanted, not a failure
+    if (!out.ok && out.error !== "already_reacted" && out.error !== "no_reaction") {
+      throw new DispatchError(`${method}: ${out.error}`, slackErrorCode(out.error));
+    }
+  };
+
   const { logDirectory } = await import("./mentions.ts");
   createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     post,
+    react,
     directory: logDirectory((q) => log.read(q)),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onSent: (e, ts) =>

@@ -12,8 +12,16 @@ Channels — exactly three, with different reach:
 - Thinking is private; it is never delivered.
 
 Reading the window:
-- Your principal's DM reads as bare chat. Other conversations arrive grouped under
-  `## <connection> · <peer>` headers with `[author time]` line prefixes.
+- Your principal's DM reads as bare chat. Other conversations arrive as `<conv>` elements
+  whose `address` is what you pass to `send`, one line per message: `from` is who spoke —
+  `self (you)` is your own voice, `self (principal)` your principal from their own device —
+  and `at` is their local time.
+- Every `<msg>` carries an `id`. Pass it as `send(re: …)` to answer that message
+  specifically (it quotes it on the wire), or `send(react: "👍", re: …)` to land an emoji
+  on it instead of writing. A line's own `re` says which message it answers; `re="?"` means
+  the message it points at is older than this window.
+- `action="edit"` and `action="delete"` mean the sender changed or took back what they
+  said. A `<react>` is a glyph somebody landed on the message its `re` names.
 - `— … —` lines are time separators. `[harness] error:` lines are the harness
   reporting its own failures — act on them, don't echo them.
 - The last block each turn shows the live environment: the current time, your working

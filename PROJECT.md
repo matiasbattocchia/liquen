@@ -460,10 +460,19 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
     never-seen group). Before this, an outbound `@Euge` in a lid group both failed to
     bind AND published a phone number into a chat whose addressing exists to hide it.
     mu's ingest just names what arrives: `@<digits>` → `@<pushname>`. Pending: live
-    receipt-merge verification (needs organic traffic), merge-only drafts still INSERT
-    stubs for unknown referents (deferred), reference rendering (`ref_external_id` is
-    ingested but never rendered — replies and reactions reach the model with no
-    referent), and the send-tool surface to author a reply or a reaction.
+    receipt-merge verification (needs organic traffic) and merge-only drafts still INSERT
+    stubs for unknown referents (deferred).
+    **References — LANDED 2026-08-17**: `ref_external_id` was ingested and never rendered,
+    so a fifth of live WhatsApp traffic (119 reactions against 550 events in 48h) reached
+    the model as glyphs pointing at nothing, and replies lost the relationship entirely.
+    Every `<msg>` now wears an `id` and every referring line a `re` (DESIGN §5) — one
+    handle both ways, since `send(re:)` takes it back and `send(react:)` lands a glyph on
+    it. `xi.referent` resolves the handle against the conversation's recent rows: unknown,
+    ambiguous, and not-yet-on-the-wire all throw into the model's own tool_result rather
+    than answering the wrong message. WhatsApp dispatch already spoke both (quote +
+    reaction content); Slack gained `thread_ts` for a reply and `reactions.add/remove` for
+    a glyph — with the emoji-name translation Slack requires, and a `failed` stamp when it
+    can't name one, because the reaction leg used to drop such sends silently.
 11. **Background completion** — early-return for long tools and the **non-blocking
     gates** fix parked in DESIGN §10; `escalation` as its first instance.
 12. **Postgres substrate** — the same ports as SQL: events table + LISTEN/NOTIFY (log),
