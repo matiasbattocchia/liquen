@@ -551,3 +551,69 @@ Deno.test("send `re`: the window's id resolves to the wire's name — reply, rea
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("send action: the account may unsay its own words, and lift its own reaction", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  log.upsertConnections([{ service: "whatsapp", address: "org" }]);
+  try {
+    const wa = (id: string, text: string, mine: boolean) => ({
+      ts: new Date().toISOString(),
+      type: "message" as const,
+      ...(mine ? { agent: { id: "a1", session_id: "s1" } } : {}),
+      envelope: {
+        service: "whatsapp" as const,
+        connection_address: "org",
+        external_id: `whatsapp:wmw.${id}`,
+        conversation: { address: "wa:g1", kind: "group" as const },
+        ...(mine ? {} : { sender: { address: "549:caro", name: "Caro" } }),
+      },
+      parts: [{ type: "text" as const, kind: "text" as const, text }],
+    });
+    // one of ours (dispatched, so it has a wire name) and one of theirs
+    const mine = await log.publish(wa("mine", "nos vemos 9", true)) as Event;
+    const theirs = await log.publish(wa("theirs", "quién trae el proyector?", false)) as Event;
+
+    const edit: Record<string, Json> = { to: "wa:g1", text: "nos vemos 10" };
+    const del: Record<string, Json> = { to: "wa:g1" };
+    const unreact: Record<string, Json> = { to: "wa:g1", react: "👍" };
+    const theirEdit: Record<string, Json> = { to: "wa:g1", text: "no dijiste eso" };
+    const { transport } = scripted([
+      ok([{ kind: "tool_use", name: "send", input: edit }], "tool_use"),
+      ok([{ kind: "tool_use", name: "send", input: del }], "tool_use"),
+      ok([{ kind: "tool_use", name: "send", input: unreact }], "tool_use"),
+      ok([{ kind: "tool_use", name: "send", input: theirEdit }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ]);
+    Object.assign(edit, { re: shortId(mine.id), action: "edit" });
+    Object.assign(del, { re: shortId(mine.id), action: "delete" });
+    Object.assign(unreact, { re: shortId(theirs.id), action: "remove" });
+    Object.assign(theirEdit, { re: shortId(theirs.id), action: "edit" });
+
+    const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+    for (let i = 0; i < 8; i++) await xi(CONFIG, ports);
+
+    const ours = (await log.read({ types: ["message"] }))
+      .filter((e) => e.agent !== undefined && e.envelope.external_id === undefined);
+    assertEquals(ours.map((e) => e.payload?.action), ["edit", "delete", "remove"]);
+    assertEquals(ours.every((e) => e.payload?.ref_external_id !== undefined), true);
+    // the edit carries the replacement; the delete carries nothing — the referent's words
+    // are the referent's, and the window still holds them
+    assertStringIncludes(JSON.stringify(ours[0].parts), "nos vemos 10");
+    assertEquals((ours[1] as MessageEvent).parts, []);
+    assertEquals((ours[2] as MessageEvent).parts[0].kind, "reaction");
+
+    // editing someone else's words is refused HERE, in the model's own tool_result —
+    // some wires would accept the stanza and silently ignore it
+    const errors = (await log.read({ types: ["tool_result"] }))
+      .filter((e) => JSON.stringify(e.parts).includes("is_error"));
+    assertEquals(errors.length, 1);
+    assertStringIncludes(
+      JSON.stringify(errors[0].parts),
+      "only this account's own messages can be edited",
+    );
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

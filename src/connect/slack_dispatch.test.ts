@@ -59,12 +59,19 @@ interface Reaction {
   glyph: string;
   remove: boolean;
 }
+interface Amend {
+  target: SlackTarget;
+  ts: string;
+  action: "edit" | "delete";
+  text: string;
+}
 
 async function withDispatch(
   fn: (t: {
     publish: (e: MessageEvent) => Promise<unknown>;
     posts: Post[];
     reactions: Reaction[];
+    amends: Amend[];
     patches: DeliveryPatch[];
     read: () => Promise<MessageEvent[]>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
@@ -86,6 +93,7 @@ async function withDispatch(
   ]);
   const posts: Post[] = [];
   const reactions: Reaction[] = [];
+  const amends: Amend[] = [];
   const patches: DeliveryPatch[] = [];
   const stop = createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
@@ -97,6 +105,10 @@ async function withDispatch(
     ...(opts.noReact ? {} : {
       react: (target, react) => {
         reactions.push({ target, ...react });
+        return opts.failWith ? Promise.reject(opts.failWith) : Promise.resolve();
+      },
+      amend: (target, a) => {
+        amends.push({ target, ...a });
         return opts.failWith ? Promise.reject(opts.failWith) : Promise.resolve();
       },
     }),
@@ -120,6 +132,7 @@ async function withDispatch(
       publish: (e) => log.publish(e),
       posts,
       reactions,
+      amends,
       patches,
       read: async () => (await log.read({ types: ["message"] })) as MessageEvent[],
       waitFor,
@@ -327,4 +340,30 @@ Deno.test("slackEmojiName: glyphs translate, names pass, the unknown gets no gue
   assertEquals(slackEmojiName(":tada:"), "tada");
   assertEquals(slackEmojiName("party_parrot"), "party_parrot"); // custom workspace emoji
   assertEquals(slackEmojiName("🫥"), undefined);
+});
+
+Deno.test("slack dispatch: an edit updates the message, a delete takes it back", async () => {
+  await withDispatch(async ({ publish, posts, amends, patches, waitFor }) => {
+    await publish({
+      ...agentMsg("e1", "mejor a las 10"),
+      payload: { ref_external_id: "slack:T1:C1:111.222", action: "edit" },
+    });
+    await publish({
+      ...agentMsg("e2", ""),
+      parts: [],
+      payload: { ref_external_id: "slack:T1:C1:111.222", action: "delete" },
+    });
+    await waitFor(() => amends.length === 2);
+    assertEquals(posts.length, 0); // neither is a new message
+    assertEquals(amends[0], {
+      target: { connection: "T1", channel: "C1" },
+      ts: "111.222",
+      action: "edit",
+      text: "mejor a las 10",
+    });
+    assertEquals(amends[1].action, "delete");
+    // chat.update keeps the original ts — nothing to converge on, so no external_id
+    assertEquals(patches[0].external_id, undefined);
+    assertEquals(typeof patches[0].status?.dispatched_at, "string");
+  });
 });

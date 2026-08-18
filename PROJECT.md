@@ -473,6 +473,16 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
     reaction content); Slack gained `thread_ts` for a reply and `reactions.add/remove` for
     a glyph — with the emoji-name translation Slack requires, and a `failed` stamp when it
     can't name one, because the reaction leg used to drop such sends silently.
+    **Mutations — LANDED 2026-08-18**: `send(action:)` completes the vocabulary the window
+    renders — `edit`, `delete`, `remove` — so the model can write back everything it can
+    read. xi refuses to edit or delete anything the account did not author (a wire would
+    accept the stanza and ignore it). Slack: `chat.update`/`chat.delete`. WhatsApp: the
+    bridge gained data kinds `edit` and `revoke` over `BuildEdit`/`BuildRevoke`, and the
+    reaction content moved to the DataPart shape `openbsp.go` always expected — mu had been
+    sending `type: "text", kind: "reaction"`, which the bridge's text case posted as an
+    emoji quoting the target, so outbound WhatsApp reactions were text replies until now.
+    Unreportable: WhatsApp ignores an edit past its 20-minute window (the tool description
+    says so; the wire says nothing).
 11. **Background completion** — early-return for long tools and the **non-blocking
     gates** fix parked in DESIGN §10; `escalation` as its first instance.
 12. **Postgres substrate** — the same ports as SQL: events table + LISTEN/NOTIFY (log),

@@ -22,6 +22,10 @@ Reading the window:
   the message it points at is older than this window.
 - `action="edit"` and `action="delete"` mean the sender changed or took back what they
   said. A `<react>` is a glyph somebody landed on the message its `re` names.
+- You can do the same: `send(re: …, action: "edit", text: …)` replaces what this account
+  said, `action: "delete"` takes it back, `action: "remove"` lifts a reaction you put on.
+  Only this account's own messages — yours and your principal's — can be edited or deleted,
+  and WhatsApp accepts an edit for about twenty minutes.
 - `— … —` lines are time separators. `[harness] error:` lines are the harness
   reporting its own failures — act on them, don't echo them.
 - The last block each turn shows the live environment: the current time, your working

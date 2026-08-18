@@ -154,20 +154,37 @@ function outbound(e: Event): Outbound | null {
   const text = texts.filter((p) => p.kind !== "reaction").map((p) => p.text).join("\n");
 
   const contents: { content: WAContent }[] = [];
-  if ((reactData || reactText) && re) {
-    // WhatsApp un-reacts with an EMPTY reaction — `action: "remove"` maps to that
-    const glyph = event.payload?.action === "remove"
-      ? ""
-      : reactData
-      ? (reactData.data.unicode ?? reactData.data.name)
-      : reactText!.text;
+  const action = event.payload?.action;
+
+  // A mutation acts on its referent and carries nothing else — the bridge answers 422 for a
+  // reference it can't resolve, which stamps the send failed instead of letting it vanish.
+  if (action === "edit" || action === "delete") {
+    return {
+      event,
+      contents: [{
+        content: {
+          version: "1",
+          type: "data",
+          kind: action === "edit" ? "edit" : "revoke",
+          ...(action === "edit" ? { text } : {}),
+          re_message_id: re ?? "",
+        },
+      }],
+    };
+  }
+
+  if (reactData || reactText) {
+    // the bridge's reaction shape (openbsp.go): a DataPart whose `action` is added/removed
+    // — a removal is WhatsApp's empty reaction, which the bridge writes from the action
+    const removed = action === "remove";
+    const glyph = reactData ? (reactData.data.unicode ?? reactData.data.name) : reactText!.text;
     contents.push({
       content: {
         version: "1",
-        type: "text",
+        type: "data",
         kind: "reaction",
-        text: glyph,
-        re_message_id: re,
+        data: removed ? { action: "removed" } : { action: "added", name: glyph, unicode: glyph },
+        re_message_id: re ?? "",
       },
     });
   }

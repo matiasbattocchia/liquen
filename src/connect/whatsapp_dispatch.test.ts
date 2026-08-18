@@ -184,14 +184,47 @@ Deno.test("a reaction maps to its own content with the raw wmw re_message_id", a
   }));
   await settle();
   assertEquals(records.length, 2);
+  // the bridge's reaction shape (openbsp.go): the DataPart carries the glyph, and its
+  // `action` is what makes a removal — WhatsApp un-reacts with an empty reaction
   assertEquals(records[0].content, {
     version: "1",
-    type: "text",
+    type: "data",
     kind: "reaction",
-    text: "👍",
+    data: { action: "added", name: "👍", unicode: "👍" },
     re_message_id: "wmw.orig.7", // prefix stripped back to the bridge's id
   });
-  assertEquals(records[1].content.text, "");
+  assertEquals(records[1].content.data, { action: "removed" });
+});
+
+Deno.test("edit and delete act on the referent: one content, no body of their own", async () => {
+  const records: WADispatchRecord[] = [];
+  const { log } = harness((r) => {
+    records.push(r);
+    return Promise.resolve("wmw.out.1");
+  });
+  log.push(outboundMessage({
+    parts: [{ type: "text", kind: "text", text: "mejor a las 10" }],
+    payload: { action: "edit", ref_external_id: externalId("wmw.orig.7") },
+  }));
+  log.push(outboundMessage({
+    parts: [],
+    payload: { action: "delete", ref_external_id: externalId("wmw.orig.7") },
+  }));
+  await settle();
+  assertEquals(records.length, 2);
+  assertEquals(records[0].content, {
+    version: "1",
+    type: "data",
+    kind: "edit",
+    text: "mejor a las 10", // the replacement, not a new message
+    re_message_id: "wmw.orig.7",
+  });
+  assertEquals(records[1].content, {
+    version: "1",
+    type: "data",
+    kind: "revoke",
+    re_message_id: "wmw.orig.7",
+  });
 });
 
 Deno.test("a bridge refusal stamps failed with the HTTP status as error_code", async () => {

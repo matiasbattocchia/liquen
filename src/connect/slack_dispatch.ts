@@ -109,6 +109,14 @@ export type SlackPost = (
   threadTs?: string,
 ) => Promise<{ ts?: string; user?: string }>;
 
+/** Replace or take back a message we sent — `chat.update` / `chat.delete`. Neither mints a
+ *  new `ts`: the edit IS the original message, so nothing backfills here either. */
+export type SlackAmend = (
+  target: SlackTarget,
+  amend: { ts: string; action: "edit" | "delete"; text: string },
+  author?: string,
+) => Promise<void>;
+
 /** Land (or lift) a glyph on a message — `reactions.add`/`remove`. A reaction is not a
  *  message: it gets no `ts` of its own, so nothing backfills and no echo merges. */
 export type SlackReact = (
@@ -123,6 +131,8 @@ export interface SlackDispatchDeps {
   /** Absent = this deployment cannot react: the send stamps `failed` rather than
    *  disappearing, because a reaction nobody sees is the worst kind of success. */
   react?: SlackReact;
+  /** Absent = it cannot edit or delete either — same rule, same stamp. */
+  amend?: SlackAmend;
   /** The conversation's name directory (§3 mentions): lets the agent's `@Name` tokens
    *  claim user ids for the wire encoding. Specials (`@here`) and bare ids encode
    *  regardless; unclaimed names stay literal text. */
@@ -141,8 +151,20 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => void {
       const out = outbound(e);
       if (!out) return;
       const { target, text, files, event, re, glyph } = out;
+      const action = event.payload?.action;
       chain = chain.then(async () => {
         try {
+          if (action === "edit" || action === "delete") {
+            if (!re) throw new DispatchError(`a ${action} needs the message it acts on`, 400);
+            if (!deps.amend) throw new DispatchError("this connection cannot edit", 400);
+            await deps.amend(target, { ts: re, action, text }, event.agent?.id);
+            // chat.update keeps the original `ts`: there is no new artifact to converge on
+            await deps.setDelivery?.(event.id, {
+              status: { dispatched_at: new Date().toISOString() },
+            });
+            deps.onSent?.(event, undefined);
+            return;
+          }
           if (glyph !== undefined) {
             if (!re) throw new DispatchError("a reaction needs the message it lands on", 400);
             if (!deps.react) throw new DispatchError("this connection cannot react", 400);
@@ -228,6 +250,10 @@ function outbound(e: Event): Outbound | null {
   if (reaction) {
     const glyph = reaction.data?.unicode ?? reaction.data?.name ?? "";
     return { target: { connection, channel }, text: "", files: [], event, re, glyph };
+  }
+  const action = event.payload?.action;
+  if (action === "delete") {
+    return { target: { connection, channel }, text: "", files: [], event, re };
   }
   if (!text && files.length === 0) return null;
   return { target: { connection, channel }, text, files, event, re };
@@ -379,11 +405,23 @@ if (import.meta.main) {
     }
   };
 
+  const amend: SlackAmend = async ({ connection, channel }, { ts, action, text }, author) => {
+    const token = await tokenFor(connection, author);
+    const method = action === "edit" ? "chat.update" : "chat.delete";
+    const out = await api<{ ok: boolean; error?: string }>(method, token, {
+      channel,
+      ts,
+      ...(action === "edit" ? { text } : {}),
+    });
+    if (!out.ok) throw new DispatchError(`${method}: ${out.error}`, slackErrorCode(out.error));
+  };
+
   const { logDirectory } = await import("./mentions.ts");
   createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     post,
     react,
+    amend,
     directory: logDirectory((q) => log.read(q)),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onSent: (e, ts) =>

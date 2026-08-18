@@ -26,6 +26,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
+  Action,
   Draft,
   Emit,
   Event,
@@ -520,8 +521,26 @@ async function execute(
     // job; a miss throws, and the tool_result sends the model back to its window rather
     // than letting it answer the wrong message.
     const target = args.re === undefined ? undefined : await referent(ports, to, String(args.re));
+    // what the send DOES to its referent (§3, §5): the vocabulary the window renders, in
+    // reverse — the model writes back the action it reads. Absent, the send is a create,
+    // or a reply/an added reaction if it points somewhere.
+    const action = args.action === undefined ? undefined : String(args.action);
+    if (action !== undefined && !MUTATIONS.includes(action)) {
+      throw new Error(`unknown action "${action}" — one of ${MUTATIONS.join(", ")}`);
+    }
+    if (action && !target) throw new Error(`\`${action}\` needs \`re\`: the message it acts on`);
     if (glyph && !target) throw new Error("a reaction needs `re`: the message it lands on");
-    if (!glyph && !body && files.length === 0) throw new Error("nothing to send");
+    // the account may unsay its OWN words — either hand of `self`, since the wire holds one
+    // account (§3) — and nobody else's: the platform would refuse, silently on some wires
+    if ((action === "edit" || action === "delete") && target!.agent === undefined) {
+      throw new Error(
+        `only this account's own messages can be ${action === "edit" ? "edited" : "deleted"}` +
+          " — that one is not",
+      );
+    }
+    if (action === "edit" && !body) throw new Error("`edit` needs the replacement text");
+    if (action === "remove" && !glyph) throw new Error("`remove` needs the reaction it lifts");
+    if (!action && !glyph && !body && files.length === 0) throw new Error("nothing to send");
     const msg: Draft<MessageEvent> = {
       ts: new Date().toISOString(),
       type: "message",
@@ -531,14 +550,24 @@ async function execute(
         turn_id: use.payload.turn_id,
         ref_id: use.id,
         ...(target ? { ref_external_id: target.envelope.external_id } : {}),
-        // what the send DOES to its referent (§3): a glyph is a part added to someone
-        // else's message; text beside a reference is relational, not mutational
-        ...(glyph ? { action: "add" as const } : target ? { action: "reply" as const } : {}),
+        ...(action
+          ? { action: action as Action }
+          // a glyph is a part added to someone else's message; text beside a reference is
+          // relational, not mutational
+          : glyph
+          ? { action: "add" as const }
+          : target
+          ? { action: "reply" as const }
+          : {}),
       },
       agent: self,
       envelope,
+      // a delete carries no body: what it removed is the referent's, and the window
+      // already holds it (§5)
       parts: glyph
         ? [{ type: "data", kind: "reaction", data: { name: glyph, unicode: glyph } } as const]
+        : action === "delete"
+        ? []
         : [...(body ? [{ type: "text", kind: "text", text: body } as const] : []), ...files],
     };
     const sent = await ports.log.publish(msg);
@@ -570,6 +599,11 @@ async function execute(
   if (!tool) throw new Error(`unknown tool: ${name}`);
   return await tool.execute(input, signal);
 }
+
+/** The actions a send may take ON its referent (§3 `Action`, §5 the rendered vocabulary).
+ *  `reply`/`add` are not here: they are what a reference and a glyph already mean, so the
+ *  model never has to name them. */
+const MUTATIONS = ["edit", "delete", "remove"];
 
 /** How far back a reference may point: a superset of any render window, so every `id` the
  *  model can still read resolves, and the scan stays one conversation's recent rows. */
@@ -622,6 +656,12 @@ function specsOf(ports: XiPorts): Anthropic.Tool[] {
             type: "string",
             description:
               "an emoji to land on the `re` message instead of sending a message of your own",
+          },
+          action: {
+            type: "string",
+            enum: ["edit", "delete", "remove"],
+            description:
+              "what to do to the `re` message instead of adding to it: replace its text with `text` (edit, this account's own messages only — WhatsApp accepts one for about 20 minutes), take it back (delete, own only), or lift the `react` glyph you put on it (remove)",
           },
           files: {
             type: "array",
