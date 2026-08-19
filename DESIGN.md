@@ -554,9 +554,12 @@ Every inbound passes through ingest, which does identity resolution **and** may 
 - **Control vocab (v0)**: `stop`/`cancel`.
 - **The verdict is not ingest's** (landed 2026-08-18): a gate is answered in **xi**, which
   already derives what the log owes and therefore already knows which cards are open. The
-  principal's line passes through as an ordinary `message`, and xi reads `/y [note]` ·
-  `/n [reason]` off it and publishes the structured `{behavior, scope, reason?}` + ref
-  before it reads the verdict — so ONE invocation settles the gate and acts on it. That
+  principal's line passes through as an ordinary `message`, and xi reads
+  `/{y,n} [conv|conn|all] [reason]` off it (`parseVerdict` — one syntax, every door) and
+  publishes the structured `{behavior, scope, reason?}` + ref before it reads the verdict
+  — so ONE invocation settles the gate and acts on it. The bare form settles the one
+  call; a scope word makes it STANDING (§9): an allow/deny row remembered for that
+  conversation, that connection, or the tool everywhere. That
   keeps every surface equal (the REPL's key handling is a shortcut, not the mechanism) and
   keeps the decision out of free text (Claude-Code discipline; its channels-relay does the
   same id-match). WHICH card an answer settles is the whole problem, and the rule is that
@@ -1953,11 +1956,18 @@ tickMs) — while the VALUE still funnels to the deepest function that needs it
 overrides, plus `identity` (`email`/`phone`, the handles a human knows the principal by);
 at start the declaration MIRRORS into the registry's columns exactly as folders mirror
 into `agents`. `rules` is the permission policy as data (§2): ordered rows
-`{tool, action: allow|ask|deny, service?, connection?, conversation?}` — first match
-decides, `*` matches any tool, and the scope fields pin a rule to where a `send` lands
-(xi resolves the destination's envelope before ruling), so "WhatsApp asks, Slack flows,
-#general is blocked" is three rows, most specific first. A standing verdict (`/always`,
-`/never`) will write into this same shape. Resolution, most specific wins: agent
+`{tool, action: allow|ask|deny, connection?, conversation?}` — first match decides, `*`
+matches any tool, and the scope fields pin a rule to the org's three gating levels: a
+conversation, a whole connection (the account/workspace — a WhatsApp number, a Slack
+team), or global (no scope). xi resolves where a `send` lands before ruling, so "the
+WhatsApp number asks, the Slack workspace flows, #general is blocked" is three rows, most
+specific first. The config rows are the BASE half; the REMEMBERED half is the `rules`
+table on the log (store/rules.ts), written by standing verdicts — the principal answers a
+card `/{y,n} [conv|conn|all] [reason]`, and a scope word pins an allow/deny row to where
+that call landed (upserted by scope: a later verdict replaces the action). The gate
+compiles both, remembered first: the principal outranks the base, and among the
+remembered the most specific wins. Same division of labor as the registry — humans write
+config, verdicts write rows, the reader merges. Resolution, most specific wins: agent
 file → MainConfig (the process: tests) → org file → the catalog's constants. The org file
 always exposes the WHOLE catalog: absent, it is materialized from the constants; when the
 catalog grows, the missing keys are appended (your values survive — the comments are the

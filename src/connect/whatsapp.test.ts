@@ -334,6 +334,31 @@ Deno.test("reaction + reply ref: the target is payload.ref_external_id, action a
   assertEquals(e.payload?.action, "add"); // a reaction ADDS a part to its referent (§3)
 });
 
+Deno.test("a GLYPHLESS reaction is a removal — the wire truth outranks the bridge's label", async () => {
+  // WhatsApp spells "un-react" as an empty reaction; a bridge that ships `{}` without
+  // classifying it must still land as remove, never as an empty add
+  const { handler, published } = harness();
+  await handler(
+    post(
+      "/whatsapp-web-webhook",
+      batch({
+        messages: [textMessage({
+          external_id: "wmw.r.2",
+          content: {
+            version: "1",
+            type: "data",
+            kind: "reaction",
+            data: {},
+            re_message_id: "wmw.orig.1",
+          },
+        })],
+      }),
+    ),
+  );
+  const e = published[0] as MessageEvent;
+  assertEquals(e.payload?.action, "remove");
+});
+
 Deno.test("an edit is its OWN event: action edit + ref to the original, new parts", async () => {
   const { handler, published } = harness();
   await handler(

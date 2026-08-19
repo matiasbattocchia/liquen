@@ -736,9 +736,8 @@ function msgLine(
   }
   if (action === "add" || action === "remove") {
     const r = e.parts.find((p): p is ReactionPart => p.type === "data" && p.kind === "reaction");
-    // `?? ""`: a glyphless reaction part (a wire removal, a bridge hiccup) renders empty
-    // rather than killing the WHOLE window render — one poisoned event must never mute
-    // the agent (live 2026-08-19: a reaction with empty data froze every wake for an hour)
+    // `?? ""`: a glyphless reaction (a removal) renders empty — one malformed event must
+    // never kill the window render
     const glyph = r ? (r.data.unicode ?? r.data.name ?? "") : textOf(e);
     const removed = action === "remove" ? ' action="remove"' : "";
     // no `id`: a reaction is a leaf — nothing in the vocabulary can point back at one

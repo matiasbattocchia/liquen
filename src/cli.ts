@@ -8,7 +8,8 @@
  *   you type            → publish a principal `message` to home
  *   the agent thinks    → thinking deltas stream dim; assistant text streams live
  *   the agent acts      → tool_use/result lines; peer sends as `→ conv: text`
- *   a gate fires        → an approval card; answer `/y [note]` or `/n [reason]`
+ *   a gate fires        → an approval card; answer `/{y,n} [conv|conn|all] [reason]` —
+ *                         a scope word makes the verdict STANDING (remembered policy, §9)
  *   /quit (or Ctrl-D)   → clean stop
  */
 
@@ -18,7 +19,14 @@ import { start } from "./main.ts";
 import { ensureOrgConfig, readAgentOverrides } from "./config.ts";
 import { outcomeLine, ownVoice } from "./render.ts";
 import { describeCall } from "./describe.ts";
-import type { Draft, Event, MessageEvent, PermissionResponseEvent } from "./types.ts";
+import { parseVerdict } from "./xi.ts";
+import type {
+  Draft,
+  Event,
+  MessageEvent,
+  PermissionResponseEvent,
+  PermissionVerdict,
+} from "./types.ts";
 
 const DIM = "\x1b[2m";
 const RED = "\x1b[31m";
@@ -75,18 +83,13 @@ const principalMsg = (text: string): Draft<MessageEvent> => ({
 
 const respond = (
   refId: string, // the gated tool_use — request and response both point at it (§3)
-  behavior: "allow" | "deny",
-  reason?: string,
+  verdict: PermissionVerdict, // behavior + scope + reason, as `parseVerdict` read them
 ): Draft<PermissionResponseEvent> => ({
   ts: new Date().toISOString(),
   type: "permission_response",
   payload: { ref_id: refId },
   envelope: homeEnv,
-  parts: [{
-    type: "data",
-    kind: "permission_response",
-    data: { behavior, scope: "once", ...(reason ? { reason } : {}) },
-  }],
+  parts: [{ type: "data", kind: "permission_response", data: verdict }],
 });
 
 const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
@@ -132,7 +135,9 @@ function paint(e: Event): void {
     case "permission_request": {
       const { detail } = e.parts[0].data;
       pendingRequest = e.payload?.ref_id;
-      write(`\n${YELLOW}? approve ${detail}${RESET}\n  /y [note] · /n [reason]\n> `);
+      write(
+        `\n${YELLOW}? approve ${detail}${RESET}\n  /{y,n} [conv|conn|all] [reason]\n> `,
+      );
       return;
     }
     case "error": {
@@ -155,7 +160,7 @@ const main = await start({
 });
 const unpaint = main.log.subscribe(paint);
 
-write(`${DIM}mu — ${target} · ${model} · log: ${dir} · /y /n /quit${RESET}\n> `);
+write(`${DIM}mu — ${target} · ${model} · log: ${dir} · /y[conv|conn|all] /n /quit${RESET}\n> `);
 
 const lines = Deno.stdin.readable
   .pipeThrough(new TextDecoderStream())
@@ -168,13 +173,13 @@ for await (const line of lines) {
     continue;
   }
   if (text === "/quit" || text === "/q") break;
-  if (text === "/y" || text.startsWith("/y ") || text === "/n" || text.startsWith("/n ")) {
+  const verdict = text.startsWith("/y") || text.startsWith("/n") ? parseVerdict(text) : undefined;
+  if (verdict) {
     if (!pendingRequest) {
       write(`${DIM}nothing pending${RESET}\n> `);
       continue;
     }
-    const behavior = text.startsWith("/y") ? "allow" : "deny";
-    await main.log.publish(respond(pendingRequest, behavior, text.slice(2).trim() || undefined));
+    await main.log.publish(respond(pendingRequest, verdict));
     pendingRequest = undefined;
     continue;
   }

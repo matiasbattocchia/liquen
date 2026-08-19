@@ -662,12 +662,17 @@ Two follow-ups on the catalog, both live (DESIGN §2 "Attention", §9):
   agent's defaults) / `system` — so an agent's config.jsonc reads as what it is:
   `{"agent": {…}, "identity": {…}}`, the same section re-declared, never "organization"
   inside an agent.
-- **Rules became policies**: `{tool, action: allow|ask|deny, service?, connection?,
-  conversation?}` — first match decides, scope fields pin a rule to where a `send` lands
-  (xi resolves the destination's envelope, with the peer-DM canonicalization, before
-  ruling). "WhatsApp asks, Slack flows, #general is blocked" is three rows. `deny` answers
-  the call as a refused tool_result without asking anyone. The table lives in
-  `agent.rules`; a standing verdict (`/always`, `/never`) will write into this shape.
+- **Rules became policies**: `{tool, action: allow|ask|deny, connection?, conversation?}`
+  — first match decides; the scope fields are the org's three gating levels (conversation
+  · connection · global — a "service" seat was considered and dropped: the account IS the
+  level, and two workspaces of one service can differ). xi resolves where a `send` lands
+  (peer-DM canonicalization included) before ruling; `deny` answers the call as a refused
+  tool_result without asking anyone. The base table lives in `agent.rules`.
+- **Verdicts grew scopes**: `/{y,n} [conv|conn|all] [reason]` — the bare form settles the
+  one call; a scope word writes the REMEMBERED half (the `rules` table on the log,
+  store/rules.ts, upserted by scope so a later verdict replaces the action). The gate
+  compiles remembered-over-base, most specific first — the principal outranks config.
+  One parser (`parseVerdict`) serves every door: xi's surface path and the REPL.
 - **Attention**: `decide`'s unanswered-news rule classes per conversation — summons
   (home, DM, reply-to-agent, name-as-word) and engaged (own last word younger than
   `engagedMinutes`, ping-pong refreshes) wake now; ambient piles wait for the digest

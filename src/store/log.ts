@@ -38,6 +38,7 @@ import type { Conversation, Draft, Envelope, Event, EventId } from "../types.ts"
 import { newId } from "./id.ts";
 import { createLocker, type Locker, LOCKS_DDL, RELEASE_SQL } from "./lock.ts";
 import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
+import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
 import { type Connections, CONNECTIONS_DDL, createConnections } from "./connections.ts";
 
 /** A bounded, filtered read over the log. Fields AND-combine (the `search` half, §6). */
@@ -130,7 +131,7 @@ export interface UsageRow {
   cache_write_tokens?: number;
 }
 
-export type Log = Appender & Reader & Subscriber & Locker & Registry & Connections & {
+export type Log = Appender & Reader & Subscriber & Locker & Registry & Standing & Connections & {
   /** Record one model call's spend. Fire-and-forget telemetry — never read on the hot path. */
   meter(row: UsageRow): void;
   /** Delivery bookkeeping on an already-published event: backfill `external_id`, merge
@@ -193,6 +194,7 @@ export async function openLog(dir: string): Promise<Log> {
      );
      ${LOCKS_DDL}
      ${AGENTS_DDL}
+     ${RULES_DDL}
      ${CONNECTIONS_DDL}`,
   );
   migrate(db); // schema versions below the current one are rewritten in place, exactly once
@@ -379,6 +381,7 @@ export async function openLog(dir: string): Promise<Log> {
     ...createLocker(db), // the turn lease lives HERE — same DB, so one transaction holds both
     //                      a turn's last writes and its release (`publishAndRelease`, §2)
     ...createRegistry(db), // the agent registry (§9): folders declare, this table mirrors
+    ...createStanding(db), // remembered policies (§9): standing verdicts land here
     ...connections, // connections + memberships (§4, §6): what policy reads, live
 
     async publish(one: Draft | Draft[]): Promise<Event & Event[]> {

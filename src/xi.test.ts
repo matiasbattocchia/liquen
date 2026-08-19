@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { type AgentConfig, decide, gateOf, relevant, type Wake } from "./xi.ts";
+import { type AgentConfig, decide, gateOf, parseVerdict, relevant, type Wake } from "./xi.ts";
 import type { Envelope, Event, Session } from "./types.ts";
 
 const SESSION: Session = { id: "s1", agentId: "a1" };
@@ -58,18 +58,42 @@ Deno.test("gateOf: the default asks for send and for nothing else — bash by ru
 });
 
 Deno.test("gateOf: scoped rules — where a send lands decides, most specific first (§9)", () => {
+  // the org's three gating levels: conversation · connection (workspace/account) · global
   const gate = gateOf([
-    { tool: "send", action: "deny", service: "slack", conversation: "C042" },
-    { tool: "send", action: "allow", service: "slack" },
-    { tool: "send", action: "ask" },
+    { tool: "send", action: "deny", connection: "T042", conversation: "C042" },
+    { tool: "send", action: "allow", connection: "T042" }, // the Slack workspace flows…
+    { tool: "send", action: "ask" }, // …the WhatsApp number (any other connection) asks
     { tool: "*", action: "allow" },
   ]);
-  assertEquals(gate("send", {}, { service: "slack", conversation: "C042" }), "deny");
-  assertEquals(gate("send", {}, { service: "slack", conversation: "C099" }), "allow");
-  assertEquals(gate("send", {}, { service: "whatsapp", conversation: "549115550000" }), "ask");
+  assertEquals(gate("send", {}, { connection: "T042", conversation: "C042" }), "deny");
+  assertEquals(gate("send", {}, { connection: "T042", conversation: "C099" }), "allow");
+  assertEquals(gate("send", {}, { connection: "549115550000", conversation: "wa:g1" }), "ask");
   assertEquals(gate("send", {}, { conversation: "mind:a1" }), "ask"); // local: the bare rule
   assertEquals(gate("send", {}), "ask"); // no target ⇒ scoped rules never match
   assertEquals(gate("bash", {}), "allow"); // a placed rule never leaks onto placeless tools
+});
+
+Deno.test("parseVerdict: /{y,n} [conv|conn|all] [reason] — one syntax, every door (§9)", () => {
+  assertEquals(parseVerdict("/y"), { behavior: "allow", scope: "once" });
+  assertEquals(parseVerdict("/n ahora no"), {
+    behavior: "deny",
+    scope: "once",
+    reason: "ahora no",
+  });
+  assertEquals(parseVerdict("/y conv"), { behavior: "allow", scope: "conversation" });
+  assertEquals(parseVerdict("/n conn spam"), {
+    behavior: "deny",
+    scope: "connection",
+    reason: "spam",
+  });
+  assertEquals(parseVerdict("/y all dale"), { behavior: "allow", scope: "all", reason: "dale" });
+  // a note that merely STARTS like a scope word is a note — the word must stand alone
+  assertEquals(parseVerdict("/y convenceme"), {
+    behavior: "allow",
+    scope: "once",
+    reason: "convenceme",
+  });
+  assertEquals(parseVerdict("hola"), undefined);
 });
 
 /* ── owed: the one derivation every poke shares ───────────────────────── */
@@ -257,9 +281,8 @@ Deno.test("decide: a trailing harness error ⇒ nothing owed (idle-after-error, 
 Deno.test("decide: a waiting gate never mutes the mind — the principal is still answered", () => {
   const req = ev("permission_request", { ...SELF, payload: { ref_id: "u1" } } as Partial<Event>);
   const pending = result("u1"); // asked AND answered, in the same act
-  // the principal says something while the ask is still up: the model is free to reply. A
-  // turn used to re-issue the tool_use it never got an answer to (live, 2026-08-18: a bare
-  // `/y` against two cards produced two more cards) — answering the call is what fixed it.
+  // the principal says something while the ask is still up: the model is free to reply —
+  // its tool_use is already answered (`pending_approval`), so a turn has nothing to re-issue
   const principal = ev("message", {
     agent: { id: "a1", session_id: "s1" },
     envelope: {

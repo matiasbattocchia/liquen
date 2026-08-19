@@ -50,13 +50,13 @@ export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 export type PolicyAction = "allow" | "ask" | "deny";
 
 /** One permission rule (§9): the first match decides. `tool` is a name or `*`. The scope
- *  fields narrow a rule to WHERE a call lands (a dispatching tool's target): every field
- *  given must equal the target's, and a call with no target only matches scopeless rules —
- *  so `whatsapp: ask, slack: allow, #general: deny` is three rows, most specific first. */
+ *  fields pin a rule to WHERE a call lands — the org's three gating levels: a single
+ *  conversation, a whole connection (the account/workspace: a WhatsApp number, a Slack
+ *  team), or global (no scope). Every field given must equal the target's, and a call
+ *  with no target only matches scopeless rules. */
 export interface Rule {
   tool: string;
   action: PolicyAction;
-  service?: string;
   connection?: string;
   conversation?: string;
 }
@@ -288,7 +288,12 @@ export interface ToolOutput {
 }
 
 export type PermissionBehavior = "allow" | "deny";
-export type PermissionScope = "once" | "always";
+
+/** How far a verdict reaches (§9): `once` settles the one call; the rest are STANDING —
+ *  they write the remembered half of the permission table, pinned to where the call
+ *  landed (`conversation`, `connection`) or to the tool everywhere (`all`). The
+ *  principal's syntax: `/y conv` · `/n conn` · `/y all`. */
+export type PermissionScope = "once" | "conversation" | "connection" | "all";
 
 export interface PermissionAsk {
   tool: string;

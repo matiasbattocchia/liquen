@@ -276,9 +276,13 @@ function payloadOf(c: WAContent, part: Part): Payload | undefined {
   const p: Payload = {};
   if (c.re_message_id) p.ref_external_id = externalId(c.re_message_id);
   if (part.kind === "reaction") {
-    // data shape (openbsp): action rides data · text shape (legacy): empty text = un-react
-    const data = part.type === "data" ? part.data as { action?: string } | null : null;
-    const removed = data ? data.action === "removed" : !(part as { text?: string }).text;
+    // WhatsApp spells "un-react" as an empty reaction, so no glyph ⇒ remove — on both wire
+    // shapes (data: openbsp, action rides data · text: legacy), whatever the label says
+    const data = part.type === "data"
+      ? part.data as { action?: string; name?: string; unicode?: string } | null
+      : null;
+    const bare = data !== null && !data.name && !data.unicode;
+    const removed = data ? data.action === "removed" || bare : !(part as { text?: string }).text;
     p.action = removed ? "remove" : "add";
     if (data) delete data.action;
   } else if (p.ref_external_id) p.action = "reply";

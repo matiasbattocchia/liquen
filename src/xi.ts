@@ -58,6 +58,7 @@ import {
 import { type Describe, describeCall, type Resolve } from "./describe.ts";
 import type { Appender, Reader } from "./store/log.ts";
 import type { Registry } from "./store/agents.ts";
+import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import type { Locker } from "./store/lock.ts";
@@ -77,9 +78,9 @@ export type Decision = "think" | "act" | "ignore";
  *  tool carries a target, and that is what a scoped rule matches on. */
 export type Gate = (name: string, input: Json, target?: Target) => PolicyAction;
 
-/** Where a call lands (§9): send's resolved destination, the fields a scoped rule names. */
+/** Where a call lands (§9): send's resolved destination, the fields a scoped rule names —
+ *  the conversation, and the connection (account/workspace) it rides. */
 export interface Target {
-  service?: string;
   connection?: string;
   conversation?: string;
 }
@@ -95,11 +96,22 @@ export function gateOf(rules: Rule[] = DEFAULT_RULES): Gate {
       "allow";
 }
 
+/** A remembered row (store/rules.ts) as the table row it compiles to — a standing verdict
+ *  is `allow`/`deny` by construction, never `ask` (asking is what it replaced). */
+function ruleOf(r: RememberedRule): Rule {
+  return {
+    tool: r.tool,
+    action: r.action,
+    ...(r.connection !== undefined ? { connection: r.connection } : {}),
+    ...(r.conversation !== undefined ? { conversation: r.conversation } : {}),
+  };
+}
+
 /** A rule's scope fields must ALL hold on the call's target; a scopeless rule holds on any
  *  call. A call with no target (bash) matches only scopeless rules — a rule that names a
  *  place never leaks onto tools that go nowhere. */
 function inScope(r: Rule, t?: Target): boolean {
-  const keys = (["service", "connection", "conversation"] as const)
+  const keys = (["connection", "conversation"] as const)
     .filter((k) => r[k] !== undefined);
   if (keys.length === 0) return true;
   return t !== undefined && keys.every((k) => r[k] === t[k]);
@@ -130,7 +142,7 @@ export function decide(
   // A gate never wedges the mind. Every use gets an answer in the turn it was made — a
   // gated one gets `pending_approval` — so the chain always closes and the conversation
   // continues while the principal decides. (Before that it did not: a turn taken with our
-  // own `tool_use` unresolved RE-ISSUES it, live 2026-08-18, so the only safe move was to
+  // own `tool_use` unresolved RE-ISSUES it, so the only safe move was to
   // ignore everything, principal included. Answering the call removes the reason.)
   if (pendingOf(events, session).length > 0) return "act";
   // …and a verdict that has since landed is work of its own: run the call, report back.
@@ -368,8 +380,25 @@ function owedOf(events: Event[], session: Session): Owed[] {
   return out;
 }
 
-/** The verdict, as the principal types it on any surface: `/y [note]` · `/n [reason]`. */
-const VERDICT = /^\/(y|n)\b\s*(.*)$/s;
+/** The verdict, as the principal types it on any surface (§9):
+ *  `/{y,n} [conv|conn|all] [reason]`. The bare form settles the one call; a scope word
+ *  makes it STANDING — remembered for the conversation, the connection, or the tool
+ *  everywhere. One syntax, every door: gateVerdict here, the REPL's own line. */
+const VERDICT = /^\/(y|n)\b(?:\s+(conv|conn|all)\b)?\s*(.*)$/s;
+
+const SCOPES = { conv: "conversation", conn: "connection", all: "all" } as const;
+
+/** Parse a principal's line into a verdict, or nothing if it isn't one. */
+export function parseVerdict(text: string): PermissionVerdict | undefined {
+  const said = VERDICT.exec(text.trim());
+  if (!said) return undefined;
+  const reason = said[3].trim();
+  return {
+    behavior: said[1] === "y" ? "allow" : "deny",
+    scope: said[2] ? SCOPES[said[2] as keyof typeof SCOPES] : "once",
+    ...(reason ? { reason } : {}),
+  };
+}
 
 /**
  * A gate answered from wherever the principal is (§9). The approval card crosses to their
@@ -407,7 +436,7 @@ function gateVerdict(
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type !== "message" || !ownComplex(e, session.id) || ownVoice(e, session.id)) continue;
-    const said = VERDICT.exec(textOf(e).trim());
+    const said = parseVerdict(textOf(e));
     if (!said) break; // their latest word is not a verdict — they said something else
     // Answered already? While a gate waits, EVERY event re-reads this same latest line —
     // and a line stays latest long after it did its work. Two ways it is spent: a verdict
@@ -427,7 +456,6 @@ function gateVerdict(
     if (!open.includes(quoted.payload?.ref_id as EventId)) {
       return spoken ? undefined : settled(live.length, homeEnv);
     }
-    const reason = said[2].trim();
     return {
       ts: new Date().toISOString(),
       type: "permission_response",
@@ -436,11 +464,7 @@ function gateVerdict(
       parts: [{
         type: "data",
         kind: "permission_response",
-        data: {
-          behavior: said[1] === "y" ? "allow" : "deny",
-          scope: "once",
-          ...(reason ? { reason } : {}),
-        },
+        data: said, // behavior + scope + reason, exactly as they typed it
       }],
     };
   }
@@ -579,14 +603,17 @@ function isOutcome(x: Json | ExecOutcome): x is ExecOutcome {
 
 export interface XiPorts {
   /** Publish · read · lock — plus the two team-chat slices the send path needs (§6):
-   *  `agents` to recognize a peer's name, `upsertMemberships` to enroll a DM's ends.
-   *  NOT `Subscriber`: the tail belongs to main (§2). The lock is a store capability so
-   *  a turn's writes and its release can share one transaction later. */
+   *  `agents` to recognize a peer's name, `upsertMemberships` to enroll a DM's ends —
+   *  and the standing half of the permission table (§9): `remembered` compiles into the
+   *  gate, `remember` is where a scoped verdict lands. NOT `Subscriber`: the tail belongs
+   *  to main (§2). The lock is a store capability so a turn's writes and its release can
+   *  share one transaction later. */
   log:
     & Appender
     & Reader
     & Locker
     & Pick<Registry, "agents">
+    & Pick<Standing, "remember" | "remembered">
     & Pick<Connections, "upsertMemberships">;
   docs: Docs;
   /** The model edge. main picks it (Anthropic today) and it travels down the chain unchanged
@@ -610,7 +637,14 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
   if (got === "held") return; // no retry: someone is on it, and their turn's end will poke
 
   const session: Session = { id: config.sessionId, agentId: config.agentId };
-  const gate = config.gate ?? gateOf(config.rules); // policy is a TABLE (§9): no tool is special
+  // policy is a TABLE (§9), compiled from two halves: the remembered rows (standing
+  // verdicts — the principal's rulings outrank the base) over the configured base. No
+  // tool is special.
+  const gate = config.gate ??
+    gateOf([
+      ...ports.log.remembered(config.agentId).map(ruleOf),
+      ...(config.rules ?? DEFAULT_RULES),
+    ]);
   // 3. decide, under the lease and from a fresh window — so it can't act on a stale verdict
   //    (another holder may have finished this very work while we were being invoked).
   //    The port is scoped (§6): visibility applies inside the read, BEFORE the limit, so the
@@ -790,12 +824,44 @@ async function act(
   const describe = (use: ToolUseEvent, full = false) =>
     describeCall(use.parts[0].data, { resolve, full, tools: describers });
 
+  // a scoped verdict is STANDING (§9): it writes the remembered half of the table, pinned
+  // to where THIS call landed — `conv` the conversation, `conn` the whole connection,
+  // `all` the tool everywhere. Upserted, so the same window re-read writes the same row.
+  // A conv/conn word on a call that lands nowhere cannot pin: the harness says so rather
+  // than silently widening the rule.
+  const standing = async (use: ToolUseEvent, v: PermissionVerdict): Promise<void> => {
+    if (v.scope === "once") return;
+    const tool = use.parts[0].data.name;
+    if (v.scope === "all") {
+      ports.log.remember({ agentId: session.agentId, tool, action: v.behavior });
+      return;
+    }
+    const target = await targetOf(use, self, ports);
+    const pin = v.scope === "connection" ? target?.connection : target?.conversation;
+    if (!pin) {
+      out.push(harness(
+        `cannot pin a ${v.scope} rule for ${tool} — the call lands nowhere; ` +
+          "`all` makes it tool-wide",
+        homeEnv,
+      ));
+      return;
+    }
+    ports.log.remember({
+      agentId: session.agentId,
+      tool,
+      action: v.behavior,
+      ...(target?.connection ? { connection: target.connection } : {}),
+      ...(v.scope === "conversation" ? { conversation: target!.conversation } : {}),
+    });
+  };
+
   // (a) the fresh batch: EVERY use is answered in the turn that made it — including a gated
   //     one, whose answer is `pending_approval`. Asking is part of executing, so the chain
   //     closes and the mind stays free while the principal decides (§9).
   for (const use of pending) {
     const { name, input } = use.parts[0].data;
     const verdict = verdictOf(events, use.id);
+    if (verdict) await standing(use, verdict);
     // the ruling (§9): where a send lands is part of the call, so the table can scope by
     // it. A verdict already given supersedes the table — the principal outranks policy.
     const ruling = verdict ? undefined : gate(name, input, await targetOf(use, self, ports));
@@ -844,6 +910,7 @@ async function act(
   //     outcome cannot be a `tool_result` block — it comes back as the harness's own line
   //     (§5), which is also what reaches the principal's surfaces.
   for (const { use, verdict } of owed) {
+    await standing(use, verdict);
     const call = describe(use);
     if (verdict.behavior === "deny") {
       out.push(resultOf(use, refused(verdict), { is_error: true }, call));
@@ -903,11 +970,7 @@ async function targetOf(
   if (peer && peer.agentId !== self.id) to = `dm:${[self.id, peer.agentId].sort().join(":")}`;
   const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
   return prior
-    ? {
-      service: prior.envelope.service,
-      connection: prior.envelope.connection_address,
-      conversation: to,
-    }
+    ? { connection: prior.envelope.connection_address, conversation: to }
     : { conversation: to };
 }
 

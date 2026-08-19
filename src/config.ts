@@ -150,7 +150,7 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
         key: "rules",
         value: DEFAULT_RULES,
         doc: "permission policy: first match decides (allow|ask|deny); * matches any tool; " +
-          "service/connection/conversation scope a rule to where a send lands",
+          "connection/conversation pin a rule to where a send lands",
       },
       {
         key: "engagedMinutes",
@@ -402,7 +402,7 @@ function validateAgent(a: Partial<OrgConfig["agent"]>, path: string): void {
         );
       }
       for (const key of Object.keys(rule)) {
-        if (!["tool", "action", "service", "connection", "conversation"].includes(key)) {
+        if (!["tool", "action", "connection", "conversation"].includes(key)) {
           throw new Error(`${path}: rule "${rule.tool}": unknown field "${key}"`);
         }
       }

@@ -6,8 +6,8 @@
  * (common → wire), ingest translates IN (wire → common). The REPL shows common markdown
  * raw until it renders it.
  *
- * What needs translating is MEASURED, not assumed. WhatsApp clients (probed live
- * 2026-08-19, Android + Web) parse CommonMark natively — `**bold**`, `*italic*`,
+ * What needs translating is MEASURED, not assumed. WhatsApp clients (probed live,
+ * Android + Web) parse CommonMark natively — `**bold**`, `*italic*`,
  * `~~strike~~`, `` `code` ``, headings, bullets, quotes all render; only the link syntax
  * `[text](url)` shows raw. Slack parses mrkdwn, its own documented dialect: `*bold*`,
  * `~strike~`, `<url|text>`, no headings.

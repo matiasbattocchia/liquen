@@ -151,7 +151,9 @@ export async function start(
   const invoke = (a: (typeof agents)[number]) => (trigger?: Event) => {
     if (stopped) return; // teardown, not routing — main takes no other decision
     const run = xi(a.config, a.ports, trigger)
-      .catch(() => {}) // a failed invocation never affects the next one
+      // a failed invocation never affects the next one — but it is SAID: a swallowed throw
+      // reads as a healthy agent that chose silence
+      .catch((err) => console.error(`[main] ${a.config.agentId} invocation failed:`, err))
       .finally(() => outstanding.delete(run));
     outstanding.add(run);
   };

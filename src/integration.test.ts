@@ -923,9 +923,8 @@ Deno.test("two cards open: a bare /y settles nothing, the quoted one settles its
         0,
       );
 
-      // quoting it AGAIN answers nothing — that card is spent. Silence would read as a
-      // broken gate (live, 2026-08-18: the phone showed a re-issued pair and the settled
-      // copy was the one on top), so the harness says so, and says it ONCE.
+      // quoting it AGAIN answers nothing — that card is spent. Silence here would read as
+      // a broken gate, so the harness says so, and says it ONCE.
       await publish(says("/y", cards[1].id));
       await waitFor(async () => (await read("error")).length === 2);
       assertStringIncludes(JSON.stringify((await read("error"))[1].parts), "already answered");
@@ -948,5 +947,52 @@ Deno.test("two cards open: a bare /y settles nothing, the quoted one settles its
       assertEquals((await read("error")).length, 2);
     },
     { gate: (name) => name === "send" ? "ask" : "allow" },
+  );
+});
+
+Deno.test("a standing verdict is REMEMBERED: /y conv settles that conversation's gate (§9)", async () => {
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "uno" } }], "tool_use"),
+      ok([{ kind: "assistant", text: "pedido" }], "end_turn"),
+      ok([{ kind: "assistant", text: "enviado" }], "end_turn"),
+      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "dos" } }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("mandale uno"));
+      await waitFor(async () => (await read("permission_request")).length === 1);
+      const [req] = await read("permission_request");
+      assert(req.type === "permission_request");
+      // the verdict, scoped: allow this CONVERSATION from now on (`/y conv` on a surface)
+      await publish({
+        ts: new Date().toISOString(),
+        type: "permission_response",
+        payload: { ref_id: req.payload.ref_id },
+        envelope: {
+          service: "local",
+          connection_address: "agent",
+          conversation: { address: "home" },
+        },
+        parts: [{
+          type: "data",
+          kind: "permission_response",
+          data: { behavior: "allow", scope: "conversation" },
+        }],
+      });
+      // the errand dispatches the queued send…
+      await waitFor(async () =>
+        (await read("message")).some((e) => e.envelope.conversation.address === "wa:x")
+      );
+      // …and the NEXT send to wa:x runs unasked: the remembered row outranks the base `ask`
+      await publish(principalMsg("mandale dos"));
+      await waitFor(async () =>
+        (await read("message"))
+          .filter((e) => e.envelope.conversation.address === "wa:x").length === 2
+      );
+      assertEquals((await read("permission_request")).length, 1); // asked once, ever
+    },
+    // the base table asks for send — no `gate` override: the COMPILED table is the subject
+    { gate: undefined, rules: [{ tool: "send", action: "ask" }, { tool: "*", action: "allow" }] },
   );
 });
