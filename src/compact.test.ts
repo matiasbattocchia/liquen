@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { buildSummary, compactionSpan } from "./compact.ts";
+import { buildSummary, compactionSpan, estTokens } from "./compact.ts";
+import { DEFAULT_COMPACT_AT, DEFAULT_WINDOW_LIMIT } from "./config.ts";
 import type { MessageEvent, SummaryEvent } from "./types.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import { canned } from "./testing.ts";
@@ -133,4 +134,54 @@ Deno.test("buildSummary: a failed model call → null (silent; the next think re
     keepRecent: 0,
   }, () => Promise.reject(new Error("overloaded")));
   assertEquals(out, null);
+});
+
+/* ── the threshold has to be REACHABLE (§5) ─────────────────────────────── */
+
+/** A message shaped like the ones a live store actually holds — uuidv7 ids, a platform
+ *  external_id, phone-number addresses, denormalized names, delivery status. Measured at
+ *  ~177 est. tokens each against a real WhatsApp+Slack log; the stripped `msg` above is
+ *  ~76, which is why the fixture matters: a threshold tuned on toy events is a threshold
+ *  tuned on nothing. */
+const liveMsg = (i: number, self: boolean): MessageEvent => ({
+  id: `01a01b76-c8f2-7000-9842-bbf7397${String(i).padStart(5, "0")}`,
+  external_id: `whatsapp:wmw.5491133585694.5492612339930.3EB0532B70E43C89${i}`,
+  ts: "2026-08-19T19:19:24.000Z",
+  type: "message",
+  ...(self
+    ? {
+      agent: { id: "matias", session_id: "matias" },
+      payload: { turn_id: `01a01b76-b731-7000-ab14-0d4dcc47fdeb`, stop_reason: "end_turn" },
+    }
+    : {}),
+  envelope: {
+    service: "whatsapp",
+    connection_address: "5491133585694",
+    conversation: { address: "5492614694650", name: "Luciano Putignano", kind: "direct" },
+    ...(self ? { status: { queued: true, delivered: true } } : {
+      sender: { address: "5492614694650", name: "Luciano Putignano" },
+    }),
+  },
+  parts: [{ type: "text", kind: "text", text: `una línea de conversación cualquiera, la ${i}` }],
+} as MessageEvent);
+
+Deno.test("compactAt sits below what a full window weighs — else the checkpoint never runs", () => {
+  // The count cap fills first under live traffic (§2), so a threshold above what
+  // `windowLimit` events can weigh is a checkpoint that never fires: this store held zero
+  // summaries from the day it was written, and compaction — the mechanism the whole memory
+  // story rests on — was unreachable code. This is that regression, in a test.
+  const window = Array.from(
+    { length: DEFAULT_WINDOW_LIMIT },
+    (_, i) => liveMsg(i, i % 3 === 0),
+  );
+  const weight = estTokens(window);
+  assert(
+    weight > DEFAULT_COMPACT_AT,
+    `a full window estimates ${weight} tokens, under the ${DEFAULT_COMPACT_AT} threshold — ` +
+      "raise windowLimit or lower compactAt",
+  );
+  // and the span is real: older closed events get covered, the recent tail stays faithful
+  const span = compactionSpan(window, "matias", "5492614694650");
+  assert(span !== null, "a full window must produce a checkpoint span");
+  assert(span.covered.length > 0 && span.covered.length < window.length);
 });

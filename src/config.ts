@@ -52,7 +52,11 @@ export const DEFAULT_QUIET_HOURS = "23-8";
 export const DEFAULT_STOP_TIMEOUT_MS = 5_000; // cap on stop() awaiting an in-flight turn
 export const DEFAULT_LOCK_TTL_MS = 120_000; // a turn lease older than this is STOLEN
 export const DEFAULT_RETRY_DELAYS_MS = [5_000, 20_000]; // slow outer retries (§2)
-export const DEFAULT_COMPACT_AT = 150_000; // est. tokens — matches the API's own trigger
+// est. tokens of RAW EVENT JSON (`estTokens`, chars/4) — roughly 1.8x the prompt those
+// events render to, since the estimate counts ids, envelopes and the tool traffic the
+// closed region drops. Below `windowLimit`'s own reach, so the checkpoint is the mechanism
+// and the count cap stays the guard it was meant to be (§5).
+export const DEFAULT_COMPACT_AT = 50_000;
 export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves uncovered
 export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard (§5)
 export const DEFAULT_MIRROR_SETTLE_MS = 1_000; // echo settle before fan-in copies (§4)
@@ -203,7 +207,7 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
       {
         key: "compactAt",
         value: DEFAULT_COMPACT_AT,
-        doc: "est. tokens before a checkpoint displaces the turn",
+        doc: "est. tokens of raw event JSON (~1.8x the prompt) before a checkpoint runs",
       },
       {
         key: "keepRecent",

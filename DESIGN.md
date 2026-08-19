@@ -1158,11 +1158,12 @@ compaction proper is only pi's **checkpoint layer**:
   compaction is just another event.
 - **Trigger — nu, and the checkpoint IS the turn.** nu is the layer that formats the
   window, so nu is the one that knows what the turn will weigh: when the **visible**
-  (summary-applied) window exceeds `compactAt` (default 150K est. tokens, chars/4 — the
-  API's own server-side trigger; our checkpoint is non-destructive, the log keeps
-  everything and `search` reads it back), the turn nu produces is not a think but **the
-  checkpoint itself** — one bare model call (no tools) over the closed region, keeping the
-  most recent `keepRecent` (~20K) uncovered. The summary commits as the turn's batch
+  (summary-applied) window exceeds `compactAt` (default 50K est. tokens, chars/4 over the
+  RAW events — roughly 1.8x the prompt they render to, since the estimate counts ids,
+  envelopes and the tool traffic the closed region drops; our checkpoint is non-destructive,
+  the log keeps everything and `search` reads it back), the turn nu produces is not a think
+  but **the checkpoint itself** — one bare model call (no tools) over the closed region,
+  keeping the most recent `keepRecent` (~20K) uncovered. The summary commits as the batch
   (publishAndRelease), and **its own insert wakes the think it displaced** — the log as
   continuation engine, applied to maintenance. This keeps the invariant *one invocation =
   at most one model call* (edge wall-clocks), and it is why `summary` is the one

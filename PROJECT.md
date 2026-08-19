@@ -729,6 +729,29 @@ mention should; (b) the agent has no way to record "I am staying out of this con
 `[agent]` mirror twin in the principal's own surface, so the agent reads itself back
 double (~10-15% of the window) and that surface is permanently `engaged` by construction.
 
+### Compaction was unreachable code (2026-08-19) — LANDED
+
+Zero `summary` events had ever been written, in any store. `compactionSpan` returned null on
+its first line every time: `compactAt` was 150K est. tokens while `windowLimit` (500) caps
+the window at ~95K on live traffic — the count cap always binds first, so the checkpoint
+could not fire and DESIGN §5's "later: the window read starts at the latest summary" was
+waiting on something that never arrives. Compounding it, the two numbers were in different
+currencies: `estTokens` is chars/4 over the RAW events (ids, envelopes, the tool traffic the
+closed region drops), which runs ~1.8x the prompt those events render to — so 150K "est"
+was never the ~150K real-token trigger its comment claimed.
+
+`compactAt` is now **50K** (org config + catalog default), and on the live log it fires at
+once: a 525-event / 95K window covers 420 events and leaves 105 faithful (~20K est), so the
+next checkpoint is ~165 events out — four or five a day at current volume. The prompt shrinks
+with it: post-checkpoint the render is a summary plus ~105 events instead of 525.
+
+`compact.test.ts` now guards reachability with a fixture shaped like a real row (uuidv7 ids,
+external_id, phone addresses, denormalized names, delivery status — ~177 est. tokens each,
+against ~76 for a stripped test message). **Known gap**: an org whose traffic is nothing but
+short one-line messages weighs ~38K per full window and still would not compact. The count
+cap can still shadow the token cap; it just no longer does for real traffic. The structural
+fix is the §5 "later" — read from the latest summary rather than a count.
+
 11. **Background completion** — early-return for long tools generally; `escalation` as its
     first instance. The gate already walks this path (ask → `pending_approval` → a deferred
     outcome the harness narrates), so what is left is a tool that returns early on its own
