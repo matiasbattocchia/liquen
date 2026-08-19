@@ -58,6 +58,7 @@ export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard
 export const DEFAULT_MIRROR_SETTLE_MS = 1_000; // echo settle before fan-in copies (§4)
 export const DEFAULT_MIRROR_CLAIM_MS = 60_000; // unclaimed-CC search window (§4)
 export const DEFAULT_TICK_MS = 60_000; // the clock poke — how often an idle agent re-looks
+export const DEFAULT_SETTLE_MS = 5_000; // a world trigger waits this long for its burst (§2)
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const ACTIONS: readonly PolicyAction[] = ["allow", "ask", "deny"];
@@ -92,6 +93,7 @@ export interface OrgConfig {
     mirrorSettleMs: number;
     mirrorClaimMs: number;
     tickMs: number;
+    settleMs: number;
   };
 }
 
@@ -227,6 +229,11 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
         key: "tickMs",
         value: DEFAULT_TICK_MS,
         doc: "the clock poke — how often an idle agent re-looks (the digest's metronome)",
+      },
+      {
+        key: "settleMs",
+        value: DEFAULT_SETTLE_MS,
+        doc: "how long a world message waits for the rest of its burst before a turn runs",
       },
     ],
   },

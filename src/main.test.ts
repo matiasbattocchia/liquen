@@ -53,7 +53,7 @@ async function waitFor(cond: () => Promise<boolean> | boolean, ms = 4000): Promi
 Deno.test("a live message flows tail → fan-out → xi → reply; stop is clean", async () => {
   const dir = await Deno.makeTempDir();
   const { transport, calls } = scripted([reply("¡Hola!")]);
-  const main = await start({ dir, principals: [agent("1")] }, { transport });
+  const main = await start({ dir, settleMs: 0, principals: [agent("1")] }, { transport });
   try {
     await main.log.publish(principalMsg("home1", "hola"));
     await waitFor(async () =>
@@ -98,11 +98,40 @@ Deno.test("boot poke: work already in the log is answered at start", async () =>
   await pre.close();
 
   const { transport } = scripted([reply("acá estoy")]);
-  const main = await start({ dir, principals: [agent("1")] }, { transport });
+  const main = await start({ dir, settleMs: 0, principals: [agent("1")] }, { transport });
   try {
     await waitFor(async () =>
       (await main.log.read({ types: ["message"] })).some((e) => e.agent?.session_id === "s1")
     );
+  } finally {
+    await main.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the settle: a burst that arrives BETWEEN turns is one turn, not three", async () => {
+  const dir = await Deno.makeTempDir();
+  let calls = 0;
+  let saw = "";
+  const transport: ModelTransport = (params) => {
+    calls++;
+    saw = JSON.stringify(params.messages);
+    return Promise.resolve(reply("los tres"));
+  };
+  // spaced wider than a canned turn takes, so without the settle each line gets its own
+  const main = await start({ dir, settleMs: 300, principals: [agent("1")] }, { transport });
+  const pause = () => new Promise((r) => setTimeout(r, 60));
+  try {
+    await main.log.publish(principalMsg("home1", "una"));
+    await pause();
+    await main.log.publish(principalMsg("home1", "cosa"));
+    await pause();
+    await main.log.publish(principalMsg("home1", "sola"));
+    await waitFor(() => calls > 0);
+    await new Promise((r) => setTimeout(r, 300)); // let any second turn show itself
+    assertEquals(calls, 1);
+    // and the one turn read the whole thought, not just its first line
+    for (const line of ["una", "cosa", "sola"]) assert(saw.includes(line), line);
   } finally {
     await main.stop();
     await Deno.remove(dir, { recursive: true });
@@ -124,7 +153,7 @@ Deno.test("three messages during a turn cause ONE follow-up turn, not three", as
     }
     return Promise.resolve(reply("y el resto"));
   };
-  const main = await start({ dir, principals: [agent("1")] }, { transport });
+  const main = await start({ dir, settleMs: 0, principals: [agent("1")] }, { transport });
   try {
     await main.log.publish(principalMsg("home1", "1"));
     await inStep; // turn 1 is inside the model call
@@ -146,7 +175,7 @@ Deno.test("three messages during a turn cause ONE follow-up turn, not three", as
 Deno.test("every model call is metered: spend lands in the usage table, per agent (§2)", async () => {
   const dir = await Deno.makeTempDir();
   const { transport } = scripted([reply("¡Hola!")]);
-  const main = await start({ dir, principals: [agent("1")] }, { transport });
+  const main = await start({ dir, settleMs: 0, principals: [agent("1")] }, { transport });
   let turn: string | undefined;
   try {
     await main.log.publish(principalMsg("home1", "hola"));
@@ -178,7 +207,7 @@ Deno.test("the framework way: folders under agents/ declare the org; the table m
   await Deno.mkdir(`${dir}/agents/bo`, { recursive: true });
   const { transport } = scripted([reply("hola"), reply("hola")]);
   // no `principals`: the folders ARE the agents — a blank folder is a blank agent (§9)
-  const main = await start({ dir, model: "claude-x", maxTokens: 1024 }, { transport });
+  const main = await start({ dir, settleMs: 0, model: "claude-x", maxTokens: 1024 }, { transport });
   try {
     assertEquals(main.log.agents(), [ // the registry mirrors the folders (the RLS substrate)
       { agentId: "ana", home: "mind:ana", model: "claude-x" },
@@ -208,7 +237,7 @@ Deno.test("config.jsonc declares the agent: settings override defaults, handles 
     }),
   );
   const { transport } = scripted([reply("hola")]);
-  const main = await start({ dir, model: "claude-x", maxTokens: 1024 }, { transport });
+  const main = await start({ dir, settleMs: 0, model: "claude-x", maxTokens: 1024 }, { transport });
   try {
     assertEquals(main.log.agents(), [{
       agentId: "ana",
@@ -238,7 +267,7 @@ Deno.test("derived policy: another agent's mind is invisible — no spurious tur
   await Deno.mkdir(`${dir}/agents/ana`, { recursive: true });
   await Deno.mkdir(`${dir}/agents/bo`, { recursive: true });
   const { transport, calls } = scripted([reply("hola")]);
-  const main = await start({ dir, model: "claude-x", maxTokens: 1024 }, { transport });
+  const main = await start({ dir, settleMs: 0, model: "claude-x", maxTokens: 1024 }, { transport });
   try {
     await main.log.publish(principalMsg("mind:ana", "hola ana"));
     await waitFor(async () =>
@@ -260,7 +289,7 @@ Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls
   const { transport } = scripted([
     canned([{ kind: "tool_use", name: "send", input: { to: "bo", text: "hola bo" } }], "tool_use"),
   ]);
-  const main = await start({ dir, model: "claude-x", maxTokens: 1024 }, { transport });
+  const main = await start({ dir, settleMs: 0, model: "claude-x", maxTokens: 1024 }, { transport });
   try {
     await main.log.publish(principalMsg("mind:ana", "decile hola a bo"));
     // `send` is gated by default: approve the card, as the principal would (§9)
@@ -303,7 +332,7 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
       input: { to: "C1", text: "on it" },
     }], "tool_use"),
   ]);
-  const main = await start({ dir, model: "claude-x", maxTokens: 1024 }, { transport });
+  const main = await start({ dir, settleMs: 0, model: "claude-x", maxTokens: 1024 }, { transport });
   try {
     // the world speaks first: the inbound stamps the conversation's anchor + kind
     main.log.upsertConnections([{ service: "slack", address: "T1", agentId: "ana" }]);
@@ -360,6 +389,7 @@ Deno.test("policy partitions the fan-out: each agent's subscription delivers onl
   const { transport, calls } = scripted([reply("para vos")]);
   const main = await start({
     dir,
+    settleMs: 0,
     principals: [
       agent("1", { readable: scope("1") }),
       agent("2", { readable: scope("2") }),
@@ -390,6 +420,7 @@ Deno.test("the mirror is main's own subscription: an alias inbound reaches the m
   const ana = agent("1", { agentId: "ana", sessionId: "ana", home: "mind:ana" });
   const main = await start({
     dir,
+    settleMs: 0,
     principals: [ana],
     // an owned WhatsApp grant: its self-chat IS the alias, derived from the number (§4)
     connections: [{ service: "whatsapp", address: "549", agentId: "ana" }],

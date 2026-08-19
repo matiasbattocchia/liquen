@@ -60,7 +60,11 @@ export function renderSystem(docs: DocEntry[]): TextBlockParam[] {
   }
 
   const last = blocks.at(-1);
-  if (last) last.cache_control = { type: "ephemeral" }; // caches tools + the full system prefix
+  // caches tools + the full system prefix. The hour TTL, not the default five minutes: docs
+  // change when a human edits one, and an agent that wakes every twenty minutes was paying
+  // to re-write this block each time (a 1h write is 2x input against 1.25x, and reads at
+  // 0.1x cover it after the first hit).
+  if (last) last.cache_control = { type: "ephemeral", ttl: "1h" };
   return blocks;
 }
 
@@ -436,9 +440,12 @@ function renderMessages(
 
   /** Set a cache breakpoint on a block. It is metadata, not content: the cached prefix is
    *  the blocks themselves, so moving the mark forward never invalidates what it covered. */
-  const mark = (b: ContentBlockParam | undefined) => {
+  const mark = (b: ContentBlockParam | undefined, ttl?: "1h") => {
     if (b && b.type !== "mid_conv_system") {
-      (b as { cache_control?: { type: "ephemeral" } }).cache_control = { type: "ephemeral" };
+      (b as { cache_control?: { type: "ephemeral"; ttl?: "1h" } }).cache_control = {
+        type: "ephemeral",
+        ...(ttl ? { ttl } : {}),
+      };
     }
   };
   const world = (e: MessageEvent) => {
@@ -553,8 +560,11 @@ function renderMessages(
   // tool loop needs: every tool round-trip re-sends this same prefix seconds apart.
   // The cluster must close here — a `<conv>` element spanning the boundary would absorb
   // trailing messages and rewrite the prefix's last block on every turn.
+  // The hour TTL: this prefix survives as long as the window's anchor does (xi), which is
+  // far longer than a five-minute idle gap — and it is the expensive block, so a hit that
+  // spans the gaps between an agent's wakes is worth the 2x write.
   closeCluster();
-  mark((cur as { content: ContentBlockParam[] } | null)?.content.at(-1));
+  mark((cur as { content: ContentBlockParam[] } | null)?.content.at(-1), "1h");
 
   // TRAILING — weld faithfully. `weldOrder` makes each group contiguous (uses, then results)
   // and floats intervening events after it, so a tool_result is always FIRST in its user
@@ -603,7 +613,8 @@ function renderMessages(
   // pair). Marking here lets the next round-trip read back everything it already paid for;
   // without it a 19-call turn re-sends its own accumulated tool output 19 times. Across
   // turns the chain collapses and this entry dies — the boundary mark above is the durable
-  // one. A miss (a message landing mid-turn reorders the tail) costs only a normal write.
+  // one, and this one keeps the default five minutes, which outlives any tool chain. A miss
+  // (a message landing mid-turn reorders the tail) costs only a normal write.
   closeCluster();
   mark((cur as { content: ContentBlockParam[] } | null)?.content.at(-1));
 

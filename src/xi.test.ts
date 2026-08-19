@@ -1,5 +1,13 @@
 import { assertEquals } from "@std/assert";
-import { type AgentConfig, decide, gateOf, parseVerdict, relevant, type Wake } from "./xi.ts";
+import {
+  type AgentConfig,
+  anchored,
+  decide,
+  gateOf,
+  parseVerdict,
+  relevant,
+  type Wake,
+} from "./xi.ts";
 import type { Envelope, Event, Session } from "./types.ts";
 
 const SESSION: Session = { id: "s1", agentId: "a1" };
@@ -412,4 +420,42 @@ Deno.test("attention: quiet hours stretch the digest; null switches quiet off", 
   assertEquals(decide([msg(night)], SESSION, WAKE, night), "ignore"); // 10 < 60 quiet min
   assertEquals(decide([msg(NOON)], SESSION, WAKE, NOON), "think"); // 10 > 5 busy min
   assertEquals(decide([msg(night)], SESSION, { ...WAKE, quietHours: null }, night), "think");
+});
+
+/* ── anchored (§5): the window's floor stands still, so the prompt prefix caches ── */
+
+const T0 = Date.parse("2026-01-01T00:00:00.000Z");
+/** `count` events five minutes apart from midnight — a steady trickle across two buckets. */
+const trickle = (count: number): Event[] =>
+  Array.from({ length: count }, (_, i) => ({
+    id: `w${String(i).padStart(3, "0")}`,
+    ts: new Date(T0 + i * 5 * 60_000).toISOString(),
+    type: "message",
+    envelope: env(HOME),
+    parts: [],
+  } as Event));
+
+Deno.test("anchored: a shorter-than-limit window is already its own floor", () => {
+  const rows = trickle(3);
+  assertEquals(anchored(rows, 4), rows);
+});
+
+Deno.test("anchored: the floor holds through a whole bucket of appends, then jumps once", () => {
+  // limit 4, events at :00 :05 … — a plain tail would start one event later every time
+  const floorOf = (n: number) => anchored(trickle(n), 4)[0].id;
+  // 12 events ⇒ the tail's floor is :40, which snaps back to the 00:30 bucket
+  assertEquals(floorOf(12), "w006"); // :30
+  // and it STAYS there while the tail's floor walks :45 → :55 inside that same bucket
+  assertEquals(floorOf(13), "w006");
+  assertEquals(floorOf(14), "w006");
+  assertEquals(floorOf(15), "w006");
+  // …until the tail's floor reaches 1:00 — one re-anchor, one cache write, then still again
+  assertEquals(floorOf(16), "w012"); // 1:00
+  assertEquals(floorOf(17), "w012");
+});
+
+Deno.test("anchored: the window is the limit PLUS whatever shares the floor's bucket", () => {
+  const kept = anchored(trickle(12), 4);
+  assertEquals(kept.length, 6); // :30 … :55 — never fewer than the limit
+  assertEquals(kept.at(-1)!.id, "w011"); // and the newest is always kept
 });

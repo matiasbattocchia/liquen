@@ -53,11 +53,11 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
   );
 });
 
-Deno.test("one cache breakpoint, on the last (whole prefix is the stable region)", () => {
+Deno.test("one cache breakpoint, on the last — an HOUR, since docs change when a human edits", () => {
   const blocks = renderSystem(clinicDocs());
   assertEquals(blocks.length, 2);
   assertEquals(blocks[0].cache_control, undefined);
-  assertEquals(blocks.at(-1)!.cache_control, { type: "ephemeral" });
+  assertEquals(blocks.at(-1)!.cache_control, { type: "ephemeral", ttl: "1h" });
 });
 
 Deno.test("kind is the major sort key, then cascade scope, then name", () => {
@@ -73,12 +73,12 @@ Deno.test("kind is the major sort key, then cascade scope, then name", () => {
 Deno.test("only-bodies ⇒ single block (cached); only-pointers ⇒ single index block (cached)", () => {
   const bodiesOnly = renderSystem([doc("org", "instruction", "x", {}, "body")]);
   assertEquals(bodiesOnly.length, 1);
-  assertEquals(bodiesOnly[0].cache_control, { type: "ephemeral" });
+  assertEquals(bodiesOnly[0].cache_control, { type: "ephemeral", ttl: "1h" });
 
   const pointersOnly = renderSystem([doc("org", "skill", "x", { description: "d" })]);
   assertEquals(pointersOnly.length, 1);
   assert(pointersOnly[0].text.startsWith("Your on-demand docs"));
-  assertEquals(pointersOnly[0].cache_control, { type: "ephemeral" });
+  assertEquals(pointersOnly[0].cache_control, { type: "ephemeral", ttl: "1h" });
 });
 
 Deno.test("a pointer with no description shows its ref + pull path", () => {

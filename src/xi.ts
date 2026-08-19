@@ -627,6 +627,31 @@ export interface XiPorts {
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
 }
 
+/** How coarse the window's floor is: the grid the oldest kept event snaps DOWN to. */
+const WINDOW_ANCHOR_MS = 30 * 60_000;
+/** How much history the read carries beyond the window, for the snap to keep. */
+const WINDOW_SLACK = 200;
+
+/**
+ * Anchor the window's floor (§5). `read({limit})` is a sliding TAIL: every append drops one
+ * event off the front, so the oldest rendered event — the first bytes of the prompt — is
+ * different on every turn. A prompt cache matches a PREFIX, so that one shift voids the whole
+ * rendered history and every breakpoint behind it: the transcript is re-WRITTEN each turn
+ * (1.25x input) instead of read back (0.1x), and render's boundary mark never once hits.
+ *
+ * So the floor snaps DOWN to a coarse grid and stands still between jumps: for a whole
+ * bucket of turns the prefix is byte-identical, and one re-anchor pays a single write. The
+ * window is then `limit` plus whatever else shares the floor's bucket — which is what the
+ * read's slack carries. Time, not position, because position is exactly what slides.
+ */
+export function anchored(rows: Event[], limit: number): Event[] {
+  if (rows.length <= limit) return rows;
+  const oldest = Date.parse(rows[rows.length - limit].ts); // the floor a plain tail would use
+  if (!Number.isFinite(oldest)) return rows.slice(-limit);
+  const grid = Math.floor(oldest / WINDOW_ANCHOR_MS) * WINDOW_ANCHOR_MS;
+  return rows.filter((e) => Date.parse(e.ts) >= grid);
+}
+
 /** One xi invocation: poke → owed → (think/act: acquire-or-exit → work) → return. */
 export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): Promise<void> {
   // 1. the gate — free: no read, no lease. Most invocations end here (§2)
@@ -652,12 +677,16 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
   //    (another holder may have finished this very work while we were being invoked).
   //    The port is scoped (§6): visibility applies inside the read, BEFORE the limit, so the
   //    window holds N visible events — xi never sees, nor re-checks, what policy hides.
-  const events = await ports.log.read({
-    limit: config.windowLimit ?? DEFAULT_WINDOW_LIMIT,
-    ...(config.since ? { after: config.since } : {}), // the boot floor, fixed (§5)
-    silenced: false, // imported history and muted/archived-chat traffic are not news: they
-    //   wake nothing and render nowhere — `search` is the door (§5)
-  }); // the
+  const limit = config.windowLimit ?? DEFAULT_WINDOW_LIMIT;
+  const events = anchored(
+    await ports.log.read({
+      limit: limit + WINDOW_SLACK, // the slack the anchor keeps — see `anchored`
+      ...(config.since ? { after: config.since } : {}), // the boot floor, fixed (§5)
+      silenced: false, // imported history and muted/archived-chat traffic are not news: they
+      //   wake nothing and render nowhere — `search` is the door (§5)
+    }),
+    limit,
+  ); // the
   //    ONE read: the work's input as well as the decision's (§2)
   // 3a. a gate the principal answered on a SURFACE (§9): their `/y` · `/n [reason]` becomes
   //     the verdict before the verdict is read, so one invocation settles it AND acts on it

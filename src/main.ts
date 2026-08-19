@@ -32,7 +32,7 @@
  * holds a token.
  */
 
-import { type AgentConfig, type ExecTool, xi, type XiPorts } from "./xi.ts";
+import { type AgentConfig, type ExecTool, relevant, xi, type XiPorts } from "./xi.ts";
 import { type Policy, policyFor, scoped } from "./policy.ts";
 import { type Log, openLog } from "./store/log.ts";
 import type { ConnectionRow } from "./store/connections.ts";
@@ -43,6 +43,7 @@ import { installExecPlane } from "./exec/bash.ts";
 import { createMirror } from "./connect/mirror.ts";
 import type { Emit, Event } from "./types.ts";
 import {
+  DEFAULT_SETTLE_MS,
   DEFAULT_STOP_TIMEOUT_MS,
   DEFAULT_TICK_MS,
   ensureOrgConfig,
@@ -76,6 +77,9 @@ export interface MainConfig {
   seed?: boolean; // install the doc cascade at boot (default true; task mode skips it)
   stopTimeoutMs?: number; // cap on how long stop() waits for an in-flight turn (default 5s)
   tickMs?: number; // the clock poke (§2 attention): the digest's metronome (default 60s)
+  /** How long a world trigger waits for the rest of its burst before the turn runs, in ms
+   *  (§2); 0 disables. Default 5s — see the settle in the fan-out. */
+  settleMs?: number;
 }
 
 export interface Main {
@@ -166,7 +170,37 @@ export async function start(
     outstanding.add(run);
   };
 
-  const unsubs = agents.map((a) => a.log.subscribe(invoke(a)));
+  // The settle (§2): people type the way they talk — three lines two seconds apart are one
+  // thing said, and a turn per line reads the first two without their point and pays a full
+  // window each time. So a world trigger arms a timer instead of a turn, and the rest of the
+  // burst joins it; the turn that finally runs sees the whole thought. The trigger itself is
+  // dropped, not queued (the invocation IS the poke): what the turn reads is the window, and
+  // by then it holds every message that landed while the timer ran.
+  //
+  // Only world triggers wait. A trigger-less poke (boot, the clock) has no burst to wait for,
+  // and the agent's own writes are how a turn CHAINS to the next one — delaying those would
+  // put the settle between every step of a single piece of work.
+  const settleMs = config.settleMs ?? org?.system.settleMs ?? DEFAULT_SETTLE_MS;
+  const settling = new Map<string, number>();
+  const wake = (a: (typeof agents)[number]) => {
+    const fire = invoke(a);
+    return (trigger?: Event) => {
+      const own = trigger?.agent?.session_id === a.config.sessionId;
+      // the class gate, run here too: an irrelevant event must not even arm a timer, or
+      // main would turn xi's free exit into a window read on a metronome
+      if (!trigger || own || settleMs <= 0 || !relevant(a.config, trigger)) return fire(trigger);
+      if (settling.has(a.config.agentId)) return; // its burst already has a timer
+      settling.set(
+        a.config.agentId,
+        setTimeout(() => {
+          settling.delete(a.config.agentId);
+          fire();
+        }, settleMs),
+      );
+    };
+  };
+
+  const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
   // the mirror rides the RAW log (§4): it copies between a mind and its alias surfaces, and
   // an agent's own alias conversation is invisible to that agent's scoped port (§6) — the
   // join has to happen where visibility isn't filtered. Inert until a surface is bound, so
@@ -198,6 +232,8 @@ export async function start(
     async stop() {
       stopped = true;
       clearInterval(ticker);
+      for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
+      settling.clear();
       for (const unsub of unsubs) unsub();
       // Bound the settle. A turn wedged on a hung model connection (e.g. a network
       // outage during shutdown) must not block teardown forever — the exec-plane reap

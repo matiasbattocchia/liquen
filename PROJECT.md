@@ -698,6 +698,37 @@ send the fields yet (absent ⇒ unmarked, so nothing breaks meanwhile). **Slack 
 equivalent** — mute is a private client preference the bot can't see; a mu-side mute
 deferred until the conversations table exists, someday.
 
+### Token spend: the prompt cache was dead below the system prefix (2026-08-19) — LANDED
+
+Read from the `usage` table, not guessed: 202 turns on 2026-08-19 cost ≈ $14.23, of which
+$11.68 was cache *writes*. Every turn showed the same shape — `cache_read` pinned at 4,048
+(the docs+tools block, and nothing else) with ~45K written fresh. Three causes, three fixes,
+all mechanical (the attention-semantics ideas below are NOT done):
+
+1. **The window was a sliding tail.** `read({limit: 500})` returns the most recent N, so
+   every append dropped one event off the front and changed the prompt's first bytes; a
+   cache matches a PREFIX, so render's boundary breakpoint never once hit in production.
+   The floor now snaps down to a half-hour grid (`anchored`, xi.ts): it stands still for a
+   bucket of turns and jumps once. The read carries `WINDOW_SLACK` (200) beyond the limit
+   for the snap to keep. Time, not position, because position is exactly what slides.
+2. **The durable breakpoints expired.** Four turns that day read 0 — all after >5min idle
+   gaps. The system prefix and the boundary mark now take `ttl: "1h"` (2× write, 0.1×
+   reads across the gaps); the within-turn mark keeps 5m, which outlives any tool chain.
+3. **A turn per line typed.** 79 of 202 turns produced under 80 output tokens, most of them
+   `(sin novedad)` — one full window spent per incoming message in a live DM. A world
+   trigger now arms a `settleMs` (5s) timer instead of a turn and the burst joins it
+   (main.ts); trigger-less pokes and the agent's own writes still fire immediately, so
+   turn-to-turn chaining keeps its latency.
+
+**Still open, deliberately** — these change what attention MEANS, so they want a decision,
+not a patch: (a) every one of the principal's DMs is a summons (`conv.kind === "direct"`),
+so a friend's casual chat wakes a turn per message — arguably only home, a reply, or a
+mention should; (b) the agent has no way to record "I am staying out of this conversation"
+— it says so in prose and the harness cannot hear it (the `rules` table is the shape);
+(c) every agent home message is stored AND rendered twice, once as itself and once as its
+`[agent]` mirror twin in the principal's own surface, so the agent reads itself back
+double (~10-15% of the window) and that surface is permanently `engaged` by construction.
+
 11. **Background completion** — early-return for long tools generally; `escalation` as its
     first instance. The gate already walks this path (ask → `pending_approval` → a deferred
     outcome the harness narrates), so what is left is a tool that returns early on its own

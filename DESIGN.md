@@ -161,6 +161,13 @@ trigger-less invoke on a metronome — re-asks the same question until it comes 
 knobs live in the catalog's `agent` section (§9), per-agent overridable; the whole policy
 stays a pure derivation over one window, so a DB-tier `decide` can say the same thing.
 
+Before any of that runs, a world trigger **settles**. People type the way they talk — three
+lines two seconds apart are one thing said — so main arms a `settleMs` (5s) timer instead of
+a turn, and the rest of the burst joins it; the turn that finally runs reads a window holding
+the whole thought instead of answering its first line. The trigger is dropped, not queued
+(the invocation IS the poke, §2), and only world triggers wait: a trigger-less poke has no
+burst to wait for, and the agent's own writes are how one turn CHAINS to the next.
+
 Beneath all three classes sit the **silencing marks** — `extra.backfill` (imported
 history) and `extra.muted` · `extra.archived` (the chat's platform-synced state when the
 message arrived; WhatsApp's phone-side mute/archive rides whatsmeow app state, stamped
@@ -189,7 +196,13 @@ The derivations are **position-aware**, so a late invocation that arrives after 
 already done resolves to nothing — quiescence is a poke that finds nothing owed.
 
 **The window has two bounds**, a count and a floor. `windowLimit` (500) bounds the prompt —
-it is the size guard, and under live traffic it is the one that binds. `since` bounds the
+it is the size guard, and under live traffic it is the one that binds. Its floor is
+**anchored**, snapped down to a half-hour grid: a plain tail drops one event off the front
+on every append, and since a prompt cache matches a PREFIX, that shift alone voids the whole
+rendered history and every breakpoint behind it — the transcript re-written each turn at
+1.25× instead of read back at 0.1×. Snapped, the floor stands still for a bucket of turns
+and jumps once; the window is `windowLimit` plus whatever else shares the floor's bucket.
+`since` bounds the
 BACKLOG: a fixed instant, set once when the agent comes up to start − `backlogHours` (24,
 org-configurable: `organization.backlogHours`), before which nothing is ever owed. An
 agent coming up after a week off answers the last day, not the week, and the rest is history
@@ -1028,7 +1041,11 @@ constraint, and render derives it **from the window's shape**:
   construction). Marking it makes the history a cache **read** (0.1× input) with only the
   turn's delta written. That is what makes the tool loop affordable: every tool round-trip
   re-sends this same prefix, seconds apart. A `<conv>` element never spans the boundary —
-  trailing messages joining it would rewrite the prefix's last block.
+  trailing messages joining it would rewrite the prefix's last block. It caches for an
+  **hour**: the window's floor is anchored (§2), so this prefix outlives the idle gaps
+  between an agent's wakes, and it is the expensive block — a 2× write buys 0.1× reads
+  across them. The within-turn breakpoint (the growing tool chain) keeps the default five
+  minutes, which already outlives any chain.
 
 ### Media (the same collapse pattern, applied to bytes)
 
@@ -1082,7 +1099,9 @@ Built by render from `docs.list()` (§8): **instructions** = the bodies of `load
 (system → org → agent), inlined; **skill / memory index** = pointers (name + description) for
 the rest, which the agent pulls via `aread` on demand; **cron / projections** = always-on.
 Ordered most-stable → most-volatile, with a cache breakpoint at the end — the first of the
-two the request carries; the second closes the collapsed history (above).
+two the request carries; the second closes the collapsed history (above). An hour's TTL,
+not the default five minutes: docs change when a human edits one, so an agent that wakes
+every twenty minutes was paying to re-write this block on every wake.
 
 ### Inline system blocks (the narrator)
 
@@ -1961,7 +1980,7 @@ backlogHours), `agent` (every agent's defaults, the section an agent's own file
 re-declares: model · effort · maxTokens · provider · timezone · locale · rules · the
 attention knobs) and `system` (harness machinery: stopTimeoutMs · lockTtlMs ·
 retryDelaysMs · compactAt · keepRecent · windowLimit · mirrorSettleMs · mirrorClaimMs ·
-tickMs) — while the VALUE still funnels to the deepest function that needs it
+tickMs · settleMs) — while the VALUE still funnels to the deepest function that needs it
 (main → xi → nu → mu; `timezone` reads as org identity but lands in nu's render).
 `agents/<name>/config.jsonc` is sparse: an `agent` section carrying only the keys it
 overrides, plus `identity` (`email`/`phone`, the handles a human knows the principal by);
