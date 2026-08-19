@@ -20,7 +20,7 @@ const agent = (n: string, over: Partial<Principal> = {}): Principal => ({
   home: `home${n}`,
   model: "claude-x",
   maxTokens: 1024,
-  gate: () => false,
+  gate: () => "allow",
   retryDelaysMs: [0, 0],
   ...over,
 });
@@ -203,7 +203,7 @@ Deno.test("config.jsonc declares the agent: settings override defaults, handles 
   await Deno.writeTextFile(
     `${dir}/agents/ana/config.jsonc`,
     JSON.stringify({
-      organization: { model: "claude-y", effort: "low" }, // the catalog's keys, overridden
+      agent: { model: "claude-y", effort: "low" }, // the catalog's agent keys, overridden
       identity: { email: "ana@org.example" }, // the handles a human knows the agent by
     }),
   );

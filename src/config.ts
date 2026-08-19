@@ -10,8 +10,9 @@
  *     materializes the same constants into the file, so code and file cannot drift.
  *   · main is the only reader of the config files, and it funnels the resolved values down
  *     the chain (main → xi → nu → mu). Placement in the FILE is by audience —
- *     `organization`: globals any agent is likely to customize · `system`: harness
- *     machinery — while the value still funnels to the deepest function that needs it.
+ *     `organization`: org-wide facts, set here and nowhere else · `agent`: every agent's
+ *     defaults, the section an agent's own file re-declares · `system`: harness machinery —
+ *     while the value still funnels to the deepest function that needs it.
  *   · `org/config.jsonc` always exposes the whole catalog. Absent, it is materialized from
  *     the constants; when the catalog grows, the missing keys are appended (values you set
  *     survive — the comments are the catalog's). An unknown key is a boot error: a typo
@@ -24,19 +25,28 @@
  */
 
 import { parse } from "@std/jsonc";
-import type { Effort, Rule } from "./types.ts";
+import type { Effort, PolicyAction, Rule } from "./types.ts";
 
 /* ── the defaults: the single source ─────────────────────────────────────── */
 
-// organization — globals any agent is likely to customize
+// organization — org-wide facts
+export const DEFAULT_BACKLOG_HOURS = 24;
+
+// agent — every agent's defaults (an agent's file re-declares these, key by key)
 export const DEFAULT_MODEL = "claude-sonnet-5";
 export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + tools + text
 export const DEFAULT_TIMEZONE = "UTC"; // explicit, so two boxes render the same stamps
-export const DEFAULT_BACKLOG_HOURS = 24;
 export const DEFAULT_RULES: Rule[] = [
-  { tool: "send", ask: true }, // dispatch leaves the org and speaks in the principal's name
-  { tool: "*", ask: false },
+  { tool: "send", action: "ask" }, // dispatch leaves the org, in the principal's name
+  { tool: "*", action: "allow" },
 ];
+// attention (§2): a summons wakes NOW; an engaged conversation wakes NOW; ambient piles
+// wake on the digest clock — reacting to every world message with a model turn is waste
+export const DEFAULT_ENGAGED_MINUTES = 15;
+export const DEFAULT_DIGEST_AFTER_MESSAGES = 20;
+export const DEFAULT_DIGEST_MINUTES = 5;
+export const DEFAULT_DIGEST_QUIET_MINUTES = 60;
+export const DEFAULT_QUIET_HOURS = "23-8";
 
 // system — harness machinery
 export const DEFAULT_STOP_TIMEOUT_MS = 5_000; // cap on stop() awaiting an in-flight turn
@@ -47,21 +57,30 @@ export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves un
 export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard (§5)
 export const DEFAULT_MIRROR_SETTLE_MS = 1_000; // echo settle before fan-in copies (§4)
 export const DEFAULT_MIRROR_CLAIM_MS = 60_000; // unclaimed-CC search window (§4)
+export const DEFAULT_TICK_MS = 60_000; // the clock poke — how often an idle agent re-looks
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export const ACTIONS: readonly PolicyAction[] = ["allow", "ask", "deny"];
 
 /* ── the shape the reader returns ────────────────────────────────────────── */
 
 export interface OrgConfig {
   organization: {
+    backlogHours: number;
+  };
+  agent: {
     model: string;
     effort: Effort | null; // null ⇒ the model decides
     maxTokens: number;
     provider: string | null; // the transport seam; null ⇒ Anthropic
     timezone: string; // IANA; every rendered stamp formats through it (§5)
     locale: string | null; // parked until the i18n seam
-    backlogHours: number;
     rules: Rule[]; // permission policy as data (§9)
+    engagedMinutes: number; // attention (§2): how long the agent's own last word keeps
+    digestAfterMessages: number; //   a conversation hot · the ambient pile that forces a
+    digestMinutes: number; //   wake · the ambient look interval, busy and quiet
+    digestQuietMinutes: number;
+    quietHours: string | null; // org-clock span "23-8"; null ⇒ never quiet
   };
   system: {
     stopTimeoutMs: number;
@@ -72,13 +91,15 @@ export interface OrgConfig {
     windowLimit: number;
     mirrorSettleMs: number;
     mirrorClaimMs: number;
+    tickMs: number;
   };
 }
 
-/** An agent's file: overrides of organization keys, plus the handles a human knows it by.
- *  Everything else about the agent is discovered (connect flows) or derived (the folder). */
+/** An agent's file: the `agent` section again — its values for the same keys — plus the
+ *  handles a human knows it by. Everything else about the agent is discovered (connect
+ *  flows) or derived (the folder). */
 export interface AgentOverrides {
-  organization?: Partial<OrgConfig["organization"]>;
+  agent?: Partial<OrgConfig["agent"]>;
   identity?: { email?: string; phone?: string };
 }
 
@@ -94,7 +115,18 @@ interface Entry {
 const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
   {
     section: "organization",
-    doc: "globals any agent is likely to customize (agent config.jsonc overrides, key by key)",
+    doc: "org-wide facts — set here and nowhere else",
+    entries: [
+      {
+        key: "backlogHours",
+        value: DEFAULT_BACKLOG_HOURS,
+        doc: "backlog an agent inherits at boot; lower it to come up quietly",
+      },
+    ],
+  },
+  {
+    section: "agent",
+    doc: "every agent's defaults — an agent's config.jsonc re-declares this section, key by key",
     entries: [
       { key: "model", value: DEFAULT_MODEL, doc: "the model an agent runs on" },
       {
@@ -115,14 +147,35 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
       },
       { key: "locale", value: null, doc: "parked until the i18n seam — render is English for now" },
       {
-        key: "backlogHours",
-        value: DEFAULT_BACKLOG_HOURS,
-        doc: "backlog an agent inherits at boot; lower it to come up quietly",
-      },
-      {
         key: "rules",
         value: DEFAULT_RULES,
-        doc: "permission policy: first matching tool decides, * matches anything",
+        doc: "permission policy: first match decides (allow|ask|deny); * matches any tool; " +
+          "service/connection/conversation scope a rule to where a send lands",
+      },
+      {
+        key: "engagedMinutes",
+        value: DEFAULT_ENGAGED_MINUTES,
+        doc: "attention: a conversation stays hot this long after the agent's own last word",
+      },
+      {
+        key: "digestAfterMessages",
+        value: DEFAULT_DIGEST_AFTER_MESSAGES,
+        doc: "attention: an ambient pile this deep wakes the agent before the interval does",
+      },
+      {
+        key: "digestMinutes",
+        value: DEFAULT_DIGEST_MINUTES,
+        doc: "attention: how often ambient conversations are looked at",
+      },
+      {
+        key: "digestQuietMinutes",
+        value: DEFAULT_DIGEST_QUIET_MINUTES,
+        doc: "attention: the ambient look interval during quiet hours",
+      },
+      {
+        key: "quietHours",
+        value: DEFAULT_QUIET_HOURS,
+        doc: 'attention: org-clock span "from-to" when the quiet interval applies; null ⇒ never',
       },
     ],
   },
@@ -169,6 +222,11 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
         key: "mirrorClaimMs",
         value: DEFAULT_MIRROR_CLAIM_MS,
         doc: "how far back an echo may claim an unclaimed CC",
+      },
+      {
+        key: "tickMs",
+        value: DEFAULT_TICK_MS,
+        doc: "the clock poke — how often an idle agent re-looks (the digest's metronome)",
       },
     ],
   },
@@ -264,12 +322,12 @@ export async function readAgentOverrides(dir: string, agentId: string): Promise<
     return {};
   }
   const found = parseStrict(raw, path) as Record<string, Record<string, unknown>>;
-  const org = CATALOG.find((c) => c.section === "organization")!;
+  const agent = CATALOG.find((c) => c.section === "agent")!;
   for (const [section, body] of Object.entries(found)) {
-    if (section === "organization") {
+    if (section === "agent") {
       for (const key of Object.keys(body)) {
-        if (!org.entries.some((e) => e.key === key)) {
-          throw new Error(`${path}: unknown key "organization.${key}"`);
+        if (!agent.entries.some((e) => e.key === key)) {
+          throw new Error(`${path}: unknown key "agent.${key}"`);
         }
       }
     } else if (section === "identity") {
@@ -278,10 +336,15 @@ export async function readAgentOverrides(dir: string, agentId: string): Promise<
           throw new Error(`${path}: unknown key "identity.${key}"`);
         }
       }
+    } else if (section === "organization") {
+      throw new Error(
+        `${path}: an agent overrides under "agent" — org-wide facts have no ` +
+          `per-agent seat`,
+      );
     } else throw new Error(`${path}: unknown section "${section}"`);
   }
   const cfg = found as AgentOverrides;
-  if (cfg.organization) validateOrganization(cfg.organization, path);
+  if (cfg.agent) validateAgent(cfg.agent, path);
   return cfg;
 }
 
@@ -298,31 +361,73 @@ function parseStrict(raw: string, path: string): unknown {
 }
 
 function validateOrg(cfg: OrgConfig, path: string): void {
-  validateOrganization(cfg.organization, path);
+  if (!(cfg.organization.backlogHours > 0)) {
+    throw new Error(
+      `${path}: backlogHours must be a positive number (got ${cfg.organization.backlogHours})`,
+    );
+  }
+  validateAgent(cfg.agent, path);
 }
 
 /** The checks that would otherwise surface as a RangeError inside a turn's render or as an
  *  API rejection mid-conversation — discovered at boot instead. */
-function validateOrganization(
-  o: Partial<OrgConfig["organization"]>,
-  path: string,
-): void {
-  if (o.effort != null && !(EFFORTS as readonly string[]).includes(o.effort)) {
-    throw new Error(`${path}: unknown effort "${o.effort}" (one of ${EFFORTS.join(", ")})`);
+function validateAgent(a: Partial<OrgConfig["agent"]>, path: string): void {
+  if (a.effort != null && !(EFFORTS as readonly string[]).includes(a.effort)) {
+    throw new Error(`${path}: unknown effort "${a.effort}" (one of ${EFFORTS.join(", ")})`);
   }
-  if (o.timezone != null) {
+  if (a.timezone != null) {
     try {
-      new Intl.DateTimeFormat("en-US", { timeZone: o.timezone });
+      new Intl.DateTimeFormat("en-US", { timeZone: a.timezone });
     } catch {
-      throw new Error(`${path}: unknown timezone "${o.timezone}" (IANA name expected)`);
+      throw new Error(`${path}: unknown timezone "${a.timezone}" (IANA name expected)`);
     }
   }
-  if (o.backlogHours != null && !(o.backlogHours > 0)) {
-    throw new Error(`${path}: backlogHours must be a positive number (got ${o.backlogHours})`);
+  if (a.rules != null) {
+    for (const r of a.rules as unknown[]) {
+      const rule = r as Record<string, unknown>;
+      if (typeof rule !== "object" || rule === null || typeof rule.tool !== "string") {
+        throw new Error(`${path}: a rule needs a "tool" (a name, or *)`);
+      }
+      if ("ask" in rule) {
+        throw new Error(
+          `${path}: rules carry "action" (${ACTIONS.join("|")}) now — ` +
+            `{"tool":"${rule.tool}","ask":${rule.ask}} becomes ` +
+            `{"tool":"${rule.tool}","action":"${rule.ask ? "ask" : "allow"}"}`,
+        );
+      }
+      if (!ACTIONS.includes(rule.action as PolicyAction)) {
+        throw new Error(
+          `${path}: rule "${rule.tool}": unknown action "${rule.action}" ` +
+            `(one of ${ACTIONS.join(", ")})`,
+        );
+      }
+      for (const key of Object.keys(rule)) {
+        if (!["tool", "action", "service", "connection", "conversation"].includes(key)) {
+          throw new Error(`${path}: rule "${rule.tool}": unknown field "${key}"`);
+        }
+      }
+    }
+  }
+  if (a.quietHours != null && !/^\d{1,2}-\d{1,2}$/.test(a.quietHours)) {
+    throw new Error(
+      `${path}: quietHours "${a.quietHours}" — an org-clock span like "23-8" expected`,
+    );
+  }
+  for (
+    const [key, v] of [
+      ["engagedMinutes", a.engagedMinutes],
+      ["digestAfterMessages", a.digestAfterMessages],
+      ["digestMinutes", a.digestMinutes],
+      ["digestQuietMinutes", a.digestQuietMinutes],
+    ] as const
+  ) {
+    if (v != null && !(v > 0)) {
+      throw new Error(`${path}: ${key} must be a positive number (got ${v})`);
+    }
   }
 }
 
-/** The catalog moved: config is `.jsonc` with `organization`/`system` sections. */
+/** The catalog moved: config is `.jsonc` with sections. */
 async function rejectLegacy(path: string): Promise<void> {
   try {
     await Deno.lstat(path);
@@ -330,7 +435,7 @@ async function rejectLegacy(path: string): Promise<void> {
     return;
   }
   throw new Error(
-    `${path}: the catalog lives in ${path}c now (sections "organization"/"system", ` +
+    `${path}: the catalog lives in ${path}c now (sections "organization"/"agent"/"system", ` +
       `comments allowed) — move your values there and delete this file`,
   );
 }

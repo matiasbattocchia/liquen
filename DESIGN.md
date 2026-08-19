@@ -138,9 +138,28 @@ decide(window) →
   last turn's `payload.stop_reason` was pause_turn / max_tokens (≤3) → think (CONTINUE it)
   trailing harness `error` (the last event in the window)          → ignore (idle-after-error)
   unclosed chain (all uses resolved, no turn output after)         → think (the closing turn)
-  unanswered (non-self msgs beyond the last closing's CONSUMED horizon) → think
+  unanswered news (non-self msgs beyond the last closing's CONSUMED horizon), CLASSED:
+    a summons — home, a DM, a reply to the agent, its name said    → think (never waits)
+    an engaged conversation — its own last word there is recent    → think (you don't drop
+                                                                     out mid-conversation)
+    ambient, and a pile is due (deep enough, or old enough)        → think (the digest)
   else                                                             → ignore (quiescence)
 ```
+
+**Attention**: not every message is worth a model turn — an agent sitting in busy group
+channels would otherwise spend a turn per line. The unanswered news is classed per
+conversation. A **summons** (the principal's channel, a direct message, a reply to
+something the agent said, its name spoken as a word) wakes immediately. An **engaged**
+conversation — the agent's own last message in it is younger than `engagedMinutes`; every
+reply refreshes the clock (ping-pong), silence lets it decay — wakes immediately too.
+Everything else is **ambient** and waits for the digest: a conversation's pile wakes the
+agent when it reaches `digestAfterMessages`, or when its oldest news has waited out
+`digestMinutes` (`digestQuietMinutes` while the org clock sits inside `quietHours`,
+"23-8"-style, null ⇒ never). Deferring costs nothing and loses nothing: the news stays
+owed in the log, and main's **tick** (`tickMs`) — the clock as a poke source, a
+trigger-less invoke on a metronome — re-asks the same question until it comes due. All
+knobs live in the catalog's `agent` section (§9), per-agent overridable; the whole policy
+stays a pure derivation over one window, so a DB-tier `decide` can say the same thing.
 
 `relevant` — authorship and class only, never payloads — and never visibility: the trigger
 arrives through the agent's scoped subscription, already readable (§6).
@@ -375,6 +394,9 @@ off a still-held lease (fixed: `publishAndRelease`, §2). Mitigations, in order 
 one transaction for the turn's end, result-in-`finally`, the TTL steal-sweep, and — underneath
 all of them — a **periodic poke** as the liveness floor. Any poke does whatever the log owes, so a heartbeat
 makes every lost wake self-healing; that is the scheduler's first job, not its last (§10).
+main's **tick** (`system.tickMs`, §2 attention) is that heartbeat, live: a trigger-less
+invoke per agent on a metronome — it re-asks the digest question AND floors liveness,
+one peripheral for both.
 
 ## 3. Event schema
 
@@ -1919,16 +1941,23 @@ exists (auto-created on first run), principal name = agent name and **no identit
 needed** — and when they share user/pass, user and agent are one (the vision line). Later:
 N:M principals↔agents, and autonomous agents (no one holds the pass but the agent).
 **The same framework way extends to settings — the catalog** (`src/config.ts`): every
-harness knob, its default, one file exposing them all. `org/config.jsonc` carries two
-sections, split by AUDIENCE — `organization` (globals any agent is likely to customize:
-model · effort · maxTokens · provider · timezone · locale · backlogHours · rules) and
-`system` (harness machinery: stopTimeoutMs · lockTtlMs · retryDelaysMs · compactAt ·
-keepRecent · windowLimit · mirrorSettleMs · mirrorClaimMs) — while the VALUE still funnels
-to the deepest function that needs it (main → xi → nu → mu; `timezone` reads as org
-identity but lands in nu's render). `agents/<name>/config.jsonc` is sparse: the same
-`organization` keys overridden key by key, plus `identity` (`email`/`phone`, the handles a
-human knows the principal by); at start the declaration MIRRORS into the registry's
-columns exactly as folders mirror into `agents`. Resolution, most specific wins: agent
+harness knob, its default, one file exposing them all. `org/config.jsonc` carries three
+sections, split by AUDIENCE — `organization` (org-wide facts, set there and nowhere else:
+backlogHours), `agent` (every agent's defaults, the section an agent's own file
+re-declares: model · effort · maxTokens · provider · timezone · locale · rules · the
+attention knobs) and `system` (harness machinery: stopTimeoutMs · lockTtlMs ·
+retryDelaysMs · compactAt · keepRecent · windowLimit · mirrorSettleMs · mirrorClaimMs ·
+tickMs) — while the VALUE still funnels to the deepest function that needs it
+(main → xi → nu → mu; `timezone` reads as org identity but lands in nu's render).
+`agents/<name>/config.jsonc` is sparse: an `agent` section carrying only the keys it
+overrides, plus `identity` (`email`/`phone`, the handles a human knows the principal by);
+at start the declaration MIRRORS into the registry's columns exactly as folders mirror
+into `agents`. `rules` is the permission policy as data (§2): ordered rows
+`{tool, action: allow|ask|deny, service?, connection?, conversation?}` — first match
+decides, `*` matches any tool, and the scope fields pin a rule to where a `send` lands
+(xi resolves the destination's envelope before ruling), so "WhatsApp asks, Slack flows,
+#general is blocked" is three rows, most specific first. A standing verdict (`/always`,
+`/never`) will write into this same shape. Resolution, most specific wins: agent
 file → MainConfig (the process: tests) → org file → the catalog's constants. The org file
 always exposes the WHOLE catalog: absent, it is materialized from the constants; when the
 catalog grows, the missing keys are appended (your values survive — the comments are the

@@ -38,13 +38,23 @@ import type {
   PermissionRequestEvent,
   PermissionResponseEvent,
   PermissionVerdict,
+  PolicyAction,
   Rule,
   Session,
   ToolCall,
   ToolResultEvent,
   ToolUseEvent,
 } from "./types.ts";
-import { DEFAULT_RULES, DEFAULT_WINDOW_LIMIT } from "./config.ts";
+import {
+  DEFAULT_DIGEST_AFTER_MESSAGES,
+  DEFAULT_DIGEST_MINUTES,
+  DEFAULT_DIGEST_QUIET_MINUTES,
+  DEFAULT_ENGAGED_MINUTES,
+  DEFAULT_QUIET_HOURS,
+  DEFAULT_RULES,
+  DEFAULT_TIMEZONE,
+  DEFAULT_WINDOW_LIMIT,
+} from "./config.ts";
 import { type Describe, describeCall, type Resolve } from "./describe.ts";
 import type { Appender, Reader } from "./store/log.ts";
 import type { Registry } from "./store/agents.ts";
@@ -63,20 +73,60 @@ import { type ModelTransport, nu, type TurnConfig } from "./nu.ts";
  *  the next move is a human's, or we just failed. */
 export type Decision = "think" | "act" | "ignore";
 
-/** Policy, per CALL — the name and the arguments both, so a rule can be conditional (§9). */
-export type Gate = (name: string, input: Json) => boolean;
+/** Policy, per CALL — the name, the arguments, and where the call LANDS (§9): a dispatching
+ *  tool carries a target, and that is what a scoped rule matches on. */
+export type Gate = (name: string, input: Json, target?: Target) => PolicyAction;
+
+/** Where a call lands (§9): send's resolved destination, the fields a scoped rule names. */
+export interface Target {
+  service?: string;
+  connection?: string;
+  conversation?: string;
+}
 
 /** The default table (`config.ts` catalog, org/agent-overridable) — and it IS a table, not
  *  a branch: there are no special tools. `bash` runs unasked because a rule says so, and
- *  `send` asks because dispatch leaves the org and speaks in the principal's name. A
- *  standing verdict (`/always`, `/never`) will write into this same shape. */
+ *  `send` asks because dispatch leaves the org and speaks in the principal's name. First
+ *  match decides, so specifics go first: `deny #general` above `allow slack` above
+ *  `ask send`. A standing verdict (`/always`, `/never`) will write into this same shape. */
 export function gateOf(rules: Rule[] = DEFAULT_RULES): Gate {
-  return (name) => rules.find((r) => r.tool === name || r.tool === "*")?.ask ?? false;
+  return (name, _input, target) =>
+    rules.find((r) => (r.tool === name || r.tool === "*") && inScope(r, target))?.action ??
+      "allow";
+}
+
+/** A rule's scope fields must ALL hold on the call's target; a scopeless rule holds on any
+ *  call. A call with no target (bash) matches only scopeless rules — a rule that names a
+ *  place never leaks onto tools that go nowhere. */
+function inScope(r: Rule, t?: Target): boolean {
+  const keys = (["service", "connection", "conversation"] as const)
+    .filter((k) => r[k] !== undefined);
+  if (keys.length === 0) return true;
+  return t !== undefined && keys.every((k) => r[k] === t[k]);
+}
+
+/** The slice of AgentConfig the wake policy reads (§2 attention) — its own type so tests
+ *  and future callers state exactly what deciding takes. Unset knobs are the catalog's. */
+export interface Wake {
+  home: string;
+  agentId: string;
+  timezone?: string;
+  engagedMinutes?: number;
+  digestAfterMessages?: number;
+  digestMinutes?: number;
+  digestQuietMinutes?: number;
+  /** Org-clock span "23-8" for the quiet interval; null ⇒ never quiet; unset ⇒ catalog. */
+  quietHours?: string | null;
 }
 
 /** Decide — once, from one window — what is owed. Position-aware, so a late invocation that
  *  arrives after the work was already done decides `ignore` (quiescence). */
-export function decide(events: Event[], session: Session, home: string): Decision {
+export function decide(
+  events: Event[],
+  session: Session,
+  wake: Wake,
+  now: number = Date.now(),
+): Decision {
   // A gate never wedges the mind. Every use gets an answer in the turn it was made — a
   // gated one gets `pending_approval` — so the chain always closes and the conversation
   // continues while the principal decides. (Before that it did not: a turn taken with our
@@ -87,8 +137,98 @@ export function decide(events: Event[], session: Session, home: string): Decisio
   if (owedOf(events, session).length > 0) return "act";
   if (cutOff(events)) return "think"; // a paced/truncated turn CONTINUES
   if (justFailed(events)) return "ignore"; // idle-after-error
-  if (unclosedChain(events, session, home) || unanswered(events, session, home)) return "think";
+  if (unclosedChain(events, session, wake.home)) return "think";
+  return attention(events, session, wake, now);
+}
+
+/* ── attention (§2): three wake classes over the unanswered news ────────── */
+
+/**
+ * Not every message is worth a model turn. The unanswered news is CLASSED, per
+ * conversation: a SUMMONS — the principal's channel, a DM, a reply to the agent, its name
+ * said out loud — wakes now. An ENGAGED conversation (the agent's own last word in it is
+ * recent — ping-pong keeps refreshing it) wakes now: you don't drop out of a conversation
+ * you are in. Everything else is AMBIENT and waits for the digest: a pile deep enough, or
+ * news old enough for the interval — the quiet one when the org sleeps. Deferring costs
+ * nothing and loses nothing: the news stays owed in the log, and the clock poke (main's
+ * tick) re-asks this same question until it is due.
+ */
+function attention(events: Event[], session: Session, wake: Wake, now: number): Decision {
+  const news = newsOf(events, session, wake.home);
+  if (news.length === 0) return "ignore";
+  if (news.some((e) => summons(e, events, session, wake))) return "think";
+  const piles = new Map<string, MessageEvent[]>();
+  for (const e of news) {
+    const conv = e.envelope.conversation.address;
+    piles.set(conv, [...(piles.get(conv) ?? []), e]);
+  }
+  for (const [conv, pile] of piles) {
+    if (engaged(conv, events, session, wake, now)) return "think";
+    if (digestDue(pile, wake, now)) return "think";
+  }
   return "ignore";
+}
+
+/** Addressed to the agent — the class that never waits. */
+function summons(e: MessageEvent, events: Event[], session: Session, wake: Wake): boolean {
+  const conv = e.envelope.conversation;
+  if (conv.address === wake.home) return true; // the principal's channel IS the mind
+  if (conv.kind === "direct" || conv.address.startsWith("dm:")) return true; // a DM is a hail
+  const ref = e.payload?.ref_id; // a reply to something the agent said
+  if (ref && events.some((x) => x.id === ref && ownVoice(x, session.id))) return true;
+  return mention(wake.agentId).test(textOf(e)); // its name, said out loud
+}
+
+/** The agent's name as a WORD — `@ana` or `ana`, never the middle of `banana`. */
+function mention(id: string): RegExp {
+  const literal = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\p{L}\\p{N}])@?${literal}([^\\p{L}\\p{N}]|$)`, "iu");
+}
+
+/** The agent's own last word in the conversation is recent ⇒ it is IN that conversation.
+ *  Every reply refreshes the clock (the ping-pong extension); silence lets it decay. */
+function engaged(
+  conversation: string,
+  events: Event[],
+  session: Session,
+  wake: Wake,
+  now: number,
+): boolean {
+  const minutes = wake.engagedMinutes ?? DEFAULT_ENGAGED_MINUTES;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (
+      e.type === "message" && ownVoice(e, session.id) &&
+      e.envelope.conversation.address === conversation
+    ) return now - Date.parse(e.ts) < minutes * 60_000;
+  }
+  return false;
+}
+
+/** An ambient pile is due when it is deep enough, or its oldest news has waited out the
+ *  interval — the quiet one while the org's clock is inside `quietHours`. */
+function digestDue(pile: MessageEvent[], wake: Wake, now: number): boolean {
+  if (pile.length >= (wake.digestAfterMessages ?? DEFAULT_DIGEST_AFTER_MESSAGES)) return true;
+  const minutes = quietNow(now, wake)
+    ? (wake.digestQuietMinutes ?? DEFAULT_DIGEST_QUIET_MINUTES)
+    : (wake.digestMinutes ?? DEFAULT_DIGEST_MINUTES);
+  return now - Date.parse(pile[0].ts) >= minutes * 60_000;
+}
+
+/** Is the org's clock inside the quiet span? "23-8" wraps midnight; null ⇒ never quiet. */
+function quietNow(now: number, wake: Wake): boolean {
+  const span = wake.quietHours === undefined ? DEFAULT_QUIET_HOURS : wake.quietHours;
+  const m = span === null ? null : /^(\d{1,2})-(\d{1,2})$/.exec(span);
+  if (!m) return false;
+  const [from, to] = [Number(m[1]), Number(m[2])];
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: wake.timezone ?? DEFAULT_TIMEZONE,
+      hour: "numeric",
+      hourCycle: "h23",
+    }).format(now),
+  );
+  return from <= to ? hour >= from && hour < to : hour >= from || hour < to;
 }
 
 /** Max consecutive `max_tokens` continuations — bounds a runaway generation (§2). */
@@ -342,16 +482,18 @@ function harness(error: string, homeEnv: Envelope): Draft<ErrorEvent> {
   };
 }
 
-/** Non-self messages our last home message's step did NOT consume ⇒ an answer is owed.
+/** Non-self messages our last home message's step did NOT consume — the answer owed.
  *  Measured against the closing's `meta.consumed` horizon (what its window actually held),
  *  not log position — a message landing between the window-read and the closing's publish
  *  sits BEFORE the closing in the log yet was never seen (the live-bench coalescing race).
- *  Position is the fallback for messages without a horizon (pre-horizon logs). */
-function unanswered(events: Event[], session: Session, home: string): boolean {
+ *  Position is the fallback for messages without a horizon (pre-horizon logs). Returns the
+ *  news itself: attention classes it (§2) rather than waking on its mere existence. */
+function newsOf(events: Event[], session: Session, home: string): MessageEvent[] {
   // news = a message our side didn't produce (§3 ownVoice) — which now includes the
   // principal's rows: they carry agent.id (and, typed into the session, session_id),
   // but input never carries a turn_id, so it stays answerable
-  const news = (e: Event) => e.type === "message" && !ownVoice(e, session.id) && !backfilled(e);
+  const news = (e: Event): e is MessageEvent =>
+    e.type === "message" && !ownVoice(e, session.id) && !backfilled(e);
   let last = -1;
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
@@ -360,12 +502,12 @@ function unanswered(events: Event[], session: Session, home: string): boolean {
       e.envelope.conversation.address === home
     ) last = i;
   }
-  if (last === -1) return events.some(news);
+  if (last === -1) return events.filter(news);
   // resolve the horizon to a POSITION — the window may be re-sorted for display (§5)
   const horizon = events[last].extra?.consumed;
   const h = typeof horizon === "string" ? events.findIndex((e) => e.id === horizon) : -1;
   const from = h !== -1 ? h : last; // no/stale horizon → fall back to the closing's position
-  return events.slice(from + 1).some(news);
+  return events.slice(from + 1).filter(news);
 }
 
 /** All our uses have results but no turn output followed ⇒ the closing think is owed.
@@ -392,7 +534,9 @@ function unclosedChain(events: Event[], session: Session, home: string): boolean
 
 /* ── the invocation ───────────────────────────────────────────────────── */
 
-export interface AgentConfig extends TurnConfig {
+/** Turn input + the wake policy (`Wake`, §2 attention) + the permission table (§9) —
+ *  main funnels every field from the catalog (org/agent config, config.ts). */
+export interface AgentConfig extends TurnConfig, Wake {
   /** Permission policy as DATA (§9) — the table `gate` is compiled from; main funnels it
    *  from org/agent config. Unset ⇒ the catalog's `DEFAULT_RULES`. */
   rules?: Rule[];
@@ -489,7 +633,7 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
     const settled = await ports.log.publish(answer);
     if (settled) events.push(settled);
   }
-  const v = decide(events, session, config.home);
+  const v = decide(events, session, config);
   if (v === "ignore") {
     await lock.release();
     return;
@@ -652,7 +796,16 @@ async function act(
   for (const use of pending) {
     const { name, input } = use.parts[0].data;
     const verdict = verdictOf(events, use.id);
-    if (!verdict && gate(name, input)) {
+    // the ruling (§9): where a send lands is part of the call, so the table can scope by
+    // it. A verdict already given supersedes the table — the principal outranks policy.
+    const ruling = verdict ? undefined : gate(name, input, await targetOf(use, self, ports));
+    if (ruling === "deny") {
+      out.push(resultOf(use, "refused by policy — a standing rule denies this call", {
+        is_error: true,
+      }));
+      continue;
+    }
+    if (ruling === "ask") {
       // the card goes to the principal-DM and crosses to their surfaces (mirror, §4);
       // a card already up is not asked twice — this use is simply being answered late
       if (!events.some((e) => e.type === "permission_request" && e.payload?.ref_id === use.id)) {
@@ -732,6 +885,31 @@ const PENDING_APPROVAL = {
   note: "your principal was asked and has not answered yet — the call is still queued. " +
     "Do NOT issue it again; you will be told the outcome when they decide.",
 };
+
+/** Where a send LANDS (§9): the destination's own envelope — the same anchoring read and
+ *  peer-name canonicalization `execute` does, so a scoped rule matches the conversation
+ *  the log will record. Tools that dispatch nowhere have no target. */
+async function targetOf(
+  use: ToolUseEvent,
+  self: { id: string },
+  ports: XiPorts,
+): Promise<Target | undefined> {
+  const { name, input } = use.parts[0].data;
+  if (name !== "send") return undefined;
+  const raw = (input as { to?: unknown } | null)?.to;
+  if (typeof raw !== "string" || raw === "") return undefined;
+  let to = raw;
+  const peer = ports.log.agents().find((a) => a.agentId === to);
+  if (peer && peer.agentId !== self.id) to = `dm:${[self.id, peer.agentId].sort().join(":")}`;
+  const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
+  return prior
+    ? {
+      service: prior.envelope.service,
+      connection: prior.envelope.connection_address,
+      conversation: to,
+    }
+    : { conversation: to };
+}
 
 /** Tool-supplied renderings, by name (§9) — the built-ins' live in `describe.ts`. */
 function describersOf(ports: XiPorts): Record<string, Describe> {

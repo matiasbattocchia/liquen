@@ -68,7 +68,7 @@ function invariants(events: Event[]): string | null {
   );
   const orphan = events.find((e) => e.type === "tool_use" && !answered.has(e.id));
   if (orphan) return `unanswered tool_use ${orphan.id}`;
-  if (decide(events, SESSION, HOME) !== "ignore") {
+  if (decide(events, SESSION, { home: HOME, agentId: SESSION.agentId }) !== "ignore") {
     return "not quiescent (work still owed)";
   }
   const err = events.find((e) => e.type === "error");
@@ -267,7 +267,7 @@ const TASKS: Task[] = [
 
 async function runTask(task: Task): Promise<{ note: string | null; ms: number; steps: number }> {
   const dir = await Deno.makeTempDir({ prefix: "mu-bench-" });
-  const gate: Gate = task.gated ? (name) => name === "send" : () => false;
+  const gate: Gate = task.gated ? (name) => (name === "send" ? "ask" : "allow") : () => "allow";
   const config: AgentConfig = {
     agentId: SESSION.agentId,
     sessionId: SESSION.id,
@@ -292,7 +292,9 @@ async function runTask(task: Task): Promise<{ note: string | null; ms: number; s
         const events = await main.log.read();
         const last = events.at(-1);
         const still = last ? Date.now() - Date.parse(last.ts) > 2_500 : false;
-        if (still && decide(events, SESSION, HOME) === "ignore") return events;
+        if (
+          still && decide(events, SESSION, { home: HOME, agentId: SESSION.agentId }) === "ignore"
+        ) return events;
         await new Promise((r) => setTimeout(r, 500));
       }
       throw new Error(`quiesce timeout (${timeoutMs / 1000}s)`);

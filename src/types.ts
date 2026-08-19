@@ -46,10 +46,19 @@ export type JsonSchema = { [key: string]: Json };
 /** Adaptive-thinking effort — the model manages its own reasoning budget (§2). */
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
-/** One permission rule (§9): the first whose `tool` matches decides. `*` matches anything. */
+/** A policy verdict (§9): run the call, ask the principal, or refuse it outright. */
+export type PolicyAction = "allow" | "ask" | "deny";
+
+/** One permission rule (§9): the first match decides. `tool` is a name or `*`. The scope
+ *  fields narrow a rule to WHERE a call lands (a dispatching tool's target): every field
+ *  given must equal the target's, and a call with no target only matches scopeless rules —
+ *  so `whatsapp: ask, slack: allow, #general: deny` is three rows, most specific first. */
 export interface Rule {
   tool: string;
-  ask: boolean;
+  action: PolicyAction;
+  service?: string;
+  connection?: string;
+  conversation?: string;
 }
 
 /* ─────────────────────────────── parts ──────────────────────────────── */

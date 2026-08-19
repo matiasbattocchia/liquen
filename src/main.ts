@@ -36,6 +36,7 @@ import { installExecPlane } from "./exec/bash.ts";
 import type { Emit, Event } from "./types.ts";
 import {
   DEFAULT_STOP_TIMEOUT_MS,
+  DEFAULT_TICK_MS,
   ensureOrgConfig,
   type OrgConfig,
   readAgentOverrides,
@@ -66,6 +67,7 @@ export interface MainConfig {
   lockTtlMs?: number;
   seed?: boolean; // install the doc cascade at boot (default true; task mode skips it)
   stopTimeoutMs?: number; // cap on how long stop() waits for an in-flight turn (default 5s)
+  tickMs?: number; // the clock poke (§2 attention): the digest's metronome (default 60s)
 }
 
 export interface Main {
@@ -157,10 +159,20 @@ export async function start(
   const unsubs = agents.map((a) => a.log.subscribe(invoke(a)));
   for (const a of agents) invoke(a)(); // boot: no trigger ⇒ look at whatever the log owes
 
+  // the clock poke (§2 attention): deferred ambient news needs someone to re-ask once the
+  // digest comes due, and the log cannot wake on time passing — so the clock is a poke
+  // source like the log, a trigger-less invoke on a metronome. Cheap: decide() re-reads
+  // one window and mostly answers `ignore`.
+  const ticker = setInterval(
+    () => agents.forEach((a) => invoke(a)()),
+    config.tickMs ?? org?.system.tickMs ?? DEFAULT_TICK_MS,
+  );
+
   return {
     log,
     async stop() {
       stopped = true;
+      clearInterval(ticker);
       for (const unsub of unsubs) unsub();
       // Bound the settle. A turn wedged on a hung model connection (e.g. a network
       // outage during shutdown) must not block teardown forever — the exec-plane reap
@@ -206,26 +218,33 @@ async function scanAgents(
   for await (const entry of Deno.readDir(`${dir}/agents`)) {
     if (!entry.isDirectory) continue;
     const overrides = await readAgentOverrides(dir, entry.name);
-    const cfg = overrides.organization ?? {};
+    const cfg = overrides.agent ?? {};
     const identity = overrides.identity ?? {};
     found.push({
       agentId: entry.name,
       sessionId: entry.name,
       home: `mind:${entry.name}`,
-      model: cfg.model ?? defaults.model ?? org.organization.model,
-      effort: cfg.effort ?? defaults.effort ?? org.organization.effort ?? undefined,
-      maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.organization.maxTokens,
-      rules: cfg.rules ?? org.organization.rules,
+      model: cfg.model ?? defaults.model ?? org.agent.model,
+      effort: cfg.effort ?? defaults.effort ?? org.agent.effort ?? undefined,
+      maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.agent.maxTokens,
+      rules: cfg.rules ?? org.agent.rules,
       since,
-      timezone: (cfg.timezone ?? org.organization.timezone) || undefined,
-      locale: cfg.locale ?? org.organization.locale ?? undefined,
+      timezone: (cfg.timezone ?? org.agent.timezone) || undefined,
+      locale: cfg.locale ?? org.agent.locale ?? undefined,
+      // attention (§2): the wake policy is the agent's — hot, summoned, or on the digest
+      engagedMinutes: cfg.engagedMinutes ?? org.agent.engagedMinutes,
+      digestAfterMessages: cfg.digestAfterMessages ?? org.agent.digestAfterMessages,
+      digestMinutes: cfg.digestMinutes ?? org.agent.digestMinutes,
+      digestQuietMinutes: cfg.digestQuietMinutes ?? org.agent.digestQuietMinutes,
+      // null survives the funnel: it means "never quiet", not "unset" (Wake, §2)
+      quietHours: cfg.quietHours !== undefined ? cfg.quietHours : org.agent.quietHours,
       // the system half funnels too — org-wide, no per-agent seat (harness machinery)
       lockTtlMs: defaults.lockTtlMs ?? org.system.lockTtlMs,
       windowLimit: org.system.windowLimit,
       retryDelaysMs: org.system.retryDelaysMs,
       compactAt: org.system.compactAt,
       keepRecent: org.system.keepRecent,
-      provider: cfg.provider ?? org.organization.provider ?? undefined,
+      provider: cfg.provider ?? org.agent.provider ?? undefined,
       email: identity.email,
       phone: identity.phone,
     });

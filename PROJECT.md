@@ -631,14 +631,15 @@ mirror's settle/claim), and purely hardcoded. One discipline replaces all three
   the whole catalog: materialized when absent, healed when the catalog grows (missing keys
   appended, your values survive), loud on unknown keys and malformed values. Seed and code
   share the constants, so they cannot drift.
-- **Sections by audience, funnel by depth**: `organization` holds what any agent
-  customizes, `system` holds harness machinery — but each value funnels to the deepest
-  function that needs it (`timezone` reads as org identity, lands in nu's render). Agent
-  files are sparse: `organization` overrides key by key, plus `identity` (email/phone).
+- **Sections by audience, funnel by depth**: `organization` holds org-wide facts,
+  `agent` holds every agent's defaults (the section an agent's own file re-declares),
+  `system` holds harness machinery — but each value funnels to the deepest function that
+  needs it (`timezone` reads as org identity, lands in nu's render). Agent files are
+  sparse: an `agent` section overriding key by key, plus `identity` (email/phone).
   Precedence: agent file → MainConfig (tests) → org file → constant.
 - **100% parametrized functions**: `start`/`xi`/`nu`/`mu` never read env; mu gained
   argument defaults (`maxTokens`, `tools: []`) — purity means no reads, not no defaults.
-  Rules (the permission table) joined the catalog under `organization.rules`, closing the
+  Rules (the permission table) joined the catalog under `agent.rules`, closing the
   "only reading the table from org/agent config is left" gap above.
 - **Env shrank to secrets plus one pointer**: `ANTHROPIC_API_KEY`, and `MU_DIR` only for
   standalone connector processes (their launch contract, until the supervisor owns it).
@@ -652,6 +653,29 @@ mirror's settle/claim), and purely hardcoded. One discipline replaces all three
   per box).
 - Next chore, sequenced after this one: `rules?`/`gate?` move from `AgentConfig` to
   `XiPorts` — then config carries only values and ports carry only capabilities.
+
+### Policies + attention (2026-08-19) — LANDED, same day
+
+Two follow-ups on the catalog, both live (DESIGN §2 "Attention", §9):
+
+- **The org file grew a third section**: `organization` (org-wide facts) / `agent` (every
+  agent's defaults) / `system` — so an agent's config.jsonc reads as what it is:
+  `{"agent": {…}, "identity": {…}}`, the same section re-declared, never "organization"
+  inside an agent.
+- **Rules became policies**: `{tool, action: allow|ask|deny, service?, connection?,
+  conversation?}` — first match decides, scope fields pin a rule to where a `send` lands
+  (xi resolves the destination's envelope, with the peer-DM canonicalization, before
+  ruling). "WhatsApp asks, Slack flows, #general is blocked" is three rows. `deny` answers
+  the call as a refused tool_result without asking anyone. The table lives in
+  `agent.rules`; a standing verdict (`/always`, `/never`) will write into this shape.
+- **Attention**: `decide`'s unanswered-news rule classes per conversation — summons
+  (home, DM, reply-to-agent, name-as-word) and engaged (own last word younger than
+  `engagedMinutes`, ping-pong refreshes) wake now; ambient piles wait for the digest
+  (`digestAfterMessages` deep, or `digestMinutes`/`digestQuietMinutes` old, quiet inside
+  `quietHours` on the org clock). main's tick (`system.tickMs`) is the metronome that
+  re-asks — and doubles as the liveness heartbeat §2 always wanted. All knobs in the
+  catalog's `agent` section; the policy stays a pure window derivation (DB-tier ready).
+- Live org: model `claude-sonnet-5` org-wide; `agents/matias` keeps only `effort: low`.
 
 11. **Background completion** — early-return for long tools generally; `escalation` as its
     first instance. The gate already walks this path (ask → `pending_approval` → a deferred

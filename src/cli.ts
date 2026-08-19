@@ -46,8 +46,8 @@ const session = target; // session_id ≈ agent id in v0 (§7)
 const home = `mind:${target}`; // the home IS the mind session (§4): steer where the tools live
 // resolved here in scanAgents' OWN order (agent file → org catalog) so the banner names
 // the model that will actually run: the agent's own config.jsonc outranks the org's
-const model = (await readAgentOverrides(dir, target)).organization?.model ??
-  (await ensureOrgConfig(dir)).organization.model;
+const model = (await readAgentOverrides(dir, target)).agent?.model ??
+  (await ensureOrgConfig(dir)).agent.model;
 
 // the framework way: running IS scaffolding — a blank org bootstraps your alter-ego
 await Deno.mkdir(`${dir}/agents/${target}`, { recursive: true });

@@ -84,7 +84,7 @@ async function runTask(instruction: string): Promise<number> {
     // longer than MU_TASK_TIMEOUT_S — so it can never finish. 32k keeps worst-case turns
     // interruptible between iterations; xi's max_tokens continuation covers larger outputs.
     maxTokens: Number(Deno.env.get("MU_MAX_TOKENS") ?? 32_000),
-    gate: () => false,
+    gate: () => "allow",
   };
   const session = { id: agent.sessionId, agentId: agent.agentId };
 
@@ -123,7 +123,7 @@ async function runTask(instruction: string): Promise<number> {
       // an API outage) — poke it awake with an alarm; bounded so a hard failure still ends
       if (
         still && age > 45_000 && repokes < 5 &&
-        decide(events, session, agent.home) !== "ignore"
+        decide(events, session, agent) !== "ignore"
       ) {
         repokes++;
         await main.log.publish({
@@ -139,7 +139,7 @@ async function runTask(instruction: string): Promise<number> {
         await new Promise((r) => setTimeout(r, 2_000));
         continue;
       }
-      if (still && decide(events, session, agent.home) === "ignore") {
+      if (still && decide(events, session, agent) === "ignore") {
         const closing = events.filter((e): e is MessageEvent =>
           e.type === "message" && e.agent?.session_id === session.id &&
           e.envelope.conversation.address === agent.home

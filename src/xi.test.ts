@@ -1,9 +1,10 @@
 import { assertEquals } from "@std/assert";
-import { type AgentConfig, decide, gateOf, relevant } from "./xi.ts";
+import { type AgentConfig, decide, gateOf, relevant, type Wake } from "./xi.ts";
 import type { Envelope, Event, Session } from "./types.ts";
 
 const SESSION: Session = { id: "s1", agentId: "a1" };
 const HOME = "home";
+const WAKE: Wake = { home: HOME, agentId: "a1" };
 
 const env = (conversation: string): Envelope => ({
   service: "local",
@@ -47,21 +48,36 @@ const result = (refId: string) =>
 
 Deno.test("gateOf: the default asks for send and for nothing else — bash by rule, not by name", () => {
   const gate = gateOf();
-  assertEquals(gate("send", {}), true);
-  assertEquals(gate("bash", { command: "rm -rf /" }), false);
-  assertEquals(gate("anything-an-mcp-server-brought", {}), false);
+  assertEquals(gate("send", {}), "ask");
+  assertEquals(gate("bash", { command: "rm -rf /" }), "allow");
+  assertEquals(gate("anything-an-mcp-server-brought", {}), "allow");
   // an org that wants the opposite writes the opposite — no code knows a tool's name
-  const strict = gateOf([{ tool: "search", ask: false }, { tool: "*", ask: true }]);
-  assertEquals(strict("search", {}), false);
-  assertEquals(strict("bash", {}), true);
+  const strict = gateOf([{ tool: "search", action: "allow" }, { tool: "*", action: "ask" }]);
+  assertEquals(strict("search", {}), "allow");
+  assertEquals(strict("bash", {}), "ask");
+});
+
+Deno.test("gateOf: scoped rules — where a send lands decides, most specific first (§9)", () => {
+  const gate = gateOf([
+    { tool: "send", action: "deny", service: "slack", conversation: "C042" },
+    { tool: "send", action: "allow", service: "slack" },
+    { tool: "send", action: "ask" },
+    { tool: "*", action: "allow" },
+  ]);
+  assertEquals(gate("send", {}, { service: "slack", conversation: "C042" }), "deny");
+  assertEquals(gate("send", {}, { service: "slack", conversation: "C099" }), "allow");
+  assertEquals(gate("send", {}, { service: "whatsapp", conversation: "549115550000" }), "ask");
+  assertEquals(gate("send", {}, { conversation: "mind:a1" }), "ask"); // local: the bare rule
+  assertEquals(gate("send", {}), "ask"); // no target ⇒ scoped rules never match
+  assertEquals(gate("bash", {}), "allow"); // a placed rule never leaks onto placeless tools
 });
 
 /* ── owed: the one derivation every poke shares ───────────────────────── */
 
 Deno.test("decide: an unanswered peer message → think; answered → nothing", () => {
-  assertEquals(decide([peerMsg()], SESSION, HOME), "think");
-  assertEquals(decide([peerMsg(), selfMsg()], SESSION, HOME), "ignore");
-  assertEquals(decide([selfMsg(), peerMsg()], SESSION, HOME), "think"); // a new one after
+  assertEquals(decide([peerMsg()], SESSION, WAKE), "think");
+  assertEquals(decide([peerMsg(), selfMsg()], SESSION, WAKE), "ignore");
+  assertEquals(decide([selfMsg(), peerMsg()], SESSION, WAKE), "think"); // a new one after
 });
 
 Deno.test("decide: the principal's stamped line is INPUT — agent + session, no turn_id (§3)", () => {
@@ -72,26 +88,26 @@ Deno.test("decide: the principal's stamped line is INPUT — agent + session, no
       agent: { id: "a1", session_id: "s1" },
       envelope: { ...env(HOME), sender: { address: "matias", name: "matias" } },
     } as Partial<Event>);
-  assertEquals(decide([principal()], SESSION, HOME), "think");
-  assertEquals(decide([principal(), selfMsg()], SESSION, HOME), "ignore");
-  assertEquals(decide([selfMsg(), principal()], SESSION, HOME), "think");
+  assertEquals(decide([principal()], SESSION, WAKE), "think");
+  assertEquals(decide([principal(), selfMsg()], SESSION, WAKE), "ignore");
+  assertEquals(decide([selfMsg(), principal()], SESSION, WAKE), "think");
 });
 
 Deno.test("decide: a directed peer send is not a closing — the answer is still owed", () => {
-  assertEquals(decide([peerMsg(), selfMsg("wa:x")], SESSION, HOME), "think");
+  assertEquals(decide([peerMsg(), selfMsg("wa:x")], SESSION, WAKE), "think");
 });
 
 Deno.test("decide: pending uses → act, whichever event poked", () => {
-  assertEquals(decide([peerMsg(), use("u1")], SESSION, HOME), "act");
+  assertEquals(decide([peerMsg(), use("u1")], SESSION, WAKE), "act");
 });
 
 Deno.test("decide: resolved uses with no turn output after → the closing think is owed", () => {
-  assertEquals(decide([peerMsg(), use("u1"), result("u1")], SESSION, HOME), "think");
+  assertEquals(decide([peerMsg(), use("u1"), result("u1")], SESSION, WAKE), "think");
 });
 
 Deno.test("decide: a closed chain with nothing new → quiescence (a poke that finds nothing)", () => {
   assertEquals(
-    decide([peerMsg(), use("u1"), result("u1"), selfMsg()], SESSION, HOME),
+    decide([peerMsg(), use("u1"), result("u1"), selfMsg()], SESSION, WAKE),
     "ignore",
   );
 });
@@ -110,21 +126,21 @@ Deno.test("decide: an answered ask whose call has not run yet → act (the harne
   } as Partial<Event>);
   // asked but unanswered: the call is closed as far as the transcript goes — the model may
   // think, and what it owes now is whatever the conversation owes
-  assertEquals(decide([peerMsg(), u, req, pending], SESSION, HOME), "think");
+  assertEquals(decide([peerMsg(), u, req, pending], SESSION, WAKE), "think");
   // the verdict lands: the harness runs it and reports back
-  assertEquals(decide([peerMsg(), u, req, pending, resp], SESSION, HOME), "act");
+  assertEquals(decide([peerMsg(), u, req, pending, resp], SESSION, WAKE), "act");
   // …and once it has reported, that ask is done
   const done = ev("tool_result", {
     ...SELF,
     payload: { turn_id: "T1", ref_id: "u1", deferred: true },
   } as Partial<Event>);
-  assertEquals(decide([peerMsg(), u, req, pending, resp, done], SESSION, HOME), "think");
+  assertEquals(decide([peerMsg(), u, req, pending, resp, done], SESSION, WAKE), "think");
 });
 
 Deno.test("decide: a use with no result is always act — asking IS executing", () => {
   // the gate lives inside `act` now, so a use the policy will stop looks like any other:
   // it gets answered this turn, with `pending_approval`. Nothing waits in the transcript.
-  assertEquals(decide([peerMsg(), use("u2")], SESSION, HOME), "act");
+  assertEquals(decide([peerMsg(), use("u2")], SESSION, WAKE), "act");
 });
 
 Deno.test("decide: another session's unresolved uses are not ours", () => {
@@ -133,7 +149,7 @@ Deno.test("decide: another session's unresolved uses are not ours", () => {
     payload: { turn_id: "TX" },
     parts: [{ type: "data", kind: "tool_use", data: { name: "echo", input: {} } }],
   } as Partial<Event>);
-  assertEquals(decide([other], SESSION, HOME), "ignore");
+  assertEquals(decide([other], SESSION, WAKE), "ignore");
 });
 
 /* ── relevant: the free gate over the ONE triggering event ────────────── */
@@ -191,12 +207,12 @@ Deno.test("relevant: a backfilled message never pokes — a pairing sync is not 
 
 Deno.test("decide: backfilled peers are not unanswered — the NEXT live event sees past them", () => {
   // the import alone owes nothing, however much of it lands
-  assertEquals(decide([oldMsg(), oldMsg(), oldMsg()], SESSION, HOME), "ignore");
+  assertEquals(decide([oldMsg(), oldMsg(), oldMsg()], SESSION, WAKE), "ignore");
   // and a later live message is answered on its own terms, not the backlog's
-  assertEquals(decide([oldMsg(), peerMsg()], SESSION, HOME), "think");
-  assertEquals(decide([oldMsg(), peerMsg(), selfMsg()], SESSION, HOME), "ignore");
+  assertEquals(decide([oldMsg(), peerMsg()], SESSION, WAKE), "think");
+  assertEquals(decide([oldMsg(), peerMsg(), selfMsg()], SESSION, WAKE), "ignore");
   // …including after a closing, where the horizon branch does the asking
-  assertEquals(decide([selfMsg(), oldMsg()], SESSION, HOME), "ignore");
+  assertEquals(decide([selfMsg(), oldMsg()], SESSION, WAKE), "ignore");
 });
 
 /* ── idle-after-error: the one policy the event-class filter used to hold ── */
@@ -211,8 +227,8 @@ Deno.test("decide: order-independent — a truncated turn continues, a failed on
   } as Partial<Event>);
   // both are `error` events in trailing position; the STAMP tells them apart, so neither
   // rule depends on being tested first
-  assertEquals(decide([peerMsg(), advisory], SESSION, HOME), "think");
-  assertEquals(decide([peerMsg(), failed], SESSION, HOME), "ignore");
+  assertEquals(decide([peerMsg(), advisory], SESSION, WAKE), "think");
+  assertEquals(decide([peerMsg(), failed], SESSION, WAKE), "ignore");
 });
 
 Deno.test("decide: the max_tokens continuation is bounded — 3 overflows and it stops", () => {
@@ -221,8 +237,8 @@ Deno.test("decide: the max_tokens continuation is bounded — 3 overflows and it
       payload: { stop_reason: "max_tokens" },
       parts: [{ type: "data", kind: "error", data: { error: "cut off" } }],
     } as Partial<Event>);
-  assertEquals(decide([peerMsg(), cut(), cut()], SESSION, HOME), "think");
-  assertEquals(decide([peerMsg(), cut(), cut(), cut()], SESSION, HOME), "ignore"); // capped
+  assertEquals(decide([peerMsg(), cut(), cut()], SESSION, WAKE), "think");
+  assertEquals(decide([peerMsg(), cut(), cut(), cut()], SESSION, WAKE), "ignore"); // capped
 });
 
 Deno.test("decide: a trailing harness error ⇒ nothing owed (idle-after-error, §2)", () => {
@@ -230,12 +246,12 @@ Deno.test("decide: a trailing harness error ⇒ nothing owed (idle-after-error, 
     parts: [{ type: "data", kind: "error", data: { error: "model overloaded" } }],
   } as Partial<Event>);
   // the peer message is still unanswered, so every other derivation says "think" …
-  assertEquals(decide([peerMsg()], SESSION, HOME), "think");
+  assertEquals(decide([peerMsg()], SESSION, WAKE), "think");
   // … but a trailing error means the think just FAILED: publishing it is itself the next
   // trigger, so re-deriving would hot-loop with no backoff. Stay idle.
-  assertEquals(decide([peerMsg(), err], SESSION, HOME), "ignore");
+  assertEquals(decide([peerMsg(), err], SESSION, WAKE), "ignore");
   // the next real event retries — an incoming message lands after the error
-  assertEquals(decide([peerMsg(), err, peerMsg()], SESSION, HOME), "think");
+  assertEquals(decide([peerMsg(), err, peerMsg()], SESSION, WAKE), "think");
 });
 
 Deno.test("decide: a waiting gate never mutes the mind — the principal is still answered", () => {
@@ -254,5 +270,80 @@ Deno.test("decide: a waiting gate never mutes the mind — the principal is stil
     },
     parts: [{ type: "text", kind: "text", text: "y las otras?" }],
   } as Partial<Event>);
-  assertEquals(decide([peerMsg(), use("u1"), req, pending, principal], SESSION, HOME), "think");
+  assertEquals(decide([peerMsg(), use("u1"), req, pending, principal], SESSION, WAKE), "think");
+});
+
+/* ── attention: three wake classes over the unanswered news (§2) ──────── */
+
+const NOON = Date.parse("2026-08-19T12:00:00Z"); // UTC — WAKE carries no timezone
+const at = (minAgo: number, base = NOON) => new Date(base - minAgo * 60_000).toISOString();
+const world = (conv: string, minAgo: number, text = "shipping the report today") =>
+  ev(
+    "message",
+    {
+      conv,
+      ts: at(minAgo),
+      parts: [{ type: "text", kind: "text", text }],
+    } as Partial<Event> & { conv?: string },
+  );
+
+Deno.test("attention: ambient world news defers until the digest interval", () => {
+  assertEquals(decide([world("slack:C1", 1)], SESSION, WAKE, NOON), "ignore"); // fresh: waits
+  assertEquals(decide([world("slack:C1", 6)], SESSION, WAKE, NOON), "think"); // past 5 min
+});
+
+Deno.test("attention: a pile deep enough wakes before the interval does", () => {
+  const pile = Array.from({ length: 20 }, () => world("slack:C1", 0));
+  assertEquals(decide(pile, SESSION, WAKE, NOON), "think");
+  assertEquals(decide(pile.slice(0, 3), SESSION, WAKE, NOON), "ignore");
+});
+
+Deno.test("attention: a summons never waits — home, a DM, a reply to us, our name", () => {
+  assertEquals(decide([world(HOME, 0)], SESSION, WAKE, NOON), "think");
+  assertEquals(decide([world("dm:a1:b2", 0)], SESSION, WAKE, NOON), "think");
+  assertEquals(decide([world("slack:C1", 0, "ping @a1 wdyt?")], SESSION, WAKE, NOON), "think");
+  assertEquals(decide([world("slack:C1", 0, "banana1 talk")], SESSION, WAKE, NOON), "ignore");
+  const mine = selfMsg("slack:C1");
+  const reply = ev(
+    "message",
+    {
+      conv: "slack:C1",
+      ts: at(0),
+      payload: { ref_id: mine.id },
+      parts: [{ type: "text", kind: "text", text: "sure" }],
+    } as Partial<Event> & { conv?: string },
+  );
+  assertEquals(decide([mine, reply], SESSION, WAKE, NOON), "think");
+});
+
+Deno.test("attention: an engaged conversation wakes now — your own last word is recent", () => {
+  const spoke = (minAgo: number) =>
+    ev(
+      "message",
+      {
+        ...SELF,
+        conv: "slack:C1",
+        ts: at(minAgo),
+        payload: { turn_id: "T0" },
+      } as Partial<Event> & { conv?: string },
+    );
+  assertEquals(decide([spoke(3), world("slack:C1", 1)], SESSION, WAKE, NOON), "think");
+  assertEquals(decide([spoke(60), world("slack:C1", 1)], SESSION, WAKE, NOON), "ignore");
+});
+
+Deno.test("attention: quiet hours stretch the digest; null switches quiet off", () => {
+  const night = Date.parse("2026-08-19T03:00:00Z"); // inside the default 23-8 span (UTC)
+  const msg = (base: number) =>
+    // 10 min old, at `base`
+    ev(
+      "message",
+      {
+        conv: "slack:C1",
+        ts: at(10, base),
+        parts: [{ type: "text", kind: "text", text: "night shift" }],
+      } as Partial<Event> & { conv?: string },
+    );
+  assertEquals(decide([msg(night)], SESSION, WAKE, night), "ignore"); // 10 < 60 quiet min
+  assertEquals(decide([msg(NOON)], SESSION, WAKE, NOON), "think"); // 10 > 5 busy min
+  assertEquals(decide([msg(night)], SESSION, { ...WAKE, quietHours: null }, night), "think");
 });

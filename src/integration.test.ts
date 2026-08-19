@@ -20,7 +20,8 @@ const CONFIG: AgentConfig = {
   home: "home",
   model: "claude-x",
   maxTokens: 1024,
-  gate: () => false, // gating off unless a test opts in
+  gate: () => "allow", // gating off unless a test opts in
+  digestAfterMessages: 1, // attention off: one ambient message is already due (xi.test owns §2)
   retryDelaysMs: [0, 0],
 };
 
@@ -293,7 +294,7 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
       assertEquals(outcome.parts[0].text, "send(to: wa:x, text: hi)");
       assertStringIncludes(JSON.stringify(outcome.parts[0].data.output), "queued");
     },
-    { gate: (name) => name === "send" },
+    { gate: (name) => name === "send" ? "ask" : "allow" },
   );
 
   // deny
@@ -319,7 +320,7 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
         0,
       );
     },
-    { gate: (name) => name === "send" },
+    { gate: (name) => name === "send" ? "ask" : "allow" },
   );
 });
 
@@ -335,7 +336,7 @@ Deno.test("a pending ask lives in the ANCHOR — state, not transcript (§5)", a
     last = params;
     return Promise.resolve(script.shift() ?? ok([]));
   };
-  const config = { ...CONFIG, gate: (name: string) => name === "send" };
+  const config = { ...CONFIG, gate: (name: string) => name === "send" ? "ask" : "allow" };
   const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
   try {
     await log.publish(principalMsg("mandale"));
@@ -383,7 +384,7 @@ Deno.test("a waiting gate does not mute the agent: it answers its principal mean
         0, // still nothing sent: the gate holds, it just doesn't hold the mind
       );
     },
-    { gate: (name) => name === "send" },
+    { gate: (name) => name === "send" ? "ask" : "allow" },
   );
 });
 
@@ -818,7 +819,7 @@ Deno.test("the gate answers from a surface: the principal's own /y and /n settle
       assert(verdict.type === "permission_response");
       assertEquals(verdict.parts[0].data.behavior, "allow");
     },
-    { gate: (name) => name === "send" },
+    { gate: (name) => name === "send" ? "ask" : "allow" },
   );
 
   // /n <reason> — the refusal reaches the model with the principal's words in it
@@ -841,7 +842,7 @@ Deno.test("the gate answers from a surface: the principal's own /y and /n settle
         0,
       );
     },
-    { gate: (name) => name === "send" },
+    { gate: (name) => name === "send" ? "ask" : "allow" },
   );
 
   // a word that is NOT a verdict settles nothing — the gate keeps waiting
@@ -861,7 +862,7 @@ Deno.test("the gate answers from a surface: the principal's own /y and /n settle
         0,
       );
     },
-    { gate: (name) => name === "send" },
+    { gate: (name) => name === "send" ? "ask" : "allow" },
   );
 });
 
@@ -946,6 +947,6 @@ Deno.test("two cards open: a bare /y settles nothing, the quoted one settles its
       await new Promise((r) => setTimeout(r, 250)); // quiescence
       assertEquals((await read("error")).length, 2);
     },
-    { gate: (name) => name === "send" },
+    { gate: (name) => name === "send" ? "ask" : "allow" },
   );
 });
