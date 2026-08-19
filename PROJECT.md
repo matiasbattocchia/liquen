@@ -559,8 +559,8 @@ rather than left to be noticed:
     point the async result should be removed too".
   - What is still waiting moved to the ANCHOR (his line: "pending gate isn't history, it's
     state. State belongs in the anchor"). It self-corrects — an ask that gets answered stops
-    being listed — and it carries no id, because an id the model cannot act on is noise; it
-    earns its place the day `cancel` lands (item 11).
+    being listed — and each line carries the ask's id (`shortId`, the `re` vocabulary),
+    the handle `cancel(id)` takes.
   - Policy became DATA: `Rule[] = [{tool, ask}]`, `gateOf(rules)`, default `send` asks and
     `*` does not. `gate ?? ((name) => name === "send")` was a special case living in code,
     and there are no special tools (2026-08-18 call) — bash goes unasked because a rule says
@@ -685,11 +685,14 @@ Two follow-ups on the catalog, both live (DESIGN §2 "Attention", §9):
 11. **Background completion** — early-return for long tools generally; `escalation` as its
     first instance. The gate already walks this path (ask → `pending_approval` → a deferred
     outcome the harness narrates), so what is left is a tool that returns early on its own
-    account rather than on a verdict, plus `cancel(id)`: a call that can outlive its turn
-    needs a way to be taken back, and the handle already exists — the API tool_use id IS the
-    event id (`toolUseBlock`), so what the anchor shows a pending call under is exactly what
-    cancel takes. `cancel` is also what earns the anchor's pending lines an id; until then
-    they carry none, because an id the model cannot act on is noise.
+    account rather than on a verdict. `cancel(id)` landed: a built-in tool that withdraws an
+    open ask by the id the anchor's pending line names (`shortId`, the `re` vocabulary).
+    It publishes the one settlement the gate already understands — a `permission_response`
+    ref'ing the use, turn-marked (§3 authorship) so `owedOf` never mistakes it for a ruling
+    to run — and the mirror carries it to the surfaces the card went to as
+    `[harness] withdrawn: send(…)`. A principal's later verdict on the withdrawn card gets
+    gateVerdict's already-answered reply; with one card left, a bare `/y` is unambiguous
+    again.
 12. **Postgres substrate** — the same ports as SQL: events table + LISTEN/NOTIFY (log),
     advisory lock, RLS as the readable filter, per-row trigger invoking `handle`. The
     verdict-before-acquire race guard (fresh re-read) is already in place for this

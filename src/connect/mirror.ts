@@ -64,6 +64,7 @@ import type {
   MessageEvent,
   Part,
   PermissionRequestEvent,
+  PermissionResponseEvent,
   Service,
   ToolUseEvent,
 } from "../types.ts";
@@ -278,7 +279,8 @@ async function fanOut(
  *  account: `[agent] …` for the voice, `[agent tool] …` for a redacted tool call,
  *  `[agent asks] …` for a gate waiting on the principal, `[you via <surface>] …` for the
  *  principal's own words replayed as output. Null ⇒ this event kind never crosses
- *  (thinking, results, the verdict itself — which is the principal's own `/y`). */
+ *  (thinking, results, the verdict itself — which is the principal's own `/y`; the
+ *  agent's own settlement, a `cancel`, crosses as a `[harness]` withdrawal). */
 function ccParts(e: Event): Part[] | null {
   if (e.type === "tool_use") {
     const call = describeCall((e as ToolUseEvent).parts[0].data);
@@ -305,6 +307,17 @@ function ccParts(e: Event): Part[] | null {
       kind: "text",
       text: `\`[agent asks]\` approve ${boldName(ask.detail)}\n` +
         `\`reply /y to approve · /n <reason> to refuse\``,
+    }];
+  }
+  if (e.type === "permission_response" && e.payload?.turn_id !== undefined) {
+    // the agent took an ask back (`cancel`, §9) — turn_id marks the settlement as the
+    // model's own doing. The principal saw the card, so they hear the withdrawal; their
+    // own verdicts (no turn_id) never cross — their `/y` line is already on their surface.
+    const call = (e as PermissionResponseEvent).parts[0].text;
+    return [{
+      type: "text",
+      kind: "text",
+      text: `\`[harness]\` withdrawn: ${boldName(call ?? "a pending approval")}`,
     }];
   }
   if (e.type !== "message") return null;

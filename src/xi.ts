@@ -366,6 +366,9 @@ function owedOf(events: Event[], session: Session): Owed[] {
   const seen = new Set<EventId>();
   for (const e of events) {
     if (e.type !== "permission_response") continue;
+    // turn_id marks a settlement a model turn produced — a `cancel` withdrawing its own
+    // ask (§3 authorship). Only someone ELSE's ruling ever creates the harness's errand.
+    if (e.payload.turn_id !== undefined) continue;
     const ref = e.payload.ref_id;
     // not answered yet ⇒ the fresh batch settles it inline, with a real tool_result;
     // already reported ⇒ done. Only the middle case is the harness's late errand.
@@ -730,8 +733,8 @@ async function think(
 /** The anchor's pending-approval lines (§5, §9): one per ask nobody has answered, named the
  *  way the card named it and stamped with when it went out. Empty when nothing waits — which
  *  is the point: the model reads its own open business off the anchor, and reads nothing
- *  when there is none. No handle yet: an id the model cannot act on is noise, and it earns
- *  its place the day `cancel` lands (item 11). */
+ *  when there is none. The id is the handle `cancel` takes — `shortId`, the same vocabulary
+ *  as `re`. */
 function waitingOn(events: Event[], config: AgentConfig): string[] {
   const cards = openCards(events);
   if (cards.length === 0) return [];
@@ -739,7 +742,9 @@ function waitingOn(events: Event[], config: AgentConfig): string[] {
     `waiting on your principal — ${cards.length} approval${cards.length === 1 ? "" : "s"}:`,
     ...cards.map((c) => {
       const ask = c.parts[0].data;
-      return `· ${ask.call ?? ask.tool} — asked ${hhmm(c.ts, config.timezone)}`;
+      return `· ${ask.call ?? ask.tool} — asked ${hhmm(c.ts, config.timezone)} · id ${
+        shortId(c.payload.ref_id)
+      }`;
     }),
   ];
 }
@@ -931,7 +936,7 @@ async function act(
   out.push(
     ...await Promise.all(runnable.map(async ({ use, call }) => {
       try {
-        return resultOf(use, await execute(use, ctl.signal, self, ports), undefined, call);
+        return resultOf(use, await execute(use, events, ctl.signal, self, ports), undefined, call);
       } catch (err) {
         return resultOf(use, err instanceof Error ? err.message : String(err), {
           is_error: true,
@@ -950,7 +955,8 @@ async function act(
 const PENDING_APPROVAL = {
   status: "pending_approval",
   note: "your principal was asked and has not answered yet — the call is still queued. " +
-    "Do NOT issue it again; you will be told the outcome when they decide.",
+    "Do NOT issue it again; you will be told the outcome when they decide. If it stops " +
+    "being worth asking, withdraw it with cancel(id) — your pending list names the id.",
 };
 
 /** Where a send LANDS (§9): the destination's own envelope — the same anchoring read and
@@ -1003,12 +1009,56 @@ async function nameResolver(ports: XiPorts, calls: ToolCall[]): Promise<Resolve>
 
 async function execute(
   use: ToolUseEvent,
+  events: Event[],
   signal: AbortSignal,
   self: { id: string; session_id: string },
   ports: XiPorts,
 ): Promise<Json | ExecOutcome> {
   const { name, input } = use.parts[0].data;
   const args = input as Record<string, Json>;
+  if (name === "cancel") {
+    // withdraw an open ask (§9): the one settlement invariant does all the work — a
+    // permission_response ref'ing the use closes the card, so the anchor line drops and a
+    // late verdict from the principal gets gateVerdict's already-answered reply. The
+    // window is the act's own read: the lock serializes the mind, so nothing settles
+    // between that read and this publish.
+    const id = String(args.id ?? "");
+    const byId = (ref: EventId) => ref === id || shortId(ref) === id;
+    const card = openCards(events).find((c) => byId(c.payload.ref_id));
+    if (!card) {
+      const ever = events.some((e) => e.type === "permission_request" && byId(e.payload.ref_id));
+      throw new Error(
+        ever
+          ? `"${id}" was already answered — the outcome is on its way`
+          : `no pending approval "${id}" — your pending list names the open ones`,
+      );
+    }
+    const call = card.parts[0].data.call;
+    await ports.log.publish(
+      {
+        ts: new Date().toISOString(),
+        type: "permission_response",
+        // turn_id marks this settlement the model's own doing (§3 authorship): the mirror
+        // carries it as a withdrawal, and act never mistakes it for a ruling to run
+        payload: { turn_id: use.payload.turn_id, ref_id: card.payload.ref_id },
+        agent: self,
+        // the card's coordinates, rebuilt — its stored envelope carries an external_id,
+        // and reusing that would upsert-merge this settlement INTO the card's row
+        envelope: {
+          service: card.envelope.service,
+          connection_address: card.envelope.connection_address,
+          conversation: { address: card.envelope.conversation.address },
+        },
+        parts: [{
+          type: "data",
+          kind: "permission_response",
+          data: { behavior: "deny", scope: "once", reason: "withdrawn by the agent" },
+          text: call, // the card's own rendering — what the withdrawal notice names
+        }],
+      } satisfies Draft<PermissionResponseEvent>,
+    );
+    return { withdrawn: true, call };
+  }
   if (name === "send") {
     // the only dispatch path (§9): directed message + queued result (two appends on
     // files — atomic pair on DB later; the steal-sweep covers the crash window)
@@ -1275,6 +1325,22 @@ function specsOf(ports: XiPorts): Anthropic.Tool[] {
           after: { type: "string" },
           text: { type: "string", description: "words said in the message itself" },
         },
+      },
+    },
+    {
+      name: "cancel",
+      description:
+        "Withdraw one of your pending approvals — a queued call that stopped being worth " +
+        "asking. Your principal is told; the call never runs.",
+      input_schema: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            description: "the pending ask's id, exactly as your pending list shows it",
+          },
+        },
+        required: ["id"],
       },
     },
     ...Object.values(ports.exec ?? {}).map((t) => t.spec),

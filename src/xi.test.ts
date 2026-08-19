@@ -161,6 +161,35 @@ Deno.test("decide: an answered ask whose call has not run yet → act (the harne
   assertEquals(decide([peerMsg(), u, req, pending, resp, done], SESSION, WAKE), "think");
 });
 
+Deno.test("decide: the agent's own settlement (a cancel — turn_id) is never the errand", () => {
+  const u = use("u1");
+  const req = ev("permission_request", { ...SELF, payload: { ref_id: "u1" } } as Partial<Event>);
+  const pending = result("u1");
+  const settle = (payload: Record<string, string>) =>
+    ev("permission_response", {
+      payload,
+      parts: [{
+        type: "data",
+        kind: "permission_response",
+        data: { behavior: "deny", scope: "once", reason: "withdrawn by the agent" },
+      }],
+    } as Partial<Event>);
+  // someone else's ruling → the errand; the model's own withdrawal (turn-marked, §3) → its
+  // cancel tool_result is already the record, so nothing is owed
+  assertEquals(
+    decide([peerMsg(), u, req, pending, settle({ ref_id: "u1" }), selfMsg()], SESSION, WAKE),
+    "act",
+  );
+  assertEquals(
+    decide(
+      [peerMsg(), u, req, pending, settle({ ref_id: "u1", turn_id: "T2" }), selfMsg()],
+      SESSION,
+      WAKE,
+    ),
+    "ignore",
+  );
+});
+
 Deno.test("decide: a use with no result is always act — asking IS executing", () => {
   // the gate lives inside `act` now, so a use the policy will stop looks like any other:
   // it gets answered this turn, with `pending_approval`. Nothing waits in the transcript.

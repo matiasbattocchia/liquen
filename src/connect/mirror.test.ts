@@ -360,3 +360,37 @@ Deno.test("mirror fan-out: a harness error crosses — the one voice left when a
     assertStringIncludes(textOf((await inConv("D1"))[0]), "`[harness]` 2 approvals are waiting");
   });
 });
+
+Deno.test("mirror fan-out: a withdrawal crosses, a verdict never does — turn_id is the bit", async () => {
+  await withMirror(async ({ publish, inConv, waitFor }) => {
+    const settle = (
+      payload: { ref_id: string; turn_id?: string },
+      text?: string,
+    ): Draft<Event> => ({
+      ts: new Date().toISOString(),
+      type: "permission_response",
+      payload,
+      agent: { id: "ana", session_id: "ana" },
+      envelope: {
+        service: "local",
+        connection_address: "agent",
+        conversation: { address: "mind:ana" },
+      },
+      parts: [{
+        type: "data",
+        kind: "permission_response",
+        data: { behavior: "deny", scope: "once", reason: "withdrawn by the agent" },
+        ...(text !== undefined ? { text } : {}),
+      }],
+    } as Draft<Event>);
+    // the principal's own verdict: their /y line is already on their surface
+    await publish(settle({ ref_id: "01a0-use" }));
+    // the agent's cancel (turn-marked): the card went out, so the withdrawal follows it
+    await publish(settle({ ref_id: "01a1-use", turn_id: "T1" }, "send(to: Vivian)"));
+    await waitFor(async () => (await inConv("D1")).length === 1);
+    assertStringIncludes(
+      textOf((await inConv("D1"))[0]),
+      "`[harness]` withdrawn: **send**(to: Vivian)",
+    );
+  });
+});

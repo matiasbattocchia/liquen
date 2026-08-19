@@ -996,3 +996,69 @@ Deno.test("a standing verdict is REMEMBERED: /y conv settles that conversation's
     { gate: undefined, rules: [{ tool: "send", action: "ask" }, { tool: "*", action: "allow" }] },
   );
 });
+
+Deno.test("cancel: the agent withdraws one of two asks — and a bare /y settles the other", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
+  const script: Anthropic.Message[] = [
+    ok([
+      { kind: "tool_use", name: "send", input: { to: "wa:x", text: "uno" } },
+      { kind: "tool_use", name: "send", input: { to: "wa:y", text: "dos" } },
+    ], "tool_use"),
+  ];
+  const transport: ModelTransport = (params) => {
+    last = params;
+    return Promise.resolve(script.shift() ?? ok([]));
+  };
+  const says = (text: string): Draft<MessageEvent> => ({
+    ...principalMsg(text),
+    agent: { id: "a1", session_id: "s1" },
+  });
+  const config = { ...CONFIG, gate: (name: string) => name === "send" ? "ask" : "allow" };
+  const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  try {
+    await log.publish(says("mandale a los dos"));
+    await xi(config, ports); // the turn that calls both sends
+    await xi(config, ports); // act: two cards up, both calls answered pending_approval
+    const cards = await log.read({ types: ["permission_request"] });
+    assertEquals(cards.length, 2);
+    const [a, b] = cards;
+    const id = shortId(a.payload!.ref_id as string);
+    script.push(
+      ok([{ kind: "tool_use", name: "cancel", input: { id } }], "tool_use"),
+      ok([{ kind: "assistant", text: "retirado, queda el otro" }]),
+    );
+    await xi(config, ports); // the think that cancels — its anchor is where the id came from
+    assertStringIncludes(JSON.stringify(last?.messages.at(-1)?.content), `id ${id}`);
+    await xi(config, ports); // act: the withdrawal
+    // the settlement is the model's own doing: turn-marked, naming the card's call
+    const [resp] = await log.read({ types: ["permission_response"] });
+    assert(resp.type === "permission_response");
+    assertEquals(resp.payload.ref_id, a.payload!.ref_id);
+    assert(resp.payload.turn_id !== undefined);
+    assertStringIncludes(String(resp.parts[0].data.reason), "withdrawn");
+    assertEquals(resp.parts[0].text, "send(to: wa:x, text: uno)");
+    await xi(config, ports); // the closing turn — the cancel's own result is the record…
+    // …so no errand ever follows it, and the withdrawn call never runs
+    assertEquals(
+      (await log.read({ types: ["tool_result"] })).filter((e) => e.payload?.deferred),
+      [],
+    );
+    const to = async (addr: string) =>
+      (await log.read({ types: ["message"] })).filter((e) =>
+        e.envelope.conversation.address === addr
+      );
+    assertEquals(await to("wa:x"), []);
+    // one card stands, so the principal's bare word is unambiguous again
+    await log.publish(says("/y"));
+    await xi(config, ports); // verdict lands and the errand runs, one invocation
+    assertEquals((await to("wa:y")).length, 1);
+    const outcome = (await log.read({ types: ["tool_result"] })).find((e) => e.payload?.deferred);
+    assert(outcome?.type === "tool_result");
+    assertEquals(outcome.payload.ref_id, b.payload!.ref_id);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
