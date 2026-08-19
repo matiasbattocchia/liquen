@@ -406,6 +406,41 @@ Deno.test("error events render as [harness] text — the model stays aware (§2)
   assertEquals(dump.includes("[harness] error: model overloaded, gave up"), true);
 });
 
+Deno.test("a deferred outcome is narrated, never welded — its tool_use is spent (§9)", () => {
+  const t = "2026-07-19T12:00:00Z";
+  const use = toolUseE("u1", t, "T1", "send", { to: "wa", text: "hola" });
+  const asked = toolResultE("r1", t, "T1", { status: "pending_approval" }, "u1");
+  const outcome: ToolResultEvent = {
+    ...toolResultE("r2", t, "T1", { queued: true }, "u1"),
+    payload: { turn_id: "T1", ref_id: "u1", deferred: true },
+    parts: [{
+      type: "data",
+      kind: "tool_result",
+      data: { output: { queued: true } },
+      text: "send(to: Mariana, text: hola)",
+    }],
+  };
+  const { messages } = render({
+    events: [homeMsg("h", t, "mandale", false), use, asked, outcome],
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
+  const dump = JSON.stringify(messages);
+  // the harness's own sentence, in the harness's own voice
+  assertEquals(
+    dump.includes('[harness] send(to: Mariana, text: hola) → {\\"queued\\":true}'),
+    true,
+  );
+  // and exactly ONE tool_result block against that id — a second one is not a thing the
+  // API has, and the pending answer is the one that owns the pair
+  const results = blocksOf(messages).filter((b) => b.type === "tool_result");
+  assertEquals(results.length, 1);
+  assertEquals(JSON.stringify(results[0]).includes("pending_approval"), true);
+});
+
 Deno.test("thinking of an incomplete group (open barrier) is not rendered", () => {
   const t = "2026-07-19T11:00:00Z";
   const events: Event[] = [

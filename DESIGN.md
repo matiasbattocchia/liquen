@@ -83,8 +83,9 @@ suspension free (no verdict → no trigger), parallelism trivial.
 ### mu's contract
 
 ```ts
-mu({system, messages, tools, model, maxTokens, effort?}, transport, emit?) → StepResult
+mu({system, messages, tools, model, maxTokens, effort?, turnId?}, transport, emit?) → StepResult
 // transport = the model edge (main picks it — Anthropic today; where a provider adapts in)
+//   + CallMeta{turn_id}: what the call is FOR — the provider never sees it, the meter does
   ok:    { emissions, usage, stop }     // usage → telemetry table, NOT the log
   fail:  { error }                      // nu owns retry policy; permanent → error event
 
@@ -132,9 +133,8 @@ another poke.
 
 ```
 decide(window) →
-  pending uses (ours, no result):
-    any actionable (ungated · unrequested gate · responded gate)   → act
-    all waiting on a human (requested, unanswered)                 → ignore (the response pokes)
+  pending uses (ours, no result)                                   → act (answer them ALL)
+  an answered ask whose call has not run yet                       → act (the late errand)
   last turn's `payload.stop_reason` was pause_turn / max_tokens (≤3) → think (CONTINUE it)
   trailing harness `error` (the last event in the window)          → ignore (idle-after-error)
   unclosed chain (all uses resolved, no turn output after)         → think (the closing turn)
@@ -158,6 +158,22 @@ arrives through the agent's scoped subscription, already readable (§6).
 
 The derivations are **position-aware**, so a late invocation that arrives after the work was
 already done resolves to nothing — quiescence is a poke that finds nothing owed.
+
+**The window has two bounds**, a count and a floor. `windowLimit` (500) bounds the prompt —
+it is the size guard, and under live traffic it is the one that binds. `since` bounds the
+BACKLOG: a fixed instant, set once when the agent comes up to start − `backlogHours` (24,
+org-configurable, `MU_BACKLOG_HOURS` for one run), before which nothing is ever owed. An
+agent coming up after a week off answers the last day, not the week, and the rest is history
+it can still reach through `search` (§6).
+
+The floor is an instant, not a distance from now, because what it answers is a one-time
+question — *what backlog did this process inherit?* A bound that followed the clock would
+keep re-deciding it: a conversation the agent already engaged with would age out from under
+it mid-thread, and the cards, horizons and own-messages the derivations read would go with
+it. Set once, it decides the inheritance and then holds still while the count cap does the
+ongoing bounding. It stays in hours for the same reason it must not be tight: the window is
+also where a turn finds its own last message and the `consumed` horizon that proves a peer
+was answered, so a floor cutting BETWEEN a message and its reply would answer it twice.
 
 **The consumed horizon** (live-bench find, 2026-07-20): the closing message carries
 `extra.consumed` — the last event id in the window its step actually read. `unanswered`
@@ -278,7 +294,9 @@ think: re-triggered; model continues (multi-send: "working on it" → work → r
   needs a follow-up `end_turn` call — the model reacts if a send failed, then closes with its
   assistant text. ~1 extra call per *think*, amortized over parallel sends in a batch. A "terminal
   send" fast-path is deferred.
-- Gated send = gated tool (outbound approval / future draft mode for free).
+- Gated send = gated tool (outbound approval / future draft mode for free) — and gated
+  never means blocked: the call returns `pending_approval` at once and the verdict runs it
+  later (§3, the non-blocking gate).
 - Failed send = errored tool (exchange kept in render as teaching material).
 - Successful send: render **collapses the tool pair** into the decorated message line.
 - **The agent addresses; the executor envelopes.** `send` takes `{to, text}`: an address
@@ -416,8 +434,9 @@ absence IS the "never confirmed" signal echo-dedup and the mirror's absorb guard
 message:  + parts: Part[]      // text | data | file, each with kind (open-bsp / A2A / MCP)
 tool_use: + parts(data: {name, input}) + payload{turn_id}   // implicitly internal
 thinking: + parts(data: {thinking, signature}) + payload{turn_id}  // replayed in-cycle, dropped after
-tool_result: + parts(data: {output, is_error?, cancelled?}) + payload{turn_id, ref_id→tool_use}
-permission_request:  + parts(data: {tool, args_preview}) + payload{ref_id→tool_use}
+tool_result: + parts(data: {output, is_error?, cancelled?}) + payload{turn_id, ref_id, deferred?}
+          // deferred = a gated call approved LATER: narration, never a block (§9)
+permission_request:  + parts(data: {tool, call, detail}) + payload{ref_id→tool_use}
 permission_response: + parts(data: {behavior, scope, reason?}) + payload{ref_id→tool_use}
           // request and response BOTH point at the use — a star, not a chain
 summary:  + parts(text) + payload{covers:[from,to]}
@@ -488,11 +507,11 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 |---|---|---|---|---|
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
 | `control` | ingest (reclassified) | **user** (context; nu acts) | **act** (hard-stop) | parts(raw) · payload{control} |
-| `tool_use` | **model → assistant** | **assistant** *(live only)* | act (ungated) / await (gated) | parts(data:{name,input}) · payload{turn_id} |
-| `tool_result` | nu | **user** *(live only)* | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use} |
+| `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
+| `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `[harness]` text | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
-| `permission_request` | nu | approver card; *n/a to model* | ignore | parts(data:{tool,args_preview}) · payload{ref_id→tool_use} |
-| `permission_response` | nu (auto) · ingest (human) | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?}) · payload{ref_id→tool_use} |
+| `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
+| `permission_response` | nu (auto) · xi (the principal's `/y`·`/n`, any surface) · the REPL | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?}) · payload{ref_id→tool_use} |
 | `summary` | nu (the checkpoint IS the turn, §5) | leading text block (§5) | **think** (it displaced one) | parts(text) · payload{covers} |
 | `alarm` | main (boot) · task · timer (§10) | *(v0: a pure poke — not rendered; "a wake that informs" is the §10 open question)* | **think** | parts(payload) |
 | `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
@@ -508,13 +527,49 @@ Every inbound passes through ingest, which does identity resolution **and** may 
 |---|---|---|
 | pass through | ordinary text | `message` (+ resolved authorship) |
 | `control` | reserved word from the agent's principal in self-talk | `control` + `payload.control` |
-| `permission_response` | text matches an **open** `permission_request` | structured verdict, `payload.ref_id` = the tool_use |
 
 - Raw text always preserved (`parts` + `extra.raw`) — misclassification auditable/reversible.
 - **Control vocab (v0)**: `stop`/`cancel`.
-- **Permission vocab (v0)**: `yes`/`allow` · `no`/`deny` · scope `once`/`always` · `reason`
-  (on deny) → structured `{behavior, scope, reason?}` + the ref. Never leave the decision
-  as free text (Claude-Code discipline; its channels-relay does the same id-match).
+- **The verdict is not ingest's** (landed 2026-08-18): a gate is answered in **xi**, which
+  already derives what the log owes and therefore already knows which cards are open. The
+  principal's line passes through as an ordinary `message`, and xi reads `/y [note]` ·
+  `/n [reason]` off it and publishes the structured `{behavior, scope, reason?}` + ref
+  before it reads the verdict — so ONE invocation settles the gate and acts on it. That
+  keeps every surface equal (the REPL's key handling is a shortcut, not the mechanism) and
+  keeps the decision out of free text (Claude-Code discipline; its channels-relay does the
+  same id-match). WHICH card an answer settles is the whole problem, and the rule is that
+  they say so: a bare `/y` settles the ONE open card, and with several waiting they QUOTE
+  the card they mean — a chat app's own reply mechanism, arriving as `ref_external_id`,
+  resolved through the card's copy on that surface (`extra.via.event`). Guessing is not on
+  the table: the wrong guess sends the wrong message under their name. A `/y` typed BEFORE
+  a card settles nothing. A verdict that settles nothing is never silent — silence reads as
+  a broken gate — but the one who says so is the HARNESS, on an `error` the mirror carries:
+  it names the ambiguity ("N waiting, quote the one you mean") or the mistake ("that one was
+  already answered") itself, rather than spending a model turn on plumbing. Once per line:
+  the same latest line is re-read on every wake, and a line is spent once a verdict or a
+  harness word followed it.
+- **A gate never blocks the mind** (landed 2026-08-18). The ask happens *inside* the call:
+  `act` publishes the `permission_request` AND answers the `tool_use` in the same batch,
+  with `{status: pending_approval}`. So the chain closes, the model keeps its voice while
+  the principal decides, and the failure that forced the old design away is gone — a turn
+  taken with an unresolved `tool_use` RE-ISSUES it (live: a bare `/y` against two cards
+  produced two more cards), which is why the gate used to have to mute everything.
+  - **The verdict is a second, later call.** When it lands, xi runs the tool on the model's
+    behalf. That outcome cannot be a `tool_result` block — its pair is spent — so it is a
+    `tool_result` EVENT marked `payload.deferred`, which render narrates in the harness's
+    voice (`[harness] send(to: Vivian) → queued`) and the mirror carries to the principal
+    who approved it. It collapses with the rest of the tool traffic at the boundary (§5).
+  - **What is still waiting lives in the ANCHOR, not the transcript** (§5): a pending gate
+    is state, not history — the transcript already closed those calls. The anchor is
+    rewritten every turn, so an ask that gets answered simply stops being listed, and the
+    model reads its own open business without anything having to be edited out of history.
+- **Policy is a table, not a branch** (§9): `Rule[] = [{tool, ask}]`, first match wins, `*`
+  the catch-all. There are no special tools — `bash` runs unasked because the default table
+  says so, not because bash is bash. The ask being *inside* execution is what lets a rule be
+  conditional (arguments in hand), and the table is the home a standing verdict needs.
+- **Scope is parked at `once`** — `/always` · `/never` (per conversation) is the next rung:
+  `PermissionVerdict.scope` already carries `always`, and a standing verdict writes into
+  that same rule table.
 - A customer typing "stop"/"yes" is **not** reclassified (wrong author/context) — stays a
   `message` (e.g. "stop" = unsubscribe).
 
@@ -1010,8 +1065,11 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
 - **summaries** — `summary` events aging out distant messages; rendered as the window's
   LEADING plain-text block (the trailing-only rule bars a leading system block). See
   "Compaction" below.
-- **`now:` anchor + ambient env** — the trailing system block before the model answers.
-  Carries `now: <ts>` plus **live environment lines** the exec plane composes (`cwd: …` ·
+- **`now:` anchor + ambient env + open state** — the trailing system block before the model
+  answers. Carries `now: <ts>`, whatever is **still open** (`waiting on your principal — 2
+  approvals:` and one line per ask, §9 — pending state, not history: the transcript already
+  closed those calls, so the only honest place for them is the block that is rewritten every
+  turn), plus **live environment lines** the exec plane composes (`cwd: …` ·
   `git: <branch> · N uncommitted` when the cwd is a repo · `background jobs (N): <cmd>
   (pid P, age)` each). Better than Claude Code's session-start env snapshot: we re-render
   every step, so it's *fresh*, not stale — and cache-free, since this block is already the
@@ -1101,6 +1159,15 @@ Returns **raw events, type-filtered** (messages; never tool/permission noise).
 - **Push-default / pull-escape**: nu pushes the agent its recent window at buildContext;
   `search` is the escape hatch to reach beyond — older history, other *public*
   conversations, cross-conversation lookup.
+- **Filters are exact, over addresses; a NAME is how you find one.** The model points with
+  the handle it was shown, and what a render shows is a name — so `in`/`from` accept either
+  and resolve a name against the names rows carry (`sender_name` / `conversation_name`,
+  denormalized at ingest: a DM is named by its peer, a group by its subject). Results hand
+  the `address` back, which is what `in` and `send(to:)` take. Ambiguity splits by
+  direction, the same rule as `re`: a **read widens** across namesakes (two Anas cost a
+  longer result), a **write refuses** (irreversible, so the model re-reads). A name nobody
+  wears is an error, never an empty result — "I don't know who that is" and "they never
+  said that" are different answers.
 - **The connections map v0** (landed 2026-08-05): `policyFor(agent, map)` derives the
   §6 Policy from the two tables — THE three-branch predicate, one boolean for readable
   and writable alike:
@@ -1463,10 +1530,20 @@ its SQL side (5 tools: `executeSql`/`getDbSchema`/`sampleTableRows`/`selectAsCsv
 
 | tool | plane | signature → returns |
 |---|---|---|
-| `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{queued, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — it quotes on the wire; `react` lands a glyph on it; `action` (`edit`/`delete`/`remove`) acts on the referent instead of adding to it, and the two mutating ones reach only the account's own messages. **The only dispatch path**, and the only one nu **gates** (permission) — which is why every one of these is a send and not a tool of its own. |
+| `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{queued, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — it quotes on the wire; `react` lands a glyph on it; `action` (`edit`/`delete`/`remove`) acts on the referent instead of adding to it, and the two mutating ones reach only the account's own messages. **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
 | `search` | control (dedicated) | `search({in?, from?, before?, after?, text?})` → events, RLS-scoped. Clean sugar over the control-plane log read (SELECT / ripgrep). |
 | `bash` | exec + durable-on-files | `bash(cmd)` → `{stdout, stderr, exit}`. The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
 | `sql` | durable-on-db | `sql(query)` → rows, RLS-scoped. The **database** substrate's one primitive; present only on the db backend (the sandbox can't touch the DB, §9 invariant). Capability via **functions** — the "DB OS": `db_schema` · `docs_write` · `docs_edit` · plus `grep`/`glob`/`ls` counterparts (FTS/`LIKE` · pattern-list · introspection). |
+
+**A tool owns how it READS.** The same call is shown in four places — the approval card, the
+anchor's pending list, the harness's report of a deferred outcome, the mirror's `[agent
+tool]` line — so the rendering belongs to the tool, not to each consumer (`describeCall`,
+optional `ExecTool.describe`). The default needs almost no overriding: a call with a single
+string argument prints it bare (`bash(git status)`), everything else is `name(k: v, …)`. Two
+verbosities, because the consumers differ: the LINE (bounded — a pending entry, a trace) and
+the FULL form (the card: approving is judging exactly what will be said). `send` supplies its
+own, and what it adds is the one thing no generic rule can know — a NAME where the wire has
+an address: `send(to: Vivian, text: …)`, the address standing when nothing names it.
 
 So the durable substrate is a config switch: **files (`bash` + binaries) ⟺ db (`sql` +
 functions)**; `bash`-for-scratch rides along regardless. `aread`/`awrite`/`aedit` ≈

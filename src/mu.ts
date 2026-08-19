@@ -32,6 +32,7 @@ export interface StepInput extends RenderedRequest {
   tools: Anthropic.Tool[];
   maxTokens: number; // API-required output cap; nu owns the number, mu has no default
   effort?: Effort; // adaptive thinking depth; omit ⇒ the model's default
+  turnId?: string; // the turn this call IS — rides past the params, to the meter (§2)
 }
 
 /** `stop` routes the loop in nu: `tool_use` → continue · `end_turn` → idle ·
@@ -48,7 +49,14 @@ export type StepResult =
 export type ModelTransport = (
   params: Anthropic.MessageCreateParamsNonStreaming,
   emit?: Emit,
+  meta?: CallMeta,
 ) => Promise<Anthropic.Message>;
+
+/** What the call is FOR, for whoever wraps the transport. Not part of the request — the
+ *  provider never sees it; the metering wrapper does (§2: spend, joinable to the log). */
+export interface CallMeta {
+  turn_id?: string;
+}
 
 /** Build `mu` over a transport. Returns the step function nu calls each invocation. */
 export async function mu(
@@ -68,7 +76,7 @@ export async function mu(
 
   let message: Anthropic.Message;
   try {
-    message = await transport(params, emit);
+    message = await transport(params, emit, { turn_id: input.turnId });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

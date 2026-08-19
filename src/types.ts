@@ -204,6 +204,11 @@ export interface Payload {
   stop_reason?: string;
   /** On a summary: the id range the checkpoint stands for (§5 compaction). */
   covers?: [EventId, EventId];
+  /** On a tool_result: this outcome arrived AFTER its `tool_use` was already answered — a
+   *  gated call the principal approved later (§9). It is the record of what the tool did,
+   *  but it can never be a `tool_result` block: its pair is spent. Render narrates it in
+   *  the harness's voice instead, and the weld skips it (§5). */
+  deferred?: true;
   /** Wire mentions: canonical address + the display name the stored text uses for it
    *  (absent when the text fell back to the bare address). `type` is the sigil the text
    *  wears: `@` a person (the default when absent), `#` a conversation. Unordered —
@@ -269,7 +274,12 @@ export type PermissionScope = "once" | "always";
 
 export interface PermissionAsk {
   tool: string;
-  args_preview: string;
+  /** The call as a person reads it, one line: `send(to: Vivian)` — the tool's own rendering
+   *  (§9 `describeCall`). What the anchor lists a waiting ask under. */
+  call: string;
+  /** The same call in FULL — approving is judging what will actually be said or run, so the
+   *  card carries the arguments themselves, not a preview of them. */
+  detail: string;
 }
 
 export interface PermissionVerdict {
@@ -326,8 +336,10 @@ export interface ThinkingEvent extends EventBase {
   parts: [DataPart<"thinking", { thinking: string; signature: string }>];
 }
 
-/** nu asks an approver before running a gated tool (§2, §9) — `ref_id` = the tool_use.
- *  n/a to the model. */
+/** The harness asks an approver, from INSIDE the gated call (§2, §9) — `ref_id` = the
+ *  tool_use, which is answered in the same breath with `pending_approval`, so asking never
+ *  wedges the turn. Invisible to the model: what is still waiting reaches it through the
+ *  anchor (§5), because a pending gate is state, not history. */
 export interface PermissionRequestEvent extends EventBase {
   type: "permission_request";
   payload: Payload & { ref_id: EventId };

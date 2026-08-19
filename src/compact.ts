@@ -62,6 +62,9 @@ export interface CompactInput {
   prompt?: () => Promise<string | null>;
   compactAt?: number;
   keepRecent?: number;
+  /** The invocation's turn (nu mints it): the checkpoint call's spend is metered under it,
+   *  and the summary carries it — a checkpoint is a model turn like any other. */
+  turnId?: string;
 }
 
 /** Decide the covered span: closed events beyond the keep-recent budget. Null ⇒ nothing to do. */
@@ -144,6 +147,7 @@ export async function buildSummary(
     effort: input.effort,
     maxTokens: 4096,
     tools: [],
+    turnId: input.turnId,
   }, transport);
   if (!res.ok) return null; // silent — the next think retries
   const summary = res.emissions.filter((e) => e.kind === "assistant")
@@ -159,7 +163,7 @@ export async function buildSummary(
       connection_address: "agent",
       conversation: { address: `mind:${input.agentId}` },
     },
-    payload: { covers: span.covers },
+    payload: { covers: span.covers, ...(input.turnId ? { turn_id: input.turnId } : {}) },
     parts: [{ type: "text", kind: "text", text: summary }],
   };
 }

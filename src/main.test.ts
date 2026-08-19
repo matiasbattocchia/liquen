@@ -147,23 +147,29 @@ Deno.test("every model call is metered: spend lands in the usage table, per agen
   const dir = await Deno.makeTempDir();
   const { transport } = scripted([reply("¡Hola!")]);
   const main = await start({ dir, principals: [agent("1")] }, { transport });
+  let turn: string | undefined;
   try {
     await main.log.publish(principalMsg("home1", "hola"));
     await waitFor(async () =>
       (await main.log.read({ types: ["message"] })).some((e) => e.agent?.session_id === "s1")
     );
+    const said = (await main.log.read({ types: ["message"] }))
+      .find((e) => e.agent?.session_id === "s1");
+    turn = said?.payload?.turn_id as string;
   } finally {
     await main.stop();
   }
   // telemetry is a TABLE, not events: read it as one (the log API never serves it)
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(`${dir}/log/log.db`);
-  const rows = db.prepare("SELECT agent_id, model, output_tokens FROM usage").all();
+  const rows = db.prepare("SELECT agent_id, turn_id, model, output_tokens FROM usage").all();
   db.close();
   await Deno.remove(dir, { recursive: true });
   assertEquals(rows.length, 1);
   assertEquals(rows[0].agent_id, "a1");
   assertEquals(rows[0].model, "claude-x");
+  // and the spend JOINS the log: the row names the turn whose events it paid for
+  assertEquals(rows[0].turn_id, turn);
 });
 
 Deno.test("the framework way: folders under agents/ declare the org; the table mirrors them", async () => {

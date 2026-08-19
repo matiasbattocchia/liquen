@@ -24,9 +24,11 @@
  *
  * Ingest is a CLASSIFIER (§3): `conversation.kind` from the jid shape (`@g.us` → group,
  * `@broadcast` → broadcast, digits → direct); a sender resolves by point lookup of its
- * grant row on the connections map, else by pushname. Group subjects and pushnames are
- * DENORMALIZED onto messages from batch-fed caches — a rename reaches rows from the next
- * message on, never retroactively (decided 2026-08-11).
+ * grant row on the connections map, else by the name the message carries. Names are
+ * DENORMALIZED onto every row: the bridge stamps `sender_name`/`conversation_name` per
+ * message (address book first — a directory mu has no table for), and the `contacts`/
+ * `groups` feeds fill in for a bridge that doesn't. Either way a rename reaches rows from
+ * the next message on, never retroactively (decided 2026-08-11).
  *
  * Edits REPLACE parts on the original row (same policy as Slack's `message_changed`);
  * revokes are MERGE-ONLY drafts — no `parts` key, so `json_patch` leaves the stored
@@ -72,6 +74,13 @@ export interface WAMessage {
   conversation_address: string;
   sender_address?: string; // if the wire knows it, it stamps it — newer bridges name their
   // own account too; absent/empty only where the platform can't name its own side
+  /** WHO those addresses are, denormalized per message: the account's own name for the
+   *  author (address book first, pushname otherwise) and for the room (a group's subject,
+   *  or the peer, since a DM is its peer). Absent on the account's own messages, and on
+   *  anyone nobody has ever named. This is where names come from — the batch feeds below
+   *  are a first-sight courtesy, and a name only they carry is lost on restart. */
+  sender_name?: string;
+  conversation_name?: string;
   content: WAContent;
   status?: Record<string, unknown>; // explicit on echoes/history; absent on live inbound
   timestamp: string;
@@ -322,11 +331,14 @@ function mapMessage(
   }
 
   const address = m.conversation_address;
-  const name = groupNames.get(address);
+  // the message's own names first, the batch caches after: a per-message name is a fact
+  // the row keeps forever, while a cache only knows whoever has spoken since this process
+  // started — which is why a restart used to leave whole conversations anonymous
+  const name = m.conversation_name || groupNames.get(address);
   const sender = m.sender_address || undefined; // "" = the wire couldn't name the account side
-  // sender.name is the SERVICE's display fact — the pushname, nothing of ours: identity
-  // resolution (who a grant binds) is the classifier's business and lands elsewhere (§3)
-  const who = sender ? pushnames.get(sender) : undefined;
+  // sender.name is the SERVICE's display fact — what the account calls this person, nothing
+  // of ours: identity resolution (who a grant binds) is the classifier's business (§3)
+  const who = m.sender_name || (sender ? pushnames.get(sender) : undefined);
   const state = m.status ? stateOf(m.status) : undefined;
 
   return {

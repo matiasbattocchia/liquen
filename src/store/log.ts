@@ -47,6 +47,13 @@ export interface ReadQuery {
   conversation?: string; // conversation address
   conversations?: string[]; // restrict to this set (RLS-parity: a principal's readable scope, §6)
   from?: string; // sender address
+  senders?: string[]; // restrict to this set of sender addresses (the `from` filter, widened)
+  /** LIKE over the names a row denormalizes (§3): what it calls its room and its author.
+   *  `search` uses these to turn the handle the model was SHOWN — a name — into the
+   *  addresses the log keys on, which is the only reason a name is ever matched: the
+   *  filters themselves stay exact, over addresses. */
+  conversationName?: string;
+  senderName?: string;
   after?: string; // events after this TIMESTAMP (event time — Slack-search semantics, §6)
   before?: string; // events before this TIMESTAMP
   text?: string; // case-insensitive substring over text parts
@@ -113,6 +120,9 @@ export interface Subscriber {
 export interface UsageRow {
   created_at: string;
   agent_id?: string;
+  /** The call's turn — the join key back to the log: the events this spend produced carry
+   *  the same `payload.turn_id`, so a row's cost resolves to a conversation (§2). */
+  turn_id?: string;
   model: string;
   input_tokens: number;
   output_tokens: number;
@@ -174,6 +184,7 @@ export async function openLog(dir: string): Promise<Log> {
      CREATE TABLE IF NOT EXISTS usage (   -- telemetry, NOT events (§2): append-only spend
        created_at         TEXT NOT NULL,
        agent_id           TEXT,
+       turn_id            TEXT,              -- the call's turn: joins spend back to the log
        model              TEXT NOT NULL,
        input_tokens       INTEGER NOT NULL,
        output_tokens      INTEGER NOT NULL,
@@ -347,8 +358,8 @@ export async function openLog(dir: string): Promise<Log> {
   };
 
   const spend = db.prepare(
-    `INSERT INTO usage (created_at, agent_id, model, input_tokens, output_tokens,
-       cache_read_tokens, cache_write_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO usage (created_at, agent_id, turn_id, model, input_tokens, output_tokens,
+       cache_read_tokens, cache_write_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   return {
@@ -356,6 +367,7 @@ export async function openLog(dir: string): Promise<Log> {
       spend.run(
         row.created_at,
         row.agent_id ?? null,
+        row.turn_id ?? null,
         row.model,
         row.input_tokens,
         row.output_tokens,
@@ -478,6 +490,7 @@ function migrate(db: DatabaseSync) {
   const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
   if (v < 1) migrateV1(db);
   if (v < 2) migrateV2(db);
+  if (v < 3) migrateV3(db);
 }
 
 function migrateV1(db: DatabaseSync) {
@@ -609,6 +622,18 @@ function migrateV2(db: DatabaseSync) {
     db.exec("ROLLBACK");
     throw err;
   }
+}
+
+/** Spend gains the call's turn — telemetry that can be joined back to the log (§2). Old rows
+ *  keep a null: what they cost is known, which conversation cost it is not. */
+function migrateV3(db: DatabaseSync) {
+  const cols = db.prepare("SELECT name FROM pragma_table_info('usage')").all() as {
+    name: string;
+  }[];
+  if (!cols.some((c) => c.name === "turn_id")) {
+    db.exec("ALTER TABLE usage ADD COLUMN turn_id TEXT");
+  }
+  db.exec("PRAGMA user_version = 3");
 }
 
 /** ONE clock in the column (§3): whatever offset the producer wrote — WhatsApp stamps
@@ -777,6 +802,17 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
     params.push(...q.conversations);
   }
   eq("sender_address", q.from);
+  if (q.senders && q.senders.length > 0) {
+    where.push(`sender_address IN (${q.senders.map(() => "?").join(",")})`);
+    params.push(...q.senders);
+  }
+  const like = (column: string, value?: string) => {
+    if (value === undefined) return;
+    where.push(`${column} IS NOT NULL AND lower(${column}) LIKE '%' || lower(?) || '%'`);
+    params.push(value);
+  };
+  like("conversation_name", q.conversationName);
+  like("sender_name", q.senderName);
   // time bounds compare EVENT time (the `timestamp` column), not ids: the callers that
   // filter by time (search, §6) mean the world's clock, and an ISO string compared against
   // a uuid would silently match everything or nothing (a real bug this replaced)

@@ -41,6 +41,7 @@ import type { MemberJoinedChannelEvent, MemberLeftChannelEvent, SlackEvent } fro
 import type { Appender } from "../store/log.ts";
 import type { Connections } from "../store/connections.ts";
 import type { Conversation, Draft, FilePart, MessageEvent, Part } from "../types.ts";
+import { fromSlack } from "./flavor.ts";
 
 /** The wire's file attachment — only the fields the media seam reads. */
 export interface SlackFileRef {
@@ -359,7 +360,8 @@ async function mapMessage(
   if (m.text) {
     const d = await decodeMentions(m.text, team, names, via);
     mentions = d.mentions;
-    parts.push({ type: "text", kind: "text", text: d.text });
+    // mrkdwn → common markdown, here at the frontier (flavor.ts): the log speaks one tongue
+    parts.push({ type: "text", kind: "text", text: fromSlack(d.text) });
   }
   if (media && files) {
     for (const f of files) {

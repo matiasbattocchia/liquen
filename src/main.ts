@@ -46,6 +46,9 @@ export interface MainConfig {
   model?: string; // defaults for folder-declared agents (ignored when `principals` is given)
   effort?: AgentConfig["effort"];
   maxTokens?: number;
+  /** The backlog an agent INHERITS when it comes up, in hours (§5); default 24. Read once,
+   *  at start: it becomes a fixed floor (`since`), not a distance that follows the clock. */
+  backlogHours?: number;
   /** Dev/test seam: connection rows UPSERTED at boot (never deleted — connections are
    *  runtime data, §4: an OAuth callback or pairing flow binds them while the org runs;
    *  `mu connect` is the real writer). */
@@ -77,7 +80,7 @@ export async function start(
   const docs = openFileDocs(dir); // the doc cascade lives on the data root itself (§8, §9)
   // the framework way (§9): no explicit principals ⇒ every folder under agents/ IS an agent
   const derived = config.principals === undefined; // …and gets the connections-map policy (§6)
-  const principals: Principal[] = config.principals ?? await scanAgents(dir, config);
+  const principals: Principal[] = config.principals ?? await scanAgents(dir, config, Date.now());
   // the registry mirrors what runs (§9): folders + config.json are the source of truth, the
   // table is their projection — it exists because policy derives from rows (RLS later, §6)
   // and the ingest classifier scans the declared handles (email/phone → principal)
@@ -186,11 +189,16 @@ interface OrgFileConfig {
   model?: string;
   effort?: AgentConfig["effort"];
   maxTokens?: number;
+  /** How much backlog an agent inherits when it comes up, in hours (§5). Lower it to come
+   *  up quietly after a long absence — 2 means "answer the last couple of hours, treat the
+   *  rest as history". Rows outside it stay readable through `search`. Default 24. */
+  backlogHours?: number;
   locale?: string;
   timezone?: string; // IANA, e.g. "America/Argentina/Buenos_Aires"
 }
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const DEFAULT_BACKLOG_HOURS = 24;
 
 /** The framework way (§9): every directory under `agents/` declares one agent — a blank
  *  folder is a blank agent, and an optional `config.json` inside it declares settings and
@@ -201,10 +209,15 @@ const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
  *  ingest ("principal handle → principal-DM alias", the special wiring). */
 async function scanAgents(
   dir: string,
-  defaults: Pick<MainConfig, "model" | "effort" | "maxTokens">,
+  defaults: Pick<MainConfig, "model" | "effort" | "maxTokens" | "backlogHours">,
+  startedAt: number,
 ): Promise<Principal[]> {
   const org = await readOrgConfig(`${dir}/org/config.json`);
   await Deno.mkdir(`${dir}/agents`, { recursive: true });
+  // the backlog is resolved ONCE, into an instant: every agent in this org comes up owing
+  // the same stretch of history, and no later read re-decides where that stretch begins
+  const hours = defaults.backlogHours ?? org.backlogHours ?? DEFAULT_BACKLOG_HOURS;
+  const since = new Date(startedAt - hours * 3_600_000).toISOString();
   const found: Principal[] = [];
   for await (const entry of Deno.readDir(`${dir}/agents`)) {
     if (!entry.isDirectory) continue;
@@ -216,6 +229,7 @@ async function scanAgents(
       model: cfg.model ?? defaults.model ?? org.model ?? "claude-opus-4-8",
       effort: cfg.effort ?? defaults.effort ?? org.effort,
       maxTokens: defaults.maxTokens ?? org.maxTokens ?? 64_000,
+      since,
       timezone: org.timezone,
       locale: org.locale,
       provider: cfg.provider ?? org.provider,
@@ -228,7 +242,7 @@ async function scanAgents(
 
 /** Absent file ⇒ all defaults; a present file must parse and carry a known effort — a
  *  silent fallback would run the org on settings the human believes overridden. */
-async function readAgentConfig(path: string): Promise<AgentFileConfig> {
+export async function readAgentConfig(path: string): Promise<AgentFileConfig> {
   return await readConfigFile<AgentFileConfig>(path);
 }
 

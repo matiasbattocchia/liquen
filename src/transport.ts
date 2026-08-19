@@ -23,18 +23,23 @@ export type { ModelTransport };
  * seam for it: every call crosses the transport, and the response already carries `usage`,
  * so no layer above changes. Wrapped per agent in main, which is what attributes the spend
  * (and matches where per-agent providers will plug in).
+ *
+ * The row also carries the call's `turn_id` (`CallMeta`, minted by nu before the request):
+ * spend is telemetry, but a turn is a log key, so "what did this conversation cost" is a
+ * join rather than a guess from timestamps.
  */
 export function metered(
   transport: ModelTransport,
   meter: (row: UsageRow) => void,
   agentId?: string,
 ): ModelTransport {
-  return async (params, emit) => {
-    const message = await transport(params, emit); // a failed call spends nothing meterable
+  return async (params, emit, meta) => {
+    const message = await transport(params, emit, meta); // a failed call spends nothing meterable
     try {
       meter({
         created_at: new Date().toISOString(),
         agent_id: agentId,
+        ...(meta?.turn_id ? { turn_id: meta.turn_id } : {}),
         model: params.model,
         input_tokens: message.usage.input_tokens,
         output_tokens: message.usage.output_tokens,

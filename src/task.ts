@@ -83,7 +83,6 @@ async function runTask(instruction: string): Promise<number> {
     maxTokens: Number(Deno.env.get("MU_MAX_TOKENS") ?? 32_000),
     gate: () => false,
   };
-  const gate = agent.gate!;
   const session = { id: agent.sessionId, agentId: agent.agentId };
 
   const main = await start({
@@ -121,7 +120,7 @@ async function runTask(instruction: string): Promise<number> {
       // an API outage) — poke it awake with an alarm; bounded so a hard failure still ends
       if (
         still && age > 45_000 && repokes < 5 &&
-        decide(events, session, agent.home, gate) !== "ignore"
+        decide(events, session, agent.home) !== "ignore"
       ) {
         repokes++;
         await main.log.publish({
@@ -137,7 +136,7 @@ async function runTask(instruction: string): Promise<number> {
         await new Promise((r) => setTimeout(r, 2_000));
         continue;
       }
-      if (still && decide(events, session, agent.home, gate) === "ignore") {
+      if (still && decide(events, session, agent.home) === "ignore") {
         const closing = events.filter((e): e is MessageEvent =>
           e.type === "message" && e.agent?.session_id === session.id &&
           e.envelope.conversation.address === agent.home

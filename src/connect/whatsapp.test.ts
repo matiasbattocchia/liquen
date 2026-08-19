@@ -173,6 +173,43 @@ Deno.test("sender.name is the SERVICE's display fact: the pushname, never a look
   assertEquals((published[1] as MessageEvent).envelope.sender?.name, "Ana"); // pushname
 });
 
+Deno.test("the message's own names win: a row names its people without any cache", async () => {
+  const { handler, published } = harness();
+  const group = "123-456@g.us";
+  await handler(
+    post(
+      "/whatsapp-web-webhook",
+      batch({
+        // a cache that disagrees — the pushname the wire once shouted, against the name
+        // this account keeps for the same person in its address book
+        contacts: [{ address: "5491177777777", extra: { name: "gv 🇮🇹" } }],
+        messages: [
+          textMessage({
+            external_id: "wmw.n.a.m.1",
+            sender_address: "5491177777777",
+            conversation_address: "5491177777777",
+            sender_name: "Gianvito",
+            conversation_name: "Gianvito",
+          }),
+          textMessage({
+            external_id: "wmw.n.a.m.2",
+            conversation_address: group,
+            sender_address: "5491177777777",
+            sender_name: "Gianvito",
+            conversation_name: "Asado",
+          }),
+        ],
+      }),
+    ),
+  );
+  const dm = published[0] as MessageEvent;
+  assertEquals(dm.envelope.sender?.name, "Gianvito");
+  assertEquals(dm.envelope.conversation.name, "Gianvito"); // a DM is named by its peer
+  const grp = published[1] as MessageEvent;
+  assertEquals(grp.envelope.sender?.name, "Gianvito");
+  assertEquals(grp.envelope.conversation.name, "Asado");
+});
+
 Deno.test("group subject denormalizes onto messages (same batch and later ones)", async () => {
   const { handler, published } = harness();
   const group = "123-456@g.us";

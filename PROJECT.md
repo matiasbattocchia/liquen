@@ -35,8 +35,8 @@ when). Status as of 2026-08-12 (Slack live, both directions, model in the loop).
 - `exec/` — the exec plane (DESIGN §9, from the pi / Agent-SDK study): `bash`
   tool (workspace cwd, 120s default timeout, merged output, tail-truncation
   2000 lines/50KB with full output persisted to `.out/`, non-zero exit →
-  is_error, ungated by design) + `aread`/`awrite`/`aedit` binaries (one `afs.ts`
-  source, PATH shims in `{dir}/bin`; head-truncated paging read, stdin write,
+  is_error, unasked by the default rule table) + `aread`/`awrite`/`aedit` binaries
+  (one `afs.ts` source, PATH shims in `{dir}/bin`; head-truncated paging read, stdin write,
   conflict-marker multi-edit with exact→fuzzy matching, BOM/CRLF preserved).
   Installed by main by default; `rg`/`fd` come from the image, not from us.
 
@@ -483,8 +483,149 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
     emoji quoting the target, so outbound WhatsApp reactions were text replies until now.
     Unreportable: WhatsApp ignores an edit past its 20-minute window (the tool description
     says so; the wire says nothing).
-11. **Background completion** — early-return for long tools and the **non-blocking
-    gates** fix parked in DESIGN §10; `escalation` as its first instance.
+    **The window's clock — LANDED 2026-08-18**, the last thing between here and live
+    WhatsApp: ingest ran for six days with the agent off, so the log holds ~1.8k live rows
+    nobody answered (`extra.backfill` covers the July pairing import and nothing else —
+    these arrived off the wire in real time). The boot read was count-bounded only, so the
+    first turn would have opened on 500 events / 44 hours / 32 conversations, all of it
+    unanswered and therefore owed. `since` bounds the read in event time — the agent comes
+    up owing `backlogHours` of history and nothing older: 24 by default, `org/config.json`
+    for the deployment, `MU_BACKLOG_HOURS` for one run (2 is the first-live-test value).
+    A CUTOFF, not a rolling window (2026-08-18 call, after watching a rolling one): main
+    resolves it once at start into a fixed instant, so what the agent inherited is settled
+    when it comes up instead of being re-decided on every read. Under live traffic the
+    500-event cap binds first anyway — 500 events reach back ~100 minutes of a busy
+    WhatsApp account, so the hours are a boot policy and the count is the bill. Search
+    still reaches everything outside both.
+    **Names on every message — LANDED 2026-08-18**, found by asking whether the agent could
+    search the conversation with a given contact. It could not, and the query was the lesser
+    half of why: names reached mu only through the batch `contacts`/`groups` feeds, cached in
+    the ingest process, so a name existed only for whoever had spoken since the last restart
+    — `conversation_name` was set on **0 of 364** WhatsApp DMs and 25 of 72 groups, and that
+    contact's 77 messages carried no name on any row. Meanwhile the bridge's own whatsmeow
+    store held 2,378 contacts, 1,050 with address-book names, his among them. So the bridge
+    now stamps `sender_name`/`conversation_name` on every message (`pickName`: address book
+    → live pushname → stored pushname → business name; a DM is named by its peer, a group by
+    its subject, and the account's own rows need no name), history import included; the
+    ingest prefers the message's names and keeps the feeds as fallback. Then `search`'s
+    `in`/`from` resolve a name to addresses (DESIGN §6). No contacts table — deliberately:
+    the name rides the row that needed it, and open-bsp's own consumer keeps the entity
+    version through the same `contacts` feed, which still flows.
+### Open from the live run (2026-08-18) — found by driving it, none of them loud
+
+The first session where the agent sent to a real contact (a birthday message, then a 🎂
+on it via `re`). Both landed; he answered with a reaction and two lines. What that
+exposed, worst first — all three fail SILENTLY, which is why they are written down
+rather than left to be noticed:
+
+- **The gate answers from any surface — LANDED 2026-08-18**, the first thing this run
+  broke. `permission_request` crossed to nothing (`mirror.ccParts` returned null for
+  "permission plumbing") and only the REPL could publish a `permission_response`, so a
+  principal steering from WhatsApp watched `[agent tool] send(→ …)` scroll by, never saw a
+  prompt, and every send stalled with no sign of why — indistinguishable from being
+  ignored. Now the card crosses as `[agent asks] approve <tool> <args>` carrying the
+  arguments (approving IS judging what will be said) plus the reply syntax, and xi reads
+  `/y [note]` · `/n [reason]` off the principal's own line and publishes the verdict
+  before it reads one — one invocation settles and acts. It went in xi, not ingest (where
+  DESIGN §3 had parked it): xi already derives which cards are open, so every surface gets
+  the same mechanism and the REPL's key handling becomes a shortcut rather than the only
+  road. Disambiguation is the principal's, not ours (2026-08-18 call): a bare `/y` settles
+  the ONE open card, several waiting means they quote the one they mean. The quote had to
+  survive the mirror too — the fan-in copy dropped `ref_external_id`, which is the only
+  record of what they pointed at.
+
+  Who speaks when a verdict settles nothing took two tries. Letting `decide` think while
+  gates wait cost a real duplicate: the model, seeing its own unresolved `tool_use`,
+  re-issued both sends (17:50:32 cards → bare `/y` → 17:51:01 a second identical pair). The
+  HARNESS answers instead, on an `error` the mirror carries — ambiguity ("N waiting, quote
+  the one you mean") and, since the same run produced two look-alike pairs on his phone, the
+  newer-and-dead case ("that one was already answered"). Both are said ONCE: the latest
+  principal line is re-read on every wake, so a line counts as spent when a verdict OR a
+  harness word follows it — without that the phone got the same complaint three times in
+  three minutes.
+- **The gate stopped blocking — LANDED 2026-08-18.** The duplicate above was the symptom;
+  the disease was that asking produced no `tool_result` at all, so the only safe verdict
+  while a card waited was to ignore EVERYTHING, principal included. Live, that read as a
+  dead agent: two cards open at 17:50 and nothing he said for the next forty minutes got an
+  answer. The fix is to make asking part of executing — `act` publishes the card AND
+  answers the call with `{status: pending_approval}` in the same batch. The chain closes,
+  the mind stays free, and the reason for the mute is gone.
+  - The verdict is a second, later call: `owedOf` finds asks that have been ruled on but not
+    run, xi runs them, and the outcome comes back as a `tool_result` carrying
+    `payload.deferred` — the record keeps its `ref_id`, but render narrates it
+    (`[harness] send(to: Vivian) → queued`) instead of welding a second block onto a pair
+    that is already spent. The mirror carries the same sentence to whoever approved it. It
+    collapses with the rest of the tool traffic at the boundary, which answers his "at some
+    point the async result should be removed too".
+  - What is still waiting moved to the ANCHOR (his line: "pending gate isn't history, it's
+    state. State belongs in the anchor"). It self-corrects — an ask that gets answered stops
+    being listed — and it carries no id, because an id the model cannot act on is noise; it
+    earns its place the day `cancel` lands (item 11).
+  - Policy became DATA: `Rule[] = [{tool, ask}]`, `gateOf(rules)`, default `send` asks and
+    `*` does not. `gate ?? ((name) => name === "send")` was a special case living in code,
+    and there are no special tools (2026-08-18 call) — bash goes unasked because a rule says
+    so. Asking from inside execution is also what makes a rule able to be CONDITIONAL
+    (arguments in hand: bash on a destructive command), and the table is the home
+    `/always` · `/never` has been waiting for (`scope: "always"` exists in the type; only
+    reading the table from org/agent config is left).
+  - One rendering per tool, finally: `describeCall` (+ optional `ExecTool.describe`)
+    replaced three divergent versions — `redact()` in the mirror, the card's
+    `JSON.stringify(input).slice(0, 200)`, and what the anchor would have grown. Default is
+    `name(k: v, …)`, with a single-string-argument call printing bare (`bash(git status)`)
+    so bash needs no override; `send` supplies `to: <name | address>` (his call: name first,
+    address the fallback). Two verbosities — the bounded line for traces and the anchor, the
+    full form for the card, because approving is judging what will actually be said.
+- **Ids the wire mints go through ONE namespace — LANDED 2026-08-18.** The bridge
+  canonicalized the chat and sender of a message ROW
+  (`conversationAddressFor`/`senderAddressFor`) but not the segments of the ids it built
+  around one, so on a LID-addressed chat every id came out under the lid and matched
+  nothing mu had stored from the other side. Three symptoms, one cause: his 😂 arrived
+  with `ref_external_id = wmw.…230480930730172.…` against our stored
+  `wmw.…15613518605.…` (same stanza, unmatchable) so render showed `re="?"`; no
+  delivery/read receipt ever merged onto a message we sent; and — the expensive one — a
+  quoted `/y`·`/n` from his phone pointed at a card mu could not find, so the gate dropped
+  his verdict without a word. `chatSegment()` now supplies the chat segment of every id the
+  bridge mints or parses (message ids, quoted refs, reaction refs, protocol-message
+  originals, receipts, the history import), resolving through `canonicalUser` — which
+  already owned the LID→PN lookup. Verified live: the next quoted reply resolved.
+- **A bridge-originated send has no wire confirmation but `dispatched_at`.** whatsmeow
+  does not echo its own client's messages, so `status.sent` (stamped from an echo) only
+  ever appears for phone-typed messages. The missing echo is FINE and stays that way —
+  waking an agent on its own send has no use case (2026-08-18 call; the self-reaction test
+  that surfaced it was a one-off). What is worth having is the receipt half above:
+  delivered/read merge for phone-addressed chats today and vanish for LID ones, so
+  "left the process" is currently the strongest claim mu can make about a LID chat. Treat
+  the absence as unknown, not as failure.
+- **Nothing supervises the mirror.** It died mid-session with an empty log and no exit
+  trace, and the failure presents exactly like a broken agent: cards stop crossing, `/y`
+  stops arriving, and both ends wait. The processes are hand-started shells today; the
+  first thing `mu init` (item 2b) owes is a supervisor with a heartbeat, because a relay
+  that fails closed and quietly is worse than one that never existed.
+- **A card can outlive its window.** `openCards` reads the window, so a
+  `permission_request` that falls out of it simply stops existing: it vanishes from the
+  anchor, a verdict for it resolves to nothing, and the call it was holding is never run.
+  Nobody is told. The boot cutoff removed the clock half of this (a fixed floor cannot
+  drift past a card), but the 500-event cap still can — a busy hour buries one. Cheap
+  guard: read open cards outside the count bound (they are few, and they are the one thing
+  whose position must not matter), or expire them explicitly with a denial the principal
+  can see.
+- **Spend joins the log — LANDED 2026-08-18.** `usage` gained `turn_id`, stamped by the
+  metered transport from `CallMeta` (nu mints the turn BEFORE the call rather than after
+  the emissions, which is the whole change). Cost per conversation is now a join instead of
+  a guess from timestamps. Found while reading a day's bill: 123 calls, 1.80M input tokens
+  of which 99.6% was cache traffic, and 18 full misses (5-minute TTL expiring between
+  wakes) accounting for 206k of the 380k written. A 1h TTL was costed and rejected — at 2x
+  write against 1.25x it lands within ~5% of the same money. The levers that matter are
+  prompt size and model price.
+
+11. **Background completion** — early-return for long tools generally; `escalation` as its
+    first instance. The gate already walks this path (ask → `pending_approval` → a deferred
+    outcome the harness narrates), so what is left is a tool that returns early on its own
+    account rather than on a verdict, plus `cancel(id)`: a call that can outlive its turn
+    needs a way to be taken back, and the handle already exists — the API tool_use id IS the
+    event id (`toolUseBlock`), so what the anchor shows a pending call under is exactly what
+    cancel takes. `cancel` is also what earns the anchor's pending lines an id; until then
+    they carry none, because an id the model cannot act on is noise.
 12. **Postgres substrate** — the same ports as SQL: events table + LISTEN/NOTIFY (log),
     advisory lock, RLS as the readable filter, per-row trigger invoking `handle`. The
     verdict-before-acquire race guard (fresh re-read) is already in place for this

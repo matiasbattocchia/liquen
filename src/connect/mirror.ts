@@ -14,10 +14,13 @@
  *             the origin surface (read off `extra.via`). Every crossing line opens with
  *             WHO, because a self-conversation renders both speakers as the same account
  *             and the tag is the surface's only input/output distinction: the agent's
- *             voice as `[agent] …`, its tool calls as `[agent tool] bash(git status)`
- *             (redacted to one line), the principal's own words as
- *             `[you via <surface>] …` — input replayed as output. The log needs no tag:
- *             authorship is the bit.
+ *             voice as `[agent] …`, its tool calls as `[agent tool] **bash**(git status)`
+ *             (redacted to one line), a gate waiting on the principal as `[agent asks] …`,
+ *             the harness's own word as `[harness] …`, and the principal's own words as
+ *             `[you via <surface>] …` — input replayed as output. Every tag ships wrapped
+ *             in backticks, so a surface that reads markdown sets it apart from the words
+ *             around it (WhatsApp renders it monospace; the bridge passes code spans
+ *             through untouched). The log needs no tag: authorship is the bit.
  *
  * Fan-out applied to fan-in's own mind copy is what cross-broadcasts surfaces: a WA line
  * copies to the mind, and that copy CCs — tagged `[you via whatsapp]` — to Slack, origin
@@ -49,9 +52,20 @@
  */
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
-import { backfilled } from "../render.ts";
+import { backfilled, outcomeLine } from "../render.ts";
+import { describeCall } from "../describe.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
-import type { Draft, Event, EventId, MessageEvent, Part, Service, ToolUseEvent } from "../types.ts";
+import type {
+  Draft,
+  ErrorEvent,
+  Event,
+  EventId,
+  MessageEvent,
+  Part,
+  PermissionRequestEvent,
+  Service,
+  ToolUseEvent,
+} from "../types.ts";
 
 export interface MirrorDeps {
   subscribe: Subscriber["subscribe"];
@@ -141,10 +155,21 @@ async function fanIn(
     return;
   }
 
+  // the quote, TRANSLATED (§9): a surface quote names a surface row, but the agent reads
+  // the mind — and its scoped port never sees the alias conversation (policy hides it), so
+  // only the mirror, reading unscoped, can make the join. A quoted CC resolves to the mind
+  // event it was made from (`extra.via.event`); that id rides the copy as `ref_id`, which
+  // is how a `/y` quoting one of several cards names the card itself.
+  const origin = await quotedOrigin(deps, e);
   await deps.publish({
     ts: now(),
     type: "message",
-    payload: { ref_id: e.id },
+    // `ref_external_id` still rides along as the mark that they quoted AT ALL — a quote
+    // that resolves to nothing falls back to provenance, not to silence
+    payload: {
+      ref_id: origin ?? e.id,
+      ...(e.payload?.ref_external_id ? { ref_external_id: e.payload.ref_external_id } : {}),
+    },
     // the principal's stamp (§3): whose mind + entered through the harness — session_id
     // is deterministic in v0 (session ≈ agent), so even a first-message copy stamps at
     // append. No turn_id: input, not voice — exactly a REPL line in wire clothing.
@@ -168,6 +193,22 @@ async function fanIn(
       },
     },
   } as Draft<MessageEvent>);
+}
+
+/** The mind event a quoted surface row was made from, if the quote can be joined: the row
+ *  the `ref_external_id` names, when it is one of our CCs, carries `extra.via.event` — the
+ *  approval card, the agent line, whatever crossed. A quote of anything else (an inbound,
+ *  a row outside the log) resolves to nothing and the copy keeps plain provenance. */
+async function quotedOrigin(deps: MirrorDeps, e: MessageEvent): Promise<EventId | undefined> {
+  const quoted = e.payload?.ref_external_id;
+  if (!quoted) return undefined;
+  const rows = await deps.read({
+    conversation: e.envelope.conversation.address,
+    limit: 1,
+    filter: (x) => x.envelope.external_id === quoted,
+  });
+  const via = rows[0]?.extra?.via as { event?: EventId } | undefined;
+  return via?.event;
 }
 
 /** Our own post, returning unrecognized: a CC on this surface carrying the same words and
@@ -226,11 +267,36 @@ async function fanOut(
 /** What a mind event looks like on a surface — exactly what the REPL shows (§4). Every
  *  line opens with WHO, because a self-conversation renders both speakers as the same
  *  account: `[agent] …` for the voice, `[agent tool] …` for a redacted tool call,
- *  `[you via <surface>] …` for the principal's own words replayed as output. Null ⇒ this
- *  event kind never crosses (thinking, results, permission plumbing). */
+ *  `[agent asks] …` for a gate waiting on the principal, `[you via <surface>] …` for the
+ *  principal's own words replayed as output. Null ⇒ this event kind never crosses
+ *  (thinking, results, the verdict itself — which is the principal's own `/y`). */
 function ccParts(e: Event): Part[] | null {
   if (e.type === "tool_use") {
-    return [{ type: "text", kind: "text", text: `[agent tool] ${redact(e as ToolUseEvent)}` }];
+    const call = describeCall((e as ToolUseEvent).parts[0].data);
+    return [{ type: "text", kind: "text", text: `\`[agent tool]\` ${boldName(call)}` }];
+  }
+  if (e.type === "tool_result" && e.payload.deferred) {
+    // a call the principal approved, now run: they asked for it, so they hear how it went
+    // — the same sentence the model is given (§9). Ordinary results never cross.
+    return [{ type: "text", kind: "text", text: `\`[harness]\` ${outcomeLine(e, 160)}` }];
+  }
+  if (e.type === "error") {
+    // the harness's own voice reaching the principal (§2): it speaks when the model can't
+    // — a gate is waiting, so no turn will be taken to relay this
+    const { error } = (e as ErrorEvent).parts[0].data;
+    return [{ type: "text", kind: "text", text: `\`[harness]\` ${error}` }];
+  }
+  if (e.type === "permission_request") {
+    // the approval card, wherever the principal is (§9). It carries the ARGUMENTS, not
+    // just the tool: approving is judging what will be said, and this chat is the
+    // principal's own. The reply syntax rides along — the surface has no key bindings.
+    const ask = (e as PermissionRequestEvent).parts[0].data;
+    return [{
+      type: "text",
+      kind: "text",
+      text: `\`[agent asks]\` approve ${boldName(ask.detail)}\n` +
+        `\`reply /y to approve · /n <reason> to refuse\``,
+    }];
   }
   if (e.type !== "message") return null;
   const m = e as MessageEvent;
@@ -243,7 +309,7 @@ function ccParts(e: Event): Part[] | null {
     // tag is the only thing that tells output from input there.
     if (!text && parts.length === 0) return null;
     return [
-      ...(text ? [{ type: "text", kind: "text", text: `[agent] ${text}` } as const] : []),
+      ...(text ? [{ type: "text", kind: "text", text: `\`[agent]\` ${text}` } as const] : []),
       ...parts.filter((p) => p.type === "file"),
     ];
   }
@@ -252,31 +318,21 @@ function ccParts(e: Event): Part[] | null {
   // the voice, naming where it was typed — the REPL when the mind itself is where it landed
   const where = viaOf(e)?.service ?? "repl";
   return [
-    { type: "text", kind: "text", text: `[you via ${where}] ${text}` },
+    { type: "text", kind: "text", text: `\`[you via ${where}]\` ${text}` },
     ...parts.filter((p) => p.type === "file"),
   ];
+}
+
+/** `send(to: …)` → `**send**(to: …)` — the tool name in bold. Common markdown, like every
+ *  harness line: the log speaks one flavour, and translating it to a surface's own dialect
+ *  is the dispatcher's job, not the mirror's. The REPL shows it raw, which is fine. */
+function boldName(call: string): string {
+  return call.replace(/^([\w-]+)\(/, "**$1**(");
 }
 
 /** The message's words — what a surface shows and what an echo comes back carrying. */
 function textOf(e: MessageEvent): string {
   return (e.parts ?? []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
-}
-
-/** One redacted line per tool call, Claude-Code style: `bash(git status)` (the
- *  `[agent tool]` tag is the caller's — every crossing line opens with who). */
-function redact(e: ToolUseEvent): string {
-  const { name, input } = e.parts[0].data;
-  const args = (input ?? {}) as Record<string, unknown>;
-  const detail = typeof args.command === "string"
-    ? args.command // bash: the command line IS the story
-    : name === "send"
-    ? `→ ${String(args.to ?? "")}`
-    : Object.entries(args)
-      .filter(([, v]) => typeof v === "string" && v !== "")
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(", ");
-  const line = `${name}(${detail.replace(/\s+/g, " ").trim()})`;
-  return line.length > 120 ? `${line.slice(0, 119)}…` : line;
 }
 
 /* ── plumbing ─────────────────────────────────────────────────────────── */

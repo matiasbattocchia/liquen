@@ -481,8 +481,11 @@ function renderMessages(
   const usePresent = new Set(
     trailing.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => u.id),
   );
+  // a DEFERRED outcome never welds (§9): its `tool_use` was answered long ago, with
+  // `pending_approval`, so the pair is spent — a second `tool_result` block against the same
+  // id is not a thing the API has. It renders as harness narration instead.
   const resultRefs = new Set(
-    trailing.filter((e): e is ToolResultEvent => e.type === "tool_result")
+    trailing.filter((e): e is ToolResultEvent => e.type === "tool_result" && !e.payload.deferred)
       .map((r) => r.payload.ref_id),
   );
   const welded = new Set([...usePresent].filter((id) => resultRefs.has(id)));
@@ -512,7 +515,8 @@ function renderMessages(
   }
 
   // CLOSED — collapse: messages survive; errors stay visible as system blocks (§2);
-  // thinking + tool pairs drop (§5).
+  // thinking and ALL tool traffic drop (§5) — pairs, and the deferred outcomes a gate
+  // produced: once the turn that cared about them has closed, they are noise like the rest.
   for (const e of events.slice(0, boundary + 1)) {
     if (deferred.has(e)) continue; // unconsumed input — renders in the trailing region
     if (e.type === "summary") {
@@ -559,7 +563,12 @@ function renderMessages(
     } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
       place("assistant", thinkingBlock(e));
     } else if (e.type === "tool_use" && welded.has(e.id)) place("assistant", toolUseBlock(e));
-    else if (e.type === "tool_result" && welded.has(e.payload.ref_id)) {
+    else if (e.type === "tool_result" && e.payload.deferred) {
+      // the second half of a non-blocking gate (§9): the principal ruled, the harness ran
+      // the call for us, and this is it reporting back — in its own voice, because the
+      // tool_use it answers is spent. Narration, so it can stand alone in any position.
+      place("user", { type: "text", text: `[harness] ${outcomeLine(e)}` });
+    } else if (e.type === "tool_result" && welded.has(e.payload.ref_id)) {
       place("user", toolResultBlock(e, mediaBlocks(e)));
     } else if (e.type === "message") {
       // a directed send dispatched by a welded tool_use is already in the block — skip it
@@ -815,6 +824,18 @@ function toolResultBlock(
   };
 }
 
+/** A DEFERRED tool outcome as one sentence (§9): `send(to: Vivian) → queued`. The call was
+ *  rendered when the outcome was written — xi is where the tool registry and the address
+ *  book are — so this reads it off the event rather than re-deriving it from a `tool_use`
+ *  that may already have collapsed. `→` carries what happened, `—` what didn't. Shared with
+ *  the mirror, so the model and the principal are told the same thing. */
+export function outcomeLine(e: ToolResultEvent, max = 0): string {
+  const { output, is_error } = e.parts[0].data;
+  const text = typeof output === "string" ? output : JSON.stringify(output);
+  const bounded = max > 0 && text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  return `${e.parts[0].text ?? "the approved call"} ${is_error ? "—" : "→"} ${bounded}`;
+}
+
 /** An `error` event's message — rendered as a plain `[harness] error:` text block: it
  *  PRECEDES what it marks, and the API takes `mid_conv_system` only in trailing position
  *  (§5, live-smoke finding). */
@@ -850,7 +871,7 @@ function isSelf(e: Event, session: SessionId): boolean {
 /** Every part's `text`, not only a TextPart's — a caption rides `FilePart.text`. Filtering
  *  on `type === "text"` meant the model never saw a single caption: the picture arrived as
  *  a bare `<media/>` marker and the words that came with it were dropped on the floor. */
-function textOf(e: Event): string {
+export function textOf(e: Event): string {
   const parts = (e as MessageEvent).parts ?? [];
   return parts.map((p) => (p as { text?: unknown }).text)
     .filter((t): t is string => typeof t === "string" && t.length > 0)
@@ -953,8 +974,9 @@ function clockOf(ts: string, zone?: string): Clock | null {
 }
 
 /** A message's stamp: `12 Aug 9:50`. Absolute on every line — separators are gone, so the
- *  line itself has to say when, and a bare `HH:mm` under a `now:` anchor reads as today. */
-function hhmm(ts: string, zone?: string): string {
+ *  line itself has to say when, and a bare `HH:mm` under a `now:` anchor reads as today.
+ *  Shared with xi's anchor lines, so one clock formats everything the model reads (§5). */
+export function hhmm(ts: string, zone?: string): string {
   const c = clockOf(ts, zone);
   if (!c) return ts;
   return `${c.day} ${MONTHS[c.month]} ${c.hour}:${pad(c.minute)}`;

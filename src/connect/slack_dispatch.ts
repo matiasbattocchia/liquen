@@ -24,6 +24,7 @@ import { DispatchError, failedStatus } from "./errors.ts";
 import type { DeliveryPatch, Subscriber } from "../store/log.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../types.ts";
 import { type Directory, encodeSlackText } from "./mentions.ts";
+import { toSlack } from "./flavor.ts";
 
 export interface SlackTarget {
   connection: string; // the workspace the conversation anchors to (§4)
@@ -241,7 +242,8 @@ function outbound(e: Event): Outbound | null {
   const channel = e.envelope.conversation.address;
   if (!connection || !channel) return null;
   const event = e as MessageEvent;
-  const text = textOf(e);
+  // common markdown → mrkdwn, here at the frontier (flavor.ts)
+  const text = toSlack(textOf(e));
   const files = filesOf(e);
   const re = tsOf(event.payload?.ref_external_id);
   const reaction = (event.parts ?? []).find((p) => p.type === "data" && p.kind === "reaction") as {

@@ -29,6 +29,7 @@ import type { DeliveryPatch, Subscriber } from "../store/log.ts";
 import type { Event, EventId, FilePart, MessageEvent, ReactionPart, TextPart } from "../types.ts";
 import { externalId, SERVICE, type WAContent } from "./whatsapp.ts";
 import { type Directory, whatsappMentions } from "./mentions.ts";
+import { toWhatsApp } from "./flavor.ts";
 
 /** The bridge's dispatch request (server.go `dispatchRequest`) — record verbatim. */
 export interface WADispatchRecord {
@@ -151,7 +152,10 @@ function outbound(e: Event): Outbound | null {
     p.type === "data" && p.kind === "reaction"
   );
   const reactText = texts.find((p) => p.kind === "reaction");
-  const text = texts.filter((p) => p.kind !== "reaction").map((p) => p.text).join("\n");
+  // common markdown → the wire's dialect, here at the frontier (flavor.ts)
+  const text = toWhatsApp(
+    texts.filter((p) => p.kind !== "reaction").map((p) => p.text).join("\n"),
+  );
 
   const contents: { content: WAContent }[] = [];
   const action = event.payload?.action;

@@ -29,22 +29,28 @@ import type {
   Action,
   Draft,
   Emit,
+  Envelope,
+  ErrorEvent,
   Event,
+  EventId,
   Json,
   MessageEvent,
   PermissionRequestEvent,
   PermissionResponseEvent,
+  PermissionVerdict,
   Session,
+  ToolCall,
   ToolResultEvent,
   ToolUseEvent,
 } from "./types.ts";
+import { type Describe, describeCall, type Resolve } from "./describe.ts";
 import type { Appender, Reader } from "./store/log.ts";
 import type { Registry } from "./store/agents.ts";
 import type { Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import type { Locker } from "./store/lock.ts";
 import { filePartOf, loadMediaBlock } from "./store/media.ts";
-import { backfilled, ownVoice, shortId } from "./render.ts"; // shared predicates: backfill never wakes;
+import { backfilled, hhmm, ownComplex, ownVoice, shortId, textOf } from "./render.ts"; // shared predicates: backfill never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { type ModelTransport, nu, type TurnConfig } from "./nu.ts";
@@ -55,13 +61,39 @@ import { type ModelTransport, nu, type TurnConfig } from "./nu.ts";
  *  the next move is a human's, or we just failed. */
 export type Decision = "think" | "act" | "ignore";
 
+/** Policy, per CALL — the name and the arguments both, so a rule can be conditional (§9). */
 export type Gate = (name: string, input: Json) => boolean;
+
+/** One permission rule (§9): the first whose `tool` matches decides. `*` matches anything. */
+export interface Rule {
+  tool: string;
+  ask: boolean;
+}
+
+/** The default table — and it IS a table, not a branch: there are no special tools. `bash`
+ *  runs unasked because a rule says so, and `send` asks because dispatch leaves the org and
+ *  speaks in the principal's name. An org or agent supplies its own; a standing verdict
+ *  (`/always`, `/never`) will write into this same shape. */
+export const RULES: Rule[] = [
+  { tool: "send", ask: true },
+  { tool: "*", ask: false },
+];
+
+export function gateOf(rules: Rule[] = RULES): Gate {
+  return (name) => rules.find((r) => r.tool === name || r.tool === "*")?.ask ?? false;
+}
 
 /** Decide — once, from one window — what is owed. Position-aware, so a late invocation that
  *  arrives after the work was already done decides `ignore` (quiescence). */
-export function decide(events: Event[], session: Session, home: string, gate: Gate): Decision {
-  const pending = pendingOf(events, session, gate);
-  if (pending.length > 0) return pending.every(waiting) ? "ignore" : "act";
+export function decide(events: Event[], session: Session, home: string): Decision {
+  // A gate never wedges the mind. Every use gets an answer in the turn it was made — a
+  // gated one gets `pending_approval` — so the chain always closes and the conversation
+  // continues while the principal decides. (Before that it did not: a turn taken with our
+  // own `tool_use` unresolved RE-ISSUES it, live 2026-08-18, so the only safe move was to
+  // ignore everything, principal included. Answering the call removes the reason.)
+  if (pendingOf(events, session).length > 0) return "act";
+  // …and a verdict that has since landed is work of its own: run the call, report back.
+  if (owedOf(events, session).length > 0) return "act";
   if (cutOff(events)) return "think"; // a paced/truncated turn CONTINUES
   if (justFailed(events)) return "ignore"; // idle-after-error
   if (unclosedChain(events, session, home) || unanswered(events, session, home)) return "think";
@@ -143,42 +175,181 @@ export function relevant(config: AgentConfig, event: Event): boolean {
 
 /* ── the owed derivations (pure, over one window) ─────────────────────── */
 
-interface Pending {
-  use: ToolUseEvent;
-  gated: boolean;
-  requested: boolean;
-  response?: PermissionResponseEvent["parts"][0]["data"];
-}
-
-/** Our tool uses without a result, each annotated with its gate state (all log queries). */
-function pendingOf(events: Event[], session: Session, gate: Gate): Pending[] {
+/** Our tool uses with no result yet — the batch `act` owes an answer to (a log query). */
+function pendingOf(events: Event[], session: Session): ToolUseEvent[] {
   const answered = new Set(
     events.filter((e) => e.type === "tool_result").map((e) => e.payload?.ref_id),
   );
-  return events
-    .filter((e): e is ToolUseEvent =>
-      e.type === "tool_use" && e.agent?.session_id === session.id && !answered.has(e.id)
-    )
-    .map((use) => {
-      const { name, input } = use.parts[0].data;
-      const gated = gate(name, input);
-      return {
-        use,
-        gated,
-        // request and response both point ref_id at the USE — a star, not a chain (§3)
-        requested: gated &&
-          events.some((e) => e.type === "permission_request" && e.payload?.ref_id === use.id),
-        response: gated
-          ? events.find((e): e is PermissionResponseEvent =>
-            e.type === "permission_response" && e.payload?.ref_id === use.id
-          )?.parts[0].data
-          : undefined,
-      };
-    });
+  return events.filter((e): e is ToolUseEvent =>
+    e.type === "tool_use" && e.agent?.session_id === session.id && !answered.has(e.id)
+  );
 }
 
-/** Waiting on a human: requested, unanswered. The permission_response carries the wake. */
-const waiting = (p: Pending) => p.gated && p.requested && !p.response;
+/** The asks nobody has answered yet: the anchor's list, and what a verdict lands on. Request
+ *  and response both point `ref_id` at the USE — a star, not a chain (§3). */
+function openCards(events: Event[]): PermissionRequestEvent[] {
+  const answered = new Set(
+    events.filter((e) => e.type === "permission_response").map((e) => e.payload?.ref_id),
+  );
+  return events.filter((e): e is PermissionRequestEvent =>
+    e.type === "permission_request" && !answered.has(e.payload?.ref_id as EventId)
+  );
+}
+
+/** The principal's verdict on a use, if they have given one. */
+function verdictOf(events: Event[], use: EventId): PermissionVerdict | undefined {
+  return events.find((e): e is PermissionResponseEvent =>
+    e.type === "permission_response" && e.payload?.ref_id === use
+  )?.parts[0].data;
+}
+
+/** An answered ask whose OUTCOME is still owed: the model already holds its
+ *  `pending_approval` result, the principal has since ruled, and nothing has run or
+ *  reported back. This is the second half of a non-blocking gate — the call the harness
+ *  makes on the model's behalf, long after the turn that asked for it ended. */
+interface Owed {
+  use: ToolUseEvent;
+  verdict: PermissionVerdict;
+}
+
+function owedOf(events: Event[], session: Session): Owed[] {
+  const reported = new Set<EventId | undefined>();
+  const answered = new Set<EventId | undefined>();
+  for (const e of events) {
+    if (e.type !== "tool_result") continue;
+    (e.payload.deferred ? reported : answered).add(e.payload.ref_id);
+  }
+  const out: Owed[] = [];
+  const seen = new Set<EventId>();
+  for (const e of events) {
+    if (e.type !== "permission_response") continue;
+    const ref = e.payload.ref_id;
+    // not answered yet ⇒ the fresh batch settles it inline, with a real tool_result;
+    // already reported ⇒ done. Only the middle case is the harness's late errand.
+    if (seen.has(ref) || reported.has(ref) || !answered.has(ref)) continue;
+    const use = events.find((x): x is ToolUseEvent =>
+      x.type === "tool_use" && x.id === ref && x.agent?.session_id === session.id
+    );
+    if (!use) continue;
+    seen.add(ref);
+    out.push({ use, verdict: e.parts[0].data });
+  }
+  return out;
+}
+
+/** The verdict, as the principal types it on any surface: `/y [note]` · `/n [reason]`. */
+const VERDICT = /^\/(y|n)\b\s*(.*)$/s;
+
+/**
+ * A gate answered from wherever the principal is (§9). The approval card crosses to their
+ * surfaces (mirror), and this is the way back: their own line, in their own DM, IS the
+ * verdict — so a principal steering from a phone can approve without a terminal. Only their
+ * words count (`ownComplex` and not `ownVoice`: our complex authored it, the model didn't),
+ * and only after the ask — a `/y` typed before the card answers nothing.
+ *
+ * WHICH card it answers is the whole problem, and the answer is: whichever one they pointed
+ * at. A bare `/y` settles the single open card and nothing else — with two waiting, a bare
+ * word is genuinely ambiguous, and guessing would send the wrong message under their name.
+ * To answer one of several they QUOTE it, which is what a chat app is for. The mirror
+ * translates the quote at fan-in — the alias conversation is invisible to this port
+ * (policy §6), so the join happens where visibility lives: the copy's `ref_id` names the
+ * card event itself, and `ref_external_id` survives as the mark that they quoted at all.
+ *
+ * No verdict ever falls silently: a bare word against several cards, or a quote pointing at a
+ * card already answered, comes back as a harness `error` the mirror carries. Said ONCE — the
+ * same latest line is re-read on every wake while the gate waits.
+ */
+function gateVerdict(
+  events: Event[],
+  session: Session,
+  homeEnv: Envelope,
+): Draft<PermissionResponseEvent> | Draft<ErrorEvent> | undefined {
+  const live = openCards(events);
+  if (live.length === 0) return undefined;
+  const open = live.map((c) => c.payload.ref_id);
+  // resolution reads EVERY card in the window, not just the open ones: a quote that lands on
+  // a card already settled is a mistake worth naming (their phone shows the whole history,
+  // and after a re-issue two identical-looking cards sit there, only one of them live).
+  const cards = events.filter((e) => e.type === "permission_request");
+  const last = live.at(-1);
+  if (!last) return undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type !== "message" || !ownComplex(e, session.id) || ownVoice(e, session.id)) continue;
+    const said = VERDICT.exec(textOf(e).trim());
+    if (!said) break; // their latest word is not a verdict — they said something else
+    // Answered already? While a gate waits, EVERY event re-reads this same latest line —
+    // and a line stays latest long after it did its work. Two ways it is spent: a verdict
+    // came of it, or the harness already said why none could. Either way, say nothing twice.
+    const spoken = events.slice(i + 1).some((x) =>
+      x.type === "error" || x.type === "permission_response"
+    );
+    // a quote that hits no card at all (they replied to something else) is no quote: fall
+    // back to the bare rule rather than dropping their word on the floor
+    const quoted = (e.payload?.ref_external_id
+      ? cards.find((c) => c.id === e.payload?.ref_id)
+      : undefined) ??
+      (live.length === 1 ? last : AMBIGUOUS);
+    if (quoted === AMBIGUOUS) return spoken ? undefined : ambiguity(live.length, homeEnv);
+    if (!quoted || events.indexOf(quoted) > i) break; // answered before it was ever asked
+    // the card they pointed at has already been answered — say so, with what is still open
+    if (!open.includes(quoted.payload?.ref_id as EventId)) {
+      return spoken ? undefined : settled(live.length, homeEnv);
+    }
+    const reason = said[2].trim();
+    return {
+      ts: new Date().toISOString(),
+      type: "permission_response",
+      payload: { ref_id: quoted.payload!.ref_id as EventId },
+      envelope: homeEnv,
+      parts: [{
+        type: "data",
+        kind: "permission_response",
+        data: {
+          behavior: said[1] === "y" ? "allow" : "deny",
+          scope: "once",
+          ...(reason ? { reason } : {}),
+        },
+      }],
+    };
+  }
+  return undefined;
+}
+
+/** Several cards up and a bare word: the HARNESS says so, rather than guessing or going
+ *  quiet. It rides an `error` (the harness's own voice, §2) — which the mirror carries to
+ *  the principal's surfaces and which, being the window's last event, keeps the agent from
+ *  taking a turn it would only spend re-issuing the tools it is already waiting on. */
+const AMBIGUOUS = Symbol("ambiguous");
+
+function ambiguity(open: number, homeEnv: Envelope): Draft<ErrorEvent> {
+  return harness(
+    `${open} approvals are waiting — reply TO the one you mean (quote it), ` +
+      `or answer them one at a time`,
+    homeEnv,
+  );
+}
+
+/** They answered a card that is no longer open — the usual cause is two copies of the same
+ *  ask on the surface (a re-issue), where the newest is the DEAD one. Silence here reads as
+ *  a broken gate, so the harness names it and points at what is actually waiting. */
+function settled(open: number, homeEnv: Envelope): Draft<ErrorEvent> {
+  return harness(
+    `that approval was already answered — ${open} still waiting, quote one of those ` +
+      `(they are the OLDER cards: the newer copies are the ones already settled)`,
+    homeEnv,
+  );
+}
+
+/** The harness's own voice (§2): an `error` the mirror carries to the principal's surfaces. */
+function harness(error: string, homeEnv: Envelope): Draft<ErrorEvent> {
+  return {
+    ts: new Date().toISOString(),
+    type: "error",
+    envelope: homeEnv,
+    parts: [{ type: "data", kind: "error", data: { error } }],
+  };
+}
 
 /** Non-self messages our last home message's step did NOT consume ⇒ an answer is owed.
  *  Measured against the closing's `meta.consumed` horizon (what its window actually held),
@@ -231,9 +402,19 @@ function unclosedChain(events: Event[], session: Session, home: string): boolean
 /* ── the invocation ───────────────────────────────────────────────────── */
 
 export interface AgentConfig extends TurnConfig {
-  /** Gate policy: true ⇒ this tool call needs approval (§9). v0 default: gate `send`. */
+  /** Permission policy as DATA (§9) — the table `gate` is compiled from. Unset ⇒ `RULES`. */
+  rules?: Rule[];
+  /** The compiled policy, for callers that would rather write the predicate than the table
+   *  (tests, task mode). Overrides `rules`. */
   gate?: Gate;
   windowLimit?: number; // history query cap — a fallback; compaction is the mechanism (§5)
+  /** The floor in EVENT TIME: nothing older than this is ever owed. A FIXED instant, decided
+   *  once when the agent comes up (main: start − `backlogHours`), not a distance from now —
+   *  a moving bound would keep re-deciding what "old" means under the agent's feet, and the
+   *  thing being bounded is a one-time question: what backlog did it inherit? Coming up is
+   *  when a pile of unanswered messages is history rather than a mandate; from then on the
+   *  count cap is what bounds the prompt. Older rows stay readable through `search` (§6). */
+  since?: string;
   lockTtlMs?: number; // turn-lease TTL; a lease older than this is STOLEN (the crash signal)
 }
 
@@ -249,6 +430,10 @@ export interface ExecOutcome {
 export interface ExecTool {
   spec: Anthropic.Tool;
   execute: (input: Json, signal: AbortSignal) => Promise<Json | ExecOutcome>;
+  /** How a call READS to a person — the approval card, the anchor's pending list, the
+   *  mirror's tool line (§9). Optional: `describeCall`'s default already renders a
+   *  one-argument tool as `bash(git status)`, which is what most tools want. */
+  describe?: Describe;
 }
 
 function isOutcome(x: Json | ExecOutcome): x is ExecOutcome {
@@ -291,17 +476,30 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
   if (got === "held") return; // no retry: someone is on it, and their turn's end will poke
 
   const session: Session = { id: config.sessionId, agentId: config.agentId };
-  const gate = config.gate ?? ((name: string) => name === "send");
+  const gate = config.gate ?? gateOf(config.rules); // policy is a TABLE (§9): no tool is special
   // 3. decide, under the lease and from a fresh window — so it can't act on a stale verdict
   //    (another holder may have finished this very work while we were being invoked).
   //    The port is scoped (§6): visibility applies inside the read, BEFORE the limit, so the
   //    window holds N visible events — xi never sees, nor re-checks, what policy hides.
   const events = await ports.log.read({
     limit: config.windowLimit ?? DEFAULT_WINDOW,
+    ...(config.since ? { after: config.since } : {}), // the boot floor, fixed (§5)
     backfill: false, // imported history is not news: it wakes nothing and renders nowhere
   }); // the
   //    ONE read: the work's input as well as the decision's (§2)
-  const v = decide(events, session, config.home, gate);
+  // 3a. a gate the principal answered on a SURFACE (§9): their `/y` · `/n [reason]` becomes
+  //     the verdict before the verdict is read, so one invocation settles it AND acts on it
+  const homeEnv: Envelope = {
+    service: "local",
+    connection_address: "agent",
+    conversation: { address: config.home },
+  };
+  const answer = gateVerdict(events, session, homeEnv);
+  if (answer) {
+    const settled = await ports.log.publish(answer);
+    if (settled) events.push(settled);
+  }
+  const v = decide(events, session, config.home);
   if (v === "ignore") {
     await lock.release();
     return;
@@ -330,7 +528,12 @@ async function think(
   ports: XiPorts,
 ): Promise<Draft<Event>[]> {
   const docs = await ports.docs.list({ agent: config.agentId, conversation: config.home });
-  const ambient = ports.ambient ? await ports.ambient() : undefined;
+  // the anchor (§5): the volatile environment, plus what is still in the air. A pending gate
+  // is STATE, not history — the transcript already closed those calls with
+  // `pending_approval`, so the only place they belong is the block that is rewritten every
+  // turn. It also self-corrects: an ask that gets answered simply stops being listed.
+  const lines = [...(ports.ambient ? await ports.ambient() : []), ...waitingOn(events, config)];
+  const ambient = lines.length > 0 ? lines : undefined;
   // ONE turn per invocation, and nu decides what the turn IS: an over-budget window makes it
   // the checkpoint (the summary's insert wakes the think it displaced); a paced/truncated
   // turn continues via `meta.stop` and `decide` (§2, §5). xi only gathers the I/O.
@@ -354,6 +557,23 @@ async function think(
     ports.transport,
     ports.onDelta,
   );
+}
+
+/** The anchor's pending-approval lines (§5, §9): one per ask nobody has answered, named the
+ *  way the card named it and stamped with when it went out. Empty when nothing waits — which
+ *  is the point: the model reads its own open business off the anchor, and reads nothing
+ *  when there is none. No handle yet: an id the model cannot act on is noise, and it earns
+ *  its place the day `cancel` lands (item 11). */
+function waitingOn(events: Event[], config: AgentConfig): string[] {
+  const cards = openCards(events);
+  if (cards.length === 0) return [];
+  return [
+    `waiting on your principal — ${cards.length} approval${cards.length === 1 ? "" : "s"}:`,
+    ...cards.map((c) => {
+      const ask = c.parts[0].data;
+      return `· ${ask.call ?? ask.tool} — asked ${hhmm(c.ts, config.timezone)}`;
+    }),
+  ];
 }
 
 /* ── act: settle the pending batch (no model) ─────────────────────────── */
@@ -383,16 +603,28 @@ async function act(
     use: ToolUseEvent,
     outcome: Json | ExecOutcome,
     flags?: Partial<{ is_error: boolean; cancelled: boolean }>,
+    /** The call, rendered — set only on a DEFERRED outcome, which has to name what it is
+     *  reporting on: its `tool_use` has already collapsed out of the transcript (§5). */
+    call?: string,
   ): Draft<ToolResultEvent> => {
     const { output, files } = isOutcome(outcome) ? outcome : { output: outcome, files: [] };
     return {
       ts: ts(),
       type: "tool_result",
-      payload: { turn_id: use.payload.turn_id, ref_id: use.id },
+      payload: {
+        turn_id: use.payload.turn_id,
+        ref_id: use.id,
+        ...(call !== undefined ? { deferred: true as const } : {}),
+      },
       agent: self,
       envelope: mind,
       parts: [
-        { type: "data", kind: "tool_result", data: { output, ...flags } },
+        {
+          type: "data",
+          kind: "tool_result",
+          data: { output, ...flags },
+          ...(call !== undefined ? { text: call } : {}),
+        },
         // the tool's attachments (§5 media) — a path that vanished mid-turn just drops
         ...files.flatMap((f) => {
           try {
@@ -405,45 +637,80 @@ async function act(
     };
   };
 
+  const refused = (v: PermissionVerdict) =>
+    `refused by your principal${v.reason ? `: ${v.reason}` : ""}`;
+
   // every write this act produces is collected and committed ONCE, with the lease release
   // (§2) — the barrier completes atomically, and no half-batch can wake anyone
   const out: Draft<Event>[] = [];
-  const runnable: ToolUseEvent[] = [];
-  for (const p of pendingOf(events, session, gate)) {
-    if (waiting(p)) continue; // the human's move — their response is the wake
-    if (p.gated && !p.requested) {
-      // surface the approval card in the principal-DM; ingest matches the reply (§9)
-      const { name, input } = p.use.parts[0].data;
-      const req: Draft<PermissionRequestEvent> = {
-        ts: ts(),
-        type: "permission_request",
-        payload: { ref_id: p.use.id },
-        agent: self,
-        envelope: homeEnv,
-        parts: [{
-          type: "data",
-          kind: "permission_request",
-          data: {
-            tool: name,
-            args_preview: JSON.stringify(input).slice(0, 200),
-          },
-        }],
-      };
-      out.push(req);
+  const runnable: { use: ToolUseEvent; call?: string }[] = [];
+  const pending = pendingOf(events, session);
+  const owed = owedOf(events, session);
+  // one rendering for every call this act touches — the card, the anchor and the deferred
+  // report all read it, and resolving addresses to names takes the log (§9)
+  const describers = describersOf(ports);
+  const resolve = await nameResolver(
+    ports,
+    [...pending, ...owed.map((o) => o.use)].map((u) => u.parts[0].data),
+  );
+  const describe = (use: ToolUseEvent, full = false) =>
+    describeCall(use.parts[0].data, { resolve, full, tools: describers });
+
+  // (a) the fresh batch: EVERY use is answered in the turn that made it — including a gated
+  //     one, whose answer is `pending_approval`. Asking is part of executing, so the chain
+  //     closes and the mind stays free while the principal decides (§9).
+  for (const use of pending) {
+    const { name, input } = use.parts[0].data;
+    const verdict = verdictOf(events, use.id);
+    if (!verdict && gate(name, input)) {
+      // the card goes to the principal-DM and crosses to their surfaces (mirror, §4);
+      // a card already up is not asked twice — this use is simply being answered late
+      if (!events.some((e) => e.type === "permission_request" && e.payload?.ref_id === use.id)) {
+        out.push(
+          {
+            ts: ts(),
+            type: "permission_request",
+            payload: { ref_id: use.id },
+            agent: self,
+            envelope: homeEnv,
+            parts: [{
+              type: "data",
+              kind: "permission_request",
+              data: { tool: name, call: describe(use), detail: describe(use, true) },
+            }],
+          } satisfies Draft<PermissionRequestEvent>,
+        );
+      }
+      out.push(resultOf(use, PENDING_APPROVAL));
       continue;
     }
-    if (p.response?.behavior === "deny") {
-      const reason = p.response.reason;
-      out.push(resultOf(p.use, `denied${reason ? `: ${reason}` : ""}`, { is_error: true }));
+    if (verdict?.behavior === "deny") {
+      out.push(resultOf(use, refused(verdict), { is_error: true }));
       continue;
     }
     if (stolen) {
       // the previous holder crashed mid-act: execution state unknown — cancel, don't
       // re-run (a send may already have reached the peer); the model re-decides
-      out.push(resultOf(p.use, "orphaned by a crashed turn", { is_error: true, cancelled: true }));
+      out.push(resultOf(use, "orphaned by a crashed turn", { is_error: true, cancelled: true }));
       continue;
     }
-    runnable.push(p.use);
+    runnable.push({ use });
+  }
+
+  // (b) the errand: asks the principal has ruled on since. The tool_use is spent, so the
+  //     outcome cannot be a `tool_result` block — it comes back as the harness's own line
+  //     (§5), which is also what reaches the principal's surfaces.
+  for (const { use, verdict } of owed) {
+    const call = describe(use);
+    if (verdict.behavior === "deny") {
+      out.push(resultOf(use, refused(verdict), { is_error: true }, call));
+    } else if (stolen) {
+      out.push(
+        resultOf(use, "orphaned by a crashed turn", { is_error: true, cancelled: true }, call),
+      );
+    } else {
+      runnable.push({ use, call });
+    }
   }
 
   // the batch runs in parallel — the lock serializes the mind, not the tools (§2). Nothing
@@ -452,18 +719,55 @@ async function act(
   // be signalled. The `cancelled` flag it sets is already the steal-sweep's flag.
   const ctl = new AbortController();
   out.push(
-    ...await Promise.all(runnable.map(async (use) => {
+    ...await Promise.all(runnable.map(async ({ use, call }) => {
       try {
-        return resultOf(use, await execute(use, ctl.signal, self, ports));
+        return resultOf(use, await execute(use, ctl.signal, self, ports), undefined, call);
       } catch (err) {
         return resultOf(use, err instanceof Error ? err.message : String(err), {
           is_error: true,
           ...(ctl.signal.aborted ? { cancelled: true } : {}),
-        });
+        }, call);
       }
     })),
   );
   return out;
+}
+
+/** What a gated call returns THE MOMENT it is made (§9). The model is told plainly that the
+ *  call is alive and not its move any more — the anchor keeps the list, and the outcome
+ *  arrives later in the harness's voice. Re-issuing is the one failure mode worth naming:
+ *  it is what a model does with a tool_use it never got an answer to. */
+const PENDING_APPROVAL = {
+  status: "pending_approval",
+  note: "your principal was asked and has not answered yet — the call is still queued. " +
+    "Do NOT issue it again; you will be told the outcome when they decide.",
+};
+
+/** Tool-supplied renderings, by name (§9) — the built-ins' live in `describe.ts`. */
+function describersOf(ports: XiPorts): Record<string, Describe> {
+  const out: Record<string, Describe> = {};
+  for (const [name, tool] of Object.entries(ports.exec ?? {})) {
+    if (tool.describe) out[name] = tool.describe;
+  }
+  return out;
+}
+
+/** A wire address → the name a human knows it by (§6): the conversation's own name off its
+ *  rows, or — in a direct chat, which has no subject of its own — the person on the other
+ *  end. So a card says `send(to: Vivian)` where the log says a phone number. */
+async function nameResolver(ports: XiPorts, calls: ToolCall[]): Promise<Resolve> {
+  const names = new Map<string, string>();
+  for (const { input } of calls) {
+    const to = (input as { to?: unknown } | null)?.to;
+    if (typeof to !== "string" || to === "" || names.has(to)) continue;
+    const rows = await ports.log.read({ conversation: to, limit: NAME_REACH });
+    const named = rows.find((r) => r.envelope.conversation.name)?.envelope.conversation.name ??
+      (rows.some((r) => r.envelope.conversation.kind === "direct")
+        ? rows.find((r) => r.envelope.sender?.name)?.envelope.sender?.name
+        : undefined);
+    if (named) names.set(to, named);
+  }
+  return (address) => names.get(address);
 }
 
 async function execute(
@@ -574,9 +878,14 @@ async function execute(
     return { queued: true, event_id: sent!.id }; // a full draft (parts present) always stores
   }
   if (name === "search") {
+    // the filters narrow by ADDRESS; a name is only ever a way to find one (§6)
+    const [conversations, senders] = await Promise.all([
+      rooms(ports, args.in === undefined ? undefined : String(args.in)),
+      people(ports, args.from === undefined ? undefined : String(args.from)),
+    ]);
     const rows = await ports.log.read({
-      conversation: args.in as string | undefined,
-      from: args.from as string | undefined,
+      ...(conversations ? { conversations } : {}),
+      ...(senders ? { senders } : {}),
       before: args.before as string | undefined,
       after: args.after as string | undefined,
       text: args.text as string | undefined,
@@ -586,7 +895,8 @@ async function execute(
     return rows.map((e) => ({
       id: e.id,
       ts: e.ts,
-      conversation: e.envelope.conversation.address,
+      conversation: e.envelope.conversation.name ?? e.envelope.conversation.address,
+      address: e.envelope.conversation.address, // what `in`/`send(to:)` take back
       sender: e.envelope.sender?.name ?? e.envelope.sender?.address ?? "self",
       // `?? []` because a row's payload may legitimately carry no parts — a merge-only
       // draft that found no target inserts one (§3). Render already defends here; search
@@ -632,6 +942,46 @@ async function referent(ports: XiPorts, conversation: string, re: string): Promi
   return target;
 }
 
+/** How deep a name lookup reads before giving up — the most recent rows that carry it. */
+const NAME_REACH = 200;
+
+/**
+ * `in` / `from` → the addresses they mean (§6). The model points with the handle it was
+ * SHOWN, and what it is shown is a name; the log keys on addresses. So a filter takes
+ * either: an address matches itself, and anything else is looked up against the names
+ * rows carry — case-insensitively, on a substring, because "Gianvito" should find
+ * "Gianvito Rossi".
+ *
+ * Where `send` REFUSES an ambiguous handle, a search WIDENS on one: two people named Ana
+ * cost a reader nothing but a longer result, and picking one for them would silently hide
+ * the other. A name nobody wears is still an error — an empty result would read as "they
+ * never said that" instead of "I don't know who that is".
+ */
+async function rooms(ports: XiPorts, handle?: string): Promise<string[] | undefined> {
+  if (handle === undefined) return undefined;
+  if ((await ports.log.read({ conversation: handle, limit: 1 })).length > 0) return [handle];
+  const named = await ports.log.read({ conversationName: handle, limit: NAME_REACH });
+  // a DM has no subject of its own: it is named by the person on the other end (§3), so a
+  // sender's name names their direct chat — never a group's, which wears its own
+  const direct = await ports.log.read({
+    senderName: handle,
+    limit: NAME_REACH,
+    filter: (e) => e.envelope.conversation.kind === "direct",
+  });
+  const found = [...new Set([...named, ...direct].map((e) => e.envelope.conversation.address))];
+  if (found.length === 0) throw new Error(`no conversation named "${handle}"`);
+  return found;
+}
+
+async function people(ports: XiPorts, handle?: string): Promise<string[] | undefined> {
+  if (handle === undefined) return undefined;
+  if ((await ports.log.read({ from: handle, limit: 1 })).length > 0) return [handle];
+  const named = await ports.log.read({ senderName: handle, limit: NAME_REACH });
+  const found = [...new Set(named.map((e) => e.envelope.sender?.address).filter((a) => !!a))];
+  if (found.length === 0) throw new Error(`nobody named "${handle}" has spoken here`);
+  return found as string[];
+}
+
 function specsOf(ports: XiPorts): Anthropic.Tool[] {
   return [
     {
@@ -674,15 +1024,25 @@ function specsOf(ports: XiPorts): Anthropic.Tool[] {
     },
     {
       name: "search",
-      description: "Search the event log: filter by conversation, sender, time range, text.",
+      description:
+        "Search the message log — including everything older than your window. Results carry " +
+        "the conversation's `address`, which `in` and `send(to:)` both take back.",
       input_schema: {
         type: "object",
         properties: {
-          in: { type: "string" },
-          from: { type: "string" },
+          in: {
+            type: "string",
+            description:
+              "one conversation: its address, or a name — a group's, or the person a direct " +
+              "chat is with (any part of it, case doesn't matter)",
+          },
+          from: {
+            type: "string",
+            description: "one sender: their address, or any part of the name they go by",
+          },
           before: { type: "string" },
           after: { type: "string" },
-          text: { type: "string" },
+          text: { type: "string", description: "words said in the message itself" },
         },
       },
     },

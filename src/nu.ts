@@ -96,6 +96,11 @@ export async function nu(
     parts: [{ type: "data", kind: "error", data: { error } }],
   });
 
+  // The turn's id, minted BEFORE the call rather than after it: the metered transport stamps
+  // it on the spend row, so a usage row joins to the events it paid for (§2). One id per
+  // invocation is exact — a checkpoint and a think are the same one model call, never both.
+  const turnId = newId();
+
   // Maintenance first — and nu is where it belongs: nu is the layer that formats the window,
   // so it's the one that knows what the turn will actually weigh. When the VISIBLE window
   // outgrows the budget, THIS turn is the checkpoint: one model call either way (the
@@ -112,6 +117,7 @@ export async function nu(
     compactAt: config.compactAt,
     keepRecent: config.keepRecent,
     prompt: input.compactPrompt,
+    turnId,
   }, transport);
   if (summary) return [summary];
 
@@ -137,6 +143,7 @@ export async function nu(
         maxTokens: config.maxTokens,
         effort: config.effort,
         tools: input.tools,
+        turnId,
       },
       transport,
       emit,
@@ -146,7 +153,6 @@ export async function nu(
   if (!res.ok) return [errorEvent(res.error)]; // unstamped ⇒ terminal (decide idles)
 
   // stamp emissions → events (mint ids; envelope by channel; one turnId per step, §5)
-  const turnId = newId();
   const events: Draft<Event>[] = [];
   for (const em of res.emissions) {
     if (em.kind === "thinking") {

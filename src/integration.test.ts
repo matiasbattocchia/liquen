@@ -12,7 +12,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
 import { shortId } from "./render.ts";
-import type { Draft, Event, Json, MessageEvent, ToolUseEvent } from "./types.ts";
+import type { Draft, Event, Json, MessageEvent, ToolResultEvent, ToolUseEvent } from "./types.ts";
 
 const CONFIG: AgentConfig = {
   agentId: "a1",
@@ -237,7 +237,7 @@ Deno.test("send: directed message + queued result, both cause-linked", async () 
   );
 });
 
-Deno.test("gating: request surfaces instead of executing; allow runs; deny errors", async () => {
+Deno.test("gating: the ask is part of executing — the call is answered, then run or refused", async () => {
   const respond = (refId: string, behavior: "allow" | "deny"): Draft<Event> => ({
     ts: new Date().toISOString(),
     type: "permission_response",
@@ -266,15 +266,32 @@ Deno.test("gating: request surfaces instead of executing; allow runs; deny error
       const [req] = await read("permission_request");
       assert(req.type === "permission_request");
       assertEquals(req.envelope.conversation.address, "home");
+      // the card names the call the way a person reads it — not a slice of its JSON
+      assertEquals(req.parts[0].data.call, "send(to: wa:x, text: hi)");
+      assertEquals(req.parts[0].data.detail, "send(to: wa:x, text: hi)");
       assertEquals(
         (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
         0,
       );
+      // …and the call was ANSWERED in the same breath: nothing is left hanging, which is
+      // what lets the mind keep talking while the principal decides
+      await waitFor(async () => (await read("tool_result")).length === 1);
+      const [asked] = await read("tool_result");
+      assert(asked.type === "tool_result");
+      assertEquals(asked.payload.ref_id, req.payload.ref_id);
+      assertStringIncludes(JSON.stringify(asked.parts[0].data.output), "pending_approval");
 
       await publish(respond(req.payload.ref_id, "allow"));
       await waitFor(async () =>
         (await read("message")).some((e) => e.envelope.conversation.address === "wa:x")
       );
+      // the outcome comes back as a DEFERRED result — the record of what ran, narrated by
+      // the harness because the tool_use it answers is long spent (§5)
+      const outcome = (await read("tool_result")).find((e) => e.payload?.deferred);
+      assert(outcome?.type === "tool_result");
+      assertEquals(outcome.payload.ref_id, req.payload.ref_id);
+      assertEquals(outcome.parts[0].text, "send(to: wa:x, text: hi)");
+      assertStringIncludes(JSON.stringify(outcome.parts[0].data.output), "queued");
     },
     { gate: (name) => name === "send" },
   );
@@ -292,14 +309,78 @@ Deno.test("gating: request surfaces instead of executing; allow runs; deny error
       assert(req.type === "permission_request");
 
       await publish(respond(req.payload.ref_id, "deny"));
-      await waitFor(async () => (await read("tool_result")).length === 1);
-      const [res] = await read("tool_result");
-      assert(res.type === "tool_result");
+      await waitFor(async () => (await read("tool_result")).some((e) => e.payload?.deferred));
+      const res = (await read("tool_result")).find((e) => e.payload?.deferred);
+      assert(res?.type === "tool_result");
       assertEquals(res.parts[0].data.is_error, true);
       assertEquals(String(res.parts[0].data.output).includes("not now"), true);
       assertEquals(
         (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
         0,
+      );
+    },
+    { gate: (name) => name === "send" },
+  );
+});
+
+Deno.test("a pending ask lives in the ANCHOR — state, not transcript (§5)", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
+  const script = [
+    ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hola" } }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ];
+  const transport: ModelTransport = (params) => {
+    last = params;
+    return Promise.resolve(script.shift() ?? ok([]));
+  };
+  const config = { ...CONFIG, gate: (name: string) => name === "send" };
+  const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("mandale"));
+    await xi(config, ports); // the turn that calls send
+    await xi(config, ports); // act: the card goes up, the call is answered
+    await xi(config, ports); // the think that follows — this is the prompt we read
+    const anchor = JSON.stringify(last?.messages.at(-1)?.content);
+    assertStringIncludes(anchor, "waiting on your principal — 1 approval");
+    assertStringIncludes(anchor, "send(to: wa:x, text: hola)");
+    // and NOT in the transcript: what the model sees there is a closed call
+    assertStringIncludes(JSON.stringify(last?.messages), "pending_approval");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a waiting gate does not mute the agent: it answers its principal meanwhile", async () => {
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok([{ kind: "assistant", text: "le escribo apenas me des el ok" }], "end_turn"),
+      ok([{ kind: "assistant", text: "sí, sigue pendiente" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("mandale"));
+      await waitFor(async () => (await read("permission_request")).length === 1);
+      // the ask is up and unanswered — and the model still gets its turn
+      await waitFor(async () =>
+        (await read("message")).some((e) =>
+          e.agent?.session_id === "s1" && String(JSON.stringify(e.parts)).includes("apenas")
+        )
+      );
+      // the principal changes the subject rather than answering: that is answered too. The
+      // old gate ignored EVERYTHING here (a turn would re-issue the unresolved tool_use).
+      await publish(principalMsg("y lo otro?"));
+      await waitFor(async () =>
+        (await read("message")).some((e) =>
+          e.agent?.session_id === "s1" && String(JSON.stringify(e.parts)).includes("pendiente")
+        )
+      );
+      assertEquals((await read("permission_request")).length, 1); // and never re-asked
+      assertEquals(
+        (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
+        0, // still nothing sent: the gate holds, it just doesn't hold the mind
       );
     },
     { gate: (name) => name === "send" },
@@ -616,4 +697,255 @@ Deno.test("send action: the account may unsay its own words, and lift its own re
     await log.close();
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("the boot cutoff: an agent coming up after an absence owes only the recent hours", async () => {
+  // A connector keeps ingesting while the agent is down, so the log fills with live rows
+  // nobody answered. `since` — a FIXED instant, main sets it to start − `backlogHours` — is
+  // what keeps that pile history rather than a mandate: the boot invocation sees past the
+  // floor, finds nothing owed, and stays quiet. It does not follow the clock afterwards:
+  // what the agent inherited is settled when it comes up, and the count cap does the rest.
+  const stale = (hoursAgo: number, text: string): Draft<MessageEvent> => ({
+    ts: new Date(Date.now() - hoursAgo * 3_600_000).toISOString(),
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "room" },
+      sender: { address: "vecino", name: "Vecino" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+
+  await scenario(
+    [ok([{ kind: "assistant", text: "ahora sí" }])],
+    async ({ publish, read, calls }) => {
+      // boot ran against a log holding only the old pile — and asked the model nothing
+      await new Promise((r) => setTimeout(r, 150));
+      assertEquals(calls(), 0);
+
+      // one live message inside the bound, and the same log is work again
+      await publish(stale(0, "¿estás?"));
+      await waitFor(async () => (await read("message")).some((e) => e.agent?.session_id === "s1"));
+      assertEquals(calls(), 1);
+    },
+    { since: new Date(Date.now() - 2 * 3_600_000).toISOString() },
+    [stale(50, "el sábado"), stale(30, "ayer a la tarde"), stale(3, "esta mañana")],
+  );
+});
+
+Deno.test("search by name: the handle the window SHOWED resolves to addresses", async () => {
+  // the log keys on addresses; what the model reads is a name. Old rows from a chat that
+  // is out of window entirely — search is the only way back to them.
+  const old = (text: string, from?: { address: string; name: string }): Draft<MessageEvent> => ({
+    ts: new Date(Date.now() - 40 * 3_600_000).toISOString(),
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "15613518605", kind: "direct", name: "Gianvito" },
+      ...(from ? { sender: { address: from.address, name: from.name } } : {}),
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "search", input: { in: "gianvito" } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { from: "Nadie" } }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("qué me dijo Gianvito"));
+      await waitFor(async () => (await read("tool_result")).length === 2);
+      const [found, missed] = await read("tool_result");
+
+      // matched case-insensitively, and the row hands back the address to point at
+      const rows = (found as ToolResultEvent).parts[0].data.output as {
+        address: string;
+        conversation: string;
+        sender: string;
+      }[];
+      assertEquals(rows.length, 2);
+      assertEquals(rows[0].address, "15613518605");
+      assertEquals(rows[0].conversation, "Gianvito"); // named, not numbered
+      assertEquals(rows[1].sender, "Gianvito");
+
+      // a name nobody wears is an ERROR, not an empty result: "I don't know who that is"
+      // and "they never said that" are different answers
+      assertStringIncludes(JSON.stringify((missed as ToolResultEvent).parts), "nobody named");
+    },
+    {},
+    [
+      old("te debo la respuesta"),
+      old("dale, mañana", { address: "15613518605", name: "Gianvito" }),
+    ],
+  );
+});
+
+Deno.test("the gate answers from a surface: the principal's own /y and /n settle it", async () => {
+  // the approval card crosses to wherever the principal is (mirror), and their reply comes
+  // back as an ordinary message — so the verdict has to be readable from their own words,
+  // in their own DM, with no terminal in the loop. Their rows carry the principal stamp:
+  // agent.id, no turn_id (§3).
+  const says = (text: string): Draft<MessageEvent> => ({
+    ts: new Date().toISOString(),
+    type: "message",
+    agent: { id: "a1", session_id: "s1" },
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "home" },
+      sender: { address: "matias", name: "Matías" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+
+  // /y — the send goes out
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok([], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(says("mandale"));
+      await waitFor(async () => (await read("permission_request")).length === 1);
+      await publish(says("/y"));
+      await waitFor(async () =>
+        (await read("message")).some((e) => e.envelope.conversation.address === "wa:x")
+      );
+      const [verdict] = await read("permission_response");
+      assert(verdict.type === "permission_response");
+      assertEquals(verdict.parts[0].data.behavior, "allow");
+    },
+    { gate: (name) => name === "send" },
+  );
+
+  // /n <reason> — the refusal reaches the model with the principal's words in it
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok([], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(says("mandale"));
+      await waitFor(async () => (await read("permission_request")).length === 1);
+      await publish(says("/n muy formal, reescribilo"));
+      await waitFor(async () => (await read("tool_result")).some((e) => e.payload?.deferred));
+      const res = (await read("tool_result")).find((e) => e.payload?.deferred);
+      assert(res?.type === "tool_result");
+      assertEquals(res.parts[0].data.is_error, true);
+      assertStringIncludes(String(res.parts[0].data.output), "muy formal, reescribilo");
+      assertEquals(
+        (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
+        0,
+      );
+    },
+    { gate: (name) => name === "send" },
+  );
+
+  // a word that is NOT a verdict settles nothing — the gate keeps waiting
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok([], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(says("mandale"));
+      await waitFor(async () => (await read("permission_request")).length === 1);
+      await publish(says("dale pero esperá"));
+      await new Promise((r) => setTimeout(r, 250));
+      assertEquals((await read("permission_response")).length, 0);
+      assertEquals(
+        (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
+        0,
+      );
+    },
+    { gate: (name) => name === "send" },
+  );
+});
+
+Deno.test("two cards open: a bare /y settles nothing, the quoted one settles its own", async () => {
+  // a quoted /y arrives as the mirror writes it: `ref_id` already TRANSLATED to the card
+  // event (the join happens at fan-in, where visibility lives — the alias conversation is
+  // hidden from xi's port), `ref_external_id` surviving as the they-quoted mark
+  const says = (text: string, quote?: string): Draft<MessageEvent> => ({
+    ts: new Date().toISOString(),
+    type: "message",
+    agent: { id: "a1", session_id: "s1" },
+    ...(quote
+      ? {
+        payload: { ref_id: quote, ref_external_id: "wa:card-2" },
+        extra: { via: { conversation: "wa:self" } },
+      }
+      : {}),
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "home" },
+      sender: { address: "matias", name: "Matías" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+
+  await scenario(
+    [
+      ok([
+        { kind: "tool_use", name: "send", input: { to: "wa:a", text: "uno" } },
+        { kind: "tool_use", name: "send", input: { to: "wa:b", text: "dos" } },
+      ], "tool_use"),
+      ok([], "end_turn"),
+      ok([], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(says("mandá los dos"));
+      await waitFor(async () => (await read("permission_request")).length === 2);
+      const cards = await read("permission_request");
+
+      // bare /y with two open: nothing settles, and the HARNESS says why — the model can't,
+      // its own tool_use is still pending and a turn would only re-issue it
+      await publish(says("/y"));
+      await waitFor(async () => (await read("error")).length === 1);
+      assertEquals((await read("permission_response")).length, 0);
+      assertStringIncludes(JSON.stringify((await read("error"))[0].parts), "2 approvals");
+
+      // quoting the card answers that one, and only that one
+      await publish(says("/y", cards[1].id));
+      await waitFor(async () =>
+        (await read("message")).some((e) => e.envelope.conversation.address === "wa:b")
+      );
+      const settled = await read("permission_response");
+      assertEquals(settled.length, 1);
+      assertEquals(settled[0].payload?.ref_id, cards[1].payload?.ref_id);
+      assertEquals(
+        (await read("message")).filter((e) => e.envelope.conversation.address === "wa:a").length,
+        0,
+      );
+
+      // quoting it AGAIN answers nothing — that card is spent. Silence would read as a
+      // broken gate (live, 2026-08-18: the phone showed a re-issued pair and the settled
+      // copy was the one on top), so the harness says so, and says it ONCE.
+      await publish(says("/y", cards[1].id));
+      await waitFor(async () => (await read("error")).length === 2);
+      assertStringIncludes(JSON.stringify((await read("error"))[1].parts), "already answered");
+      assertEquals((await read("permission_response")).length, 1);
+
+      // and once is once: another wake re-reads that same latest line (card 1 is still open,
+      // so no turn runs) and the harness stays quiet rather than repeating itself
+      await publish({
+        ts: new Date().toISOString(),
+        type: "message",
+        envelope: {
+          service: "local",
+          connection_address: "agent",
+          conversation: { address: "wa:a" },
+          sender: { address: "wa:a" },
+        },
+        parts: [{ type: "text", kind: "text", text: "ping" }],
+      } as Draft<Event>);
+      await new Promise((r) => setTimeout(r, 250)); // quiescence
+      assertEquals((await read("error")).length, 2);
+    },
+    { gate: (name) => name === "send" },
+  );
 });

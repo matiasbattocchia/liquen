@@ -62,11 +62,13 @@ const closings = (events: Event[]): MessageEvent[] =>
   );
 
 /** Machine invariants every task must satisfy at the end. */
-function invariants(events: Event[], gate: Gate): string | null {
-  const answered = new Set(events.filter((e) => e.type === "tool_result").map((e) => e.cause));
+function invariants(events: Event[]): string | null {
+  const answered = new Set(
+    events.filter((e) => e.type === "tool_result").map((e) => e.payload.ref_id),
+  );
   const orphan = events.find((e) => e.type === "tool_use" && !answered.has(e.id));
   if (orphan) return `unanswered tool_use ${orphan.id}`;
-  if (decide(events, SESSION, HOME, gate) !== "ignore") {
+  if (decide(events, SESSION, HOME) !== "ignore") {
     return "not quiescent (work still owed)";
   }
   const err = events.find((e) => e.type === "error");
@@ -84,7 +86,9 @@ const TASKS: Task[] = [
       const events = await ctx.quiesce();
       const c = closings(events);
       if (c.length === 0) return "no closing reply";
-      const turns = new Set(events.filter((e) => e.type === "thinking").map((e) => e.turnId));
+      const turns = new Set(
+        events.filter((e) => e.type === "thinking").map((e) => e.payload.turn_id),
+      );
       if (turns.size > 2) return `${turns.size} turns for a greeting (expected ≤2)`;
       return null;
     },
@@ -198,7 +202,7 @@ const TASKS: Task[] = [
         if (!all.toLowerCase().includes(a.toLowerCase())) return `question unanswered: ${q}`;
       }
       const turns = new Set(
-        events.filter((e) => e.type === "thinking").map((e) => e.turnId),
+        events.filter((e) => e.type === "thinking").map((e) => e.payload.turn_id),
       ).size;
       if (turns > 3) return `${turns} turns for a 3-message burst (coalescing failed?)`;
       return null;
@@ -288,7 +292,7 @@ async function runTask(task: Task): Promise<{ note: string | null; ms: number; s
         const events = await main.log.read();
         const last = events.at(-1);
         const still = last ? Date.now() - Date.parse(last.ts) > 2_500 : false;
-        if (still && decide(events, SESSION, HOME, gate) === "ignore") return events;
+        if (still && decide(events, SESSION, HOME) === "ignore") return events;
         await new Promise((r) => setTimeout(r, 500));
       }
       throw new Error(`quiesce timeout (${timeoutMs / 1000}s)`);
@@ -298,9 +302,9 @@ async function runTask(task: Task): Promise<{ note: string | null; ms: number; s
       const req = reqs.at(-1)!;
       if (req.type !== "permission_request") throw new Error("no request to respond to");
       await main.log.publish({
-        id: newId(),
         ts: new Date().toISOString(),
         type: "permission_response",
+        payload: { ref_id: req.payload.ref_id },
         envelope: {
           service: "local",
           connection_address: "agent",
@@ -313,7 +317,6 @@ async function runTask(task: Task): Promise<{ note: string | null; ms: number; s
             behavior,
             scope: "once",
             ...(reason ? { reason } : {}),
-            request_id: req.parts[0].data.request_id,
           },
         }],
       });
@@ -327,10 +330,10 @@ async function runTask(task: Task): Promise<{ note: string | null; ms: number; s
     const events = await main.log.read();
     steps = new Set(
       events.filter((e) => e.type === "thinking" || e.type === "tool_use").map((e) =>
-        (e as { turnId: string }).turnId
+        e.payload.turn_id
       ),
     ).size;
-    note ??= invariants(events, gate);
+    note ??= invariants(events);
   } catch (err) {
     note = err instanceof Error ? err.message : String(err);
   } finally {
