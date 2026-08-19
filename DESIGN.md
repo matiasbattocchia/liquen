@@ -161,6 +161,16 @@ trigger-less invoke on a metronome — re-asks the same question until it comes 
 knobs live in the catalog's `agent` section (§9), per-agent overridable; the whole policy
 stays a pure derivation over one window, so a DB-tier `decide` can say the same thing.
 
+Beneath all three classes sit the **silencing marks** — `extra.backfill` (imported
+history) and `extra.muted` · `extra.archived` (the chat's platform-synced state when the
+message arrived; WhatsApp's phone-side mute/archive rides whatsmeow app state, stamped
+per message by the bridge — the same denormalization as names, never retroactive). A
+marked row is not news at all: it never wakes (not even as a summons — a mention in a
+muted group stays silent, WhatsApp's own semantics), never renders, never mirrors; the
+turn window's read drops it in SQL (`silenced: false`) and `search` is the door. Slack
+has no wire equivalent (mute is a private client preference the bot can't see) — a
+mu-side mute waits for the conversations table.
+
 `relevant` — authorship and class only, never payloads — and never visibility: the trigger
 arrives through the agent's scoped subscription, already readable (§6).
 
@@ -427,7 +437,7 @@ one peripheral for both.
     mentions?         // wire mentions, canonical addresses
     control?          // ingest-classified reserved word (stop | cancel)
   }
-  extra?: {}        // the sidecar: backfill, consumed, via, <service> provenance, raw
+  extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, via, <service> provenance, raw
   status?: {        // delivery lifecycle — ONE mutable json_patch-merged column, never events
     state?          // furthest stage (envelope.status is its shorthand view)
     delivered_at? · read_at?   // scalars in a DM; {participant: ts} maps in groups
@@ -489,7 +499,8 @@ Decisions:
   carry the conversation's own coordinates; `visibility` keeps them off the wire).
 - **`payload` vs `extra`, one admission rule**: `payload` is what the event MEANS — the
   action, the reference, the turn keys — typed, and the machine branches on it. `extra` is
-  the sidecar — how the wire said it plus harness bookkeeping (`backfill`, `consumed`,
+  the sidecar — how the wire said it plus harness bookkeeping (`backfill` · `muted` ·
+  `archived` — the silencing marks, §2 — `consumed`,
   `via`, `raw`, per-service provenance like `slack: {subtype, authorizations}`) —
   mergeable JSON the machine never branches on service keys of. Admission test: dropping
   an `extra` key must cost only auditability, never correctness — what queries or policy

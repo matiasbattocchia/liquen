@@ -237,8 +237,10 @@ export interface Payload {
 }
 
 /** The event's SIDECAR (§3): auditable, droppable, `json_patch`-merged on echo-merge —
- *  the machine never branches on service keys. Known keys: `backfill` (imported history —
- *  wakes nothing, renders nowhere, §2), `consumed` (on the agent's home messages: the last
+ *  the machine never branches on service keys. Known keys: `backfill` (imported history),
+ *  `muted` · `archived` (the chat's platform-synced state when the message arrived) — any
+ *  of the three SILENCES the row: wakes nothing, renders nowhere, `search` is the door
+ *  (§2, §5) — `consumed` (on the agent's home messages: the last
  *  event id the step's window read — the coalescing horizon `unanswered` measures against,
  *  §2), `via` (mirror provenance, §4), and per-service provenance under the service name —
  *  how the wire said it, not what the event means (`slack: {subtype, authorizations}`,

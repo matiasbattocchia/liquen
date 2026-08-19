@@ -313,19 +313,26 @@ export function capRun(
 }
 
 /**
- * A BACKFILLED row: history a connector imported (WhatsApp's post-pairing sync), not
- * something that just happened. Connectors stamp it service-neutrally — `extra.backfill`,
- * beside the per-service sidecar — so one predicate serves every frontier.
+ * A SILENCED row: real history — readable, searchable, part of the log — that is not NEWS,
+ * and so appears in no prompt: not as a wake (the gates in xi ask this too), and not in a
+ * WUM. `search` is the door. Connectors stamp the marks service-neutrally, beside the
+ * per-service sidecar, so one predicate serves every frontier:
  *
- * It is real history: readable, searchable, part of the log. It is simply not NEWS, and so
- * it appears in no prompt — not as a wake (the gates in xi ask this too), and not in a WUM.
- * The deciding reason is determinism, not size: an import streams in over minutes, and an
- * OPEN WUM that carried it would be rewritten on every batch — its elision count walking
- * 4 → 812 → 8,512 — churning the prompt's tail exactly when there is most of it. Hidden,
- * a sync is invisible to the prompt and `search` is the door.
+ * `backfill` — history a connector imported (WhatsApp's post-pairing sync), not something
+ * that just happened. The deciding reason is determinism, not size: an import streams in
+ * over minutes, and an OPEN WUM that carried it would be rewritten on every batch — its
+ * elision count walking 4 → 812 → 8,512 — churning the prompt's tail exactly when there is
+ * most of it.
+ *
+ * `muted` · `archived` — the chat's state ON ARRIVAL, as the platform synced it (the
+ * phone's own mute/archive, whatsmeow app state). The principal silenced that conversation
+ * and the agent honors it — a mention in a muted group stays silent (WhatsApp's own
+ * semantics), and an unmute wakes only what arrives after it: the stamp is per message,
+ * never retroactive, the same denormalization as names.
  */
-export function backfilled(event: Event): boolean {
-  return event.extra?.backfill === true;
+export function silenced(event: Event): boolean {
+  return event.extra?.backfill === true || event.extra?.muted === true ||
+    event.extra?.archived === true;
 }
 
 /** Stable-partition a run by conversation id, groups in first-arrival order. */
@@ -344,10 +351,10 @@ const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 function renderMessages(
   { events: window, session, home, now, zone, ambient, loadMedia }: RenderInput,
 ): MessageParam[] {
-  const { events, elisions } = byEventTime(applySummary(window.filter((e) => !backfilled(e))));
+  const { events, elisions } = byEventTime(applySummary(window.filter((e) => !silenced(e))));
   const out: MessageParam[] = [];
 
-  // ref resolution (§5): the WHOLE window, backfill included — a delete or a reply often
+  // ref resolution (§5): the WHOLE window, silenced rows included — a delete or a reply often
   // lands long after its referent, and the referent being history doesn't unsay it. Only
   // the RENDERED events wear an `id` though, so `re` can point at a line the model can
   // actually read; a resolvable-but-unrendered referent is a reference to elsewhere (`?`).

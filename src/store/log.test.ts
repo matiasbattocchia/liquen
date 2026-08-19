@@ -419,20 +419,26 @@ Deno.test("events.extra: wire sidecar round-trips and MERGES on the external-id 
   });
 });
 
-Deno.test("read({backfill:false}) drops imported history — and spends the LIMIT on news", async () => {
+Deno.test("read({silenced:false}) drops silenced rows — and spends the LIMIT on news", async () => {
   await withLog(async (log) => {
-    // an import, then the one live message behind it
+    // an import, a muted chat's message, an archived chat's — then the one live message
     for (let i = 0; i < 5; i++) {
       const e = msg(`h${i}`, "C1", `history ${i}`);
       e.extra = { backfill: true, whatsapp: { re: "x" } }; // beside the sidecar, not in it
       await log.publish(e);
     }
+    const mutedRow = msg("m1", "C2", "muted noise");
+    mutedRow.extra = { muted: true };
+    await log.publish(mutedRow);
+    const archivedRow = msg("a1", "C3", "archived noise");
+    archivedRow.extra = { archived: true };
+    await log.publish(archivedRow);
     await log.publish(msg("live", "C1", "the news"));
 
     const all = await log.read();
-    assertEquals(all.length, 6); // search still sees everything — history is its point
+    assertEquals(all.length, 8); // search still sees everything — silenced rows are its point
 
-    const news = await log.read({ backfill: false });
+    const news = await log.read({ silenced: false });
     assertEquals(news.map((e) => (e as MessageEvent).parts[0]), [{
       type: "text",
       kind: "text",
@@ -441,9 +447,12 @@ Deno.test("read({backfill:false}) drops imported history — and spends the LIMI
 
     // the point of doing it in SQL: a window of 3 fills with 3 LIVE rows, not 3 dropped ones
     for (let i = 0; i < 3; i++) await log.publish(msg(`n${i}`, "C1", `news ${i}`));
-    const window = await log.read({ backfill: false, limit: 3 });
+    const window = await log.read({ silenced: false, limit: 3 });
     assertEquals(window.length, 3);
-    assertEquals(window.every((e) => e.extra?.backfill === undefined), true);
+    assertEquals(
+      window.every((e) => e.extra === undefined || e.extra.backfill === undefined),
+      true,
+    );
   });
 });
 

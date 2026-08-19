@@ -457,6 +457,37 @@ Deno.test("a history batch stamps extra.backfill; the reply ref rides payload", 
   assertEquals(live.extra?.backfill, undefined);
 });
 
+Deno.test("a muted or archived chat stamps its state per message — the silencing marks (§5)", async () => {
+  const { handler, published } = harness();
+  await handler(
+    post(
+      "/whatsapp-web-webhook",
+      batch({
+        messages: [
+          textMessage({ external_id: "wmw.m.1", muted: true }),
+          textMessage({ external_id: "wmw.b.1", muted: true, archived: true }),
+          textMessage({ external_id: "wmw.l.1" }), // live, unmarked chat — no extra at all
+        ],
+        edits: [{
+          external_id: "wmw.e.1",
+          original_message_id: "wmw.m.0",
+          conversation_address: "5491199999999",
+          text: "edited",
+          timestamp: "2026-08-11T12:01:00Z",
+          muted: true,
+        }],
+      }),
+    ),
+  );
+  const [m, both, live, edit] = published as MessageEvent[];
+  assertEquals(m.extra, { muted: true });
+  assertEquals(both.extra, { muted: true, archived: true });
+  assertEquals(live.extra, undefined);
+  // an edit is its OWN event, so it carries the chat state too — else an edit in a muted
+  // chat would wake what the chat can't
+  assertEquals(edit.extra, { muted: true });
+});
+
 Deno.test("sessions/events: connected upserts the connection row (the gate)", async () => {
   const { store, upserts } = fakeStore();
   const { handler } = harness({ store });

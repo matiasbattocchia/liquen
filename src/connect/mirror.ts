@@ -53,7 +53,7 @@
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { DEFAULT_MIRROR_CLAIM_MS, DEFAULT_MIRROR_SETTLE_MS } from "../config.ts";
-import { backfilled, outcomeLine } from "../render.ts";
+import { outcomeLine, silenced } from "../render.ts";
 import { describeCall } from "../describe.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type {
@@ -98,7 +98,8 @@ export function createMirror(deps: MirrorDeps): () => void {
   };
 
   return deps.subscribe((e) => {
-    if (backfilled(e)) return; // history is not news (§5) — the no-backfill rule
+    if (silenced(e)) return; // silenced rows are not news (§5) — history never mirrors,
+    //   and a muted chat's traffic never reaches a surface the principal silenced it from
     const mind = mindOf(e);
     if (mind !== null) {
       const parts = ccParts(e);

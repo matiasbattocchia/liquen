@@ -84,6 +84,13 @@ export interface WAMessage {
   content: WAContent;
   status?: Record<string, unknown>; // explicit on echoes/history; absent on live inbound
   timestamp: string;
+  /** The chat's state when this message arrived, from the phone-synced settings store
+   *  (whatsmeow app state — the principal's own mute/archive). Stamped per message, the
+   *  same denormalization as names: an unmute reaches rows from the next message on,
+   *  never retroactively. Either mark SILENCES the row (§5) — it wakes nothing and
+   *  renders nowhere; `search` is the door. */
+  muted?: boolean;
+  archived?: boolean;
 }
 
 export interface WABatch {
@@ -105,6 +112,8 @@ export interface WABatch {
     sender_address?: string;
     text: string;
     timestamp: string;
+    muted?: boolean; // an edit is its own event, so it carries the chat state too —
+    archived?: boolean; //   else an edit in a muted chat would wake what the chat can't
   }[];
   revokes?: {
     external_id?: string;
@@ -344,6 +353,13 @@ function mapMessage(
   // of ours: identity resolution (who a grant binds) is the classifier's business (§3)
   const who = m.sender_name || (sender ? pushnames.get(sender) : undefined);
   const state = m.status ? stateOf(m.status) : undefined;
+  // the SERVICE-NEUTRAL silencing marks (§3 extra, §5): a consumer skipping history or a
+  // muted chat reads the same keys across every connector
+  const marks = {
+    ...(backfill ? { backfill: true } : {}),
+    ...(m.muted ? { muted: true } : {}),
+    ...(m.archived ? { archived: true } : {}),
+  };
 
   return {
     ts: m.timestamp || now(),
@@ -362,9 +378,7 @@ function mapMessage(
     },
     parts: [part],
     ...(payloadOf(m.content, part) ? { payload: payloadOf(m.content, part) } : {}),
-    // `backfill` is SERVICE-NEUTRAL (§3 extra): a consumer skipping history (the
-    // wake/automation gate) reads one key across every connector
-    ...(backfill ? { extra: { backfill: true } } : {}),
+    ...(Object.keys(marks).length ? { extra: marks } : {}),
   };
 }
 
@@ -382,10 +396,12 @@ function mapEdit(
 ): Draft<MessageEvent> | null {
   if (!e.original_message_id) return null;
   const ts = e.timestamp || now();
+  const marks = { ...(e.muted ? { muted: true } : {}), ...(e.archived ? { archived: true } : {}) };
   return {
     ts,
     type: "message",
     payload: { action: "edit", ref_external_id: externalId(e.original_message_id) },
+    ...(Object.keys(marks).length ? { extra: marks } : {}),
     envelope: {
       service: SERVICE,
       connection_address: connection,

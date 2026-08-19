@@ -244,7 +244,7 @@ Deno.test("relevant: another session's tool events are not ours", () => {
   assertEquals(relevant(CONFIG, ev("tool_result", other)), false);
 });
 
-/* ── backfill: imported history is readable, but owes nothing ─────────── */
+/* ── silenced (§5): backfill · muted · archived are readable, but owe nothing ── */
 
 const oldMsg = () => ev("message", { extra: { backfill: true } } as Partial<Event>);
 
@@ -266,6 +266,20 @@ Deno.test("decide: backfilled peers are not unanswered — the NEXT live event s
   assertEquals(decide([oldMsg(), peerMsg(), selfMsg()], SESSION, WAKE), "ignore");
   // …including after a closing, where the horizon branch does the asking
   assertEquals(decide([selfMsg(), oldMsg()], SESSION, WAKE), "ignore");
+});
+
+Deno.test("silenced: a muted or archived chat's message never wakes — not even a summons", () => {
+  const muted = ev("message", { extra: { muted: true } } as Partial<Event>);
+  const archived = ev("message", { extra: { archived: true } } as Partial<Event>);
+  // the trigger predicate skips the invocation outright…
+  assertEquals(relevant(CONFIG, muted), false);
+  assertEquals(relevant(CONFIG, archived), false);
+  // …and the window side agrees: these land in HOME — the strongest summons — and still
+  // wake nothing (the principal muted the chat; the agent honors it)
+  assertEquals(decide([muted], SESSION, WAKE), "ignore");
+  assertEquals(decide([archived, muted], SESSION, WAKE), "ignore");
+  // a live message beside them is answered on its own terms
+  assertEquals(decide([muted, peerMsg()], SESSION, WAKE), "think");
 });
 
 /* ── idle-after-error: the one policy the event-class filter used to hold ── */

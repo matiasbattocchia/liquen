@@ -682,6 +682,22 @@ Two follow-ups on the catalog, both live (DESIGN §2 "Attention", §9):
   catalog's `agent` section; the policy stays a pure window derivation (DB-tier ready).
 - Live org: model `claude-sonnet-5` org-wide; `agents/matias` keeps only `effort: low`.
 
+### Silenced rows: muted · archived join backfill (2026-08-19) — LANDED
+
+`extra.backfill` was the first member of a class; muted and archived chats complete it
+(DESIGN §2 "silencing marks", §3 sidecar). One predicate — `silenced` (render.ts) — reads
+all three marks: a marked row never wakes (not even a summons: a mention in a muted group
+stays silent, WhatsApp's own semantics), never renders, never mirrors; the turn window
+drops it in SQL (`read({silenced: false})`, the renamed backfill option) and `search` is
+the door. The WhatsApp wire contract grew `muted?`/`archived?` per message (and per edit —
+an edit is its own event, so it carries the chat state too), stamped by the bridge from
+whatsmeow's phone-synced chat settings (`ChatSettings{MutedUntil, Archived}`) at webhook
+time — the same per-message denormalization as names, never retroactive, so an unmute
+wakes only what arrives after it. **Bridge side is pending**: open-bsp-whatsmeow doesn't
+send the fields yet (absent ⇒ unmarked, so nothing breaks meanwhile). **Slack has no wire
+equivalent** — mute is a private client preference the bot can't see; a mu-side mute
+deferred until the conversations table exists, someday.
+
 11. **Background completion** — early-return for long tools generally; `escalation` as its
     first instance. The gate already walks this path (ask → `pending_approval` → a deferred
     outcome the harness narrates), so what is left is a tool that returns early on its own

@@ -63,7 +63,7 @@ import type { Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import type { Locker } from "./store/lock.ts";
 import { filePartOf, loadMediaBlock } from "./store/media.ts";
-import { backfilled, hhmm, ownComplex, ownVoice, shortId, textOf } from "./render.ts"; // shared predicates: backfill never wakes;
+import { hhmm, ownComplex, ownVoice, shortId, silenced, textOf } from "./render.ts"; // shared predicates: silenced never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { type ModelTransport, nu, type TurnConfig } from "./nu.ts";
@@ -297,7 +297,7 @@ function justFailed(events: Event[]): boolean {
 export function relevant(config: AgentConfig, event: Event): boolean {
   switch (event.type) {
     case "message": // a peer's IS the work; our own closing message is the self-poke that
-      return !backfilled(event); //   catches whatever landed mid-turn (§2)
+      return !silenced(event); //   catches whatever landed mid-turn (§2)
     case "tool_use":
     case "tool_result":
       return event.agent?.session_id === config.sessionId; // never react to others' tools
@@ -520,7 +520,7 @@ function newsOf(events: Event[], session: Session, home: string): MessageEvent[]
   // principal's rows: they carry agent.id (and, typed into the session, session_id),
   // but input never carries a turn_id, so it stays answerable
   const news = (e: Event): e is MessageEvent =>
-    e.type === "message" && !ownVoice(e, session.id) && !backfilled(e);
+    e.type === "message" && !ownVoice(e, session.id) && !silenced(e);
   let last = -1;
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
@@ -655,7 +655,8 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
   const events = await ports.log.read({
     limit: config.windowLimit ?? DEFAULT_WINDOW_LIMIT,
     ...(config.since ? { after: config.since } : {}), // the boot floor, fixed (§5)
-    backfill: false, // imported history is not news: it wakes nothing and renders nowhere
+    silenced: false, // imported history and muted/archived-chat traffic are not news: they
+    //   wake nothing and render nowhere — `search` is the door (§5)
   }); // the
   //    ONE read: the work's input as well as the decision's (§2)
   // 3a. a gate the principal answered on a SURFACE (§9): their `/y` · `/n [reason]` becomes
