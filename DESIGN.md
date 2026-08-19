@@ -162,7 +162,7 @@ already done resolves to nothing — quiescence is a poke that finds nothing owe
 **The window has two bounds**, a count and a floor. `windowLimit` (500) bounds the prompt —
 it is the size guard, and under live traffic it is the one that binds. `since` bounds the
 BACKLOG: a fixed instant, set once when the agent comes up to start − `backlogHours` (24,
-org-configurable, `MU_BACKLOG_HOURS` for one run), before which nothing is ever owed. An
+org-configurable: `organization.backlogHours`), before which nothing is ever owed. An
 agent coming up after a week off answers the last day, not the week, and the rest is history
 it can still reach through `search` (§6).
 
@@ -587,7 +587,7 @@ already replied stays quiet) — observe whether they self-coordinate; patch (as
 ownership) only if double-answers show up.
 
 - **Who a wire address IS — two homes (decided 2026-08-13)**: *declared* handles are
-  registry columns (`agents.email` / `agents.phone`, mirrored from `config.json`, §9) —
+  registry columns (`agents.email` / `agents.phone`, mirrored from `config.jsonc`, §9) —
   the classifier's lookup is a column scan against the sender address. *Discovered*
   bindings ARE connections: a user grant is its own owned connection whose address
   carries the wire user (`<team>:<user>`, written by the connect flow from `auth.test`),
@@ -1918,12 +1918,29 @@ principal is the **OS username**, trusted because localhost; when `agents/<usern
 exists (auto-created on first run), principal name = agent name and **no identity map is
 needed** — and when they share user/pass, user and agent are one (the vision line). Later:
 N:M principals↔agents, and autonomous agents (no one holds the pass but the agent).
-**The same framework way extends to the agent's settings and handles** (landed
-2026-08-13): `agents/<name>/config.json` — `{provider, model, effort, email, phone}` —
-declares per-agent runtime settings (overriding MainConfig defaults) and the principal's
-human-known wire handles; at start the whole declaration MIRRORS into the registry's
-columns exactly as folders mirror into `agents` (a malformed config fails the boot loudly
-— a silent fallback would run the org on settings the human believes overridden).
+**The same framework way extends to settings — the catalog** (`src/config.ts`): every
+harness knob, its default, one file exposing them all. `org/config.jsonc` carries two
+sections, split by AUDIENCE — `organization` (globals any agent is likely to customize:
+model · effort · maxTokens · provider · timezone · locale · backlogHours · rules) and
+`system` (harness machinery: stopTimeoutMs · lockTtlMs · retryDelaysMs · compactAt ·
+keepRecent · windowLimit · mirrorSettleMs · mirrorClaimMs) — while the VALUE still funnels
+to the deepest function that needs it (main → xi → nu → mu; `timezone` reads as org
+identity but lands in nu's render). `agents/<name>/config.jsonc` is sparse: the same
+`organization` keys overridden key by key, plus `identity` (`email`/`phone`, the handles a
+human knows the principal by); at start the declaration MIRRORS into the registry's
+columns exactly as folders mirror into `agents`. Resolution, most specific wins: agent
+file → MainConfig (the process: tests) → org file → the catalog's constants. The org file
+always exposes the WHOLE catalog: absent, it is materialized from the constants; when the
+catalog grows, the missing keys are appended (your values survive — the comments are the
+catalog's); an unknown key or malformed value fails the boot loudly — a typo must not run
+silently, and a silent fallback would run the org on settings the human believes
+overridden. The functions are 100% parametrized — `start`/`xi`/`nu`/`mu` take values as
+arguments and never read env; their argument defaults are the same exported constants
+(ergonomics for direct callers: tests), so code and file cannot drift. Env is for secrets
+(`ANTHROPIC_API_KEY`) and for pointing a standalone connector process at its org
+(`MU_DIR`); session choices — which agent the REPL faces, which principal a connect door
+binds — are CLI arguments, per-invocation by nature. The REPL's data root is a path
+constant (`./data`): the org lives where you run mu.
 Machine-discovered bindings (a Slack user id from `auth.test`, the self-DM channel) land
 on the connections map directly — so the two tables are the merged QUERY surface (the
 classifier's lookups, the RLS substrate) and no human ever edits them: humans write

@@ -5,6 +5,8 @@
     "jsr:@std/bytes@^1.0.6": "1.0.6",
     "jsr:@std/encoding@1": "1.0.10",
     "jsr:@std/internal@^1.0.6": "1.0.13",
+    "jsr:@std/json@^1.0.2": "1.1.0",
+    "jsr:@std/jsonc@1": "1.0.2",
     "jsr:@std/streams@1": "1.1.0",
     "jsr:@std/yaml@1": "1.1.2",
     "npm:@anthropic-ai/sdk@0.112": "0.112.3",
@@ -27,6 +29,15 @@
     },
     "@std/internal@1.0.13": {
       "integrity": "2f9546691d4ac2d32859c82dff284aaeac980ddeca38430d07941e7e288725c0"
+    },
+    "@std/json@1.1.0": {
+      "integrity": "93330d3ed4054d6b1ffe54b075432c80a5f671be77277b978931e018014cb1cc"
+    },
+    "@std/jsonc@1.0.2": {
+      "integrity": "909605dae3af22bd75b1cbda8d64a32cf1fd2cf6efa3f9e224aba6d22c0f44c7",
+      "dependencies": [
+        "jsr:@std/json"
+      ]
     },
     "@std/streams@1.1.0": {
       "integrity": "2f7024d841f343fd478afe0c958a3f0f068ef2a0d2bcc954f550f97ac1fa22e3",
@@ -308,6 +319,7 @@
     "dependencies": [
       "jsr:@std/assert@1",
       "jsr:@std/encoding@1",
+      "jsr:@std/jsonc@1",
       "jsr:@std/streams@1",
       "jsr:@std/yaml@1",
       "npm:@anthropic-ai/sdk@0.112",

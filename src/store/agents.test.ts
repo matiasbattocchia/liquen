@@ -1,5 +1,5 @@
 /**
- * agents: the registry (§9). Folders + config.json declare agents; `syncAgents` MIRRORS
+ * agents: the registry (§9). Folders + config.jsonc declare agents; `syncAgents` MIRRORS
  * the table to them — upsert present, delete absent — because the table is a projection
  * of what runs (the RLS substrate and the classifier's handle columns), never an archive.
  */
@@ -52,7 +52,7 @@ Deno.test("syncAgents mirrors the declared settings and handles; a sync without 
       phone: "+5491155501234",
     }]);
 
-    // config.json shrank — the mirror follows the declaration, it never remembers
+    // config.jsonc shrank — the mirror follows the declaration, it never remembers
     log.syncAgents([{ agentId: "ana", home: "mind:ana", email: "ana@org.example" }]);
     assertEquals(log.agents(), [{ agentId: "ana", home: "mind:ana", email: "ana@org.example" }]);
   } finally {

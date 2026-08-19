@@ -34,6 +34,12 @@ import { seedDocs } from "./store/seed.ts";
 import { anthropicClient, anthropicTransport, metered, type ModelTransport } from "./transport.ts";
 import { installExecPlane } from "./exec/bash.ts";
 import type { Emit, Event } from "./types.ts";
+import {
+  DEFAULT_STOP_TIMEOUT_MS,
+  ensureOrgConfig,
+  type OrgConfig,
+  readAgentOverrides,
+} from "./config.ts";
 
 export interface MainConfig {
   dir: string; // the org's data root (§9): log/ · credentials/ · system/ · org/ · agents/
@@ -80,8 +86,12 @@ export async function start(
   const docs = openFileDocs(dir); // the doc cascade lives on the data root itself (§8, §9)
   // the framework way (§9): no explicit principals ⇒ every folder under agents/ IS an agent
   const derived = config.principals === undefined; // …and gets the connections-map policy (§6)
-  const principals: Principal[] = config.principals ?? await scanAgents(dir, config, Date.now());
-  // the registry mirrors what runs (§9): folders + config.json are the source of truth, the
+  // the catalog (config.ts): read once, here — main is the only reader, and it funnels the
+  // resolved values down the chain. Explicit principals (tests, task mode) skip the files.
+  const org = derived ? await ensureOrgConfig(dir) : null;
+  const principals: Principal[] = config.principals ??
+    await scanAgents(dir, config, org!, Date.now());
+  // the registry mirrors what runs (§9): folders + config.jsonc are the source of truth, the
   // table is their projection — it exists because policy derives from rows (RLS later, §6)
   // and the ingest classifier scans the declared handles (email/phone → principal)
   log.syncAgents(principals.map((p) => ({
@@ -157,7 +167,10 @@ export async function start(
       // and log.close have to run so no background job or file handle is left behind.
       // The orphaned in-flight turn is swallowed by drive's catch (and, in task
       // mode, killed outright by the process exit that follows).
-      await withTimeout(Promise.all([...outstanding]), config.stopTimeoutMs ?? 5_000);
+      await withTimeout(
+        Promise.all([...outstanding]),
+        config.stopTimeoutMs ?? org?.system.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+      );
       await plane?.reap(); // kill any background jobs the agents left running (§9)
       await log.close();
     },
@@ -168,117 +181,56 @@ export async function start(
  *  declared facts (`provider` for the transport seam, `email`/`phone` for the classifier). */
 type Principal = AgentConfig & Policy & { provider?: string; email?: string; phone?: string };
 
-/** `agents/<name>/config.json` — the human-declared side of an agent (§9): runtime
- *  settings overriding the org defaults, and the handles a human knows. Everything
- *  else about the agent is discovered (by connect flows) or derived (from the folder). */
-interface AgentFileConfig {
-  provider?: string;
-  model?: string;
-  effort?: AgentConfig["effort"];
-  email?: string;
-  phone?: string;
-}
-
-/** `org/config.json` — the org-wide defaults every agent inherits (§9): the model
- *  settings nothing should hardcode, and the deployment's clock (`timezone` formats every
- *  rendered stamp, §5; `locale` is parked until the i18n seam). Resolution, most specific
- *  wins: agent config.json → MainConfig (the process: env, tests) → org config.json →
- *  built-in fallback. */
-interface OrgFileConfig {
-  provider?: string;
-  model?: string;
-  effort?: AgentConfig["effort"];
-  maxTokens?: number;
-  /** How much backlog an agent inherits when it comes up, in hours (§5). Lower it to come
-   *  up quietly after a long absence — 2 means "answer the last couple of hours, treat the
-   *  rest as history". Rows outside it stay readable through `search`. Default 24. */
-  backlogHours?: number;
-  locale?: string;
-  timezone?: string; // IANA, e.g. "America/Argentina/Buenos_Aires"
-}
-
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
-const DEFAULT_BACKLOG_HOURS = 24;
-
 /** The framework way (§9): every directory under `agents/` declares one agent — a blank
- *  folder is a blank agent, and an optional `config.json` inside it declares settings and
- *  handles. agentId = sessionId = the folder name (v0: session ≈ agent, §7), home =
- *  `mind:<name>` — the HOME IS THE MIND SESSION (§4): the main session is the one with
- *  tools, where the agent is steered; the principal talks straight into it (the REPL
+ *  folder is a blank agent, and an optional `config.jsonc` inside it overrides the catalog
+ *  key by key (config.ts). agentId = sessionId = the folder name (v0: session ≈ agent, §7),
+ *  home = `mind:<name>` — the HOME IS THE MIND SESSION (§4): the main session is the one
+ *  with tools, where the agent is steered; the principal talks straight into it (the REPL
  *  needs no identity map — principal name = agent name), and platform DMs alias onto it at
- *  ingest ("principal handle → principal-DM alias", the special wiring). */
+ *  ingest ("principal handle → principal-DM alias", the special wiring).
+ *
+ *  Resolution, most specific wins: agent config.jsonc → MainConfig (the process: tests) →
+ *  org config.jsonc — which always exposes the whole catalog, so nothing falls through. */
 async function scanAgents(
   dir: string,
-  defaults: Pick<MainConfig, "model" | "effort" | "maxTokens" | "backlogHours">,
+  defaults: Pick<MainConfig, "model" | "effort" | "maxTokens" | "backlogHours" | "lockTtlMs">,
+  org: OrgConfig,
   startedAt: number,
 ): Promise<Principal[]> {
-  const org = await readOrgConfig(`${dir}/org/config.json`);
   await Deno.mkdir(`${dir}/agents`, { recursive: true });
   // the backlog is resolved ONCE, into an instant: every agent in this org comes up owing
   // the same stretch of history, and no later read re-decides where that stretch begins
-  const hours = defaults.backlogHours ?? org.backlogHours ?? DEFAULT_BACKLOG_HOURS;
+  const hours = defaults.backlogHours ?? org.organization.backlogHours;
   const since = new Date(startedAt - hours * 3_600_000).toISOString();
   const found: Principal[] = [];
   for await (const entry of Deno.readDir(`${dir}/agents`)) {
     if (!entry.isDirectory) continue;
-    const cfg = await readAgentConfig(`${dir}/agents/${entry.name}/config.json`);
+    const overrides = await readAgentOverrides(dir, entry.name);
+    const cfg = overrides.organization ?? {};
+    const identity = overrides.identity ?? {};
     found.push({
       agentId: entry.name,
       sessionId: entry.name,
       home: `mind:${entry.name}`,
-      model: cfg.model ?? defaults.model ?? org.model ?? "claude-opus-4-8",
-      effort: cfg.effort ?? defaults.effort ?? org.effort,
-      maxTokens: defaults.maxTokens ?? org.maxTokens ?? 64_000,
+      model: cfg.model ?? defaults.model ?? org.organization.model,
+      effort: cfg.effort ?? defaults.effort ?? org.organization.effort ?? undefined,
+      maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.organization.maxTokens,
+      rules: cfg.rules ?? org.organization.rules,
       since,
-      timezone: org.timezone,
-      locale: org.locale,
-      provider: cfg.provider ?? org.provider,
-      email: cfg.email,
-      phone: cfg.phone,
+      timezone: (cfg.timezone ?? org.organization.timezone) || undefined,
+      locale: cfg.locale ?? org.organization.locale ?? undefined,
+      // the system half funnels too — org-wide, no per-agent seat (harness machinery)
+      lockTtlMs: defaults.lockTtlMs ?? org.system.lockTtlMs,
+      windowLimit: org.system.windowLimit,
+      retryDelaysMs: org.system.retryDelaysMs,
+      compactAt: org.system.compactAt,
+      keepRecent: org.system.keepRecent,
+      provider: cfg.provider ?? org.organization.provider ?? undefined,
+      email: identity.email,
+      phone: identity.phone,
     });
   }
   return found.sort((a, b) => a.agentId < b.agentId ? -1 : 1);
-}
-
-/** Absent file ⇒ all defaults; a present file must parse and carry a known effort — a
- *  silent fallback would run the org on settings the human believes overridden. */
-export async function readAgentConfig(path: string): Promise<AgentFileConfig> {
-  return await readConfigFile<AgentFileConfig>(path);
-}
-
-/** Same strictness as the agent file, plus the timezone must be one `Intl` knows — a typo
- *  discovered at boot, not as a RangeError inside a turn's render. */
-export async function readOrgConfig(path: string): Promise<OrgFileConfig> {
-  const cfg = await readConfigFile<OrgFileConfig>(path);
-  if (cfg.timezone !== undefined) {
-    try {
-      new Intl.DateTimeFormat("en-US", { timeZone: cfg.timezone });
-    } catch {
-      throw new Error(`${path}: unknown timezone "${cfg.timezone}" (IANA name expected)`);
-    }
-  }
-  return cfg;
-}
-
-async function readConfigFile<T extends { effort?: AgentConfig["effort"] }>(
-  path: string,
-): Promise<T> {
-  let raw: string;
-  try {
-    raw = await Deno.readTextFile(path);
-  } catch {
-    return {} as T;
-  }
-  let cfg: T;
-  try {
-    cfg = JSON.parse(raw) as T;
-  } catch (err) {
-    throw new Error(`${path}: ${err instanceof Error ? err.message : err}`);
-  }
-  if (cfg.effort !== undefined && !EFFORTS.includes(cfg.effort)) {
-    throw new Error(`${path}: unknown effort "${cfg.effort}" (one of ${EFFORTS.join(", ")})`);
-  }
-  return cfg;
 }
 
 /** Resolve when `p` settles or `ms` elapses, whichever comes first — and never leave the

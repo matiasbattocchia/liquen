@@ -16,6 +16,7 @@
  */
 
 import { start } from "./main.ts";
+import { DEFAULT_MODEL } from "./config.ts";
 import { type AgentConfig, decide } from "./xi.ts";
 import { bashAmbient, type BashState, bashTool, type Job } from "./exec/bash.ts";
 import type { Draft, MessageEvent } from "./types.ts";
@@ -71,11 +72,13 @@ async function runTask(instruction: string): Promise<number> {
   await Deno.mkdir(`${dir}/system/instructions`, { recursive: true });
   await Deno.writeTextFile(`${dir}/system/instructions/task.md`, TASK_DOC);
 
+  // Task mode is the config-less entry (§9): a throwaway dir, no catalog file — so its few
+  // knobs ride env (the CI/container interface), defaulting to the catalog's constants.
   const agent: AgentConfig = {
     agentId: "task",
     sessionId: "task",
     home: "home",
-    model: Deno.env.get("MU_MODEL") ?? "claude-opus-4-8",
+    model: Deno.env.get("MU_MODEL") ?? DEFAULT_MODEL,
     effort: Deno.env.get("MU_EFFORT") as AgentConfig["effort"],
     // a maxed turn must fit under the wall: 64k output tokens takes ~13min (~60-80 tok/s),
     // longer than MU_TASK_TIMEOUT_S — so it can never finish. 32k keeps worst-case turns

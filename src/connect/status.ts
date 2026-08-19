@@ -18,7 +18,7 @@ if (import.meta.main) {
   const db = new DatabaseSync(`${dir}/log/log.db`);
   const rows = (sql: string) => db.prepare(sql).all() as Record<string, unknown>[];
 
-  console.log("agents (the registry — folders + config.json declare, table mirrors):");
+  console.log("agents (the registry — folders + config.jsonc declare, table mirrors):");
   for (const a of log.agents()) {
     const opts = (["provider", "model", "effort", "email", "phone"] as const)
       .filter((k) => a[k])

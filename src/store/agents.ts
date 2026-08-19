@@ -4,9 +4,9 @@
  * An agent is a row — identity + home; docs, workspace, memory may all be empty and the
  * agent still fully exists. But rows are terrible DX to author, so agents are created "the
  * framework way": a folder under `MU_DIR/agents/<name>/` declares the agent, an optional
- * `config.json` inside it declares its settings (`provider`, `model`, `effort`) and the
+ * `config.jsonc` inside it declares its settings (`provider`, `model`, `effort`) and the
  * handles a human knows (`email`, `phone`), and at start main scans the folders and SYNCS
- * this table to them. **Folders + config.json are the source of truth; the table mirrors
+ * this table to them. **Folders + config.jsonc are the source of truth; the table mirrors
  * them** — it exists because policy and the ingest classifier need rows (RLS derives from
  * the registry on Postgres, and the scoped-log policy derives from it here, §6; a sender
  * whose address matches an agent's `phone`/`email` is that agent's principal), not because

@@ -197,12 +197,15 @@ Deno.test("the framework way: folders under agents/ declare the org; the table m
   }
 });
 
-Deno.test("config.json declares the agent: settings override defaults, handles mirror in (§9)", async () => {
+Deno.test("config.jsonc declares the agent: settings override defaults, handles mirror in (§9)", async () => {
   const dir = await Deno.makeTempDir();
   await Deno.mkdir(`${dir}/agents/ana`, { recursive: true });
   await Deno.writeTextFile(
-    `${dir}/agents/ana/config.json`,
-    JSON.stringify({ model: "claude-y", effort: "low", email: "ana@org.example" }),
+    `${dir}/agents/ana/config.jsonc`,
+    JSON.stringify({
+      organization: { model: "claude-y", effort: "low" }, // the catalog's keys, overridden
+      identity: { email: "ana@org.example" }, // the handles a human knows the agent by
+    }),
   );
   const { transport } = scripted([reply("hola")]);
   const main = await start({ dir, model: "claude-x", maxTokens: 1024 }, { transport });

@@ -14,7 +14,8 @@
 
 import { TextLineStream } from "@std/streams";
 import { userInfo } from "node:os";
-import { type MainConfig, readAgentConfig, readOrgConfig, start } from "./main.ts";
+import { start } from "./main.ts";
+import { ensureOrgConfig, readAgentOverrides } from "./config.ts";
 import { outcomeLine, ownVoice } from "./render.ts";
 import { describeCall } from "./describe.ts";
 import type { Draft, Event, MessageEvent, PermissionResponseEvent } from "./types.ts";
@@ -25,42 +26,28 @@ const YELLOW = "\x1b[33m";
 const CYAN = "\x1b[36m";
 const RESET = "\x1b[0m";
 
-const dir = Deno.env.get("MU_DIR") ?? "./data";
-
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-const effortEnv = Deno.env.get("MU_EFFORT");
-if (effortEnv !== undefined && !(EFFORTS as readonly string[]).includes(effortEnv)) {
-  console.error(`MU_EFFORT must be one of ${EFFORTS.join("|")} (got: ${effortEnv})`);
-  Deno.exit(1);
-}
-
-// How much backlog this run inherits — the org config sets the deployment's value; this is
-// the per-run override, for coming up quietly after a long absence (MU_BACKLOG_HOURS=2).
-const hoursEnv = Deno.env.get("MU_BACKLOG_HOURS");
-const backlogHours = hoursEnv === undefined ? undefined : Number(hoursEnv);
-if (backlogHours !== undefined && !(backlogHours > 0)) {
-  console.error(`MU_BACKLOG_HOURS must be a positive number of hours (got: ${hoursEnv})`);
-  Deno.exit(1);
-}
+// The org lives where you run mu — a path constant like any other. Every knob is in the
+// catalog (`org/config.jsonc`, config.ts); env is for secrets (ANTHROPIC_API_KEY) only.
+const dir = "./data";
 
 // The trusted-localhost principal (§9): identity is the OS username — and when the agent
 // folder shares that name, no identity map exists at all (principal name = agent name).
-// The vision line: user and agent are one. MU_AGENT overrides to talk to another agent.
+// The vision line: user and agent are one. `mu <agent>` — a session choice, so an
+// argument, not config — talks to another agent.
 const username = (() => {
   try {
     return userInfo().username;
   } catch {
-    return Deno.env.get("USER") ?? "principal";
+    return "principal";
   }
 })();
-const target = Deno.env.get("MU_AGENT") ?? username;
+const target = Deno.args[0] ?? username;
 const session = target; // session_id ≈ agent id in v0 (§7)
 const home = `mind:${target}`; // the home IS the mind session (§4): steer where the tools live
-// resolved here in scanAgents' OWN order (agent file → env → org → fallback) so the banner
-// names the model that will actually run: the agent's own config.json outranks the process
-const model = (await readAgentConfig(`${dir}/agents/${target}/config.json`)).model ??
-  Deno.env.get("MU_MODEL") ??
-  (await readOrgConfig(`${dir}/org/config.json`)).model ?? "claude-opus-4-8";
+// resolved here in scanAgents' OWN order (agent file → org catalog) so the banner names
+// the model that will actually run: the agent's own config.jsonc outranks the org's
+const model = (await readAgentOverrides(dir, target)).organization?.model ??
+  (await ensureOrgConfig(dir)).organization.model;
 
 // the framework way: running IS scaffolding — a blank org bootstraps your alter-ego
 await Deno.mkdir(`${dir}/agents/${target}`, { recursive: true });
@@ -159,10 +146,7 @@ function paint(e: Event): void {
 
 const main = await start({
   dir, // no principals: the folders under agents/ declare the org (the framework way, §9)
-  model,
-  effort: effortEnv as MainConfig["effort"], // unset ⇒ the API default (high)
-  maxTokens: 64_000, // streaming — give the turn room (thinking + tools + text)
-  backlogHours, // unset ⇒ org config, then the 24h default
+  // …and no settings either: everything funnels from the catalog (org/agent config.jsonc)
   onDelta: (d) => {
     if (d.kind === "text") write(d.text ?? "");
     else if (d.kind === "thinking") write(`${DIM}${d.text ?? ""}${RESET}`);

@@ -14,8 +14,11 @@
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Emit, Json, Usage } from "./types.ts";
+import type { Effort, Emit, Json, Usage } from "./types.ts";
 import type { RenderedRequest } from "./render.ts";
+import { DEFAULT_MAX_TOKENS } from "./config.ts";
+
+export type { Effort };
 
 /** What the model produced this step, pre-log. nu stamps id/ts/envelope/agent/turnId.
  *  `assistant` is the model's text (the assistant channel, §5); `thinking` is private; `tool_use` acts. */
@@ -24,13 +27,10 @@ export type Emission =
   | { kind: "assistant"; text: string }
   | { kind: "tool_use"; name: string; input: Json };
 
-/** Adaptive-thinking effort — the model manages its own reasoning budget (§2). */
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
-
 export interface StepInput extends RenderedRequest {
   model: string;
-  tools: Anthropic.Tool[];
-  maxTokens: number; // API-required output cap; nu owns the number, mu has no default
+  tools?: Anthropic.Tool[]; // omit ⇒ a toolless call (wiring, not a knob — tools are code)
+  maxTokens?: number; // API-required output cap; default: the catalog's (§9)
   effort?: Effort; // adaptive thinking depth; omit ⇒ the model's default
   turnId?: string; // the turn this call IS — rides past the params, to the meter (§2)
 }
@@ -66,9 +66,9 @@ export async function mu(
 ): Promise<StepResult> {
   const params: Anthropic.MessageCreateParamsNonStreaming = {
     model: input.model,
-    max_tokens: input.maxTokens,
+    max_tokens: input.maxTokens ?? DEFAULT_MAX_TOKENS,
     messages: input.messages,
-    tools: input.tools,
+    tools: input.tools ?? [],
     thinking: { type: "adaptive" }, // modern models reason adaptively (§2)
     ...(input.system.length > 0 ? { system: input.system } : {}),
     ...(input.effort ? { output_config: { effort: input.effort } } : {}),

@@ -52,6 +52,7 @@
  */
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
+import { DEFAULT_MIRROR_CLAIM_MS, DEFAULT_MIRROR_SETTLE_MS } from "../config.ts";
 import { backfilled, outcomeLine } from "../render.ts";
 import { describeCall } from "../describe.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
@@ -89,7 +90,7 @@ export interface MirrorDeps {
 /** Wire the mirror to the log. Returns unsubscribe. Serialized: copies keep log order. */
 export function createMirror(deps: MirrorDeps): () => void {
   const now = deps.now ?? (() => new Date().toISOString());
-  const settleMs = deps.settleMs ?? 1_000;
+  const settleMs = deps.settleMs ?? DEFAULT_MIRROR_SETTLE_MS;
   let chain: Promise<void> = Promise.resolve();
   const enqueue = (e: Event, work: () => Promise<void>) => {
     chain = chain.then(work).catch((err) => deps.onError?.(e, err));
@@ -113,7 +114,15 @@ export function createMirror(deps: MirrorDeps): () => void {
     if (binding) {
       enqueue(
         e,
-        () => fanIn(deps, e as MessageEvent, binding, settleMs, deps.claimMs ?? 60_000, now),
+        () =>
+          fanIn(
+            deps,
+            e as MessageEvent,
+            binding,
+            settleMs,
+            deps.claimMs ?? DEFAULT_MIRROR_CLAIM_MS,
+            now,
+          ),
       );
     }
   });
@@ -362,7 +371,9 @@ function viaOf(e: Event): Via | undefined {
  * Env: MU_DIR. */
 if (import.meta.main) {
   const { openLog } = await import("../store/log.ts");
+  const { ensureOrgConfig } = await import("../config.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const cfg = await ensureOrgConfig(dir);
   const log = await openLog(`${dir}/log`);
   createMirror({
     subscribe: (l, o) => log.subscribe(l, o),
@@ -370,6 +381,8 @@ if (import.meta.main) {
     read: (q) => log.read(q),
     aliases: () => log.aliases(),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
+    settleMs: cfg.system.mirrorSettleMs,
+    claimMs: cfg.system.mirrorClaimMs,
     onError: (e, err) =>
       console.error(`[mirror] FAILED on ${e.envelope.conversation.address}:`, err),
   });

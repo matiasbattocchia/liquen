@@ -43,6 +43,15 @@ export type Json =
 /** A JSON Schema object — a tool's input contract. */
 export type JsonSchema = { [key: string]: Json };
 
+/** Adaptive-thinking effort — the model manages its own reasoning budget (§2). */
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/** One permission rule (§9): the first whose `tool` matches decides. `*` matches anything. */
+export interface Rule {
+  tool: string;
+  ask: boolean;
+}
+
 /* ─────────────────────────────── parts ──────────────────────────────── */
 // The content model (open-bsp): text · file · data, each with a finer `kind`.
 // `parts` is the uniform body of every event (§3).

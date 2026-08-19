@@ -146,19 +146,20 @@ export async function connectWhatsApp(
  * and the bridge fails the pending session then (events.go) rather than idling to its TTL.
  * Expired ⇒ run the door again for a fresh one.
  *
- * Env: MU_DIR · MU_AGENT (principal override) · WA_BRIDGE_URL (default
- *      http://localhost:8081) · WA_BRIDGE_TOKEN · WA_ORG (default mu) · WA_PHONE. */
+ * Arg: the principal (default: the OS username — a session choice, so an argument).
+ * Env: MU_DIR · WA_BRIDGE_URL (default http://localhost:8081) · WA_BRIDGE_TOKEN ·
+ *      WA_ORG (default mu) · WA_PHONE. */
 if (import.meta.main) {
   const { openLog } = await import("../store/log.ts");
   const { userInfo } = await import("node:os");
   const qrcode = (await import("qrcode-terminal")).default;
 
   const dir = Deno.env.get("MU_DIR") ?? "./data";
-  const principal = Deno.env.get("MU_AGENT") ?? (() => {
+  const principal = Deno.args[0] ?? (() => {
     try {
       return userInfo().username;
     } catch {
-      return Deno.env.get("USER") ?? "principal";
+      return "principal";
     }
   })();
   const base = Deno.env.get("WA_BRIDGE_URL") ?? "http://localhost:8081";

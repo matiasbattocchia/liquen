@@ -25,6 +25,7 @@ import type {
 import type { DocEntry } from "./store/docs.ts";
 import { newId } from "./store/id.ts";
 import { buildSummary } from "./compact.ts";
+import { DEFAULT_RETRY_DELAYS_MS } from "./config.ts";
 import { render } from "./render.ts";
 import { type Effort, type ModelTransport, mu, type StepResult } from "./mu.ts";
 
@@ -67,8 +68,6 @@ export interface TurnInput {
 /** nu's output IS events (the symmetry: events in → events out). The turn's outcome is not a
  *  separate channel — it rides on the last event's `meta.stop`, where `decide` reads it. */
 export type TurnOutput = Draft<Event>[];
-
-const DEFAULT_RETRIES = [5_000, 20_000];
 
 /** Run one turn: render → mu (retrying) → stamp. Never throws; failure returns an error event. */
 export async function nu(
@@ -133,7 +132,7 @@ export async function nu(
   });
 
   let res: StepResult = { ok: false, error: "not attempted" };
-  const delays = config.retryDelaysMs ?? DEFAULT_RETRIES;
+  const delays = config.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
   for (let attempt = 0; attempt <= delays.length; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, delays[attempt - 1]));
     res = await mu(

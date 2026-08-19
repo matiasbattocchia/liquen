@@ -15,8 +15,7 @@ import type { Draft, Event, SummaryEvent } from "./types.ts";
 import { applySummary, closingBoundary, deferredInput, ownVoice } from "./render.ts";
 import { type ModelTransport, mu, type StepInput } from "./mu.ts";
 
-export const DEFAULT_COMPACT_AT = 150_000; // est. tokens — matches the API's own server-side compaction trigger
-export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens left uncovered
+import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT } from "./config.ts";
 
 /** chars/4 — crude but monotone; both thresholds are order-of-magnitude knobs. */
 export const estTokens = (events: Event[]): number => Math.ceil(JSON.stringify(events).length / 4);

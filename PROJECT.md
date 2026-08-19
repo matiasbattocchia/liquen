@@ -30,8 +30,8 @@ when). Status as of 2026-08-12 (Slack live, both directions, model in the loop).
   teardown can await it
 - `cli` (2b) — the line REPL over the log: stdin → principal message; streamed
   deltas (text live, thinking dim); tool/send/error lines; approval cards with
-  `/y` / `/n`. Run: `deno task cli` (env: `MU_DIR`, `MU_MODEL`,
-  `ANTHROPIC_API_KEY` via `.env`).
+  `/y` / `/n`. Run: `deno task cli [agent]` (org in `./data`; knobs in
+  `org/config.jsonc`; `ANTHROPIC_API_KEY` via `.env`).
 - `exec/` — the exec plane (DESIGN §9, from the pi / Agent-SDK study): `bash`
   tool (workspace cwd, 120s default timeout, merged output, tail-truncation
   2000 lines/50KB with full output persisted to `.out/`, non-zero exit →
@@ -617,6 +617,41 @@ rather than left to be noticed:
   wakes) accounting for 206k of the 380k written. A 1h TTL was costed and rejected — at 2x
   write against 1.25x it lands within ~5% of the same money. The levers that matter are
   prompt size and model price.
+
+### The config funnel (2026-08-19) — decided and LANDED
+
+Prompted by the attention design ("N, T, W should be configurable… as always don't
+hardcode"), an audit of every knob found three castes: read-from-config-with-fallback
+(model, effort), settable-only-in-code (compactAt, retryDelaysMs, windowLimit, the
+mirror's settle/claim), and purely hardcoded. One discipline replaces all three
+(DESIGN §9, "the catalog"):
+
+- **The catalog** (`src/config.ts`): every knob, its default as an exported constant, and
+  the reader. `org/config.jsonc` (JSONC — the comments are documentation) always exposes
+  the whole catalog: materialized when absent, healed when the catalog grows (missing keys
+  appended, your values survive), loud on unknown keys and malformed values. Seed and code
+  share the constants, so they cannot drift.
+- **Sections by audience, funnel by depth**: `organization` holds what any agent
+  customizes, `system` holds harness machinery — but each value funnels to the deepest
+  function that needs it (`timezone` reads as org identity, lands in nu's render). Agent
+  files are sparse: `organization` overrides key by key, plus `identity` (email/phone).
+  Precedence: agent file → MainConfig (tests) → org file → constant.
+- **100% parametrized functions**: `start`/`xi`/`nu`/`mu` never read env; mu gained
+  argument defaults (`maxTokens`, `tools: []`) — purity means no reads, not no defaults.
+  Rules (the permission table) joined the catalog under `organization.rules`, closing the
+  "only reading the table from org/agent config is left" gap above.
+- **Env shrank to secrets plus one pointer**: `ANTHROPIC_API_KEY`, and `MU_DIR` only for
+  standalone connector processes (their launch contract, until the supervisor owns it).
+  `MU_MODEL` · `MU_EFFORT` · `MU_BACKLOG_HOURS` · `MU_AGENT` · `USER` are gone. Session
+  choices became arguments (`deno task cli [agent]`, connect doors take the principal);
+  the REPL's data root is the constant `./data` — the org lives where you run mu. Task
+  mode keeps its tiny env surface (`MU_MODEL`, `MU_MAX_TOKENS`, `MU_TASK_TIMEOUT_S`): it
+  is the config-less entry, and env is a container's interface.
+- Defaults changed while the constants moved: model `claude-sonnet-5`, timezone `"UTC"`
+  (the deployment-zone fallback was hidden nondeterminism — same org, different stamps
+  per box).
+- Next chore, sequenced after this one: `rules?`/`gate?` move from `AgentConfig` to
+  `XiPorts` — then config carries only values and ports carry only capabilities.
 
 11. **Background completion** — early-return for long tools generally; `escalation` as its
     first instance. The gate already walks this path (ask → `pending_approval` → a deferred

@@ -18,6 +18,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { DEFAULT_LOCK_TTL_MS } from "../config.ts";
 
 /** How an acquire went. "held" = a live holder exists — exit, their output will poke. */
 export type Acquired = "acquired" | "stolen" | "held";
@@ -35,8 +36,6 @@ export interface TurnLock {
 export interface Locker {
   lock(name: string, ttlMs?: number): TurnLock;
 }
-
-export const DEFAULT_TTL_MS = 120_000;
 
 export const LOCKS_DDL = `CREATE TABLE IF NOT EXISTS locks (
   name TEXT PRIMARY KEY,
@@ -60,7 +59,7 @@ export function createLocker(db: DatabaseSync, now: () => number = Date.now): Lo
   const live = db.prepare("SELECT 1 AS x FROM locks WHERE name = ? AND born > ?");
 
   return {
-    lock(name: string, ttlMs: number = DEFAULT_TTL_MS): TurnLock {
+    lock(name: string, ttlMs: number = DEFAULT_LOCK_TTL_MS): TurnLock {
       return {
         acquire(): Promise<Acquired> {
           const t = now();

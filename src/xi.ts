@@ -38,11 +38,13 @@ import type {
   PermissionRequestEvent,
   PermissionResponseEvent,
   PermissionVerdict,
+  Rule,
   Session,
   ToolCall,
   ToolResultEvent,
   ToolUseEvent,
 } from "./types.ts";
+import { DEFAULT_RULES, DEFAULT_WINDOW_LIMIT } from "./config.ts";
 import { type Describe, describeCall, type Resolve } from "./describe.ts";
 import type { Appender, Reader } from "./store/log.ts";
 import type { Registry } from "./store/agents.ts";
@@ -64,22 +66,11 @@ export type Decision = "think" | "act" | "ignore";
 /** Policy, per CALL — the name and the arguments both, so a rule can be conditional (§9). */
 export type Gate = (name: string, input: Json) => boolean;
 
-/** One permission rule (§9): the first whose `tool` matches decides. `*` matches anything. */
-export interface Rule {
-  tool: string;
-  ask: boolean;
-}
-
-/** The default table — and it IS a table, not a branch: there are no special tools. `bash`
- *  runs unasked because a rule says so, and `send` asks because dispatch leaves the org and
- *  speaks in the principal's name. An org or agent supplies its own; a standing verdict
- *  (`/always`, `/never`) will write into this same shape. */
-export const RULES: Rule[] = [
-  { tool: "send", ask: true },
-  { tool: "*", ask: false },
-];
-
-export function gateOf(rules: Rule[] = RULES): Gate {
+/** The default table (`config.ts` catalog, org/agent-overridable) — and it IS a table, not
+ *  a branch: there are no special tools. `bash` runs unasked because a rule says so, and
+ *  `send` asks because dispatch leaves the org and speaks in the principal's name. A
+ *  standing verdict (`/always`, `/never`) will write into this same shape. */
+export function gateOf(rules: Rule[] = DEFAULT_RULES): Gate {
   return (name) => rules.find((r) => r.tool === name || r.tool === "*")?.ask ?? false;
 }
 
@@ -402,7 +393,8 @@ function unclosedChain(events: Event[], session: Session, home: string): boolean
 /* ── the invocation ───────────────────────────────────────────────────── */
 
 export interface AgentConfig extends TurnConfig {
-  /** Permission policy as DATA (§9) — the table `gate` is compiled from. Unset ⇒ `RULES`. */
+  /** Permission policy as DATA (§9) — the table `gate` is compiled from; main funnels it
+   *  from org/agent config. Unset ⇒ the catalog's `DEFAULT_RULES`. */
   rules?: Rule[];
   /** The compiled policy, for callers that would rather write the predicate than the table
    *  (tests, task mode). Overrides `rules`. */
@@ -461,8 +453,6 @@ export interface XiPorts {
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
 }
 
-const DEFAULT_WINDOW = 500;
-
 /** One xi invocation: poke → owed → (think/act: acquire-or-exit → work) → return. */
 export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): Promise<void> {
   // 1. the gate — free: no read, no lease. Most invocations end here (§2)
@@ -482,7 +472,7 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
   //    The port is scoped (§6): visibility applies inside the read, BEFORE the limit, so the
   //    window holds N visible events — xi never sees, nor re-checks, what policy hides.
   const events = await ports.log.read({
-    limit: config.windowLimit ?? DEFAULT_WINDOW,
+    limit: config.windowLimit ?? DEFAULT_WINDOW_LIMIT,
     ...(config.since ? { after: config.since } : {}), // the boot floor, fixed (§5)
     backfill: false, // imported history is not news: it wakes nothing and renders nowhere
   }); // the
