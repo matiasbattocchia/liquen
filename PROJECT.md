@@ -248,7 +248,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
    principal-identified conversation (WA self-chat, Slack self-DM) maps to AND from the
    mind by **COPY, never rewrite** — an event with the right envelope must exist in the
    log to be dispatched, and the wire original stays honest where it landed. One
-   broker-side component, `connect/mirror.ts` (`deno task mirror`), two rules: fan-in
+   broker-side component, `connect/mirror.ts` (a subscription main holds), two rules: fan-in
    copies an alias inbound into `mind:<agent>` (provenance in `extra.via`; the agent
    wakes on it like a REPL line); fan-out CCs **every mind event the REPL shows** to
    every binding except the origin surface — the voice as `[agent] …` (a

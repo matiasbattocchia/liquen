@@ -377,28 +377,3 @@ function viaOf(e: Event): Via | undefined {
   const via = e.extra?.via;
   return typeof via === "object" && via !== null ? via as Via : undefined;
 }
-
-/* ── local entry: tail the log, sync minds ↔ aliases ───────────────────
- *
- *   deno task mirror              # runs beside the ingests and dispatchers
- *
- * Env: MU_DIR. */
-if (import.meta.main) {
-  const { openLog } = await import("../store/log.ts");
-  const { ensureOrgConfig } = await import("../config.ts");
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
-  const cfg = await ensureOrgConfig(dir);
-  const log = await openLog(`${dir}/log`);
-  createMirror({
-    subscribe: (l, o) => log.subscribe(l, o),
-    publish: log.publish,
-    read: (q) => log.read(q),
-    aliases: () => log.aliases(),
-    setDelivery: (id, patch) => log.setDelivery(id, patch),
-    settleMs: cfg.system.mirrorSettleMs,
-    claimMs: cfg.system.mirrorClaimMs,
-    onError: (e, err) =>
-      console.error(`[mirror] FAILED on ${e.envelope.conversation.address}:`, err),
-  });
-  console.error(`[mirror] syncing minds ↔ alias surfaces on ${dir}/log`);
-}

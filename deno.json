@@ -23,7 +23,6 @@
     "ingest:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp.ts",
     "dispatch:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp_dispatch.ts",
     "connect:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp_connect.ts",
-    "mirror": "deno run -A --env-file=.env src/connect/mirror.ts",
     "compile:task": "deno compile -A --include seed/docs -o dist/mu-task src/task.ts"
   },
   "fmt": {

@@ -23,6 +23,13 @@
  * The one thing main keeps is `outstanding`: the in-flight invocations, so `stop()` can await
  * them. Lifecycle, not scheduling — teardown closes the log and reaps the exec plane, and
  * neither may happen under a live turn.
+ *
+ * One subscription is not an agent's: the mind-alias mirror (§4), which rides the RAW log
+ * because it joins across a boundary the scoped ports hide from each other. It lives here
+ * for the same reason the agents do — it needs a log and nothing else, no socket and no
+ * credential, so a process of its own would only be a lifetime nobody watches. The
+ * connectors are the opposite case and stay outside: an ingest holds a port, a dispatcher
+ * holds a token.
  */
 
 import { type AgentConfig, type ExecTool, xi, type XiPorts } from "./xi.ts";
@@ -33,6 +40,7 @@ import { openFileDocs } from "./store/docs.ts";
 import { seedDocs } from "./store/seed.ts";
 import { anthropicClient, anthropicTransport, metered, type ModelTransport } from "./transport.ts";
 import { installExecPlane } from "./exec/bash.ts";
+import { createMirror } from "./connect/mirror.ts";
 import type { Emit, Event } from "./types.ts";
 import {
   DEFAULT_STOP_TIMEOUT_MS,
@@ -159,6 +167,21 @@ export async function start(
   };
 
   const unsubs = agents.map((a) => a.log.subscribe(invoke(a)));
+  // the mirror rides the RAW log (§4): it copies between a mind and its alias surfaces, and
+  // an agent's own alias conversation is invisible to that agent's scoped port (§6) — the
+  // join has to happen where visibility isn't filtered. Inert until a surface is bound, so
+  // it costs nothing in an org that has none.
+  unsubs.push(createMirror({
+    subscribe: (l, o) => log.subscribe(l, o),
+    publish: log.publish,
+    read: (q) => log.read(q),
+    aliases: () => log.aliases(),
+    setDelivery: (id, patch) => log.setDelivery(id, patch),
+    settleMs: org?.system.mirrorSettleMs,
+    claimMs: org?.system.mirrorClaimMs,
+    onError: (e, err) =>
+      console.error(`[main] mirror FAILED on ${e.envelope.conversation.address}:`, err),
+  }));
   for (const a of agents) invoke(a)(); // boot: no trigger ⇒ look at whatever the log owes
 
   // the clock poke (§2 attention): deferred ambient news needs someone to re-ask once the

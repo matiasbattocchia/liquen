@@ -382,3 +382,46 @@ Deno.test("policy partitions the fan-out: each agent's subscription delivers onl
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("the mirror is main's own subscription: an alias inbound reaches the mind (§4)", async () => {
+  const dir = await Deno.makeTempDir();
+  const { transport } = scripted([reply("dale")]);
+  // v0 session ≈ agent, and the HOME is the mind the mirror copies into
+  const ana = agent("1", { agentId: "ana", sessionId: "ana", home: "mind:ana" });
+  const main = await start({
+    dir,
+    principals: [ana],
+    // an owned WhatsApp grant: its self-chat IS the alias, derived from the number (§4)
+    connections: [{ service: "whatsapp", address: "549", agentId: "ana" }],
+  }, { transport });
+  const words = (e: Event) =>
+    ((e as MessageEvent).parts ?? []).filter((p) => p.type === "text")
+      .map((p) => (p as { text: string }).text).join("");
+  try {
+    await main.log.publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "549",
+        conversation: { address: "549", kind: "direct" },
+        external_id: "wa:1",
+      },
+      parts: [{ type: "text", kind: "text", text: "che" }],
+    } as Draft<Event>);
+    // nothing but `start` is running — no standalone process copies this
+    await waitFor(async () =>
+      (await main.log.read({ conversation: "mind:ana", types: ["message"] })).length >= 2
+    );
+    const mind = await main.log.read({ conversation: "mind:ana", types: ["message"] });
+    // the copy is the one carrying provenance — `extra.via` is the mirror's signature
+    const copy = mind.find((e) => e.extra?.via !== undefined);
+    assert(copy, "no mirrored copy reached the mind");
+    assertEquals(words(copy), "che");
+    // …and the mind is live in the same process: the agent answered into it
+    assert(mind.some((e) => e.agent?.session_id === "ana" && e.payload?.turn_id !== undefined));
+  } finally {
+    await main.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
