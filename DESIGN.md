@@ -541,7 +541,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
 | `control` | ingest (reclassified) | **user** (context; nu acts) | **act** (hard-stop) | parts(raw) · payload{control} |
 | `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
-| `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `[harness]` text | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
+| `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `[system]` text | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · xi (the principal's `/y`·`/n`, any surface) · the REPL | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?}) · payload{ref_id→tool_use} |
@@ -593,7 +593,7 @@ Every inbound passes through ingest, which does identity resolution **and** may 
   - **The verdict is a second, later call.** When it lands, xi runs the tool on the model's
     behalf. That outcome cannot be a `tool_result` block — its pair is spent — so it is a
     `tool_result` EVENT marked `payload.deferred`, which render narrates in the harness's
-    voice (`[harness] send(to: Vivian) → queued`) and the mirror carries to the principal
+    voice (`[system] send(to: Vivian) → queued`) and the mirror carries to the principal
     who approved it. It collapses with the rest of the tool traffic at the boundary (§5).
   - **What is still waiting lives in the ANCHOR, not the transcript** (§5): a pending gate
     is state, not history — the transcript already closed those calls. The anchor is
@@ -1096,7 +1096,7 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
 - **time** — every `<msg>` line carries its own absolute stamp (`at="12 Aug 9:50"`), so
   there are NO separator blocks: separators were cross-message state measured in render
   order (not a timeline after the per-conversation partition) and they broke `<conv>`
-  clustering. One fact per line. **`[harness] error:` markers** are plain text likewise:
+  clustering. One fact per line. **`[system] error:` markers** are plain text likewise:
   they precede what they mark, so they can't be (trailing-only) system blocks.
 - **summaries** — `summary` events aging out distant messages; rendered as the window's
   LEADING plain-text block (the trailing-only rule bars a leading system block). See

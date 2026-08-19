@@ -534,7 +534,7 @@ function renderMessages(
       continue;
     }
     if (e.type === "error") {
-      place("user", { type: "text", text: `[harness] error: ${errorTextOf(e)}` });
+      place("user", { type: "text", text: `[system] error: ${errorTextOf(e)}` });
       continue;
     }
     if (e.type !== "message") continue;
@@ -566,7 +566,7 @@ function renderMessages(
         text: `[checkpoint — earlier messages summarized]\n${textOf(e)}`,
       });
     } else if (e.type === "error") {
-      place("user", { type: "text", text: `[harness] error: ${errorTextOf(e)}` });
+      place("user", { type: "text", text: `[system] error: ${errorTextOf(e)}` });
     } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
       place("assistant", thinkingBlock(e));
     } else if (e.type === "tool_use" && welded.has(e.id)) place("assistant", toolUseBlock(e));
@@ -574,7 +574,7 @@ function renderMessages(
       // the second half of a non-blocking gate (§9): the principal ruled, the harness ran
       // the call for us, and this is it reporting back — in its own voice, because the
       // tool_use it answers is spent. Narration, so it can stand alone in any position.
-      place("user", { type: "text", text: `[harness] ${outcomeLine(e)}` });
+      place("user", { type: "text", text: `[system] ${outcomeLine(e)}` });
     } else if (e.type === "tool_result" && welded.has(e.payload.ref_id)) {
       place("user", toolResultBlock(e, mediaBlocks(e)));
     } else if (e.type === "message") {
@@ -845,7 +845,7 @@ export function outcomeLine(e: ToolResultEvent, max = 0): string {
   return `${e.parts[0].text ?? "the approved call"} ${is_error ? "—" : "→"} ${bounded}`;
 }
 
-/** An `error` event's message — rendered as a plain `[harness] error:` text block: it
+/** An `error` event's message — rendered as a plain `[system] error:` text block: it
  *  PRECEDES what it marks, and the API takes `mid_conv_system` only in trailing position
  *  (§5, live-smoke finding). */
 function errorTextOf(e: HarnessErrorEvent): string {

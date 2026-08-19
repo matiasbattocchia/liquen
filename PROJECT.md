@@ -553,7 +553,7 @@ rather than left to be noticed:
   - The verdict is a second, later call: `owedOf` finds asks that have been ruled on but not
     run, xi runs them, and the outcome comes back as a `tool_result` carrying
     `payload.deferred` — the record keeps its `ref_id`, but render narrates it
-    (`[harness] send(to: Vivian) → queued`) instead of welding a second block onto a pair
+    (`[system] send(to: Vivian) → queued`) instead of welding a second block onto a pair
     that is already spent. The mirror carries the same sentence to whoever approved it. It
     collapses with the rest of the tool traffic at the boundary, which answers his "at some
     point the async result should be removed too".
@@ -706,7 +706,7 @@ deferred until the conversations table exists, someday.
     It publishes the one settlement the gate already understands — a `permission_response`
     ref'ing the use, turn-marked (§3 authorship) so `owedOf` never mistakes it for a ruling
     to run — and the mirror carries it to the surfaces the card went to as
-    `[harness] withdrawn: send(…)`. A principal's later verdict on the withdrawn card gets
+    `[system] withdrawn: send(…)`. A principal's later verdict on the withdrawn card gets
     gateVerdict's already-answered reply; with one card left, a bare `/y` is unambiguous
     again.
 12. **Postgres substrate** — the same ports as SQL: events table + LISTEN/NOTIFY (log),

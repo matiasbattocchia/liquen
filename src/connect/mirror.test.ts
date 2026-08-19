@@ -357,7 +357,7 @@ Deno.test("mirror fan-out: a harness error crosses — the one voice left when a
       }],
     } as Draft<Event>);
     await waitFor(async () => (await inConv("D1")).length === 1);
-    assertStringIncludes(textOf((await inConv("D1"))[0]), "`[harness]` 2 approvals are waiting");
+    assertStringIncludes(textOf((await inConv("D1"))[0]), "`[system]` 2 approvals are waiting");
   });
 });
 
@@ -390,7 +390,7 @@ Deno.test("mirror fan-out: a withdrawal crosses, a verdict never does — turn_i
     await waitFor(async () => (await inConv("D1")).length === 1);
     assertStringIncludes(
       textOf((await inConv("D1"))[0]),
-      "`[harness]` withdrawn: **send**(to: Vivian)",
+      "`[system]` withdrawn: **send**(to: Vivian)",
     );
   });
 });

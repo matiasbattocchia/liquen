@@ -16,7 +16,7 @@
  *             and the tag is the surface's only input/output distinction: the agent's
  *             voice as `[agent] …`, its tool calls as `[agent tool] **bash**(git status)`
  *             (redacted to one line), a gate waiting on the principal as `[agent asks] …`,
- *             the harness's own word as `[harness] …`, and the principal's own words as
+ *             the harness's own word as `[system] …`, and the principal's own words as
  *             `[you via <surface>] …` — input replayed as output. Every tag ships wrapped
  *             in backticks, so a surface that reads markdown sets it apart from the words
  *             around it (WhatsApp renders it monospace; the bridge passes code spans
@@ -281,7 +281,7 @@ async function fanOut(
  *  `[agent asks] …` for a gate waiting on the principal, `[you via <surface>] …` for the
  *  principal's own words replayed as output. Null ⇒ this event kind never crosses
  *  (thinking, results, the verdict itself — which is the principal's own `/y`; the
- *  agent's own settlement, a `cancel`, crosses as a `[harness]` withdrawal). */
+ *  agent's own settlement, a `cancel`, crosses as a `[system]` withdrawal). */
 function ccParts(e: Event): Part[] | null {
   if (e.type === "tool_use") {
     const call = describeCall((e as ToolUseEvent).parts[0].data);
@@ -290,13 +290,13 @@ function ccParts(e: Event): Part[] | null {
   if (e.type === "tool_result" && e.payload.deferred) {
     // a call the principal approved, now run: they asked for it, so they hear how it went
     // — the same sentence the model is given (§9). Ordinary results never cross.
-    return [{ type: "text", kind: "text", text: `\`[harness]\` ${outcomeLine(e, 160)}` }];
+    return [{ type: "text", kind: "text", text: `\`[system]\` ${outcomeLine(e, 160)}` }];
   }
   if (e.type === "error") {
     // the harness's own voice reaching the principal (§2): it speaks when the model can't
     // — a gate is waiting, so no turn will be taken to relay this
     const { error } = (e as ErrorEvent).parts[0].data;
-    return [{ type: "text", kind: "text", text: `\`[harness]\` ${error}` }];
+    return [{ type: "text", kind: "text", text: `\`[system]\` ${error}` }];
   }
   if (e.type === "permission_request") {
     // the approval card, wherever the principal is (§9). It carries the ARGUMENTS, not
@@ -318,7 +318,7 @@ function ccParts(e: Event): Part[] | null {
     return [{
       type: "text",
       kind: "text",
-      text: `\`[harness]\` withdrawn: ${boldName(call ?? "a pending approval")}`,
+      text: `\`[system]\` withdrawn: ${boldName(call ?? "a pending approval")}`,
     }];
   }
   if (e.type !== "message") return null;

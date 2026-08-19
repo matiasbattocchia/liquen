@@ -382,7 +382,7 @@ Deno.test("the ts sort never crosses the machine: an agent turn pins what follow
   assertEquals(last.includes("straggler"), true);
 });
 
-Deno.test("error events render as [harness] text — the model stays aware (§2)", () => {
+Deno.test("error events render as [system] text — the model stays aware (§2)", () => {
   const t = "2026-07-19T12:00:00Z";
   const events: Event[] = [
     homeMsg("h", t, "todo bien?", false),
@@ -403,7 +403,7 @@ Deno.test("error events render as [harness] text — the model stays aware (§2)
     now: t,
   });
   const dump = JSON.stringify(messages);
-  assertEquals(dump.includes("[harness] error: model overloaded, gave up"), true);
+  assertEquals(dump.includes("[system] error: model overloaded, gave up"), true);
 });
 
 Deno.test("a deferred outcome is narrated, never welded — its tool_use is spent (§9)", () => {
@@ -431,7 +431,7 @@ Deno.test("a deferred outcome is narrated, never welded — its tool_use is spen
   const dump = JSON.stringify(messages);
   // the harness's own sentence, in the harness's own voice
   assertEquals(
-    dump.includes('[harness] send(to: Mariana, text: hola) → {\\"queued\\":true}'),
+    dump.includes('[system] send(to: Mariana, text: hola) → {\\"queued\\":true}'),
     true,
   );
   // and exactly ONE tool_result block against that id — a second one is not a thing the
