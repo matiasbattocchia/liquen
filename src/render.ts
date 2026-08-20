@@ -844,7 +844,7 @@ function toolResultBlock(
   };
 }
 
-/** A DEFERRED tool outcome as one sentence (§9): `send(to: Vivian) → queued`. The call was
+/** A DEFERRED tool outcome as one sentence (§9): `send(to: Vivian) → sent`. The call was
  *  rendered when the outcome was written — xi is where the tool registry and the address
  *  book are — so this reads it off the event rather than re-deriving it from a `tool_use`
  *  that may already have collapsed. `→` carries what happened, `—` what didn't. Shared with

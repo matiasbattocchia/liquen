@@ -332,7 +332,7 @@ before acquiring would run a duplicate turn.
 
 ```
 think: mu emits tool_use(send)
-act:   send-executor appends message(directed) + tool_result "queued"  (ONE transaction)
+act:   send-executor appends message(directed) + tool_result "sent"  (ONE transaction)
 think: re-triggered; model continues (multi-send: "working on it" → work → results →
        final message). Cycle ends at end_turn (the final assistant text).
 ```
@@ -616,7 +616,7 @@ Every inbound passes through ingest, which does identity resolution **and** may 
   - **The verdict is a second, later call.** When it lands, xi runs the tool on the model's
     behalf. That outcome cannot be a `tool_result` block — its pair is spent — so it is a
     `tool_result` EVENT marked `payload.deferred`, which render narrates in the harness's
-    voice (`[system] send(to: Vivian) → queued`) and the mirror carries to the principal
+    voice (`[system] send(to: Vivian) → sent`) and the mirror carries to the principal
     who approved it. It collapses with the rest of the tool traffic at the boundary (§5).
   - **What is still waiting lives in the ANCHOR, not the transcript** (§5): a pending gate
     is state, not history — the transcript already closed those calls. The anchor is
@@ -1596,7 +1596,7 @@ its SQL side (5 tools: `executeSql`/`getDbSchema`/`sampleTableRows`/`selectAsCsv
 
 | tool | plane | signature → returns |
 |---|---|---|
-| `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{queued, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — it quotes on the wire; `react` lands a glyph on it; `action` (`edit`/`delete`/`remove`) acts on the referent instead of adding to it, and the two mutating ones reach only the account's own messages. **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
+| `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{sent, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — it quotes on the wire; `react` lands a glyph on it; `action` (`edit`/`delete`/`remove`) acts on the referent instead of adding to it, and the two mutating ones reach only the account's own messages. **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
 | `search` | control (dedicated) | `search({in?, from?, before?, after?, text?})` → events, RLS-scoped. Clean sugar over the control-plane log read (SELECT / ripgrep). |
 | `bash` | exec + durable-on-files | `bash(cmd)` → `{stdout, stderr, exit}`. The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
 | `sql` | durable-on-db | `sql(query)` → rows, RLS-scoped. The **database** substrate's one primitive; present only on the db backend (the sandbox can't touch the DB, §9 invariant). Capability via **functions** — the "DB OS": `db_schema` · `docs_write` · `docs_edit` · plus `grep`/`glob`/`ls` counterparts (FTS/`LIKE` · pattern-list · introspection). |

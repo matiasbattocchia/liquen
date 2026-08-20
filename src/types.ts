@@ -444,7 +444,11 @@ export interface SendArgs {
   parts: Part[];
 }
 export interface SendResult {
-  queued: boolean;
+  /** The call ran and the message is on the log — the wire is the dispatcher's problem, and
+   *  a failure there comes back as its own `[system]` line (§5). The word matters: anything
+   *  suggesting a queue reads to the model as the APPROVAL queue, and it reports a sent
+   *  message as pending. The gated vocabulary (`pending_approval`) shares no word with this. */
+  sent: boolean;
   event_id: EventId;
 }
 

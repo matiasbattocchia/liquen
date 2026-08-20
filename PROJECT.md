@@ -553,7 +553,7 @@ rather than left to be noticed:
   - The verdict is a second, later call: `owedOf` finds asks that have been ruled on but not
     run, xi runs them, and the outcome comes back as a `tool_result` carrying
     `payload.deferred` — the record keeps its `ref_id`, but render narrates it
-    (`[system] send(to: Vivian) → queued`) instead of welding a second block onto a pair
+    (`[system] send(to: Vivian) → sent`) instead of welding a second block onto a pair
     that is already spent. The mirror carries the same sentence to whoever approved it. It
     collapses with the rest of the tool traffic at the boundary, which answers his "at some
     point the async result should be removed too".

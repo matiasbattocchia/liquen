@@ -210,14 +210,14 @@ Deno.test("renderMessages reproduces the clinic scenario (§5) from ONE flat win
     homeMsg("e03", t2, "Dale, le pregunto a Mariana y te confirmo.", true, "T1"), // mid-chain
     toolUseE("e04", t2, "T1", "send", { text: "Hola" }), // dropped (closed)
     waMsg("e05", t2, "Hola Mariana! ¿Confirmás tu turno de mañana a las 10:00?", true, "e04"),
-    toolResultE("e06", t2, "T1", "queued", "e04"), // dropped (closed)
+    toolResultE("e06", t2, "T1", "sent", "e04"), // dropped (closed)
     thinkingE("e07", t2, "T2", "enviado, nada más", "s7"), // dropped (closed)
     homeMsg("e08", t2, "Listo, le escribí. Te aviso cuando conteste.", true, "T2"), // boundary
     waMsg("e09", t11, "¡Sí! Ahí estaré 🙌", false),
     thinkingE("e10", t11, "T3", "Confirmó. Le agradezco y aviso a Ana.", "sig10"),
     toolUseE("e11", t11, "T3", "send", { text: "¡Perfecto, te espero! 🙌" }),
     waMsg("e12", t11, "¡Perfecto, te espero! 🙌", true, "e11"), // skipped: in the welded block
-    toolResultE("e13", t11, "T3", "queued", "e11"),
+    toolResultE("e13", t11, "T3", "sent", "e11"),
   ];
 
   const { messages } = render({
@@ -411,12 +411,12 @@ Deno.test("a deferred outcome is narrated, never welded — its tool_use is spen
   const use = toolUseE("u1", t, "T1", "send", { to: "wa", text: "hola" });
   const asked = toolResultE("r1", t, "T1", { status: "pending_approval" }, "u1");
   const outcome: ToolResultEvent = {
-    ...toolResultE("r2", t, "T1", { queued: true }, "u1"),
+    ...toolResultE("r2", t, "T1", { sent: true }, "u1"),
     payload: { turn_id: "T1", ref_id: "u1", deferred: true },
     parts: [{
       type: "data",
       kind: "tool_result",
-      data: { output: { queued: true } },
+      data: { output: { sent: true } },
       text: "send(to: Mariana, text: hola)",
     }],
   };
@@ -431,7 +431,7 @@ Deno.test("a deferred outcome is narrated, never welded — its tool_use is spen
   const dump = JSON.stringify(messages);
   // the harness's own sentence, in the harness's own voice
   assertEquals(
-    dump.includes('[system] send(to: Mariana, text: hola) → {\\"queued\\":true}'),
+    dump.includes('[system] send(to: Mariana, text: hola) → {\\"sent\\":true}'),
     true,
   );
   // and exactly ONE tool_result block against that id — a second one is not a thing the

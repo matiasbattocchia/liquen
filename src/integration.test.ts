@@ -215,7 +215,7 @@ Deno.test("coalescing: messages landing mid-turn batch into ONE follow-up, not o
   );
 });
 
-Deno.test("send: directed message + queued result, both cause-linked", async () => {
+Deno.test("send: directed message + sent result, both cause-linked", async () => {
   await scenario(
     [
       ok(
@@ -292,7 +292,7 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
       assert(outcome?.type === "tool_result");
       assertEquals(outcome.payload.ref_id, req.payload.ref_id);
       assertEquals(outcome.parts[0].text, "send(to: wa:x, text: hi)");
-      assertStringIncludes(JSON.stringify(outcome.parts[0].data.output), "queued");
+      assertStringIncludes(JSON.stringify(outcome.parts[0].data.output), "sent");
     },
     { gate: (name) => name === "send" ? "ask" : "allow" },
   );
@@ -322,6 +322,44 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
     },
     { gate: (name) => name === "send" ? "ask" : "allow" },
   );
+});
+
+Deno.test("run and gated share no vocabulary: what ran says `sent`, and only that", async () => {
+  // The model's report to its principal is built out of these words and nothing else — it
+  // cannot see the gate. Let one word mean both states and it tells the principal a message
+  // is awaiting their approval while the message is already read on the other end.
+  const RAN = ["sent"];
+  const WAITING = ["pending", "approval", "queue"];
+
+  const outputOf = async (gate: AgentConfig["gate"]): Promise<string> => {
+    let output = "";
+    await scenario(
+      [
+        ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hola" } }], "tool_use"),
+        ok([], "end_turn"),
+      ],
+      async ({ publish, read }) => {
+        await publish(principalMsg("mandale"));
+        await waitFor(async () => (await read("tool_result")).length === 1);
+        const [r] = await read("tool_result") as ToolResultEvent[];
+        output = JSON.stringify(r.parts[0].data.output).toLowerCase();
+      },
+      { gate },
+    );
+    return output;
+  };
+
+  const ran = await outputOf(() => "allow");
+  const waiting = await outputOf((name) => name === "send" ? "ask" : "allow");
+
+  for (const w of RAN) {
+    assertStringIncludes(ran, w);
+    assertEquals(waiting.includes(w), false, `a waiting call says "${w}": ${waiting}`);
+  }
+  for (const w of WAITING) {
+    assertEquals(ran.includes(w), false, `a call that RAN says "${w}": ${ran}`);
+  }
+  assertStringIncludes(waiting, "pending_approval");
 });
 
 Deno.test("a pending ask lives in the ANCHOR — state, not transcript (§5)", async () => {
@@ -993,6 +1031,55 @@ Deno.test("a standing verdict is REMEMBERED: /y conv settles that conversation's
       assertEquals((await read("permission_request")).length, 1); // asked once, ever
     },
     // the base table asks for send — no `gate` override: the COMPILED table is the subject
+    { gate: undefined, rules: [{ tool: "send", action: "ask" }, { tool: "*", action: "allow" }] },
+  );
+});
+
+Deno.test("a standing verdict is PINNED: the ruled conversation runs, its neighbour asks", async () => {
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "uno" } }], "tool_use"),
+      ok([{ kind: "assistant", text: "pedido" }], "end_turn"),
+      ok([{ kind: "assistant", text: "enviado" }], "end_turn"),
+      ok([{ kind: "tool_use", name: "send", input: { to: "wa:y", text: "dos" } }], "tool_use"),
+      ok([{ kind: "assistant", text: "pedido de nuevo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("mandale uno"));
+      await waitFor(async () => (await read("permission_request")).length === 1);
+      const [req] = await read("permission_request");
+      assert(req.type === "permission_request");
+      await publish({
+        ts: new Date().toISOString(),
+        type: "permission_response",
+        payload: { ref_id: req.payload.ref_id },
+        envelope: {
+          service: "local",
+          connection_address: "agent",
+          conversation: { address: "home" },
+        },
+        parts: [{
+          type: "data",
+          kind: "permission_response",
+          data: { behavior: "allow", scope: "conversation" },
+        }],
+      });
+      await waitFor(async () =>
+        (await read("message")).some((e) => e.envelope.conversation.address === "wa:x")
+      );
+
+      // a send to a DIFFERENT conversation: the remembered row names wa:x, so it does not
+      // match, and the base `ask` decides again — one standing yes is not a general one
+      await publish(principalMsg("mandale dos"));
+      await waitFor(async () => (await read("permission_request")).length === 2);
+      const [, second] = await read("permission_request");
+      assert(second.type === "permission_request");
+      assertEquals(second.parts[0].data.call, "send(to: wa:y, text: dos)");
+      assertEquals(
+        (await read("message")).filter((e) => e.envelope.conversation.address === "wa:y").length,
+        0,
+      );
+    },
     { gate: undefined, rules: [{ tool: "send", action: "ask" }, { tool: "*", action: "allow" }] },
   );
 });

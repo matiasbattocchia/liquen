@@ -984,10 +984,12 @@ async function act(
 /** What a gated call returns THE MOMENT it is made (§9). The model is told plainly that the
  *  call is alive and not its move any more — the anchor keeps the list, and the outcome
  *  arrives later in the harness's voice. Re-issuing is the one failure mode worth naming:
- *  it is what a model does with a tool_use it never got an answer to. */
+ *  it is what a model does with a tool_use it never got an answer to. Nothing here may
+ *  share a word with what a RUN call returns (`sent`): the model reports the two apart on
+ *  the strength of the vocabulary alone, and it reports them to the principal. */
 const PENDING_APPROVAL = {
   status: "pending_approval",
-  note: "your principal was asked and has not answered yet — the call is still queued. " +
+  note: "your principal was asked and has not answered yet — the call has NOT run. " +
     "Do NOT issue it again; you will be told the outcome when they decide. If it stops " +
     "being worth asking, withdraw it with cancel(id) — your pending list names the id.",
 };
@@ -1093,7 +1095,7 @@ async function execute(
     return { withdrawn: true, call };
   }
   if (name === "send") {
-    // the only dispatch path (§9): directed message + queued result (two appends on
+    // the only dispatch path (§9): directed message + sent result (two appends on
     // files — atomic pair on DB later; the steal-sweep covers the crash window)
     let to = String(args.to);
     // team chat (§6): a peer AGENT's name canonicalizes to the pair's DM conversation,
@@ -1189,7 +1191,7 @@ async function execute(
         : [...(body ? [{ type: "text", kind: "text", text: body } as const] : []), ...files],
     };
     const sent = await ports.log.publish(msg);
-    return { queued: true, event_id: sent!.id }; // a full draft (parts present) always stores
+    return { sent: true, event_id: sent!.id }; // a full draft (parts present) always stores
   }
   if (name === "search") {
     // the filters narrow by ADDRESS; a name is only ever a way to find one (§6)
@@ -1363,8 +1365,8 @@ function specsOf(ports: XiPorts): Anthropic.Tool[] {
     {
       name: "cancel",
       description:
-        "Withdraw one of your pending approvals — a queued call that stopped being worth " +
-        "asking. Your principal is told; the call never runs.",
+        "Withdraw one of your pending approvals — a call awaiting a verdict that stopped " +
+        "being worth asking. Your principal is told; the call never runs.",
       input_schema: {
         type: "object",
         properties: {
