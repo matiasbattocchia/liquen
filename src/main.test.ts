@@ -350,6 +350,9 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
       },
       parts: [{ type: "text", kind: "text", text: "@ana ping" }],
     } as Draft<Event>);
+    // …and the principal sends the agent in. A channel line — even one saying its name — is
+    // ambient now (§2 attention: the summons is the mind alias), so the poke comes from home
+    await main.log.publish(principalMsg("mind:ana", "contestá en C1"));
     await waitFor(async () => (await main.log.read({ types: ["permission_request"] })).length > 0);
     const [req] = await main.log.read({ types: ["permission_request"] });
     await main.log.publish({

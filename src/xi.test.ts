@@ -12,7 +12,7 @@ import type { Envelope, Event, Session } from "./types.ts";
 
 const SESSION: Session = { id: "s1", agentId: "a1" };
 const HOME = "home";
-const WAKE: Wake = { home: HOME, agentId: "a1" };
+const WAKE: Wake = { home: HOME };
 
 const env = (conversation: string): Envelope => ({
   service: "local",
@@ -372,25 +372,39 @@ Deno.test("attention: a pile deep enough wakes before the interval does", () => 
   assertEquals(decide(pile.slice(0, 3), SESSION, WAKE, NOON), "ignore");
 });
 
-Deno.test("attention: a summons never waits — home, a DM, a reply to us, our name", () => {
+Deno.test("attention: the summons is the mind alias and NOTHING else", () => {
   assertEquals(decide([world(HOME, 0)], SESSION, WAKE, NOON), "think");
-  assertEquals(decide([world("dm:a1:b2", 0)], SESSION, WAKE, NOON), "think");
-  assertEquals(decide([world("slack:C1", 0, "ping @a1 wdyt?")], SESSION, WAKE, NOON), "think");
-  assertEquals(decide([world("slack:C1", 0, "banana1 talk")], SESSION, WAKE, NOON), "ignore");
-  const mine = selfMsg("slack:C1");
-  const reply = ev(
-    "message",
-    {
-      conv: "slack:C1",
-      ts: at(0),
-      payload: { ref_id: mine.id },
-      parts: [{ type: "text", kind: "text", text: "sure" }],
-    } as Partial<Event> & { conv?: string },
-  );
-  assertEquals(decide([mine, reply], SESSION, WAKE, NOON), "think");
+  // a DM is a hail to the PRINCIPAL's account, in a room the agent is a bystander in
+  assertEquals(decide([world("wa:5491133585694", 0)], SESSION, WAKE, NOON), "ignore");
+  // its name said out loud, by someone who is not its principal, is still the world
+  assertEquals(decide([world("slack:C1", 0, "ping @a1 wdyt?")], SESSION, WAKE, NOON), "ignore");
 });
 
-Deno.test("attention: an engaged conversation wakes now — your own last word is recent", () => {
+Deno.test("attention: a reply to us wakes only while we hold the floor — else the digest", () => {
+  const reply = (mine: Event, minAgo: number) =>
+    ev(
+      "message",
+      {
+        conv: "slack:C1",
+        ts: at(minAgo),
+        payload: { ref_id: mine.id },
+        parts: [{ type: "text", kind: "text", text: "sure" }],
+      } as Partial<Event> & { conv?: string },
+    );
+  const spoke = (minAgo: number) =>
+    ev(
+      "message",
+      { ...SELF, conv: "slack:C1", ts: at(minAgo), payload: { turn_id: "T0" } } as
+        & Partial<Event>
+        & { conv?: string },
+    );
+  const fresh = spoke(3);
+  assertEquals(decide([fresh, reply(fresh, 1)], SESSION, WAKE, NOON), "think"); // engaged
+  const stale = spoke(60);
+  assertEquals(decide([stale, reply(stale, 1)], SESSION, WAKE, NOON), "ignore"); // decayed
+});
+
+Deno.test("attention: engagement is HOLDING THE FLOOR — our word last, and recent", () => {
   const spoke = (minAgo: number) =>
     ev(
       "message",
@@ -403,6 +417,37 @@ Deno.test("attention: an engaged conversation wakes now — your own last word i
     );
   assertEquals(decide([spoke(3), world("slack:C1", 1)], SESSION, WAKE, NOON), "think");
   assertEquals(decide([spoke(60), world("slack:C1", 1)], SESSION, WAKE, NOON), "ignore");
+});
+
+Deno.test("attention: the principal speaking in a conversation ENDS engagement, at once", () => {
+  // A wire echo carries `agent.id` (the classifier stamps it from their grant) and NO
+  // session_id — so it reads as our complex only through ownComplex's id fallback, which
+  // is v0's session ≈ agent (§7). This session says so; the file's default deliberately
+  // does not, to hold session_id to its own job.
+  const s: Session = { id: "a1", agentId: "a1" };
+  const self = { agent: { id: "a1", session_id: "a1" } };
+  const byHand = (minAgo: number) =>
+    ev("message", {
+      agent: { id: "a1" }, // their phone in hand: no session_id, and never a turn_id
+      ts: at(minAgo),
+      envelope: { ...env("slack:C1"), sender: { address: "matias", name: "matias" } },
+      parts: [{ type: "text", kind: "text", text: "yo sigo desde acá" }],
+    } as Partial<Event>);
+  const spoke = () =>
+    ev(
+      "message",
+      { ...self, conv: "slack:C1", ts: at(4), payload: { turn_id: "T0" } } as
+        & Partial<Event>
+        & { conv?: string },
+    );
+  // our word is 4 min old — engaged, but for their line landing after it
+  assertEquals(decide([spoke(), world("slack:C1", 1)], s, WAKE, NOON), "think");
+  assertEquals(decide([spoke(), byHand(3), world("slack:C1", 1)], s, WAKE, NOON), "ignore");
+  // and the floor comes back the moment the agent speaks again
+  assertEquals(
+    decide([spoke(), byHand(3), spoke(), world("slack:C1", 1)], s, WAKE, NOON),
+    "think",
+  );
 });
 
 Deno.test("attention: quiet hours stretch the digest; null switches quiet off", () => {

@@ -686,8 +686,8 @@ Two follow-ups on the catalog, both live (DESIGN §2 "Attention", §9):
 
 `extra.backfill` was the first member of a class; muted and archived chats complete it
 (DESIGN §2 "silencing marks", §3 sidecar). One predicate — `silenced` (render.ts) — reads
-all three marks: a marked row never wakes (not even a summons: a mention in a muted group
-stays silent, WhatsApp's own semantics), never renders, never mirrors; the turn window
+all three marks: a marked row never wakes — not even into a pile, so a muted group never
+comes due — never renders, never mirrors; the turn window
 drops it in SQL (`read({silenced: false})`, the renamed backfill option) and `search` is
 the door. The WhatsApp wire contract grew `muted?`/`archived?` per message (and per edit —
 an edit is its own event, so it carries the chat state too), stamped by the bridge from
@@ -720,14 +720,7 @@ all mechanical (the attention-semantics ideas below are NOT done):
    (main.ts); trigger-less pokes and the agent's own writes still fire immediately, so
    turn-to-turn chaining keeps its latency.
 
-**Still open, deliberately** — these change what attention MEANS, so they want a decision,
-not a patch: (a) every one of the principal's DMs is a summons (`conv.kind === "direct"`),
-so a friend's casual chat wakes a turn per message — arguably only home, a reply, or a
-mention should; (b) the agent has no way to record "I am staying out of this conversation"
-— it says so in prose and the harness cannot hear it (the `rules` table is the shape);
-(c) every agent home message is stored AND rendered twice, once as itself and once as its
-`[agent]` mirror twin in the principal's own surface, so the agent reads itself back
-double (~10-15% of the window) and that surface is permanently `engaged` by construction.
+These three are mechanical. What attention MEANS was the other half, decided next.
 
 ### Compaction was unreachable code (2026-08-19) — LANDED
 
@@ -751,6 +744,58 @@ against ~76 for a stripped test message). **Known gap**: an org whose traffic is
 short one-line messages weighs ~38K per full window and still would not compact. The count
 cap can still shadow the token cap; it just no longer does for real traffic. The structural
 fix is the §5 "later" — read from the latest summary rather than a count.
+
+### Attention means: only the mind alias, and the floor is the principal's (2026-08-20) — LANDED
+
+The other half of the token work, and this one is semantic. The 19–20 UTC hour on 2026-08-19
+cost $14.43 across 95 turns; the driver was one friend's DM, 51 lines typed live, each a
+summons under `conv.kind === "direct"` and each answered with a full window and the words
+"(sin novedad — sigo en silencio)". The agent had *said* it was staying out of that chat,
+in prose, sixteen minutes earlier.
+
+Two changes, both mostly deletion:
+
+1. **The summons is the mind alias and nothing else.** `summons` had four clauses; three are
+   gone. A DM, a reply to something the agent said, its name spoken as a word — none of them
+   address the agent, they address the principal's account in a room the agent is a bystander
+   in. What is genuinely said TO the agent arrives at home through the mirror's fan-in, and
+   `conv.address === wake.home` catches it (home is always `mind:<agent>`, never a wire
+   address — so the `dm:` clause was redundant besides). Nothing is lost that `engaged` did
+   not already hold: a reply landing while the agent has the floor still wakes it; one landing
+   after the floor decayed is the world talking, which is what the digest is for. With
+   `summons` a one-liner, `mention` and the helper itself dissolved into `attention`, and
+   `Wake` lost `agentId` — the wake policy no longer reads it.
+2. **Engagement is holding the floor, and the principal takes it back by speaking.**
+   `engaged` scanned back for the agent's own last word, skipping *past* the principal's — so
+   an agent that spoke once kept waking for a conversation its principal had since taken over
+   by hand, answering over them for a whole engagement window. The scan now stops at whichever
+   half of the complex spoke last (`ownComplex`) and engagement holds only if that half was
+   the model (`ownVoice`; the discriminator is `payload.turn_id`, §3 — a wire echo from their
+   phone carries `agent.id` and neither `session_id` nor `turn_id`). Their line ends it at
+   once, without a clock. To hand the floor back they say so at home.
+
+The property that falls out: **the world can never pull the agent in without the principal.**
+It is only ever engaged where it was sent. Replayed against that hour, Luciano's 51 lines are
+ambient (and engagement would have been cut anyway, since the principal was replying there by
+hand) — 95 turns becomes ~10, on top of the anchored cache.
+
+**Next, and it is not optional**: with everything but home ambient, the digest becomes the
+main path — and the digest cannot currently count. `newsOf` measures owed news against
+`extra.consumed`, ONE global high-water mark stamped by every closing home message (nu.ts),
+so any turn at all drains every ambient pile. Chat with the agent regularly and no pile ever
+reaches `digestAfterMessages`: the config would promise a digest that silently never fires.
+The conflation is that one mark answers two questions — `consumed` answers *seen* (it was in
+the window); the digest needs *handled*, which is per-conversation and only the agent's own
+act can stamp it. Which is the **conversations table**, and it is not a mute list:
+`conversations(agent_id, address, read_through, defer_until, note, updated_at)` — ambient
+piles measure from `read_through`, and mute is just `defer_until`, a timestamp rather than a
+boolean so a defer set on partial information stays re-decidable. Three calls open: whether
+`defer_until` is agent-only or the principal writes it too, whether a deferred conversation
+still renders (recommend yes — suppress waking, not reading: the window read is one read and
+it is cached now, and hiding it blinds the agent to a conversation turning important), and
+whether a digest wake gets its own framing in the prompt. That last one matters: at 19:32 the
+model emitted the same 49-token "(sin novedad)" twenty-five times in a row, and a digest that
+renders identically to a summons will do it again, just less often.
 
 11. **Background completion** — early-return for long tools generally; `escalation` as its
     first instance. The gate already walks this path (ask → `pending_approval` → a deferred

@@ -121,7 +121,6 @@ function inScope(r: Rule, t?: Target): boolean {
  *  and future callers state exactly what deciding takes. Unset knobs are the catalog's. */
 export interface Wake {
   home: string;
-  agentId: string;
   timezone?: string;
   engagedMinutes?: number;
   digestAfterMessages?: number;
@@ -157,18 +156,26 @@ export function decide(
 
 /**
  * Not every message is worth a model turn. The unanswered news is CLASSED, per
- * conversation: a SUMMONS — the principal's channel, a DM, a reply to the agent, its name
- * said out loud — wakes now. An ENGAGED conversation (the agent's own last word in it is
- * recent — ping-pong keeps refreshing it) wakes now: you don't drop out of a conversation
- * you are in. Everything else is AMBIENT and waits for the digest: a pile deep enough, or
- * news old enough for the interval — the quiet one when the org sleeps. Deferring costs
- * nothing and loses nothing: the news stays owed in the log, and the clock poke (main's
- * tick) re-asks this same question until it is due.
+ * conversation: a SUMMONS — the mind alias, and nothing else — wakes now. An ENGAGED
+ * conversation (the agent holds the floor there: its own word is the last our complex
+ * said, and it is recent) wakes now: you don't drop out of a conversation you are in.
+ * Everything else is AMBIENT and waits for the digest: a pile deep enough, or news old
+ * enough for the interval — the quiet one when the org sleeps. Deferring costs nothing and
+ * loses nothing: the news stays owed in the log, and the clock poke (main's tick) re-asks
+ * this same question until it is due.
  */
 function attention(events: Event[], session: Session, wake: Wake, now: number): Decision {
   const news = newsOf(events, session, wake.home);
   if (news.length === 0) return "ignore";
-  if (news.some((e) => summons(e, events, session, wake))) return "think";
+  // The summons is the MIND ALIAS and nothing else (§2). Not a DM, not a reply to the
+  // agent, not its name said out loud: none of those address the agent, they address the
+  // principal's account in a room the agent is a bystander in — and answering each at wake
+  // priority is a full turn per line of somebody else's conversation. What is genuinely
+  // said TO the agent arrives here, through the mirror's fan-in; the rest is the world,
+  // and the world waits. Nothing is lost that `engaged` doesn't already hold: a reply that
+  // lands while the agent has the floor wakes it as engaged, and one that lands after the
+  // floor decayed is the world talking, which is what the digest is for.
+  if (news.some((e) => e.envelope.conversation.address === wake.home)) return "think";
   const piles = new Map<string, MessageEvent[]>();
   for (const e of news) {
     const conv = e.envelope.conversation.address;
@@ -181,24 +188,20 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   return "ignore";
 }
 
-/** Addressed to the agent — the class that never waits. */
-function summons(e: MessageEvent, events: Event[], session: Session, wake: Wake): boolean {
-  const conv = e.envelope.conversation;
-  if (conv.address === wake.home) return true; // the principal's channel IS the mind
-  if (conv.kind === "direct" || conv.address.startsWith("dm:")) return true; // a DM is a hail
-  const ref = e.payload?.ref_id; // a reply to something the agent said
-  if (ref && events.some((x) => x.id === ref && ownVoice(x, session.id))) return true;
-  return mention(wake.agentId).test(textOf(e)); // its name, said out loud
-}
-
-/** The agent's name as a WORD — `@ana` or `ana`, never the middle of `banana`. */
-function mention(id: string): RegExp {
-  const literal = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^\\p{L}\\p{N}])@?${literal}([^\\p{L}\\p{N}]|$)`, "iu");
-}
-
-/** The agent's own last word in the conversation is recent ⇒ it is IN that conversation.
- *  Every reply refreshes the clock (the ping-pong extension); silence lets it decay. */
+/**
+ * The agent HOLDS THE FLOOR in the conversation ⇒ it is IN it. Two conditions, both on the
+ * last thing our complex said there: it was the agent's own voice, and it is recent. Every
+ * reply refreshes the clock (the ping-pong extension); silence lets it decay.
+ *
+ * The floor is the point. Scanning for the agent's last word alone would skip PAST the
+ * principal's — so an agent that spoke once kept waking for a conversation its principal
+ * had since taken over by hand, answering over them for a whole engagement window. So the
+ * scan stops at whichever half spoke last (`ownComplex`, either half) and engagement holds
+ * only if that half was the model (`ownVoice` — the discriminator is `payload.turn_id`,
+ * §3). A principal typing into that conversation from their phone ends it, at once and
+ * without a clock: they took the floor back. To hand it over again they say so at home,
+ * which is the one thing that still wakes the agent now.
+ */
 function engaged(
   conversation: string,
   events: Event[],
@@ -210,9 +213,9 @@ function engaged(
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (
-      e.type === "message" && ownVoice(e, session.id) &&
+      e.type === "message" && ownComplex(e, session.id) &&
       e.envelope.conversation.address === conversation
-    ) return now - Date.parse(e.ts) < minutes * 60_000;
+    ) return ownVoice(e, session.id) && now - Date.parse(e.ts) < minutes * 60_000;
   }
   return false;
 }

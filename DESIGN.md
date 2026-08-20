@@ -139,19 +139,29 @@ decide(window) →
   trailing harness `error` (the last event in the window)          → ignore (idle-after-error)
   unclosed chain (all uses resolved, no turn output after)         → think (the closing turn)
   unanswered news (non-self msgs beyond the last closing's CONSUMED horizon), CLASSED:
-    a summons — home, a DM, a reply to the agent, its name said    → think (never waits)
-    an engaged conversation — its own last word there is recent    → think (you don't drop
-                                                                     out mid-conversation)
+    a summons — the mind alias, and nothing else                   → think (never waits)
+    an engaged conversation — it HOLDS THE FLOOR: our complex's    → think (you don't drop
+      last word there is the agent's, and it is recent               out mid-conversation)
     ambient, and a pile is due (deep enough, or old enough)        → think (the digest)
   else                                                             → ignore (quiescence)
 ```
 
 **Attention**: not every message is worth a model turn — an agent sitting in busy group
 channels would otherwise spend a turn per line. The unanswered news is classed per
-conversation. A **summons** (the principal's channel, a direct message, a reply to
-something the agent said, its name spoken as a word) wakes immediately. An **engaged**
-conversation — the agent's own last message in it is younger than `engagedMinutes`; every
-reply refreshes the clock (ping-pong), silence lets it decay — wakes immediately too.
+conversation. A **summons** is the **mind alias** and nothing else: the one conversation
+that addresses the agent. Not a DM, not a reply to something it said, not its name spoken
+as a word — those address the principal's account in a room the agent is a bystander in,
+and waking on each is a full turn per line of somebody else's conversation. What is
+genuinely said TO the agent arrives at home, through the mirror's fan-in (§4); the rest is
+the world, and the world waits. An **engaged** conversation wakes immediately too, and
+engagement is **holding the floor**: the last thing our complex said there was the agent's
+own voice (`ownVoice` — the `turn_id` discriminator, §3) and it is younger than
+`engagedMinutes`. Every reply refreshes the clock (ping-pong), silence lets it decay — and
+the **principal speaking there ends it at once, without a clock**: they took the floor
+back, from their own phone, and an agent that answered over them for the rest of the window
+would be talking past its own principal. To hand the floor over again they say so at home,
+which is the one thing that still wakes the agent. So the world can never pull the agent in
+without the principal: it is only ever engaged where it was sent.
 Everything else is **ambient** and waits for the digest: a conversation's pile wakes the
 agent when it reaches `digestAfterMessages`, or when its oldest news has waited out
 `digestMinutes` (`digestQuietMinutes` while the org clock sits inside `quietHours`,
@@ -172,8 +182,8 @@ Beneath all three classes sit the **silencing marks** — `extra.backfill` (impo
 history) and `extra.muted` · `extra.archived` (the chat's platform-synced state when the
 message arrived; WhatsApp's phone-side mute/archive rides whatsmeow app state, stamped
 per message by the bridge — the same denormalization as names, never retroactive). A
-marked row is not news at all: it never wakes (not even as a summons — a mention in a
-muted group stays silent, WhatsApp's own semantics), never renders, never mirrors; the
+marked row is not news at all: it never wakes — not even into a pile, so a muted group
+never comes due — never renders, never mirrors; the
 turn window's read drops it in SQL (`silenced: false`) and `search` is the door. Slack
 has no wire equivalent (mute is a private client preference the bot can't see) — a
 mu-side mute waits for the conversations table.
