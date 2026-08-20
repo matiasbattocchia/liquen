@@ -736,8 +736,8 @@ async function think(
   // is STATE, not history — the transcript already closed those calls with
   // `pending_approval`, so the only place they belong is the block that is rewritten every
   // turn. It also self-corrects: an ask that gets answered simply stops being listed.
-  const lines = [...(ports.ambient ? await ports.ambient() : []), ...waitingOn(events, config)];
-  const ambient = lines.length > 0 ? lines : undefined;
+  // `waitingOn` always has a line, so the anchor always carries the approval state.
+  const ambient = [...(ports.ambient ? await ports.ambient() : []), ...waitingOn(events, config)];
   // ONE turn per invocation, and nu decides what the turn IS: an over-budget window makes it
   // the checkpoint (the summary's insert wakes the think it displaced); a paced/truncated
   // turn continues via `meta.stop` and `decide` (§2, §5). xi only gathers the I/O.
@@ -764,13 +764,18 @@ async function think(
 }
 
 /** The anchor's pending-approval lines (§5, §9): one per ask nobody has answered, named the
- *  way the card named it and stamped with when it went out. Empty when nothing waits — which
- *  is the point: the model reads its own open business off the anchor, and reads nothing
- *  when there is none. The id is the handle `cancel` takes — `shortId`, the same vocabulary
- *  as `re`. */
+ *  way the card named it and stamped with when it went out. The id is the handle `cancel`
+ *  takes — `shortId`, the same vocabulary as `re`.
+ *
+ *  The empty case still speaks. Everywhere else the anchor states only what IS, and silence
+ *  means nothing is there — but this is the one anchor fact the model SAYS to its principal
+ *  in prose, who has no way to check it. A block that can only ever add a claim can never
+ *  contradict one, so an invented "waiting for your ok" passes untouched. Present in one of
+ *  two forms every turn, it is a ground truth the model reads instead of an absence it has
+ *  to notice. */
 function waitingOn(events: Event[], config: AgentConfig): string[] {
   const cards = openCards(events);
-  if (cards.length === 0) return [];
+  if (cards.length === 0) return ["nothing is waiting on your principal — no approval is open"];
   return [
     `waiting on your principal — ${cards.length} approval${cards.length === 1 ? "" : "s"}:`,
     ...cards.map((c) => {

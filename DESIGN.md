@@ -622,6 +622,9 @@ Every inbound passes through ingest, which does identity resolution **and** may 
     is state, not history — the transcript already closed those calls. The anchor is
     rewritten every turn, so an ask that gets answered simply stops being listed, and the
     model reads its own open business without anything having to be edited out of history.
+    The empty case is stated, not left silent: this is the one anchor fact the model says to
+    its principal in prose, and a block that only ever adds a claim can never contradict an
+    invented one.
 - **Policy is a table, not a branch** (§9): `Rule[] = [{tool, ask}]`, first match wins, `*`
   the catch-all. There are no special tools — `bash` runs unasked because the default table
   says so, not because bash is bash. The ask being *inside* execution is what lets a rule be

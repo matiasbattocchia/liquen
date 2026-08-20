@@ -392,6 +392,37 @@ Deno.test("a pending ask lives in the ANCHOR — state, not transcript (§5)", a
   }
 });
 
+Deno.test("the anchor states the approval state either way — silence is not a denial", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
+  const script = [
+    ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hola" } }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ];
+  const transport: ModelTransport = (params) => {
+    last = params;
+    return Promise.resolve(script.shift() ?? ok([]));
+  };
+  const config = { ...CONFIG, gate: (name: string) => name === "send" ? "ask" : "allow" };
+  const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const anchor = () => JSON.stringify(last?.messages.at(-1)?.content);
+  try {
+    await log.publish(principalMsg("mandale"));
+    await xi(config, ports); // nothing has been asked yet — and the anchor SAYS so, which is
+    assertStringIncludes(anchor(), "nothing is waiting on your principal"); // what a model
+    // claiming "queued for your ok" has to contradict. An absent section contradicts nothing.
+
+    await xi(config, ports); // act: the card goes up
+    await xi(config, ports);
+    assertStringIncludes(anchor(), "waiting on your principal — 1 approval");
+    assertEquals(anchor().includes("nothing is waiting"), false); // one state, never both
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a waiting gate does not mute the agent: it answers its principal meanwhile", async () => {
   await scenario(
     [
