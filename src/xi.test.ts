@@ -363,11 +363,11 @@ const world = (conv: string, minAgo: number, text = "shipping the report today")
 
 Deno.test("attention: ambient world news defers until the digest interval", () => {
   assertEquals(decide([world("slack:C1", 1)], SESSION, WAKE, NOON), "ignore"); // fresh: waits
-  assertEquals(decide([world("slack:C1", 6)], SESSION, WAKE, NOON), "think"); // past 5 min
+  assertEquals(decide([world("slack:C1", 16)], SESSION, WAKE, NOON), "think"); // past 15 min
 });
 
 Deno.test("attention: a pile deep enough wakes before the interval does", () => {
-  const pile = Array.from({ length: 20 }, () => world("slack:C1", 0));
+  const pile = Array.from({ length: 25 }, () => world("slack:C1", 0));
   assertEquals(decide(pile, SESSION, WAKE, NOON), "think");
   assertEquals(decide(pile.slice(0, 3), SESSION, WAKE, NOON), "ignore");
 });
@@ -462,9 +462,12 @@ Deno.test("attention: quiet hours stretch the digest; null switches quiet off", 
         parts: [{ type: "text", kind: "text", text: "night shift" }],
       } as Partial<Event> & { conv?: string },
     );
-  assertEquals(decide([msg(night)], SESSION, WAKE, night), "ignore"); // 10 < 60 quiet min
-  assertEquals(decide([msg(NOON)], SESSION, WAKE, NOON), "think"); // 10 > 5 busy min
-  assertEquals(decide([msg(night)], SESSION, { ...WAKE, quietHours: null }, night), "think");
+  assertEquals(decide([msg(night)], SESSION, WAKE, night), "ignore"); // 10 < 180 quiet min
+  assertEquals(decide([msg(NOON)], SESSION, { ...WAKE, digestMinutes: 5 }, NOON), "think"); // 10 > 5 busy min
+  assertEquals(
+    decide([msg(night)], SESSION, { ...WAKE, quietHours: null, digestMinutes: 5 }, night),
+    "think",
+  );
 });
 
 /* ── anchored (§5): the window's floor stands still, so the prompt prefix caches ── */

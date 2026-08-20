@@ -41,11 +41,17 @@ export const DEFAULT_RULES: Rule[] = [
   { tool: "*", action: "allow" },
 ];
 // attention (§2): a summons wakes NOW; an engaged conversation wakes NOW; ambient piles
-// wake on the digest clock — reacting to every world message with a model turn is waste
+// wake on the digest clock — reacting to every world message with a model turn is waste.
+// The digest carries the WHOLE world now that the summons is the mind alias alone, so its
+// interval sets the agent's idle cadence outright: measured against live traffic, five
+// minutes meant a turn every nine, and more than half of them said "nothing new".
 export const DEFAULT_ENGAGED_MINUTES = 15;
-export const DEFAULT_DIGEST_AFTER_MESSAGES = 20;
-export const DEFAULT_DIGEST_MINUTES = 5;
-export const DEFAULT_DIGEST_QUIET_MINUTES = 60;
+export const DEFAULT_DIGEST_AFTER_MESSAGES = 25;
+export const DEFAULT_DIGEST_MINUTES = 15;
+// Overnight the wakes are hours apart, so each one pays a full uncached prefix write (the
+// 1h cache TTL is the longest there is). Fewer of them is the only lever: if a write is
+// unavoidable, buy it twice a night rather than eight times.
+export const DEFAULT_DIGEST_QUIET_MINUTES = 180;
 export const DEFAULT_QUIET_HOURS = "23-8";
 
 // system — harness machinery
@@ -54,8 +60,17 @@ export const DEFAULT_LOCK_TTL_MS = 120_000; // a turn lease older than this is S
 export const DEFAULT_RETRY_DELAYS_MS = [5_000, 20_000]; // slow outer retries (§2)
 // est. tokens of RAW EVENT JSON (`estTokens`, chars/4) — roughly 1.8x the prompt those
 // events render to, since the estimate counts ids, envelopes and the tool traffic the
-// closed region drops. Below `windowLimit`'s own reach, so the checkpoint is the mechanism
-// and the count cap stays the guard it was meant to be (§5).
+// closed region drops. It has to sit BELOW what a full window weighs or the count cap
+// binds first and the checkpoint is unreachable code (`compact.test.ts` guards this) — a
+// live 500-event window measures ~52K, so the headroom here is thin by construction and
+// this number cannot be raised without raising `windowLimit` with it.
+//
+// Which is also why it is not the knob for how OFTEN a checkpoint runs. A checkpoint is
+// priced against the CACHE, not the window: it rewrites the prompt prefix, so it costs an
+// uncached call plus the full writes that follow until the cache re-settles. Both halves
+// scale with the window, while the interval between checkpoints scales the same way — a
+// wider window buys proportionally rarer, proportionally dearer checkpoints, and the spend
+// comes out flat. What moves it is less world traffic reaching the window at all.
 export const DEFAULT_COMPACT_AT = 50_000;
 export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves uncovered
 export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard (§5)
@@ -171,12 +186,13 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
       {
         key: "digestMinutes",
         value: DEFAULT_DIGEST_MINUTES,
-        doc: "attention: how often ambient conversations are looked at",
+        doc: "attention: how often ambient conversations are looked at — the idle cadence",
       },
       {
         key: "digestQuietMinutes",
         value: DEFAULT_DIGEST_QUIET_MINUTES,
-        doc: "attention: the ambient look interval during quiet hours",
+        doc:
+          "attention: the ambient look interval during quiet hours (each wake pays a full write)",
       },
       {
         key: "quietHours",
