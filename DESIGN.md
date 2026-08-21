@@ -235,6 +235,17 @@ seen. render honors the same horizon (unconsumed messages render as trailing INP
 history — also keeps the final user turn non-empty), and compaction never checkpoints
 them away. Real model latency opens this race seconds wide; scripted steps never could.
 
+**`<|SILENCE|>`** — the word that closes a turn without speaking. Every turn ends with a
+home message, because that message is the close and the horizon rides on it; so an agent
+that looks at the world and finds nothing still had to write a sentence to somebody who
+did not ask, and that sentence then sat in the window being re-read for days. Most of what
+an always-on agent writes is that sentence. The sentinel is stamped `extra.silence` and
+the event is kept verbatim — the log stays honest, the close is a real close, the horizon
+holds — but the body goes nowhere: the mirror carries it to no surface (§4), render draws
+no block for it (§5), and the REPL holds the deltas back until it knows which word it is.
+`silent` is not `silenced` (§2): a silenced row is not ours and never enters the window
+read at all; a silence note is ours, and it is only the body that is absent.
+
 *(v0 has no `held`/park pre-check. **Coexistence** — the principal answering a customer
 directly — is handled by the model **yielding** when it sees the principal's reply, not by
 a state flag. Explicit **takeover/hold** is deferred, §10.)*
@@ -460,7 +471,7 @@ one peripheral for both.
     mentions?         // wire mentions, canonical addresses
     control?          // ingest-classified reserved word (stop | cancel)
   }
-  extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, via, <service> provenance, raw
+  extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, <service> provenance, raw
   status?: {        // delivery lifecycle — ONE mutable json_patch-merged column, never events
     state?          // furthest stage (envelope.status is its shorthand view)
     delivered_at? · read_at?   // scalars in a DM; {participant: ts} maps in groups
@@ -523,7 +534,7 @@ Decisions:
 - **`payload` vs `extra`, one admission rule**: `payload` is what the event MEANS — the
   action, the reference, the turn keys — typed, and the machine branches on it. `extra` is
   the sidecar — how the wire said it plus harness bookkeeping (`backfill` · `muted` ·
-  `archived` — the silencing marks, §2 — `consumed`,
+  `archived` — the silencing marks, §2 — `consumed`, `silence`,
   `via`, `raw`, per-service provenance like `slack: {subtype, authorizations}`) —
   mergeable JSON the machine never branches on service keys of. Admission test: dropping
   an `extra` key must cost only auditability, never correctness — what queries or policy

@@ -17,7 +17,7 @@ import { TextLineStream } from "@std/streams";
 import { userInfo } from "node:os";
 import { start } from "./main.ts";
 import { ensureOrgConfig, readAgentOverrides } from "./config.ts";
-import { outcomeLine, ownVoice } from "./render.ts";
+import { outcomeLine, ownVoice, SILENCE, silent } from "./render.ts";
 import { describeCall } from "./describe.ts";
 import { parseVerdict } from "./xi.ts";
 import type {
@@ -96,6 +96,18 @@ const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
 
 let pendingRequest: string | undefined; // the last approval card — what /y and /n answer
 
+// The REPL is a surface like any other, so `SILENCE` has to LOOK like silence here too —
+// but text arrives as deltas, before we know which word it is. So hold back whatever could
+// still turn out to be the sentinel and release it the moment it can't: an ordinary answer
+// pays one delta of latency, and a turn that says nothing prints nothing.
+let held = "";
+const say = (text: string) => {
+  held += text;
+  if (SILENCE.startsWith(held.trimStart())) return;
+  write(held);
+  held = "";
+};
+
 function paint(e: Event): void {
   const self = ownVoice(e, session); // the model's output (§3) — the principal's own
   // stamped lines stay non-self: locally they're already on screen
@@ -113,8 +125,13 @@ function paint(e: Event): void {
         return;
       }
       if (via) return; // an alias CC is plumbing — its mind original already painted
-      if (e.envelope.conversation.address === home) write("\n> "); // body already streamed
-      else write(`\n${CYAN}→ ${e.envelope.conversation.address}:${RESET} ${text}\n> `);
+      if (e.envelope.conversation.address === home) {
+        // the message is published: whatever `say` is still holding was the sentinel, or
+        // the tail of a reply that ended mid-word. Either way this turn is over.
+        if (!silent(e)) write(held);
+        held = "";
+        write("\n> "); // the body itself already streamed
+      } else write(`\n${CYAN}→ ${e.envelope.conversation.address}:${RESET} ${text}\n> `);
       return;
     }
     case "tool_use": {
@@ -153,7 +170,7 @@ const main = await start({
   dir, // no principals: the folders under agents/ declare the org (the framework way, §9)
   // …and no settings either: everything funnels from the catalog (org/agent config.jsonc)
   onDelta: (d) => {
-    if (d.kind === "text") write(d.text ?? "");
+    if (d.kind === "text") say(d.text ?? "");
     else if (d.kind === "thinking") write(`${DIM}${d.text ?? ""}${RESET}`);
     else if (d.kind === "error") write(`\n${RED}! ${d.text ?? ""}${RESET}\n`);
   },

@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { createMirror } from "./mirror.ts";
+import { SILENCE } from "../render.ts";
 import { openLog } from "../store/log.ts";
 import type { Draft, Event, MessageEvent, ToolUseEvent } from "../types.ts";
 
@@ -392,5 +393,24 @@ Deno.test("mirror fan-out: a withdrawal crosses, a verdict never does — turn_i
       textOf((await inConv("D1"))[0]),
       "`[system]` withdrawn: **send**(to: Vivian)",
     );
+  });
+});
+
+Deno.test("mirror: a SILENCE note reaches no surface — nothing said is nothing sent", async () => {
+  await withMirror(async ({ publish, inConv, waitFor }) => {
+    await publish(mindMsg(SILENCE, {
+      agent: { id: "ana", session_id: "ana" },
+      payload: { turn_id: "t9" },
+      extra: { silence: true },
+    }));
+    await new Promise((r) => setTimeout(r, 200));
+    assertEquals((await inConv("D1")).length, 0);
+    assertEquals((await inConv("549")).length, 0);
+    // and the next real word still crosses — silence is per message, not a state
+    await publish(mindMsg("ahí va", {
+      agent: { id: "ana", session_id: "ana" },
+      payload: { turn_id: "t10" },
+    }));
+    await waitFor(async () => (await inConv("D1")).length === 1);
   });
 });

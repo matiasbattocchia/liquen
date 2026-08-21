@@ -339,6 +339,29 @@ export function silenced(event: Event): boolean {
     event.extra?.archived === true;
 }
 
+/**
+ * The one word the model can say to say NOTHING. A turn has to close with a home message —
+ * that message is what ends the chain and carries the horizon (`extra.consumed`, §2) — so
+ * until now the model had no way to look at the world and not speak: every idle digest
+ * cost a "(nothing new)" paragraph, addressed to a principal who did not ask, and that
+ * paragraph then sat in the window being re-read for days. Most of what an always-on agent
+ * writes is that sentence.
+ *
+ * `SILENCE` is the answer that closes the turn without speaking. The event is logged
+ * verbatim (the log stays honest about what the model said, and the horizon hangs off it
+ * exactly as before), and everything downstream treats it as bodiless: the mirror carries
+ * nothing to any surface, and render draws nothing — so tomorrow's window holds no record
+ * of the times we had nothing to say.
+ */
+export const SILENCE = "<|SILENCE|>";
+
+/** The model said nothing (`SILENCE`). NOT `silenced`: a silence note stays in the window
+ *  READ — it is ours, it closes the turn, and the horizon is stamped on it. It is only the
+ *  BODY that goes nowhere. */
+export function silent(event: Event): boolean {
+  return event.extra?.silence === true;
+}
+
 /** Stable-partition a run by conversation id, groups in first-arrival order. */
 function byConversation(run: Event[]): Event[] {
   const groups = new Map<string, Event[]>();
@@ -545,6 +568,7 @@ function renderMessages(
       continue;
     }
     if (e.type !== "message") continue;
+    if (silent(e)) continue; // said nothing — it closed the turn, it draws no block
     if (e.envelope.conversation.address === home) {
       // home: the plain user/assistant chat every LLM API means (§5)
       place(isSelf(e, session) ? "assistant" : "user", { type: "text", text: bodyOf(e) });
@@ -590,6 +614,7 @@ function renderMessages(
     } else if (e.type === "message") {
       // a directed send dispatched by a welded tool_use is already in the block — skip it
       if (e.payload?.ref_id && welded.has(e.payload.ref_id)) continue;
+      if (silent(e)) continue; // said nothing — here too, so the last block stays the world's
       if (isSelf(e, session) && e.envelope.conversation.address === home) {
         place("assistant", { type: "text", text: bodyOf(e) }); // mid-chain assistant text
       } else if (e.envelope.conversation.address === home) {

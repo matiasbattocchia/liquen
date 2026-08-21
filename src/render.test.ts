@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
-import { capRun, render, renderSystem, WUM_PER_CONVERSATION } from "./render.ts";
+import { capRun, render, renderSystem, SILENCE, WUM_PER_CONVERSATION } from "./render.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
   Event,
@@ -1279,4 +1279,31 @@ Deno.test('a reference outside the window says so (§5): re="?", and a delete sp
     dump,
     '<msg id=\\"e3\\" from=\\"sol\\" at=\\"16 Aug 12:00\\" re=\\"?\\">ese mismo</msg>',
   );
+});
+
+Deno.test("a SILENCE note draws nothing — it still closes the region it ends", () => {
+  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
+  const quiet = homeMsg("e02", t(1), SILENCE, true, "T1");
+  quiet.extra = { silence: true, consumed: "e01" };
+  const events: Event[] = [
+    worldMsg("e01", t(0), { address: "wa" }, { address: "549" }, "algo en el grupo"),
+    quiet, // the model looked and said nothing — the close is real, the body is not
+    worldMsg("e03", t(2), { address: "wa" }, { address: "549" }, "y otra cosa"),
+  ];
+  const { messages } = render({
+    events,
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t(3),
+  });
+
+  const texts = blocksOf(messages).map(txt);
+  assert(!texts.some((s) => s.includes(SILENCE)), "the sentinel never reaches the prompt");
+  assert(!messages.some((m) => m.role === "assistant"), "silence speaks in no role");
+  // the close still landed: e01 is CLOSED (behind the breakpoint), e03 is trailing
+  const prefix = prefixOf(messages).map((b) => txt(b as Anthropic.ContentBlockParam)).join(" ");
+  assertStringIncludes(prefix, "algo en el grupo");
+  assert(!prefix.includes("y otra cosa"));
 });

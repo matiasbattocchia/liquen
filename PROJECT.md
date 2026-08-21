@@ -797,6 +797,30 @@ whether a digest wake gets its own framing in the prompt. That last one matters:
 model emitted the same 49-token "(sin novedad)" twenty-five times in a row, and a digest that
 renders identically to a summons will do it again, just less often.
 
+### `<|SILENCE|>` — the model can finally say nothing (2026-08-21) — LANDED
+
+Measured on the first full day of the new attention rules (Sonnet 5 at $2/$10): 70 home
+messages, **44 of them "(sin novedad …)"**, and in the window the agent actually reads its own
+messages were 45KB against the world's 97KB — a third of the context it pays to re-read, and
+the third that says nothing. The instruction had told it "close quietly — silence is valid"
+for weeks; it could not comply, because a turn ends with a home message and there was no way
+to write one that was not a message.
+
+`SILENCE` is that way: the model answers `<|SILENCE|>` alone, nu stamps `extra.silence`, and
+the event stays in the log verbatim — it is still the close, and the `consumed` horizon still
+rides on it, so nothing about attention changes. What changes is that the body goes nowhere:
+`ccParts` returns null so no surface hears it (§4), render draws no block in either region
+(§5), and the REPL holds text deltas back while they could still turn out to be the sentinel,
+so a quiet turn prints nothing. `silent` is deliberately NOT a fourth silencing mark — a
+silenced row never enters the window read, and dropping a silence note from the read would
+strand the horizon on some real reply hours back and re-wake the agent for everything since.
+
+The saving is indirect and that is the point: the turn still runs and still costs its ~$0.014,
+but it stops feeding the window, and window growth is what fires checkpoints — which at 4/day
+were ~$1.10 of a $2.64 day (each checkpoint is ~$0.28: the summarizer call plus two cold
+re-warms). It also settles half of the "digest framing" question above: the digest does not
+need a different prompt so much as a way to end without speaking.
+
 11. **Background completion** — early-return for long tools generally; `escalation` as its
     first instance. The gate already walks this path (ask → `pending_approval` → a deferred
     outcome the harness narrates), so what is left is a tool that returns early on its own

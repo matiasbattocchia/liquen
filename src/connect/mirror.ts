@@ -53,7 +53,7 @@
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { DEFAULT_MIRROR_CLAIM_MS, DEFAULT_MIRROR_SETTLE_MS } from "../config.ts";
-import { outcomeLine, silenced } from "../render.ts";
+import { outcomeLine, silenced, silent } from "../render.ts";
 import { describeCall } from "../describe.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type {
@@ -283,6 +283,7 @@ async function fanOut(
  *  (thinking, results, the verdict itself — which is the principal's own `/y`; the
  *  agent's own settlement, a `cancel`, crosses as a `[system]` withdrawal). */
 function ccParts(e: Event): Part[] | null {
+  if (silent(e)) return null; // the model said nothing (§5) — nothing crosses to a surface
   if (e.type === "tool_use") {
     const call = describeCall((e as ToolUseEvent).parts[0].data);
     return [{ type: "text", kind: "text", text: `\`[agent tool]\` ${boldName(call)}` }];

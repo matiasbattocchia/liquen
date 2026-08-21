@@ -3,6 +3,7 @@ import { nu, type TurnConfig } from "./nu.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission } from "./mu.ts";
 import { canned } from "./testing.ts";
+import { SILENCE } from "./render.ts";
 import type { Event, MessageEvent, ThinkingEvent, ToolUseEvent } from "./types.ts";
 
 const CONFIG: TurnConfig = {
@@ -87,4 +88,26 @@ Deno.test("nu renders the window it was handed (events reach mu)", async () => {
     },
   );
   assert(seen[0].includes("¿todo bien?"));
+});
+
+Deno.test("nu: the sentinel alone is SILENCE — stamped, and only when it stands alone", async () => {
+  const world: Event = {
+    id: "01000000-0000-7000-8000-00000000000a" as Event["id"],
+    ts: "2026-01-01T10:00:00.000Z",
+    type: "message",
+    envelope: { service: "local", connection_address: "c", conversation: { address: "g" } },
+    parts: [{ type: "text", kind: "text", text: "algo" }],
+  };
+  const [quiet] = await nu(
+    { events: [world], docs: [], tools: [], config: CONFIG },
+    once([{ kind: "assistant", text: `\n${SILENCE}\n` }]), // whitespace around it still counts
+  ) as [MessageEvent];
+  assertEquals(quiet.extra?.silence, true);
+  assertEquals(quiet.extra?.consumed, world.id); // it still carries the horizon: it IS the close
+
+  const [spoken] = await nu(
+    { events: [world], docs: [], tools: [], config: CONFIG },
+    once([{ kind: "assistant", text: `mirá esto: ${SILENCE}` }]),
+  ) as [MessageEvent];
+  assertEquals(spoken.extra?.silence, undefined); // said something — the word is just text
 });

@@ -17,6 +17,7 @@ import type {
   Draft,
   Emit,
   Event,
+  Extra,
   MessageEvent,
   SessionId,
   ThinkingEvent,
@@ -26,7 +27,7 @@ import type { DocEntry } from "./store/docs.ts";
 import { newId } from "./store/id.ts";
 import { buildSummary } from "./compact.ts";
 import { DEFAULT_RETRY_DELAYS_MS } from "./config.ts";
-import { render } from "./render.ts";
+import { render, SILENCE } from "./render.ts";
 import { type Effort, type ModelTransport, mu, type StepResult } from "./mu.ts";
 
 /** Re-exported so the layer above talks to nu, not past it (main → xi → nu → mu). */
@@ -169,16 +170,22 @@ export async function nu(
       };
       events.push(e);
     } else if (em.kind === "assistant") {
+      // consumed: the coalescing horizon — what this step actually read; xi's `unanswered`
+      // measures against it (§2). silence: the model closed the turn without speaking (§5
+      // SILENCE) — the event still exists, still closes, still carries the horizon; only
+      // its body goes nowhere. Both ride `extra` (harness sidecar), not payload: nothing
+      // about the MESSAGE depends on either.
+      const extra: Extra = {};
+      const read = input.events.at(-1);
+      if (read) extra.consumed = read.id;
+      if (em.text.trim() === SILENCE) extra.silence = true;
       const e: Draft<MessageEvent> = {
         ts: ts(),
         type: "message",
         agent: self,
         envelope: home,
-        // turn_id: render's boundary rule (§5). consumed: the coalescing horizon — what
-        // this step actually read; xi's `unanswered` measures against it (§2). It rides
-        // `extra` (harness sidecar), not payload: nothing about the MESSAGE depends on it.
-        payload: { turn_id: turnId },
-        ...(input.events.at(-1) ? { extra: { consumed: input.events.at(-1)!.id } } : {}),
+        payload: { turn_id: turnId }, // render's boundary rule (§5)
+        ...(Object.keys(extra).length > 0 ? { extra } : {}),
         parts: [{ type: "text", kind: "text", text: em.text }],
       };
       events.push(e);
