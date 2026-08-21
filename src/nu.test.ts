@@ -90,7 +90,7 @@ Deno.test("nu renders the window it was handed (events reach mu)", async () => {
   assert(seen[0].includes("¿todo bien?"));
 });
 
-Deno.test("nu: the sentinel alone is SILENCE — stamped, and only when it stands alone", async () => {
+Deno.test("nu: the sentinel is SILENCE wherever it lands — the word governs the reply", async () => {
   const world: Event = {
     id: "01000000-0000-7000-8000-00000000000a" as Event["id"],
     ts: "2026-01-01T10:00:00.000Z",
@@ -100,14 +100,22 @@ Deno.test("nu: the sentinel alone is SILENCE — stamped, and only when it stand
   };
   const [quiet] = await nu(
     { events: [world], docs: [], tools: [], config: CONFIG },
-    once([{ kind: "assistant", text: `\n${SILENCE}\n` }]), // whitespace around it still counts
+    once([{ kind: "assistant", text: `\n${SILENCE}\n` }]), // alone, whitespace and all
   ) as [MessageEvent];
   assertEquals(quiet.extra?.silence, true);
   assertEquals(quiet.extra?.consumed, world.id); // it still carries the horizon: it IS the close
 
+  // the word GOVERNS: a model that explains itself before saying it still said it, and the
+  // explanation was addressed to nobody — it goes nowhere with the rest
+  const [hedged] = await nu(
+    { events: [world], docs: [], tools: [], config: CONFIG },
+    once([{ kind: "assistant", text: `Nada de esto necesita respuesta.\n\n${SILENCE}` }]),
+  ) as [MessageEvent];
+  assertEquals(hedged.extra?.silence, true);
+
   const [spoken] = await nu(
     { events: [world], docs: [], tools: [], config: CONFIG },
-    once([{ kind: "assistant", text: `mirá esto: ${SILENCE}` }]),
+    once([{ kind: "assistant", text: "listo, ya le contesté" }]),
   ) as [MessageEvent];
-  assertEquals(spoken.extra?.silence, undefined); // said something — the word is just text
+  assertEquals(spoken.extra?.silence, undefined);
 });

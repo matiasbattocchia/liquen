@@ -178,7 +178,12 @@ export async function nu(
       const extra: Extra = {};
       const read = input.events.at(-1);
       if (read) extra.consumed = read.id;
-      if (em.text.trim() === SILENCE) extra.silence = true;
+      // ANYWHERE in the reply, not just alone: the sentinel is a directive, not content,
+      // and a model that reasons its way to silence tends to explain itself first — the
+      // live one wrote a paragraph about why nothing was owed and then said the word. That
+      // paragraph is addressed to nobody, so the word governs and it goes nowhere with the
+      // rest. It stays in the log verbatim; only delivery and render are silenced.
+      if (em.text.includes(SILENCE)) extra.silence = true;
       const e: Draft<MessageEvent> = {
         ts: ts(),
         type: "message",

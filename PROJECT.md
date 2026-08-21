@@ -673,11 +673,11 @@ Two follow-ups on the catalog, both live (DESIGN §2 "Attention", §9):
   store/rules.ts, upserted by scope so a later verdict replaces the action). The gate
   compiles remembered-over-base, most specific first — the principal outranks config.
   One parser (`parseVerdict`) serves every door: xi's surface path and the REPL.
-- **Attention**: `decide`'s unanswered-news rule classes per conversation — summons
-  (home, DM, reply-to-agent, name-as-word) and engaged (own last word younger than
-  `engagedMinutes`, ping-pong refreshes) wake now; ambient piles wait for the digest
-  (`digestAfterMessages` deep, or `digestMinutes`/`digestQuietMinutes` old, quiet inside
-  `quietHours` on the org clock). main's tick (`system.tickMs`) is the metronome that
+- **Attention**: `decide`'s unanswered-news rule classes per conversation — summons (the
+  mind alias, nothing else) and engaged (the agent holds the floor: our complex's last word
+  there was the model's, younger than `engagedMinutes`) wake now; ambient piles wait for the
+  digest (`digestAfterMessages` deep, or `digestMinutes` old) and, inside `sleepHours` on
+  the org clock, for morning. main's tick (`system.tickMs`) is the metronome that
   re-asks — and doubles as the liveness heartbeat §2 always wanted. All knobs in the
   catalog's `agent` section; the policy stays a pure window derivation (DB-tier ready).
 - Live org: model `claude-sonnet-5` org-wide; `agents/matias` keeps only `effort: low`.
@@ -815,11 +815,38 @@ so a quiet turn prints nothing. `silent` is deliberately NOT a fourth silencing 
 silenced row never enters the window read, and dropping a silence note from the read would
 strand the horizon on some real reply hours back and re-wake the agent for everything since.
 
+Same day, on the live agent's first uses of it: the word arrived, but twice it came after a
+paragraph explaining what had been read and why nothing was owed — a paragraph addressed to
+nobody, which then crossed to WhatsApp because the strict rule (`trim() === SILENCE`) had
+already decided the turn was speech. Two fixes: nu now takes the sentinel ANYWHERE in the
+reply (it is a directive, not content — if the model said it, the reply goes nowhere, prose
+and all), and the instruction says so in the imperative: the word and NOTHING else, no
+summary, no "understood", not one line, because a message saying you have nothing to say is
+still a message.
+
 The saving is indirect and that is the point: the turn still runs and still costs its ~$0.014,
 but it stops feeding the window, and window growth is what fires checkpoints — which at 4/day
 were ~$1.10 of a $2.64 day (each checkpoint is ~$0.28: the summarizer call plus two cold
 re-warms). It also settles half of the "digest framing" question above: the digest does not
 need a different prompt so much as a way to end without speaking.
+
+### Nights are sleep, not a slower clock (2026-08-21) — LANDED
+
+`digestQuietMinutes` (180) and `quietHours` are one knob now, `sleepHours`: inside the span
+the ambient class wakes nobody, however deep the pile. The number was never a saving.
+Overnight wakes 3h apart each pay a full uncached prefix write — measured at $0.13 against
+$0.009 for a warm one — so the three it bought cost more than the ten they replaced, and
+each of the three read a third of a night. Under sleep the night arrives once, whole, as the
+first digest of the morning: one cold wake instead of three, and one coherent read instead of
+three fragments. The WUM caps already handle an oversized pile (`— N more … search to read
+them —`), so nothing new was needed for the morning.
+
+The guard sits BETWEEN the classes, not over them — after summons and engaged, before the
+piles — so it never silences anything that was addressed to someone: the principal's own line
+at home is answered at 3am, and a conversation the agent is holding the floor in is one it is
+IN. And sleep beats `digestAfterMessages`, deliberately: a pile-triggered 4am wake is exactly
+the thing a slower cadence could not rule out, and ruling it out is the difference between
+sleeping and ticking slowly.
 
 11. **Background completion** — early-return for long tools generally; `escalation` as its
     first instance. The gate already walks this path (ask → `pending_approval` → a deferred

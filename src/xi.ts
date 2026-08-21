@@ -48,10 +48,9 @@ import type {
 import {
   DEFAULT_DIGEST_AFTER_MESSAGES,
   DEFAULT_DIGEST_MINUTES,
-  DEFAULT_DIGEST_QUIET_MINUTES,
   DEFAULT_ENGAGED_MINUTES,
-  DEFAULT_QUIET_HOURS,
   DEFAULT_RULES,
+  DEFAULT_SLEEP_HOURS,
   DEFAULT_TIMEZONE,
   DEFAULT_WINDOW_LIMIT,
 } from "./config.ts";
@@ -125,9 +124,8 @@ export interface Wake {
   engagedMinutes?: number;
   digestAfterMessages?: number;
   digestMinutes?: number;
-  digestQuietMinutes?: number;
-  /** Org-clock span "23-8" for the quiet interval; null ⇒ never quiet; unset ⇒ catalog. */
-  quietHours?: string | null;
+  /** Org-clock span "23-8" the ambient world waits out; null ⇒ never sleeps; unset ⇒ catalog. */
+  sleepHours?: string | null;
 }
 
 /** Decide — once, from one window — what is owed. Position-aware, so a late invocation that
@@ -160,9 +158,9 @@ export function decide(
  * conversation (the agent holds the floor there: its own word is the last our complex
  * said, and it is recent) wakes now: you don't drop out of a conversation you are in.
  * Everything else is AMBIENT and waits for the digest: a pile deep enough, or news old
- * enough for the interval — the quiet one when the org sleeps. Deferring costs nothing and
- * loses nothing: the news stays owed in the log, and the clock poke (main's tick) re-asks
- * this same question until it is due.
+ * enough for the interval — and during `sleepHours`, for morning. Deferring costs nothing
+ * and loses nothing: the news stays owed in the log, and the clock poke (main's tick)
+ * re-asks this same question until it is due.
  */
 function attention(events: Event[], session: Session, wake: Wake, now: number): Decision {
   const news = newsOf(events, session, wake.home);
@@ -181,8 +179,19 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
     const conv = e.envelope.conversation.address;
     piles.set(conv, [...(piles.get(conv) ?? []), e]);
   }
-  for (const [conv, pile] of piles) {
+  for (const conv of piles.keys()) {
     if (engaged(conv, events, session, wake, now)) return "think";
+  }
+  // ASLEEP: inside the span the ambient class wakes nobody, however deep the pile. The two
+  // classes above still do — the principal's own line at 3am is answered, and a conversation
+  // the agent is holding the floor in is one it is IN — so what sleeps is the world, which
+  // is the only class that was never addressed to anyone here. A stretched night interval
+  // (what this replaces) was a number tuned against a cache TTL nobody controls: past an
+  // hour every wake pays a full uncached write anyway, so the three it bought cost more
+  // than the ten they replaced, and each read a third of a night. Sleeping drops the
+  // number: the night arrives once, whole, as the first digest of the morning.
+  if (asleep(now, wake)) return "ignore";
+  for (const pile of piles.values()) {
     if (digestDue(pile, wake, now)) return "think";
   }
   return "ignore";
@@ -221,18 +230,16 @@ function engaged(
 }
 
 /** An ambient pile is due when it is deep enough, or its oldest news has waited out the
- *  interval — the quiet one while the org's clock is inside `quietHours`. */
+ *  interval. Only reached while awake — `asleep` answers for the whole class before this. */
 function digestDue(pile: MessageEvent[], wake: Wake, now: number): boolean {
   if (pile.length >= (wake.digestAfterMessages ?? DEFAULT_DIGEST_AFTER_MESSAGES)) return true;
-  const minutes = quietNow(now, wake)
-    ? (wake.digestQuietMinutes ?? DEFAULT_DIGEST_QUIET_MINUTES)
-    : (wake.digestMinutes ?? DEFAULT_DIGEST_MINUTES);
+  const minutes = wake.digestMinutes ?? DEFAULT_DIGEST_MINUTES;
   return now - Date.parse(pile[0].ts) >= minutes * 60_000;
 }
 
-/** Is the org's clock inside the quiet span? "23-8" wraps midnight; null ⇒ never quiet. */
-function quietNow(now: number, wake: Wake): boolean {
-  const span = wake.quietHours === undefined ? DEFAULT_QUIET_HOURS : wake.quietHours;
+/** Is the org's clock inside the sleep span? "23-8" wraps midnight; null ⇒ never sleeps. */
+function asleep(now: number, wake: Wake): boolean {
+  const span = wake.sleepHours === undefined ? DEFAULT_SLEEP_HOURS : wake.sleepHours;
   const m = span === null ? null : /^(\d{1,2})-(\d{1,2})$/.exec(span);
   if (!m) return false;
   const [from, to] = [Number(m[1]), Number(m[2])];

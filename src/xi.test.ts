@@ -450,24 +450,34 @@ Deno.test("attention: the principal speaking in a conversation ENDS engagement, 
   );
 });
 
-Deno.test("attention: quiet hours stretch the digest; null switches quiet off", () => {
+Deno.test("attention: asleep, the ambient world waits for morning — the principal never does", () => {
   const night = Date.parse("2026-08-19T03:00:00Z"); // inside the default 23-8 span (UTC)
-  const msg = (base: number) =>
-    // 10 min old, at `base`
+  const ambient = (base: number, minAgo = 10) =>
     ev(
       "message",
       {
         conv: "slack:C1",
-        ts: at(10, base),
+        ts: at(minAgo, base),
         parts: [{ type: "text", kind: "text", text: "night shift" }],
       } as Partial<Event> & { conv?: string },
     );
-  assertEquals(decide([msg(night)], SESSION, WAKE, night), "ignore"); // 10 < 180 quiet min
-  assertEquals(decide([msg(NOON)], SESSION, { ...WAKE, digestMinutes: 5 }, NOON), "think"); // 10 > 5 busy min
-  assertEquals(
-    decide([msg(night)], SESSION, { ...WAKE, quietHours: null, digestMinutes: 5 }, night),
-    "think",
+  // by day the interval decides; at night nothing does — the same news, twice
+  assertEquals(decide([ambient(NOON, 16)], SESSION, WAKE, NOON), "think");
+  assertEquals(decide([ambient(night, 16)], SESSION, WAKE, night), "ignore");
+  // and sleep BEATS the pile: a night that fills the room still waits for the morning,
+  // which is the whole difference between sleeping and a slower cadence
+  const pile = Array.from({ length: 40 }, (_, i) => ambient(night, 300 - i));
+  assertEquals(decide(pile, SESSION, WAKE, night), "ignore");
+  assertEquals(decide(pile, SESSION, { ...WAKE, sleepHours: null }, night), "think");
+  // what still gets through at 3am: their own line at home, and a conversation we hold
+  const home = ev(
+    "message",
+    {
+      ts: at(1, night),
+      parts: [{ type: "text", kind: "text", text: "che" }],
+    } as Partial<Event> & { conv?: string },
   );
+  assertEquals(decide([...pile, home], SESSION, WAKE, night), "think");
 });
 
 /* ── anchored (§5): the window's floor stands still, so the prompt prefix caches ── */

@@ -164,8 +164,15 @@ which is the one thing that still wakes the agent. So the world can never pull t
 without the principal: it is only ever engaged where it was sent.
 Everything else is **ambient** and waits for the digest: a conversation's pile wakes the
 agent when it reaches `digestAfterMessages`, or when its oldest news has waited out
-`digestMinutes` (`digestQuietMinutes` while the org clock sits inside `quietHours`,
-"23-8"-style, null ⇒ never). Deferring costs nothing and loses nothing: the news stays
+`digestMinutes` — and inside `sleepHours` ("23-8"-style on the org clock, null ⇒ never
+sleeps), neither does: the ambient class wakes nobody until morning, however deep the pile.
+Sleep sits between the classes, not over them, so the two that were addressed to someone
+still land at 3am — the principal's own line at home, and a conversation the agent is
+holding the floor in. What sleeps is the world. (It replaces a stretched night interval,
+which was a number tuned against a cache TTL nobody controls: past an hour every wake pays
+a full uncached prefix write anyway, so three overnight wakes cost more than the ten they
+replaced and each read a third of a night. The night now arrives once, whole.)
+Deferring costs nothing and loses nothing: the news stays
 owed in the log, and main's **tick** (`tickMs`) — the clock as a poke source, a
 trigger-less invoke on a metronome — re-asks the same question until it comes due. All
 knobs live in the catalog's `agent` section (§9), per-agent overridable; the whole policy

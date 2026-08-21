@@ -48,11 +48,13 @@ export const DEFAULT_RULES: Rule[] = [
 export const DEFAULT_ENGAGED_MINUTES = 15;
 export const DEFAULT_DIGEST_AFTER_MESSAGES = 25;
 export const DEFAULT_DIGEST_MINUTES = 15;
-// Overnight the wakes are hours apart, so each one pays a full uncached prefix write (the
-// 1h cache TTL is the longest there is). Fewer of them is the only lever: if a write is
-// unavoidable, buy it twice a night rather than eight times.
-export const DEFAULT_DIGEST_QUIET_MINUTES = 180;
-export const DEFAULT_QUIET_HOURS = "23-8";
+// Nights are not a slower cadence, they are SLEEP: inside the span the ambient class wakes
+// nobody at all, however deep the pile gets. A stretched interval was a number tuned
+// against a cache TTL nobody controls — past an hour every wake pays a full uncached write
+// anyway, so three of them cost more than the ten they replaced. Sleep drops the number:
+// the world waits until morning and arrives as one digest. What still wakes is what always
+// did — the mind alias, and a conversation the agent is holding the floor in.
+export const DEFAULT_SLEEP_HOURS = "23-8";
 
 // system — harness machinery
 export const DEFAULT_STOP_TIMEOUT_MS = 5_000; // cap on stop() awaiting an in-flight turn
@@ -98,9 +100,8 @@ export interface OrgConfig {
     rules: Rule[]; // permission policy as data (§9)
     engagedMinutes: number; // attention (§2): how long the agent's own last word keeps
     digestAfterMessages: number; //   a conversation hot · the ambient pile that forces a
-    digestMinutes: number; //   wake · the ambient look interval, busy and quiet
-    digestQuietMinutes: number;
-    quietHours: string | null; // org-clock span "23-8"; null ⇒ never quiet
+    digestMinutes: number; //   wake · the ambient look interval
+    sleepHours: string | null; // org-clock span "23-8"; null ⇒ never sleeps
   };
   system: {
     stopTimeoutMs: number;
@@ -189,15 +190,9 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
         doc: "attention: how often ambient conversations are looked at — the idle cadence",
       },
       {
-        key: "digestQuietMinutes",
-        value: DEFAULT_DIGEST_QUIET_MINUTES,
-        doc:
-          "attention: the ambient look interval during quiet hours (each wake pays a full write)",
-      },
-      {
-        key: "quietHours",
-        value: DEFAULT_QUIET_HOURS,
-        doc: 'attention: org-clock span "from-to" when the quiet interval applies; null ⇒ never',
+        key: "sleepHours",
+        value: DEFAULT_SLEEP_HOURS,
+        doc: 'attention: org-clock span "from-to" the ambient world waits out; null ⇒ never sleeps',
       },
     ],
   },
@@ -435,9 +430,9 @@ function validateAgent(a: Partial<OrgConfig["agent"]>, path: string): void {
       }
     }
   }
-  if (a.quietHours != null && !/^\d{1,2}-\d{1,2}$/.test(a.quietHours)) {
+  if (a.sleepHours != null && !/^\d{1,2}-\d{1,2}$/.test(a.sleepHours)) {
     throw new Error(
-      `${path}: quietHours "${a.quietHours}" — an org-clock span like "23-8" expected`,
+      `${path}: sleepHours "${a.sleepHours}" — an org-clock span like "23-8" expected`,
     );
   }
   for (
@@ -445,7 +440,6 @@ function validateAgent(a: Partial<OrgConfig["agent"]>, path: string): void {
       ["engagedMinutes", a.engagedMinutes],
       ["digestAfterMessages", a.digestAfterMessages],
       ["digestMinutes", a.digestMinutes],
-      ["digestQuietMinutes", a.digestQuietMinutes],
     ] as const
   ) {
     if (v != null && !(v > 0)) {

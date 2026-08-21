@@ -296,9 +296,8 @@ async function scanAgents(
       engagedMinutes: cfg.engagedMinutes ?? org.agent.engagedMinutes,
       digestAfterMessages: cfg.digestAfterMessages ?? org.agent.digestAfterMessages,
       digestMinutes: cfg.digestMinutes ?? org.agent.digestMinutes,
-      digestQuietMinutes: cfg.digestQuietMinutes ?? org.agent.digestQuietMinutes,
-      // null survives the funnel: it means "never quiet", not "unset" (Wake, §2)
-      quietHours: cfg.quietHours !== undefined ? cfg.quietHours : org.agent.quietHours,
+      // null survives the funnel: it means "never sleeps", not "unset" (Wake, §2)
+      sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.agent.sleepHours,
       // the system half funnels too — org-wide, no per-agent seat (harness machinery)
       lockTtlMs: defaults.lockTtlMs ?? org.system.lockTtlMs,
       windowLimit: org.system.windowLimit,
