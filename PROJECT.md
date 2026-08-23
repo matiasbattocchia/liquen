@@ -848,6 +848,22 @@ IN. And sleep beats `digestAfterMessages`, deliberately: a pile-triggered 4am wa
 the thing a slower cadence could not rule out, and ruling it out is the difference between
 sleeping and ticking slowly.
 
+### Voice notes become text — the audio processor (2026-08-23) — LANDED
+
+`connect/transcribe.ts` + `processors/qwen-asr/` (DESIGN §5 Media). The architecture note
+lives there; what belongs here is the operational record. The processor is
+huanglizhuo/QwenASR (Rust, Qwen3-ASR 0.6B, CPU) — release binaries ≤0.9.1 hang on short
+clips on x86 (unbounded spin-join, fixed post-release; our build-fix PR:
+https://github.com/huanglizhuo/QwenASR/pull/54), so the README says build HEAD. Measured on
+the i7-1365U: a note transcribes in ≈ its own duration (5.4s → 9s, 57s → 37s), near-verbatim
+Spanish; `OPENBLAS_NUM_THREADS=1` is mandatory (a pooled BLAS under qwen-asr's own threads
+burned 25s of sys for 1.7s of work), `-t 4` beats more threads on the hybrid core layout,
+`-S 20` is upstream's own batch recommendation. `--stdin` takes raw s16le 16k (a wav header
+can't be backpatched on a pipe), hence the ffmpeg leg in `transcribe.sh`. Binary and model
+are gitignored — each deployment builds/downloads its own (the README walks it). En route:
+`saveMedia` now strips mime params, so `audio/ogg; codecs=opus` lands as `.ogg`, not
+`.bin`.
+
 11. **Background completion** — early-return for long tools generally; `escalation` as its
     first instance. The gate already walks this path (ask → `pending_approval` → a deferred
     outcome the harness narrates), so what is left is a tool that returns early on its own

@@ -25,6 +25,7 @@ import type {
   MessageEvent,
   ReactionPart,
   SessionId,
+  TextPart,
   ThinkingEvent,
   ToolResultEvent,
   ToolUseEvent,
@@ -730,9 +731,10 @@ function conversationEl(
   return `<conv ${attrs.join(" ")}>\n${c.lines.join("\n")}\n</conv>`;
 }
 
-/** One world message line — two elements, the deviation marked (§3, §5): `<msg>` carries
+/** One world message line — three elements, the deviation marked (§3, §5): `<msg>` carries
  *  text (`action="edit"` = replacement content, `action="delete"` = the removed content),
- *  `<react>` carries the glyph (`action="remove"` = an un-react). Bare defaults: create and
+ *  `<react>` carries the glyph (`action="remove"` = an un-react), `<transcript>` carries
+ *  the derived words of the audio its `re` points at. Bare defaults: create and
  *  add wear no attribute. `from="self"` = the agent's own send (its author label inside a
  *  user turn); `status="failed"` = the dispatcher gave up on delivery (§5).
  *
@@ -778,6 +780,11 @@ function msgLine(
     return `<msg ${head}${re} action="delete">${body}</msg>`;
   }
   if (action === "add" || action === "remove") {
+    // agnostic over WHAT was added — the part names itself (§3). A transcript is the
+    // harness's derived words for the audio its `re` points at: no `id` (nothing in the
+    // vocabulary points at one) and no `from` (nobody spoke — the referent's sender did).
+    const t = e.parts.find((p): p is TextPart => p.type === "text" && p.kind === "transcript");
+    if (t) return `<transcript${re}>${escText(t.text)}</transcript>`;
     const r = e.parts.find((p): p is ReactionPart => p.type === "data" && p.kind === "reaction");
     // `?? ""`: a glyphless reaction (a removal) renders empty — one malformed event must
     // never kill the window render

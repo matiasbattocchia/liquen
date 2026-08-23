@@ -41,6 +41,7 @@ import { seedDocs } from "./store/seed.ts";
 import { anthropicClient, anthropicTransport, metered, type ModelTransport } from "./transport.ts";
 import { installExecPlane } from "./exec/bash.ts";
 import { createMirror } from "./connect/mirror.ts";
+import { createTranscriber } from "./connect/transcribe.ts";
 import type { Emit, Event } from "./types.ts";
 import {
   DEFAULT_SETTLE_MS,
@@ -216,6 +217,18 @@ export async function start(
     onError: (e, err) =>
       console.error(`[main] mirror FAILED on ${e.envelope.conversation.address}:`, err),
   }));
+  // the transcriber rides the RAW log too (§5): connector-neutral — an audio message is an
+  // audio message whatever surface it landed on, including alias conversations the scoped
+  // ports hide. Inert unless the org configured an audio processor.
+  if (org?.processors.audio) {
+    unsubs.push(createTranscriber({
+      subscribe: (l, o) => log.subscribe(l, o),
+      publish: log.publish,
+      command: org.processors.audio,
+      onError: (e, err) =>
+        console.error(`[main] transcriber FAILED on ${e.envelope.conversation.address}:`, err),
+    }));
+  }
   for (const a of agents) invoke(a)(); // boot: no trigger ⇒ look at whatever the log owes
 
   // the clock poke (§2 attention): deferred ambient news needs someone to re-ask once the

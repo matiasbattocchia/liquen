@@ -67,7 +67,9 @@ export interface Rule {
 
 export interface TextPart {
   type: "text";
-  kind: "text" | "reaction";
+  /** `transcript` = machine-derived words for a message that carried none (a voice note's
+   *  ASR text) — ridden by an `action: "add"` event pointing at the audio message (§3). */
+  kind: "text" | "reaction" | "transcript";
   text: string;
 }
 

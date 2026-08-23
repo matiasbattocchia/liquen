@@ -22,6 +22,11 @@ Deno.test("saveMedia: content-named and idempotent — same bytes, same path, on
     const c = await saveMedia(root, "dm:ana:bo", bytes, { name: "x.pdf" });
     assert(c.uri.includes("/conversations/dm_ana_bo/media/"));
     assertEquals(c.mime_type, "application/pdf"); // inferred from the name
+    // mime params stripped: a WA voice note says `audio/ogg; codecs=opus` — it lands
+    // as .ogg (a .bin was unplayable AND invisible to the extension-keyed maps)
+    const d = await saveMedia(root, "C1", bytes, { mime_type: "audio/ogg; codecs=opus" });
+    assert(d.uri.endsWith(".ogg"));
+    assertEquals(d.mime_type, "audio/ogg");
   } finally {
     await Deno.remove(root, { recursive: true });
   }

@@ -103,6 +103,12 @@ export interface OrgConfig {
     digestMinutes: number; //   wake · the ambient look interval
     sleepHours: string | null; // org-clock span "23-8"; null ⇒ never sleeps
   };
+  processors: {
+    /** Shell command: audio bytes on stdin → transcript text on stdout (non-zero exit =
+     *  no transcript). null ⇒ voice notes stay untranscribed. The command IS the plugin
+     *  interface — the repo ships `processors/qwen-asr/` as one implementation. */
+    audio: string | null;
+  };
   system: {
     stopTimeoutMs: number;
     lockTtlMs: number;
@@ -193,6 +199,18 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
         key: "sleepHours",
         value: DEFAULT_SLEEP_HOURS,
         doc: 'attention: org-clock span "from-to" the ambient world waits out; null ⇒ never sleeps',
+      },
+    ],
+  },
+  {
+    section: "processors",
+    doc: "media processors — broker-side commands that derive text from bytes (§5)",
+    entries: [
+      {
+        key: "audio",
+        value: null,
+        doc: 'shell command, audio bytes on stdin → transcript on stdout — e.g. "processors/' +
+          'qwen-asr/transcribe.sh" (repo-relative; see its README); null ⇒ no transcription',
       },
     ],
   },
@@ -386,6 +404,12 @@ function validateOrg(cfg: OrgConfig, path: string): void {
   if (!(cfg.organization.backlogHours > 0)) {
     throw new Error(
       `${path}: backlogHours must be a positive number (got ${cfg.organization.backlogHours})`,
+    );
+  }
+  if (cfg.processors.audio !== null && typeof cfg.processors.audio !== "string") {
+    throw new Error(
+      `${path}: processors.audio must be a shell command string, or null (got ` +
+        `${JSON.stringify(cfg.processors.audio)})`,
     );
   }
   validateAgent(cfg.agent, path);

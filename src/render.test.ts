@@ -1243,6 +1243,36 @@ Deno.test("actions on the element (§5): <msg action>, id/re references, <react>
   assertStringIncludes(dump, 'mentions=\\"5491133585694\\">che @matias mirá esto</msg>');
 });
 
+Deno.test("a transcript add-event renders as <transcript re=…>, not as a reaction (§5)", () => {
+  const t = "2026-08-16T12:00:00Z";
+  const conv = { address: "wa:sol", kind: "direct" as const };
+  const sol = { address: "549", name: "sol" };
+  const voice = worldMsg("e1", t, conv, sol, "");
+  voice.envelope.external_id = "whatsapp:wmw.x.note";
+  voice.parts = [{
+    type: "file",
+    kind: "audio",
+    file: { mime_type: "audio/ogg", uri: "file:///tmp/note.ogg", name: "PTT.ogg" },
+  }];
+  const transcript: MessageEvent = {
+    ...worldMsg("e2", t, conv, null, ""),
+    parts: [{ type: "text", kind: "transcript", text: "hola, ¿viste el set?" }],
+    payload: { action: "add", ref_external_id: "whatsapp:wmw.x.note" },
+  };
+  const { messages } = render({
+    events: [voice, transcript],
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
+  const dump = JSON.stringify(messages);
+  // no id (nothing points at a transcript), no from (nobody spoke — the harness derived it)
+  assertStringIncludes(dump, '<transcript re=\\"e1\\">hola, ¿viste el set?</transcript>');
+  assert(!dump.includes("<react"));
+});
+
 Deno.test('a reference outside the window says so (§5): re="?", and a delete spells it out', () => {
   const t = "2026-08-16T12:00:00Z";
   const conv = { address: "wa:sol", kind: "direct" as const };

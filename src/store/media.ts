@@ -118,7 +118,8 @@ export async function saveMedia(
   bytes: Uint8Array,
   meta: { mime_type?: string; name?: string } = {},
 ): Promise<FilePart["file"]> {
-  const mime = meta.mime_type ?? (meta.name ? mimeOf(meta.name) : null) ??
+  // params stripped: the wire says `audio/ogg; codecs=opus`, the maps key on the bare type
+  const mime = meta.mime_type?.split(";")[0].trim() ?? (meta.name ? mimeOf(meta.name) : null) ??
     "application/octet-stream";
   const fromName = meta.name?.includes(".") ? meta.name.slice(meta.name.lastIndexOf(".") + 1) : "";
   const ext = (fromName || EXT[mime] || "bin").toLowerCase();

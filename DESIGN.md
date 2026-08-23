@@ -1105,6 +1105,25 @@ Dispatch is per-connector capability: Slack uploads local files via the `files.u
 flow with the text as the share comment, and external links join the text as lines
 (Slack's own idiom — the client unfurls them); WhatsApp (future) passes links natively.
 
+**Audio becomes text by PROCESSOR** (the Messages API has no audio input, and a voice
+note's words belong in the log — durable, searchable, cheap). A processor is a broker-side
+log listener like the mirror (`connect/transcribe.ts`, composed by main): connector-neutral
+— by the time audio is an event, its origin doesn't matter — and its model is a SHELL
+COMMAND from the org catalog (`processors.audio`: bytes on stdin → text on stdout), so the
+implementation is swappable without touching the harness; the repo ships
+`processors/qwen-asr/` (local Qwen3-ASR, CPU) as one. The transcript is an `action: "add"`
+event — a `transcript` text part added to the audio message, `ref_external_id` pointing at
+it — so the original row stays sealed, past WUMs stay invariant (§3), and the words render
+as a later `<transcript re=…>` line whose wake IS the feature: the agent reads the note
+when its words arrive (the instructions say to wait for them). Sender-less and agent-less
+(the harness derived it — which is exactly what keeps it off dispatch's outbound predicate
+and out of the mirror's absorb guard), `external_id = transcript:<audio external_id>` (the
+upsert makes one audio message exactly one transcript), and a `<hash>.txt` sidecar beside
+the media file caches the work — the same bytes forwarded again publish from the cache.
+Serial, one note at a time: transcription is CPU-bound and a burst of forwarded notes is
+exactly when N model trees must not race each other; concurrency becomes a `processors`
+knob if a GPU box ever runs it.
+
 Tool results carry attachments the same way (the model-initiated half of the loop —
 Claude Code's Read pattern): `aread` on a bytes file (image/audio/video/PDF) prints a
 `[media …]` line plus a `MEDIA_MARK` sentinel; bash peels the mark (the CWD_MARK
