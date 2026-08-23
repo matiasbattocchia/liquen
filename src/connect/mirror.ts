@@ -171,7 +171,7 @@ async function fanIn(
   // only the mirror, reading unscoped, can make the join. A quoted CC resolves to the mind
   // event it was made from (`extra.via.event`); that id rides the copy as `ref_id`, which
   // is how a `/y` quoting one of several cards names the card itself.
-  const origin = await quotedOrigin(deps, e);
+  const origin = await quotedOrigin(deps, e, `mind:${binding.agentId}`);
   await deps.publish({
     ts: now(),
     type: "message",
@@ -206,20 +206,38 @@ async function fanIn(
   } as Draft<MessageEvent>);
 }
 
-/** The mind event a quoted surface row was made from, if the quote can be joined: the row
- *  the `ref_external_id` names, when it is one of our CCs, carries `extra.via.event` — the
- *  approval card, the agent line, whatever crossed. A quote of anything else (an inbound,
- *  a row outside the log) resolves to nothing and the copy keeps plain provenance. */
-async function quotedOrigin(deps: MirrorDeps, e: MessageEvent): Promise<EventId | undefined> {
+/** The mind event a quoted surface row was made from, if the quote can be joined. Both
+ *  directions of the crossing carry the join, at opposite ends:
+ *
+ *    OURS   — the quoted row is one of our CCs, and its `extra.via.event` names the mind
+ *             event it was made from (the approval card, the agent line, whatever crossed).
+ *    THEIRS — the quoted row is an inbound, and the mind's own copy of it carries the
+ *             surface id in `extra.via.external_id`. The transcriber's case (§5): a
+ *             transcript is an `add` naming the audio it transcribes, and in the mind it has
+ *             to name the audio's COPY, which is the only row the agent can see.
+ *
+ *  A quote that joins to neither (a row outside the log) resolves to nothing and the copy
+ *  keeps plain provenance. */
+async function quotedOrigin(
+  deps: MirrorDeps,
+  e: MessageEvent,
+  mind: string,
+): Promise<EventId | undefined> {
   const quoted = e.payload?.ref_external_id;
   if (!quoted) return undefined;
-  const rows = await deps.read({
+  const ours = await deps.read({
     conversation: e.envelope.conversation.address,
     limit: 1,
     filter: (x) => x.envelope.external_id === quoted,
   });
-  const via = rows[0]?.extra?.via as { event?: EventId } | undefined;
-  return via?.event;
+  const via = ours[0]?.extra?.via as { event?: EventId } | undefined;
+  if (via?.event) return via.event;
+  const theirs = await deps.read({
+    conversation: mind,
+    limit: 1,
+    filter: (x) => (x.extra?.via as { external_id?: string } | undefined)?.external_id === quoted,
+  });
+  return theirs[0]?.id;
 }
 
 /** Our own post, returning unrecognized: a CC on this surface carrying the same words and

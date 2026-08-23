@@ -268,6 +268,29 @@ Deno.test("mirror fan-in: a quoted CC is TRANSLATED — the copy's ref_id names 
   });
 });
 
+Deno.test("mirror fan-in: a transcript lands on the mind's COPY of the audio it names (§5)", async () => {
+  await withMirror(async ({ publish, inConv, waitFor }) => {
+    // the voice note arrives on the surface and crosses to the mind
+    await publish(aliasInbound("", { external_id: "slack:T1:D1:111.1" }));
+    await waitFor(async () => (await inConv("mind:ana")).length === 1);
+    const [audioCopy] = await inConv("mind:ana");
+
+    // the transcriber publishes the words into the AUDIO's conversation — an `add` naming
+    // the surface row, which is the only id it has
+    await publish({
+      ...aliasInbound("hola, esto es una prueba", { external_id: "transcript:slack:T1:D1:111.1" }),
+      payload: { action: "add", ref_external_id: "slack:T1:D1:111.1" },
+    } as Draft<Event>);
+
+    // in the mind that id names nothing — the copy has its own. The mirror joins from the
+    // other end (`extra.via.external_id`), so the words land on the note they came from
+    await waitFor(async () => (await inConv("mind:ana")).length === 2);
+    const words = (await inConv("mind:ana")).find((e) => textOf(e).startsWith("hola"))!;
+    assertEquals(words.payload?.ref_id, audioCopy.id);
+    assertEquals(words.payload?.ref_external_id, "slack:T1:D1:111.1");
+  });
+});
+
 Deno.test("mirror fan-in settles: an echo absorbed by the dispatch backfill copies nothing", async () => {
   await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
     // the agent speaks → a CC to the self-DM lands (what a dispatcher would then post)
