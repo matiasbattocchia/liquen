@@ -30,8 +30,8 @@
  * `groups` feeds fill in for a bridge that doesn't. Either way a rename reaches rows from
  * the next message on, never retroactively (decided 2026-08-11).
  *
- * Edits REPLACE parts on the original row (same policy as Slack's `message_changed`);
- * revokes are MERGE-ONLY drafts — no `parts` key, so `json_patch` leaves the stored
+ * Edits are their OWN events (§3) — the original row stays sealed, the edit renders in a
+ * later WUM; revokes are MERGE-ONLY drafts — no `parts` key, so `json_patch` leaves the stored
  * payload untouched and only `extra.whatsapp.revoked_at` lands: the log is append-only
  * and the content stays auditable (§3).
  */
@@ -382,8 +382,6 @@ function mapMessage(
   };
 }
 
-/** An edit REPLACES parts on the original row (a `json_patch` array replaces — the same
- *  row semantics as Slack's `message_changed`); the mark rides `extra`. */
 /** An edit is its OWN event (§3): `action: "edit"` + the original's wire id in
  *  `ref_external_id`, parts carrying the new content in the original's part types. The
  *  original row is never touched — sealed WUMs stay invariant, and the edit renders in a
