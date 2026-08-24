@@ -95,7 +95,7 @@ async function installProxy(dir: string): Promise<ProxyHandle> {
 }
 
 export interface MainConfig {
-  dir: string; // the org's data root (§9): log/ · credentials/ · system/ · org/ · agents/
+  dir: string; // the org's data root (§9): log/ · system/ · org/ · agents/
   /** One agent per principal. The `Policy` half (readable/writable, §6) never reaches xi:
    *  main lifts it into the agent's scoped log — locally a wrapper, on Postgres a credential.
    *  OMIT to create agents "the framework way": every folder under `agents/` declares one

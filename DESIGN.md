@@ -2018,8 +2018,8 @@ The Docker layout, concretely:
                              the workspace IS the docs source: frontmattered **/*.md (§8)
 ```
 
-Local (dev, one user — same shape, no enforcement): `MU_DIR/{log/, credentials/, system/,
-org/, agents/<name>/}` — `agents/<name>/` plays `/home/<agent>`. **Agents are created "the
+Local (dev, one user — same shape, no enforcement): `MU_DIR/{log/, system/,
+org/, agents/<name>/}` (the vault is a table in `log/log.db`) — `agents/<name>/` plays `/home/<agent>`. **Agents are created "the
 framework way"**: a folder under `agents/` declares one (a blank folder is a blank agent);
 at start main scans the folders and `syncAgents` MIRRORS the registry table to them
 (upsert present, delete absent). Folders are the DX and the source of truth; the table is
