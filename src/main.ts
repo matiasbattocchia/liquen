@@ -81,7 +81,9 @@ async function installProxy(dir: string): Promise<ProxyHandle> {
   }
   console.error(
     `[main] egress proxy on :${proxy.port}` +
-      (grants.length === 1 ? ` — fronting ${grants[0].key}` : ` — ${grants.length} google grants`),
+      (grants.length === 1
+        ? ` — fronting ${grants[0].key} as ${env.GOOGLE_WORKSPACE_CLI_TOKEN}`
+        : ` — ${grants.length} google grants`),
   );
   return {
     env: () => env,
