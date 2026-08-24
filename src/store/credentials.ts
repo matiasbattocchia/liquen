@@ -32,6 +32,8 @@ export interface Credentials {
   /** Merge the row's `value`/`extra` fields into the stored blob (see header). */
   put(row: CredentialRow): Promise<void>;
   get(key: string): Promise<CredentialRow | null>;
+  /** Rows whose key starts with `prefix` (a literal, not a pattern) — key order. */
+  list(prefix: string): Promise<CredentialRow[]>;
   /** Mint a one-time state for an OAuth flow; `extra` rides along (org, hints). */
   mintState(service: string, extra?: Record<string, unknown>): Promise<string>;
   /** Consume a state exactly once: returns its extra, or null (unknown/used/expired). */
@@ -72,6 +74,9 @@ export async function openCredentials(dir: string): Promise<Credentials> {
        extra = excluded.extra, updated_at = excluded.updated_at`,
   );
   const getC = db.prepare("SELECT * FROM credentials WHERE key = ?");
+  const listC = db.prepare(
+    "SELECT * FROM credentials WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
+  );
   const putS = db.prepare(
     "INSERT INTO oauth_states (state, service, extra, born) VALUES (?, ?, ?, ?)",
   );
@@ -81,17 +86,16 @@ export async function openCredentials(dir: string): Promise<Credentials> {
      RETURNING extra`,
   );
 
+  type RawRow = { key: string; value: string; agent_id: string | null; extra: string | null };
+  const rowOf = (r: RawRow): CredentialRow => ({
+    key: r.key,
+    value: JSON.parse(r.value) as Record<string, string>,
+    ...(r.agent_id ? { agentId: r.agent_id } : {}),
+    ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
+  });
   const read = (key: string): CredentialRow | null => {
-    const r = getC.get(key) as
-      | { key: string; value: string; agent_id: string | null; extra: string | null }
-      | undefined;
-    if (!r) return null;
-    return {
-      key: r.key,
-      value: JSON.parse(r.value) as Record<string, string>,
-      ...(r.agent_id ? { agentId: r.agent_id } : {}),
-      ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
-    };
+    const r = getC.get(key) as RawRow | undefined;
+    return r ? rowOf(r) : null;
   };
 
   return {
@@ -112,6 +116,11 @@ export async function openCredentials(dir: string): Promise<Credentials> {
 
     get(key: string): Promise<CredentialRow | null> {
       return Promise.resolve(read(key));
+    },
+
+    list(prefix: string): Promise<CredentialRow[]> {
+      const pattern = prefix.replace(/[\\%_]/g, (c) => `\\${c}`) + "%";
+      return Promise.resolve((listC.all(pattern) as RawRow[]).map(rowOf));
     },
 
     mintState(service, extra): Promise<string> {

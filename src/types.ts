@@ -129,7 +129,15 @@ export type Part = TextPart | FilePart | DataPart | SharePart;
 // WHICH CONVERSATION. Every event has a home — even internal ones (§3).
 
 /** Known services; open set — new channels extend it. `local` = the harness's own channel. */
-export type Service = "local" | "slack" | "whatsapp" | "instagram" | "email" | "teams" | "github";
+export type Service =
+  | "local"
+  | "slack"
+  | "whatsapp"
+  | "instagram"
+  | "email"
+  | "teams"
+  | "github"
+  | "google";
 
 /** Delivery bookkeeping — a mutable field, not events (§3). Render marks pending/failed only. */
 export type DeliveryStatus = "pending" | "sent" | "delivered" | "read" | "failed";
