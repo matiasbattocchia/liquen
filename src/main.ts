@@ -56,28 +56,40 @@ import {
   readAgentOverrides,
 } from "./config.ts";
 
-/** Start the egress proxy when the org holds exactly one google grant, returning the env
- *  provider bash issues into every spawn (§8). Undefined ⇒ no proxy (nothing to front, or
- *  an ambiguous choice better left to the per-agent plane). */
-async function installProxy(dir: string): Promise<(() => Record<string, string>) | undefined> {
+/** Start the egress proxy — the org's MANDATORY single egress point — and return the env
+ *  provider bash issues into every spawn (§8). HTTPS_PROXY/SSL_CERT_FILE always ride; the
+ *  proxy rewrites requests carrying a placeholder and passes everything else through
+ *  untouched. The google placeholder rides too when the org holds exactly one grant (more
+ *  than one is the per-agent plane's call — which token?). */
+interface ProxyHandle {
+  env: () => Record<string, string>;
+  close(): Promise<void>;
+}
+
+async function installProxy(dir: string): Promise<ProxyHandle> {
   const creds = await openCredentials(dir);
-  const grants = (await creds.list("google:")).filter((r) => !r.key.startsWith("google:app:"));
-  if (grants.length !== 1) {
-    await creds.close();
-    return undefined;
-  }
-  const grant = grants[0];
   const broker = createGrantBroker({ creds });
   const ca = await openCA(dir);
   const proxy = startProxy({ ca, broker });
-  const handle = broker.issue(grant.key, grant.agentId);
-  const env = {
+  const env: Record<string, string> = {
     HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
     SSL_CERT_FILE: proxy.caPath,
-    GOOGLE_WORKSPACE_CLI_TOKEN: handle,
   };
-  console.error(`[main] egress proxy on :${proxy.port} — fronting ${grant.key}`);
-  return () => env;
+  const grants = (await creds.list("google:")).filter((r) => !r.key.startsWith("google:app:"));
+  if (grants.length === 1) {
+    env.GOOGLE_WORKSPACE_CLI_TOKEN = broker.issue(grants[0].key, grants[0].agentId);
+  }
+  console.error(
+    `[main] egress proxy on :${proxy.port}` +
+      (grants.length === 1 ? ` — fronting ${grants[0].key}` : ` — ${grants.length} google grants`),
+  );
+  return {
+    env: () => env,
+    async close() {
+      await proxy.shutdown();
+      await creds.close();
+    },
+  };
 }
 
 export interface MainConfig {
@@ -159,8 +171,8 @@ export async function start(
   // the egress proxy (§8): if the org holds exactly one google grant, front it — user space
   // gets the placeholder + proxy env, never a real credential. More than one grant needs the
   // per-agent plane (which agent's token?), so we hold off rather than guess.
-  const proxyEnv = await installProxy(dir);
-  const plane = config.exec ? null : await installExecPlane(dir, proxyEnv);
+  const proxy = config.exec ? null : await installProxy(dir);
+  const plane = config.exec ? null : await installExecPlane(dir, proxy!.env);
   const exec = config.exec ?? plane!.exec;
   const ambient = plane?.ambient ?? config.ambient; // per-agent planes arrive with multi-principal
 
@@ -291,6 +303,7 @@ export async function start(
         config.stopTimeoutMs ?? org?.system.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
       );
       await plane?.reap(); // kill any background jobs the agents left running (§9)
+      await proxy?.close(); // stop the egress proxy and close its vault handle
       await log.close();
     },
   };
