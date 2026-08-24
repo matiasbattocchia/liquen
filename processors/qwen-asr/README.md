@@ -1,9 +1,9 @@
 # qwen-asr — local audio transcription
 
 The audio processor mu ships: [huanglizhuo/QwenASR](https://github.com/huanglizhuo/QwenASR)
-(a Rust port of antirez/qwen-asr) running the Qwen3-ASR 0.6B model, CPU-only, fully local.
+(a Rust port of antirez/qwen-asr) running the Qwen3-ASR 1.7B model, CPU-only, fully local.
 The harness pipes a voice note's bytes into `transcribe.sh` and publishes stdout as a
-`<transcript>` event; a note transcribes in roughly its own duration on a laptop CPU.
+`<transcript>` event; a note transcribes in roughly 1.7× its own duration on a laptop CPU.
 
 Only the script and this README are versioned — the binary and the model are yours to
 install, right here:
@@ -12,7 +12,7 @@ install, right here:
 processors/qwen-asr/
   transcribe.sh      # the processor (versioned)
   qwen-asr           # the binary — you build it (gitignored)
-  qwen3-asr-0.6b/    # the model, ~1.9 GB — you download it (gitignored)
+  qwen3-asr-1.7b/    # the model, ~6 GB on disk — you download it (gitignored)
   lib/               # optional bundled OpenBLAS (gitignored)
 ```
 
@@ -35,8 +35,14 @@ The binary links OpenBLAS dynamically. Install your distro's `openblas` package,
 
 ```sh
 cd <mu>/processors/qwen-asr
-./qwen-asr download qwen3-asr-0.6b
+./qwen-asr download qwen3-asr-1.7b
 ```
+
+The first run quantizes the weights to int8 beside them (a few extra minutes, once).
+`./qwen-asr download` with no argument lists the alternatives — `qwen3-asr-0.6b` is
+~2× faster and fits where CPU is scarce, at the cost of accuracy: it loses and mangles
+words the 1.7B gets right, and its pinned decode returns them without punctuation or
+casing.
 
 ## 3. Wire it up
 
@@ -65,5 +71,9 @@ ffmpeg -i some-note.ogg -f ogg - | processors/qwen-asr/transcribe.sh
   (25 s of sys time for 1.7 s of work, observed).
 - `-t 4` — worker threads. More threads drag P-core work onto E-cores; on big machines,
   raise it.
+- `--language <name>` — from the org's `locale`, which rides in as `MU_LOCALE`. Left
+  unpinned, Qwen sometimes translates a note into English instead of transcribing it —
+  silently and fluently, so nothing downstream can tell. Naming the language forecloses
+  that, and on this model costs nothing in punctuation, casing, or words.
 - `-S 20` — segmented mode, the upstream README's recommendation for batch/offline
   transcription; also what keeps long notes from degrading.
