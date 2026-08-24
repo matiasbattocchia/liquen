@@ -42,6 +42,11 @@ export interface BashOptions {
    *  CALL, never the harness. Keyed per agent → ownership. */
   jobs?: Set<Job>;
   state?: BashState; // sticky cwd, published for the plane's ambient snapshot
+  /** Extra env ISSUED into every spawn (evaluated per call — placeholders can rotate).
+   *  This is the ONLY channel besides the allowlist by which user space learns anything:
+   *  the egress proxy's HTTPS_PROXY/SSL_CERT_FILE/placeholder-token land here (§8). Never
+   *  put a real secret in it — the whole point is that user space holds only handles. */
+  env?: () => Record<string, string>;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -65,6 +70,27 @@ function hasSetsid(): boolean {
 // like a real terminal — a tail sentinel reports the shell's final pwd + exit code, so the
 // model never re-`cd`s and its true exit status survives the appended print (§9 audit find).
 const CWD_MARK = "__MU_CWD__";
+
+// User space starts with an EMPTY pocket (clearEnv): the harness process's environment —
+// API keys, bridge tokens, whatever it was launched with — never leaks into the agent's
+// shell. What a tool binary legitimately needs is issued by NAME:
+//   HOME        git/ssh/CLI config discovery
+//   LANG/LC_ALL encoding — without them tools drop to C locale and mangle UTF-8
+//   TMPDIR      honored where set
+//   USER/LOGNAME/SHELL  identity fallbacks (git author guessing, whoami)
+// PATH is built, TERM is fixed to `dumb` (no TTY to paint). Anything else gets added
+// here by name, with a reason — this list is what user space is allowed to know.
+const ENV_ALLOWLIST = ["HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "LOGNAME", "SHELL"];
+
+function userSpaceEnv(binDir?: string): Record<string, string> {
+  const env: Record<string, string> = { TERM: "dumb" };
+  for (const name of ENV_ALLOWLIST) {
+    const v = Deno.env.get(name);
+    if (v !== undefined) env[name] = v;
+  }
+  env.PATH = binDir ? `${binDir}:${Deno.env.get("PATH") ?? ""}` : Deno.env.get("PATH") ?? "";
+  return env;
+}
 
 export function bashTool(opts: BashOptions): ExecTool {
   const timeoutMsDefault = opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -118,8 +144,7 @@ export function bashTool(opts: BashOptions): ExecTool {
         max_bytes?: number;
       };
       const timeoutMs = timeout !== undefined ? timeout * 1000 : timeoutMsDefault;
-      const env: Record<string, string> = {};
-      if (opts.binDir) env.PATH = `${opts.binDir}:${Deno.env.get("PATH") ?? ""}`;
+      const env = { ...userSpaceEnv(opts.binDir), ...opts.env?.() };
 
       // append a sentinel that prints the shell's final pwd + the command's REAL exit code
       // (the appended print would otherwise mask a non-zero exit). `cd` at start is honored,
@@ -131,6 +156,7 @@ export function bashTool(opts: BashOptions): ExecTool {
       const child = new Deno.Command(isolated ? "setsid" : "bash", {
         args: isolated ? ["bash", "-c", wrapped] : ["-c", wrapped],
         cwd: state.cwd,
+        clearEnv: true,
         env,
         stdin: "null",
         stdout: "piped",
@@ -323,8 +349,12 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
   return lines;
 }
 
-/** Prepare the exec plane under the org data root: workspace, .out, PATH shims, job group. */
-export async function installExecPlane(dir: string): Promise<ExecPlane> {
+/** Prepare the exec plane under the org data root: workspace, .out, PATH shims, job group.
+ *  `env` (optional) is issued into every spawn — the egress proxy's handoff vars (§8). */
+export async function installExecPlane(
+  dir: string,
+  env?: () => Record<string, string>,
+): Promise<ExecPlane> {
   const workspace = `${dir}/workspace`;
   const binDir = `${dir}/bin`;
   await Deno.mkdir(workspace, { recursive: true });
@@ -341,7 +371,7 @@ export async function installExecPlane(dir: string): Promise<ExecPlane> {
   const jobs = new Set<Job>();
   const state: BashState = { cwd: workspace };
   return {
-    exec: { bash: bashTool({ workspace, binDir, jobs, state }) },
+    exec: { bash: bashTool({ workspace, binDir, jobs, state, ...(env ? { env } : {}) }) },
     ambient: () => bashAmbient(state, jobs),
     reap() {
       for (const { pgid } of jobs) {

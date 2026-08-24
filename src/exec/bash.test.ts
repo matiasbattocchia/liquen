@@ -30,6 +30,36 @@ Deno.test("bash: runs in the workspace, merges stdout+stderr", async () => {
   });
 });
 
+Deno.test("bash: user space starts with an empty pocket — the harness env never leaks", async () => {
+  Deno.env.set("MU_TEST_SECRET", "xoxp-leak");
+  try {
+    await withPlane(async ({ run }) => {
+      const env = await run("env");
+      assert(!env.includes("MU_TEST_SECRET"), "harness env leaked into user space");
+      assertStringIncludes(env, "HOME="); // the allowlist still issues what tools need
+      assertStringIncludes(env, "PATH=");
+      assertStringIncludes(env, "TERM=dumb");
+    });
+  } finally {
+    Deno.env.delete("MU_TEST_SECRET");
+  }
+});
+
+Deno.test("bash: the env hook issues extra vars into the spawn (the proxy handoff)", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    let handle = "mu-grant-first";
+    const bash = bashTool({ workspace: dir, env: () => ({ GOOGLE_WORKSPACE_CLI_TOKEN: handle }) });
+    const run = async () =>
+      String(await bash.execute({ command: "echo $GOOGLE_WORKSPACE_CLI_TOKEN" }, live()));
+    assertStringIncludes(await run(), "mu-grant-first");
+    handle = "mu-grant-rotated"; // evaluated per call — a rotated placeholder is picked up
+    assertStringIncludes(await run(), "mu-grant-rotated");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("bash: non-zero exit → error carrying output + code", async () => {
   await withPlane(async ({ run }) => {
     const err = await assertRejects(() => run("echo boom; exit 3"), Error);
