@@ -22,6 +22,8 @@ const CONFIG: AgentConfig = {
   maxTokens: 1024,
   gate: () => "allow", // gating off unless a test opts in
   digestAfterMessages: 1, // attention off: one ambient message is already due (xi.test owns §2)
+  sleepHours: null, // …and the night never falls here: these scenarios assert what a turn
+  //                   DOES, and the default span would idle them between 23 and 8 UTC
   retryDelaysMs: [0, 0],
 };
 
