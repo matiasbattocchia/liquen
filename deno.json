@@ -24,6 +24,7 @@
     "ingest:slack": "deno run -A --env-file=.env src/connect/slack.ts",
     "dispatch:slack": "deno run -A --env-file=.env src/connect/slack_dispatch.ts",
     "ingest:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp.ts",
+    "ingest:google": "deno run -A --env-file=.env src/connect/google_webhook.ts",
     "dispatch:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp_dispatch.ts",
     "connect:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp_connect.ts",
     "compile:task": "deno compile -A --include seed/docs -o dist/mu-task src/task.ts"
