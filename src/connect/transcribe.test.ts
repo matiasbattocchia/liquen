@@ -13,6 +13,7 @@ async function withTranscriber(
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
     media: string; // a real .ogg on disk for FileParts to point at
   }) => Promise<void>,
+  locale?: string,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
@@ -24,6 +25,7 @@ async function withTranscriber(
     subscribe: (l, o) => log.subscribe(l, o),
     publish: log.publish,
     command,
+    locale,
     onError: (_e, err) => errors.push(err),
   });
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 3000) => {
@@ -100,6 +102,17 @@ Deno.test("a voice note gets a transcript add-event; the sidecar caches the word
     const again = (await t.transcripts()).find((e) => e.payload?.ref_external_id === "wa:note2")!;
     assertEquals(again.parts[0], { type: "text", kind: "transcript", text: "palabras cacheadas" });
   });
+});
+
+Deno.test("the org's locale reaches the processor as MU_LOCALE — its own business there", async () => {
+  // stdin is the audio and stdout is the words, so the language rides the environment. The
+  // harness knows no ASR vocabulary: it hands over the locale and the processor decides.
+  await withTranscriber('cat > /dev/null; printf "locale=%s" "$MU_LOCALE"', async (t) => {
+    await t.publish(voiceNote(t.media));
+    await t.waitFor(async () => (await t.transcripts()).length === 1);
+    const [tr] = await t.transcripts();
+    assertEquals(tr.parts[0], { type: "text", kind: "transcript", text: "locale=es_AR" });
+  }, "es_AR");
 });
 
 Deno.test("a failing or silent processor publishes nothing", async () => {

@@ -51,6 +51,10 @@ export interface TranscriberDeps {
   publish: Appender["publish"];
   /** The processor (config `processors.audio`): bytes on stdin → text on stdout. */
   command: string;
+  /** The org's language (config `locale`), handed over as `MU_LOCALE`. What a processor
+   *  makes of it is its own business — the harness knows nothing about ASR languages, and
+   *  the mapping from a locale to a model's own vocabulary belongs beside that model. */
+  locale?: string | null;
   timeoutMs?: number;
   now?: () => string;
   onError?: (event: Event, err: unknown) => void;
@@ -89,8 +93,12 @@ async function transcribe(
   try {
     text = (await Deno.readTextFile(sidecar)).trim(); // cached — same bytes, same words
   } catch {
-    text = (await run(deps.command, await Deno.readFile(path), deps.timeoutMs ?? TIMEOUT_MS))
-      .trim();
+    text = (await run(
+      deps.command,
+      await Deno.readFile(path),
+      deps.timeoutMs ?? TIMEOUT_MS,
+      deps.locale,
+    )).trim();
     if (text) await Deno.writeTextFile(sidecar, text + "\n");
   }
   if (!text) return; // a silent clip has no words to add
@@ -113,12 +121,20 @@ async function transcribe(
 
 /** stdin → stdout through `sh -c`. Sequential write-then-read is safe because a
  *  transcriber emits at the end; killed hard on timeout so the queue survives a hang. */
-async function run(command: string, bytes: Uint8Array, timeoutMs: number): Promise<string> {
+async function run(
+  command: string,
+  bytes: Uint8Array,
+  timeoutMs: number,
+  locale?: string | null,
+): Promise<string> {
   const child = new Deno.Command("sh", {
     args: ["-c", command],
     stdin: "piped",
     stdout: "piped",
     stderr: "piped",
+    // the org's language reaches the processor as an environment variable: stdin is the
+    // audio and stdout is the words, so ambient facts have nowhere else to ride
+    ...(locale ? { env: { MU_LOCALE: locale } } : {}),
   }).spawn();
   const timer = setTimeout(() => {
     try {

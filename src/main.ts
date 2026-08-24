@@ -225,6 +225,7 @@ export async function start(
       subscribe: (l, o) => log.subscribe(l, o),
       publish: log.publish,
       command: org.processors.audio,
+      locale: org.agent.locale,
       onError: (e, err) =>
         console.error(`[main] transcriber FAILED on ${e.envelope.conversation.address}:`, err),
     }));
