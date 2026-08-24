@@ -40,6 +40,10 @@ import { openFileDocs } from "./store/docs.ts";
 import { seedDocs } from "./store/seed.ts";
 import { anthropicClient, anthropicTransport, metered, type ModelTransport } from "./transport.ts";
 import { installExecPlane } from "./exec/bash.ts";
+import { openCredentials } from "./store/credentials.ts";
+import { createGrantBroker } from "./proxy/grants.ts";
+import { openCA } from "./proxy/ca.ts";
+import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
 import { createTranscriber } from "./connect/transcribe.ts";
 import type { Emit, Event } from "./types.ts";
@@ -51,6 +55,30 @@ import {
   type OrgConfig,
   readAgentOverrides,
 } from "./config.ts";
+
+/** Start the egress proxy when the org holds exactly one google grant, returning the env
+ *  provider bash issues into every spawn (§8). Undefined ⇒ no proxy (nothing to front, or
+ *  an ambiguous choice better left to the per-agent plane). */
+async function installProxy(dir: string): Promise<(() => Record<string, string>) | undefined> {
+  const creds = await openCredentials(dir);
+  const grants = (await creds.list("google:")).filter((r) => !r.key.startsWith("google:app:"));
+  if (grants.length !== 1) {
+    await creds.close();
+    return undefined;
+  }
+  const grant = grants[0];
+  const broker = createGrantBroker({ creds });
+  const ca = await openCA(dir);
+  const proxy = startProxy({ ca, broker });
+  const handle = broker.issue(grant.key, grant.agentId);
+  const env = {
+    HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
+    SSL_CERT_FILE: proxy.caPath,
+    GOOGLE_WORKSPACE_CLI_TOKEN: handle,
+  };
+  console.error(`[main] egress proxy on :${proxy.port} — fronting ${grant.key}`);
+  return () => env;
+}
 
 export interface MainConfig {
   dir: string; // the org's data root (§9): log/ · credentials/ · system/ · org/ · agents/
@@ -128,7 +156,11 @@ export async function start(
     for (const agent of principals) await seedDocs(dir, agent.agentId);
   }
   const transport = overrides.transport ?? anthropicTransport(anthropicClient(config.apiKey));
-  const plane = config.exec ? null : await installExecPlane(dir);
+  // the egress proxy (§8): if the org holds exactly one google grant, front it — user space
+  // gets the placeholder + proxy env, never a real credential. More than one grant needs the
+  // per-agent plane (which agent's token?), so we hold off rather than guess.
+  const proxyEnv = await installProxy(dir);
+  const plane = config.exec ? null : await installExecPlane(dir, proxyEnv);
   const exec = config.exec ?? plane!.exec;
   const ambient = plane?.ambient ?? config.ambient; // per-agent planes arrive with multi-principal
 
