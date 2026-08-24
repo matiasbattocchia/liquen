@@ -1,5 +1,5 @@
 /**
- * store/credentials.ts — the vault (DESIGN §4, §8): a key:value store for everything
+ * store/credentials.ts — the vault (DESIGN §4, §9): a key:value store for everything
  * secret, in log.db (one substrate, its own accessor — the vault never rides the `Log`
  * object, so a policy-scoped log carries no credential capability into the agent plane).
  *
@@ -16,7 +16,7 @@
  *     the lease-arithmetic exception, like `locks.born`).
  *
  * Broker-side by construction: connectors read rows; agents never can (the exec plane
- * has no port here). On Postgres the same table wears RLS deny-all (§8).
+ * has no port here). On Postgres the same table wears RLS deny-all (§9).
  */
 
 import { DatabaseSync } from "node:sqlite";

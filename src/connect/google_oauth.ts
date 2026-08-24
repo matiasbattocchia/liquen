@@ -1,5 +1,5 @@
 /**
- * connect/google_oauth.ts — the Google OAuth surface of the connection (DESIGN §4, §8).
+ * connect/google_oauth.ts — the Google OAuth surface of the connection (DESIGN §4, §9).
  *
  * Two routes, one portable handler (`(Request) => Response`, deps injected — the same
  * shape as connect/slack_oauth.ts):
@@ -27,7 +27,7 @@
  * `access_type=offline` + `prompt=consent` is what makes the refresh token arrive on
  * every pass through the door — and the vault's merge keeps a sibling field a re-consent
  * doesn't carry. The refresh token never leaves the vault: consumers ask the broker for
- * short-lived access tokens (the credential stays broker-side, §8).
+ * short-lived access tokens (the credential stays broker-side, §9).
  *
  * Serving note: both routes are SYNCHRONOUS request/response (a 302, a page) — serve
  * them through a real proxy (cloudflared in dev, an edge function in prod).
@@ -135,7 +135,7 @@ export function createGoogleOAuth(deps: GoogleOAuthDeps): OAuthHandler {
         extra: {
           scope: tok.scope,
           sub: id.sub,
-          // the app that minted the grant — the broker needs it to refresh (§8): only this
+          // the app that minted the grant — the broker needs it to refresh (§9): only this
           // client_id's secret can spend this refresh_token
           client_id: config.clientId,
           ...(tok.expires_in

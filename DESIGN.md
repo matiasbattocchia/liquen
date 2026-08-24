@@ -1902,15 +1902,19 @@ true for exec (kernel handles it), false for control (only harness/human authori
      (hooks, `core.fsmonitor`) executes as the conduit. The §4 consumer axis becomes a uid:
      org/principal tokens readable by conduit uids, never agent uids — the matrix as
      literal file ownership (same move as docs-scopes → groups).
-  3. *Egress proxy with header injection (MITM CA)* — **the chosen end-state, deferred**:
-     the proxy terminates TLS (its own CA seeded into the sandbox trust store), injects the
-     auth header outbound; the sandbox never holds token material, binary-agnostic (git
-     included), and it IS the egress allowlist — the trifecta's highest-leverage control
-     and credential delivery in one mechanism. Not the nicest (CA to manage, cert-pinning
-     fights) but the most secure — and **the one rung, for everything** (no per-service
-     tiers, no interim mechanisms; rungs 1–2 above are recorded as the analysis of why
-     they lost, not as options). Until the proxy exists, the honest name for the gap is
-     the local dev-trust tier, not a halfway rung.
+  3. *Egress proxy with header injection (MITM CA)* — **the one rung, for everything,
+     live** (`src/proxy/`, mandatory at start): user space is issued `HTTPS_PROXY` +
+     `SSL_CERT_FILE` (the mu CA *replaces* the trust store — inside user space it is the
+     only issuer, so TLS physically cannot bypass the proxy) + a `mu-grant-…` placeholder
+     standing for the vault grant. The proxy terminates the tunnel with a per-host leaf
+     (`ca.ts`), swaps the placeholder for a live token — refreshed broker-side against the
+     vault, the refresh_token never leaving it (`grants.ts`) — re-originates over real
+     TLS, and audits every request (method · host · path · status · agent, never the
+     token). The sandbox never holds token material, binary-agnostic (git included), and
+     the terminated plaintext is where the egress allowlist and auth policy attach — that
+     seam exists, deliberately unused so far. Not the nicest (CA to manage, cert-pinning
+     fights) but the most secure, with no per-service tiers and no interim mechanisms;
+     rungs 1–2 above are recorded as the analysis of why they lost, not as options.
 - **Smuggled credentials** (the proxy's complement): the proxy protects broker-held
   secrets from the sandbox, but cannot stop NEW secrets being born inside it — e.g. the
   agent social-engineers the principal into `gh auth login` (or a pasted token) so a real

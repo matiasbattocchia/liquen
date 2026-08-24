@@ -57,7 +57,7 @@ import {
 } from "./config.ts";
 
 /** Start the egress proxy — the org's MANDATORY single egress point — and return the env
- *  provider bash issues into every spawn (§8). HTTPS_PROXY/SSL_CERT_FILE always ride; the
+ *  provider bash issues into every spawn (§9). HTTPS_PROXY/SSL_CERT_FILE always ride; the
  *  proxy rewrites requests carrying a placeholder and passes everything else through
  *  untouched. The google placeholder rides too when the org holds exactly one grant (more
  *  than one is the per-agent plane's call — which token?). */
@@ -170,7 +170,7 @@ export async function start(
     for (const agent of principals) await seedDocs(dir, agent.agentId);
   }
   const transport = overrides.transport ?? anthropicTransport(anthropicClient(config.apiKey));
-  // the egress proxy (§8): if the org holds exactly one google grant, front it — user space
+  // the egress proxy (§9): if the org holds exactly one google grant, front it — user space
   // gets the placeholder + proxy env, never a real credential. More than one grant needs the
   // per-agent plane (which agent's token?), so we hold off rather than guess.
   const proxy = config.exec ? null : await installProxy(dir);

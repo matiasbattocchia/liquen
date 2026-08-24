@@ -1,5 +1,5 @@
 /**
- * connect/slack_oauth.ts — the Slack OAuth surface of the connection (DESIGN §4, §8).
+ * connect/slack_oauth.ts — the Slack OAuth surface of the connection (DESIGN §4, §9).
  *
  * Two routes, one portable handler (`(Request) => Response`, deps injected — the same
  * open-bsp function shape as connect/github.ts):

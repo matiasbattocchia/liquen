@@ -864,6 +864,26 @@ are gitignored — each deployment builds/downloads its own (the README walks it
 `saveMedia` now strips mime params, so `audio/ogg; codecs=opus` lands as `.ogg`, not
 `.bin`.
 
+### The egress proxy — the credential meets the request at the wire (2026-08-24) — LANDED
+
+`src/proxy/` (DESIGN §9 credential-delivery rung 3 — the architecture lives there; this is
+the operational record). Mandatory at start: bash issues every spawn `HTTPS_PROXY` +
+`SSL_CERT_FILE` and — while the org holds exactly one google grant — the `mu-grant-…`
+placeholder (logged at boot: a capability, not a secret; more than one grant is the
+per-agent plane's call). `SSL_CERT_FILE` REPLACES the child's trust store (verified: `gws`
+rejects Google's real cert as UnknownIssuer once it's set), so user space can only reach
+what the proxy fronts. openssl does the X.509 (no JS cert dep); leaves mint lazily per
+host with a random serial (a shared `.srl` would race concurrent mints). CONNECT bridges
+through per-authority loopback `Deno.serve` backends because TLS-server-on-a-hijacked-conn
+isn't a stable Deno primitive; a non-443 dial keeps its port to the origin, and a tunnel
+that can't stand up answers 502 rather than hanging the client. The broker refreshes an
+expired token single-flight and writes back through the vault's merging `put`
+(refresh_token and client_id survive the write); a placeholder it can't honor 401s at the
+proxy — the handle never leaves the box. Deno's `fetch` strips `content-encoding`/
+`content-length` when it auto-decompresses and re-frames forwarded bodies as chunked
+(both probed), so the verbatim header copy on re-origination is sound. Policy (allowlist,
+auth normalization) is a seam on the terminated plaintext, deliberately unused.
+
 11. **Background completion** — early-return for long tools generally; `escalation` as its
     first instance. The gate already walks this path (ask → `pending_approval` → a deferred
     outcome the harness narrates), so what is left is a tool that returns early on its own
@@ -879,11 +899,11 @@ are gitignored — each deployment builds/downloads its own (the README walks it
     advisory lock, RLS as the readable filter, per-row trigger invoking `handle`. The
     verdict-before-acquire race guard (fresh re-read) is already in place for this
     world.
-13. **Egress proxy with header injection** (decided 2026-08-03, deferred — DESIGN §9
-    credential-delivery rungs): THE one credential rung for everything — the sandbox never
-    holds token material, the proxy IS the egress allowlist, and it normalizes outbound
-    auth (strips sandbox-supplied headers, so smuggled credentials are unusable). Plus
-    secret quarantine at ingest (pasted tokens → creds.db, a reference in the log).
+13. **Egress policy at the proxy** (the landed proxy's unused seam — DESIGN §9): the
+    egress allowlist and outbound auth normalization (strip/replace sandbox-supplied
+    headers, so smuggled credentials are unusable) attach to the plaintext the proxy
+    already terminates. Plus secret quarantine at ingest (pasted tokens → the vault, a
+    reference in the log).
 
 ## The honest framing
 

@@ -108,6 +108,7 @@ Deno.test("startProxy: a real TLS tunnel terminates and the swap reaches the ori
   try {
     const ca = await openCA(dir);
     let originAuth: string | null = null;
+    const originUrls: string[] = [];
     const proxy = startProxy({
       ca,
       broker: fakeBroker(),
@@ -115,6 +116,7 @@ Deno.test("startProxy: a real TLS tunnel terminates and the swap reaches the ori
       // stand in for Google: capture what actually arrived after TLS termination
       originFetch: (input, init) => {
         originAuth = headersOf(input, init).get("authorization");
+        originUrls.push(String(input));
         return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
       },
     });
@@ -133,7 +135,38 @@ Deno.test("startProxy: a real TLS tunnel terminates and the swap reaches the ori
       assertEquals(res.status, 200);
       assertEquals((await res.json()).ok, true);
       assertEquals(originAuth, "Bearer ya29.REAL"); // the credential was injected at the last hop
+      assertEquals(originUrls[0], "https://www.googleapis.com/calendar/v3/x");
+
+      // a non-443 dial keeps its port all the way to the origin
+      const odd = await fetch("https://www.googleapis.com:8443/calendar/v3/x", { client });
+      assertEquals(odd.status, 200);
+      await odd.body?.cancel();
+      assertEquals(originUrls[1], "https://www.googleapis.com:8443/calendar/v3/x");
       client.close();
+    } finally {
+      await proxy.shutdown();
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("startProxy: a tunnel that can't be stood up answers 502 — it never hangs", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const ca = await openCA(dir);
+    const proxy = startProxy({ ca, broker: fakeBroker(), audit: () => {} });
+    try {
+      // `bad_host` fails the CA's host check, so no leaf can be minted for the tunnel
+      const conn = await Deno.connect({ hostname: "127.0.0.1", port: proxy.port });
+      await conn.write(new TextEncoder().encode("CONNECT bad_host:443 HTTP/1.1\r\n\r\n"));
+      const buf = new Uint8Array(64);
+      const n = await conn.read(buf);
+      assert(
+        new TextDecoder().decode(buf.subarray(0, n ?? 0)).startsWith("HTTP/1.1 502"),
+        "the client must get an answer, not a hang",
+      );
+      conn.close();
     } finally {
       await proxy.shutdown();
     }

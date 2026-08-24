@@ -1,5 +1,5 @@
 /**
- * proxy/ca.ts — the egress proxy's certificate authority (DESIGN §8).
+ * proxy/ca.ts — the egress proxy's certificate authority (DESIGN §9).
  *
  * The proxy terminates TLS on behalf of every host a tool dials, so it needs a leaf cert
  * for each host, signed by a root the tool trusts. That root is the mu CA: generated once
@@ -88,6 +88,11 @@ export async function openCA(dir: string): Promise<CA> {
         `subjectAltName=DNS:${host}\nbasicConstraints=CA:FALSE\n` +
           `keyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n`,
       );
+      // a random serial per leaf: no shared .srl file, so concurrent mints never race
+      const serial = "0x" + Array.from(
+        crypto.getRandomValues(new Uint8Array(16)),
+        (b) => b.toString(16).padStart(2, "0"),
+      ).join("");
       await sh([
         "x509",
         "-req",
@@ -97,7 +102,8 @@ export async function openCA(dir: string): Promise<CA> {
         caPath,
         "-CAkey",
         caKey,
-        "-CAcreateserial",
+        "-set_serial",
+        serial,
         "-out",
         crtPath,
         "-days",

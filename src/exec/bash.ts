@@ -44,7 +44,7 @@ export interface BashOptions {
   state?: BashState; // sticky cwd, published for the plane's ambient snapshot
   /** Extra env ISSUED into every spawn (evaluated per call — placeholders can rotate).
    *  This is the ONLY channel besides the allowlist by which user space learns anything:
-   *  the egress proxy's HTTPS_PROXY/SSL_CERT_FILE/placeholder-token land here (§8). Never
+   *  the egress proxy's HTTPS_PROXY/SSL_CERT_FILE/placeholder-token land here (§9). Never
    *  put a real secret in it — the whole point is that user space holds only handles. */
   env?: () => Record<string, string>;
 }
@@ -350,7 +350,7 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
 }
 
 /** Prepare the exec plane under the org data root: workspace, .out, PATH shims, job group.
- *  `env` (optional) is issued into every spawn — the egress proxy's handoff vars (§8). */
+ *  `env` (optional) is issued into every spawn — the egress proxy's handoff vars (§9). */
 export async function installExecPlane(
   dir: string,
   env?: () => Record<string, string>,

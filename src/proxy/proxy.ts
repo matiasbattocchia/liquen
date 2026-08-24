@@ -1,5 +1,5 @@
 /**
- * proxy/proxy.ts — the credential-injecting egress proxy (DESIGN §8).
+ * proxy/proxy.ts — the credential-injecting egress proxy (DESIGN §9).
  *
  * The wire half of the MITM the vault design is built on. A tool in user space is handed
  * three env vars (issued, never inherited — bash.ts clears the pocket first):
@@ -15,7 +15,8 @@
  * credential; the credential meets the request only here, at the last hop before Google.
  *
  * TLS-server-on-a-hijacked-conn isn't a stable Deno primitive, so CONNECT is bridged: per
- * host we stand up a loopback `Deno.serve` with that host's leaf (giving us Request/Response
+ * dialed authority (`host`, or `host:port` off 443 — the port rides through to the origin)
+ * we stand up a loopback `Deno.serve` with that host's leaf (giving us Request/Response
  * directly), and pipe the tunnel's bytes into it. A handful of backends over a process life.
  *
  * No method/host/path policy yet (deliberate): the swap and the audit line are the whole
@@ -51,7 +52,7 @@ export interface ProxyDeps {
 
 export interface EgressAudit {
   method: string;
-  host: string;
+  host: string; // the dialed authority: `host`, or `host:port` off 443
   path: string;
   status: number;
   agentId?: string;
@@ -59,8 +60,9 @@ export interface EgressAudit {
 }
 
 /**
- * Serve one decrypted request for `host`: swap a placeholder bearer for the real token,
- * re-originate, and audit. Pure over its deps (no TLS) — the proxy's testable core.
+ * Serve one decrypted request for the dialed authority: swap a placeholder bearer for the
+ * real token, re-originate, and audit. Pure over its deps (no TLS) — the proxy's testable
+ * core.
  */
 export async function proxyRequest(host: string, req: Request, deps: ProxyDeps): Promise<Response> {
   const originFetch = deps.originFetch ?? fetch;
@@ -117,24 +119,24 @@ export function startProxy(
   opts: { port?: number; hostname?: string } = {},
 ): Proxy {
   const hostname = opts.hostname ?? "127.0.0.1";
-  // per-host decrypting backend: a loopback TLS `Deno.serve` with that host's leaf
+  // per-authority decrypting backend: a loopback TLS `Deno.serve` with the host's leaf
   const backends = new Map<string, Promise<number>>();
   const servers: { shutdown(): Promise<void> }[] = [];
 
-  const backendFor = (host: string): Promise<number> => {
-    let p = backends.get(host);
+  const backendFor = (authority: string): Promise<number> => {
+    let p = backends.get(authority);
     if (!p) {
       p = (async () => {
-        const leaf = await deps.ca.leafFor(host);
+        const leaf = await deps.ca.leafFor(authority.replace(/:\d+$/, ""));
         const srv = Deno.serve(
           { hostname, port: 0, cert: leaf.cert, key: leaf.key, onListen: () => {} },
-          (req) => proxyRequest(host, req, deps),
+          (req) => proxyRequest(authority, req, deps),
         );
         servers.push(srv);
         return srv.addr.port;
       })();
-      backends.set(host, p);
-      p.catch(() => backends.delete(host));
+      backends.set(authority, p);
+      p.catch(() => backends.delete(authority));
     }
     return p;
   };
@@ -145,18 +147,31 @@ export function startProxy(
   const serve = async () => {
     for await (const conn of listener) handleConn(conn).catch(() => {});
   };
-  const handleConn = async (conn: Deno.Conn): Promise<void> => {
-    const host = await readConnect(conn);
-    if (!host) {
-      // not a CONNECT: this proxy only tunnels HTTPS
-      await conn.write(new TextEncoder().encode("HTTP/1.1 405 Method Not Allowed\r\n\r\n"))
-        .catch(() => {});
+  // a conn we can't tunnel gets an ANSWER and a close — never a silent hang
+  const deny = async (conn: Deno.Conn, status: string): Promise<void> => {
+    await conn.write(new TextEncoder().encode(`HTTP/1.1 ${status}\r\n\r\n`)).catch(() => {});
+    try {
       conn.close();
-      return;
+    } catch { /* already closed */ }
+  };
+  const handleConn = async (conn: Deno.Conn): Promise<void> => {
+    const head = await readConnect(conn);
+    // not a CONNECT: this proxy only tunnels HTTPS
+    if (!head) return deny(conn, "405 Method Not Allowed");
+    let up: Deno.Conn;
+    try {
+      const backendPort = await backendFor(head.authority);
+      up = await Deno.connect({ hostname, port: backendPort });
+    } catch {
+      // a refused host, a failed mint — the tunnel can't be stood up
+      return deny(conn, "502 Bad Gateway");
     }
-    const backendPort = await backendFor(host);
-    await conn.write(new TextEncoder().encode("HTTP/1.1 200 Connection Established\r\n\r\n"));
-    const up = await Deno.connect({ hostname, port: backendPort });
+    await conn.write(new TextEncoder().encode("HTTP/1.1 200 Connection Established\r\n\r\n"))
+      .catch(() => {});
+    try {
+      // bytes an optimistic client sent past the CONNECT head are the tunnel's first bytes
+      for (let off = 0; off < head.early.length;) off += await up.write(head.early.subarray(off));
+    } catch { /* a broken tunnel surfaces in the pipes below */ }
     await Promise.all([
       conn.readable.pipeTo(up.writable).catch(() => {}),
       up.readable.pipeTo(conn.writable).catch(() => {}),
@@ -178,15 +193,39 @@ export function startProxy(
   };
 }
 
-/** Read the CONNECT line off a fresh tunnel conn → the target host (no port). null if the
- *  first bytes aren't a CONNECT. */
-async function readConnect(conn: Deno.Conn): Promise<string | null> {
+/** Read the whole CONNECT head off a fresh tunnel conn (it may arrive in pieces): the
+ *  dialed authority (`host`, or `host:port` off 443) plus any bytes past the head — an
+ *  optimistic client's first tunnel bytes. null if the bytes aren't a CONNECT. */
+async function readConnect(
+  conn: Deno.Conn,
+): Promise<{ authority: string; early: Uint8Array } | null> {
   const buf = new Uint8Array(4096);
-  const n = await conn.read(buf);
-  if (!n) return null;
-  const head = new TextDecoder().decode(buf.subarray(0, n));
-  const m = head.match(/^CONNECT (\S+?)(?::(\d+))? /);
-  return m ? m[1] : null;
+  let n = 0;
+  let end = -1;
+  while (end < 0) {
+    if (n === buf.length) return null; // no head in 4 KiB: nothing this proxy honors
+    const read = await conn.read(buf.subarray(n));
+    if (read === null) return null;
+    n += read;
+    end = headEnd(buf, n);
+    // bail on non-CONNECT bytes now — never wait on a terminator that will never come
+    const line = new TextDecoder().decode(buf.subarray(0, Math.min(n, 8)));
+    if (end < 0 && !"CONNECT ".startsWith(line) && !line.startsWith("CONNECT ")) return null;
+  }
+  const m = new TextDecoder().decode(buf.subarray(0, end)).match(/^CONNECT (\S+?)(?::(\d+))? /);
+  if (!m) return null;
+  const authority = !m[2] || m[2] === "443" ? m[1] : `${m[1]}:${m[2]}`;
+  return { authority, early: buf.slice(end, n) };
+}
+
+/** The byte offset just past the head's `\r\n\r\n` terminator, or -1. */
+function headEnd(buf: Uint8Array, n: number): number {
+  for (let i = 0; i + 4 <= n; i++) {
+    if (buf[i] === 13 && buf[i + 1] === 10 && buf[i + 2] === 13 && buf[i + 3] === 10) {
+      return i + 4;
+    }
+  }
+  return -1;
 }
 
 function defaultAudit(a: EgressAudit): void {

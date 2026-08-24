@@ -16,7 +16,7 @@
  * `http://localhost:<port>/oauth/google/callback` must be registered on the OAuth client
  * alongside the hosted one (Google allows plain-http localhost redirects).
  *
- * Removal is not a door yet: deleting an app or a grant is a deliberate SQL act (§8).
+ * Removal is not a door yet: deleting an app or a grant is a deliberate SQL act (§9).
  */
 
 import type { CredentialRow, Credentials } from "../store/credentials.ts";

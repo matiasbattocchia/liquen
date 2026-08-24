@@ -1,5 +1,5 @@
 /**
- * proxy/grants.ts — the credential broker (DESIGN §8): the ONLY code in the proxy that ever
+ * proxy/grants.ts — the credential broker (DESIGN §9): the ONLY code in the proxy that ever
  * touches a secret.
  *
  * User space never holds a real credential — it holds a PLACEHOLDER handle (`mu-grant-…`),

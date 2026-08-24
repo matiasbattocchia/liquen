@@ -36,7 +36,7 @@
  * (`timeMin = now`): only future changes ever become events, no history flood. A `410 Gone`
  * (token aged out) drops the cursor → the next tick re-bootstraps.
  *
- * Credentials (§8): the access token is fetched BROKER-side — `broker.accessTokenFor(
+ * Credentials (§9): the access token is fetched BROKER-side — `broker.accessTokenFor(
  * broker.issue(key))` — reusing the proxy's refresh+writeback. This process holds the grant;
  * the agent never does. The Calendar API is called directly (no proxy, no placeholder): the
  * broker is already the one code path that touches the secret, and this runs beside it.
