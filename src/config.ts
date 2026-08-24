@@ -56,6 +56,9 @@ export const DEFAULT_DIGEST_MINUTES = 15;
 // did — the mind alias, and a conversation the agent is holding the floor in.
 export const DEFAULT_SLEEP_HOURS = "23-8";
 
+// connections — knobs the standalone connector services read
+export const DEFAULT_GOOGLE_CALENDARS = ["primary"];
+
 // system — harness machinery
 export const DEFAULT_STOP_TIMEOUT_MS = 5_000; // cap on stop() awaiting an in-flight turn
 export const DEFAULT_LOCK_TTL_MS = 120_000; // a turn lease older than this is STOLEN
@@ -108,6 +111,10 @@ export interface OrgConfig {
      *  no transcript). null ⇒ voice notes stay untranscribed. The command IS the plugin
      *  interface — the repo ships `processors/qwen-asr/` as one implementation. */
     audio: string | null;
+  };
+  connections: {
+    /** Calendars the google poll watches on every grant; `primary` is the account's own. */
+    googleCalendars: string[];
   };
   system: {
     stopTimeoutMs: number;
@@ -211,6 +218,17 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
         value: null,
         doc: 'shell command, audio bytes on stdin → transcript on stdout — e.g. "processors/' +
           'qwen-asr/transcribe.sh" (repo-relative; see its README); null ⇒ no transcription',
+      },
+    ],
+  },
+  {
+    section: "connections",
+    doc: "knobs the standalone connector services read (each reads its own, §4)",
+    entries: [
+      {
+        key: "googleCalendars",
+        value: DEFAULT_GOOGLE_CALENDARS,
+        doc: 'calendars the google poll watches on every grant; "primary" = the account\'s own',
       },
     ],
   },
@@ -410,6 +428,13 @@ function validateOrg(cfg: OrgConfig, path: string): void {
     throw new Error(
       `${path}: processors.audio must be a shell command string, or null (got ` +
         `${JSON.stringify(cfg.processors.audio)})`,
+    );
+  }
+  const cals = cfg.connections.googleCalendars;
+  if (!Array.isArray(cals) || cals.length === 0 || cals.some((c) => typeof c !== "string" || !c)) {
+    throw new Error(
+      `${path}: connections.googleCalendars must be a non-empty array of calendar ids (got ` +
+        `${JSON.stringify(cals)})`,
     );
   }
   validateAgent(cfg.agent, path);

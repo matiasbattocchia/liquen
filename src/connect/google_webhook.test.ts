@@ -45,11 +45,13 @@ function poller(
   creds: Awaited<ReturnType<typeof openCredentials>>,
   fetchApi: typeof fetch,
   publish: Appender["publish"] = captor().publish,
+  calendars?: string[],
 ): { tick(): Promise<void> } {
   return createGoogleWebhook({
     publish,
     creds,
     broker: createGrantBroker({ creds }),
+    calendars,
     fetchApi,
     now: () => "2026-08-24T00:00:00.000Z",
   });
@@ -112,8 +114,10 @@ Deno.test("a new event is a create: a plain calendar message keyed on the stable
     const row = cap.rows[0];
     assertEquals(row.envelope.service, "google");
     assertEquals(row.envelope.connection_address, "ana@example.com");
-    assertEquals(row.envelope.conversation.address, "calendar:primary");
-    assertEquals(row.envelope.external_id, "calendar:primary:ev1"); // the STABLE referent
+    // `primary` resolves to its true id — the grant's email (meeting ids copy across
+    // attendee calendars, so a grant-relative referent would collide two grants' views)
+    assertEquals(row.envelope.conversation.address, "calendar:ana@example.com");
+    assertEquals(row.envelope.external_id, "calendar:ana@example.com:ev1"); // the STABLE referent
     assertEquals(row.payload?.action, undefined); // a create has no action
     assert(row.agent === undefined && row.envelope.sender === undefined); // harness-derived
     const part = row.parts[0] as DataPart;
@@ -146,8 +150,11 @@ Deno.test("an edit is action:edit referencing the create; the original stays sea
     assertEquals(cap.rows.length, 1);
     const row = cap.rows[0];
     assertEquals(row.payload?.action, "edit");
-    assertEquals(row.payload?.ref_external_id, "calendar:primary:ev1"); // points at the create
-    assertEquals(row.envelope.external_id, "calendar:primary:ev1:2026-08-24T12:00:00Z"); // own version
+    assertEquals(row.payload?.ref_external_id, "calendar:ana@example.com:ev1"); // points at the create
+    assertEquals(
+      row.envelope.external_id,
+      "calendar:ana@example.com:ev1:2026-08-24T12:00:00Z", // own version
+    );
     assertEquals((row.parts[0] as DataPart).text, "Natación (movida) — 2026-08-24T19:00:00Z");
   });
 });
@@ -167,11 +174,11 @@ Deno.test("a cancellation is action:delete + a merge-only deleted_at stamp on th
     assertEquals(cap.rows.length, 2); // the delete event + the merge-only stamp
     const del = cap.rows[0];
     assertEquals(del.payload?.action, "delete");
-    assertEquals(del.payload?.ref_external_id, "calendar:primary:ev1");
-    assertEquals(del.envelope.external_id, "calendar:primary:ev1:cancelled");
+    assertEquals(del.payload?.ref_external_id, "calendar:ana@example.com:ev1");
+    assertEquals(del.envelope.external_id, "calendar:ana@example.com:ev1:cancelled");
     assertEquals(del.parts.length, 0); // empty parts — the action is the meaning
     const stamp = cap.rows[1];
-    assertEquals(stamp.envelope.external_id, "calendar:primary:ev1"); // merges onto the create
+    assertEquals(stamp.envelope.external_id, "calendar:ana@example.com:ev1"); // merges onto the create
     assertEquals(stamp.status?.deleted_at, "2026-08-24T00:00:00.000Z");
     assertEquals((stamp as { parts?: unknown }).parts, undefined); // partless ⇒ content sealed
   });
@@ -193,6 +200,62 @@ Deno.test("a 410 drops the cursor so the next tick re-bootstraps", async () => {
     assertEquals((await syncOf(creds))?.primary, undefined, "cursor cleared after 410");
     await p.tick(); // re-bootstrap → tok3
     assertEquals((await syncOf(creds))!.primary, "tok3");
+  });
+});
+
+Deno.test("a named calendar keeps its own id — only `primary` resolves to the grant", async () => {
+  await withVault(async (creds) => {
+    const team = "team@group.calendar.google.com";
+    await poller(
+      creds,
+      () => Promise.resolve(jsonResponse({ items: [], nextSyncToken: "t1" })),
+      undefined,
+      [team],
+    ).tick(); // seed
+
+    const created = {
+      id: "ev9",
+      status: "confirmed",
+      summary: "Sync",
+      created: "2026-08-24T10:00:00Z",
+      updated: "2026-08-24T10:00:00Z",
+    };
+    const cap = captor();
+    await poller(
+      creds,
+      () => Promise.resolve(jsonResponse({ items: [created], nextSyncToken: "t2" })),
+      cap.publish,
+      [team],
+    ).tick();
+
+    assertEquals(cap.rows[0].envelope.conversation.address, `calendar:${team}`);
+    assertEquals(cap.rows[0].envelope.external_id, `calendar:${team}:ev9`);
+    assertEquals((await syncOf(creds))![team], "t2"); // the cursor keys on the CONFIGURED id
+  });
+});
+
+Deno.test("ticks never overlap — one landing mid-sweep joins the running one", async () => {
+  await withVault(async (creds) => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const p = poller(
+      creds,
+      (async () => {
+        calls++;
+        await gate;
+        return jsonResponse({ items: [], nextSyncToken: "tok1" });
+      }) as typeof fetch,
+    );
+
+    const first = p.tick();
+    const joined = p.tick(); // lands while the first sweep is parked on the API
+    release();
+    await Promise.all([first, joined]);
+    assertEquals(calls, 1, "the joined tick must not run its own sweep");
+
+    await p.tick(); // a LATER tick sweeps again
+    assertEquals(calls, 2);
   });
 });
 

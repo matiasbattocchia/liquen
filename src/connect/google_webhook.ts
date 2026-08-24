@@ -10,11 +10,12 @@
  * ticker for a `(Request)=>Response` on the edge tier and the map/publish below is unchanged.
  *
  * What it watches: each google GRANT the org holds (`google:<email>`, minus the `google:app:`
- * client rows), across a set of calendars (default `primary`). What it emits: a `message` per
- * changed calendar event, in conversation `calendar:<calendarId>` on service `google`, with
- * the resource in a `{ type:"data", kind:"calendar" }` part — harness-derived, so NO `sender`
- * and NO `agent` (the same trick the transcriber uses to keep a broker-authored row off the
- * wire — dispatch wants `agent` — and out of fan-in, §4).
+ * client rows), across a set of calendars (org config `connections.googleCalendars`). What it
+ * emits: a `message` per changed calendar event, in conversation `calendar:<calendar>` on
+ * service `google` — where `<calendar>` is the calendar's TRUE id (`primary` resolves to the
+ * grant's email; see `pollCalendar`) — with the resource in a `{ type:"data", kind:"calendar" }`
+ * part. Harness-derived, so NO `sender` and NO `agent` (the same trick the transcriber uses to
+ * keep a broker-authored row off the wire — dispatch wants `agent` — and out of fan-in, §4).
  *
  * A change speaks the SAME action language WhatsApp/Slack ingests do (§3), so an edit or a
  * cancellation reads as what it is, not as another opaque row:
@@ -27,7 +28,11 @@
  * Calendar's sync doesn't LABEL the change (no `message_changed`), so `classify` reads it off
  * the resource: `cancelled` ⇒ delete, `updated` past `created` ⇒ edit, else create. An edit or
  * delete of an event from before our window is a dangling ref — the soft reference the log
- * already tolerates for out-of-order revokes.
+ * already tolerates for out-of-order revokes. Two more shapes land as dangling-but-tolerated:
+ * a cancelled INSTANCE of a recurring event (`<masterId>_<ts>` — the master was the create),
+ * and a re-cancellation after a restore (the restore is an edit that leaves `deleted_at`
+ * standing; the second delete dedupes on `:cancelled` — un-delete has no verb here, same as
+ * the wire services).
  *
  * The cursor is a syncToken, and it lives ON THE GRANT: `extra.calendar_sync[<calendarId>]`
  * in the vault (`put` shallow-merges `extra`, so it sits beside `client_id`/`expiry` without
@@ -84,29 +89,36 @@ export interface GoogleWebhookDeps {
   fetchApi?: typeof fetch;
   now?: () => string;
   onError?: (key: string, err: unknown) => void;
-  /** Per-poll accounting (a grant, a calendar, how many rows published). */
+  /** Per-poll accounting (a grant, a calendar, how many changes published — a cancellation
+   *  publishes two rows but is one change). */
   onPolled?: (key: string, calendarId: string, published: number) => void;
 }
 
 /** A poller bound to the vault + broker. `tick()` sweeps every grant once; callers drive the
- *  cadence (the entry runs it on a `setInterval`). Serialized per call — a slow poll delays
- *  the next tick's work for that grant, never overlaps it. */
+ *  cadence (the entry runs it on a `setInterval`). Ticks never overlap: one that lands while
+ *  a sweep runs JOINS it — two sweeps reading one cursor would each publish the same delta
+ *  and race the write-back, and a stalled poll must not pile intervals behind it. */
 export function createGoogleWebhook(deps: GoogleWebhookDeps): { tick(): Promise<void> } {
   const calendars = deps.calendars?.length ? deps.calendars : ["primary"];
-  return {
-    async tick(): Promise<void> {
-      const grants = (await deps.creds.list(GRANT_PREFIX))
-        .filter((r) => !r.key.startsWith(APP_PREFIX));
-      for (const grant of grants) {
-        for (const calendarId of calendars) {
-          try {
-            const n = await pollCalendar(deps, grant.key, grant.agentId, calendarId);
-            deps.onPolled?.(grant.key, calendarId, n);
-          } catch (err) {
-            deps.onError?.(grant.key, err);
-          }
+  const sweep = async (): Promise<void> => {
+    const grants = (await deps.creds.list(GRANT_PREFIX))
+      .filter((r) => !r.key.startsWith(APP_PREFIX));
+    for (const grant of grants) {
+      for (const calendarId of calendars) {
+        try {
+          const n = await pollCalendar(deps, grant.key, grant.agentId, calendarId);
+          deps.onPolled?.(grant.key, calendarId, n);
+        } catch (err) {
+          deps.onError?.(grant.key, err);
         }
       }
+    }
+  };
+  let inflight: Promise<void> | null = null;
+  return {
+    tick(): Promise<void> {
+      inflight ??= sweep().finally(() => (inflight = null));
+      return inflight;
     },
   };
 }
@@ -133,7 +145,15 @@ async function pollCalendar(
   }
 
   const email = key.slice(GRANT_PREFIX.length);
-  const conversation: Conversation = { address: `calendar:${calendarId}`, kind: "channel" };
+  // `primary` is an ALIAS, not an identity — its true calendarId is the grant's email. The
+  // published address and referent must carry the true id: meeting ids COPY across attendee
+  // calendars (the organizer's id lands in every copy) and `external_id` is globally unique
+  // in the log, so a grant-relative `calendar:primary:<id>` would collapse two grants' views
+  // of one meeting into whichever row landed first. (A genuinely shared calendar collapsing
+  // by its one true id is the same rule doing its job.) The API is still called by the
+  // configured alias; only what we publish resolves.
+  const calendar = calendarId === "primary" ? email : calendarId;
+  const conversation: Conversation = { address: `calendar:${calendar}`, kind: "channel" };
   let pageToken: string | undefined;
   let nextSyncToken: string | undefined;
   let published = 0;
@@ -218,7 +238,8 @@ function rowsFor(
         parts: [],
       },
       // merge-only: no `parts` key, so the upsert leaves the sealed original untouched and
-      // only the lifecycle stamp lands (soft-inserts a stub if the create was before us)
+      // only the lifecycle stamp lands (a create from before our window has no row — the
+      // log stores nothing for a patch with no referent, the same dangling tolerance)
       {
         ts,
         type: "message",
@@ -279,11 +300,18 @@ async function storeCursor(
   const calendar_sync = { ...prior };
   if (token) calendar_sync[calendarId] = token;
   else delete calendar_sync[calendarId];
-  // put shallow-merges extra, so this sits beside client_id/expiry untouched
+  // put shallow-merges extra, so this sits beside client_id/expiry untouched. The broker's
+  // expiry write-back (another process) does the same read-merge-write on this row; a stale
+  // read can regress the other's field, and both losses self-heal — a regressed expiry just
+  // re-refreshes, a regressed cursor replays a delta into the external_id dedupe.
   await deps.creds.put({ key, value: {}, extra: { calendar_sync } });
 }
 
 /* ── the Calendar API (direct fetch; the broker already holds the secret) ─────────── */
+
+// a socket that hangs without closing would stall its grant's polling FOREVER (the tick
+// join above holds every later tick behind it) — bound every call, fail into onError
+const FETCH_TIMEOUT_MS = 30_000;
 
 /** Thrown on a 410 — the syncToken is too old; the caller re-bootstraps. */
 class SyncTokenGone extends Error {}
@@ -297,7 +325,10 @@ async function getEvents(
   const url = new URL(`${API}/calendars/${encodeURIComponent(calendarId)}/events`);
   if (q.syncToken) url.searchParams.set("syncToken", q.syncToken);
   if (q.pageToken) url.searchParams.set("pageToken", q.pageToken);
-  const res = await fetchApi(url, { headers: { authorization: `Bearer ${token}` } });
+  const res = await fetchApi(url, {
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (res.status === 410) {
     await res.body?.cancel();
     throw new SyncTokenGone();
@@ -322,7 +353,10 @@ async function bootstrap(
     url.searchParams.set("timeMin", timeMin);
     url.searchParams.set("showDeleted", "false");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
-    const res = await fetchApi(url, { headers: { authorization: `Bearer ${token}` } });
+    const res = await fetchApi(url, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (!res.ok) {
       throw new Error(`calendar bootstrap ${res.status}: ${(await res.text()).slice(0, 300)}`);
     }
@@ -339,17 +373,18 @@ async function bootstrap(
  *   deno task ingest:google        # sweeps every google grant on a metronome
  *
  * The harness (`deno task cli`) on the SAME MU_DIR turns each calendar change into a poke.
- * Env: MU_DIR (default ./data) · GOOGLE_CALENDARS (comma list, default `primary`) ·
- * GOOGLE_POLL_MS (default 60000). The store imports are dynamic so importing
- * `createGoogleWebhook` (e.g. from an edge function) never pulls in file I/O. */
+ * Env is `MU_DIR` alone (the org pointer, default ./data): the calendars come from the org
+ * config (`connections.googleCalendars`), the cadence is a constant. The store imports are
+ * dynamic so importing `createGoogleWebhook` (e.g. from an edge function) never pulls in
+ * file I/O. */
 if (import.meta.main) {
+  const POLL_MS = 60_000;
   const { openLog } = await import("../store/log.ts");
   const { openCredentials } = await import("../store/credentials.ts");
   const { createGrantBroker } = await import("../proxy/grants.ts");
+  const { ensureOrgConfig } = await import("../config.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
-  const calendars = (Deno.env.get("GOOGLE_CALENDARS") ?? "primary")
-    .split(",").map((s) => s.trim()).filter(Boolean);
-  const pollMs = Number(Deno.env.get("GOOGLE_POLL_MS") ?? 60_000);
+  const calendars = (await ensureOrgConfig(dir)).connections.googleCalendars;
 
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
@@ -360,11 +395,11 @@ if (import.meta.main) {
     broker,
     calendars,
     onError: (key, err) => console.error(`[google] poll FAILED on ${key}:`, err),
-    onPolled: (key, cal, n) => n && console.error(`[google] ${key} ${cal}: +${n} events`),
+    onPolled: (key, cal, n) => n && console.error(`[google] ${key} ${cal}: +${n} changes`),
   });
   console.error(
-    `[google] calendar poll every ${pollMs}ms → ${dir}/log  (calendars: ${calendars.join(", ")})`,
+    `[google] calendar poll every ${POLL_MS}ms → ${dir}/log  (calendars: ${calendars.join(", ")})`,
   );
   await poller.tick(); // once at boot: seed cursors / catch up
-  setInterval(() => poller.tick(), pollMs);
+  setInterval(() => poller.tick(), POLL_MS);
 }
