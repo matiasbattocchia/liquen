@@ -10,21 +10,24 @@
  * ticker for a `(Request)=>Response` on the edge tier and the map/publish below is unchanged.
  *
  * What it watches: each google GRANT the org holds (`google:<email>`, minus the `google:app:`
- * client rows), across a set of calendars (default `primary`). What it emits: one `message`
- * per changed calendar event —
+ * client rows), across a set of calendars (default `primary`). What it emits: a `message` per
+ * changed calendar event, in conversation `calendar:<calendarId>` on service `google`, with
+ * the resource in a `{ type:"data", kind:"calendar" }` part — harness-derived, so NO `sender`
+ * and NO `agent` (the same trick the transcriber uses to keep a broker-authored row off the
+ * wire — dispatch wants `agent` — and out of fan-in, §4).
  *
- *   envelope.service        "google"
- *   envelope.conversation   { address: "calendar:<calendarId>", kind: "channel" }
- *   parts[0]                { type: "data", kind: "calendar", data: <the event resource> }
- *
- * harness-derived, so NO `sender` and NO `agent` — the same trick the transcriber uses to
- * keep a broker-authored row off the wire (dispatch wants `agent`) and out of fan-in (§4). A
- * deletion is not a new type: incremental sync returns the resource with `status:"cancelled"`,
- * and the data part carries it verbatim.
- *
- * Idempotence, like the transcriber's `transcript:<id>`: `external_id` keys on the event's id
- * AND its `updated` stamp — `calendar:<cal>:<id>:<updated>` — so each VERSION is one durable
- * row (an edit publishes a new row; a crash-replay merges via the store's upsert).
+ * A change speaks the SAME action language WhatsApp/Slack ingests do (§3), so an edit or a
+ * cancellation reads as what it is, not as another opaque row:
+ *   create   a plain message carrying the resource; `external_id` = the STABLE referent
+ *            `calendar:<cal>:<id>` (the event's identity across versions).
+ *   edit     its own event, `action:"edit"` + `ref_external_id` at the create, new content;
+ *            the create row stays sealed (a `:<updated>`-versioned external_id dedupes replays).
+ *   delete   its own event, `action:"delete"` + ref + EMPTY parts (the action is the meaning),
+ *            plus a merge-only `status.deleted_at` on the create row.
+ * Calendar's sync doesn't LABEL the change (no `message_changed`), so `classify` reads it off
+ * the resource: `cancelled` ⇒ delete, `updated` past `created` ⇒ edit, else create. An edit or
+ * delete of an event from before our window is a dangling ref — the soft reference the log
+ * already tolerates for out-of-order revokes.
  *
  * The cursor is a syncToken, and it lives ON THE GRANT: `extra.calendar_sync[<calendarId>]`
  * in the vault (`put` shallow-merges `extra`, so it sits beside `client_id`/`expiry` without
@@ -54,6 +57,7 @@ export interface CalendarEvent {
   id?: string;
   status?: string; // "confirmed" | "tentative" | "cancelled"
   summary?: string;
+  created?: string;
   updated?: string;
   start?: { dateTime?: string; date?: string };
   end?: { dateTime?: string; date?: string };
@@ -147,7 +151,7 @@ async function pollCalendar(
     }
     for (const item of page.items ?? []) {
       if (!item.id) continue;
-      await deps.publish(rowFor(email, conversation, calendarId, item, now));
+      for (const draft of rowsFor(email, conversation, item, now)) await deps.publish(draft);
       published++;
     }
     pageToken = page.nextPageToken;
@@ -159,40 +163,92 @@ async function pollCalendar(
   return published;
 }
 
-/** The published event for one changed calendar resource (see the header for the shape). */
-function rowFor(
-  email: string,
-  conversation: Conversation,
-  calendarId: string,
-  item: CalendarEvent,
-  now: () => string,
-): Draft<MessageEvent> {
-  const updated = item.updated ?? "";
-  return {
-    ts: item.updated ?? now(),
-    type: "message",
-    // no sender, no agent: harness-derived — off the wire, out of fan-in (like transcribe)
-    envelope: {
-      service: SERVICE,
-      connection_address: email,
-      conversation,
-      external_id: `calendar:${calendarId}:${item.id}:${updated}`,
-    },
-    // the resource is parsed JSON by construction; the loose `unknown`-valued interface
-    // above is for the few fields we read, not a claim the whole thing isn't Json
-    parts: [{
-      type: "data",
-      kind: "calendar",
-      text: summarize(item),
-      data: item as unknown as Json,
-    }],
-  };
+/** A create/edit/delete window is later than its create by more than this — Google stamps
+ *  `created == updated` on insert (± server jitter), so a wider gap means a real edit. */
+const EDIT_EPSILON_MS = 2000;
+
+/** The change an incremental resource represents, in the action language (§3). Calendar's
+ *  sync doesn't LABEL the change the way a Slack `message_changed` does, so we read it off
+ *  the resource: `cancelled` ⇒ delete; `updated` well past `created` ⇒ edit; else create. */
+function classify(item: CalendarEvent): "create" | "edit" | "delete" {
+  if (item.status === "cancelled") return "delete";
+  const created = item.created ? Date.parse(item.created) : NaN;
+  const updated = item.updated ? Date.parse(item.updated) : NaN;
+  const edited = Number.isFinite(created) && Number.isFinite(updated) &&
+    updated - created > EDIT_EPSILON_MS;
+  return edited ? "edit" : "create";
 }
 
-/** A one-line human form for render; the full resource is in `data`. */
+/** The stable referent for a calendar event — its identity across versions, what an edit or
+ *  delete points `ref_external_id` at (and the create row's own external_id). */
+function refFor(conversation: Conversation, id: string): string {
+  return `${conversation.address}:${id}`;
+}
+
+/**
+ * One changed resource → the events it means, in the SAME action language WhatsApp/Slack
+ * speak (§3):
+ *   create  a plain `message` carrying the resource, external_id = the stable referent.
+ *   edit    its OWN event, `action:"edit"` + `ref_external_id` at the create, new content;
+ *           the create row stays sealed (a versioned external_id keeps replays idempotent).
+ *   delete  its OWN event, `action:"delete"` + ref + EMPTY parts (the action IS the meaning),
+ *           PLUS a merge-only `status.deleted_at` stamp on the create row. An edit/delete of
+ *           an event from before our window is a dangling ref — the tolerated soft reference.
+ * All harness-derived: no sender, no agent (off the wire, out of fan-in — like transcribe).
+ */
+function rowsFor(
+  email: string,
+  conversation: Conversation,
+  item: CalendarEvent,
+  now: () => string,
+): Draft<MessageEvent>[] {
+  const id = item.id!;
+  const ref = refFor(conversation, id);
+  const ts = item.updated ?? now();
+  const base = { service: SERVICE, connection_address: email, conversation };
+  const change = classify(item);
+
+  if (change === "delete") {
+    return [
+      {
+        ts,
+        type: "message",
+        payload: { action: "delete", ref_external_id: ref },
+        envelope: { ...base, external_id: `${ref}:cancelled` },
+        parts: [],
+      },
+      // merge-only: no `parts` key, so the upsert leaves the sealed original untouched and
+      // only the lifecycle stamp lands (soft-inserts a stub if the create was before us)
+      {
+        ts,
+        type: "message",
+        envelope: { ...base, external_id: ref },
+        status: { deleted_at: ts },
+      } as unknown as Draft<MessageEvent>,
+    ];
+  }
+
+  // create/edit both carry the resource; the loose `unknown`-valued interface above is for
+  // the few fields we read, not a claim the parsed JSON isn't Json
+  const parts: MessageEvent["parts"] = [
+    { type: "data", kind: "calendar", text: summarize(item), data: item as unknown as Json },
+  ];
+  if (change === "edit") {
+    return [{
+      ts,
+      type: "message",
+      payload: { action: "edit", ref_external_id: ref },
+      envelope: { ...base, external_id: `${ref}:${item.updated ?? ""}` },
+      parts,
+    }];
+  }
+  return [{ ts, type: "message", envelope: { ...base, external_id: ref }, parts }];
+}
+
+/** A one-line human form for render; the full resource is in `data`. Deletes never reach
+ *  here — they carry no parts (the action is the meaning). */
 function summarize(item: CalendarEvent): string {
-  const title = item.summary ?? "(untitled)";
-  if (item.status === "cancelled") return `${title} — cancelled`;
+  const title = item.summary ?? "(no title)";
   const start = item.start?.dateTime ?? item.start?.date;
   return start ? `${title} — ${start}` : title;
 }

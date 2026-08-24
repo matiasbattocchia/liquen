@@ -89,22 +89,23 @@ Deno.test("first run bootstraps from now forward: seeds a cursor, publishes noth
   });
 });
 
-Deno.test("incremental sync: a change becomes a calendar data message; the cursor advances", async () => {
+Deno.test("a new event is a create: a plain calendar message keyed on the stable referent", async () => {
   await withVault(async (creds) => {
     await poller(creds, () => Promise.resolve(jsonResponse({ items: [], nextSyncToken: "tok1" })))
       .tick(); // seed
 
-    const changed = {
+    const created = {
       id: "ev1",
       status: "confirmed",
       summary: "Natación",
-      updated: "2026-08-24T10:00:00Z",
+      created: "2026-08-24T10:00:00Z",
+      updated: "2026-08-24T10:00:00Z", // created == updated ⇒ a create
       start: { dateTime: "2026-08-24T18:00:00Z" },
     };
     const cap = captor();
     await poller(creds, (input) => {
       assertEquals(new URL(String(input)).searchParams.get("syncToken"), "tok1");
-      return Promise.resolve(jsonResponse({ items: [changed], nextSyncToken: "tok2" }));
+      return Promise.resolve(jsonResponse({ items: [created], nextSyncToken: "tok2" }));
     }, cap.publish).tick();
 
     assertEquals(cap.rows.length, 1);
@@ -112,17 +113,46 @@ Deno.test("incremental sync: a change becomes a calendar data message; the curso
     assertEquals(row.envelope.service, "google");
     assertEquals(row.envelope.connection_address, "ana@example.com");
     assertEquals(row.envelope.conversation.address, "calendar:primary");
-    assertEquals(row.envelope.external_id, "calendar:primary:ev1:2026-08-24T10:00:00Z");
+    assertEquals(row.envelope.external_id, "calendar:primary:ev1"); // the STABLE referent
+    assertEquals(row.payload?.action, undefined); // a create has no action
     assert(row.agent === undefined && row.envelope.sender === undefined); // harness-derived
     const part = row.parts[0] as DataPart;
-    assertEquals(part.type, "data");
     assertEquals(part.kind, "calendar");
     assertEquals(part.text, "Natación — 2026-08-24T18:00:00Z");
     assertEquals((await syncOf(creds))!.primary, "tok2"); // cursor moved
   });
 });
 
-Deno.test("a cancelled event passes through as a deletion (status carries it)", async () => {
+Deno.test("an edit is action:edit referencing the create; the original stays sealed", async () => {
+  await withVault(async (creds) => {
+    await poller(creds, () => Promise.resolve(jsonResponse({ items: [], nextSyncToken: "tok1" })))
+      .tick(); // seed
+
+    const edited = {
+      id: "ev1",
+      status: "confirmed",
+      summary: "Natación (movida)",
+      created: "2026-08-24T10:00:00Z",
+      updated: "2026-08-24T12:00:00Z", // well past created ⇒ an edit
+      start: { dateTime: "2026-08-24T19:00:00Z" },
+    };
+    const cap = captor();
+    await poller(
+      creds,
+      () => Promise.resolve(jsonResponse({ items: [edited], nextSyncToken: "tok2" })),
+      cap.publish,
+    ).tick();
+
+    assertEquals(cap.rows.length, 1);
+    const row = cap.rows[0];
+    assertEquals(row.payload?.action, "edit");
+    assertEquals(row.payload?.ref_external_id, "calendar:primary:ev1"); // points at the create
+    assertEquals(row.envelope.external_id, "calendar:primary:ev1:2026-08-24T12:00:00Z"); // own version
+    assertEquals((row.parts[0] as DataPart).text, "Natación (movida) — 2026-08-24T19:00:00Z");
+  });
+});
+
+Deno.test("a cancellation is action:delete + a merge-only deleted_at stamp on the create", async () => {
   await withVault(async (creds) => {
     await poller(creds, () => Promise.resolve(jsonResponse({ items: [], nextSyncToken: "tok1" })))
       .tick(); // seed
@@ -130,19 +160,20 @@ Deno.test("a cancelled event passes through as a deletion (status carries it)", 
     const cap = captor();
     await poller(creds, () =>
       Promise.resolve(jsonResponse({
-        items: [{
-          id: "ev1",
-          status: "cancelled",
-          summary: "Old",
-          updated: "2026-08-24T11:00:00Z",
-        }],
+        items: [{ id: "ev1", status: "cancelled" }], // a tombstone: minimal, no summary
         nextSyncToken: "tok2",
       })), cap.publish).tick();
 
-    assertEquals(cap.rows.length, 1);
-    const part = cap.rows[0].parts[0] as DataPart<string, { status: string }>;
-    assertEquals(part.text, "Old — cancelled");
-    assertEquals(part.data.status, "cancelled");
+    assertEquals(cap.rows.length, 2); // the delete event + the merge-only stamp
+    const del = cap.rows[0];
+    assertEquals(del.payload?.action, "delete");
+    assertEquals(del.payload?.ref_external_id, "calendar:primary:ev1");
+    assertEquals(del.envelope.external_id, "calendar:primary:ev1:cancelled");
+    assertEquals(del.parts.length, 0); // empty parts — the action is the meaning
+    const stamp = cap.rows[1];
+    assertEquals(stamp.envelope.external_id, "calendar:primary:ev1"); // merges onto the create
+    assertEquals(stamp.status?.deleted_at, "2026-08-24T00:00:00.000Z");
+    assertEquals((stamp as { parts?: unknown }).parts, undefined); // partless ⇒ content sealed
   });
 });
 
