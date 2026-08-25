@@ -3,7 +3,7 @@ import { createGoogleWebhook } from "./calendar.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
 import type { Appender } from "../../store/log.ts";
-import type { DataPart, Draft, Event, MessageEvent } from "../../types.ts";
+import type { CalendarPart, Draft, Event, MessageEvent } from "../../types.ts";
 
 const KEY = "google:ana@example.com";
 
@@ -129,7 +129,7 @@ Deno.test("a new event is a create: a plain calendar message keyed on the stable
     assertEquals(row.payload?.action, undefined); // a create has no action
     assertEquals(row.envelope.sender, { address: "ana@example.com", name: "Ana" }); // creator
     assertEquals(row.agent, undefined); // harness-derived: never dispatched
-    const part = row.parts[0] as DataPart;
+    const part = row.parts[0] as CalendarPart;
     assertEquals(part.kind, "calendar");
     assertEquals(part.text, undefined); // no prose — `data` IS the content
     assertEquals(part.data, {
@@ -173,7 +173,7 @@ Deno.test("an edit is action:edit referencing the create; the original stays sea
       row.envelope.external_id,
       "calendar:ana@example.com:ev1:2026-08-24T12:00:00Z", // own version
     );
-    const data = (row.parts[0] as DataPart).data as Record<string, unknown>;
+    const data = (row.parts[0] as CalendarPart).data;
     assertEquals(data.title, "Natación (movida)"); // the new content rides the edit
     assertEquals(data.start, "2026-08-24T19:00:00Z");
   });
@@ -198,7 +198,7 @@ Deno.test("a cancellation is action:delete + a merge-only deleted_at stamp on th
     assertEquals(del.envelope.external_id, "calendar:ana@example.com:ev1:cancelled");
     // the delete's whole content: the service-side handle that keeps the gone event
     // fetchable after its create scrolls out of the render window
-    assertEquals((del.parts[0] as DataPart).data, { gid: "ev1" });
+    assertEquals((del.parts[0] as CalendarPart).data, { gid: "ev1" });
     assertEquals(del.envelope.sender, undefined); // a tombstone has no creator — no voice
     const stamp = cap.rows[1];
     assertEquals(stamp.envelope.external_id, "calendar:ana@example.com:ev1"); // merges onto the create

@@ -123,6 +123,29 @@ export type SharePart = DataPart<"share", {
  *  was added or removed is the EVENT's `payload.action`, not the part's business. */
 export type ReactionPart = DataPart<"reaction", { name: string; unicode?: string }>;
 
+/** A calendar event — the CANONICAL shape every calendar connector prunes its wire resource
+ *  to (iCalendar is the shared standard underneath; Google today, Outlook next — the
+ *  service's ~40-field resource stops at the connector, THIS crosses). `gid` is the
+ *  service-side event id, what the service's get/patch take; `start`/`end` are ISO stamps,
+ *  a bare date meaning all-day (render's value rule turns datetimes into org-zone clocks);
+ *  `status` is RFC 5545 PARTSTAT in camelCase — a connector whose wire speaks another
+ *  vocabulary maps onto it. A delete's part is the bare `{gid}` handle, hence everything
+ *  else optional. */
+export type CalendarData = {
+  gid: string;
+  title?: string;
+  start?: string;
+  end?: string;
+  loc?: string;
+  description?: string;
+  invitees?: {
+    name?: string;
+    email?: string;
+    status?: "needsAction" | "accepted" | "declined" | "tentative";
+  }[];
+};
+export type CalendarPart = DataPart<"calendar", CalendarData>;
+
 export type Part = TextPart | FilePart | DataPart | SharePart;
 
 /* ────────────────────────────── envelope ────────────────────────────── */

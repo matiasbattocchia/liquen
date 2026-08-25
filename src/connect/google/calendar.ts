@@ -14,7 +14,8 @@
  * emits: a `message` per changed calendar event, in a `broadcast` conversation
  * `calendar:<calendar>` on service `google` — where `<calendar>` is the calendar's TRUE id
  * (`primary` resolves to the grant's email; see `pollCalendar`) — with the PRUNED resource in
- * a `{ type:"data", kind:"calendar" }` part (`pruned`: what render shows and search indexes).
+ * a `CalendarPart` (`pruned` maps the wire onto the canonical shape in types.ts, the same one
+ * any other calendar service's connector targets; it is what render shows and search indexes).
  * `sender` is the event's CREATOR (the line's `from`); NO `agent` (the transcriber's trick to
  * keep a broker-authored row off the wire — dispatch wants `agent` — and out of fan-in, §4).
  *
@@ -52,7 +53,7 @@
 import type { Appender } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
-import type { Conversation, Draft, Json, MessageEvent } from "../../types.ts";
+import type { CalendarData, CalendarPart, Conversation, Draft, MessageEvent } from "../../types.ts";
 
 const SERVICE = "google" as const;
 const GRANT_PREFIX = "google:";
@@ -255,7 +256,7 @@ function rowsFor(
         envelope: { ...base, external_id: `${ref}:cancelled` },
         // `{gid}` is the delete's whole content: the service-side id that keeps the event
         // fetchable (`events get`) after the `re` referent scrolls out of the window
-        parts: [{ type: "data", kind: "calendar", data: { gid: id } }],
+        parts: [{ type: "data", kind: "calendar", data: { gid: id } } satisfies CalendarPart],
       },
       // merge-only: no `parts` key, so the upsert leaves the sealed original untouched and
       // only the lifecycle stamp lands (a create from before our window has no row — the
@@ -269,7 +270,9 @@ function rowsFor(
     ];
   }
 
-  const parts: MessageEvent["parts"] = [{ type: "data", kind: "calendar", data: pruned(item) }];
+  const parts: MessageEvent["parts"] = [
+    { type: "data", kind: "calendar", data: pruned(item) } satisfies CalendarPart,
+  ];
   if (change === "edit") {
     return [{
       ts,
@@ -282,13 +285,13 @@ function rowsFor(
   return [{ ts, type: "message", envelope: { ...base, external_id: ref }, parts }];
 }
 
-/** What of a resource is WORTH the agent's tokens: `data` verbatim is what render shows (as
- *  a TS literal) and what the search column indexes (string leaves), so everything else —
- *  etags, iCalUIDs, reminder policy, html links — stops here. `gid` is the service-side id
- *  (what `events get`/`patch` take); `start`/`end` are the wire's ISO stamps (a bare date =
- *  all-day), rendered as org-zone clocks by render's value rule. */
-function pruned(item: CalendarEvent): Json {
-  const out: Record<string, Json> = { gid: item.id! };
+/** What of a resource is WORTH the agent's tokens: the wire resource pruned to the canonical
+ *  `CalendarData` (types.ts) — `data` verbatim is what render shows (as a TS literal) and
+ *  what the search column indexes (string leaves), so everything else — etags, iCalUIDs,
+ *  reminder policy, html links — stops here. Google's `responseStatus` vocabulary IS the
+ *  canonical PARTSTAT set, so it passes through the whitelist unchanged. */
+function pruned(item: CalendarEvent): CalendarData {
+  const out: CalendarData = { gid: item.id! };
   if (item.summary) out.title = item.summary;
   const start = item.start?.dateTime ?? item.start?.date;
   if (start) out.start = start;
@@ -297,10 +300,13 @@ function pruned(item: CalendarEvent): Json {
   if (item.location) out.loc = item.location;
   if (item.description) out.description = item.description;
   const invitees = (item.attendees ?? []).map((a) => {
-    const inv: Record<string, Json> = {};
+    const inv: NonNullable<CalendarData["invitees"]>[number] = {};
     if (a.displayName) inv.name = a.displayName;
     if (a.email) inv.email = a.email;
-    if (a.responseStatus) inv.status = a.responseStatus;
+    const s = a.responseStatus;
+    if (s === "needsAction" || s === "accepted" || s === "declined" || s === "tentative") {
+      inv.status = s;
+    }
     return inv;
   }).filter((inv) => Object.keys(inv).length > 0);
   if (invitees.length) out.invitees = invitees;
