@@ -834,10 +834,10 @@ function msgLine(
  *  the whole object rides a `data` attribute as a compact TS literal; the part's own `text`
  *  (genuinely human words, a caption) is the body, and no text means self-closing. `head`
  *  carries hoisted envelope attributes when the part IS the whole message, empty when it
- *  rides inline as a marker beside text. An unnameable kind falls back to `<data>` so a
- *  malformed part can never forge a tag. */
+ *  rides inline as a marker beside text. Every part shape makes `kind` mandatory (types.ts);
+ *  a malformed row without one falls back to the part's `type`. */
 function dataEl(p: DataPart, head: string, zone?: string): string {
-  const tag = /^[a-z][a-z0-9_-]*$/i.test(p.kind) ? p.kind : "data";
+  const tag = p.kind || p.type;
   const attrs = [
     ...(head ? [head] : []),
     ...(p.data !== undefined ? [`data="${escAttr(tsLiteral(p.data, zone))}"`] : []),
@@ -1033,7 +1033,7 @@ function datasOf(e: Event): DataPart[] {
  *  take); external links show the url itself. Untrusted strings (a wire filename) are
  *  attribute-escaped like everything else. */
 function mediaMarker(p: FilePart): string {
-  const tag = /^[a-z][a-z0-9_-]*$/i.test(p.kind) ? p.kind : "media";
+  const tag = p.kind || p.type;
   const name = p.file.name ? ` name="${escAttr(p.file.name)}"` : "";
   const handle = isExternal(p.file.uri) ? p.file.uri : pathOf(p.file.uri);
   return `<${tag}${name} path="${escAttr(handle)}"/>`;
