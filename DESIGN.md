@@ -1006,13 +1006,13 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   from the sender's grant row on both wires, §3). The reply sits with what it answers. A dead delivery carries
   `status="failed"`; wire mentions ride a `mentions=` attribute. **Two elements, the
   deviation marked** (§3): `<msg>` carries text — `action="edit"` renders the new
-  content, `action="delete"` the removed content; `<react>` carries the glyph —
+  content, `action="delete"` the removed content; `<reaction>` carries the glyph —
   `action="remove"` = un-react. Bare defaults: create and add wear no attribute.
   **References**: every `<msg>` wears an `id`, and a line that answers, reacts to, edits or
   deletes another points at it with `re` — one handle, read and write, since `send` takes
   the same string back (§9). It is derived from the event id, so it names the same message
   in every render; `re="?"` says the referent is outside this window, and only then does a
-  delete spell out what it removed. A `<react>` spends no id: nothing can point at one.
+  delete spell out what it removed. A `<reaction>` spends no id: nothing can point at one.
   Stamps format
   through the org's timezone (org config; stored ts is UTC, §3). Clustering: inbound runs
   are ts-sorted, then partitioned per conversation in first-arrival order —

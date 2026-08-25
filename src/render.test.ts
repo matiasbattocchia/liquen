@@ -1171,7 +1171,7 @@ Deno.test("authorship labels (§3): turn_id = (you); the stamp alone = (principa
   assertStringIncludes(dump, 'from=\\"robo\\" at=\\"12 Aug 9:00\\">puedo ayudar');
 });
 
-Deno.test("actions on the element (§5): <msg action>, id/re references, <react>, mentions", () => {
+Deno.test("actions on the element (§5): <msg action>, id/re references, <reaction>, mentions", () => {
   const t = "2026-08-16T12:00:00Z";
   const conv = { address: "wa:sol", kind: "direct" as const };
   const sol = { address: "549", name: "sol" };
@@ -1235,10 +1235,13 @@ Deno.test("actions on the element (§5): <msg action>, id/re references, <react>
   );
   // bare defaults: create and add wear no action attribute. A reaction spends no id —
   // nothing can point back at one — but it says what it lands on
-  assertStringIncludes(dump, '<react from=\\"sol\\" at=\\"16 Aug 12:00\\" re=\\"e1\\">😮</react>');
   assertStringIncludes(
     dump,
-    '<react from=\\"sol\\" at=\\"16 Aug 12:00\\" re=\\"e1\\" action=\\"remove\\">😮</react>',
+    '<reaction from=\\"sol\\" at=\\"16 Aug 12:00\\" re=\\"e1\\">😮</reaction>',
+  );
+  assertStringIncludes(
+    dump,
+    '<reaction from=\\"sol\\" at=\\"16 Aug 12:00\\" re=\\"e1\\" action=\\"remove\\">😮</reaction>',
   );
   assertStringIncludes(dump, 'mentions=\\"5491133585694\\">che @matias mirá esto</msg>');
 });
@@ -1270,7 +1273,7 @@ Deno.test("a transcript add-event renders as <transcript re=…>, not as a react
   const dump = JSON.stringify(messages);
   // no id (nothing points at a transcript), no from (nobody spoke — the harness derived it)
   assertStringIncludes(dump, '<transcript re=\\"e1\\">hola, ¿viste el set?</transcript>');
-  assert(!dump.includes("<react"));
+  assert(!dump.includes("<reaction"));
 });
 
 Deno.test("calendar changes render hoisted: <calendar data=…>, ISO values as clocks (§5)", () => {

@@ -21,7 +21,7 @@ Reading the window:
   on it instead of writing. A line's own `re` says which message it answers; `re="?"` means
   the message it points at is older than this window.
 - `action="edit"` and `action="delete"` mean the sender changed or took back what they
-  said. A `<react>` is a glyph somebody landed on the message its `re` names.
+  said. A `<reaction>` is a glyph somebody landed on the message its `re` names.
 - A `<transcript>` carries the words of the voice note its `re` names — the harness
   transcribes audio automatically, and the words arrive a little after the note (up to a
   few minutes for a long one). Wait for it; never try to transcribe an attachment yourself.

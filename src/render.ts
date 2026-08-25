@@ -735,11 +735,11 @@ function conversationEl(
 
 /** One world message line — the deviation marked (§3, §5): `<msg>` carries text
  *  (`action="edit"` = replacement content, `action="delete"` = the removed content),
- *  `<react>` carries the glyph (`action="remove"` = an un-react), `<transcript>` carries
+ *  `<reaction>` carries the glyph (`action="remove"` = an un-react), `<transcript>` carries
  *  the derived words of the audio its `re` points at. A DATA part renders as its kind's own
  *  element — `<location>`, `<contacts>`, `<calendar>`, whatever a connector ships — the
  *  pruned object riding a `data` attribute as a TS literal; a message that IS one data part
- *  hoists the envelope attributes onto that element and spends no `<msg>` wrapper (`<react>`
+ *  hoists the envelope attributes onto that element and spends no `<msg>` wrapper (`<reaction>`
  *  is this rule's oldest instance). Bare defaults: create and add wear no attribute.
  *  `from="self"` = the agent's own send (its author label inside a
  *  user turn); `status="failed"` = the dispatcher gave up on delivery (§5).
@@ -747,7 +747,7 @@ function conversationEl(
  *  **References** (§5): every `<msg>` wears an `id` — the handle a reply, a reaction or a
  *  delete points back at with `re`, and the one `send` takes to author them. It is derived
  *  from the event id, so it names the same message in every render; `re="?"` = the referent
- *  is outside this window. Nothing can point at a `<react>`, so reactions spend no id.
+ *  is outside this window. Nothing can point at a `<reaction>`, so reactions spend no id.
  *
  *  Body and sender name are attacker-controlled — escaped, so no message can close its own
  *  element or forge a mark. */
@@ -777,7 +777,7 @@ function msgLine(
 
   const action = e.payload?.action;
   // the hoisting rule: a message that IS one data part wears the envelope on its own element
-  // (reactions keep `<react>` via the add/remove branch below)
+  // (reactions keep `<reaction>` via the add/remove branch below)
   const solo = e.parts?.length === 1 && e.parts[0].type === "data" &&
       e.parts[0].kind !== "reaction" && action !== "add" && action !== "remove"
     ? e.parts[0]
@@ -805,7 +805,7 @@ function msgLine(
     const removed = action === "remove" ? ' action="remove"' : "";
     // no `id`: a reaction is a leaf — nothing in the vocabulary can point back at one
     const react = `from="${escAttr(from)}" at="${hhmm(e.ts, zone)}"`;
-    return `<react ${react}${re}${removed}>${escText(glyph)}</react>`;
+    return `<reaction ${react}${re}${removed}>${escText(glyph)}</reaction>`;
   }
 
   const failed = e.envelope.status === "failed" ? ' status="failed"' : "";
@@ -1021,7 +1021,7 @@ function filesOf(e: Event): FilePart[] {
 }
 
 /** The data parts a body renders as `<kind>` markers — reactions excluded, they are
- *  `<react>`'s business (msgLine's add/remove branch). */
+ *  `<reaction>`'s business (msgLine's add/remove branch). */
 function datasOf(e: Event): DataPart[] {
   const parts = (e as MessageEvent).parts ?? [];
   return parts.filter((p): p is DataPart => p.type === "data" && p.kind !== "reaction");
