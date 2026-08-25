@@ -134,19 +134,18 @@ export async function connectWhatsApp(
 
 /* ── local entry: drive the pairing against the bridge, QR in the terminal ──────────
  *
- *   deno task connect:whatsapp          # QR flow: scan with the phone
- *   deno task connect:whatsapp <phone>  # pairing-code flow (international digits, no `+`)
+ *   deno task connect:whatsapp [principal]                  # QR flow: scan with the phone
+ *   deno task connect:whatsapp [principal] --phone <digits> # pairing-code flow
  *
- * No `--` before the number: `deno task` forwards it verbatim, so it arrives as args[0]
- * and the bridge answers "phone number too short". The flow is chosen by the number's
- * presence because the code flow CANNOT exist without it (whatsmeow's PairPhone mints the
- * code for that specific number), while the QR flow needs nothing.
+ * The positional is the principal (default: the OS username — a session choice, so an
+ * argument); the number is a flag, international digits, no `+`. The flow is chosen by
+ * the number's presence because the code flow CANNOT exist without it (whatsmeow's
+ * PairPhone mints the code for that specific number), while the QR flow needs nothing.
  *
  * A phone code is short-lived: WhatsApp ends the pairing stream ~3 minutes after minting,
  * and the bridge fails the pending session then (events.go) rather than idling to its TTL.
  * Expired ⇒ run the door again for a fresh one.
  *
- * Arg: the principal (default: the OS username — a session choice, so an argument).
  * Env: WA_BRIDGE_TOKEN (the secret); the knobs are connections.whatsapp. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
@@ -154,7 +153,13 @@ if (import.meta.main) {
   const qrcode = (await import("qrcode-terminal")).default;
 
   const dir = "./data";
-  const principal = Deno.args[0] ?? (() => {
+  const flags = new Map<string, string>();
+  const positional: string[] = [];
+  for (let i = 0; i < Deno.args.length; i++) {
+    if (Deno.args[i].startsWith("--")) flags.set(Deno.args[i].slice(2), Deno.args[++i] ?? "");
+    else positional.push(Deno.args[i]);
+  }
+  const principal = positional[0] ?? (() => {
     try {
       return userInfo().username;
     } catch {
@@ -164,7 +169,11 @@ if (import.meta.main) {
   const { whatsappConfig } = await import("./config.ts");
   const { bridgeUrl: base, bridgeOrg } = await whatsappConfig(dir);
   const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
-  const phoneNumber = Deno.args[0] ?? undefined;
+  const phoneNumber = flags.get("phone") || undefined;
+  if (flags.has("phone") && !phoneNumber) {
+    console.error("--phone needs the number (international digits, no `+`)");
+    Deno.exit(2);
+  }
 
   const call = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
     const res = await fetch(`${base}${path}`, {
@@ -186,7 +195,10 @@ if (import.meta.main) {
     pending: (id) => call("GET", `/sessions/pending/${id}`),
   };
 
-  console.error(`Connecting WhatsApp as principal "${principal}" (bridge ${base}).\n`);
+  console.error(
+    `Connecting WhatsApp as principal "${principal}" (bridge ${base}) — ` +
+      `${phoneNumber ? `pairing code for ${phoneNumber}` : "QR"}.\n`,
+  );
   const log = await openLog(`${dir}/log`);
   try {
     const { address } = await connectWhatsApp({
