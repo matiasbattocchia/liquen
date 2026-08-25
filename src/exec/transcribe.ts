@@ -1,5 +1,5 @@
 /**
- * connect/transcribe.ts — the audio transcriber (DESIGN §5): voice notes become durable,
+ * exec/transcribe.ts — the audio transcriber (DESIGN §5): voice notes become durable,
  * searchable text, as EVENTS.
  *
  * A broker-side log listener, like the mirror: connector-neutral (whatever ingested the

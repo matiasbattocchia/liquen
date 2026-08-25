@@ -1,12 +1,12 @@
 /**
- * connect/google_connect.ts — `mu connect google`: the two dev-side Google doors (§4).
+ * connect/google/connect.ts — `mu connect google`: the two dev-side Google doors (§4).
  *
  *   app      the door's own key: paste the OAuth client (id + secret + redirect URI)
  *            → vault `google:app:<client_id>`. Not a grant — no connection, no
  *            membership, no event; nobody got connected. Several apps may coexist
  *            (`list("google:app:")`); the id in the key is what the account door picks by.
  *   account  the dev's own grant through the SAME handler the hosted door serves
- *            (connect/google_oauth.ts): serve it on localhost, open the browser at
+ *            (connect/google/oauth.ts): serve it on localhost, open the browser at
  *            /start, and the callback does what every grant does — writes the map.
  *            Ownership (the connection's agent_id) is decided HERE, at mint time:
  *            the principal arg rides `?agent=`; `--org` mints an ownerless link, the
@@ -19,7 +19,7 @@
  * Removal is not a door yet: deleting an app or a grant is a deliberate SQL act (§9).
  */
 
-import type { CredentialRow, Credentials } from "../store/credentials.ts";
+import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 
 export const APP_PREFIX = "google:app:";
 
@@ -74,7 +74,7 @@ export async function pickGoogleApp(
  *
  * Env: MU_DIR · PORT (account's localhost callback, default 8791). */
 if (import.meta.main) {
-  const { openCredentials } = await import("../store/credentials.ts");
+  const { openCredentials } = await import("../../store/credentials.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
   const [verb, ...rest] = Deno.args;
 
@@ -105,8 +105,8 @@ if (import.meta.main) {
         `✓ app stored: ${key}` + (redirectUri ? ` (hosted callback: ${redirectUri})` : ""),
       );
     } else if (verb === "account") {
-      const { createGoogleOAuth } = await import("./google_oauth.ts");
-      const { openLog } = await import("../store/log.ts");
+      const { createGoogleOAuth } = await import("./oauth.ts");
+      const { openLog } = await import("../../store/log.ts");
       const { userInfo } = await import("node:os");
       const org = flags.has("org");
       const agent = org ? undefined : positional[0] ?? (() => {

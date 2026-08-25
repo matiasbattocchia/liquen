@@ -5,10 +5,10 @@ import {
   slackEmojiName,
   slackErrorCode,
   type SlackTarget,
-} from "./slack_dispatch.ts";
-import { DispatchError } from "./errors.ts";
-import { type DeliveryPatch, openLog } from "../store/log.ts";
-import type { FilePart, MessageEvent } from "../types.ts";
+} from "./dispatch.ts";
+import { DispatchError } from "../errors.ts";
+import { type DeliveryPatch, openLog } from "../../store/log.ts";
+import type { FilePart, MessageEvent } from "../../types.ts";
 
 /** An agent reply as the anchor produces it: BARE address, service/connection on the
  *  envelope (routing is the service field now — no prefix, §3). */

@@ -1,11 +1,11 @@
 /**
- * connect/slack_connect.ts — `mu connect slack`: the PASTE door (DESIGN §4).
+ * connect/slack/connect.ts — `mu connect slack`: the PASTE door (DESIGN §4).
  *
  * The dashboard's "Install to Workspace" button IS an OAuth flow with Slack hosting the
  * redirect — so a dev can self-serve a user token (xoxp) with zero public surface: the
  * CLI prints the app-manifest prefill link, the dev creates + installs the app and pastes
  * the token back. The paste is the grant, and THE GRANT WRITES THE MAP — the same two
- * writes as the hosted oauth door (connect/slack_oauth.ts), from a different door:
+ * writes as the hosted oauth door (connect/slack/oauth.ts), from a different door:
  *
  *   auth.test(xoxp) → team + user (the paste never identifies the workspace; Slack does)
  *     → connections: the GRANT, OWNED — address `<team>:<user>` (a user grant is its own
@@ -19,10 +19,10 @@
  */
 
 import type { AuthTestResponse } from "@slack/web-api";
-import type { Appender } from "../store/log.ts";
-import type { Connections } from "../store/connections.ts";
-import type { Credentials } from "../store/credentials.ts";
-import type { Draft, MessageEvent } from "../types.ts";
+import type { Appender } from "../../store/log.ts";
+import type { Connections } from "../../store/connections.ts";
+import type { Credentials } from "../../store/credentials.ts";
+import type { Draft, MessageEvent } from "../../types.ts";
 
 export interface SlackConnectDeps {
   /** The registry name the pasted grant belongs to (v0: principal name = agent name). */
@@ -173,8 +173,8 @@ async function defaultAuthTest(token: string): Promise<AuthTestResponse> {
  *   deno task connect:slack      # prefill link → create + install → paste xoxp
  */
 if (import.meta.main) {
-  const { openLog } = await import("../store/log.ts");
-  const { openCredentials } = await import("../store/credentials.ts");
+  const { openLog } = await import("../../store/log.ts");
+  const { openCredentials } = await import("../../store/credentials.ts");
   const { userInfo } = await import("node:os");
 
   const dir = Deno.env.get("MU_DIR") ?? "./data";

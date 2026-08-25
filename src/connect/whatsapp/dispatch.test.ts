@@ -3,12 +3,12 @@ import {
   createWhatsAppDispatch,
   type WADispatchRecord,
   type WhatsAppDispatchDeps,
-} from "./whatsapp_dispatch.ts";
-import { externalId } from "./whatsapp.ts";
-import { DispatchError } from "./errors.ts";
-import type { DeliveryPatch, Subscriber } from "../store/log.ts";
-import type { Draft, Event, EventId, MessageEvent } from "../types.ts";
-import { newId } from "../store/id.ts";
+} from "./dispatch.ts";
+import { externalId } from "./ingest.ts";
+import { DispatchError } from "../errors.ts";
+import type { DeliveryPatch, Subscriber } from "../../store/log.ts";
+import type { Draft, Event, EventId, MessageEvent } from "../../types.ts";
+import { newId } from "../../store/id.ts";
 
 /** A hand-cranked subscription: capture the listener, push events by hand. */
 function fakeLog() {

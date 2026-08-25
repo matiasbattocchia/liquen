@@ -6,11 +6,11 @@ import {
   type WABatch,
   type WAMessage,
   type WhatsAppWebhookDeps,
-} from "./whatsapp.ts";
-import type { Draft, Event, MessageEvent } from "../types.ts";
-import { newId } from "../store/id.ts";
-import type { Appender } from "../store/log.ts";
-import type { ConnectionRow } from "../store/connections.ts";
+} from "./ingest.ts";
+import type { Draft, Event, MessageEvent } from "../../types.ts";
+import { newId } from "../../store/id.ts";
+import type { Appender } from "../../store/log.ts";
+import type { ConnectionRow } from "../../store/connections.ts";
 
 const TOKEN = "wa-s3cret";
 

@@ -1,9 +1,9 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { createSlackWebhook, type SlackWebhookDeps, type WebhookHandler } from "./slack.ts";
-import type { Draft, Event, MessageEvent } from "../types.ts";
-import { newId } from "../store/id.ts";
-import type { Appender } from "../store/log.ts";
-import type { ConnectionRow, MembershipRow } from "../store/connections.ts";
+import { createSlackWebhook, type SlackWebhookDeps, type WebhookHandler } from "./ingest.ts";
+import type { Draft, Event, MessageEvent } from "../../types.ts";
+import { newId } from "../../store/id.ts";
+import type { Appender } from "../../store/log.ts";
+import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
 
 const SECRET = "sl-s3cret";
 const enc = new TextEncoder();

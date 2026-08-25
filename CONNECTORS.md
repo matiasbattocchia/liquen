@@ -31,6 +31,31 @@ exactly one of them:
 
 Nothing below needs a sixth piece. What some of them need is **new state**, which is §2.
 
+### Where a connector lives — and the import contract
+
+A connector is a **standalone process over the org's substrate**: it reaches mu through
+`MU_DIR` and imports only the seam module, **`src/connector.ts`** — the log (`openLog`,
+`publish`, subscribe/`setDelivery`), the vault (`openCredentials`, the grant broker),
+`ensureOrgConfig`, the event types, and the dispatch error contract. A deep import from a
+connector is a contract violation, not a convenience.
+
+Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispatch.ts` ·
+`oauth.ts` · `connect.ts`):
+
+- **Shipped** — `src/connect/<service>/` (slack, google, whatsapp). Cross-service helpers
+  (`flavor.ts`, `mentions.ts`, `mirror.ts`, `errors.ts`, `status.ts`) live at
+  `src/connect/` root.
+- **Custom** — `connectors/<name>/` at the repo root, beside `src/`. Connectors are code
+  and ship with the image (MU_DIR is the volume — state only); an org's deployment is
+  the framework + `connectors/` + config, and a framework upgrade is a rebase that never
+  touches them. The **github** connector lives there as the living proof: it moved from
+  `src/connect/` by swapping places, imports nothing but the seam, and everything works —
+  the bar every custom connector inherits. Its config lands under `connections.<name>`
+  in the org catalog; its secrets in env/vault as ever.
+
+Tasks point at files (`deno task ingest:github` → `connectors/github/ingest.ts`); the
+future `mu connect <name>` resolves the shipped map first, then `connectors/<name>/connect.ts`.
+
 ## 2. The split that decides everything: pushed content vs. bare change signal
 
 - **Slack · WhatsApp · Teams · GitHub push the CONTENT.** Ingest maps and publishes. This
@@ -104,7 +129,7 @@ Its contract is already mu-shaped:
 - *"Phone-sent messages become outgoing rows"* **is** §4's coexistence case, already solved
   on their side.
 
-**Decision: run it as a sidecar; write `connect/whatsapp.ts` to satisfy its three
+**Decision: run it as a sidecar; write `connect/whatsapp/ingest.ts` to satisfy its three
 contracts.** The webhook batch → map → `publish` (the ingest half); mu's dispatch subscriber
 → `POST /dispatch` (the dispatch half); `mu connect whatsapp` → the session endpoints (the
 door). Ports work, not a rewrite. A Baileys/TS reimplementation trades the asset for

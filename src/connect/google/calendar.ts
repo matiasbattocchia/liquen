@@ -1,5 +1,5 @@
 /**
- * connect/google_webhook.ts — the Google ingest as a standalone service (open-bsp shape).
+ * connect/google/calendar.ts — the Google ingest as a standalone service (open-bsp shape).
  *
  * Sibling of `slack.ts`/`github.ts`/`whatsapp.ts`: world → log, its own process, publishing
  * into `$MU_DIR/log`. The name follows the ingest family (the `*-webhook` convention the
@@ -49,10 +49,10 @@
  * broker is already the one code path that touches the secret, and this runs beside it.
  */
 
-import type { Appender } from "../store/log.ts";
-import type { Credentials } from "../store/credentials.ts";
-import type { GrantBroker } from "../proxy/grants.ts";
-import type { Conversation, Draft, Json, MessageEvent } from "../types.ts";
+import type { Appender } from "../../store/log.ts";
+import type { Credentials } from "../../store/credentials.ts";
+import type { GrantBroker } from "../../proxy/grants.ts";
+import type { Conversation, Draft, Json, MessageEvent } from "../../types.ts";
 
 const SERVICE = "google" as const;
 const GRANT_PREFIX = "google:";
@@ -412,10 +412,10 @@ async function bootstrap(
  * file I/O. */
 if (import.meta.main) {
   const POLL_MS = 60_000;
-  const { openLog } = await import("../store/log.ts");
-  const { openCredentials } = await import("../store/credentials.ts");
-  const { createGrantBroker } = await import("../proxy/grants.ts");
-  const { ensureOrgConfig } = await import("../config.ts");
+  const { openLog } = await import("../../store/log.ts");
+  const { openCredentials } = await import("../../store/credentials.ts");
+  const { createGrantBroker } = await import("../../proxy/grants.ts");
+  const { ensureOrgConfig } = await import("../../config.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
   const calendars = (await ensureOrgConfig(dir)).connections.googleCalendars;
 

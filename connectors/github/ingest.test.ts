@@ -1,8 +1,7 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { createGithubWebhook, type WebhookHandler } from "./github.ts";
-import type { Draft, Event, MessageEvent } from "../types.ts";
-import { newId } from "../store/id.ts";
-import type { Appender } from "../store/log.ts";
+import { createGithubWebhook, type WebhookHandler } from "./ingest.ts";
+import type { Appender, Draft, Event, MessageEvent } from "../../src/connector.ts";
+import { newId } from "../../src/connector.ts";
 
 const SECRET = "s3cr3t";
 const enc = new TextEncoder();

@@ -8,8 +8,8 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { openLog } from "../store/log.ts";
-import type { Event, MessageEvent } from "../types.ts";
+import type { Event, MessageEvent } from "../../src/connector.ts";
+import { openLog } from "../../src/connector.ts";
 
 /** Grab a free port by binding :0 and releasing it (small race, fine for a test). */
 function freePort(): number {
@@ -42,7 +42,7 @@ async function waitReady(port: number, ms = 10_000): Promise<void> {
 Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in ANOTHER process", async () => {
   const dir = await Deno.makeTempDir();
   const port = freePort();
-  const script = new URL("./github.ts", import.meta.url).pathname; // absolute — cwd-independent
+  const script = new URL("./ingest.ts", import.meta.url).pathname; // absolute — cwd-independent
 
   // a subscriber in THIS process — exactly what `main` does — resolves on the first gh message
   const log = await openLog(`${dir}/log`);

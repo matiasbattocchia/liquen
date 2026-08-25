@@ -1,9 +1,9 @@
 import { assert, assertEquals } from "@std/assert";
-import { createGoogleWebhook } from "./google_webhook.ts";
-import { createGrantBroker } from "../proxy/grants.ts";
-import { openCredentials } from "../store/credentials.ts";
-import type { Appender } from "../store/log.ts";
-import type { DataPart, Draft, Event, MessageEvent } from "../types.ts";
+import { createGoogleWebhook } from "./calendar.ts";
+import { createGrantBroker } from "../../proxy/grants.ts";
+import { openCredentials } from "../../store/credentials.ts";
+import type { Appender } from "../../store/log.ts";
+import type { DataPart, Draft, Event, MessageEvent } from "../../types.ts";
 
 const KEY = "google:ana@example.com";
 

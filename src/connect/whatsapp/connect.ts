@@ -1,5 +1,5 @@
 /**
- * connect/whatsapp_connect.ts — `mu connect whatsapp`: the PAIRING door (§4).
+ * connect/whatsapp/connect.ts — `mu connect whatsapp`: the PAIRING door (§4).
  *
  * The bridge (open-bsp-whatsmeow) owns the wire: `POST /sessions` starts a pairing and
  * `GET /sessions/pending/{id}` is polled while WhatsApp rotates QR codes (~20s each) —
@@ -22,10 +22,10 @@
  * even when the ingest webhook isn't up yet.
  */
 
-import type { Appender } from "../store/log.ts";
-import type { Connections } from "../store/connections.ts";
-import type { Draft, MessageEvent } from "../types.ts";
-import { SERVICE } from "./whatsapp.ts";
+import type { Appender } from "../../store/log.ts";
+import type { Connections } from "../../store/connections.ts";
+import type { Draft, MessageEvent } from "../../types.ts";
+import { SERVICE } from "./ingest.ts";
 
 /** The bridge's pairing poll response (sessions.go `PairingState`) — verbatim. */
 export interface WAPairingState {
@@ -150,7 +150,7 @@ export async function connectWhatsApp(
  * Env: MU_DIR · WA_BRIDGE_URL (default http://localhost:8081) · WA_BRIDGE_TOKEN ·
  *      WA_ORG (default mu) · WA_PHONE. */
 if (import.meta.main) {
-  const { openLog } = await import("../store/log.ts");
+  const { openLog } = await import("../../store/log.ts");
   const { userInfo } = await import("node:os");
   const qrcode = (await import("qrcode-terminal")).default;
 

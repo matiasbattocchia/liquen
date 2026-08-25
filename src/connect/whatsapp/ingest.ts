@@ -1,5 +1,5 @@
 /**
- * connect/whatsapp.ts — the WhatsApp ingest: the OpenBSP-side of the whatsmeow BRIDGE.
+ * connect/whatsapp/ingest.ts — the WhatsApp ingest: the OpenBSP-side of the whatsmeow BRIDGE.
  *
  * The bridge (open-bsp-whatsmeow, a Go sidecar wrapping whatsmeow) owns the wire — Signal
  * session, pairing, media crypto — and POSTs OpenBSP-shaped webhook batches at us. This
@@ -36,8 +36,8 @@
  * and the content stays auditable (§3).
  */
 
-import type { Appender } from "../store/log.ts";
-import type { Connections } from "../store/connections.ts";
+import type { Appender } from "../../store/log.ts";
+import type { Connections } from "../../store/connections.ts";
 import type {
   Conversation,
   DataPart,
@@ -49,7 +49,7 @@ import type {
   MessageEvent,
   Part,
   Payload,
-} from "../types.ts";
+} from "../../types.ts";
 
 /* ── the bridge's wire shapes (openbsp.go is the source of truth — the bridge's own
  *    contract, not a platform API, so hand-rolled here is honest) ─────────────────── */
@@ -562,8 +562,8 @@ function json(status: number, body: unknown): Response {
  *
  * Env: MU_DIR · WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN) · PORT. */
 if (import.meta.main) {
-  const { openLog } = await import("../store/log.ts");
-  const { saveMedia } = await import("../store/media.ts");
+  const { openLog } = await import("../../store/log.ts");
+  const { saveMedia } = await import("../../store/media.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
   const log = await openLog(`${dir}/log`);
 

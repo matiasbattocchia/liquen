@@ -882,7 +882,7 @@ The 3×2 grid, each cell real and distinct:
   devs expect (Claude-Code MCP logins likewise): a `mu connect <service>` flow writes the
   connection row + vault rows; the same flow is later steerable through the agent (§8
   conversational setup), since the REPL into the mind is already the operator console.
-  **The paste door (landed 2026-08-12, `connect/slack_connect.ts`)**: the dashboard's
+  **The paste door (landed 2026-08-12, `connect/slack/connect.ts`)**: the dashboard's
   "Install to Workspace" button IS an OAuth flow with Slack hosting the redirect, so a
   dev self-serves tokens with zero public surface — the CLI prints the manifest prefill
   link (app creation and app-level tokens have no public API; the link is the automation
@@ -1107,7 +1107,7 @@ flow with the text as the share comment, and external links join the text as lin
 
 **Audio becomes text by PROCESSOR** (the Messages API has no audio input, and a voice
 note's words belong in the log — durable, searchable, cheap). A processor is a broker-side
-log listener like the mirror (`connect/transcribe.ts`, composed by main): connector-neutral
+log listener like the mirror (`exec/transcribe.ts`, composed by main): connector-neutral
 — by the time audio is an event, its origin doesn't matter — and its model is a SHELL
 COMMAND from the org catalog (`processors.audio`: bytes on stdin → text on stdout), so the
 implementation is swappable without touching the harness; the repo ships
@@ -2028,10 +2028,18 @@ principal is the **OS username**, trusted because localhost; when `agents/<usern
 exists (auto-created on first run), principal name = agent name and **no identity map is
 needed** — and when they share user/pass, user and agent are one (the vision line). Later:
 N:M principals↔agents, and autonomous agents (no one holds the pass but the agent).
+**The same framework way extends to connectors**: the shipped ones live in
+`src/connect/<service>/` (role-named files: `ingest.ts` · `dispatch.ts` · `oauth.ts` ·
+`connect.ts`, each optional); an org's own live in **`connectors/<name>/`** at the repo
+root — code ships with the image, `MU_DIR` is the volume and carries state only. Both
+import one seam module, `src/connector.ts` (log, vault, broker, config, types); the
+contract and the per-service map are CONNECTORS.md. The github connector lives in
+`connectors/` as the reference: a custom connector is a swap of places, nothing more.
 **The same framework way extends to settings — the catalog** (`src/config.ts`): every
-harness knob, its default, one file exposing them all. `org/config.jsonc` carries three
+harness knob, its default, one file exposing them all. `org/config.jsonc` carries five
 sections, split by AUDIENCE — `organization` (org-wide facts, set there and nowhere else:
-backlogHours), `agent` (every agent's defaults, the section an agent's own file
+backlogHours), `processors` (media→text commands, §5), `connections` (the knobs the
+standalone connector services read), `agent` (every agent's defaults, the section an agent's own file
 re-declares: model · effort · maxTokens · provider · timezone · locale · rules · the
 attention knobs) and `system` (harness machinery: stopTimeoutMs · lockTtlMs ·
 retryDelaysMs · compactAt · keepRecent · windowLimit · mirrorSettleMs · mirrorClaimMs ·

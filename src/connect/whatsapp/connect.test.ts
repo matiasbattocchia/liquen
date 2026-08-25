@@ -4,11 +4,11 @@ import {
   type WABridgeSessions,
   type WAPairingState,
   type WhatsAppConnectDeps,
-} from "./whatsapp_connect.ts";
-import type { Appender } from "../store/log.ts";
-import type { ConnectionRow, MembershipRow } from "../store/connections.ts";
-import type { Draft, Event, MessageEvent } from "../types.ts";
-import { newId } from "../store/id.ts";
+} from "./connect.ts";
+import type { Appender } from "../../store/log.ts";
+import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
+import type { Draft, Event, MessageEvent } from "../../types.ts";
+import { newId } from "../../store/id.ts";
 
 /** A scripted bridge: `create` answers the first state, each `pending` poll the next. */
 function fakeBridge(first: WAPairingState, ...polls: WAPairingState[]) {

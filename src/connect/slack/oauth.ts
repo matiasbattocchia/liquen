@@ -1,8 +1,8 @@
 /**
- * connect/slack_oauth.ts — the Slack OAuth surface of the connection (DESIGN §4, §9).
+ * connect/slack/oauth.ts — the Slack OAuth surface of the connection (DESIGN §4, §9).
  *
  * Two routes, one portable handler (`(Request) => Response`, deps injected — the same
- * open-bsp function shape as connect/github.ts):
+ * open-bsp function shape as the github connector's ingest.ts):
  *
  *   GET /start     mint a one-time `state` → 302 to Slack's consent screen. This is what
  *                  makes the SHARED link work: the admin distributes a stable URL; each
@@ -26,10 +26,10 @@
  */
 
 import type { OauthV2AccessResponse } from "@slack/web-api";
-import type { Appender } from "../store/log.ts";
-import type { Connections } from "../store/connections.ts";
-import type { Credentials } from "../store/credentials.ts";
-import type { Draft, MessageEvent } from "../types.ts";
+import type { Appender } from "../../store/log.ts";
+import type { Connections } from "../../store/connections.ts";
+import type { Credentials } from "../../store/credentials.ts";
+import type { Draft, MessageEvent } from "../../types.ts";
 
 export interface SlackOAuthConfig {
   clientId: string;
@@ -202,8 +202,8 @@ function text(status: number, message: string): Response {
  * registration binds principals as `slack:<team>:<user>` until the identities map (v0.1)
  * refines it. */
 if (import.meta.main) {
-  const { openLog } = await import("../store/log.ts");
-  const { openCredentials } = await import("../store/credentials.ts");
+  const { openLog } = await import("../../store/log.ts");
+  const { openCredentials } = await import("../../store/credentials.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
   const port = Number(Deno.env.get("PORT") ?? 8790);
   const config: SlackOAuthConfig = {

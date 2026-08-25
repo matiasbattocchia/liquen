@@ -1,5 +1,5 @@
 /**
- * connect/github_dispatch.ts — the DISPATCH half of the GitHub connection (open-bsp).
+ * connectors/github/dispatch.ts — the DISPATCH half of the GitHub connection (open-bsp).
  *
  * The mirror of the ingest (github.ts): where ingest is world → log, dispatch is log → world.
  * It subscribes to the log, picks the agent's OUTBOUND sends on the github service
@@ -23,8 +23,13 @@
  * (`selfLogin`) is needed anywhere.
  */
 
-import type { DeliveryPatch, Subscriber } from "../store/log.ts";
-import type { Event, EventId, MessageEvent } from "../types.ts";
+import type {
+  DeliveryPatch,
+  Event,
+  EventId,
+  MessageEvent,
+  Subscriber,
+} from "../../src/connector.ts";
 
 export interface GhTarget {
   owner: string;
@@ -133,7 +138,7 @@ const ghPost: GhPost = async ({ owner, repo, number }, text) => {
 };
 
 if (import.meta.main) {
-  const { openLog } = await import("../store/log.ts");
+  const { openLog } = await import("../../src/connector.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
   const log = await openLog(`${dir}/log`);
   createGithubDispatch({

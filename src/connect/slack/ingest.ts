@@ -1,5 +1,5 @@
 /**
- * connect/slack.ts — the Slack ingest as a portable webhook FUNCTION (open-bsp shape).
+ * connect/slack/ingest.ts — the Slack ingest as a portable webhook FUNCTION (open-bsp shape).
  *
  * Canonically an **Events API webhook**: `(Request) => Response` — url_verification
  * challenge, signing-secret verification, event_callback → map → publish. That is the
@@ -38,10 +38,10 @@
  */
 
 import type { MemberJoinedChannelEvent, MemberLeftChannelEvent, SlackEvent } from "@slack/types";
-import type { Appender } from "../store/log.ts";
-import type { Connections } from "../store/connections.ts";
-import type { Conversation, Draft, FilePart, MessageEvent, Part } from "../types.ts";
-import { fromSlack } from "./flavor.ts";
+import type { Appender } from "../../store/log.ts";
+import type { Connections } from "../../store/connections.ts";
+import type { Conversation, Draft, FilePart, MessageEvent, Part } from "../../types.ts";
+import { fromSlack } from "../flavor.ts";
 
 /** The wire's file attachment — only the fields the media seam reads. */
 export interface SlackFileRef {
@@ -593,9 +593,9 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => vo
  *
  * Env: MU_DIR · SLACK_APP_TOKEN (socket mode) · SLACK_SIGNING_SECRET (HTTP mode) · PORT. */
 if (import.meta.main) {
-  const { openLog } = await import("../store/log.ts");
-  const { openCredentials } = await import("../store/credentials.ts");
-  const { kindOf, saveMedia } = await import("../store/media.ts");
+  const { openLog } = await import("../../store/log.ts");
+  const { openCredentials } = await import("../../store/credentials.ts");
+  const { kindOf, saveMedia } = await import("../../store/media.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);

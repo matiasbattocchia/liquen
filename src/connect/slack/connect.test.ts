@@ -5,12 +5,12 @@
  */
 
 import { assertEquals, assertRejects } from "@std/assert";
-import { connectSlackUser, manifestUrl, userManifest } from "./slack_connect.ts";
-import type { ConnectionRow, MembershipRow } from "../store/connections.ts";
-import type { CredentialRow } from "../store/credentials.ts";
-import type { Appender } from "../store/log.ts";
-import type { Draft, Event } from "../types.ts";
-import { newId } from "../store/id.ts";
+import { connectSlackUser, manifestUrl, userManifest } from "./connect.ts";
+import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
+import type { CredentialRow } from "../../store/credentials.ts";
+import type { Appender } from "../../store/log.ts";
+import type { Draft, Event } from "../../types.ts";
+import { newId } from "../../store/id.ts";
 
 function harness() {
   const connections: ConnectionRow[] = [];

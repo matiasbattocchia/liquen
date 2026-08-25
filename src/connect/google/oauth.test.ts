@@ -1,10 +1,10 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { createGoogleOAuth, type GoogleTokens } from "./google_oauth.ts";
-import { openCredentials } from "../store/credentials.ts";
-import type { Draft, Event } from "../types.ts";
-import { newId } from "../store/id.ts";
-import type { Appender } from "../store/log.ts";
-import type { ConnectionRow, MembershipRow } from "../store/connections.ts";
+import { createGoogleOAuth, type GoogleTokens } from "./oauth.ts";
+import { openCredentials } from "../../store/credentials.ts";
+import type { Draft, Event } from "../../types.ts";
+import { newId } from "../../store/id.ts";
+import type { Appender } from "../../store/log.ts";
+import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
 
 const CONFIG = {
   clientId: "cid",

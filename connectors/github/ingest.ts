@@ -1,5 +1,5 @@
 /**
- * connect/github.ts — the GitHub ingest as a portable webhook FUNCTION (open-bsp shape).
+ * connectors/github/ingest.ts — the GitHub ingest as a portable webhook FUNCTION (open-bsp shape).
  *
  * ONE handler, `(Request) => Response`, built from Web-standard APIs only
  * (`Request`/`Response`/`crypto.subtle`). Everything it needs is INJECTED — the log `publish`,
@@ -18,8 +18,7 @@
  * that can write to GitHub — it only reads the shared webhook secret and writes to the log.
  */
 
-import type { Appender } from "../store/log.ts";
-import type { Draft, MessageEvent } from "../types.ts";
+import type { Appender, Draft, MessageEvent } from "../../src/connector.ts";
 
 export interface GithubWebhookDeps {
   /** → the EventLog (the connection's only write). Bind mu's `log.publish`. */
@@ -264,7 +263,7 @@ function text(status: number, message: string): Response {
  * MU_DIR (default ./data) · GITHUB_WEBHOOK_SECRET · PORT. The store import is dynamic so
  * importing `createGithubWebhook` (e.g. from an edge function) never pulls in file I/O. */
 if (import.meta.main) {
-  const { openLog } = await import("../store/log.ts");
+  const { openLog } = await import("../../src/connector.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
   const port = Number(Deno.env.get("PORT") ?? 8788);
   const secret = Deno.env.get("GITHUB_WEBHOOK_SECRET") || undefined;

@@ -1,5 +1,5 @@
 /**
- * connect/whatsapp_dispatch.ts — the DISPATCH half of the WhatsApp connection.
+ * connect/whatsapp/dispatch.ts — the DISPATCH half of the WhatsApp connection.
  *
  * The mirror of the ingest (whatsapp.ts): log → world, through the whatsmeow BRIDGE's
  * `POST /dispatch` (server.go). Subscribes, picks the agent's outbound sends on the
@@ -23,13 +23,20 @@
  * `error_code` = the HTTP status, so a retrier can read the class off the log.
  */
 
-import { isExternal } from "../store/media.ts";
-import { DispatchError, failedStatus } from "./errors.ts";
-import type { DeliveryPatch, Subscriber } from "../store/log.ts";
-import type { Event, EventId, FilePart, MessageEvent, ReactionPart, TextPart } from "../types.ts";
-import { externalId, SERVICE, type WAContent } from "./whatsapp.ts";
-import { type Directory, whatsappMentions } from "./mentions.ts";
-import { toWhatsApp } from "./flavor.ts";
+import { isExternal } from "../../store/media.ts";
+import { DispatchError, failedStatus } from "../errors.ts";
+import type { DeliveryPatch, Subscriber } from "../../store/log.ts";
+import type {
+  Event,
+  EventId,
+  FilePart,
+  MessageEvent,
+  ReactionPart,
+  TextPart,
+} from "../../types.ts";
+import { externalId, SERVICE, type WAContent } from "./ingest.ts";
+import { type Directory, whatsappMentions } from "../mentions.ts";
+import { toWhatsApp } from "../flavor.ts";
 
 /** The bridge's dispatch request (server.go `dispatchRequest`) — record verbatim. */
 export interface WADispatchRecord {
@@ -258,8 +265,8 @@ function urlFor(c: WAContent, mediaUrl?: WAMediaUrl): Promise<string | undefined
  *      WA_MEDIA_PORT (default 8792) · WA_MEDIA_HOST (what the bridge dials; default
  *      localhost — set it when the bridge runs in a container). */
 if (import.meta.main) {
-  const { openLog } = await import("../store/log.ts");
-  const { mimeOf, pathOf } = await import("../store/media.ts");
+  const { openLog } = await import("../../store/log.ts");
+  const { mimeOf, pathOf } = await import("../../store/media.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
   const log = await openLog(`${dir}/log`);
   const base = Deno.env.get("WA_BRIDGE_URL") ?? "http://localhost:8081";
@@ -305,7 +312,7 @@ if (import.meta.main) {
     return out.external_id;
   };
 
-  const { logDirectory } = await import("./mentions.ts");
+  const { logDirectory } = await import("../mentions.ts");
   createWhatsAppDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     send,

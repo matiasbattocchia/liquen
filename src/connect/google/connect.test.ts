@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { APP_PREFIX, connectGoogleApp, pickGoogleApp } from "./google_connect.ts";
-import { openCredentials } from "../store/credentials.ts";
+import { APP_PREFIX, connectGoogleApp, pickGoogleApp } from "./connect.ts";
+import { openCredentials } from "../../store/credentials.ts";
 
 async function withVault(
   fn: (creds: Awaited<ReturnType<typeof openCredentials>>) => Promise<void>,

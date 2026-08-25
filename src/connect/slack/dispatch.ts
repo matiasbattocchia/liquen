@@ -1,5 +1,5 @@
 /**
- * connect/slack_dispatch.ts — the DISPATCH half of the Slack connection (open-bsp).
+ * connect/slack/dispatch.ts — the DISPATCH half of the Slack connection (open-bsp).
  *
  * The mirror of the ingest (slack.ts): log → world. Subscribes, picks the agent's OUTBOUND
  * sends on the slack service, posts them, and backfills the
@@ -19,12 +19,12 @@
  */
 
 import type { ChatPostMessageResponse } from "@slack/web-api";
-import { isExternal, pathOf } from "../store/media.ts";
-import { DispatchError, failedStatus } from "./errors.ts";
-import type { DeliveryPatch, Subscriber } from "../store/log.ts";
-import type { Event, EventId, FilePart, MessageEvent } from "../types.ts";
-import { type Directory, encodeSlackText } from "./mentions.ts";
-import { toSlack } from "./flavor.ts";
+import { isExternal, pathOf } from "../../store/media.ts";
+import { DispatchError, failedStatus } from "../errors.ts";
+import type { DeliveryPatch, Subscriber } from "../../store/log.ts";
+import type { Event, EventId, FilePart, MessageEvent } from "../../types.ts";
+import { type Directory, encodeSlackText } from "../mentions.ts";
+import { toSlack } from "../flavor.ts";
 
 export interface SlackTarget {
   connection: string; // the workspace the conversation anchors to (§4)
@@ -287,8 +287,8 @@ function textOf(e: Event): string {
 /* ── local entry: `post` = chat.postMessage with the workspace bot token ──────────────── */
 
 if (import.meta.main) {
-  const { openLog } = await import("../store/log.ts");
-  const { openCredentials } = await import("../store/credentials.ts");
+  const { openLog } = await import("../../store/log.ts");
+  const { openCredentials } = await import("../../store/credentials.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
@@ -418,7 +418,7 @@ if (import.meta.main) {
     if (!out.ok) throw new DispatchError(`${method}: ${out.error}`, slackErrorCode(out.error));
   };
 
-  const { logDirectory } = await import("./mentions.ts");
+  const { logDirectory } = await import("../mentions.ts");
   createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     post,

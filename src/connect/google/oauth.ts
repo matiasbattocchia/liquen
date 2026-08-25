@@ -1,8 +1,8 @@
 /**
- * connect/google_oauth.ts — the Google OAuth surface of the connection (DESIGN §4, §9).
+ * connect/google/oauth.ts — the Google OAuth surface of the connection (DESIGN §4, §9).
  *
  * Two routes, one portable handler (`(Request) => Response`, deps injected — the same
- * shape as connect/slack_oauth.ts):
+ * shape as connect/slack/oauth.ts):
  *
  *   GET /start     mint a one-time `state` → 302 to Google's consent screen. Unlike the
  *                  Slack door (a shared admin link; Slack verifies who clicked), this
@@ -33,10 +33,10 @@
  * them through a real proxy (cloudflared in dev, an edge function in prod).
  */
 
-import type { Appender } from "../store/log.ts";
-import type { Connections } from "../store/connections.ts";
-import type { Credentials } from "../store/credentials.ts";
-import type { Draft, MessageEvent } from "../types.ts";
+import type { Appender } from "../../store/log.ts";
+import type { Connections } from "../../store/connections.ts";
+import type { Credentials } from "../../store/credentials.ts";
+import type { Draft, MessageEvent } from "../../types.ts";
 
 export interface GoogleOAuthConfig {
   clientId: string;
@@ -233,9 +233,9 @@ function text(status: number, message: string): Response {
  * among several. The redirect URI is the app row's `redirect_uri` sidecar (the hosted
  * callback), localhost when absent. Env: MU_DIR · PORT (platform convention). */
 if (import.meta.main) {
-  const { openLog } = await import("../store/log.ts");
-  const { openCredentials } = await import("../store/credentials.ts");
-  const { pickGoogleApp } = await import("./google_connect.ts");
+  const { openLog } = await import("../../store/log.ts");
+  const { openCredentials } = await import("../../store/credentials.ts");
+  const { pickGoogleApp } = await import("./connect.ts");
   const dir = Deno.env.get("MU_DIR") ?? "./data";
   const port = Number(Deno.env.get("PORT") ?? 8791);
   const creds = await openCredentials(dir);
