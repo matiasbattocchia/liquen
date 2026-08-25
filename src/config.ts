@@ -317,11 +317,51 @@ function defaults(): OrgConfig {
   return cfg as unknown as OrgConfig;
 }
 
+/** A connector subsection's comments as the file already carries them: the lines above the
+ *  subsection, and above each of its keys. Harvested so a writer that knows only ONE spec
+ *  still rewrites the others' annotations instead of stripping them. */
+type Notes = Record<string, { doc: string[]; keys: Record<string, string[]> }>;
+
+/** Read back the `connections` comments from the file on disk. Line-oriented on purpose:
+ *  the parser drops comments, and the only text we must reproduce is the `//` runs the
+ *  writer itself emitted. Anything it cannot place (a key whose value spans lines, say)
+ *  simply keeps no note — never an error, the file is the user's to shape. */
+function harvest(raw: string): Notes {
+  const notes: Notes = {};
+  let depth = 0, inConnections = false, section: string | null = null;
+  let pending: string[] = [];
+  for (const line of raw.split("\n")) {
+    const text = line.trim();
+    if (text.startsWith("//")) {
+      pending.push(text.slice(2).trim());
+      continue;
+    }
+    const open = text.match(/^"([^"]+)"\s*:\s*\{/);
+    if (depth === 1 && open?.[1] === "connections") inConnections = true;
+    else if (inConnections && depth === 2 && open) {
+      section = open[1];
+      notes[section] = { doc: pending, keys: {} };
+    } else if (section && depth === 3) {
+      const key = text.match(/^"([^"]+)"\s*:/)?.[1];
+      if (key && pending.length > 0) notes[section].keys[key] = pending;
+    }
+    depth += (text.match(/\{/g)?.length ?? 0) - (text.match(/\}/g)?.length ?? 0);
+    if (depth <= 2) section = null;
+    if (depth <= 1) inConnections = false;
+    pending = [];
+  }
+  return notes;
+}
+
 /** Render the file: the user's values (or the defaults), the catalog's comments. The
  *  `connections` subsections re-emit verbatim — with THEIR catalog's comments when the
- *  writer knows it (`known`, the healing connector's spec), bare values otherwise (each
- *  connector re-annotates its own subsection the next time it heals). */
-function materialize(cfg: OrgConfig, known: Record<string, ConnectorSpec> = {}): string {
+ *  writer knows it (`known`, the healing connector's spec), else with the comments the
+ *  file already had (`notes`), so one connector's heal never strips another's. */
+function materialize(
+  cfg: OrgConfig,
+  known: Record<string, ConnectorSpec> = {},
+  notes: Notes = {},
+): string {
   const lines: string[] = [
     "// config.jsonc — every harness knob (the catalog, DESIGN §9).",
     "// Values are yours to edit; when the catalog grows the file is regenerated with the",
@@ -345,12 +385,13 @@ function materialize(cfg: OrgConfig, known: Record<string, ConnectorSpec> = {}):
   names.forEach((name, i) => {
     const body = cfg.connections[name];
     const spec = known[name];
-    if (spec) lines.push(`    // ${spec.doc}`);
+    const note = notes[name];
+    for (const doc of spec ? [spec.doc] : note?.doc ?? []) lines.push(`    // ${doc}`);
     lines.push(`    "${name}": {`);
     const keys = spec ? spec.entries.map((e) => e.key) : Object.keys(body);
     keys.forEach((key, j) => {
-      const doc = spec?.entries.find((e) => e.key === key)?.doc;
-      if (doc) lines.push(`      // ${doc}`);
+      const entry = spec?.entries.find((e) => e.key === key)?.doc;
+      for (const doc of entry ? [entry] : note?.keys[key] ?? []) lines.push(`      // ${doc}`);
       lines.push(`      "${key}": ${JSON.stringify(body[key])}${j < keys.length - 1 ? "," : ""}`);
     });
     lines.push(`    }${i < names.length - 1 ? "," : ""}`);
@@ -409,7 +450,7 @@ export async function ensureOrgConfig(dir: string): Promise<OrgConfig> {
   const cfg = merged as unknown as OrgConfig;
   validateOrg(cfg, path);
   if (missing.length > 0) {
-    await Deno.writeTextFile(path, materialize(cfg));
+    await Deno.writeTextFile(path, materialize(cfg, {}, harvest(raw)));
     console.error(`[config] ${path}: appended ${missing.join(", ")} (the catalog grew)`);
   }
   return cfg;
@@ -446,7 +487,9 @@ export async function ensureConnectorConfig<T extends object>(
   }
   if (missing.length > 0) {
     cfg.connections[spec.name] = merged;
-    await Deno.writeTextFile(path, materialize(cfg, { [spec.name]: spec }));
+    // the file `ensureOrgConfig` just guaranteed — the other connectors' comments live there
+    const notes = harvest(await Deno.readTextFile(path));
+    await Deno.writeTextFile(path, materialize(cfg, { [spec.name]: spec }, notes));
     console.error(`[config] ${path}: appended ${missing.join(", ")} (the catalog grew)`);
   }
   return merged as unknown as T;

@@ -947,6 +947,12 @@ else the SDK's own chain). Also promoted while auditing: bash's tool timeout bec
 `system.bashTimeoutMs`. The one tracked exception left: task.ts's `MU_*` env vars,
 pending the task-mode redesign.
 
+A heal rewrites the WHOLE file while the writer holds only one connector's spec, so the
+comments of every other subsection are read back off the file first (`harvest`, a line
+scanner over the `connections` block) and re-emitted verbatim. Only the healing connector's
+own annotations come from its spec — the catalog's word on its own knobs. Notes a human
+wrote on a subsection no connector claims survive the same way.
+
 ### Outbound media: one door in, and mu stopped stating its own address (2026-08-25) — LANDED
 
 Found by asking why a `mediaHost` knob existed at all. Inbound media is **pushed** to us

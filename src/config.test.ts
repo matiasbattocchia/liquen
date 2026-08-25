@@ -83,6 +83,39 @@ Deno.test("main preserves subsections it does not know; a foreign heal keeps the
   });
 });
 
+Deno.test("one connector's heal keeps the OTHER connectors' comments", async () => {
+  await withDir(async (dir) => {
+    const OTHER: ConnectorSpec = {
+      name: "zed",
+      doc: "zed — another test connector",
+      entries: [{ key: "url", value: "http://localhost:1", doc: "where zed lives" }],
+    };
+    await ensureConnectorConfig(dir, SPEC);
+    await ensureConnectorConfig(dir, OTHER); // rewrites the file knowing only zed's spec
+    const raw = await Deno.readTextFile(`${dir}/config.jsonc`);
+    for (
+      const comment of [
+        "// acme — a test connector",
+        "// the port",
+        "// the things",
+        "// zed — another test connector",
+        "// where zed lives",
+      ]
+    ) assert(raw.includes(comment), `${comment} survived`);
+    // and a hand-written note on a subsection no connector claims survives main's heal too
+    await Deno.writeTextFile(
+      `${dir}/config.jsonc`,
+      raw.replace('    "acme": {', '    // mine, hands off\n    "acme": {')
+        .replace(/\n *"stopTimeoutMs": \d+,/, ""), // now missing — main will rewrite the file
+    );
+    const org = await ensureOrgConfig(dir);
+    assertEquals(org.system.stopTimeoutMs, 5000, "the dropped key healed back");
+    const after = await Deno.readTextFile(`${dir}/config.jsonc`);
+    assert(after.includes("// mine, hands off"), "the hand-written note survived");
+    assert(after.includes("// where zed lives"), "and so did the catalog's");
+  });
+});
+
 Deno.test("a connections subsection that is not an object is a boot error", async () => {
   await withDir(async (dir) => {
     await Deno.writeTextFile(
