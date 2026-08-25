@@ -88,6 +88,93 @@ Deno.test("github: a signed issue_comment maps to a message in owner/repo#N", as
   assertEquals((m.extra?.github as { delivery: string }).delivery, "d1");
 });
 
+Deno.test("github: structure rides `data`, the human's words ride `text` (§5)", async () => {
+  const { handler, published } = harness();
+  const post = async (event: string, payload: unknown) => {
+    const body = JSON.stringify(payload);
+    await handler(
+      new Request("http://localhost/", {
+        method: "POST",
+        body,
+        headers: {
+          "x-github-event": event,
+          "x-github-delivery": crypto.randomUUID(),
+          "x-hub-signature-256": await sign(body),
+        },
+      }),
+    );
+    return (published.at(-1) as MessageEvent).parts[0];
+  };
+  const repo = { full_name: "ana/widgets" };
+
+  // a plain comment is prose all the way down — a text part, rendering as a bare <msg>
+  assertEquals(await post("issue_comment", issueComment()), {
+    type: "text",
+    kind: "text",
+    text: "can you look at this?",
+  });
+
+  // a review: the verdict is structure, the words are the reviewer's
+  assertEquals(
+    await post("pull_request_review", {
+      action: "submitted",
+      repository: repo,
+      pull_request: { number: 5 },
+      review: { id: 9, state: "approved", body: "LGTM" },
+      sender: { login: "ana" },
+    }),
+    { type: "data", kind: "review", data: { state: "approved" }, text: "LGTM" },
+  );
+
+  // an approval with NO words is still a whole event: data only, no empty text
+  assertEquals(
+    await post("pull_request_review", {
+      action: "submitted",
+      repository: repo,
+      pull_request: { number: 5 },
+      review: { id: 10, state: "approved" },
+      sender: { login: "ana" },
+    }),
+    { type: "data", kind: "review", data: { state: "approved" } },
+  );
+
+  // a code comment: where it hangs is structure, the remark is prose
+  assertEquals(
+    await post("pull_request_review_comment", {
+      action: "created",
+      repository: repo,
+      pull_request: { number: 5 },
+      comment: { id: 11, path: "src/render.ts", line: 88, body: "why not X?" },
+      sender: { login: "ana" },
+    }),
+    {
+      type: "data",
+      kind: "review_comment",
+      data: { path: "src/render.ts", line: 88 },
+      text: "why not X?",
+    },
+  );
+
+  // a PR: only what the conversation can't say — opened ≠ reopened. The number and title are
+  // the conversation's address and name; repeating them here would say them twice.
+  const pr = await post("pull_request", {
+    action: "reopened",
+    repository: repo,
+    pull_request: { number: 5, title: "Fix login", body: "the description" },
+    sender: { login: "ana" },
+  });
+  assertEquals(pr, {
+    type: "data",
+    kind: "pr",
+    data: { state: "reopened" },
+    text: "the description",
+  });
+  assertEquals((published.at(-1) as MessageEvent).envelope.conversation, {
+    address: "ana/widgets#5",
+    name: "Fix login",
+  });
+});
+
 Deno.test("github: a bad signature is rejected before the log (401, nothing published)", async () => {
   const { handler, published } = harness();
   const res = await handler(req("issue_comment", issueComment(), { sig: "sha256=deadbeef" }));

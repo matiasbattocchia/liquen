@@ -854,30 +854,40 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
   return { sql: `SELECT * FROM events ${clause} ORDER BY id ASC`, params };
 }
 
-/** The search column: every part's `text`, plus — on MESSAGE events — the string leaves of
- *  each data part's `data`. Null for events with no text. */
+/** The search column (§6) — every part's words, part by part, one rule per part TYPE:
+ *    text   its `text`
+ *    file   the file's `name` (the wire's filename), then the caption in `text`
+ *    data   the textual leaves of `data` (values kept, keys dropped), then its `text`
+ *  Nothing is indexed twice: what a connector puts in `data` it does not repeat in `text`
+ *  (a calendar event's description, a PR's body — prose is the part's `text`, structure is
+ *  its `data`). Filtering on `type === "text"` once left every WhatsApp caption out — 5,419
+ *  file rows, none of them findable.
+ *
+ *  MESSAGES only: the column exists for `search`, and search reads messages (xi passes
+ *  `types: ["message"]`). A tool call's arguments and a thinking block's signature are
+ *  machinery, not words anyone looks for — indexing them would only bloat the column. */
 function textOf(event: Draft): string | null {
+  if (event.type !== "message") return null;
   const parts = (event as { parts?: unknown }).parts;
   if (!Array.isArray(parts)) return null;
-  // ANY part's `text`, not only a TextPart's: a caption rides `FilePart.text` and a data
-  // part may describe itself the same way. Filtering on `type === "text"` left every
-  // WhatsApp caption out of the search column — 5,419 file rows, none of them findable.
-  const texts = parts
-    .map((p) => (p as { text?: unknown }).text)
-    .filter((x): x is string => typeof x === "string" && x.length > 0);
-  // A world data part (a calendar event, shared contacts) is findable by its content:
-  // connectors prune `data` at ingest, so its string leaves are clean search terms. Message
-  // events only — a tool_use's arguments or a thinking part's signature are not search text.
-  if (event.type === "message") {
-    for (const p of parts) {
-      const part = p as { type?: unknown; data?: unknown };
-      if (part.type === "data") stringLeaves(part.data, texts);
-    }
+  const texts: string[] = [];
+  for (const p of parts) {
+    const part = p as {
+      type?: unknown;
+      text?: unknown;
+      file?: { name?: unknown };
+      data?: unknown;
+    };
+    if (part.type === "file" && typeof part.file?.name === "string") texts.push(part.file.name);
+    if (part.type === "data") stringLeaves(part.data, texts);
+    if (typeof part.text === "string" && part.text.length > 0) texts.push(part.text);
   }
   const t = texts.join(" ");
   return t.length ? t : null;
 }
 
+/** A json object's textual VALUES, keys dropped, nesting traversed — a pruned `data` is
+ *  clean search terms (a title, a place, an invitee's name) by the time it reaches here. */
 function stringLeaves(v: unknown, out: string[]): void {
   if (typeof v === "string") {
     if (v.length) out.push(v);

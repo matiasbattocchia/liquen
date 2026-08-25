@@ -131,16 +131,15 @@ Deno.test("a new event is a create: a plain calendar message keyed on the stable
     assertEquals(row.agent, undefined); // harness-derived: never dispatched
     const part = row.parts[0] as CalendarPart;
     assertEquals(part.kind, "calendar");
-    assertEquals(part.text, undefined); // no prose — `data` IS the content
+    assertEquals(part.text, "traer antiparras"); // the prose is the part's TEXT, not a data field
     assertEquals(part.data, {
       gid: "ev1",
       title: "Natación",
       start: "2026-08-24T18:00:00Z",
       end: "2026-08-24T19:00:00Z",
       loc: "Club Náutico",
-      description: "traer antiparras",
       invitees: [{ email: "luis@example.com", status: "needsAction" }],
-    }); // pruned: the wire's etag/iCalUID stopped at the connector
+    }); // pruned: the wire's etag/iCalUID stopped at the connector; the description is `text`
     assertEquals((await syncOf(creds))!.primary, "tok2"); // cursor moved
   });
 });

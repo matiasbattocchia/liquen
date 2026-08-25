@@ -130,14 +130,17 @@ export type ReactionPart = DataPart<"reaction", { name: string; unicode?: string
  *  a bare date meaning all-day (render's value rule turns datetimes into org-zone clocks);
  *  `status` is RFC 5545 PARTSTAT in camelCase — a connector whose wire speaks another
  *  vocabulary maps onto it. A delete's part is the bare `{gid}` handle, hence everything
- *  else optional. */
+ *  else optional.
+ *
+ *  The event's DESCRIPTION is not here: prose is the part's `text` (where it renders as the
+ *  element's body and reads as words, instead of escaped inside the `data` attribute), and
+ *  nothing a connector puts in `data` is repeated there. */
 export type CalendarData = {
   gid: string;
   title?: string;
   start?: string;
   end?: string;
   loc?: string;
-  description?: string;
   invitees?: {
     name?: string;
     email?: string;

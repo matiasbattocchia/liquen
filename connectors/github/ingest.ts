@@ -19,7 +19,7 @@
  */
 
 import { DEFAULT_EVENTS } from "./config.ts";
-import type { Appender, Draft, MessageEvent } from "../../src/connector.ts";
+import type { Appender, Draft, MessageEvent, Part } from "../../src/connector.ts";
 
 export interface GithubWebhookDeps {
   /** → the EventLog (the connection's only write). Bind mu's `log.publish`. */
@@ -100,7 +100,7 @@ function mapEvent(event: string, p: GhPayload, ctx: MapCtx): Draft<MessageEvent>
 
   const built = describe(event, p);
   if (!built || built.number === undefined) return null;
-  const { number, text: body, title, url } = built;
+  const { number, part, title, url } = built;
 
   return {
     ts: ctx.now(),
@@ -119,7 +119,7 @@ function mapEvent(event: string, p: GhPayload, ctx: MapCtx): Draft<MessageEvent>
         ? `gh:${built.externalId}`
         : `ghd:${ctx.delivery}`,
     },
-    parts: [{ type: "text", kind: "text", text: body }],
+    parts: [part],
     extra: {
       // the dispatch side reads extra.github to know WHERE and HOW to reply (§4)
       github: {
@@ -136,13 +136,23 @@ function mapEvent(event: string, p: GhPayload, ctx: MapCtx): Draft<MessageEvent>
 
 interface Built {
   number?: number;
-  text: string;
+  part: Part;
   title?: string;
   url?: string;
   externalId?: number; // the platform artifact id (comment/review), when the event maps to one
 }
 
-/** Per-event action filter + human-readable body. Only the actions worth waking on. */
+/** Per-event action filter + the PART the delivery becomes. Only the actions worth waking on.
+ *
+ *  The split every connector makes (§5): what a machine keys on is `data`, what a human wrote
+ *  is `text` — never the same words in both. A comment is pure prose, so it stays a text part
+ *  and renders as a plain `<msg>`; the rest carry a scrap of structure their prose can't say —
+ *  a review's verdict, the file a code comment hangs on, whether a PR was opened or reopened —
+ *  and render as their kind: `<review data="{state:'approved'}">LGTM</review>`.
+ *
+ *  What the ENVELOPE already carries is never repeated here: the repo and number are the
+ *  conversation's address (`ana/widgets#42`), the PR/issue title is its name, and the url and
+ *  wire action ride `extra.github` for dispatch. */
 function describe(event: string, p: GhPayload): Built | null {
   switch (event) {
     case "issue_comment": // fires for PR comments too (a PR is an issue)
@@ -150,25 +160,39 @@ function describe(event: string, p: GhPayload): Built | null {
       return {
         number: p.issue?.number,
         title: p.issue?.title,
-        text: p.comment?.body ?? "",
+        part: { type: "text", kind: "text", text: p.comment?.body ?? "" },
         url: p.comment?.html_url,
         externalId: p.comment?.id,
       };
-    case "pull_request_review_comment":
+    case "pull_request_review_comment": {
       if (p.action !== "created") return null;
+      // where it hangs is structure; the remark itself is prose
+      const anchor: Record<string, string | number> = {};
+      if (p.comment?.path) anchor.path = p.comment.path;
+      if (p.comment?.line !== undefined) anchor.line = p.comment.line;
       return {
         number: p.pull_request?.number,
-        text: p.comment?.path
-          ? `[review comment · ${p.comment.path}]\n${p.comment?.body ?? ""}`
-          : p.comment?.body ?? "",
+        part: {
+          type: "data",
+          kind: "review_comment",
+          data: anchor,
+          text: p.comment?.body ?? "",
+        },
         url: p.comment?.html_url,
         externalId: p.comment?.id,
       };
+    }
     case "pull_request_review":
       if (p.action !== "submitted") return null;
       return {
         number: p.pull_request?.number,
-        text: `[review: ${p.review?.state ?? "?"}]${p.review?.body ? `\n${p.review.body}` : ""}`,
+        // the verdict is the point — an approval with no words is a whole event
+        part: {
+          type: "data",
+          kind: "review",
+          data: { state: p.review?.state ?? "commented" },
+          ...(p.review?.body ? { text: p.review.body } : {}),
+        },
         url: p.review?.html_url,
         externalId: p.review?.id,
       };
@@ -177,9 +201,12 @@ function describe(event: string, p: GhPayload): Built | null {
       return {
         number: p.pull_request?.number ?? p.number,
         title: p.pull_request?.title,
-        text: `PR #${p.pull_request?.number ?? p.number} ${p.action}: ${
-          p.pull_request?.title ?? ""
-        }${p.pull_request?.body ? `\n\n${p.pull_request.body}` : ""}`,
+        part: {
+          type: "data",
+          kind: "pr",
+          data: { state: p.action! }, // opened ≠ reopened ≠ ready_for_review
+          ...(p.pull_request?.body ? { text: p.pull_request.body } : {}),
+        },
         url: p.pull_request?.html_url,
       };
     case "issues":
@@ -187,9 +214,12 @@ function describe(event: string, p: GhPayload): Built | null {
       return {
         number: p.issue?.number,
         title: p.issue?.title,
-        text: `Issue #${p.issue?.number} ${p.action}: ${p.issue?.title ?? ""}${
-          p.issue?.body ? `\n\n${p.issue.body}` : ""
-        }`,
+        part: {
+          type: "data",
+          kind: "issue",
+          data: { state: p.action! },
+          ...(p.issue?.body ? { text: p.issue.body } : {}),
+        },
         url: p.issue?.html_url,
       };
     default:
@@ -236,7 +266,7 @@ interface GhPayload {
   sender?: GhUser;
   issue?: { number?: number; title?: string; body?: string; html_url?: string };
   pull_request?: { number?: number; title?: string; body?: string; html_url?: string };
-  comment?: { id?: number; body?: string; path?: string; html_url?: string };
+  comment?: { id?: number; body?: string; path?: string; line?: number; html_url?: string };
   review?: { id?: number; body?: string; state?: string; html_url?: string };
 }
 

@@ -86,6 +86,44 @@ Deno.test("read filters by conversation, sender, and case-insensitive text (§6)
   });
 });
 
+Deno.test("the search column is every part's words: text, a file's name+caption, a data part's leaves+text (§6)", async () => {
+  await withLog(async (log) => {
+    const parted = (id: string, parts: MessageEvent["parts"]): MessageEvent => ({
+      ...msg(id, "c1", ""),
+      parts,
+    });
+    await log.publish(parted("01", [{
+      type: "file",
+      kind: "document",
+      file: { mime_type: "application/pdf", uri: "file:///m/x.pdf", name: "contrato.pdf" },
+      text: "acá está",
+    }]));
+    await log.publish(parted("02", [{
+      type: "data",
+      kind: "calendar",
+      // keys are dropped, VALUES indexed — and the prose rides `text`, not a data field
+      data: { gid: "ev1", title: "Natación", loc: "Club Náutico" },
+      text: "traer antiparras",
+    }]));
+    // machinery is not search text: a thinking block's signature never enters the column
+    await log.publish({
+      ts: "2026-07-16T00:00:03Z",
+      type: "thinking",
+      envelope: { service: "local", connection_address: "org", conversation: { address: "c1" } },
+      parts: [{ type: "data", kind: "thinking", data: { thinking: "hmm", signature: "AbCd" } }],
+    } as unknown as Draft<Event>);
+
+    const found = async (text: string) => (await log.read({ text })).map((e) => e.id);
+    assertEquals(await found("contrato"), ["01"]); // the filename
+    assertEquals(await found("acá está"), ["01"]); // the caption
+    assertEquals(await found("Natación"), ["02"]); // a data VALUE
+    assertEquals(await found("Náutico"), ["02"]);
+    assertEquals(await found("antiparras"), ["02"]); // the data part's own text
+    assertEquals(await found("gid"), []); // never a KEY
+    assertEquals(await found("AbCd"), []); // never machinery
+  });
+});
+
 Deno.test("read `conversations` scopes to a set — the readable filter at source (§6)", async () => {
   await withLog(async (log) => {
     await log.publish(msg("01", "c1", "a"));

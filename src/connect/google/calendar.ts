@@ -15,7 +15,8 @@
  * `calendar:<calendar>` on service `google` — where `<calendar>` is the calendar's TRUE id
  * (`primary` resolves to the grant's email; see `pollCalendar`) — with the PRUNED resource in
  * a `CalendarPart` (`pruned` maps the wire onto the canonical shape in types.ts, the same one
- * any other calendar service's connector targets; it is what render shows and search indexes).
+ * any other calendar service's connector targets; it is what render shows and search indexes)
+ * and the event's description as that part's `text` — structure and prose, never both.
  * `sender` is the event's CREATOR (the line's `from`); NO `agent` (the transcriber's trick to
  * keep a broker-authored row off the wire — dispatch wants `agent` — and out of fan-in, §4).
  *
@@ -271,8 +272,14 @@ function rowsFor(
     ];
   }
 
+  // structure in `data`, the organizer's prose in `text` — never the same words twice
   const parts: MessageEvent["parts"] = [
-    { type: "data", kind: "calendar", data: pruned(item) } satisfies CalendarPart,
+    {
+      type: "data",
+      kind: "calendar",
+      data: pruned(item),
+      ...(item.description ? { text: item.description } : {}),
+    } satisfies CalendarPart,
   ];
   if (change === "edit") {
     return [{
@@ -299,7 +306,6 @@ function pruned(item: CalendarEvent): CalendarData {
   const end = item.end?.dateTime ?? item.end?.date;
   if (end) out.end = end;
   if (item.location) out.loc = item.location;
-  if (item.description) out.description = item.description;
   const invitees = (item.attendees ?? []).map((a) => {
     const inv: NonNullable<CalendarData["invitees"]>[number] = {};
     if (a.displayName) inv.name = a.displayName;
