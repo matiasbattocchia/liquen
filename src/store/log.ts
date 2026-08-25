@@ -854,16 +854,36 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
   return { sql: `SELECT * FROM events ${clause} ORDER BY id ASC`, params };
 }
 
-/** Concatenated text parts (the search column); null for events with no text. */
+/** The search column: every part's `text`, plus — on MESSAGE events — the string leaves of
+ *  each data part's `data`. Null for events with no text. */
 function textOf(event: Draft): string | null {
   const parts = (event as { parts?: unknown }).parts;
   if (!Array.isArray(parts)) return null;
   // ANY part's `text`, not only a TextPart's: a caption rides `FilePart.text` and a data
   // part may describe itself the same way. Filtering on `type === "text"` left every
   // WhatsApp caption out of the search column — 5,419 file rows, none of them findable.
-  const t = parts
+  const texts = parts
     .map((p) => (p as { text?: unknown }).text)
-    .filter((x): x is string => typeof x === "string" && x.length > 0)
-    .join(" ");
+    .filter((x): x is string => typeof x === "string" && x.length > 0);
+  // A world data part (a calendar event, shared contacts) is findable by its content:
+  // connectors prune `data` at ingest, so its string leaves are clean search terms. Message
+  // events only — a tool_use's arguments or a thinking part's signature are not search text.
+  if (event.type === "message") {
+    for (const p of parts) {
+      const part = p as { type?: unknown; data?: unknown };
+      if (part.type === "data") stringLeaves(part.data, texts);
+    }
+  }
+  const t = texts.join(" ");
   return t.length ? t : null;
+}
+
+function stringLeaves(v: unknown, out: string[]): void {
+  if (typeof v === "string") {
+    if (v.length) out.push(v);
+  } else if (Array.isArray(v)) {
+    for (const x of v) stringLeaves(x, out);
+  } else if (v !== null && typeof v === "object") {
+    for (const x of Object.values(v)) stringLeaves(x, out);
+  }
 }

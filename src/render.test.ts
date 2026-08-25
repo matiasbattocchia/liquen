@@ -1273,6 +1273,135 @@ Deno.test("a transcript add-event renders as <transcript re=…>, not as a react
   assert(!dump.includes("<react"));
 });
 
+Deno.test("calendar changes render hoisted: <calendar data=…>, ISO values as clocks (§5)", () => {
+  const t = "2026-08-24T12:00:00Z";
+  const conv = { address: "calendar:battox@gmail.com", kind: "broadcast" as const };
+  const ana = { address: "ana@example.com", name: "Ana" };
+  // the poller's shape: creator as sender, pruned `data`, no agent, no text
+  const cal = (
+    id: string,
+    data: Json,
+    payload?: MessageEvent["payload"],
+    sender?: { address: string; name?: string },
+  ): MessageEvent => ({
+    id,
+    ts: t,
+    type: "message",
+    envelope: {
+      service: "google",
+      connection_address: "battox@gmail.com",
+      conversation: conv,
+      sender,
+      external_id: payload?.ref_external_id ? `${payload.ref_external_id}:${id}` : `cal:${id}`,
+    },
+    parts: [{ type: "data", kind: "calendar", data }],
+    ...(payload ? { payload } : {}),
+  });
+  const create = cal(
+    "e1",
+    { gid: "ev1", title: "Natación", start: "2026-08-24T18:00:00Z", loc: "Club Náutico" },
+    undefined,
+    ana,
+  );
+  create.envelope.external_id = "calendar:battox@gmail.com:ev1";
+  const edit = cal(
+    "e2",
+    { gid: "ev1", title: "Natación", start: "2026-08-24T19:00:00Z", loc: "Club Náutico" },
+    { action: "edit", ref_external_id: "calendar:battox@gmail.com:ev1" },
+    ana,
+  );
+  // a tombstone: no creator (no voice), its whole content the service-side handle
+  const del = cal("e3", { gid: "ev1" }, {
+    action: "delete",
+    ref_external_id: "calendar:battox@gmail.com:ev1",
+  });
+
+  const { messages } = render({
+    events: [create, edit, del],
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
+  const dump = JSON.stringify(messages);
+  // create: hoisted element, an id to point at, the creator as `from`, `data` a TS literal
+  // with its ISO start rendered as the org-zone clock
+  assertStringIncludes(
+    dump,
+    '<calendar id=\\"e1\\" from=\\"Ana\\" at=\\"24 Aug 12:00\\" ' +
+      "data=\\\"{gid:'ev1',title:'Natación',start:'24 Aug 18:00',loc:'Club Náutico'}\\\"/>",
+  );
+  // edit: the new content, pointing at the create it supersedes
+  assertStringIncludes(
+    dump,
+    '<calendar id=\\"e2\\" from=\\"Ana\\" at=\\"24 Aug 12:00\\" re=\\"e1\\" action=\\"edit\\" ' +
+      "data=\\\"{gid:'ev1',title:'Natación',start:'24 Aug 19:00',loc:'Club Náutico'}\\\"/>",
+  );
+  // delete: no id (nothing points at one), no from (a tombstone has no creator — and the
+  // senderless broadcast line must never read as the principal), the gid still in hand
+  assertStringIncludes(
+    dump,
+    '<calendar at=\\"24 Aug 12:00\\" re=\\"e1\\" action=\\"delete\\" data=\\"{gid:\'ev1\'}\\"/>',
+  );
+  assertStringIncludes(
+    dump,
+    '<conv service=\\"google\\" connection=\\"battox@gmail.com\\" ' +
+      'address=\\"calendar:battox@gmail.com\\" kind=\\"broadcast\\"',
+  );
+  assert(!dump.includes("self (principal)"), "a calendar change must not read as the principal");
+  assert(!dump.includes("<msg"), "calendar changes hoist — never a <msg> wrapper");
+});
+
+Deno.test("a location- or contacts-only message hoists to its kind's element (§5)", () => {
+  const t = "2026-08-24T20:29:57Z";
+  const conv = { address: "wa:sol", kind: "direct" as const };
+  const sol = { address: "549", name: "sol" };
+  const loc = worldMsg("e1", t, conv, sol, "");
+  loc.parts = [{
+    type: "data",
+    kind: "location",
+    data: { latitude: -32.8974321, longitude: -68.8629829 },
+  }];
+  const card = worldMsg("e2", t, conv, sol, "");
+  card.parts = [{
+    type: "data",
+    kind: "contacts",
+    data: [{ name: { formatted_name: "Carlos" }, phones: [{ phone: "+54 9 261 656-0401" }] }],
+  }];
+  // a data part BESIDE text rides inline as a marker — the `<msg>` wrapper stays
+  const both = worldMsg("e3", t, conv, sol, "acá estamos");
+  both.parts = [...both.parts, {
+    type: "data",
+    kind: "location",
+    data: { latitude: -32.9, longitude: -68.9 },
+  }];
+  const { messages } = render({
+    events: [loc, card, both],
+    docs: [],
+    session: "s1",
+    home: "home",
+    zone: "UTC",
+    now: t,
+  });
+  const dump = JSON.stringify(messages);
+  assertStringIncludes(
+    dump,
+    '<location id=\\"e1\\" from=\\"sol\\" at=\\"24 Aug 20:29\\" ' +
+      'data=\\"{latitude:-32.8974321,longitude:-68.8629829}\\"/>',
+  );
+  // nested wire shapes render as they are — pruning is the connector's business
+  assertStringIncludes(
+    dump,
+    '<contacts id=\\"e2\\" from=\\"sol\\" at=\\"24 Aug 20:29\\" ' +
+      "data=\\\"[{name:{formatted_name:'Carlos'},phones:[{phone:'+54 9 261 656-0401'}]}]\\\"/>",
+  );
+  assertStringIncludes(
+    dump,
+    'acá estamos <location data=\\"{latitude:-32.9,longitude:-68.9}\\"/></msg>',
+  );
+});
+
 Deno.test('a reference outside the window says so (§5): re="?", and a delete spells it out', () => {
   const t = "2026-08-16T12:00:00Z";
   const conv = { address: "wa:sol", kind: "direct" as const };

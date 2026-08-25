@@ -18,10 +18,12 @@ import { isExternal, pathOf } from "./store/media.ts"; // pure uri helpers — n
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
   Conversation,
+  DataPart,
   ErrorEvent as HarnessErrorEvent, // aliased: `ErrorEvent` is a DOM global in Deno's lib
   Event,
   EventId,
   FilePart,
+  Json,
   MessageEvent,
   ReactionPart,
   SessionId,
@@ -731,11 +733,15 @@ function conversationEl(
   return `<conv ${attrs.join(" ")}>\n${c.lines.join("\n")}\n</conv>`;
 }
 
-/** One world message line — three elements, the deviation marked (§3, §5): `<msg>` carries
- *  text (`action="edit"` = replacement content, `action="delete"` = the removed content),
+/** One world message line — the deviation marked (§3, §5): `<msg>` carries text
+ *  (`action="edit"` = replacement content, `action="delete"` = the removed content),
  *  `<react>` carries the glyph (`action="remove"` = an un-react), `<transcript>` carries
- *  the derived words of the audio its `re` points at. Bare defaults: create and
- *  add wear no attribute. `from="self"` = the agent's own send (its author label inside a
+ *  the derived words of the audio its `re` points at. A DATA part renders as its kind's own
+ *  element — `<location>`, `<contacts>`, `<calendar>`, whatever a connector ships — the
+ *  pruned object riding a `data` attribute as a TS literal; a message that IS one data part
+ *  hoists the envelope attributes onto that element and spends no `<msg>` wrapper (`<react>`
+ *  is this rule's oldest instance). Bare defaults: create and add wear no attribute.
+ *  `from="self"` = the agent's own send (its author label inside a
  *  user turn); `status="failed"` = the dispatcher gave up on delivery (§5).
  *
  *  **References** (§5): every `<msg>` wears an `id` — the handle a reply, a reaction or a
@@ -770,6 +776,13 @@ function msgLine(
   const head = `id="${shortId(e.id)}" from="${escAttr(from)}" at="${hhmm(e.ts, zone)}"`;
 
   const action = e.payload?.action;
+  // the hoisting rule: a message that IS one data part wears the envelope on its own element
+  // (reactions keep `<react>` via the add/remove branch below)
+  const solo = e.parts?.length === 1 && e.parts[0].type === "data" &&
+      e.parts[0].kind !== "reaction" && action !== "add" && action !== "remove"
+    ? e.parts[0]
+    : undefined;
+  if (solo) return dataLine(solo, e, from, re, zone);
   if (action === "edit") {
     return `<msg ${head}${re} action="edit">${escText(textOf(e))}</msg>`;
   }
@@ -805,10 +818,79 @@ function msgLine(
       )
     }"`
     : "";
-  // body text is escaped (untrusted); the media markers are render's own, appended after
-  const body = [escText(textOf(e)), ...filesOf(e).map(mediaMarker)]
-    .filter((s) => s.length > 0).join(" ");
+  // body text is escaped (untrusted); the media and data markers are render's own, appended
+  // after (a data part beside text rides inline, attribute-escaped inside its own element)
+  const body = [
+    escText(textOf(e)),
+    ...filesOf(e).map(mediaMarker),
+    ...datasOf(e).map((p) => dataEl(p, "", zone)),
+  ].filter((s) => s.length > 0).join(" ");
   return `<msg ${head}${re}${failed}${mentions}>${body}</msg>`;
+}
+
+/** A data part's element (§5): the part's KIND names the tag — `<location>`, `<contacts>`,
+ *  `<calendar>` — one code path for every kind a connector ships, present or future. The
+ *  connector already pruned `data` at ingest (it is the only party that knows the wire), so
+ *  the whole object rides a `data` attribute as a compact TS literal; the part's own `text`
+ *  (genuinely human words, a caption) is the body, and no text means self-closing. `head`
+ *  carries hoisted envelope attributes when the part IS the whole message, empty when it
+ *  rides inline as a marker beside text. An unnameable kind falls back to `<data>` so a
+ *  malformed part can never forge a tag. */
+function dataEl(p: DataPart, head: string, zone?: string): string {
+  const tag = /^[a-z][a-z0-9_-]*$/i.test(p.kind) ? p.kind : "data";
+  const attrs = [
+    ...(head ? [head] : []),
+    ...(p.data !== undefined ? [`data="${escAttr(tsLiteral(p.data, zone))}"`] : []),
+  ].join(" ");
+  const text = typeof p.text === "string" && p.text.length ? p.text : "";
+  return text ? `<${tag} ${attrs}>${escText(text)}</${tag}>` : `<${tag} ${attrs}/>`;
+}
+
+/** A hoisted data line: a message that is EXACTLY one data part spends no `<msg>` wrapper —
+ *  the part's element wears the envelope attributes itself. A sender renders as `from` the
+ *  usual way (a calendar event's creator, mapped to `envelope.sender` by the connector); a
+ *  SENDERLESS line in a `broadcast` conversation wears none — fan-out is not a room anyone
+ *  is in, so the "self (principal)" fallback must not mislabel a world fact (a cancellation
+ *  tombstone has no creator). A delete spends no `id` (nothing points at one) and its `data`
+ *  is whatever minimal handle the connector kept — e.g. a calendar tombstone's `{gid}`, the
+ *  service-side id that stays actionable after the `re` referent scrolls out of the window. */
+function dataLine(
+  p: DataPart,
+  e: MessageEvent,
+  from: string,
+  re: string,
+  zone?: string,
+): string {
+  const action = e.payload?.action;
+  const act = action === "edit" || action === "delete" ? ` action="${action}"` : "";
+  const voiceless = e.envelope.conversation.kind === "broadcast" &&
+    e.envelope.sender === undefined;
+  const voice = voiceless ? "" : ` from="${escAttr(from)}"`;
+  const id = action === "delete" ? "" : `id="${shortId(e.id)}" `;
+  const head = `${id}${voice ? voice.slice(1) + " " : ""}at="${hhmm(e.ts, zone)}"${re}${act}`;
+  return dataEl(p, head, zone);
+}
+
+/** `data` as a compact TS literal — fewer tokens than JSON and the model reads it natively.
+ *  Unquoted keys where legal, single quotes, no whitespace; nulls dropped in objects (ingest
+ *  prunes, this is the belt to that suspenders). The one rewrite: a string VALUE that is a
+ *  full ISO datetime renders as the org-zone clock (`hhmm`) — same vocabulary as `at=`,
+ *  applied per value so bare dates (all-day events) and prose merely mentioning a timestamp
+ *  pass through untouched. Display loses the offset; wire precision stays in the log. */
+function tsLiteral(v: Json, zone?: string): string {
+  if (v === null) return "null";
+  if (typeof v === "string") {
+    const s = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) ? hhmm(v, zone) : v;
+    return `'${s.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
+  }
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return `[${v.map((x) => tsLiteral(x, zone)).join(",")}]`;
+  const entries = Object.entries(v).filter(([, x]) => x !== undefined && x !== null);
+  return `{${entries.map(([k, x]) => `${keyLiteral(k)}:${tsLiteral(x, zone)}`).join(",")}}`;
+}
+
+function keyLiteral(k: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(k) ? k : `'${k.replaceAll("'", "\\'")}'`;
 }
 
 /** What a line's `ref_external_id` resolved to against the window (§5): the attribute to
@@ -920,12 +1002,15 @@ function isSelf(e: Event, session: SessionId): boolean {
   return ownVoice(e, session);
 }
 
-/** Every part's `text`, not only a TextPart's — a caption rides `FilePart.text`. Filtering
- *  on `type === "text"` meant the model never saw a single caption: the picture arrived as
- *  a bare `<media/>` marker and the words that came with it were dropped on the floor. */
+/** Every part's `text` EXCEPT a data part's — a caption rides `FilePart.text` and belongs
+ *  in the message body, but a data part's text renders inside its own `<kind>` element
+ *  (`dataEl`), and joining it here would say it twice. Filtering on `type === "text"` meant
+ *  the model never saw a single caption: the picture arrived as a bare `<media/>` marker and
+ *  the words that came with it were dropped on the floor. */
 export function textOf(e: Event): string {
   const parts = (e as MessageEvent).parts ?? [];
-  return parts.map((p) => (p as { text?: unknown }).text)
+  return parts.filter((p) => p.type !== "data")
+    .map((p) => (p as { text?: unknown }).text)
     .filter((t): t is string => typeof t === "string" && t.length > 0)
     .join(" ");
 }
@@ -933,6 +1018,13 @@ export function textOf(e: Event): string {
 function filesOf(e: Event): FilePart[] {
   const parts = (e as MessageEvent).parts ?? [];
   return parts.filter((p): p is FilePart => p.type === "file");
+}
+
+/** The data parts a body renders as `<kind>` markers — reactions excluded, they are
+ *  `<react>`'s business (msgLine's add/remove branch). */
+function datasOf(e: Event): DataPart[] {
+  const parts = (e as MessageEvent).parts ?? [];
+  return parts.filter((p): p is DataPart => p.type === "data" && p.kind !== "reaction");
 }
 
 /** A file part's `<media/>` marker (§5) — the durable face of an attachment in every
@@ -946,9 +1038,12 @@ function mediaMarker(p: FilePart): string {
 }
 
 /** A message's body for HOME rendering (plain text turns): text, then one marker per
- *  attachment. World lines compose the same pieces inside `msgLine` (escaped there). */
+ *  attachment, then one element per data part. World lines compose the same pieces inside
+ *  `msgLine` (escaped there). Every part shape yields a piece, so a location- or contacts-
+ *  only message never renders as an empty text block — the API rejects those (400). */
 function bodyOf(e: Event): string {
-  return [textOf(e), ...filesOf(e).map(mediaMarker)].filter((s) => s.length > 0).join("\n");
+  return [textOf(e), ...filesOf(e).map(mediaMarker), ...datasOf(e).map((p) => dataEl(p, ""))]
+    .filter((s) => s.length > 0).join("\n");
 }
 
 /* ── clocks (§5) ────────────────────────────────────────────────────────────────────

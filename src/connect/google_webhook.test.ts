@@ -100,9 +100,16 @@ Deno.test("a new event is a create: a plain calendar message keyed on the stable
       id: "ev1",
       status: "confirmed",
       summary: "Natación",
+      description: "traer antiparras",
+      location: "Club Náutico",
       created: "2026-08-24T10:00:00Z",
       updated: "2026-08-24T10:00:00Z", // created == updated ⇒ a create
       start: { dateTime: "2026-08-24T18:00:00Z" },
+      end: { dateTime: "2026-08-24T19:00:00Z" },
+      creator: { email: "ana@example.com", displayName: "Ana" },
+      attendees: [{ email: "luis@example.com", responseStatus: "needsAction" }],
+      etag: '"3400"', // wire noise — pruning must drop it
+      iCalUID: "ev1@google.com",
     };
     const cap = captor();
     await poller(creds, (input) => {
@@ -117,12 +124,23 @@ Deno.test("a new event is a create: a plain calendar message keyed on the stable
     // `primary` resolves to its true id — the grant's email (meeting ids copy across
     // attendee calendars, so a grant-relative referent would collide two grants' views)
     assertEquals(row.envelope.conversation.address, "calendar:ana@example.com");
+    assertEquals(row.envelope.conversation.kind, "broadcast"); // fan-out, not a room
     assertEquals(row.envelope.external_id, "calendar:ana@example.com:ev1"); // the STABLE referent
     assertEquals(row.payload?.action, undefined); // a create has no action
-    assert(row.agent === undefined && row.envelope.sender === undefined); // harness-derived
+    assertEquals(row.envelope.sender, { address: "ana@example.com", name: "Ana" }); // creator
+    assertEquals(row.agent, undefined); // harness-derived: never dispatched
     const part = row.parts[0] as DataPart;
     assertEquals(part.kind, "calendar");
-    assertEquals(part.text, "Natación — 2026-08-24T18:00:00Z");
+    assertEquals(part.text, undefined); // no prose — `data` IS the content
+    assertEquals(part.data, {
+      gid: "ev1",
+      title: "Natación",
+      start: "2026-08-24T18:00:00Z",
+      end: "2026-08-24T19:00:00Z",
+      loc: "Club Náutico",
+      description: "traer antiparras",
+      invitees: [{ email: "luis@example.com", status: "needsAction" }],
+    }); // pruned: the wire's etag/iCalUID stopped at the connector
     assertEquals((await syncOf(creds))!.primary, "tok2"); // cursor moved
   });
 });
@@ -155,7 +173,9 @@ Deno.test("an edit is action:edit referencing the create; the original stays sea
       row.envelope.external_id,
       "calendar:ana@example.com:ev1:2026-08-24T12:00:00Z", // own version
     );
-    assertEquals((row.parts[0] as DataPart).text, "Natación (movida) — 2026-08-24T19:00:00Z");
+    const data = (row.parts[0] as DataPart).data as Record<string, unknown>;
+    assertEquals(data.title, "Natación (movida)"); // the new content rides the edit
+    assertEquals(data.start, "2026-08-24T19:00:00Z");
   });
 });
 
@@ -176,7 +196,10 @@ Deno.test("a cancellation is action:delete + a merge-only deleted_at stamp on th
     assertEquals(del.payload?.action, "delete");
     assertEquals(del.payload?.ref_external_id, "calendar:ana@example.com:ev1");
     assertEquals(del.envelope.external_id, "calendar:ana@example.com:ev1:cancelled");
-    assertEquals(del.parts.length, 0); // empty parts — the action is the meaning
+    // the delete's whole content: the service-side handle that keeps the gone event
+    // fetchable after its create scrolls out of the render window
+    assertEquals((del.parts[0] as DataPart).data, { gid: "ev1" });
+    assertEquals(del.envelope.sender, undefined); // a tombstone has no creator — no voice
     const stamp = cap.rows[1];
     assertEquals(stamp.envelope.external_id, "calendar:ana@example.com:ev1"); // merges onto the create
     assertEquals(stamp.status?.deleted_at, "2026-08-24T00:00:00.000Z");

@@ -11,10 +11,11 @@
  *
  * What it watches: each google GRANT the org holds (`google:<email>`, minus the `google:app:`
  * client rows), across a set of calendars (org config `connections.googleCalendars`). What it
- * emits: a `message` per changed calendar event, in conversation `calendar:<calendar>` on
- * service `google` — where `<calendar>` is the calendar's TRUE id (`primary` resolves to the
- * grant's email; see `pollCalendar`) — with the resource in a `{ type:"data", kind:"calendar" }`
- * part. Harness-derived, so NO `sender` and NO `agent` (the same trick the transcriber uses to
+ * emits: a `message` per changed calendar event, in a `broadcast` conversation
+ * `calendar:<calendar>` on service `google` — where `<calendar>` is the calendar's TRUE id
+ * (`primary` resolves to the grant's email; see `pollCalendar`) — with the PRUNED resource in
+ * a `{ type:"data", kind:"calendar" }` part (`pruned`: what render shows and search indexes).
+ * `sender` is the event's CREATOR (the line's `from`); NO `agent` (the transcriber's trick to
  * keep a broker-authored row off the wire — dispatch wants `agent` — and out of fan-in, §4).
  *
  * A change speaks the SAME action language WhatsApp/Slack ingests do (§3), so an edit or a
@@ -23,8 +24,9 @@
  *            `calendar:<cal>:<id>` (the event's identity across versions).
  *   edit     its own event, `action:"edit"` + `ref_external_id` at the create, new content;
  *            the create row stays sealed (a `:<updated>`-versioned external_id dedupes replays).
- *   delete   its own event, `action:"delete"` + ref + EMPTY parts (the action is the meaning),
- *            plus a merge-only `status.deleted_at` on the create row.
+ *   delete   its own event, `action:"delete"` + ref, its part the bare `{gid}` handle (the
+ *            action is the meaning; the gid keeps the gone event fetchable), plus a
+ *            merge-only `status.deleted_at` on the create row.
  * Calendar's sync doesn't LABEL the change (no `message_changed`), so `classify` reads it off
  * the resource: `cancelled` ⇒ delete, `updated` past `created` ⇒ edit, else create. An edit or
  * delete of an event from before our window is a dangling ref — the soft reference the log
@@ -57,15 +59,21 @@ const GRANT_PREFIX = "google:";
 const APP_PREFIX = "google:app:";
 const API = "https://www.googleapis.com/calendar/v3";
 
-/** The slice of a Calendar `events` resource we read; the whole thing rides in `data`. */
+/** The slice of a Calendar `events` resource we read — and all we KEEP: `data` carries the
+ *  pruned shape (`pruned` below), never the raw resource with its etags and policy noise.
+ *  Pruning is the connector's job; render is service-agnostic and shows whatever rides here. */
 export interface CalendarEvent {
   id?: string;
   status?: string; // "confirmed" | "tentative" | "cancelled"
   summary?: string;
+  description?: string;
+  location?: string;
   created?: string;
   updated?: string;
   start?: { dateTime?: string; date?: string };
   end?: { dateTime?: string; date?: string };
+  creator?: { email?: string; displayName?: string };
+  attendees?: { email?: string; displayName?: string; responseStatus?: string }[];
   htmlLink?: string;
   [k: string]: unknown;
 }
@@ -153,7 +161,9 @@ async function pollCalendar(
   // by its one true id is the same rule doing its job.) The API is still called by the
   // configured alias; only what we publish resolves.
   const calendar = calendarId === "primary" ? email : calendarId;
-  const conversation: Conversation = { address: `calendar:${calendar}`, kind: "channel" };
+  // broadcast: a calendar is fan-out, not a room anyone is in — render wears no voice on a
+  // senderless line here (a tombstone has no creator)
+  const conversation: Conversation = { address: `calendar:${calendar}`, kind: "broadcast" };
   let pageToken: string | undefined;
   let nextSyncToken: string | undefined;
   let published = 0;
@@ -225,7 +235,15 @@ function rowsFor(
   const id = item.id!;
   const ref = refFor(conversation, id);
   const ts = item.updated ?? now();
-  const base = { service: SERVICE, connection_address: email, conversation };
+  // the creator is the line's voice — `from` in render, findable by name in search. A
+  // tombstone carries none: its delete row stays senderless (a world fact, no voice).
+  const sender = item.creator?.email
+    ? {
+      address: item.creator.email,
+      ...(item.creator.displayName ? { name: item.creator.displayName } : {}),
+    }
+    : undefined;
+  const base = { service: SERVICE, connection_address: email, conversation, sender };
   const change = classify(item);
 
   if (change === "delete") {
@@ -235,7 +253,9 @@ function rowsFor(
         type: "message",
         payload: { action: "delete", ref_external_id: ref },
         envelope: { ...base, external_id: `${ref}:cancelled` },
-        parts: [],
+        // `{gid}` is the delete's whole content: the service-side id that keeps the event
+        // fetchable (`events get`) after the `re` referent scrolls out of the window
+        parts: [{ type: "data", kind: "calendar", data: { gid: id } }],
       },
       // merge-only: no `parts` key, so the upsert leaves the sealed original untouched and
       // only the lifecycle stamp lands (a create from before our window has no row — the
@@ -249,11 +269,7 @@ function rowsFor(
     ];
   }
 
-  // create/edit both carry the resource; the loose `unknown`-valued interface above is for
-  // the few fields we read, not a claim the parsed JSON isn't Json
-  const parts: MessageEvent["parts"] = [
-    { type: "data", kind: "calendar", text: summarize(item), data: item as unknown as Json },
-  ];
+  const parts: MessageEvent["parts"] = [{ type: "data", kind: "calendar", data: pruned(item) }];
   if (change === "edit") {
     return [{
       ts,
@@ -266,12 +282,29 @@ function rowsFor(
   return [{ ts, type: "message", envelope: { ...base, external_id: ref }, parts }];
 }
 
-/** A one-line human form for render; the full resource is in `data`. Deletes never reach
- *  here — they carry no parts (the action is the meaning). */
-function summarize(item: CalendarEvent): string {
-  const title = item.summary ?? "(no title)";
+/** What of a resource is WORTH the agent's tokens: `data` verbatim is what render shows (as
+ *  a TS literal) and what the search column indexes (string leaves), so everything else —
+ *  etags, iCalUIDs, reminder policy, html links — stops here. `gid` is the service-side id
+ *  (what `events get`/`patch` take); `start`/`end` are the wire's ISO stamps (a bare date =
+ *  all-day), rendered as org-zone clocks by render's value rule. */
+function pruned(item: CalendarEvent): Json {
+  const out: Record<string, Json> = { gid: item.id! };
+  if (item.summary) out.title = item.summary;
   const start = item.start?.dateTime ?? item.start?.date;
-  return start ? `${title} — ${start}` : title;
+  if (start) out.start = start;
+  const end = item.end?.dateTime ?? item.end?.date;
+  if (end) out.end = end;
+  if (item.location) out.loc = item.location;
+  if (item.description) out.description = item.description;
+  const invitees = (item.attendees ?? []).map((a) => {
+    const inv: Record<string, Json> = {};
+    if (a.displayName) inv.name = a.displayName;
+    if (a.email) inv.email = a.email;
+    if (a.responseStatus) inv.status = a.responseStatus;
+    return inv;
+  }).filter((inv) => Object.keys(inv).length > 0);
+  if (invitees.length) out.invitees = invitees;
+  return out;
 }
 
 /* ── the cursor: a syncToken per calendar, on the grant's `extra` ─────────────────── */
