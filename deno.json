@@ -13,6 +13,7 @@
     "smoke": "deno test -A --env-file=.env src/transport.test.ts",
     "cli": "deno run -A --env-file=.env src/cli.ts",
     "bench": "deno run -A --env-file=.env bench/run.ts",
+    "connect": "deno run -A --env-file=.env src/connect/connect.ts",
     "status": "deno run -A --env-file=.env src/connect/status.ts",
     "proxy": "deno run -A --env-file=.env src/proxy/proxy.ts",
     "ingest:slack": "deno run -A --env-file=.env src/connect/slack/ingest.ts",

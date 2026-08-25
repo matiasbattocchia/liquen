@@ -53,8 +53,11 @@ Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispat
   the bar every custom connector inherits. Its config lands under `connections.<name>`
   in the org catalog; its secrets in env/vault as ever.
 
-Tasks point at files (`deno task ingest:github` → `connectors/github/ingest.ts`); the
-future `mu connect <name>` resolves the shipped map first, then `connectors/<name>/connect.ts`.
+Tasks point at files (`deno task ingest:github` → `connectors/github/ingest.ts`). The
+front door is **`mu connect`** (`deno task connect`, `src/connect/connect.ts`): bare, it
+prints the map (status); `mu connect <name> [args...]` resolves the shipped services
+first, then `connectors/<name>/connect.ts`, and runs the door as a child process with the
+remaining args — a name with a slash is taken as a module path.
 
 ## 2. The split that decides everything: pushed content vs. bare change signal
 
