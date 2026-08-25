@@ -6,22 +6,26 @@
  *
  *   HTTPS_PROXY=http://127.0.0.1:<port>   send every HTTPS request here as a CONNECT tunnel
  *   SSL_CERT_FILE=<ca.pem>                trust ONLY the mu CA (so this proxy can terminate)
- *   GOOGLE_WORKSPACE_CLI_TOKEN / GH_TOKEN=mu-grant-… a PLACEHOLDER — the real token never
- *                                         enters user space
+ *   <extra.env>=mu-grant-…                a PLACEHOLDER — the real token never enters user
+ *                                         space; the var's NAME is the credential row's own
+ *                                         declaration (main.ts fronts every row that makes one)
  *
  * The proxy terminates the tunnel's TLS with a leaf it mints for the dialed host (ca.ts),
- * reads the plaintext request, and — where it carries a `mu-grant-…` bearer — swaps in the
- * real access token the broker fetches from the vault (grants.ts). Then it re-originates to
- * the true host over real TLS and streams the answer back. User space never holds a valid
- * credential; the credential meets the request only here, at the last hop before Google.
+ * reads the plaintext request, and — wherever a header value carries a `mu-grant-…` handle —
+ * substitutes the real access token the broker fetches from the vault (grants.ts). Then it
+ * re-originates to the true host over real TLS and streams the answer back. User space never
+ * holds a valid credential; the credential meets the request only here, at the last hop
+ * before the origin.
  *
  * TLS-server-on-a-hijacked-conn isn't a stable Deno primitive, so CONNECT is bridged: per
  * dialed authority (`host`, or `host:port` off 443 — the port rides through to the origin)
  * we stand up a loopback `Deno.serve` with that host's leaf (giving us Request/Response
  * directly), and pipe the tunnel's bytes into it. A handful of backends over a process life.
  *
- * No method/host/path policy yet (deliberate): the swap and the audit line are the whole
- * job. The plaintext request is where policy WOULD attach — that seam exists, unused.
+ * One policy rule attaches at the plaintext seam: the grant's HOST BINDING. A credential
+ * row that declares `extra.hosts` spends only toward those origins — the swap refuses any
+ * other dial (grants.ts hostAllowed), so a handle can't be aimed at an echo endpoint to
+ * read the real token back. Method/path policy would attach at the same seam; none yet.
  */
 
 import type { GrantBroker } from "./grants.ts";
@@ -39,9 +43,12 @@ const HOP_BY_HOP = new Set([
   "upgrade",
   "host",
 ]);
-// both auth schemes a placeholder rides in: OAuth's `Bearer`, gh's `token` — the swap
-// keeps whichever the client spoke (GitHub accepts both; gh insists on its own)
-const HANDLE_RE = /^(Bearer|token) (mu-grant-\S+)$/;
+// the handle itself is the marker, wherever it rides: `Bearer mu-grant-…`, gh's
+// `token mu-grant-…`, an `x-api-key: mu-grant-…` — the swap is a SUBSTITUTION over every
+// header value, preserving whatever surrounds the handle, so a new tool needs no proxy
+// change. (A handle a tool base64s or signs over can't be substituted — such schemes
+// belong broker-side.)
+const HANDLE_RE = /mu-grant-[A-Za-z0-9]+/g;
 
 export interface ProxyDeps {
   ca: CA;
@@ -78,19 +85,38 @@ export async function proxyRequest(host: string, req: Request, deps: ProxyDeps):
 
   let swapped = false;
   let agentId: string | undefined;
-  const auth = req.headers.get("authorization");
-  const m = auth?.match(HANDLE_RE);
-  if (m) {
-    const handle = m[2];
-    agentId = deps.broker.resolve(handle)?.agentId;
-    const real = await deps.broker.accessTokenFor(handle);
-    if (!real) {
-      // a placeholder we can't honor never leaves the box as-is (it would 401 upstream and
-      // leak the handle) — fail it here
-      audit({ method: req.method, host, path: url.pathname, status: 401, agentId, swapped: false });
-      return new Response("mu proxy: no credential for this grant\n", { status: 401 });
+  // every handle in the request, resolved once — a token per distinct handle, refused as
+  // a whole if any can't be honored toward THIS host
+  const real = new Map<string, string>();
+  for (const [, v] of headers) {
+    for (const { 0: handle } of v.matchAll(HANDLE_RE)) {
+      if (real.has(handle)) continue;
+      agentId ??= deps.broker.resolve(handle)?.agentId;
+      const token = await deps.broker.accessTokenFor(handle, host);
+      if (!token) {
+        // a placeholder we can't honor never leaves the box as-is (it would 401 upstream
+        // and leak the handle) — fail it here; same answer when the grant's host binding
+        // refuses the dialed origin
+        audit({
+          method: req.method,
+          host,
+          path: url.pathname,
+          status: 401,
+          agentId,
+          swapped: false,
+        });
+        return new Response(
+          "mu proxy: no credential for this grant, or grant not valid for this host\n",
+          { status: 401 },
+        );
+      }
+      real.set(handle, token);
     }
-    headers.set("authorization", `${m[1]} ${real}`);
+  }
+  if (real.size) {
+    for (const [k, v] of [...headers]) {
+      headers.set(k, v.replace(HANDLE_RE, (h) => real.get(h) ?? h));
+    }
     swapped = true;
   }
 
@@ -271,8 +297,10 @@ if (import.meta.main) {
   const proxy = startProxy({ ca, broker });
   const grant = await creds.get(key);
   const handle = broker.issue(key, grant?.agentId);
+  // the row's own declaration names the var (main.ts fronts the same way)
+  const varName = typeof grant?.extra?.env === "string" ? grant.extra.env : "MU_GRANT";
   console.error(`[proxy] on :${proxy.port} — fronting ${key}\n`);
   console.error(`export HTTPS_PROXY=http://127.0.0.1:${proxy.port}`);
   console.error(`export SSL_CERT_FILE=${proxy.caPath}`);
-  console.error(`export GOOGLE_WORKSPACE_CLI_TOKEN=${handle}`);
+  console.error(`export ${varName}=${handle}`);
 }

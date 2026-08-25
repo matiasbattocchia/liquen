@@ -1910,9 +1910,14 @@ true for exec (kernel handles it), false for control (only harness/human authori
      (`ca.ts`), swaps the placeholder for a live token — refreshed broker-side against the
      vault, the refresh_token never leaving it (`grants.ts`) — re-originates over real
      TLS, and audits every request (method · host · path · status · agent, never the
-     token). The sandbox never holds token material, binary-agnostic (git included), and
-     the terminated plaintext is where the egress allowlist and auth policy attach — that
-     seam exists, deliberately unused so far. Not the nicest (CA to manage, cert-pinning
+     token). The sandbox never holds token material, binary-agnostic (git included): the
+     swap is a substitution over header values (the handle is the marker, not any
+     particular header), so a new tool costs no proxy change — its connect door declares
+     the placeholder's env var and the grant's hosts on the vault row (`extra.env`,
+     `extra.hosts`), main fronts what's declared, and the swap refuses any dial outside
+     the declaration (so a handle can't be aimed at an echo endpoint to read the token
+     back). The terminated plaintext is where further policy (method/path) would attach.
+     Not the nicest (CA to manage, cert-pinning
      fights) but the most secure, with no per-service tiers and no interim mechanisms;
      rungs 1–2 above are recorded as the analysis of why they lost, not as options.
 - **Smuggled credentials** (the proxy's complement): the proxy protects broker-held

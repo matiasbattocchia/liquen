@@ -59,10 +59,11 @@ import {
 /** Start the egress proxy — the org's MANDATORY single egress point — and return the env
  *  provider bash issues into every spawn (§9). HTTPS_PROXY/SSL_CERT_FILE always ride; the
  *  proxy rewrites requests carrying a placeholder and passes everything else through
- *  untouched. A service's placeholder rides too when the vault names ONE identity to front
- *  (google: exactly one grant; github: the org's own — `github:org` — else a lone user
- *  grant). More than one candidate is the per-agent plane's call — which token? — so we
- *  hold off rather than guess. */
+ *  untouched. Which placeholders ride is the VAULT's say, not this file's: a credential
+ *  row that declares `extra.env` (the connect doors write it) is fronted under that var —
+ *  the org's own row (no agentId) when one exists, else a lone candidate. Several rows
+ *  contending for one var is the per-agent plane's call — which token? — so we hold off
+ *  rather than guess. */
 interface ProxyHandle {
   env: () => Record<string, string>;
   close(): Promise<void>;
@@ -78,18 +79,18 @@ async function installProxy(dir: string): Promise<ProxyHandle> {
     SSL_CERT_FILE: proxy.caPath,
   };
   const fronted: string[] = [];
-  const grants = (await creds.list("google:")).filter((r) => !r.key.startsWith("google:app:"));
-  if (grants.length === 1) {
-    env.GOOGLE_WORKSPACE_CLI_TOKEN = broker.issue(grants[0].key, grants[0].agentId);
-    fronted.push(grants[0].key);
+  const rows = (await creds.list("")).filter((r) => typeof r.extra?.env === "string");
+  const byVar = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const name = r.extra!.env as string;
+    byVar.set(name, [...(byVar.get(name) ?? []), r]);
   }
-  // gh rides the same rails: Go honors HTTPS_PROXY + SSL_CERT_FILE, and gh sends GH_TOKEN
-  // as `Authorization: token …` — a scheme the proxy swaps like any other placeholder
-  const gh = (await creds.list("github:")).filter((r) => !r.key.startsWith("github:app:"));
-  const ghPick = gh.find((r) => r.key === "github:org") ?? (gh.length === 1 ? gh[0] : undefined);
-  if (ghPick) {
-    env.GH_TOKEN = broker.issue(ghPick.key, ghPick.agentId);
-    fronted.push(ghPick.key);
+  for (const [name, candidates] of byVar) {
+    const org = candidates.filter((r) => !r.agentId);
+    const pick = org.length === 1 ? org[0] : candidates.length === 1 ? candidates[0] : undefined;
+    if (!pick) continue;
+    env[name] = broker.issue(pick.key, pick.agentId);
+    fronted.push(pick.key);
   }
   console.error(
     `[main] egress proxy on :${proxy.port}` +
@@ -180,9 +181,8 @@ export async function start(
     for (const agent of principals) await seedDocs(dir, agent.agentId);
   }
   const transport = overrides.transport ?? anthropicTransport(anthropicClient(config.apiKey));
-  // the egress proxy (§9): if the org holds exactly one google grant, front it — user space
-  // gets the placeholder + proxy env, never a real credential. More than one grant needs the
-  // per-agent plane (which agent's token?), so we hold off rather than guess.
+  // the egress proxy (§9): front every credential row that declares an env var — user space
+  // gets the placeholder + proxy env, never a real credential (see installProxy).
   const proxy = config.exec ? null : await installProxy(dir);
   const plane = config.exec
     ? null

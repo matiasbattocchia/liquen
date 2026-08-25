@@ -18,6 +18,11 @@ export const DEFAULT_SCOPES = [
   "email",
   "https://www.googleapis.com/auth/calendar",
 ];
+/** The grant's proxy declaration (§9), written onto every vault row this connector mints:
+ *  the env var main fronts the placeholder under, and the only hosts the token may be
+ *  spent toward (the swap refuses any other dial). */
+export const GRANT_ENV = "GOOGLE_WORKSPACE_CLI_TOKEN";
+export const GRANT_HOSTS = ["*.googleapis.com"];
 
 export interface GoogleConfig {
   calendars: string[];

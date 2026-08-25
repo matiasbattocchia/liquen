@@ -5,6 +5,8 @@ import {
   connectGithubApp,
   connectGithubBot,
   connectGithubUser,
+  GRANT_ENV,
+  GRANT_HOSTS,
   type Installation,
   ORG_KEY,
 } from "./connect.ts";
@@ -115,7 +117,13 @@ Deno.test("bot door: binds the single installation — anchor org-credentialed, 
       { service: "github", address: "github", credentialKey: ORG_KEY },
     ]);
     const row = (await creds.get(ORG_KEY))!;
-    assertEquals(row.extra, { app_id: "7", installation_id: "42", account: "acme" });
+    assertEquals(row.extra, {
+      app_id: "7",
+      installation_id: "42",
+      account: "acme",
+      env: GRANT_ENV,
+      hosts: GRANT_HOSTS,
+    });
     assertEquals(row.value.access_token, undefined); // minted on demand, never here
     assertEquals(h.notes.length, 1);
     assertEquals(h.notes[0].envelope.connection_address, "github");
@@ -166,7 +174,7 @@ Deno.test("user door: a verified paste writes the anchor, the owned leg, and the
     const row = (await creds.get("github:ana"))!;
     assertEquals(row.value.token, "ghp_abc123");
     assertEquals(row.agentId, "ana");
-    assertEquals(row.extra, { login: "ana-dev" });
+    assertEquals(row.extra, { login: "ana-dev", env: GRANT_ENV, hosts: GRANT_HOSTS });
   });
 });
 

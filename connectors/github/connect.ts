@@ -14,9 +14,10 @@
  *          agent_id = the principal) → vault `github:<principal>` (`token`, static).
  *
  * WHO POSTS is dispatch's call (the slack resolver policy): the author's user grant when
- * the vault holds one, else `github:org`. The same rows feed the egress proxy: main fronts
- * the org identity (else a lone user grant) as a GH_TOKEN placeholder, so an agent's `gh`
- * works with no real credential in user space (§9).
+ * the vault holds one, else `github:org`. The same rows feed the egress proxy: each door
+ * writes the proxy declaration (`extra.env` + `extra.hosts`, below) onto its row, and main
+ * fronts the org identity (else a lone user grant) as a GH_TOKEN placeholder spendable
+ * only toward GitHub — an agent's `gh` works with no real credential in user space (§9).
  *
  * Arg (user door): the principal (default: the OS username). Env: none.
  */
@@ -32,6 +33,11 @@ import {
 
 export const APP_PREFIX = "github:app:";
 export const ORG_KEY = "github:org";
+/** The grant's proxy declaration (§9), written onto every identity row this connector
+ *  mints: the env var main fronts the placeholder under (gh reads GH_TOKEN), and the only
+ *  hosts the token may be spent toward (the swap refuses any other dial). */
+export const GRANT_ENV = "GH_TOKEN";
+export const GRANT_HOSTS = ["api.github.com", "uploads.github.com"];
 
 /* ── the app door: the App's credentials into the vault ──────────────────────────────── */
 
@@ -141,6 +147,8 @@ export async function connectGithubBot(
       app_id: appId,
       installation_id: String(inst.id),
       ...(account ? { account } : {}),
+      env: GRANT_ENV,
+      hosts: GRANT_HOSTS,
     },
   });
 
@@ -210,7 +218,7 @@ export async function connectGithubUser(
     key: credentialKey,
     value: { token },
     agentId: deps.principal,
-    extra: { login: who.login },
+    extra: { login: who.login, env: GRANT_ENV, hosts: GRANT_HOSTS },
   });
 
   await deps.publish(

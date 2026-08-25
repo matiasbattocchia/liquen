@@ -127,6 +127,9 @@ Deno.test("callback: the grant writes the map — vault, connection, membership,
     assertEquals(row.value.access_token, "ya29.short");
     assertEquals(row.agentId, "ana");
     assertStringIncludes(row.extra!.scope as string, "auth/calendar");
+    // the proxy declaration rides every grant: main fronts it, the swap binds it (§9)
+    assertEquals(row.extra!.env, "GOOGLE_WORKSPACE_CLI_TOKEN");
+    assertEquals(row.extra!.hosts, ["*.googleapis.com"]);
     // the connection anchor, owned ⇒ private (§6), pointing at the vault row
     assertEquals(t.connections, [{
       service: "google",

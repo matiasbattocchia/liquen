@@ -46,6 +46,16 @@ spec's comments, unknown keys a boot error, `check`s run at boot) and returns th
 values. Secrets never enter the file — they live in the vault (slack and github keep
 their app, bot, and grants there) or, for a local bridge, in env (`WA_BRIDGE_TOKEN`).
 
+A connector whose CLI should work from agent bash **fronts its grant through the egress
+proxy by declaration, not by code**: the connect door writes two sidecar fields on the
+credential row — `extra.env`, the env var the placeholder is issued under (what the tool
+reads: `GH_TOKEN`, `GOOGLE_WORKSPACE_CLI_TOKEN`), and `extra.hosts`, the only origins the
+token may be spent toward (exact hostnames or `*.suffix`). main fronts every row that
+declares an env var (the org's own row wins; several contenders for one var → none is
+fronted), and the proxy substitutes the handle wherever it appears in a header value —
+no proxy or main change per tool. A handle a tool base64s or signs over (Basic, SigV4)
+can't ride this path; such schemes belong broker-side.
+
 A connector's subsection holds what is **that service's**: the addresses of its wire, the
 scopes it asks for, the events it maps. A value that is merely *arbitrary and fixed* is a
 constant at the top of the file that uses it, not a knob: the whatsmeow bridge's

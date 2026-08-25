@@ -144,6 +144,49 @@ Deno.test("accessTokenFor: a static `token` rides as-is — nothing expires, not
   });
 });
 
+Deno.test("accessTokenFor: the host binding — declared hosts spend, anything else is null", async () => {
+  await withVault(async (creds) => {
+    await creds.put({
+      key: "github:ana",
+      value: { token: "ghp_static" },
+      agentId: "ana",
+      extra: { hosts: ["api.github.com", "uploads.github.com"] },
+    });
+    const broker = createGrantBroker({ creds });
+    const h = broker.issue("github:ana", "ana");
+    assertEquals(await broker.accessTokenFor(h, "api.github.com"), "ghp_static");
+    assertEquals(await broker.accessTokenFor(h, "api.github.com:8443"), "ghp_static"); // the port doesn't bind
+    assertEquals(await broker.accessTokenFor(h, "httpbin.org"), null); // an echo endpoint gets nothing
+    assertEquals(await broker.accessTokenFor(h), "ghp_static"); // no host: a broker-side caller
+  });
+});
+
+Deno.test("accessTokenFor: a `*.` wildcard binds the suffix — never the apex or a look-alike", async () => {
+  await withVault(async (creds) => {
+    await seed(creds, { access_token: "ya29.t" }, {
+      expiry: new Date(Date.now() + 3600_000).toISOString(),
+      hosts: ["*.googleapis.com"],
+    });
+    const broker = createGrantBroker({ creds });
+    const h = broker.issue(KEY);
+    assertEquals(await broker.accessTokenFor(h, "www.googleapis.com"), "ya29.t");
+    assertEquals(await broker.accessTokenFor(h, "admin.googleapis.com"), "ya29.t");
+    assertEquals(await broker.accessTokenFor(h, "googleapis.com"), null);
+    assertEquals(await broker.accessTokenFor(h, "evil-googleapis.com"), null);
+  });
+});
+
+Deno.test("accessTokenFor: a row declaring no hosts is unbound — the door's call", async () => {
+  await withVault(async (creds) => {
+    await creds.put({ key: "github:ana", value: { token: "ghp_static" } });
+    const broker = createGrantBroker({ creds });
+    assertEquals(
+      await broker.accessTokenFor(broker.issue("github:ana"), "anywhere.example"),
+      "ghp_static",
+    );
+  });
+});
+
 /** A throwaway RSA pair, the private half as GitHub downloads it (PKCS#1 PEM). */
 function rsaPair(): { pem: string; pub: ReturnType<typeof createPublicKey> } {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });

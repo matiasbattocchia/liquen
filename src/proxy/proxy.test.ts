@@ -106,6 +106,58 @@ Deno.test("proxyRequest: gh's `token` scheme swaps too — and keeps its scheme"
   assertEquals(audits[0].swapped, true);
 });
 
+Deno.test("proxyRequest: the handle is the marker, not the header — any value substitutes in place", async () => {
+  const sent: Record<string, string | null> = {};
+  await proxyRequest(
+    "api.example.com",
+    new Request("https://api.example.com/v1", {
+      headers: { "x-api-key": "mu-grant-x", "x-auth": "key=mu-grant-x;v=1" },
+    }),
+    {
+      ca: {} as never,
+      broker: fakeBroker(),
+      audit: () => {},
+      originFetch: (input, init) => {
+        const h = headersOf(input, init);
+        sent.key = h.get("x-api-key");
+        sent.combo = h.get("x-auth");
+        return Promise.resolve(new Response("", { status: 200 }));
+      },
+    },
+  );
+  assertEquals(sent.key, "ya29.REAL"); // a custom tool's own header, no proxy change needed
+  assertEquals(sent.combo, "key=ya29.REAL;v=1"); // the surroundings survive the substitution
+});
+
+Deno.test("proxyRequest: the grant's host binding refuses the swap — the origin is never dialed", async () => {
+  const asked: (string | undefined)[] = [];
+  let originCalled = false;
+  const res = await proxyRequest(
+    "httpbin.org",
+    new Request("https://httpbin.org/headers", {
+      headers: { authorization: "Bearer mu-grant-x" },
+    }),
+    {
+      ca: {} as never,
+      broker: fakeBroker({
+        // the real broker's hostAllowed, in miniature: this grant spends only toward github
+        accessTokenFor: (_h, host) => {
+          asked.push(host);
+          return Promise.resolve(host === "api.github.com" ? "ya29.REAL" : null);
+        },
+      }),
+      audit: () => {},
+      originFetch: () => {
+        originCalled = true;
+        return Promise.resolve(new Response("", { status: 200 }));
+      },
+    },
+  );
+  assertEquals(res.status, 401);
+  assertEquals(asked, ["httpbin.org"]); // the dialed authority reaches the broker's check
+  assert(!originCalled, "a refused handle must not leave the box toward the echo endpoint");
+});
+
 Deno.test("proxyRequest: a request with no placeholder passes through untouched", async () => {
   let sentAuth: string | null = "unset";
   await proxyRequest(

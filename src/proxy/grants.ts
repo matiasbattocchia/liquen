@@ -9,10 +9,13 @@
  *
  *   issue(credentialKey)   mint (or return) the handle standing for a vault grant.
  *   resolve(handle)        handle → the grant it names (credentialKey/agentId) — NO secret.
- *   accessTokenFor(handle) a LIVE credential: a static `token` as-is (a pasted PAT, a
+ *   accessTokenFor(handle, host?)
+ *                          a LIVE credential: a static `token` as-is (a pasted PAT, a
  *                          slack xoxb — nothing expires), the stored `access_token` while
  *                          it's fresh, else a re-issue against the grant's issuer, with
- *                          the rotated token written back to the vault.
+ *                          the rotated token written back to the vault. `host` enforces
+ *                          the grant's binding: the row's `extra.hosts` names the only
+ *                          origins the token may be spent toward (hostAllowed).
  *
  * The re-issue needs the app that minted the grant, and the grant's `extra` says which
  * issuer that is: `installation_id` names a GitHub App installation — the broker signs the
@@ -38,8 +41,13 @@ export interface GrantBroker {
   /** The grant a handle names — never a secret. */
   resolve(handle: string): Grant | null;
   /** A live access token for the handle, refreshing when the stored one has expired.
-   *  null ⇒ unknown handle, or the refresh failed (the proxy answers 401). */
-  accessTokenFor(handle: string): Promise<string | null>;
+   *  `host` is the dialed authority the token is about to be spent toward: a grant whose
+   *  row declares `extra.hosts` is spendable ONLY toward them (exact or `*.` wildcard;
+   *  the port doesn't bind) — the swap's one policy rule, declared where the grant lives.
+   *  A row declaring none is unbound. Omit `host` for broker-side callers that hold the
+   *  token anyway (a dispatcher's spawn env). null ⇒ unknown handle, a host outside the
+   *  declaration, or a failed refresh (the proxy answers 401). */
+  accessTokenFor(handle: string, host?: string): Promise<string | null>;
 }
 
 export interface BrokerDeps {
@@ -147,13 +155,14 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
       return byHandle.get(handle) ?? null;
     },
 
-    async accessTokenFor(handle: string): Promise<string | null> {
+    async accessTokenFor(handle: string, host?: string): Promise<string | null> {
       const grant = byHandle.get(handle);
       if (!grant) return null;
       const key = grant.credentialKey;
 
       const row = await deps.creds.get(key);
       if (!row) return null;
+      if (host !== undefined && !hostAllowed(row.extra?.hosts, host)) return null;
       if (row.value.token) return row.value.token; // static — nothing expires, nothing refreshes
       const expiry = typeof row.extra?.expiry === "string" ? Date.parse(row.extra.expiry) : NaN;
       if (row.value.access_token && Number.isFinite(expiry) && expiry - now() > SKEW_MS) {
@@ -169,6 +178,18 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
       return await flight;
     },
   };
+}
+
+/** The grant's host binding: a row declaring `extra.hosts` spends only toward them.
+ *  Entries are exact hostnames or `*.suffix` wildcards; the dialed authority may carry a
+ *  port, which doesn't bind. A row declaring none (or a malformed sidecar) is unbound. */
+export function hostAllowed(hosts: unknown, authority: string): boolean {
+  if (!Array.isArray(hosts)) return true;
+  const host = authority.replace(/:\d+$/, "").toLowerCase();
+  return hosts.some((h) =>
+    typeof h === "string" &&
+    (h.startsWith("*.") ? host.endsWith(h.slice(1).toLowerCase()) : host === h.toLowerCase())
+  );
 }
 
 async function defaultRefresh(body: URLSearchParams): Promise<TokenResponse> {

@@ -33,7 +33,7 @@
  * them through a real proxy (cloudflared in dev, an edge function in prod).
  */
 
-import { DEFAULT_SCOPES } from "./config.ts";
+import { DEFAULT_SCOPES, GRANT_ENV, GRANT_HOSTS } from "./config.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Credentials } from "../../store/credentials.ts";
@@ -133,6 +133,9 @@ export function createGoogleOAuth(deps: GoogleOAuthDeps): OAuthHandler {
           // the app that minted the grant — the broker needs it to refresh (§9): only this
           // client_id's secret can spend this refresh_token
           client_id: config.clientId,
+          // the proxy declaration (§9): which env var fronts this grant, toward which hosts
+          env: GRANT_ENV,
+          hosts: GRANT_HOSTS,
           ...(tok.expires_in
             ? { expiry: new Date(Date.now() + tok.expires_in * 1000).toISOString() }
             : {}),
