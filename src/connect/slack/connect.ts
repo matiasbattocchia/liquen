@@ -22,6 +22,10 @@
  *          hosted oauth door serves from
  *
  * Arg (user door): the principal (default: the OS username). Env: none.
+ *
+ * The manifest it prints is `seed/slack-manifest.json` — the app's SHAPE (name, events,
+ * redirect, socket mode) — with the consent lists filled from `connections.slack`
+ * (`withScopes`), so what the app may do is a knob and lives in one place.
  */
 
 import type { AuthTestResponse } from "@slack/web-api";
@@ -250,6 +254,18 @@ export async function connectSlackBot(
   return { team, botUser };
 }
 
+/** Fill the manifest's consent lists from the catalog — the seed carries the app's shape
+ *  (name, events, redirect, socket mode), the config carries what it may do, so the app a
+ *  door creates asks for exactly what the oauth door later requests. */
+export function withScopes(
+  manifest: Record<string, unknown>,
+  scopes: { bot: string[]; user: string[] },
+): Record<string, unknown> {
+  const m = structuredClone(manifest) as { oauth_config?: Record<string, unknown> };
+  m.oauth_config = { ...m.oauth_config, scopes: { bot: scopes.bot, user: scopes.user } };
+  return m as Record<string, unknown>;
+}
+
 /** The USER door mints a USER-ONLY app: no bot user, no bot scopes, no bot events.
  *  The bot is not required for the user leg — and asking for one puts an xoxb next to
  *  the xoxp on the dashboard, the exact paste-slip the shape guard catches. The bot is
@@ -307,6 +323,7 @@ if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { userInfo } = await import("node:os");
+  const { slackConfig } = await import("./config.ts");
 
   const dir = "./data";
   const [first, ...rest] = Deno.args;
@@ -377,8 +394,12 @@ if (import.meta.main) {
     }
   })();
 
-  const manifest = userManifest(JSON.parse(
-    await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
+  const { botScopes, userScopes } = await slackConfig(dir);
+  const manifest = userManifest(withScopes(
+    JSON.parse(
+      await Deno.readTextFile(new URL("../../../seed/slack-manifest.json", import.meta.url)),
+    ),
+    { bot: botScopes, user: userScopes },
   ));
   const url = manifestUrl(manifest);
   console.error(`Connecting Slack as principal "${principal}".\n`);

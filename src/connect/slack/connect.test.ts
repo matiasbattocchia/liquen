@@ -4,7 +4,7 @@
  * string never identifies one) and a rejected token writes NOTHING.
  */
 
-import { assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
   connectSlackApp,
   connectSlackBot,
@@ -12,7 +12,9 @@ import {
   manifestUrl,
   pickSlackApp,
   userManifest,
+  withScopes,
 } from "./connect.ts";
+import { DEFAULT_BOT_SCOPES, DEFAULT_USER_SCOPES } from "./config.ts";
 import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
 import type { CredentialRow } from "../../store/credentials.ts";
 import type { Appender } from "../../store/log.ts";
@@ -144,6 +146,25 @@ Deno.test("connect: the default door mints a USER-ONLY app — every bot limb dr
   assertEquals(m.oauth_config.scopes, { user: ["chat:write", "im:history"] });
   assertEquals(m.settings.event_subscriptions, { user_events: ["message.im"] });
   assertEquals(m.settings.socket_mode_enabled, true); // the carrier stays
+});
+
+Deno.test("connect: the manifest's consent comes from the catalog, not the seed", async () => {
+  const seed = JSON.parse(
+    await Deno.readTextFile(new URL("../../../seed/slack-manifest.json", import.meta.url)),
+  ) as { oauth_config: Record<string, unknown> };
+  // the seed is the app's SHAPE — it must not carry a second copy of the scope lists
+  assertEquals(seed.oauth_config.scopes, undefined);
+  assert(Array.isArray(seed.oauth_config.redirect_urls), "the shape is still there");
+
+  const filled = withScopes(seed, { bot: DEFAULT_BOT_SCOPES, user: DEFAULT_USER_SCOPES }) as {
+    oauth_config: { scopes: Record<string, string[]>; redirect_urls: string[] };
+  };
+  assertEquals(filled.oauth_config.scopes.bot, DEFAULT_BOT_SCOPES);
+  assertEquals(filled.oauth_config.scopes.user, DEFAULT_USER_SCOPES);
+  assert(filled.oauth_config.redirect_urls.length > 0, "injection kept the rest of the section");
+  // and the user door drops the bot leg from what it just filled in
+  const user = userManifest(filled) as { oauth_config: { scopes: Record<string, string[]> } };
+  assertEquals(user.oauth_config.scopes, { user: DEFAULT_USER_SCOPES });
 });
 
 Deno.test("connect: the prefill link embeds the manifest for api.slack.com to build from", () => {

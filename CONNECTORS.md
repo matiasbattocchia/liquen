@@ -62,6 +62,12 @@ constant at the top of the file that uses it, not a knob: the whatsmeow bridge's
 `organizationId` is `"mu"` in `whatsapp/connect.ts` — a data root is one org, so nothing
 chooses it. And mu's own address is never a knob at all (below).
 
+When a connector also **prints an app definition** — slack's manifest, the prefill link
+`mu connect slack` opens — that definition is filled from the same knobs at print time
+(`withScopes`). The seed template holds the app's shape (name, events, redirect, socket
+mode); what the app may do comes from `connections.slack`, so the consent the door asks
+Slack for and the consent the app declares are one list, not two that drift.
+
 ### Outbound media: the pull leg, signed and relative
 
 Most services take a file by **push** — Slack's `files.uploadV2`, Gmail's MIME body: mu

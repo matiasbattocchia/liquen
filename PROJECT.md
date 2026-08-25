@@ -953,6 +953,27 @@ scanner over the `connections` block) and re-emitted verbatim. Only the healing 
 own annotations come from its spec — the catalog's word on its own knobs. Notes a human
 wrote on a subsection no connector claims survive the same way.
 
+### Slack's per-principal leg was never actually requested (2026-08-25) — FIXED
+
+Found while auditing the default scopes. The hosted oauth door supports the user leg
+(`user_scope` on `/start`, and a callback branch that writes the principal's own grant from
+`authed_user.access_token`), but the entry point passed only `botScopes` — and without
+`user_scope` Slack returns an `authed_user` carrying an id and no token, so that branch
+never ran. The shared link re-installed the bot and nothing else; the only route to an xoxp
+was the paste door. `userScopes` is now a catalog knob and the door asks for it.
+
+The two lists differ for a reason worth keeping straight: the bot is ONE identity for the
+org and sees a channel only once invited, so `channels:read` + histories + `chat:write`
+is the job. A user token acts AS that human, so enumerating their private channels, DMs and
+group DMs needs `groups:read`/`im:read`/`mpim:read`, and `search:read`/`files:read` have no
+bot equivalent at all.
+
+Same pass: the scope lists lived twice — in the catalog and in `seed/slack-manifest.json` —
+kept in sync by hand. The seed now carries only the app's shape and the door fills the
+consent from the catalog (`withScopes`). And the manifest's path was one directory short
+(`src/seed/`), so the user door died on `NotFound` before printing its link; the new test
+reads the seed, which is what surfaced it.
+
 ### Outbound media: one door in, and mu stopped stating its own address (2026-08-25) — LANDED
 
 Found by asking why a `mediaHost` knob existed at all. Inbound media is **pushed** to us

@@ -198,7 +198,7 @@ if (import.meta.main) {
   const { pickSlackApp } = await import("./connect.ts");
   const { slackConfig } = await import("./config.ts");
   const dir = "./data";
-  const { oauthPort: port, botScopes } = await slackConfig(dir);
+  const { oauthPort: port, botScopes, userScopes } = await slackConfig(dir);
   const creds = await openCredentials(dir);
   const appFlag = Deno.args.indexOf("--app");
   const app = await pickSlackApp(creds, appFlag >= 0 ? Deno.args[appFlag + 1] : undefined)
@@ -212,6 +212,7 @@ if (import.meta.main) {
     redirectUri: (app.extra?.redirect_uri as string | undefined) ??
       `http://localhost:${port}/oauth/slack/callback`,
     scopes: botScopes,
+    userScopes, // without it Slack returns an authed_user with no token — no principal grant
   };
   const log = await openLog(`${dir}/log`);
   const handler = createSlackOAuth({

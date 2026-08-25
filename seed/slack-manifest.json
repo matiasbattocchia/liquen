@@ -13,31 +13,6 @@
     "redirect_urls": [
       "https://YOUR-PUBLIC-HOST/oauth/slack/callback"
     ],
-    "scopes": {
-      "bot": [
-        "channels:history",
-        "groups:history",
-        "im:history",
-        "mpim:history",
-        "channels:read",
-        "users:read",
-        "chat:write"
-      ],
-      "user": [
-        "channels:history",
-        "groups:history",
-        "im:history",
-        "mpim:history",
-        "channels:read",
-        "groups:read",
-        "im:read",
-        "mpim:read",
-        "users:read",
-        "chat:write",
-        "search:read",
-        "files:read"
-      ]
-    },
     "pkce_enabled": false
   },
   "settings": {
