@@ -587,11 +587,12 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => vo
   };
 }
 
-/* ── local entry: Socket Mode carrier (SLACK_APP_TOKEN) or HTTP (PORT) ──────
+/* ── local entry: Socket Mode carrier (SLACK_APP_TOKEN) or HTTP ─────────────
  *
  *   deno task ingest:slack       # xapp set → socket mode; else HTTP on :8789
  *
- * Env: SLACK_APP_TOKEN (socket mode) · SLACK_SIGNING_SECRET (HTTP mode) · PORT. */
+ * Env: SLACK_APP_TOKEN (socket mode) · SLACK_SIGNING_SECRET (HTTP mode) — secrets;
+ * the HTTP port is connections.slack.ingestPort. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
@@ -648,7 +649,8 @@ if (import.meta.main) {
     console.error(`[slack] socket-mode ingest → ${dir}/log`);
     slackSocket(appToken, handler);
   } else {
-    const port = Number(Deno.env.get("PORT") ?? 8789);
+    const { slackConfig } = await import("./config.ts");
+    const port = (await slackConfig(dir)).ingestPort;
     console.error(`[slack] HTTP ingest on :${port} → ${dir}/log (Events API request URL)`);
     Deno.serve({ port }, handler);
   }

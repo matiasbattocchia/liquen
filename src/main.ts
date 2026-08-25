@@ -174,7 +174,9 @@ export async function start(
   // gets the placeholder + proxy env, never a real credential. More than one grant needs the
   // per-agent plane (which agent's token?), so we hold off rather than guess.
   const proxy = config.exec ? null : await installProxy(dir);
-  const plane = config.exec ? null : await installExecPlane(dir, proxy!.env);
+  const plane = config.exec
+    ? null
+    : await installExecPlane(dir, proxy!.env, org?.system.bashTimeoutMs);
   const exec = config.exec ?? plane!.exec;
   const ambient = plane?.ambient ?? config.ambient; // per-agent planes arrive with multi-principal
 

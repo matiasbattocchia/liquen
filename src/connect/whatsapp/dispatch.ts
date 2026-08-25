@@ -257,26 +257,26 @@ function urlFor(c: WAContent, mediaUrl?: WAMediaUrl): Promise<string | undefined
   return mediaUrl({ type: "file", kind: "document", file: c.file });
 }
 
-/* ── local entry: `send` = POST ${WA_BRIDGE_URL}/dispatch · loopback media server ──
+/* ── local entry: `send` = POST <bridgeUrl>/dispatch · loopback media server ──
  *
  *   deno task dispatch:whatsapp
  *
- * Env: WA_BRIDGE_URL (default http://localhost:8081) · WA_BRIDGE_TOKEN ·
- *      WA_MEDIA_PORT (default 8792) · WA_MEDIA_HOST (what the bridge dials; default
- *      localhost — set it when the bridge runs in a container). */
+ * Env: WA_BRIDGE_TOKEN (the secret); the knobs are connections.whatsapp — mediaHost
+ * is what the bridge dials (set it when the bridge runs in a container). */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { mimeOf, pathOf } = await import("../../store/media.ts");
+  const { whatsappConfig } = await import("./config.ts");
   const dir = "./data";
   const log = await openLog(`${dir}/log`);
-  const base = Deno.env.get("WA_BRIDGE_URL") ?? "http://localhost:8081";
+  const { bridgeUrl: base, mediaPort, mediaHost } = await whatsappConfig(dir);
   const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
 
   // the loopback file server behind the `mediaUrl` seam: one-time tokens → local bytes.
   // The bridge GETs, uploads to WhatsApp, done — the file never rides the log or the
   // agent's context (§9). Tokens expire; a served token stays valid for bridge retries.
-  const port = Number(Deno.env.get("WA_MEDIA_PORT") ?? 8792);
-  const host = Deno.env.get("WA_MEDIA_HOST") ?? "localhost";
+  const port = mediaPort;
+  const host = mediaHost;
   const tokens = new Map<string, { path: string; expires: number }>();
   const TTL = 10 * 60 * 1000;
   Deno.serve({ port }, async (req) => {

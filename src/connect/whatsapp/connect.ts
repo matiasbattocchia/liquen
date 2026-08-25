@@ -147,8 +147,7 @@ export async function connectWhatsApp(
  * Expired ⇒ run the door again for a fresh one.
  *
  * Arg: the principal (default: the OS username — a session choice, so an argument).
- * Env: WA_BRIDGE_URL (default http://localhost:8081) · WA_BRIDGE_TOKEN ·
- *      WA_ORG (default mu) · WA_PHONE. */
+ * Env: WA_BRIDGE_TOKEN (the secret); the knobs are connections.whatsapp. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { userInfo } = await import("node:os");
@@ -162,9 +161,10 @@ if (import.meta.main) {
       return "principal";
     }
   })();
-  const base = Deno.env.get("WA_BRIDGE_URL") ?? "http://localhost:8081";
+  const { whatsappConfig } = await import("./config.ts");
+  const { bridgeUrl: base, bridgeOrg } = await whatsappConfig(dir);
   const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
-  const phoneNumber = Deno.args[0] ?? Deno.env.get("WA_PHONE") ?? undefined;
+  const phoneNumber = Deno.args[0] ?? undefined;
 
   const call = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
     const res = await fetch(`${base}${path}`, {
@@ -192,7 +192,7 @@ if (import.meta.main) {
     const { address } = await connectWhatsApp({
       bridge,
       principal,
-      organizationId: Deno.env.get("WA_ORG") ?? "mu",
+      organizationId: bridgeOrg,
       phoneNumber,
       store: log, // connections live on the Log (§4)
       publish: log.publish,

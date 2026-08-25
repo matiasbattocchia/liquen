@@ -65,14 +65,11 @@ export function anthropicTransport(client: Anthropic): ModelTransport {
   };
 }
 
-/** Build a client. An explicit (or env) key wins; otherwise `apiKey: null` hands auth to
- *  the SDK's credential chain — `ANTHROPIC_AUTH_TOKEN`, then an `ant auth login` OAuth
- *  profile on disk. Caveat: an EMPTY `ANTHROPIC_API_KEY=` line still shadows the chain
- *  inside the SDK — delete the line rather than leaving it blank. */
-export function anthropicClient(
-  apiKey: string | undefined = Deno.env.get("ANTHROPIC_API_KEY"),
-): Anthropic {
-  return apiKey ? new Anthropic({ apiKey }) : new Anthropic({ apiKey: null });
+/** Build a client. An explicit key (a test's, or later a vault credential) wins;
+ *  otherwise credentials are the SDK's own affair — `ANTHROPIC_API_KEY`,
+ *  `ANTHROPIC_AUTH_TOKEN`, an `ant auth login` OAuth profile — mu never reads them. */
+export function anthropicClient(apiKey?: string): Anthropic {
+  return apiKey ? new Anthropic({ apiKey }) : new Anthropic();
 }
 
 function errorText(err: unknown): string {

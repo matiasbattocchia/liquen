@@ -54,11 +54,14 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
   });
 
   // the ingest runs as a SEPARATE OS process over the same org — the org lives where you
-  // run mu, so pointing the child at it is a cwd, not an env var
+  // run mu (a cwd, not an env var), and the port is its config knob, not an env var
+  await Deno.writeTextFile(
+    `${dir}/data/config.jsonc`,
+    JSON.stringify({ connections: { github: { ingestPort: port } } }),
+  );
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", script],
     cwd: dir,
-    env: { PORT: String(port) },
     stdout: "null",
     stderr: "null",
   }).spawn();

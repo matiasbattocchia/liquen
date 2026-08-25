@@ -18,6 +18,7 @@
  * that can write to GitHub — it only reads the shared webhook secret and writes to the log.
  */
 
+import { DEFAULT_EVENTS } from "./config.ts";
 import type { Appender, Draft, MessageEvent } from "../../src/connector.ts";
 
 export interface GithubWebhookDeps {
@@ -34,15 +35,6 @@ export interface GithubWebhookDeps {
 }
 
 export type WebhookHandler = (req: Request) => Promise<Response>;
-
-/** The events we map by default. Others are acknowledged (2xx) but produce nothing. */
-export const DEFAULT_EVENTS = [
-  "issue_comment",
-  "issues",
-  "pull_request",
-  "pull_request_review",
-  "pull_request_review_comment",
-];
 
 /** Build the ingest handler. Pure over its deps — call once, serve the result anywhere. */
 export function createGithubWebhook(deps: GithubWebhookDeps): WebhookHandler {
@@ -259,13 +251,15 @@ function text(status: number, message: string): Response {
  *     --events=issue_comment,pull_request,pull_request_review_comment \
  *     --url=http://localhost:8788/ --secret="$GITHUB_WEBHOOK_SECRET"
  *
- * The harness (`deno task cli`) on the SAME data root turns a PR comment into a poke. Env:
- * GITHUB_WEBHOOK_SECRET · PORT. The store import is dynamic so
- * importing `createGithubWebhook` (e.g. from an edge function) never pulls in file I/O. */
+ * The harness (`deno task cli`) on the SAME data root turns a PR comment into a poke.
+ * Env: GITHUB_WEBHOOK_SECRET (the secret); the knobs are connections.github. The store
+ * import is dynamic so importing `createGithubWebhook` (e.g. from an edge function)
+ * never pulls in file I/O. */
 if (import.meta.main) {
   const { openLog } = await import("../../src/connector.ts");
+  const { githubConfig } = await import("./config.ts");
   const dir = "./data";
-  const port = Number(Deno.env.get("PORT") ?? 8788);
+  const { ingestPort: port, events } = await githubConfig(dir);
   const secret = Deno.env.get("GITHUB_WEBHOOK_SECRET") || undefined;
 
   const log = await openLog(`${dir}/log`);
@@ -278,5 +272,5 @@ if (import.meta.main) {
     `[github] ingest on :${port} → ${dir}/log  (gh webhook forward --url=http://localhost:${port}/)`,
   );
   // `log.publish` passed straight through — a wrapper lambda would flatten its overloads
-  Deno.serve({ port }, createGithubWebhook({ publish: log.publish, secret }));
+  Deno.serve({ port }, createGithubWebhook({ publish: log.publish, secret, events }));
 }

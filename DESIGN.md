@@ -2036,10 +2036,13 @@ import one seam module, `src/connector.ts` (log, vault, broker, config, types); 
 contract and the per-service map are CONNECTORS.md. The github connector lives in
 `connectors/` as the reference: a custom connector is a swap of places, nothing more.
 **The same framework way extends to settings — the catalog** (`src/config.ts`): every
-harness knob, its default, one file exposing them all. `org/config.jsonc` carries five
-sections, split by AUDIENCE — `organization` (org-wide facts, set there and nowhere else:
-backlogHours), `processors` (media→text commands, §5), `connections` (the knobs the
-standalone connector services read), `agent` (every agent's defaults, the section an agent's own file
+harness knob, its default, one file exposing them all. `data/config.jsonc` (the org root's
+one file) carries five sections, split by AUDIENCE — `organization` (org-wide facts, set
+there and nowhere else: backlogHours), `processors` (media→text commands, §5),
+`connections` (one subsection per connector, OWNED by the connector: its `config.ts`
+declares the defaults and heals `connections.<name>` through `ensureConnectorConfig`;
+main preserves what it does not know, so custom connectors configure identically),
+`agent` (every agent's defaults, the section an agent's own file
 re-declares: model · effort · maxTokens · provider · timezone · locale · rules · the
 attention knobs) and `system` (harness machinery: stopTimeoutMs · lockTtlMs ·
 retryDelaysMs · compactAt · keepRecent · windowLimit · mirrorSettleMs · mirrorClaimMs ·

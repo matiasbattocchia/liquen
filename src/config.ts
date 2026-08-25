@@ -13,11 +13,15 @@
  *     `organization`: org-wide facts, set here and nowhere else · `agent`: every agent's
  *     defaults, the section an agent's own file re-declares · `system`: harness machinery —
  *     while the value still funnels to the deepest function that needs it.
- *   · `org/config.jsonc` always exposes the whole catalog. Absent, it is materialized from
- *     the constants; when the catalog grows, the missing keys are appended (values you set
- *     survive — the comments are the catalog's). An unknown key is a boot error: a typo
- *     must not run silently. Agent files are sparse — only what they override, plus the
- *     declared identity handles.
+ *   · `data/config.jsonc` always exposes the whole catalog. Absent, it is materialized
+ *     from the constants; when the catalog grows, the missing keys are appended (values
+ *     you set survive — the comments are the catalog's). An unknown key is a boot error: a
+ *     typo must not run silently. Agent files are sparse — only what they override, plus
+ *     the declared identity handles.
+ *   · `connections.<name>` subsections belong to the connectors: each connector ships its
+ *     own `config.ts` (its DEFAULT_s, the same rules) and heals ITS subsection through
+ *     `ensureConnectorConfig` — main preserves subsections it does not know, so shipped
+ *     and custom connectors are configured identically.
  *   · env is for secrets only (tokens the services hold; `ANTHROPIC_API_KEY` belongs to
  *     the SDK's own credential chain, not to us); everything else lives in the file or is
  *     a constant. The data root is `./data`, period. Session choices (which agent a REPL
@@ -56,11 +60,9 @@ export const DEFAULT_DIGEST_MINUTES = 15;
 // did — the mind alias, and a conversation the agent is holding the floor in.
 export const DEFAULT_SLEEP_HOURS = "23-8";
 
-// connections — knobs the standalone connector services read
-export const DEFAULT_GOOGLE_CALENDARS = ["primary"];
-
 // system — harness machinery
 export const DEFAULT_STOP_TIMEOUT_MS = 5_000; // cap on stop() awaiting an in-flight turn
+export const DEFAULT_BASH_TIMEOUT_MS = 120_000; // a bash call's cap unless the model asks
 export const DEFAULT_LOCK_TTL_MS = 120_000; // a turn lease older than this is STOLEN
 export const DEFAULT_RETRY_DELAYS_MS = [5_000, 20_000]; // slow outer retries (§2)
 // est. tokens of RAW EVENT JSON (`estTokens`, chars/4) — roughly 1.8x the prompt those
@@ -112,12 +114,13 @@ export interface OrgConfig {
      *  interface — the repo ships `processors/qwen-asr/` as one implementation. */
     audio: string | null;
   };
-  connections: {
-    /** Calendars the google poll watches on every grant; `primary` is the account's own. */
-    googleCalendars: string[];
-  };
+  /** The connectors' subsections, one per connector, OPAQUE here: each connector's own
+   *  `config.ts` declares, heals, and validates its subsection (`ensureConnectorConfig`);
+   *  main only preserves what it does not know. */
+  connections: Record<string, Record<string, unknown>>;
   system: {
     stopTimeoutMs: number;
+    bashTimeoutMs: number;
     lockTtlMs: number;
     retryDelaysMs: number[];
     compactAt: number;
@@ -145,6 +148,27 @@ interface Entry {
   key: string;
   value: unknown;
   doc: string;
+}
+
+/** Common boot checks for connector entries. */
+export const checkPort = (v: unknown): string | null =>
+  Number.isInteger(v) && (v as number) > 0 && (v as number) < 65536
+    ? null
+    : "must be a port (1-65535)";
+export const checkStrings = (v: unknown): string | null =>
+  Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === "string" && s)
+    ? null
+    : "must be a non-empty array of non-empty strings";
+
+/** A connector's catalog — the same shape the harness catalog has, scoped to ONE
+ *  `connections.<name>` subsection. Declared in the connector's own `config.ts`. */
+export interface ConnectorSpec {
+  name: string; // the subsection: connections.<name>
+  doc: string; // the subsection's comment in the file
+  entries: (Entry & {
+    /** Boot validation: a complaint ("must be …") or null when the value is fine. */
+    check?: (v: unknown) => string | null;
+  })[];
 }
 
 const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
@@ -222,17 +246,6 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
     ],
   },
   {
-    section: "connections",
-    doc: "knobs the standalone connector services read (each reads its own, §4)",
-    entries: [
-      {
-        key: "googleCalendars",
-        value: DEFAULT_GOOGLE_CALENDARS,
-        doc: 'calendars the google poll watches on every grant; "primary" = the account\'s own',
-      },
-    ],
-  },
-  {
     section: "system",
     doc: "harness machinery — rarely touched",
     entries: [
@@ -240,6 +253,11 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
         key: "stopTimeoutMs",
         value: DEFAULT_STOP_TIMEOUT_MS,
         doc: "cap on stop() awaiting an in-flight turn",
+      },
+      {
+        key: "bashTimeoutMs",
+        value: DEFAULT_BASH_TIMEOUT_MS,
+        doc: "a bash call's wall cap unless the model asks for another",
       },
       {
         key: "lockTtlMs",
@@ -295,18 +313,22 @@ function defaults(): OrgConfig {
   for (const { section, entries } of CATALOG) {
     cfg[section] = Object.fromEntries(entries.map((e) => [e.key, e.value]));
   }
+  cfg.connections = {};
   return cfg as unknown as OrgConfig;
 }
 
-/** Render the file: the user's values (or the defaults), the catalog's comments. */
-function materialize(cfg: OrgConfig): string {
+/** Render the file: the user's values (or the defaults), the catalog's comments. The
+ *  `connections` subsections re-emit verbatim — with THEIR catalog's comments when the
+ *  writer knows it (`known`, the healing connector's spec), bare values otherwise (each
+ *  connector re-annotates its own subsection the next time it heals). */
+function materialize(cfg: OrgConfig, known: Record<string, ConnectorSpec> = {}): string {
   const lines: string[] = [
-    "// org/config.jsonc — every harness knob (the catalog, DESIGN §9).",
+    "// config.jsonc — every harness knob (the catalog, DESIGN §9).",
     "// Values are yours to edit; when the catalog grows the file is regenerated with the",
     "// missing keys appended — your values survive, these comments are the catalog's.",
     "{",
   ];
-  CATALOG.forEach(({ section, doc, entries }, i) => {
+  CATALOG.forEach(({ section, doc, entries }) => {
     lines.push(`  // ${doc}`);
     lines.push(`  "${section}": {`);
     entries.forEach((e, j) => {
@@ -315,32 +337,49 @@ function materialize(cfg: OrgConfig): string {
       lines.push(`    // ${e.doc}`);
       lines.push(`    "${e.key}": ${JSON.stringify(value)}${comma}`);
     });
-    lines.push(`  }${i < CATALOG.length - 1 ? "," : ""}`);
+    lines.push(`  },`);
   });
-  lines.push("}", "");
+  lines.push("  // the connectors' knobs — each connector heals its own subsection (§4)");
+  lines.push(`  "connections": {`);
+  const names = Object.keys(cfg.connections);
+  names.forEach((name, i) => {
+    const body = cfg.connections[name];
+    const spec = known[name];
+    if (spec) lines.push(`    // ${spec.doc}`);
+    lines.push(`    "${name}": {`);
+    const keys = spec ? spec.entries.map((e) => e.key) : Object.keys(body);
+    keys.forEach((key, j) => {
+      const doc = spec?.entries.find((e) => e.key === key)?.doc;
+      if (doc) lines.push(`      // ${doc}`);
+      lines.push(`      "${key}": ${JSON.stringify(body[key])}${j < keys.length - 1 ? "," : ""}`);
+    });
+    lines.push(`    }${i < names.length - 1 ? "," : ""}`);
+  });
+  lines.push("  }", "}", "");
   return lines.join("\n");
 }
 
 /* ── the readers (main only) ─────────────────────────────────────────────── */
 
-/** Read `org/config.jsonc`, materializing or healing it so the file always exposes the
- *  whole catalog. Unknown key or section ⇒ boot error. */
+/** Read `<dir>/config.jsonc`, materializing or healing it so the file always exposes the
+ *  whole catalog. Unknown key or section ⇒ boot error; `connections` subsections are the
+ *  connectors' and pass through opaque (each connector validates its own). */
 export async function ensureOrgConfig(dir: string): Promise<OrgConfig> {
-  await rejectLegacy(`${dir}/org/config.json`);
-  const path = `${dir}/org/config.jsonc`;
+  await rejectLegacy(`${dir}/org/config.jsonc`, `${dir}/config.jsonc`);
+  const path = `${dir}/config.jsonc`;
   let raw: string | null = null;
   try {
     raw = await Deno.readTextFile(path);
   } catch { /* absent — materialize below */ }
   if (raw === null) {
     const cfg = defaults();
-    await Deno.mkdir(`${dir}/org`, { recursive: true });
+    await Deno.mkdir(dir, { recursive: true });
     await Deno.writeTextFile(path, materialize(cfg));
     return cfg;
   }
   const found = parseStrict(raw, path) as Record<string, Record<string, unknown>>;
   for (const section of Object.keys(found)) {
-    if (!CATALOG.some((c) => c.section === section)) {
+    if (section !== "connections" && !CATALOG.some((c) => c.section === section)) {
       throw new Error(`${path}: unknown section "${section}"`);
     }
   }
@@ -358,6 +397,15 @@ export async function ensureOrgConfig(dir: string): Promise<OrgConfig> {
       return [e.key, e.key in given ? given[e.key] : e.value];
     }));
   }
+  const connections = found.connections ?? {};
+  for (const [name, body] of Object.entries(connections)) {
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      throw new Error(
+        `${path}: connections.${name} must be an object (a connector's subsection)`,
+      );
+    }
+  }
+  merged.connections = connections;
   const cfg = merged as unknown as OrgConfig;
   validateOrg(cfg, path);
   if (missing.length > 0) {
@@ -367,12 +415,49 @@ export async function ensureOrgConfig(dir: string): Promise<OrgConfig> {
   return cfg;
 }
 
+/** A connector's reader: `ensureOrgConfig` first (the file exists, the harness sections
+ *  hold), then its own subsection — unknown keys error, missing keys heal into the file
+ *  with the spec's comments, `check`s run at boot. Returns the merged subsection. */
+export async function ensureConnectorConfig<T extends object>(
+  dir: string,
+  spec: ConnectorSpec,
+): Promise<T> {
+  const path = `${dir}/config.jsonc`;
+  const cfg = await ensureOrgConfig(dir);
+  const given = cfg.connections[spec.name] ?? {};
+  for (const key of Object.keys(given)) {
+    if (!spec.entries.some((e) => e.key === key)) {
+      throw new Error(`${path}: unknown key "connections.${spec.name}.${key}"`);
+    }
+  }
+  const missing: string[] = [];
+  const merged = Object.fromEntries(spec.entries.map((e) => {
+    if (!(e.key in given)) missing.push(`connections.${spec.name}.${e.key}`);
+    return [e.key, e.key in given ? given[e.key] : e.value];
+  }));
+  for (const e of spec.entries) {
+    const complaint = e.check?.(merged[e.key]);
+    if (complaint) {
+      throw new Error(
+        `${path}: connections.${spec.name}.${e.key} ${complaint} (got ` +
+          `${JSON.stringify(merged[e.key])})`,
+      );
+    }
+  }
+  if (missing.length > 0) {
+    cfg.connections[spec.name] = merged;
+    await Deno.writeTextFile(path, materialize(cfg, { [spec.name]: spec }));
+    console.error(`[config] ${path}: appended ${missing.join(", ")} (the catalog grew)`);
+  }
+  return merged as unknown as T;
+}
+
 /** Read `agents/<id>/config.jsonc` — sparse: absent file ⇒ no overrides. A present file
  *  must parse and carry only known keys — a silent fallback would run the org on settings
  *  the human believes overridden. */
 export async function readAgentOverrides(dir: string, agentId: string): Promise<AgentOverrides> {
-  await rejectLegacy(`${dir}/agents/${agentId}/config.json`);
   const path = `${dir}/agents/${agentId}/config.jsonc`;
+  await rejectLegacy(`${dir}/agents/${agentId}/config.json`, path);
   let raw: string;
   try {
     raw = await Deno.readTextFile(path);
@@ -428,13 +513,6 @@ function validateOrg(cfg: OrgConfig, path: string): void {
     throw new Error(
       `${path}: processors.audio must be a shell command string, or null (got ` +
         `${JSON.stringify(cfg.processors.audio)})`,
-    );
-  }
-  const cals = cfg.connections.googleCalendars;
-  if (!Array.isArray(cals) || cals.length === 0 || cals.some((c) => typeof c !== "string" || !c)) {
-    throw new Error(
-      `${path}: connections.googleCalendars must be a non-empty array of calendar ids (got ` +
-        `${JSON.stringify(cals)})`,
     );
   }
   validateAgent(cfg.agent, path);
@@ -497,15 +575,15 @@ function validateAgent(a: Partial<OrgConfig["agent"]>, path: string): void {
   }
 }
 
-/** The catalog moved: config is `.jsonc` with sections. */
-async function rejectLegacy(path: string): Promise<void> {
+/** The catalog moved (org/config.jsonc → config.jsonc — data/ is the org's root). */
+async function rejectLegacy(path: string, target: string): Promise<void> {
   try {
     await Deno.lstat(path);
   } catch {
     return;
   }
   throw new Error(
-    `${path}: the catalog lives in ${path}c now (sections "organization"/"agent"/"system", ` +
-      `comments allowed) — move your values there and delete this file`,
+    `${path}: the catalog lives in ${target} now — move your values there and delete ` +
+      `this file`,
   );
 }

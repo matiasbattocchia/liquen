@@ -36,8 +36,15 @@ Nothing below needs a sixth piece. What some of them need is **new state**, whic
 A connector is a **standalone process over the org's substrate**: it reaches mu through
 the shared `./data` root and imports only the seam module, **`src/connector.ts`** — the log (`openLog`,
 `publish`, subscribe/`setDelivery`), the vault (`openCredentials`, the grant broker),
-`ensureOrgConfig`, the event types, and the dispatch error contract. A deep import from a
-connector is a contract violation, not a convenience.
+`ensureConnectorConfig`, the event types, and the dispatch error contract. A deep import
+from a connector is a contract violation, not a convenience.
+
+Configuration follows the harness's own config rules: the connector ships a `config.ts`
+declaring its DEFAULT_s and its `ConnectorSpec`; `ensureConnectorConfig` heals the
+`connections.<name>` subsection of `data/config.jsonc` (missing keys appended with the
+spec's comments, unknown keys a boot error, `check`s run at boot) and returns the merged
+values. Secrets never enter the file — they stay in env (`WA_BRIDGE_TOKEN`,
+`GITHUB_WEBHOOK_SECRET`, `SLACK_CLIENT_SECRET`, …).
 
 Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispatch.ts` ·
 `oauth.ts` · `connect.ts`):

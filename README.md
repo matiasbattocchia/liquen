@@ -32,10 +32,9 @@ workspace, and its docs (identity, org, memories — edit them, boot never overw
 
 ## Knobs
 
-| env | default | |
-|---|---|---|
-| `MU_MODEL` | `claude-opus-4-8` | the agent's model |
-| `MU_EFFORT` | `high` (API default) | `low` · `medium` · `high` · `xhigh` · `max` |
+Every knob lives in `data/config.jsonc` (the catalog, materialized on first boot — edit
+values there; comments document each key). Env is for secrets only. Task mode is the one
+exception left: `MU_MODEL` · `MU_EFFORT` (env, pending the same treatment).
 
 ## Connections
 

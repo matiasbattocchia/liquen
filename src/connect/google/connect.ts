@@ -72,7 +72,7 @@ export async function pickGoogleApp(
  *   deno task connect:google account [principal] [--org] [--app <client_id>]
  *                                    [--scopes "a b c"]   # default: openid email calendar
  *
- * Env: PORT (account's localhost callback, default 8791). */
+ * The account door serves its callback on connections.google.oauthPort. */
 if (import.meta.main) {
   const { openCredentials } = await import("../../store/credentials.ts");
   const dir = "./data";
@@ -117,7 +117,8 @@ if (import.meta.main) {
         }
       })();
       const app = await pickGoogleApp(creds, flags.get("app"));
-      const port = Number(Deno.env.get("PORT") ?? 8791);
+      const { googleConfig } = await import("./config.ts");
+      const port = (await googleConfig("./data")).oauthPort;
       const log = await openLog(`${dir}/log`);
       const done = Promise.withResolvers<void>();
       const handler = createGoogleOAuth({

@@ -26,6 +26,7 @@
  */
 
 import type { OauthV2AccessResponse } from "@slack/web-api";
+import { DEFAULT_BOT_SCOPES } from "./config.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Credentials } from "../../store/credentials.ts";
@@ -57,16 +58,6 @@ export interface SlackOAuthDeps {
   exchange?: (code: string, config: SlackOAuthConfig) => Promise<SlackAccess>;
   now?: () => string;
 }
-
-export const DEFAULT_BOT_SCOPES = [
-  "channels:history",
-  "groups:history",
-  "im:history",
-  "mpim:history",
-  "channels:read",
-  "users:read",
-  "chat:write",
-];
 
 export type OAuthHandler = (req: Request) => Promise<Response>;
 
@@ -197,20 +188,21 @@ function text(status: number, message: string): Response {
  *
  *   deno task oauth:slack        # :8790 — put a SYNCHRONOUS proxy in front (cloudflared)
  *
- * Env: SLACK_CLIENT_ID · SLACK_CLIENT_SECRET · SLACK_REDIRECT_URI · PORT.
+ * Env: SLACK_CLIENT_ID · SLACK_CLIENT_SECRET (secrets); the knobs are connections.slack.
  * The shareable door is <public>/oauth/slack/start — the admin distributes it; auto-
  * registration binds principals as `slack:<team>:<user>` until the identities map (v0.1)
  * refines it. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
+  const { slackConfig } = await import("./config.ts");
   const dir = "./data";
-  const port = Number(Deno.env.get("PORT") ?? 8790);
+  const { oauthPort: port, redirectUri, botScopes } = await slackConfig(dir);
   const config: SlackOAuthConfig = {
     clientId: Deno.env.get("SLACK_CLIENT_ID") ?? "",
     clientSecret: Deno.env.get("SLACK_CLIENT_SECRET") ?? "",
-    redirectUri: Deno.env.get("SLACK_REDIRECT_URI") ??
-      `http://localhost:${port}/oauth/slack/callback`,
+    redirectUri: redirectUri ?? `http://localhost:${port}/oauth/slack/callback`,
+    scopes: botScopes,
   };
   if (!config.clientId || !config.clientSecret) {
     console.error("[slack-oauth] SLACK_CLIENT_ID / SLACK_CLIENT_SECRET are required");

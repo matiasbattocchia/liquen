@@ -560,7 +560,8 @@ function json(status: number, body: unknown): Response {
  *
  *   deno task ingest:whatsapp     # serves :8791; bridge env → OPENBSP_URL=http://localhost:8791
  *
- * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN) · PORT. */
+ * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN); the port is
+ * connections.whatsapp.ingestPort. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { saveMedia } = await import("../../store/media.ts");
@@ -577,7 +578,8 @@ if (import.meta.main) {
       }),
     bridgeToken: Deno.env.get("WA_BRIDGE_TOKEN") || undefined,
   });
-  const port = Number(Deno.env.get("PORT") ?? 8791);
+  const { whatsappConfig } = await import("./config.ts");
+  const port = (await whatsappConfig(dir)).ingestPort;
   console.error(`[whatsapp] bridge ingest on :${port} → ${dir}/log`);
   Deno.serve({ port }, handler);
 }

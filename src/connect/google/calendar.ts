@@ -10,7 +10,7 @@
  * ticker for a `(Request)=>Response` on the edge tier and the map/publish below is unchanged.
  *
  * What it watches: each google GRANT the org holds (`google:<email>`, minus the `google:app:`
- * client rows), across a set of calendars (org config `connections.googleCalendars`). What it
+ * client rows), across a set of calendars (config `connections.google.calendars`). What it
  * emits: a `message` per changed calendar event, in a `broadcast` conversation
  * `calendar:<calendar>` on service `google` — where `<calendar>` is the calendar's TRUE id
  * (`primary` resolves to the grant's email; see `pollCalendar`) — with the PRUNED resource in
@@ -50,6 +50,7 @@
  * broker is already the one code path that touches the secret, and this runs beside it.
  */
 
+import { DEFAULT_CALENDARS } from "./config.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
@@ -92,7 +93,7 @@ export interface GoogleWebhookDeps {
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
   broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
-  /** Which calendars to watch on each grant. Default `["primary"]`. */
+  /** Which calendars to watch on each grant. Default `DEFAULT_CALENDARS`. */
   calendars?: string[];
   /** Injectable for tests; defaults to global `fetch` against the Calendar API. */
   fetchApi?: typeof fetch;
@@ -108,7 +109,7 @@ export interface GoogleWebhookDeps {
  *  a sweep runs JOINS it — two sweeps reading one cursor would each publish the same delta
  *  and race the write-back, and a stalled poll must not pile intervals behind it. */
 export function createGoogleWebhook(deps: GoogleWebhookDeps): { tick(): Promise<void> } {
-  const calendars = deps.calendars?.length ? deps.calendars : ["primary"];
+  const calendars = deps.calendars?.length ? deps.calendars : DEFAULT_CALENDARS;
   const sweep = async (): Promise<void> => {
     const grants = (await deps.creds.list(GRANT_PREFIX))
       .filter((r) => !r.key.startsWith(APP_PREFIX));
@@ -412,8 +413,8 @@ async function bootstrap(
  *   deno task ingest:google        # sweeps every google grant on a metronome
  *
  * The harness (`deno task cli`) on the SAME data root turns each calendar change into a poke.
- * Env: none — the data root is `./data`; the calendars come from the org
- * config (`connections.googleCalendars`), the cadence is a constant. The store imports are
+ * Env: none — the data root is `./data`; the calendars come from config
+ * (`connections.google.calendars`), the cadence is a constant. The store imports are
  * dynamic so importing `createGoogleWebhook` (e.g. from an edge function) never pulls in
  * file I/O. */
 if (import.meta.main) {
@@ -421,9 +422,9 @@ if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { createGrantBroker } = await import("../../proxy/grants.ts");
-  const { ensureOrgConfig } = await import("../../config.ts");
+  const { googleConfig } = await import("./config.ts");
   const dir = "./data";
-  const calendars = (await ensureOrgConfig(dir)).connections.googleCalendars;
+  const { calendars } = await googleConfig(dir);
 
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);

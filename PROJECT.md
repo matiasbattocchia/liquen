@@ -929,8 +929,25 @@ move plus a proof:
   entry, so spawning keeps one contract for shipped, custom, and pasted-path doors).
 - **Env shrank to secrets**: `MU_DIR` removed — the data root is the constant `./data`
   everywhere (the org lives where you run mu); `ANTHROPIC_API_KEY` is the SDK's own
-  credential chain, not our knob. Remaining env cleanups tracked: task.ts's `MU_*` trio,
-  the WhatsApp bridge vars, `SLACK_REDIRECT_URI`, and `PORT`.
+  credential chain, not our knob.
+
+### Config went the framework way for connectors (2026-08-25) — LANDED
+
+The catalog moved to **`data/config.jsonc`** (data/ is the org's root the way `/` is
+linux's; `data/agents/` is its `/home`) and the `connections` section became **one
+subsection per connector, owned by the connector**: each ships a `config.ts` (its
+DEFAULT_s, the config rules) and heals `connections.<name>` through
+`ensureConnectorConfig` — missing keys appended with the spec's comments, unknown keys a
+boot error, `check`s at boot. Main preserves subsections it does not know, so custom
+connectors configure identically (github's `config.ts` sits in `connectors/github/`,
+importing the seam). `PORT` and every remaining env knob died in the same pass —
+`connections.<service>` now carries ingest/oauth/media ports (whatsapp ingest moved
+8791 → 8793: it collided with google's oauth door), bridge url/org, scopes, github's
+event list; the whatsapp ingest/media split ports stay distinct. Env is secrets, full
+stop; `transport.ts` no longer reads `ANTHROPIC_API_KEY` at all (an explicit key wins,
+else the SDK's own chain). Also promoted while auditing: bash's tool timeout became
+`system.bashTimeoutMs`. The one tracked exception left: task.ts's `MU_*` env vars,
+pending the task-mode redesign.
 
 ## The honest framing
 

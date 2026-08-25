@@ -18,6 +18,7 @@ import type { Json } from "../types.ts";
 import { newId } from "../store/id.ts";
 import { MEDIA_MARK } from "../store/media.ts";
 import { MAX_BYTES, MAX_LINES, truncateTail } from "./truncate.ts";
+import { DEFAULT_BASH_TIMEOUT_MS } from "../config.ts";
 
 /** A background job the agent left running: its process group + a hint of what it is. */
 export interface Job {
@@ -48,8 +49,6 @@ export interface BashOptions {
    *  put a real secret in it — the whole point is that user space holds only handles. */
   env?: () => Record<string, string>;
 }
-
-const DEFAULT_TIMEOUT_MS = 120_000;
 
 // Process-group isolation (`setsid`) lets us kill a command's whole tree — including a
 // backgrounded grandchild — by the group. Not on macOS; fall back to a bare spawn there.
@@ -93,7 +92,7 @@ function userSpaceEnv(binDir?: string): Record<string, string> {
 }
 
 export function bashTool(opts: BashOptions): ExecTool {
-  const timeoutMsDefault = opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMsDefault = opts.defaultTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
   // sticky cwd lives in the shared state when the plane provides one (so it can report it),
   // else in a local closure var
   const state = opts.state ?? { cwd: opts.workspace };
@@ -354,6 +353,7 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
 export async function installExecPlane(
   dir: string,
   env?: () => Record<string, string>,
+  defaultTimeoutMs?: number, // the system.bashTimeoutMs knob, funneled by main
 ): Promise<ExecPlane> {
   const workspace = `${dir}/workspace`;
   const binDir = `${dir}/bin`;
@@ -371,7 +371,9 @@ export async function installExecPlane(
   const jobs = new Set<Job>();
   const state: BashState = { cwd: workspace };
   return {
-    exec: { bash: bashTool({ workspace, binDir, jobs, state, ...(env ? { env } : {}) }) },
+    exec: {
+      bash: bashTool({ workspace, binDir, defaultTimeoutMs, jobs, state, ...(env ? { env } : {}) }),
+    },
     ambient: () => bashAmbient(state, jobs),
     reap() {
       for (const { pgid } of jobs) {

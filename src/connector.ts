@@ -18,7 +18,8 @@ export { createGrantBroker } from "./proxy/grants.ts";
 export type { GrantBroker } from "./proxy/grants.ts";
 export type { Connections } from "./store/connections.ts";
 export { newId } from "./store/id.ts";
-export { ensureOrgConfig } from "./config.ts";
+export { checkPort, checkStrings, ensureConnectorConfig, ensureOrgConfig } from "./config.ts";
+export type { ConnectorSpec } from "./config.ts";
 export { DispatchError, failedStatus } from "./connect/errors.ts";
 export type {
   Conversation,

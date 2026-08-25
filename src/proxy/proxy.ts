@@ -242,7 +242,7 @@ function defaultAudit(a: EgressAudit): void {
  * Prints the three env vars a tool needs. Verify by hand:
  *   HTTPS_PROXY=… SSL_CERT_FILE=… GOOGLE_WORKSPACE_CLI_TOKEN=… \
  *     gws calendar events list --params '{"calendarId":"primary"}'
- * Env: PORT. */
+ * Env: none — the port is EPHEMERAL (printed at start; main runs its own in-process). */
 if (import.meta.main) {
   const { openCredentials } = await import("../store/credentials.ts");
   const { createGrantBroker } = await import("./grants.ts");
@@ -265,7 +265,7 @@ if (import.meta.main) {
 
   const broker = createGrantBroker({ creds });
   const ca = await openCA(dir);
-  const proxy = startProxy({ ca, broker }, { port: Number(Deno.env.get("PORT") ?? 0) });
+  const proxy = startProxy({ ca, broker });
   const grant = await creds.get(key);
   const handle = broker.issue(key, grant?.agentId);
   console.error(`[proxy] on :${proxy.port} — fronting ${key}\n`);

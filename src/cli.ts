@@ -35,7 +35,7 @@ const CYAN = "\x1b[36m";
 const RESET = "\x1b[0m";
 
 // The org lives where you run mu — a path constant like any other. Every knob is in the
-// catalog (`org/config.jsonc`, config.ts); env is for secrets (ANTHROPIC_API_KEY) only.
+// catalog (`data/config.jsonc`, config.ts); env is for secrets only.
 const dir = "./data";
 
 // The trusted-localhost principal (§9): identity is the OS username — and when the agent
