@@ -135,6 +135,7 @@ export const APP_PREFIX = "slack:app:";
 export interface SlackApp {
   clientId: string;
   clientSecret: string;
+  signingSecret?: string; // verifies HTTP-mode deliveries; socket mode needs none
   redirectUri?: string; // the HOSTED door's callback; absent ⇒ oauth serves localhost
 }
 
@@ -148,7 +149,11 @@ export async function connectSlackApp(
   const key = `${APP_PREFIX}${app.clientId}`;
   await creds.put({
     key,
-    value: { client_id: app.clientId, client_secret: app.clientSecret },
+    value: {
+      client_id: app.clientId,
+      client_secret: app.clientSecret,
+      ...(app.signingSecret ? { signing_secret: app.signingSecret } : {}),
+    },
     ...(app.redirectUri ? { extra: { redirect_uri: app.redirectUri } } : {}),
   });
   return key;
@@ -323,8 +328,12 @@ if (import.meta.main) {
         console.error("nothing pasted — nothing written");
         Deno.exit(2);
       }
+      const signingSecret = ask("Signing secret (verifies HTTP ingest; empty to skip):");
       const redirectUri = ask("Hosted redirect URI (empty to skip):");
-      const key = await connectSlackApp({ clientId, clientSecret, redirectUri }, creds);
+      const key = await connectSlackApp(
+        { clientId, clientSecret, signingSecret, redirectUri },
+        creds,
+      );
       console.error(
         `✓ app stored: ${key}` + (redirectUri ? ` (hosted callback: ${redirectUri})` : ""),
       );

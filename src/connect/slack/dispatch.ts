@@ -321,7 +321,7 @@ if (import.meta.main) {
     const team = teamOf(connection);
     const user = author ? await creds.get(`slack:${team}:${author}`) : null;
     const bot = user?.value.token ? null : await creds.get(`slack:${team}:org`);
-    const token = user?.value.token ?? bot?.value.token ?? Deno.env.get("SLACK_BOT_TOKEN");
+    const token = user?.value.token ?? bot?.value.token;
     if (!token) throw new Error(`no token for connection ${connection}`);
     return token;
   };

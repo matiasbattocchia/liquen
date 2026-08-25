@@ -587,13 +587,14 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => vo
   };
 }
 
-/* ── local entry: Socket Mode carrier (SLACK_APP_TOKEN) or HTTP ─────────────
+/* ── local entry: Socket Mode carriers (from the vault) or HTTP ─────────────
  *
- *   deno task ingest:slack       # xapp set → socket mode; else HTTP on :8789
+ *   deno task ingest:slack       # xapp in the vault → socket mode; else HTTP on :8789
  *
- * Socket carriers come from the VAULT (`mu connect slack bot` stores the xapp) — env
- * SLACK_APP_TOKEN still joins as one more carrier. No carrier ⇒ HTTP mode on
- * connections.slack.ingestPort, verified by SLACK_SIGNING_SECRET (env, a secret). */
+ * Env: none — everything comes from the vault. Socket carriers are the app-level
+ * tokens the bot door stored (`mu connect slack bot`), one socket per app (§4). No
+ * carrier ⇒ HTTP mode on connections.slack.ingestPort, verified by the app's
+ * signing secret (`mu connect slack app` stores it). */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
@@ -602,14 +603,16 @@ if (import.meta.main) {
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
   // socket carriers: every org bot with an app-level token (the bot door stores it as
-  // `app_token` on `slack:<team>:org`) plus the env one — one socket per app (§4)
-  const vaulted = (await creds.list("slack:")).filter((r) => r.key.endsWith(":org"))
-    .map((r) => r.value.app_token).filter(Boolean);
-  const envToken = Deno.env.get("SLACK_APP_TOKEN");
-  const carriers = [...new Set([...vaulted, ...(envToken ? [envToken] : [])])];
+  // `app_token` on `slack:<team>:org`) — one socket per app (§4)
+  const carriers = [
+    ...new Set(
+      (await creds.list("slack:")).filter((r) => r.key.endsWith(":org"))
+        .map((r) => r.value.app_token).filter(Boolean),
+    ),
+  ];
 
   // the media seam, broker-side (§9): resolve a token that can read `url_private`
-  // (the org bot → any authorized grant → env), download, land in the media store —
+  // (the org bot → any authorized grant), download, land in the media store —
   // the URL and the token stay on this side of the frontier
   const tokenFor = async (team: string, users: string[]): Promise<string | null> => {
     const org = await creds.get(`slack:${team}:org`);
@@ -619,7 +622,7 @@ if (import.meta.main) {
       const c = key ? await creds.get(key) : null;
       if (c?.value.token) return c.value.token;
     }
-    return Deno.env.get("SLACK_BOT_TOKEN") ?? null;
+    return null;
   };
   const media: SlackMedia = async (f, ctx) => {
     if (!f.url_private) return null;
@@ -644,14 +647,16 @@ if (import.meta.main) {
   // any authorized grant → env) — a display name is a workspace fact any grant can read
   const names = slackNames(tokenFor);
 
+  // HTTP mode verifies with the app's signing secret (the app door stores it); socket
+  // mode needs none (the xapp IS the authentication)
+  const { pickSlackApp } = await import("./connect.ts");
+  const app = carriers.length > 0 ? null : await pickSlackApp(creds).catch(() => null);
   const handler = createSlackWebhook({
     publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
     store: log, // identities + memberships live on the Log (§4) — the wire fills the map
     media,
     names,
-    signingSecret: carriers.length > 0
-      ? undefined
-      : Deno.env.get("SLACK_SIGNING_SECRET") || undefined,
+    signingSecret: app?.value.signing_secret || undefined,
   });
   if (carriers.length > 0) {
     console.error(`[slack] socket-mode ingest, ${carriers.length} carrier(s) → ${dir}/log`);

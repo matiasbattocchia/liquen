@@ -226,9 +226,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
    light up. Paste = local/dev tier; the hosted oauth door = org tier (one shared link, N
    principals). Still open: `--bot` / `--agent <name>` / `--shared` connect options (bot
    paste via `auth.test` on xoxb; per-agent apps for per-agent bots — one bot per
-   app×workspace, a reinstall only rotates); ingest carrier per vaulted app token (the
-   blob's `app_token` field is populated; today the entry still reads one SLACK_APP_TOKEN
-   env);
+   app×workspace, a reinstall only rotates); ingest carrier per vaulted app token (landed 2026-08-25 with `mu connect slack bot`);
    WhatsApp pairs by QR/code locally, by code through the mind remotely; SSH+REPL is the
    remote steering door.
 

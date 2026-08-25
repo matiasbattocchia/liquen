@@ -44,7 +44,7 @@ declaring its DEFAULT_s and its `ConnectorSpec`; `ensureConnectorConfig` heals t
 `connections.<name>` subsection of `data/config.jsonc` (missing keys appended with the
 spec's comments, unknown keys a boot error, `check`s run at boot) and returns the merged
 values. Secrets never enter the file — they stay in env (`WA_BRIDGE_TOKEN`,
-`GITHUB_WEBHOOK_SECRET`, `SLACK_CLIENT_SECRET`, …).
+`GITHUB_WEBHOOK_SECRET`, …) or in the vault (slack keeps its app, bot, and grants there).
 
 Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispatch.ts` ·
 `oauth.ts` · `connect.ts`):
@@ -175,9 +175,9 @@ Live smoke passed 2026-08-12 (paste door, alter-ego dispatch, echo merge). Remai
 - **The mind-alias at ingest** — aliasing the principal's Slack self-DM onto `mind:<agent>`
   requires knowing WHICH `im` is the self-DM. A management step, not derivable from message
   events.
-- **Connect options** — `--bot` / `--agent <name>` / `--shared`; per-agent apps for
-  per-agent bots (one bot per app × workspace); ingest carrier per vault app-token (today:
-  one `SLACK_APP_TOKEN` env).
+- **Connect options** — `mu connect slack bot` landed (xoxb + xapp → the vault; the
+  ingest opens one socket per vaulted app token). Still open: `--agent <name>` /
+  `--shared` — per-agent apps for per-agent bots (one bot per app × workspace).
 
 ## 5. Gmail — the cursor connector, and it has a "Socket Mode"
 

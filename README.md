@@ -79,7 +79,7 @@ gh webhook forward --repo=you/repo \
 5. **Run the connection** (both halves, over the shared `./data` root):
 
    ```sh
-   deno task ingest:slack      # SLACK_APP_TOKEN set → Socket Mode; else HTTP (Events API)
+   deno task ingest:slack      # xapp in the vault → Socket Mode; else HTTP (Events API)
    deno task dispatch:slack    # agent replies → chat.postMessage (bot token from the store)
    ```
 
