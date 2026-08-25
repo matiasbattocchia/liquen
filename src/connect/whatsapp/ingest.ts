@@ -558,7 +558,7 @@ function json(status: number, body: unknown): Response {
 
 /* ── local entry: HTTP server the bridge's OPENBSP_URL points at ───────────────────
  *
- *   deno task ingest:whatsapp     # serves :8791; bridge env → OPENBSP_URL=http://localhost:8791
+ *   deno task ingest:whatsapp     # serves :8793; bridge env → OPENBSP_URL=http://localhost:8793
  *
  * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN); the port is
  * connections.whatsapp.ingestPort. */
