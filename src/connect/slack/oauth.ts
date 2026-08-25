@@ -188,28 +188,32 @@ function text(status: number, message: string): Response {
  *
  *   deno task oauth:slack        # :8790 — put a SYNCHRONOUS proxy in front (cloudflared)
  *
- * Env: SLACK_CLIENT_ID · SLACK_CLIENT_SECRET (secrets); the knobs are connections.slack.
- * The shareable door is <public>/oauth/slack/start — the admin distributes it; auto-
- * registration binds principals as `slack:<team>:<user>` until the identities map (v0.1)
- * refines it. */
+ * Env: none — the app comes from the vault (`mu connect slack app`, `--app <client_id>`
+ * picks among several); the knobs are connections.slack. The shareable door is
+ * <public>/oauth/slack/start — the admin distributes it; auto-registration binds
+ * principals as `slack:<team>:<user>` until the identities map (v0.1) refines it. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
+  const { pickSlackApp } = await import("./connect.ts");
   const { slackConfig } = await import("./config.ts");
   const dir = "./data";
-  const { oauthPort: port, redirectUri, botScopes } = await slackConfig(dir);
+  const { oauthPort: port, botScopes } = await slackConfig(dir);
+  const creds = await openCredentials(dir);
+  const appFlag = Deno.args.indexOf("--app");
+  const app = await pickSlackApp(creds, appFlag >= 0 ? Deno.args[appFlag + 1] : undefined)
+    .catch((e) => {
+      console.error(`[slack-oauth] ${e.message}`);
+      Deno.exit(2);
+    });
   const config: SlackOAuthConfig = {
-    clientId: Deno.env.get("SLACK_CLIENT_ID") ?? "",
-    clientSecret: Deno.env.get("SLACK_CLIENT_SECRET") ?? "",
-    redirectUri: redirectUri ?? `http://localhost:${port}/oauth/slack/callback`,
+    clientId: app.value.client_id,
+    clientSecret: app.value.client_secret,
+    redirectUri: (app.extra?.redirect_uri as string | undefined) ??
+      `http://localhost:${port}/oauth/slack/callback`,
     scopes: botScopes,
   };
-  if (!config.clientId || !config.clientSecret) {
-    console.error("[slack-oauth] SLACK_CLIENT_ID / SLACK_CLIENT_SECRET are required");
-    Deno.exit(2);
-  }
   const log = await openLog(`${dir}/log`);
-  const creds = await openCredentials(dir);
   const handler = createSlackOAuth({
     config,
     creds,

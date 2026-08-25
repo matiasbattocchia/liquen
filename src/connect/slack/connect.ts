@@ -13,15 +13,21 @@
  *                    `credential_key` → the vault row below
  *     → vault:       key `slack:<team>:<principal>` — the `token` field of the blob
  *
- * v0 scope: the user leg for the default principal (paste = local/dev tier; the hosted
- * oauth door remains the org tier — same map, two doors, like ingest's socket vs HTTP).
- * Arg: the principal (default: the OS username). Env: none.
+ * Three doors, one map (google's twins):
+ *
+ *   user   the paste above — the principal's own leg (xoxp), owned ⇒ private (§6)
+ *   bot    the org's shared identity: xoxb (+ optional xapp, the socket carrier the
+ *          ingest picks up) → vault `slack:<team>:org`, org-credentialed anchor
+ *   app    the OAuth client (id + secret) → vault `slack:app:<client_id>` — what the
+ *          hosted oauth door serves from
+ *
+ * Arg (user door): the principal (default: the OS username). Env: none.
  */
 
 import type { AuthTestResponse } from "@slack/web-api";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
-import type { Credentials } from "../../store/credentials.ts";
+import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 
 export interface SlackConnectDeps {
@@ -122,10 +128,127 @@ export async function connectSlackUser(
   return { team, user };
 }
 
-/** The DEFAULT door mints a USER-ONLY app: no bot user, no bot scopes, no bot events.
+/* ── the app door: `mu connect slack app` — the OAuth client into the vault ──────────── */
+
+export const APP_PREFIX = "slack:app:";
+
+export interface SlackApp {
+  clientId: string;
+  clientSecret: string;
+  redirectUri?: string; // the HOSTED door's callback; absent ⇒ oauth serves localhost
+}
+
+/** Store an OAuth client under its own id (the google app door's twin). The vault's
+ *  merge lets a re-paste rotate the secret without losing the sidecar. */
+export async function connectSlackApp(
+  app: SlackApp,
+  creds: Pick<Credentials, "put">,
+): Promise<string> {
+  if (!app.clientId || !app.clientSecret) throw new Error("client_id and client_secret required");
+  const key = `${APP_PREFIX}${app.clientId}`;
+  await creds.put({
+    key,
+    value: { client_id: app.clientId, client_secret: app.clientSecret },
+    ...(app.redirectUri ? { extra: { redirect_uri: app.redirectUri } } : {}),
+  });
+  return key;
+}
+
+/** The hosted door's app choice: the only one, or the one `clientId` names. */
+export async function pickSlackApp(
+  creds: Pick<Credentials, "get" | "list">,
+  clientId?: string,
+): Promise<CredentialRow> {
+  if (clientId) {
+    const row = await creds.get(`${APP_PREFIX}${clientId}`);
+    if (!row) throw new Error(`no app ${clientId} — \`mu connect slack app\` first`);
+    return row;
+  }
+  const apps = await creds.list(APP_PREFIX);
+  if (apps.length === 0) {
+    throw new Error("no slack app in the vault — `mu connect slack app` first");
+  }
+  if (apps.length > 1) {
+    const ids = apps.map((a) => a.value.client_id).join("\n  ");
+    throw new Error(`several apps — pick one with --app <client_id>:\n  ${ids}`);
+  }
+  return apps[0];
+}
+
+/* ── the bot door: `mu connect slack bot` — the org's shared identity ────────────────── */
+
+export interface SlackBotDeps {
+  creds: Pick<Credentials, "put">;
+  store: Pick<Connections, "upsertConnections">;
+  publish: Appender["publish"];
+  authTest?: (token: string) => Promise<AuthTestResponse>;
+  now?: () => string;
+}
+
+/** Finish a pasted bot-token grant: verify with Slack, write the ORG-credentialed anchor
+ *  (`credential_key` on the workspace row, no owner ⇒ the org's shared inbox, §6), vault
+ *  the blob at `slack:<team>:org` — `token` (xoxb) plus `app_token` (xapp) when given,
+ *  the socket carrier the ingest picks up. Throws (writing nothing) on a rejected token. */
+export async function connectSlackBot(
+  token: string,
+  deps: SlackBotDeps,
+  appToken?: string,
+): Promise<{ team: string; botUser: string }> {
+  const authTest = deps.authTest ?? defaultAuthTest;
+  const now = deps.now ?? (() => new Date().toISOString());
+  if (!token.startsWith("xoxb-")) {
+    const got = token.startsWith("xoxp-")
+      ? "the USER token (xoxp) — that one goes through `mu connect slack user`"
+      : token.startsWith("xapp-")
+      ? "an app-level token (xapp) — that's the socket carrier, pasted SECOND at this door"
+      : "not a Slack bot token";
+    throw new Error(`expected a bot token (xoxb-…), got ${got}`);
+  }
+  if (appToken && !appToken.startsWith("xapp-")) {
+    throw new Error("the second paste must be an app-level token (xapp-…), or empty");
+  }
+
+  const who = await authTest(token);
+  if (!who.ok || !who.team_id || !who.user_id) {
+    throw new Error(`auth.test: ${who.error ?? "no team/user in response"}`);
+  }
+  const { team_id: team, user_id: botUser } = who;
+
+  const credentialKey = `slack:${team}:org`;
+  // ONE row: the workspace anchor, org-credentialed — that account itself reads as the
+  // org (§6), so no ownership edge and no membership; the bot's identity is vault sidecar
+  deps.store.upsertConnections([{ service: "slack", address: team, credentialKey }]);
+  await deps.creds.put({
+    key: credentialKey,
+    value: { token, ...(appToken ? { app_token: appToken } : {}) },
+    extra: { bot_user: botUser, ...(who.url ? { url: who.url } : {}) },
+  });
+
+  await deps.publish(
+    {
+      ts: now(),
+      type: "message",
+      envelope: {
+        service: "slack",
+        connection_address: team,
+        conversation: { address: "connect" },
+        sender: { address: "slack-connect" },
+      },
+      parts: [{
+        type: "text",
+        kind: "text",
+        text: `Slack bot connected on workspace ${team} (bot user ${botUser})` +
+          (appToken ? " — socket carrier stored" : " — no app-level token, HTTP ingest only"),
+      }],
+    } satisfies Draft<MessageEvent>,
+  );
+  return { team, botUser };
+}
+
+/** The USER door mints a USER-ONLY app: no bot user, no bot scopes, no bot events.
  *  The bot is not required for the user leg — and asking for one puts an xoxb next to
- *  the xoxp on the dashboard, the exact paste-slip the shape guard catches. A bot is a
- *  separate, deliberate act (`--bot`, backlog). */
+ *  the xoxp on the dashboard, the exact paste-slip the shape guard catches. The bot is
+ *  its own deliberate door (`mu connect slack bot`). */
 export function userManifest(manifest: Record<string, unknown>): Record<string, unknown> {
   const m = structuredClone(manifest) as {
     features?: Record<string, unknown>;
@@ -168,17 +291,76 @@ async function defaultAuthTest(token: string): Promise<AuthTestResponse> {
   return await res.json() as AuthTestResponse;
 }
 
-/* ── local entry: print the door, take the paste, finish the grant ──────────────────────
+/* ── local entry: the three doors ───────────────────────────────────────────────────────
  *
- *   deno task connect:slack      # prefill link → create + install → paste xoxp
- */
+ *   deno task connect:slack user [principal]   # prefill link → install → paste xoxp
+ *   deno task connect:slack bot                # paste xoxb (+ optional xapp carrier)
+ *   deno task connect:slack app                # paste client id + secret → the vault
+ *
+ * A bare invocation (or a bare principal name) is the user door — the common case. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { userInfo } = await import("node:os");
 
   const dir = "./data";
-  const principal = Deno.args[0] ?? (() => {
+  const [first, ...rest] = Deno.args;
+  const verb = first === "app" || first === "bot" || first === "user" ? first : "user";
+
+  /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
+  const lines = Deno.stdin.isTerminal()
+    ? null
+    : (await new Response(Deno.stdin.readable).text()).split("\n").map((l) => l.trim());
+  const ask = (label: string): string | undefined =>
+    (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
+
+  if (verb === "app") {
+    const creds = await openCredentials(dir);
+    try {
+      const clientId = ask("Client ID:");
+      const clientSecret = ask("Client secret:");
+      if (!clientId || !clientSecret) {
+        console.error("nothing pasted — nothing written");
+        Deno.exit(2);
+      }
+      const redirectUri = ask("Hosted redirect URI (empty to skip):");
+      const key = await connectSlackApp({ clientId, clientSecret, redirectUri }, creds);
+      console.error(
+        `✓ app stored: ${key}` + (redirectUri ? ` (hosted callback: ${redirectUri})` : ""),
+      );
+    } finally {
+      await creds.close();
+    }
+    Deno.exit(0);
+  }
+
+  if (verb === "bot") {
+    console.error("In the app: OAuth & Permissions → the Bot User OAuth Token (xoxb-…).");
+    console.error("Socket mode too? Basic Information → App-Level Tokens (xapp-…).\n");
+    const token = ask("Paste the bot token (xoxb-…):");
+    if (!token) {
+      console.error("no token pasted — nothing written");
+      Deno.exit(2);
+    }
+    const appToken = ask("App-level token (xapp-…, empty to skip):");
+    const log = await openLog(`${dir}/log`);
+    const creds = await openCredentials(dir);
+    try {
+      const { team, botUser } = await connectSlackBot(token, {
+        creds,
+        store: log,
+        publish: log.publish,
+      }, appToken);
+      console.error(`\n✓ connected: workspace ${team}, bot user ${botUser} → the org`);
+      console.error("  (deno task status shows the map)");
+    } finally {
+      await creds.close();
+      await log.close();
+    }
+    Deno.exit(0);
+  }
+
+  const principal = (verb === "user" && first === "user" ? rest[0] : first) ?? (() => {
     try {
       return userInfo().username;
     } catch {
@@ -204,10 +386,7 @@ if (import.meta.main) {
     }).spawn().unref();
   } catch { /* headless is fine */ }
 
-  // TTY: interactive paste; piped stdin: read the line (secret managers, scripts)
-  const token = Deno.stdin.isTerminal()
-    ? prompt("Paste the user token (xoxp-…):")?.trim()
-    : (await new Response(Deno.stdin.readable).text()).trim();
+  const token = ask("Paste the user token (xoxp-…):");
   if (!token) {
     console.error("no token pasted — nothing written");
     Deno.exit(2);

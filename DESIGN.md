@@ -882,13 +882,13 @@ The 3×2 grid, each cell real and distinct:
   devs expect (Claude-Code MCP logins likewise): a `mu connect <service>` flow writes the
   connection row + vault rows; the same flow is later steerable through the agent (§8
   conversational setup), since the REPL into the mind is already the operator console.
-  **The paste door (landed 2026-08-12, `connect/slack/connect.ts`)**: the dashboard's
+  **The paste doors (`mu connect slack {app,bot,user}`, `connect/slack/connect.ts`)**: the dashboard's
   "Install to Workspace" button IS an OAuth flow with Slack hosting the redirect, so a
   dev self-serves tokens with zero public surface — the CLI prints the manifest prefill
   link (app creation and app-level tokens have no public API; the link is the automation
   ceiling), the dev pastes the token, and `auth.test` resolves the workspace (a token
   string never identifies one) before the SAME map writes as the hosted door — bound to
-  the real registry name. Two doors, one map: paste = local/dev tier, hosted oauth = org
+  the real registry name. The `app` paste vaults the OAuth client (`slack:app:<id>`, what the hosted door serves from), the `bot` paste vaults the org identity (`slack:<team>:org`, xoxb + the xapp socket carrier the ingest picks up). Pastes = local/dev tier, hosted oauth = org
   tier (a shared link, N principals) — mirroring ingest's socket-vs-HTTP split. Facts
   that shaped it: one app × workspace = ONE bot (reinstall rotates the token, never a
   second bot; more bots ⇒ more apps — per-agent apps named after the agent), multiple

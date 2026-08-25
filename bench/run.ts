@@ -17,7 +17,7 @@ import type { Event, MessageEvent } from "../src/types.ts";
 import type { Log } from "../src/store/log.ts";
 import { newId } from "../src/store/id.ts";
 
-const MODEL = Deno.env.get("MU_BENCH_MODEL") ?? "claude-sonnet-5";
+const MODEL = "claude-sonnet-5";
 const SESSION = { id: "alter", agentId: "alter" };
 const HOME = "home";
 

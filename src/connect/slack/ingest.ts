@@ -591,8 +591,9 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => vo
  *
  *   deno task ingest:slack       # xapp set → socket mode; else HTTP on :8789
  *
- * Env: SLACK_APP_TOKEN (socket mode) · SLACK_SIGNING_SECRET (HTTP mode) — secrets;
- * the HTTP port is connections.slack.ingestPort. */
+ * Socket carriers come from the VAULT (`mu connect slack bot` stores the xapp) — env
+ * SLACK_APP_TOKEN still joins as one more carrier. No carrier ⇒ HTTP mode on
+ * connections.slack.ingestPort, verified by SLACK_SIGNING_SECRET (env, a secret). */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
@@ -600,7 +601,12 @@ if (import.meta.main) {
   const dir = "./data";
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
-  const appToken = Deno.env.get("SLACK_APP_TOKEN");
+  // socket carriers: every org bot with an app-level token (the bot door stores it as
+  // `app_token` on `slack:<team>:org`) plus the env one — one socket per app (§4)
+  const vaulted = (await creds.list("slack:")).filter((r) => r.key.endsWith(":org"))
+    .map((r) => r.value.app_token).filter(Boolean);
+  const envToken = Deno.env.get("SLACK_APP_TOKEN");
+  const carriers = [...new Set([...vaulted, ...(envToken ? [envToken] : [])])];
 
   // the media seam, broker-side (§9): resolve a token that can read `url_private`
   // (the org bot → any authorized grant → env), download, land in the media store —
@@ -643,11 +649,13 @@ if (import.meta.main) {
     store: log, // identities + memberships live on the Log (§4) — the wire fills the map
     media,
     names,
-    signingSecret: appToken ? undefined : Deno.env.get("SLACK_SIGNING_SECRET") || undefined,
+    signingSecret: carriers.length > 0
+      ? undefined
+      : Deno.env.get("SLACK_SIGNING_SECRET") || undefined,
   });
-  if (appToken) {
-    console.error(`[slack] socket-mode ingest → ${dir}/log`);
-    slackSocket(appToken, handler);
+  if (carriers.length > 0) {
+    console.error(`[slack] socket-mode ingest, ${carriers.length} carrier(s) → ${dir}/log`);
+    for (const t of carriers) slackSocket(t, handler);
   } else {
     const { slackConfig } = await import("./config.ts");
     const port = (await slackConfig(dir)).ingestPort;

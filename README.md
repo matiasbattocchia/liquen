@@ -60,8 +60,12 @@ gh webhook forward --repo=you/repo \
    ```
 
 2. **Install it** (admin, once): *Install to Workspace* on the app page → the workspace
-   leg. Copy into `.env`: `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, the bot token, and an
-   app-level token (*App-Level Tokens* section, `connections:write`) for Socket Mode.
+   leg. Then paste the pieces into the vault:
+
+   ```sh
+   deno task connect slack app    # client id + secret (what the OAuth door serves from)
+   deno task connect slack bot    # bot token (xoxb) + app-level token (xapp) for Socket Mode
+   ```
 3. **Serve the OAuth door** and put a synchronous proxy in front (cloudflared in dev —
    an async webhook relay can't carry the 302):
 

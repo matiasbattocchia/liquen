@@ -5,7 +5,14 @@
  */
 
 import { assertEquals, assertRejects } from "@std/assert";
-import { connectSlackUser, manifestUrl, userManifest } from "./connect.ts";
+import {
+  connectSlackApp,
+  connectSlackBot,
+  connectSlackUser,
+  manifestUrl,
+  pickSlackApp,
+  userManifest,
+} from "./connect.ts";
 import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
 import type { CredentialRow } from "../../store/credentials.ts";
 import type { Appender } from "../../store/log.ts";
@@ -146,4 +153,62 @@ Deno.test("connect: the prefill link embeds the manifest for api.slack.com to bu
     decodeURIComponent(url.split("manifest_json=")[1]),
     '{"display_information":{"name":"mu"}}',
   );
+});
+
+Deno.test("bot door: xoxb (+ xapp) → the org-credentialed anchor + the vault blob", async () => {
+  const h = harness();
+  const { team, botUser } = await connectSlackBot("xoxb-bot", {
+    ...h.deps,
+    authTest: () =>
+      Promise.resolve({ ok: true, team_id: "T1", user_id: "UBOT", url: "https://x.slack.com" }),
+  }, "xapp-carrier");
+
+  assertEquals({ team, botUser }, { team: "T1", botUser: "UBOT" });
+  // ONE row: the workspace anchor, org-credentialed — no owner, no membership (§6)
+  assertEquals(h.connections, [{ service: "slack", address: "T1", credentialKey: "slack:T1:org" }]);
+  assertEquals(h.memberships.length, 0);
+  assertEquals(h.credentials[0].key, "slack:T1:org");
+  assertEquals(h.credentials[0].value, { token: "xoxb-bot", app_token: "xapp-carrier" });
+  assertEquals(h.credentials[0].extra?.bot_user, "UBOT");
+  assertEquals(h.published.length, 1); // the note crossed the frontier as an event
+});
+
+Deno.test("bot door: a USER token is refused by shape and points at the user door", async () => {
+  const h = harness();
+  await assertRejects(
+    () =>
+      connectSlackBot("xoxp-user", {
+        ...h.deps,
+        authTest: () => Promise.resolve({ ok: true, team_id: "T1", user_id: "U7" }),
+      }),
+    Error,
+    "mu connect slack user",
+  );
+  assertEquals(h.connections.length, 0);
+  assertEquals(h.credentials.length, 0);
+});
+
+Deno.test("app door: the client lands under its own id; pick = only one, or by id", async () => {
+  const rows = new Map<string, CredentialRow>();
+  const creds = {
+    put: (r: CredentialRow) => {
+      rows.set(r.key, r);
+      return Promise.resolve();
+    },
+    get: (k: string) => Promise.resolve(rows.get(k) ?? null),
+    list: (p: string) => Promise.resolve([...rows.values()].filter((r) => r.key.startsWith(p))),
+  };
+  await assertRejects(() => pickSlackApp(creds), Error, "mu connect slack app");
+  const key = await connectSlackApp(
+    { clientId: "123.456", clientSecret: "sec", redirectUri: "https://org.example/cb" },
+    creds,
+  );
+  assertEquals(key, "slack:app:123.456");
+  assertEquals((await pickSlackApp(creds)).value.client_id, "123.456");
+  assertEquals(
+    (await pickSlackApp(creds, "123.456")).extra?.redirect_uri,
+    "https://org.example/cb",
+  );
+  await connectSlackApp({ clientId: "789.000", clientSecret: "sec2" }, creds);
+  await assertRejects(() => pickSlackApp(creds), Error, "--app"); // several ⇒ pick explicitly
 });

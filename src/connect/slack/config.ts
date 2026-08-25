@@ -26,7 +26,6 @@ export const DEFAULT_BOT_SCOPES = [
 export interface SlackConfig {
   ingestPort: number;
   oauthPort: number;
-  redirectUri: string | null;
   botScopes: string[];
 }
 
@@ -45,12 +44,6 @@ const SPEC: ConnectorSpec = {
       value: DEFAULT_OAUTH_PORT,
       doc: "the hosted oauth door's port",
       check: checkPort,
-    },
-    {
-      key: "redirectUri",
-      value: null,
-      doc: "the public OAuth callback; null ⇒ http://localhost:<oauthPort>/oauth/slack/callback",
-      check: (v) => v === null || (typeof v === "string" && v) ? null : "must be a URL, or null",
     },
     {
       key: "botScopes",
