@@ -126,7 +126,7 @@ export interface RenderInput {
   ambient?: string[];
   /** Base64 payload for a stored media file (images/PDFs, size-capped) — xi injects
    *  `store/media.loadMediaBlock`. Only TRAILING-region messages resolve through it: the
-   *  model sees the picture while it's current, the `<media/>` marker once it's history
+   *  model sees the picture while it's current, the kind marker (`<image/>`) once it's history
    *  (§5 — the tool-pair collapse pattern; the path is the durable re-viewable handle).
    *  Absent ⇒ markers only. */
   loadMedia?: (uri: string) => { media_type: string; data: string } | null;
@@ -1005,7 +1005,7 @@ function isSelf(e: Event, session: SessionId): boolean {
 /** Every part's `text` EXCEPT a data part's — a caption rides `FilePart.text` and belongs
  *  in the message body, but a data part's text renders inside its own `<kind>` element
  *  (`dataEl`), and joining it here would say it twice. Filtering on `type === "text"` meant
- *  the model never saw a single caption: the picture arrived as a bare `<media/>` marker and
+ *  the model never saw a single caption: the picture arrived as a bare `<image/>` marker and
  *  the words that came with it were dropped on the floor. */
 export function textOf(e: Event): string {
   const parts = (e as MessageEvent).parts ?? [];
@@ -1027,14 +1027,16 @@ function datasOf(e: Event): DataPart[] {
   return parts.filter((p): p is DataPart => p.type === "data" && p.kind !== "reaction");
 }
 
-/** A file part's `<media/>` marker (§5) — the durable face of an attachment in every
- *  region: kind + name + the handle. Local uris show the PLAIN path (what `aread`/bash
+/** A file part's marker (§5): the element IS the part's kind — `<image/>`, `<audio/>`,
+ *  `<document/>` — the same rule data parts follow, the durable face of an attachment in
+ *  every region: name + the handle. Local uris show the PLAIN path (what `aread`/bash
  *  take); external links show the url itself. Untrusted strings (a wire filename) are
  *  attribute-escaped like everything else. */
 function mediaMarker(p: FilePart): string {
+  const tag = /^[a-z][a-z0-9_-]*$/i.test(p.kind) ? p.kind : "media";
   const name = p.file.name ? ` name="${escAttr(p.file.name)}"` : "";
   const handle = isExternal(p.file.uri) ? p.file.uri : pathOf(p.file.uri);
-  return `<media kind="${p.kind}"${name} path="${escAttr(handle)}"/>`;
+  return `<${tag}${name} path="${escAttr(handle)}"/>`;
 }
 
 /** A message's body for HOME rendering (plain text turns): text, then one marker per

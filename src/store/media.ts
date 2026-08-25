@@ -8,7 +8,7 @@
  * §8 conversation scope; media is just its binary shelf.
  *
  * The path IS the durable handle: a `FilePart.uri` points here, render shows it as a
- * `<media/>` marker the agent can re-view any time (`aread`/bash), and `loadMediaBlock`
+ * kind marker (`<image/>`, `<audio/>`…) the agent can re-view any time (`aread`/bash), and `loadMediaBlock`
  * turns it into a real Messages-API base64 block for the TRAILING region only — the
  * model sees the picture while it's current, the marker once it's history (§5).
  */

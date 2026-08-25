@@ -131,7 +131,7 @@ when). Status as of 2026-08-12 (Slack live, both directions, model in the loop).
      `url_private` + bearer; WA decrypt) and publishes the message with the FilePart
      pointing at the local path — the platform URL+token never cross the frontier (§9).
   4. *Render (the Anthropic side)*: inside the `<msg>` a media part renders as a
-     `<media kind name path/>` marker (escaped like everything else); for images/PDFs in
+     its kind's element (`<image name path/>` — escaped like everything else); for images/PDFs in
      the TRAILING region render ALSO appends a real Messages-API content block after the
      element (`{type: "image", source: {type: "base64", …}}` / document block) — the
      model SEES the picture, not a filename. Closed region keeps only the marker (the

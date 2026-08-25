@@ -32,7 +32,7 @@
  * runs this, concurrency becomes a `processors` knob — not before.
  *
  * LIVE tail, like the mirror: notes that arrived while the process was down are not owed a
- * transcript — the agent read them as `<media/>` markers, and `search` still finds the
+ * transcript — the agent read them as `<audio/>` markers, and `search` still finds the
  * conversation around them.
  */
 

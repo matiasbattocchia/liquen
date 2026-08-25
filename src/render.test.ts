@@ -859,9 +859,9 @@ Deno.test("media: trailing attachments inline as base64 blocks; closed keep mark
   });
   const dump = JSON.stringify(messages);
   // the marker is every attachment's durable face — closed and trailing alike
-  assertStringIncludes(dump, 'media kind=\\"image\\" name=\\"shot.png\\" path=\\"/m/old.png\\"');
+  assertStringIncludes(dump, '<image name=\\"shot.png\\" path=\\"/m/old.png\\"/>');
   assertStringIncludes(dump, 'path=\\"/m/new.png\\"');
-  assertStringIncludes(dump, 'media kind=\\"document\\" name=\\"r.pdf\\" path=\\"/m/doc.pdf\\"');
+  assertStringIncludes(dump, '<document name=\\"r.pdf\\" path=\\"/m/doc.pdf\\"/>');
   // real blocks: only the TRAILING files — one image, one PDF document; the closed one never
   const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
   const images = blocks.filter((b) => b.type === "image");

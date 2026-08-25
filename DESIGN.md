@@ -1091,7 +1091,7 @@ cross the frontier, §9). Outbound uris are local or public: `send` takes
 `files: string[]` — paths statted broker-side, links kept as-is (no secret in a public
 URL, the frontier rule is untouched).
 
-A `FilePart` renders as a `<media kind name path/>` marker in EVERY region — the durable
+A `FilePart` renders as its kind's element — `<image name path/>`, `<audio/>`, `<document/>` — in EVERY region — the durable
 handle (local: the plain path, re-viewable via `aread`/bash; external: the url). In the
 TRAILING region only, inlineable files (images, PDFs) additionally render as REAL API
 blocks after their element — local bytes as base64, external links as url-source blocks
