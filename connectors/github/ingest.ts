@@ -279,23 +279,27 @@ function text(status: number, message: string): Response {
  *   deno task ingest:github        # serves on :8788, publishing into the org log (./data)
  *   gh webhook forward --repo=you/repo \
  *     --events=issue_comment,pull_request,pull_request_review_comment \
- *     --url=http://localhost:8788/ --secret="$GITHUB_WEBHOOK_SECRET"
+ *     --url=http://localhost:8788/        # dev: add --secret matching the app row's
  *
  * The harness (`deno task cli`) on the SAME data root turns a PR comment into a poke.
- * Env: GITHUB_WEBHOOK_SECRET (the secret); the knobs are connections.github. The store
- * import is dynamic so importing `createGithubWebhook` (e.g. from an edge function)
- * never pulls in file I/O. */
+ * The secret is the app row's (`mu connect github app` → vault `github:app:<id>`); the
+ * knobs are connections.github. Env: none. The store import is dynamic so importing
+ * `createGithubWebhook` (e.g. from an edge function) never pulls in file I/O. */
 if (import.meta.main) {
-  const { openLog } = await import("../../src/connector.ts");
+  const { openLog, openCredentials } = await import("../../src/connector.ts");
   const { githubConfig } = await import("./config.ts");
   const dir = "./data";
   const { ingestPort: port, events } = await githubConfig(dir);
-  const secret = Deno.env.get("GITHUB_WEBHOOK_SECRET") || undefined;
+  const creds = await openCredentials(dir);
+  const secret = (await creds.list("github:app:")).find((a) => a.value.webhook_secret)
+    ?.value.webhook_secret;
+  await creds.close(); // one read at boot — the ingest holds no vault handle while serving
 
   const log = await openLog(`${dir}/log`);
   if (!secret) {
     console.error(
-      "[github] WARNING: no GITHUB_WEBHOOK_SECRET — accepting UNSIGNED deliveries (dev only)",
+      "[github] WARNING: no webhook secret in the vault (`mu connect github app`) — " +
+        "accepting UNSIGNED deliveries (dev only)",
     );
   }
   console.error(

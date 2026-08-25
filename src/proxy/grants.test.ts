@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
-import { createGrantBroker, type TokenResponse } from "./grants.ts";
+import { createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
+import { appJwt, createGrantBroker, type TokenResponse } from "./grants.ts";
 import { openCredentials } from "../store/credentials.ts";
 
 async function withVault(
@@ -120,5 +121,90 @@ Deno.test("accessTokenFor: an unknown handle is null, never a throw", async () =
   await withVault(async (creds) => {
     const broker = createGrantBroker({ creds });
     assertEquals(await broker.accessTokenFor("mu-grant-ghost"), null);
+  });
+});
+
+Deno.test("accessTokenFor: a static `token` rides as-is — nothing expires, nothing refreshes", async () => {
+  await withVault(async (creds) => {
+    await creds.put({ key: "github:ana", value: { token: "ghp_static" }, agentId: "ana" });
+    let refreshed = false;
+    const broker = createGrantBroker({
+      creds,
+      refresh: () => {
+        refreshed = true;
+        return Promise.resolve({ access_token: "never" });
+      },
+      installationToken: () => {
+        refreshed = true;
+        return Promise.resolve({ token: "never" });
+      },
+    });
+    assertEquals(await broker.accessTokenFor(broker.issue("github:ana", "ana")), "ghp_static");
+    assert(!refreshed, "a static token must not touch any issuer");
+  });
+});
+
+/** A throwaway RSA pair, the private half as GitHub downloads it (PKCS#1 PEM). */
+function rsaPair(): { pem: string; pub: ReturnType<typeof createPublicKey> } {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  return { pem: privateKey.export({ type: "pkcs1", format: "pem" }) as string, pub: publicKey };
+}
+
+Deno.test("appJwt: RS256 over the app id, ten minutes, iat backdated for skew", () => {
+  const { pem, pub } = rsaPair();
+  const jwt = appJwt("7", pem, 1_000_000_000_000);
+  const [h, p, s] = jwt.split(".");
+  const dec = (b: string) => JSON.parse(new TextDecoder().decode(decodeB64u(b)));
+  assertEquals(dec(h), { alg: "RS256", typ: "JWT" });
+  const claims = dec(p);
+  assertEquals(claims.iss, "7");
+  assertEquals(claims.iat, 1_000_000_000 - 60);
+  assertEquals(claims.exp, claims.iat + 600);
+  const v = createVerify("RSA-SHA256");
+  v.update(`${h}.${p}`);
+  assert(v.verify(pub, decodeB64u(s)), "the signature must verify against the app's key");
+});
+
+function decodeB64u(b: string): Uint8Array {
+  const std = b.replaceAll("-", "+").replaceAll("_", "/");
+  return Uint8Array.from(
+    atob(std.padEnd(Math.ceil(std.length / 4) * 4, "=")),
+    (c) => c.charCodeAt(0),
+  );
+}
+
+Deno.test("accessTokenFor: a github installation grant mints through the app's key, cached", async () => {
+  await withVault(async (creds) => {
+    const { pem, pub } = rsaPair();
+    await creds.put({ key: "github:app:7", value: { private_key: pem } });
+    await creds.put({
+      key: "github:org",
+      value: {},
+      extra: { app_id: "7", installation_id: "42" },
+    });
+    const mints: { jwt: string; installation: string }[] = [];
+    const future = new Date(Date.now() + 3600_000).toISOString();
+    const broker = createGrantBroker({
+      creds,
+      installationToken: (jwt, installation) => {
+        mints.push({ jwt, installation });
+        return Promise.resolve({ token: "ghs_minted", expires_at: future });
+      },
+    });
+    const h = broker.issue("github:org");
+    assertEquals(await broker.accessTokenFor(h), "ghs_minted");
+    assertEquals(mints[0].installation, "42");
+    // the JWT handed to GitHub really is the app's: signed by the vaulted key, iss = app id
+    const [jh, jp, js] = mints[0].jwt.split(".");
+    const v = createVerify("RSA-SHA256");
+    v.update(`${jh}.${jp}`);
+    assert(v.verify(pub, decodeB64u(js)));
+    assertEquals(JSON.parse(new TextDecoder().decode(decodeB64u(jp))).iss, "7");
+    // written back: the next call is a cache hit until GitHub's expiry
+    const row = (await creds.get("github:org"))!;
+    assertEquals(row.value.access_token, "ghs_minted");
+    assertEquals(row.extra!.expiry, future);
+    assertEquals(await broker.accessTokenFor(h), "ghs_minted");
+    assertEquals(mints.length, 1, "the fresh cached token must not re-mint");
   });
 });

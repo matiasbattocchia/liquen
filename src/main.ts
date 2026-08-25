@@ -59,8 +59,10 @@ import {
 /** Start the egress proxy — the org's MANDATORY single egress point — and return the env
  *  provider bash issues into every spawn (§9). HTTPS_PROXY/SSL_CERT_FILE always ride; the
  *  proxy rewrites requests carrying a placeholder and passes everything else through
- *  untouched. The google placeholder rides too when the org holds exactly one grant (more
- *  than one is the per-agent plane's call — which token?). */
+ *  untouched. A service's placeholder rides too when the vault names ONE identity to front
+ *  (google: exactly one grant; github: the org's own — `github:org` — else a lone user
+ *  grant). More than one candidate is the per-agent plane's call — which token? — so we
+ *  hold off rather than guess. */
 interface ProxyHandle {
   env: () => Record<string, string>;
   close(): Promise<void>;
@@ -75,15 +77,23 @@ async function installProxy(dir: string): Promise<ProxyHandle> {
     HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
     SSL_CERT_FILE: proxy.caPath,
   };
+  const fronted: string[] = [];
   const grants = (await creds.list("google:")).filter((r) => !r.key.startsWith("google:app:"));
   if (grants.length === 1) {
     env.GOOGLE_WORKSPACE_CLI_TOKEN = broker.issue(grants[0].key, grants[0].agentId);
+    fronted.push(grants[0].key);
+  }
+  // gh rides the same rails: Go honors HTTPS_PROXY + SSL_CERT_FILE, and gh sends GH_TOKEN
+  // as `Authorization: token …` — a scheme the proxy swaps like any other placeholder
+  const gh = (await creds.list("github:")).filter((r) => !r.key.startsWith("github:app:"));
+  const ghPick = gh.find((r) => r.key === "github:org") ?? (gh.length === 1 ? gh[0] : undefined);
+  if (ghPick) {
+    env.GH_TOKEN = broker.issue(ghPick.key, ghPick.agentId);
+    fronted.push(ghPick.key);
   }
   console.error(
     `[main] egress proxy on :${proxy.port}` +
-      (grants.length === 1
-        ? ` — fronting ${grants[0].key} as ${env.GOOGLE_WORKSPACE_CLI_TOKEN}`
-        : ` — ${grants.length} google grants`),
+      (fronted.length ? ` — fronting ${fronted.join(", ")}` : ""),
   );
   return {
     env: () => env,

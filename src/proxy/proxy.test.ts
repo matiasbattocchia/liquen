@@ -84,6 +84,28 @@ Deno.test("proxyRequest: an unhonorable placeholder 401s here — it never leave
   assert(!originCalled, "the request must not be re-originated with a dead placeholder");
 });
 
+Deno.test("proxyRequest: gh's `token` scheme swaps too — and keeps its scheme", async () => {
+  let sentAuth: string | null = null;
+  const audits: EgressAudit[] = [];
+  await proxyRequest(
+    "api.github.com",
+    new Request("https://api.github.com/repos/a/b/issues", {
+      headers: { authorization: "token mu-grant-x" },
+    }),
+    {
+      ca: {} as never,
+      broker: fakeBroker(),
+      audit: (a) => audits.push(a),
+      originFetch: (input, init) => {
+        sentAuth = headersOf(input, init).get("authorization");
+        return Promise.resolve(new Response("", { status: 200 }));
+      },
+    },
+  );
+  assertEquals(sentAuth, "token ya29.REAL"); // gh insists on `token`; the swap respects it
+  assertEquals(audits[0].swapped, true);
+});
+
 Deno.test("proxyRequest: a request with no placeholder passes through untouched", async () => {
   let sentAuth: string | null = "unset";
   await proxyRequest(

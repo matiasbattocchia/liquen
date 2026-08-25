@@ -7,9 +7,11 @@
  * INJECTED — `post` shells `gh` locally (see below) and would be a `fetch` to the REST API on
  * edge — so the subscribe/parse/route logic is portable and testable.
  *
- * Credentials (§9): `post` (the `gh` process) holds the scoped write token — `pull_requests` /
- * `issues: write`, nothing more — and it lives in THIS process, never the agent's exec context.
- * The agent emits a `send`; it holds no GitHub credential.
+ * Credentials (§9): WHICH identity posts is dispatcher-internal (the slack resolver's
+ * policy, §4): the author's own grant (`github:<author>` — the alter-ego leg) when the
+ * vault holds one, else the org's (`github:org` — a token the broker mints from the App
+ * installation hourly, or a pasted PAT). The token meets `gh` only in this process's spawn
+ * env; the agent emits a `send` and holds no GitHub credential.
  *
  * Outbound = a `message` with an `agent` (authored by a handler, not the world) on the
  * github service. Inbound messages (from ingest) carry no `agent`, so they're never re-sent.
@@ -37,8 +39,13 @@ export interface GhTarget {
   number: number;
 }
 
-/** Post `text` to a PR/issue thread; returns the created comment id (→ external_id, §4). */
-export type GhPost = (target: GhTarget, text: string) => Promise<string | undefined>;
+/** Post `text` to a PR/issue thread; returns the created comment id (→ external_id, §4).
+ *  `author` is the sending agent's registry name — the token resolver's key. */
+export type GhPost = (
+  target: GhTarget,
+  text: string,
+  author?: string,
+) => Promise<string | undefined>;
 
 export interface GithubDispatchDeps {
   subscribe: Subscriber["subscribe"];
@@ -61,7 +68,7 @@ export function createGithubDispatch(deps: GithubDispatchDeps): () => void {
       const { target, text, event } = out;
       chain = chain.then(async () => {
         try {
-          const externalId = await deps.post(target, text);
+          const externalId = await deps.post(target, text, event.agent?.id);
           await deps.setDelivery?.(event.id, {
             ...(externalId !== undefined ? { external_id: `gh:${externalId}` } : {}),
             status: { dispatched_at: new Date().toISOString() },
@@ -116,31 +123,45 @@ function textOf(e: Event): string {
     .join("\n");
 }
 
-/* ── local entry: `post` shells `gh` (holds the scoped write token via GH_TOKEN) ──────── */
-
-/** Post a comment via the `gh` CLI. `gh` reads GH_TOKEN/GITHUB_TOKEN from the env. */
-const ghPost: GhPost = async ({ owner, repo, number }, text) => {
-  const out = await new Deno.Command("gh", {
-    args: [
-      "api",
-      "--method",
-      "POST",
-      `repos/${owner}/${repo}/issues/${number}/comments`,
-      "-f",
-      `body=${text}`,
-    ],
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  if (!out.success) throw new Error(new TextDecoder().decode(out.stderr).trim());
-  const created = JSON.parse(new TextDecoder().decode(out.stdout)) as { id?: number };
-  return created.id !== undefined ? String(created.id) : undefined;
-};
+/* ── local entry: `post` shells `gh`, the resolved token issued into its spawn env ─────── */
 
 if (import.meta.main) {
-  const { openLog } = await import("../../src/connector.ts");
+  const { openLog, openCredentials, createGrantBroker } = await import("../../src/connector.ts");
   const dir = "./data";
   const log = await openLog(`${dir}/log`);
+  const creds = await openCredentials(dir);
+  const broker = createGrantBroker({ creds });
+
+  // the token resolver (§4, dispatcher-internal): the author's own grant (alter-ego)
+  // → the org's — through the broker, which returns a static PAT as-is and mints the
+  // App's hourly installation token when that is what `github:org` records
+  const tokenFor = async (author?: string): Promise<string> => {
+    const user = author ? await creds.get(`github:${author}`) : null;
+    const key = user?.value.token ? `github:${author}` : "github:org";
+    const token = await broker.accessTokenFor(broker.issue(key, user?.agentId));
+    if (!token) throw new Error(`no github credential for ${key} — \`mu connect github\``);
+    return token;
+  };
+
+  const ghPost: GhPost = async ({ owner, repo, number }, text, author) => {
+    const out = await new Deno.Command("gh", {
+      args: [
+        "api",
+        "--method",
+        "POST",
+        `repos/${owner}/${repo}/issues/${number}/comments`,
+        "-f",
+        `body=${text}`,
+      ],
+      env: { GH_TOKEN: await tokenFor(author) }, // gh's env, this spawn only — never exported
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!out.success) throw new Error(new TextDecoder().decode(out.stderr).trim());
+    const created = JSON.parse(new TextDecoder().decode(out.stdout)) as { id?: number };
+    return created.id !== undefined ? String(created.id) : undefined;
+  };
+
   createGithubDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     post: ghPost,
@@ -150,8 +171,11 @@ if (import.meta.main) {
     onError: (e, err) =>
       console.error(`[github-dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
   });
-  if (!(Deno.env.get("GH_TOKEN") || Deno.env.get("GITHUB_TOKEN"))) {
-    console.error("[github-dispatch] WARNING: no GH_TOKEN/GITHUB_TOKEN — gh posts will fail");
+  if (!(await creds.get("github:org"))) {
+    console.error(
+      "[github-dispatch] WARNING: no github:org in the vault (`mu connect github bot`) — " +
+        "posts fall back to authors' own grants",
+    );
   }
   console.error(`[github-dispatch] watching ${dir}/log for outbound github sends`);
 }

@@ -41,11 +41,12 @@ exception left: `MU_MODEL` · `MU_EFFORT` (env, pending the same treatment).
 ### GitHub (dev-tier: `gh webhook forward`)
 
 ```sh
-deno task ingest:github      # webhook receiver → the log (set GITHUB_WEBHOOK_SECRET)
-deno task dispatch:github    # agent replies → gh api (uses your `gh` auth)
+deno task connect github     # app / bot / user doors → the vault (secrets live there)
+deno task ingest:github      # webhook receiver → the log
+deno task dispatch:github    # agent replies → gh api (token resolved from the vault)
 gh webhook forward --repo=you/repo \
   --events=issue_comment,pull_request,pull_request_review_comment \
-  --url=http://localhost:8788/ --secret="$GITHUB_WEBHOOK_SECRET"
+  --url=http://localhost:8788/
 ```
 
 ### Slack (bring-your-own app, per org)

@@ -14,7 +14,7 @@ export { openLog } from "./store/log.ts";
 export type { Appender, DeliveryPatch, Reader, ReadQuery, Subscriber } from "./store/log.ts";
 export { openCredentials } from "./store/credentials.ts";
 export type { CredentialRow, Credentials } from "./store/credentials.ts";
-export { createGrantBroker } from "./proxy/grants.ts";
+export { appJwt, createGrantBroker } from "./proxy/grants.ts";
 export type { GrantBroker } from "./proxy/grants.ts";
 export type { Connections } from "./store/connections.ts";
 export { newId } from "./store/id.ts";

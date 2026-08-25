@@ -6,7 +6,8 @@
  *
  *   HTTPS_PROXY=http://127.0.0.1:<port>   send every HTTPS request here as a CONNECT tunnel
  *   SSL_CERT_FILE=<ca.pem>                trust ONLY the mu CA (so this proxy can terminate)
- *   GOOGLE_WORKSPACE_CLI_TOKEN=mu-grant-… a PLACEHOLDER — the real token never enters here
+ *   GOOGLE_WORKSPACE_CLI_TOKEN / GH_TOKEN=mu-grant-… a PLACEHOLDER — the real token never
+ *                                         enters user space
  *
  * The proxy terminates the tunnel's TLS with a leaf it mints for the dialed host (ca.ts),
  * reads the plaintext request, and — where it carries a `mu-grant-…` bearer — swaps in the
@@ -38,7 +39,9 @@ const HOP_BY_HOP = new Set([
   "upgrade",
   "host",
 ]);
-const HANDLE_RE = /^Bearer (mu-grant-\S+)$/;
+// both auth schemes a placeholder rides in: OAuth's `Bearer`, gh's `token` — the swap
+// keeps whichever the client spoke (GitHub accepts both; gh insists on its own)
+const HANDLE_RE = /^(Bearer|token) (mu-grant-\S+)$/;
 
 export interface ProxyDeps {
   ca: CA;
@@ -78,7 +81,7 @@ export async function proxyRequest(host: string, req: Request, deps: ProxyDeps):
   const auth = req.headers.get("authorization");
   const m = auth?.match(HANDLE_RE);
   if (m) {
-    const handle = m[1];
+    const handle = m[2];
     agentId = deps.broker.resolve(handle)?.agentId;
     const real = await deps.broker.accessTokenFor(handle);
     if (!real) {
@@ -87,7 +90,7 @@ export async function proxyRequest(host: string, req: Request, deps: ProxyDeps):
       audit({ method: req.method, host, path: url.pathname, status: 401, agentId, swapped: false });
       return new Response("mu proxy: no credential for this grant\n", { status: 401 });
     }
-    headers.set("authorization", `Bearer ${real}`);
+    headers.set("authorization", `${m[1]} ${real}`);
     swapped = true;
   }
 

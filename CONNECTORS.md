@@ -43,8 +43,8 @@ Configuration follows the harness's own config rules: the connector ships a `con
 declaring its DEFAULT_s and its `ConnectorSpec`; `ensureConnectorConfig` heals the
 `connections.<name>` subsection of `data/config.jsonc` (missing keys appended with the
 spec's comments, unknown keys a boot error, `check`s run at boot) and returns the merged
-values. Secrets never enter the file — they stay in env (`WA_BRIDGE_TOKEN`,
-`GITHUB_WEBHOOK_SECRET`, …) or in the vault (slack keeps its app, bot, and grants there).
+values. Secrets never enter the file — they live in the vault (slack and github keep
+their app, bot, and grants there) or, for a local bridge, in env (`WA_BRIDGE_TOKEN`).
 
 A connector's subsection holds what is **that service's**: the addresses of its wire, the
 scopes it asks for, the events it maps. What belongs to mu belongs to `system` even when

@@ -28,6 +28,7 @@
     "connect:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp/connect.ts",
     "ingest:github": "deno run -A --env-file=.env connectors/github/ingest.ts",
     "dispatch:github": "deno run -A --env-file=.env connectors/github/dispatch.ts",
+    "connect:github": "deno run -A --env-file=.env connectors/github/connect.ts",
     "compile:task": "deno compile -A --include seed/docs -o dist/mu-task src/task.ts"
   },
   "fmt": {

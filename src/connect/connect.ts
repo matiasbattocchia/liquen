@@ -44,7 +44,7 @@ export function available(root: URL = ROOT): string[] {
         Deno.statSync(new URL(`connectors/${e.name}/connect.ts`, root));
         custom.push(e.name);
       } catch {
-        // a connector without a connect door (github: webhook-secret setup, no flow)
+        // a connector without a connect door (ingest-only) — nothing to list
       }
     }
   } catch {

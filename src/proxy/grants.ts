@@ -9,18 +9,23 @@
  *
  *   issue(credentialKey)   mint (or return) the handle standing for a vault grant.
  *   resolve(handle)        handle → the grant it names (credentialKey/agentId) — NO secret.
- *   accessTokenFor(handle) a LIVE access token: the stored one while it's fresh, else a
- *                          refresh against Google (refresh_token + the app secret), with
- *                          the rotated token written back to the vault. The refresh_token
- *                          never leaves this function.
+ *   accessTokenFor(handle) a LIVE credential: a static `token` as-is (a pasted PAT, a
+ *                          slack xoxb — nothing expires), the stored `access_token` while
+ *                          it's fresh, else a re-issue against the grant's issuer, with
+ *                          the rotated token written back to the vault.
  *
- * The refresh needs the app that minted the grant — its `client_id` is recorded on the
- * grant's `extra`, and the secret lives in `google:app:<client_id>`. Concurrent calls for
- * one grant share a single in-flight refresh (no double-spend of the one-time nothing, but
- * also no redundant round-trips).
+ * The re-issue needs the app that minted the grant, and the grant's `extra` says which
+ * issuer that is: `installation_id` names a GitHub App installation — the broker signs the
+ * app's RS256 JWT with the private key in `github:app:<app_id>` and mints an hourly
+ * installation token; `client_id` names a Google OAuth app — refresh_token + the secret in
+ * `google:app:<client_id>`. The refresh_token and the private key never leave this module.
+ * Concurrent calls for one grant share a single in-flight re-issue (no double-spend of the
+ * one-time nonce, but also no redundant round-trips).
  */
 
-import type { Credentials } from "../store/credentials.ts";
+import { createPrivateKey, createSign } from "node:crypto";
+import { encodeBase64Url } from "@std/encoding";
+import type { CredentialRow, Credentials } from "../store/credentials.ts";
 
 export interface Grant {
   credentialKey: string;
@@ -39,8 +44,11 @@ export interface GrantBroker {
 
 export interface BrokerDeps {
   creds: Pick<Credentials, "get" | "put">;
-  /** The token endpoint — injectable for tests; default POSTs oauth2.googleapis.com. */
+  /** Google's token endpoint — injectable for tests; default POSTs oauth2.googleapis.com. */
   refresh?: (body: URLSearchParams) => Promise<TokenResponse>;
+  /** GitHub's installation-token endpoint — injectable for tests; default POSTs
+   *  api.github.com with the app's JWT. */
+  installationToken?: (jwt: string, installationId: string) => Promise<InstallationToken>;
   now?: () => number; // epoch ms
 }
 
@@ -51,21 +59,47 @@ export interface TokenResponse {
   error_description?: string;
 }
 
+export interface InstallationToken {
+  token?: string;
+  expires_at?: string; // ISO — GitHub mints for an hour
+  message?: string; // GitHub's error prose
+}
+
 // refresh a shade early: a token that expires mid-flight would 401 the tool
 const SKEW_MS = 60_000;
 const HANDLE_PREFIX = "mu-grant-";
 
 export function createGrantBroker(deps: BrokerDeps): GrantBroker {
   const refresh = deps.refresh ?? defaultRefresh;
+  const installationToken = deps.installationToken ?? defaultInstallationToken;
   const now = deps.now ?? (() => Date.now());
   const byHandle = new Map<string, Grant>();
   const byKey = new Map<string, string>(); // credentialKey → handle (idempotence)
   const inflight = new Map<string, Promise<string | null>>(); // credentialKey → refresh
 
-  const doRefresh = async (key: string): Promise<string | null> => {
-    const row = await deps.creds.get(key);
-    const refreshToken = row?.value.refresh_token;
-    const clientId = typeof row?.extra?.client_id === "string" ? row.extra.client_id : undefined;
+  // github: the grant names an App installation — sign the app's JWT, mint an hourly token
+  const refreshGithub = async (key: string, row: CredentialRow): Promise<string | null> => {
+    const appId = String(row.extra?.app_id ?? "");
+    const app = appId ? await deps.creds.get(`github:app:${appId}`) : null;
+    const pem = app?.value.private_key;
+    if (!pem) return null;
+    const tok = await installationToken(
+      appJwt(appId, pem, now()),
+      String(row.extra!.installation_id),
+    );
+    if (!tok.token) return null;
+    await deps.creds.put({
+      key,
+      value: { access_token: tok.token },
+      ...(tok.expires_at ? { extra: { expiry: tok.expires_at } } : {}),
+    });
+    return tok.token;
+  };
+
+  // google: spend the refresh_token with the app's own secret
+  const refreshGoogle = async (key: string, row: CredentialRow): Promise<string | null> => {
+    const refreshToken = row.value.refresh_token;
+    const clientId = typeof row.extra?.client_id === "string" ? row.extra.client_id : undefined;
     if (!refreshToken || !clientId) return null;
     const app = await deps.creds.get(`google:app:${clientId}`);
     const clientSecret = app?.value.client_secret;
@@ -91,6 +125,14 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
     return tok.access_token;
   };
 
+  const doRefresh = async (key: string): Promise<string | null> => {
+    const row = await deps.creds.get(key);
+    if (!row) return null;
+    // the row itself says which issuer re-issues it (see header)
+    if (row.extra?.installation_id !== undefined) return refreshGithub(key, row);
+    return refreshGoogle(key, row);
+  };
+
   return {
     issue(credentialKey: string, agentId?: string): string {
       const existing = byKey.get(credentialKey);
@@ -112,6 +154,7 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
 
       const row = await deps.creds.get(key);
       if (!row) return null;
+      if (row.value.token) return row.value.token; // static — nothing expires, nothing refreshes
       const expiry = typeof row.extra?.expiry === "string" ? Date.parse(row.extra.expiry) : NaN;
       if (row.value.access_token && Number.isFinite(expiry) && expiry - now() > SKEW_MS) {
         return row.value.access_token; // still fresh
@@ -135,4 +178,34 @@ async function defaultRefresh(body: URLSearchParams): Promise<TokenResponse> {
     body,
   });
   return await res.json() as TokenResponse;
+}
+
+async function defaultInstallationToken(
+  jwt: string,
+  installationId: string,
+): Promise<InstallationToken> {
+  const res = await fetch(
+    `https://api.github.com/app/installations/${installationId}/access_tokens`,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${jwt}`, accept: "application/vnd.github+json" },
+    },
+  );
+  return await res.json() as InstallationToken;
+}
+
+/** The GitHub App's self-signed RS256 JWT: what `POST /app/installations/…/access_tokens`
+ *  (and every other JWT-authenticated app endpoint) accepts as `Bearer`. Ten minutes is
+ *  GitHub's ceiling; `iat` is backdated a minute because GitHub rejects any clock ahead of
+ *  its own. Takes the PEM as GitHub downloads it (PKCS#1) — node:crypto reads both. */
+export function appJwt(appId: string, privateKeyPem: string, nowMs: number): string {
+  const b64 = (b: string | Uint8Array): string =>
+    encodeBase64Url(typeof b === "string" ? new TextEncoder().encode(b) : b);
+  const iat = Math.floor(nowMs / 1000) - 60;
+  const signing = `${b64(JSON.stringify({ alg: "RS256", typ: "JWT" }))}.${
+    b64(JSON.stringify({ iat, exp: iat + 600, iss: appId }))
+  }`;
+  const signer = createSign("RSA-SHA256");
+  signer.update(signing);
+  return `${signing}.${b64(new Uint8Array(signer.sign(createPrivateKey(privateKeyPem))))}`;
 }
