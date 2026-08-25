@@ -46,6 +46,14 @@ spec's comments, unknown keys a boot error, `check`s run at boot) and returns th
 values. Secrets never enter the file — they stay in env (`WA_BRIDGE_TOKEN`,
 `GITHUB_WEBHOOK_SECRET`, …) or in the vault (slack keeps its app, bot, and grants there).
 
+A connector's subsection holds what is **that service's**: the addresses of its wire, the
+scopes it asks for, the events it maps. What belongs to mu belongs to `system` even when
+one connector is the only caller today — the media server outbound bytes are fetched from
+is `system.mediaPort`/`system.mediaHost`, because the store it serves is `data/media` and
+the address is mu's own. And a value that is merely *arbitrary and fixed* is a constant at
+the top of the file that uses it, not a knob: the whatsmeow bridge's `organizationId` is
+`"mu"` in `whatsapp/connect.ts` — a data root is one org, so nothing chooses it.
+
 Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispatch.ts` ·
 `oauth.ts` · `connect.ts`):
 

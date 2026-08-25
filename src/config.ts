@@ -85,6 +85,14 @@ export const DEFAULT_MIRROR_SETTLE_MS = 1_000; // echo settle before fan-in copi
 export const DEFAULT_MIRROR_CLAIM_MS = 60_000; // unclaimed-CC search window (§4)
 export const DEFAULT_TICK_MS = 60_000; // the clock poke — how often an idle agent re-looks
 export const DEFAULT_SETTLE_MS = 5_000; // a world trigger waits this long for its burst (§2)
+// The media server: outbound bytes leave mu by being FETCHED, not uploaded — a dispatch
+// hands the service a one-time URL and the service GETs it. That is harness machinery, not
+// any one connector's: the store it serves is `data/media` and the address is mu's own.
+// `mediaHost` is the only knob here that is a fact about somebody ELSE — it goes into a URL
+// the puller resolves, so it must name mu from THAT process's network: localhost on one
+// box, `host.docker.internal` or a compose service name when the puller is containerized.
+export const DEFAULT_MEDIA_PORT = 8792;
+export const DEFAULT_MEDIA_HOST = "localhost";
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const ACTIONS: readonly PolicyAction[] = ["allow", "ask", "deny"];
@@ -130,6 +138,8 @@ export interface OrgConfig {
     mirrorClaimMs: number;
     tickMs: number;
     settleMs: number;
+    mediaPort: number; // where mu serves outbound bytes
+    mediaHost: string; // how the fetching service reaches that server
   };
 }
 
@@ -303,6 +313,16 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
         key: "settleMs",
         value: DEFAULT_SETTLE_MS,
         doc: "how long a world message waits for the rest of its burst before a turn runs",
+      },
+      {
+        key: "mediaPort",
+        value: DEFAULT_MEDIA_PORT,
+        doc: "where mu serves outbound media — the service fetches, mu never uploads",
+      },
+      {
+        key: "mediaHost",
+        value: DEFAULT_MEDIA_HOST,
+        doc: "how that server is reached FROM the fetching service (host.docker.internal, …)",
       },
     ],
   },

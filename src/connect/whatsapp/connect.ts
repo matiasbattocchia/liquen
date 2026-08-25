@@ -27,6 +27,11 @@ import type { Connections } from "../../store/connections.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { SERVICE } from "./ingest.ts";
 
+/** The tenant sessions are filed under on the bridge (its open-BSP `organization_id`).
+ *  Not a knob: a data root is ONE org, and the bridge is that org's sidecar — the label
+ *  only has to be stable, and mu is the org running mu. */
+const BRIDGE_ORG = "mu";
+
 /** The bridge's pairing poll response (sessions.go `PairingState`) — verbatim. */
 export interface WAPairingState {
   session_id: string;
@@ -167,7 +172,7 @@ if (import.meta.main) {
     }
   })();
   const { whatsappConfig } = await import("./config.ts");
-  const { bridgeUrl: base, bridgeOrg } = await whatsappConfig(dir);
+  const { bridgeUrl: base } = await whatsappConfig(dir);
   const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
   const phoneNumber = flags.get("phone") || undefined;
   if (flags.has("phone") && !phoneNumber) {
@@ -204,7 +209,7 @@ if (import.meta.main) {
     const { address } = await connectWhatsApp({
       bridge,
       principal,
-      organizationId: bridgeOrg,
+      organizationId: BRIDGE_ORG,
       phoneNumber,
       store: log, // connections live on the Log (§4)
       publish: log.publish,
