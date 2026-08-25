@@ -47,12 +47,30 @@ values. Secrets never enter the file — they live in the vault (slack and githu
 their app, bot, and grants there) or, for a local bridge, in env (`WA_BRIDGE_TOKEN`).
 
 A connector's subsection holds what is **that service's**: the addresses of its wire, the
-scopes it asks for, the events it maps. What belongs to mu belongs to `system` even when
-one connector is the only caller today — the media server outbound bytes are fetched from
-is `system.mediaPort`/`system.mediaHost`, because the store it serves is `data/media` and
-the address is mu's own. And a value that is merely *arbitrary and fixed* is a constant at
-the top of the file that uses it, not a knob: the whatsmeow bridge's `organizationId` is
-`"mu"` in `whatsapp/connect.ts` — a data root is one org, so nothing chooses it.
+scopes it asks for, the events it maps. A value that is merely *arbitrary and fixed* is a
+constant at the top of the file that uses it, not a knob: the whatsmeow bridge's
+`organizationId` is `"mu"` in `whatsapp/connect.ts` — a data root is one org, so nothing
+chooses it. And mu's own address is never a knob at all (below).
+
+### Outbound media: the pull leg, signed and relative
+
+Most services take a file by **push** — Slack's `files.uploadV2`, Gmail's MIME body: mu
+reads the bytes and sends them. Some take a **link** the service fetches instead (the
+whatsmeow bridge, Twilio's `MediaUrl`, the Cloud API's `link`), and for a file in
+`data/media` that link has to point back at mu.
+
+It points back **relatively**. `signMediaPath` (`store/media.ts`) mints `/m/<payload>.<mac>`
+— the absolute path and an expiry, HMAC'd with a key in the vault — and the service
+resolves it against the address it already delivers to. That address is the connector's
+own ingest: the same door the service posts events at serves `/m/…`, so mu never states
+its own hostname anywhere, and a containerized bridge is configured once (its
+`OPENBSP_URL`) instead of twice.
+
+Three properties come from signing rather than remembering: verification holds no state,
+so the ingest and the dispatch can be different processes; a restart doesn't invalidate a
+path the service hasn't fetched yet; and a retry re-fetches freely, since serving one
+doesn't consume it. The store's boundary is still checked on its own — a signature proves
+who minted a path, never that the path is innocent.
 
 Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispatch.ts` ·
 `oauth.ts` · `connect.ts`):

@@ -939,13 +939,45 @@ DEFAULT_s, the config rules) and heals `connections.<name>` through
 boot error, `check`s at boot. Main preserves subsections it does not know, so custom
 connectors configure identically (github's `config.ts` sits in `connectors/github/`,
 importing the seam). `PORT` and every remaining env knob died in the same pass —
-`connections.<service>` now carries ingest/oauth/media ports (whatsapp ingest moved
-8791 → 8793: it collided with google's oauth door), bridge url/org, scopes, github's
-event list; the whatsapp ingest/media split ports stay distinct. Env is secrets, full
+`connections.<service>` now carries ingest/oauth ports (whatsapp ingest moved
+8791 → 8793: it collided with google's oauth door), the bridge url, scopes, github's
+event list. Env is secrets, full
 stop; `transport.ts` no longer reads `ANTHROPIC_API_KEY` at all (an explicit key wins,
 else the SDK's own chain). Also promoted while auditing: bash's tool timeout became
 `system.bashTimeoutMs`. The one tracked exception left: task.ts's `MU_*` env vars,
 pending the task-mode redesign.
+
+### Outbound media: one door in, and mu stopped stating its own address (2026-08-25) — LANDED
+
+Found by asking why a `mediaHost` knob existed at all. Inbound media is **pushed** to us
+(the bridge decrypts and POSTs multipart before the message); outbound was **pulled** from
+us (dispatch ran a second HTTP server and minted `http://<mediaHost>:<mediaPort>/m/<token>`
+against an in-memory map). So mu had to be told its own hostname — a fact the bridge
+already held as `OPENBSP_URL`, duplicated with nothing keeping the two equal, and wrong by
+default the moment the bridge runs in a container.
+
+Symmetry (mu POSTs the bytes) was the wrong fix: it moves CUSTODY. The bridge answers
+`accepted` on a dispatch, so bytes it has taken but not yet uploaded would need a real
+spool with crash recovery. The pull leg is what avoids that — mu keeps the only copy in
+`data/media` and hands over a reference the bridge fetches when it is ready.
+
+So the leg stayed and its two defects went:
+
+- **Signed, not remembered.** `signMediaPath` mints `/m/<expiry:path>.<hmac>`, key in the
+  vault (`media:sign`, minted on first use, read per use so two processes cannot disagree).
+  Verification holds no state — which fixed a real bug: the token map died with the
+  dispatch process, so a restart 404'd every path the bridge had not fetched yet, silently
+  turning a media send into a message with no file. Same shape open-bsp-api gets from
+  Supabase's signed URLs.
+- **Relative, so the ingest can serve it.** Statelessness is what lets a DIFFERENT process
+  verify, so `/m/…` is served by the ingest — the door the bridge already delivers to —
+  and `media_url` ships as a path. The bridge resolves it against `OPENBSP_URL`
+  (`resolveMediaURL`, absolute URLs untouched so open-bsp-api's storage links still work).
+
+`system.mediaPort`/`mediaHost` are gone, the second server is gone, and the deployment
+states where mu is exactly once, on the bridge. The store's boundary is checked
+independently of the signature: a signed path outside `data/conversations` is a 404,
+because a signature proves who minted a path, never that the path is innocent.
 
 ## The honest framing
 

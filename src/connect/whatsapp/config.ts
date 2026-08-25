@@ -4,11 +4,11 @@
  * into `data/config.jsonc` under `connections.whatsapp` and are validated at boot.
  * The bridge TOKEN is the one thing that stays in env (a secret): WA_BRIDGE_TOKEN.
  *
- * Only what is whatsapp's lives here: the two addresses of the bridge seam. The media
- * server dispatch serves outbound bytes from is the HARNESS's (`system.mediaPort` /
- * `system.mediaHost`) — one server, any connector whose service fetches rather than
- * receives — and the bridge's `organizationId` is a constant in `connect.ts`, since a
- * data root is one org and the bridge is single-tenant to it.
+ * Only what is whatsapp's lives here: the two addresses of the bridge seam. mu's own
+ * address is not among them — outbound bytes ride a RELATIVE signed path the bridge
+ * resolves against the ingest it already delivers to (`store/media.ts`) — and the
+ * bridge's `organizationId` is a constant in `connect.ts`, since a data root is one org
+ * and the bridge is single-tenant to it.
  */
 
 import { checkPort, type ConnectorSpec, ensureConnectorConfig } from "../../config.ts";

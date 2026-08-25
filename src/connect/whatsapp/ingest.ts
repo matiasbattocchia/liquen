@@ -14,6 +14,11 @@
  *   POST …/whatsapp-web-management/sessions/events — connected | logged_out → the
  *                                            connections map (the frontier event, §4)
  *
+ * The entry adds a fourth route the bridge dials at the same address — `GET /m/<signed>`,
+ * the outbound bytes the dispatch process minted a path for (`store/media.ts`). Inbound
+ * media is PUSHED to us and outbound is PULLED from us, but both legs use this one door,
+ * so the bridge is told where mu is exactly once (`OPENBSP_URL`) and mu is told nothing.
+ *
  * Mapping (§3, §4): `external_id = whatsapp:<wmw-id>` — the bridge's own id
  * (`wmw.<own>.<chat>.<sender>.<id>`) already encodes direction and the group participant,
  * so retries, edits, revokes, receipts, and our own dispatched messages echoing back all
@@ -564,9 +569,11 @@ function json(status: number, body: unknown): Response {
  * connections.whatsapp.ingestPort. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
-  const { saveMedia } = await import("../../store/media.ts");
+  const { openCredentials } = await import("../../store/credentials.ts");
+  const { mediaSecret, saveMedia, serveMedia } = await import("../../store/media.ts");
   const dir = "./data";
   const log = await openLog(`${dir}/log`);
+  const creds = await openCredentials(dir);
 
   const handler = createWhatsAppWebhook({
     publish: log.publish,
@@ -581,5 +588,11 @@ if (import.meta.main) {
   const { whatsappConfig } = await import("./config.ts");
   const port = (await whatsappConfig(dir)).ingestPort;
   console.error(`[whatsapp] bridge ingest on :${port} → ${dir}/log`);
-  Deno.serve({ port }, handler);
+  // One door in: the bridge's own address serves the outbound bytes too. `/m/<signed>` is
+  // minted by the dispatch process and verified here from the vault's key — the signature
+  // IS the authorization, so the route sits BEFORE the bridge-token check.
+  Deno.serve(
+    { port },
+    async (req) => await serveMedia(req, dir, () => mediaSecret(creds)) ?? await handler(req),
+  );
 }

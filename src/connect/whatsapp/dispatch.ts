@@ -9,10 +9,12 @@
  * no author-based skip anywhere).
  *
  * Media rides the `media_url` leg: the bridge GETs the url and uploads the bytes to
- * WhatsApp itself (encrypt + CDN push are ITS job). A local `file://` part needs a url
- * the bridge can reach — the `mediaUrl` seam mints one (the entry runs a loopback file
- * server); an external `http(s)` part passes through as-is. The token and the files stay
- * broker-side (§9).
+ * WhatsApp itself (encrypt + CDN push are ITS job — the multi-device protocol has no
+ * send-by-link, so whoever sends must hold the plaintext). A local `file://` part needs
+ * a url the bridge can reach: the `mediaUrl` seam mints a RELATIVE signed path
+ * (`/m/<payload>.<mac>`, `store/media.ts`) which the bridge resolves against its
+ * `OPENBSP_URL` — our ingest — and fetches there. An external `http(s)` part passes
+ * through as-is. The token and the files stay broker-side (§9).
  *
  * One event, N parts → N bridge calls (the bridge takes ONE content each): the first
  * file carries the text as caption; the FIRST response's id backfills `external_id` —
@@ -257,43 +259,27 @@ function urlFor(c: WAContent, mediaUrl?: WAMediaUrl): Promise<string | undefined
   return mediaUrl({ type: "file", kind: "document", file: c.file });
 }
 
-/* ── local entry: `send` = POST <bridgeUrl>/dispatch · loopback media server ──
+/* ── local entry: `send` = POST <bridgeUrl>/dispatch ──────────────────────────
  *
  *   deno task dispatch:whatsapp
  *
- * Env: WA_BRIDGE_TOKEN (the secret). The bridge's address is connections.whatsapp; the
- * media server it fetches from is the harness's (system.mediaHost is what the bridge
- * dials — set it when the bridge runs in a container). */
+ * Env: WA_BRIDGE_TOKEN (the secret); the bridge's address is connections.whatsapp. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
-  const { mimeOf, pathOf } = await import("../../store/media.ts");
+  const { openCredentials } = await import("../../store/credentials.ts");
+  const { mediaSecret, signMediaPath } = await import("../../store/media.ts");
   const { whatsappConfig } = await import("./config.ts");
-  const { ensureOrgConfig } = await import("../../config.ts");
   const dir = "./data";
   const log = await openLog(`${dir}/log`);
+  const creds = await openCredentials(dir);
   const { bridgeUrl: base } = await whatsappConfig(dir);
-  const { mediaPort, mediaHost } = (await ensureOrgConfig(dir)).system;
   const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
 
-  // the loopback file server behind the `mediaUrl` seam: one-time tokens → local bytes.
-  // The bridge GETs, uploads to WhatsApp, done — the file never rides the log or the
-  // agent's context (§9). Tokens expire; a served token stays valid for bridge retries.
-  const tokens = new Map<string, { path: string; expires: number }>();
-  const TTL = 10 * 60 * 1000;
-  Deno.serve({ port: mediaPort }, async (req) => {
-    const t = tokens.get(new URL(req.url).pathname.replace(/^\/m\//, ""));
-    if (!t || t.expires < Date.now()) return new Response("gone", { status: 404 });
-    const bytes = await Deno.readFile(t.path);
-    return new Response(bytes, {
-      headers: { "content-type": mimeOf(t.path) ?? "application/octet-stream" },
-    });
-  });
-  const mediaUrl: WAMediaUrl = (f) => {
-    for (const [k, v] of tokens) if (v.expires < Date.now()) tokens.delete(k);
-    const t = crypto.randomUUID();
-    tokens.set(t, { path: pathOf(f.file.uri), expires: Date.now() + TTL });
-    return Promise.resolve(`http://${mediaHost}:${mediaPort}/m/${t}`);
-  };
+  // The bytes leave by being FETCHED: a signed, expiring path rides `media_url`, the
+  // bridge resolves it against the address it already delivers to and GETs it there —
+  // the INGEST serves it (one door in, §4). Nothing is buffered on either side, the
+  // file never rides the log or the agent's context (§9), and a retry re-fetches.
+  const mediaUrl: WAMediaUrl = async (f) => signMediaPath(f.file.uri, await mediaSecret(creds));
 
   const send: WASend = async (record, mediaUrl) => {
     const res = await fetch(`${base}/dispatch`, {
@@ -325,5 +311,5 @@ if (import.meta.main) {
     onError: (e, err) =>
       console.error(`[wa-dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
   });
-  console.error(`[wa-dispatch] watching ${dir}/log → ${base}/dispatch (media :${mediaPort})`);
+  console.error(`[wa-dispatch] watching ${dir}/log → ${base}/dispatch`);
 }

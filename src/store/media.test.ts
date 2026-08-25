@@ -4,7 +4,17 @@
  */
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { filePartOf, kindOf, loadMediaBlock, mimeOf, saveMedia } from "./media.ts";
+import { openCredentials } from "./credentials.ts";
+import {
+  filePartOf,
+  kindOf,
+  loadMediaBlock,
+  mediaSecret,
+  mimeOf,
+  saveMedia,
+  serveMedia,
+  signMediaPath,
+} from "./media.ts";
 
 Deno.test("saveMedia: content-named and idempotent — same bytes, same path, one file", async () => {
   const root = await Deno.makeTempDir();
@@ -110,5 +120,90 @@ Deno.test("extension-less media classifies by its bytes — whole pipeline, not 
     assertEquals(block?.media_type, "image/png"); // inlines despite the nameless path
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+/* ── the pull leg: signed, relative, stateless ─────────────────────────────── */
+
+const req = (path: string) => new Request(`http://ingest${path}`);
+
+Deno.test("signed media path: minted relative, served by any process holding the key", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const file = await saveMedia(root, "C1", new TextEncoder().encode("bytes"), {
+      mime_type: "image/png",
+      name: "a.png",
+    });
+    const secret = "s3cret";
+    const path = await signMediaPath(file.uri, secret);
+    // relative on purpose: the fetching service resolves it against mu's own address,
+    // which is the one it already delivers to — mu never states its host
+    assert(path.startsWith("/m/"));
+    const res = await serveMedia(req(path), root, () => secret);
+    assertEquals(res?.status, 200);
+    assertEquals(res?.headers.get("content-type"), "image/png");
+    assertEquals(await res?.text(), "bytes");
+    // stateless: nothing was minted into memory, so a "restarted" verifier still serves it
+    assertEquals((await serveMedia(req(path), root, () => secret))?.status, 200);
+    // and it stays valid for a retry — a served path is not consumed
+    assertEquals((await serveMedia(req(path), root, () => secret))?.status, 200);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("signed media path: another path is not one, a forged one is gone", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const file = await saveMedia(root, "C1", new TextEncoder().encode("bytes"), { name: "a.png" });
+    const path = await signMediaPath(file.uri, "s3cret");
+    // not our route at all ⇒ null, so the caller's own handler answers it
+    assertEquals(await serveMedia(req("/whatsapp-web-webhook"), root, () => "s3cret"), null);
+    // a different key, a tampered mac, a tampered payload, a shape that is not one
+    assertEquals((await serveMedia(req(path), root, () => "other"))?.status, 404);
+    assertEquals((await serveMedia(req(`${path}x`), root, () => "s3cret"))?.status, 404);
+    assertEquals((await serveMedia(req("/m/bm90aGluZw.bWFj"), root, () => "s3cret"))?.status, 404);
+    assertEquals((await serveMedia(req("/m/"), root, () => "s3cret"))?.status, 404);
+    // expired ⇒ gone, however well signed
+    const stale = await signMediaPath(file.uri, "s3cret", Date.now() - 1);
+    assertEquals((await serveMedia(req(stale), root, () => "s3cret"))?.status, 404);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("signed media path: the store's boundary is checked on its own", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    // a signature proves who minted the path, never that the path is innocent: a secret
+    // that leaked (or a bug that signed the wrong thing) still cannot read the org's docs
+    const outside = `${root}/system/instructions/principal.md`;
+    await Deno.mkdir(`${root}/system/instructions`, { recursive: true });
+    await Deno.writeTextFile(outside, "the operator's own file");
+    const path = await signMediaPath(outside, "s3cret");
+    assertEquals((await serveMedia(req(path), root, () => "s3cret"))?.status, 404);
+    // ...and the traversal spelling of the same thing
+    const climb = await signMediaPath(`${root}/conversations/../system/x.md`, "s3cret");
+    assertEquals((await serveMedia(req(climb), root, () => "s3cret"))?.status, 404);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("the signing key lives in the vault, so two processes agree on it", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    // the dispatch process mints it...
+    const signer = await openCredentials(dir);
+    const secret = await mediaSecret(signer);
+    assert(secret.length >= 32);
+    assertEquals(await mediaSecret(signer), secret); // minted once, not per call
+    // ...the ingest process, a different process over the same root, reads the same one
+    const verifier = await openCredentials(dir);
+    assertEquals(await mediaSecret(verifier), secret);
+    await signer.close();
+    await verifier.close();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });
