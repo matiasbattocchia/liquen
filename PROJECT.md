@@ -905,6 +905,33 @@ auth normalization) is a seam on the terminated plaintext, deliberately unused.
     already terminates. Plus secret quarantine at ingest (pasted tokens → the vault, a
     reference in the log).
 
+### Connectors became the plugin surface (2026-08-25) — LANDED
+
+The restructure that makes connectors the most plugin-able part of the system, in one
+move plus a proof:
+
+- **Per-service folders, role-named files**: `src/connect/<service>/{ingest,dispatch,
+  oauth,connect}.ts` (slack · google · whatsapp — google's poll is `calendar.ts`, named
+  what it is). Cross-service helpers stay at the connect root; `transcribe.ts` turned out
+  to be an exec concern and moved to `src/exec/`. `mentions.ts` stayed shared — it serves
+  WhatsApp too, not just Slack.
+- **One import seam**: `src/connector.ts` — the log, the vault + grant broker, the org
+  config, `newId`, the event types, the dispatch error contract. A connector imports this
+  and nothing deeper; the contract is documented in CONNECTORS.md §1.
+- **Custom connectors live at `connectors/<name>/`**, repo root: code ships with the
+  image, `data/` is the volume and carries state only. The experiment that set the bar:
+  **github moved there by swapping places** — it imports only the seam, its cross-process
+  test spawns the real entry, everything worked unchanged. That is the promise custom
+  connectors inherit.
+- **`mu connect` front door** (`deno task connect`): bare = the map (status); named =
+  two-step resolution, shipped services first then `connectors/<name>/connect.ts`, spawn
+  the door as a child with the remaining args (every door is an `import.meta.main`
+  entry, so spawning keeps one contract for shipped, custom, and pasted-path doors).
+- **Env shrank to secrets**: `MU_DIR` removed — the data root is the constant `./data`
+  everywhere (the org lives where you run mu); `ANTHROPIC_API_KEY` is the SDK's own
+  credential chain, not our knob. Remaining env cleanups tracked: task.ts's `MU_*` trio,
+  the WhatsApp bridge vars, `SLACK_REDIRECT_URI`, and `PORT`.
+
 ## The honest framing
 
 After 2b, nothing structural remains — the machine is complete and every later item is

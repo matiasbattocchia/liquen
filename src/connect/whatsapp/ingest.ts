@@ -560,11 +560,11 @@ function json(status: number, body: unknown): Response {
  *
  *   deno task ingest:whatsapp     # serves :8791; bridge env → OPENBSP_URL=http://localhost:8791
  *
- * Env: MU_DIR · WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN) · PORT. */
+ * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN) · PORT. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { saveMedia } = await import("../../store/media.ts");
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const log = await openLog(`${dir}/log`);
 
   const handler = createWhatsAppWebhook({

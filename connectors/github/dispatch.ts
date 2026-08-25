@@ -139,7 +139,7 @@ const ghPost: GhPost = async ({ owner, repo, number }, text) => {
 
 if (import.meta.main) {
   const { openLog } = await import("../../src/connector.ts");
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const log = await openLog(`${dir}/log`);
   createGithubDispatch({
     subscribe: (l, o) => log.subscribe(l, o),

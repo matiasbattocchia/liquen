@@ -231,12 +231,12 @@ function text(status: number, message: string): Response {
  * The app credential (client id/secret) lives in the vault — `google:app:<client_id>`,
  * written by `mu connect google app` — and the vault is the ONLY source: `--app` picks
  * among several. The redirect URI is the app row's `redirect_uri` sidecar (the hosted
- * callback), localhost when absent. Env: MU_DIR · PORT (platform convention). */
+ * callback), localhost when absent. Env: PORT (platform convention). */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { pickGoogleApp } = await import("./connect.ts");
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const port = Number(Deno.env.get("PORT") ?? 8791);
   const creds = await openCredentials(dir);
   const appFlag = Deno.args.indexOf("--app");

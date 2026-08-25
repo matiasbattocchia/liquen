@@ -15,7 +15,7 @@
  *
  * v0 scope: the user leg for the default principal (paste = local/dev tier; the hosted
  * oauth door remains the org tier — same map, two doors, like ingest's socket vs HTTP).
- * Arg: the principal (default: the OS username). Env: MU_DIR.
+ * Arg: the principal (default: the OS username). Env: none.
  */
 
 import type { AuthTestResponse } from "@slack/web-api";
@@ -177,7 +177,7 @@ if (import.meta.main) {
   const { openCredentials } = await import("../../store/credentials.ts");
   const { userInfo } = await import("node:os");
 
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const principal = Deno.args[0] ?? (() => {
     try {
       return userInfo().username;

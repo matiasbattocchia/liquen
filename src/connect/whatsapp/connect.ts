@@ -147,14 +147,14 @@ export async function connectWhatsApp(
  * Expired ⇒ run the door again for a fresh one.
  *
  * Arg: the principal (default: the OS username — a session choice, so an argument).
- * Env: MU_DIR · WA_BRIDGE_URL (default http://localhost:8081) · WA_BRIDGE_TOKEN ·
+ * Env: WA_BRIDGE_URL (default http://localhost:8081) · WA_BRIDGE_TOKEN ·
  *      WA_ORG (default mu) · WA_PHONE. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { userInfo } = await import("node:os");
   const qrcode = (await import("qrcode-terminal")).default;
 
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const principal = Deno.args[0] ?? (() => {
     try {
       return userInfo().username;

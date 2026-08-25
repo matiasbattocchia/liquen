@@ -261,13 +261,13 @@ function urlFor(c: WAContent, mediaUrl?: WAMediaUrl): Promise<string | undefined
  *
  *   deno task dispatch:whatsapp
  *
- * Env: MU_DIR · WA_BRIDGE_URL (default http://localhost:8081) · WA_BRIDGE_TOKEN ·
+ * Env: WA_BRIDGE_URL (default http://localhost:8081) · WA_BRIDGE_TOKEN ·
  *      WA_MEDIA_PORT (default 8792) · WA_MEDIA_HOST (what the bridge dials; default
  *      localhost — set it when the bridge runs in a container). */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { mimeOf, pathOf } = await import("../../store/media.ts");
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const log = await openLog(`${dir}/log`);
   const base = Deno.env.get("WA_BRIDGE_URL") ?? "http://localhost:8081";
   const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";

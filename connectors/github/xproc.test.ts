@@ -45,7 +45,7 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
   const script = new URL("./ingest.ts", import.meta.url).pathname; // absolute — cwd-independent
 
   // a subscriber in THIS process — exactly what `main` does — resolves on the first gh message
-  const log = await openLog(`${dir}/log`);
+  const log = await openLog(`${dir}/data/log`);
   log.upsertConnections([{ service: "github", address: "github" }]); // the gate wants a grant
   let resolveGot!: (e: MessageEvent) => void;
   const got = new Promise<MessageEvent>((r) => (resolveGot = r));
@@ -53,10 +53,12 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
     if (e.type === "message" && e.envelope.service === "github") resolveGot(e as MessageEvent);
   });
 
-  // the ingest runs as a SEPARATE OS process, over the same log dir (dev mode: no secret)
+  // the ingest runs as a SEPARATE OS process over the same org — the org lives where you
+  // run mu, so pointing the child at it is a cwd, not an env var
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", script],
-    env: { MU_DIR: dir, PORT: String(port) },
+    cwd: dir,
+    env: { PORT: String(port) },
     stdout: "null",
     stderr: "null",
   }).spawn();

@@ -72,10 +72,10 @@ export async function pickGoogleApp(
  *   deno task connect:google account [principal] [--org] [--app <client_id>]
  *                                    [--scopes "a b c"]   # default: openid email calendar
  *
- * Env: MU_DIR · PORT (account's localhost callback, default 8791). */
+ * Env: PORT (account's localhost callback, default 8791). */
 if (import.meta.main) {
   const { openCredentials } = await import("../../store/credentials.ts");
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const [verb, ...rest] = Deno.args;
 
   const flags = new Map<string, string>();

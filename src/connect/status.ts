@@ -6,14 +6,14 @@
  * The setup flows (`oauth:slack`, pairing, future `mu connect <service>`) WRITE the map;
  * this prints it — the first thing a live smoke checks ("did the grant land?"). Secrets
  * never print: the vault lists keys, owners, and the FIELD NAMES of each value blob,
- * never values. Env: MU_DIR.
+ * never values. Env: none.
  */
 
 import { DatabaseSync } from "node:sqlite";
 import { openLog } from "../store/log.ts";
 
 if (import.meta.main) {
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const log = await openLog(`${dir}/log`);
   const db = new DatabaseSync(`${dir}/log/log.db`);
   const rows = (sql: string) => db.prepare(sql).all() as Record<string, unknown>[];

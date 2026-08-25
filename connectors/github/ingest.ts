@@ -254,17 +254,17 @@ function text(status: number, message: string): Response {
 
 /* ── local entry: the thin Deno server (the edge wrapper is the same shape) ────────────
  *
- *   deno task ingest:github        # serves on :8788, publishing into $MU_DIR/log
+ *   deno task ingest:github        # serves on :8788, publishing into the org log (./data)
  *   gh webhook forward --repo=you/repo \
  *     --events=issue_comment,pull_request,pull_request_review_comment \
  *     --url=http://localhost:8788/ --secret="$GITHUB_WEBHOOK_SECRET"
  *
- * The harness (`deno task cli`) on the SAME MU_DIR turns a PR comment into a poke. Env:
- * MU_DIR (default ./data) · GITHUB_WEBHOOK_SECRET · PORT. The store import is dynamic so
+ * The harness (`deno task cli`) on the SAME data root turns a PR comment into a poke. Env:
+ * GITHUB_WEBHOOK_SECRET · PORT. The store import is dynamic so
  * importing `createGithubWebhook` (e.g. from an edge function) never pulls in file I/O. */
 if (import.meta.main) {
   const { openLog } = await import("../../src/connector.ts");
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const port = Number(Deno.env.get("PORT") ?? 8788);
   const secret = Deno.env.get("GITHUB_WEBHOOK_SECRET") || undefined;
 

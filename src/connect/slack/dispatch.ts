@@ -289,7 +289,7 @@ function textOf(e: Event): string {
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
 

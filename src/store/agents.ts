@@ -3,7 +3,7 @@
  *
  * An agent is a row — identity + home; docs, workspace, memory may all be empty and the
  * agent still fully exists. But rows are terrible DX to author, so agents are created "the
- * framework way": a folder under `MU_DIR/agents/<name>/` declares the agent, an optional
+ * framework way": a folder under `data/agents/<name>/` declares the agent, an optional
  * `config.jsonc` inside it declares its settings (`provider`, `model`, `effort`) and the
  * handles a human knows (`email`, `phone`), and at start main scans the folders and SYNCS
  * this table to them. **Folders + config.jsonc are the source of truth; the table mirrors

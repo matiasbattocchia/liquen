@@ -34,7 +34,6 @@ workspace, and its docs (identity, org, memories — edit them, boot never overw
 
 | env | default | |
 |---|---|---|
-| `MU_DIR` | `./data` | the org data root — different dir = a different, unrelated org |
 | `MU_MODEL` | `claude-opus-4-8` | the agent's model |
 | `MU_EFFORT` | `high` (API default) | `low` · `medium` · `high` · `xhigh` · `max` |
 
@@ -74,7 +73,7 @@ gh webhook forward --repo=you/repo \
 4. **Share the door**: give members `https://<public>/oauth/slack/start` however you like
    (paste it in a channel). Everyone — the admin included — connects their personal leg
    through it; installing was the workspace leg only.
-5. **Run the connection** (both halves, over the shared `MU_DIR`):
+5. **Run the connection** (both halves, over the shared `./data` root):
 
    ```sh
    deno task ingest:slack      # SLACK_APP_TOKEN set → Socket Mode; else HTTP (Events API)

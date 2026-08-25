@@ -9,7 +9,7 @@
  * first, then the org's own (`connectors/<name>/connect.ts` at the repo root,
  * CONNECTORS.md). Every door is an `import.meta.main` entry, so the front door runs the
  * resolved file as a CHILD process with the remaining args — the same contract whether
- * the door is shipped, custom, or a pasted path; env (MU_DIR, PORT, secrets) rides
+ * the door is shipped, custom, or a pasted path; env (PORT, secrets) rides
  * through untouched. Unknown names fail listing every door that exists.
  */
 

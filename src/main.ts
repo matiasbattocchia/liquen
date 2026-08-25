@@ -136,7 +136,7 @@ export async function start(
   overrides: { transport?: ModelTransport } = {}, // tests inject a scripted model edge
 ): Promise<Main> {
   // resolve the data root to ABSOLUTE once: every path that reaches the model (the bash
-  // workspace, doc pull paths) must survive a cwd change — MU_DIR is often relative
+  // workspace, doc pull paths) must survive a cwd change — the data root is a relative path
   await Deno.mkdir(config.dir, { recursive: true });
   const dir = await Deno.realPath(config.dir);
   const log = await openLog(`${dir}/log`);

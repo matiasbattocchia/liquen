@@ -2018,7 +2018,7 @@ The Docker layout, concretely:
                              the workspace IS the docs source: frontmattered **/*.md (§8)
 ```
 
-Local (dev, one user — same shape, no enforcement): `MU_DIR/{log/, system/,
+Local (dev, one user — same shape, no enforcement): `data/{log/, system/,
 org/, agents/<name>/}` (the vault is a table in `log/log.db`) — `agents/<name>/` plays `/home/<agent>`. **Agents are created "the
 framework way"**: a folder under `agents/` declares one (a blank folder is a blank agent);
 at start main scans the folders and `syncAgents` MIRRORS the registry table to them
@@ -2031,7 +2031,7 @@ N:M principals↔agents, and autonomous agents (no one holds the pass but the ag
 **The same framework way extends to connectors**: the shipped ones live in
 `src/connect/<service>/` (role-named files: `ingest.ts` · `dispatch.ts` · `oauth.ts` ·
 `connect.ts`, each optional); an org's own live in **`connectors/<name>/`** at the repo
-root — code ships with the image, `MU_DIR` is the volume and carries state only. Both
+root — code ships with the image, `data/` is the volume and carries state only. Both
 import one seam module, `src/connector.ts` (log, vault, broker, config, types); the
 contract and the per-service map are CONNECTORS.md. The github connector lives in
 `connectors/` as the reference: a custom connector is a swap of places, nothing more.
@@ -2068,11 +2068,11 @@ catalog's); an unknown key or malformed value fails the boot loudly — a typo m
 silently, and a silent fallback would run the org on settings the human believes
 overridden. The functions are 100% parametrized — `start`/`xi`/`nu`/`mu` take values as
 arguments and never read env; their argument defaults are the same exported constants
-(ergonomics for direct callers: tests), so code and file cannot drift. Env is for secrets
-(`ANTHROPIC_API_KEY`) and for pointing a standalone connector process at its org
-(`MU_DIR`); session choices — which agent the REPL faces, which principal a connect door
-binds — are CLI arguments, per-invocation by nature. The REPL's data root is a path
-constant (`./data`): the org lives where you run mu.
+(ergonomics for direct callers: tests), so code and file cannot drift. Env is for secrets only
+(the tokens a service holds; `ANTHROPIC_API_KEY` belongs to the SDK's own credential
+chain, not to us); session choices — which agent the REPL faces, which principal a connect
+door binds — are CLI arguments, per-invocation by nature. The data root is a path
+constant (`./data`) for every process alike: the org lives where you run mu.
 Machine-discovered bindings (a Slack user id from `auth.test`, the self-DM channel) land
 on the connections map directly — so the two tables are the merged QUERY surface (the
 classifier's lookups, the RLS substrate) and no human ever edits them: humans write

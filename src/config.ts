@@ -18,10 +18,10 @@
  *     survive — the comments are the catalog's). An unknown key is a boot error: a typo
  *     must not run silently. Agent files are sparse — only what they override, plus the
  *     declared identity handles.
- *   · env is for secrets (`ANTHROPIC_API_KEY`) and for pointing a standalone connector
- *     process at its org (`MU_DIR`); everything else lives in the file. Session choices
- *     (which agent a REPL faces) are CLI arguments — per-invocation by nature, no seat in
- *     either file.
+ *   · env is for secrets only (tokens the services hold; `ANTHROPIC_API_KEY` belongs to
+ *     the SDK's own credential chain, not to us); everything else lives in the file or is
+ *     a constant. The data root is `./data`, period. Session choices (which agent a REPL
+ *     faces) are CLI arguments — per-invocation by nature, no seat in either file.
  */
 
 import { parse } from "@std/jsonc";

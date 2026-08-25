@@ -2,7 +2,7 @@
  * connector.ts — the connector seam (DESIGN §4, §9): everything a connector may
  * import from mu, shipped or custom, through ONE module.
  *
- * A connector is a standalone process over the org's substrate (`MU_DIR`): ingest
+ * A connector is a standalone process over the org's substrate (the `./data` root): ingest
  * publishes world events into the log, dispatch tails the log and delivers, connect
  * is the setup door writing the connection map and the vault. The shipped ones under
  * `src/connect/<service>/` and the org's own under `connectors/<name>/` (repo root,

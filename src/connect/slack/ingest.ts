@@ -591,12 +591,12 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => vo
  *
  *   deno task ingest:slack       # xapp set → socket mode; else HTTP on :8789
  *
- * Env: MU_DIR · SLACK_APP_TOKEN (socket mode) · SLACK_SIGNING_SECRET (HTTP mode) · PORT. */
+ * Env: SLACK_APP_TOKEN (socket mode) · SLACK_SIGNING_SECRET (HTTP mode) · PORT. */
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { kindOf, saveMedia } = await import("../../store/media.ts");
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
   const appToken = Deno.env.get("SLACK_APP_TOKEN");

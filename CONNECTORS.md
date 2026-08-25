@@ -34,7 +34,7 @@ Nothing below needs a sixth piece. What some of them need is **new state**, whic
 ### Where a connector lives — and the import contract
 
 A connector is a **standalone process over the org's substrate**: it reaches mu through
-`MU_DIR` and imports only the seam module, **`src/connector.ts`** — the log (`openLog`,
+the shared `./data` root and imports only the seam module, **`src/connector.ts`** — the log (`openLog`,
 `publish`, subscribe/`setDelivery`), the vault (`openCredentials`, the grant broker),
 `ensureOrgConfig`, the event types, and the dispatch error contract. A deep import from a
 connector is a contract violation, not a convenience.
@@ -46,7 +46,7 @@ Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispat
   (`flavor.ts`, `mentions.ts`, `mirror.ts`, `errors.ts`, `status.ts`) live at
   `src/connect/` root.
 - **Custom** — `connectors/<name>/` at the repo root, beside `src/`. Connectors are code
-  and ship with the image (MU_DIR is the volume — state only); an org's deployment is
+  and ship with the image (`data/` is the volume — state only); an org's deployment is
   the framework + `connectors/` + config, and a framework upgrade is a rebase that never
   touches them. The **github** connector lives there as the living proof: it moved from
   `src/connect/` by swapping places, imports nothing but the seam, and everything works —

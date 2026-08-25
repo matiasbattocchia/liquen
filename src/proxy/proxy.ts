@@ -242,12 +242,12 @@ function defaultAudit(a: EgressAudit): void {
  * Prints the three env vars a tool needs. Verify by hand:
  *   HTTPS_PROXY=… SSL_CERT_FILE=… GOOGLE_WORKSPACE_CLI_TOKEN=… \
  *     gws calendar events list --params '{"calendarId":"primary"}'
- * Env: MU_DIR · PORT. */
+ * Env: PORT. */
 if (import.meta.main) {
   const { openCredentials } = await import("../store/credentials.ts");
   const { createGrantBroker } = await import("./grants.ts");
   const { openCA } = await import("./ca.ts");
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const creds = await openCredentials(dir);
 
   let key = Deno.args[0];

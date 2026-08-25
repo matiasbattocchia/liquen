@@ -2,7 +2,7 @@
  * connect/google/calendar.ts — the Google ingest as a standalone service (open-bsp shape).
  *
  * Sibling of `slack.ts`/`github.ts`/`whatsapp.ts`: world → log, its own process, publishing
- * into `$MU_DIR/log`. The name follows the ingest family (the `*-webhook` convention the
+ * into `the org log (./data)`. The name follows the ingest family (the `*-webhook` convention the
  * others wear) even though the CARRIER here is a poll, not a webhook — Calendar's push door
  * (`events.watch`) needs a verified public endpoint, so on a laptop the only carrier is a
  * clock. This is the same split slack.ts names: "Socket Mode is a carrier, not an
@@ -407,12 +407,12 @@ async function bootstrap(
   return undefined;
 }
 
-/* ── local entry: a standalone poll service into $MU_DIR/log ───────────────────────
+/* ── local entry: a standalone poll service into the org log (./data) ───────────────────────
  *
  *   deno task ingest:google        # sweeps every google grant on a metronome
  *
- * The harness (`deno task cli`) on the SAME MU_DIR turns each calendar change into a poke.
- * Env is `MU_DIR` alone (the org pointer, default ./data): the calendars come from the org
+ * The harness (`deno task cli`) on the SAME data root turns each calendar change into a poke.
+ * Env: none — the data root is `./data`; the calendars come from the org
  * config (`connections.googleCalendars`), the cadence is a constant. The store imports are
  * dynamic so importing `createGoogleWebhook` (e.g. from an edge function) never pulls in
  * file I/O. */
@@ -422,7 +422,7 @@ if (import.meta.main) {
   const { openCredentials } = await import("../../store/credentials.ts");
   const { createGrantBroker } = await import("../../proxy/grants.ts");
   const { ensureOrgConfig } = await import("../../config.ts");
-  const dir = Deno.env.get("MU_DIR") ?? "./data";
+  const dir = "./data";
   const calendars = (await ensureOrgConfig(dir)).connections.googleCalendars;
 
   const log = await openLog(`${dir}/log`);
