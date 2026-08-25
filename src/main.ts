@@ -45,7 +45,7 @@ import { createGrantBroker } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
 import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
-import { createTranscriber } from "./exec/transcribe.ts";
+import { createTranscriber } from "./processors.ts";
 import type { Emit, Event } from "./types.ts";
 import {
   DEFAULT_SETTLE_MS,

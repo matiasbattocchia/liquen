@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "@std/assert";
-import { createTranscriber, transcribable } from "./transcribe.ts";
-import { openLog } from "../store/log.ts";
-import type { Draft, Event, MessageEvent } from "../types.ts";
+import { createTranscriber, transcribable } from "./processors.ts";
+import { openLog } from "./store/log.ts";
+import type { Draft, Event, MessageEvent } from "./types.ts";
 
 /** A live org with the transcriber on a REAL log — the upsert idempotence is half the
  *  contract. The "model" is a shell one-liner over stdin, which is the whole interface. */

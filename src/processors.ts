@@ -1,13 +1,25 @@
 /**
- * exec/transcribe.ts — the audio transcriber (DESIGN §5): voice notes become durable,
- * searchable text, as EVENTS.
+ * processors.ts — the media processors (DESIGN §5): bytes the model cannot read become
+ * durable, searchable text, as EVENTS. Today one runs: the audio transcriber.
  *
- * A broker-side log listener, like the mirror: connector-neutral (whatever ingested the
- * audio, it is a message with an audio FilePart by the time it is here), composed by main,
- * inert unless `processors.audio` is configured (config.ts — the org catalog). The
- * processor is a SHELL COMMAND — audio bytes on stdin, transcript text on stdout, non-zero
- * exit = no transcript. That command line is the whole plugin interface; the repo ships
- * `processors/qwen-asr/` as one implementation.
+ * Broker machinery, not a tool and not a connector's: a log listener like the mirror,
+ * composed by main, connector-neutral (whatever ingested the audio, it is a message with
+ * an audio FilePart by the time it is here) and inert unless `processors.audio` is
+ * configured (config.ts — the org catalog). The processor is a SHELL COMMAND — audio bytes
+ * on stdin, transcript text on stdout, non-zero exit = no transcript. That command line is
+ * the whole plugin interface; the repo ships `processors/qwen-asr/` as one implementation.
+ *
+ * WHAT IS AND ISN'T AUDIO-SPECIFIC. The machine below is generic over "bytes → text": the
+ * command interface, the `action: "add"` event, both idempotence axes, the serialization,
+ * the timeout kill, the live tail, the skip list. Three things bind it to audio —
+ * `transcribable`'s `kind === "audio"` test, the scalar config key `processors.audio`, and
+ * the output part's `kind: "transcript"`. A second modality (image OCR/caption, document
+ * extraction) is therefore a DISPATCH, not a rewrite: `processors` becomes kind → command,
+ * the selector picks the first part whose kind has one, and the sidecar stops being one
+ * `<hash>.txt` per file. The open question is the part kind: `transcript` is a lie for a
+ * caption, but each new name (`caption`, `extract`) is a member of a closed union that
+ * render.ts must learn — one neutral `derived` kind carrying its origin is the alternative,
+ * and it changes what the model sees. Decide that before writing the map.
  *
  * The transcript is an `action: "add"` event (§3): a `transcript` text part added to the
  * audio message, `ref_external_id` pointing at it — the original row stays sealed, past
@@ -36,10 +48,10 @@
  * conversation around them.
  */
 
-import { pathOf } from "../store/media.ts";
-import { silenced } from "../render.ts";
-import type { Appender, Subscriber } from "../store/log.ts";
-import type { Draft, Event, FilePart, MessageEvent } from "../types.ts";
+import { pathOf } from "./store/media.ts";
+import { silenced } from "./render.ts";
+import type { Appender, Subscriber } from "./store/log.ts";
+import type { Draft, Event, FilePart, MessageEvent } from "./types.ts";
 
 /** A hung model must not wedge the queue (a real 0.9.1 failure mode): well past the
  *  transcribe-in-own-duration rule for the longest note a platform accepts. */

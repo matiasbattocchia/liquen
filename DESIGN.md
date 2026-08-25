@@ -1107,7 +1107,7 @@ flow with the text as the share comment, and external links join the text as lin
 
 **Audio becomes text by PROCESSOR** (the Messages API has no audio input, and a voice
 note's words belong in the log — durable, searchable, cheap). A processor is a broker-side
-log listener like the mirror (`exec/transcribe.ts`, composed by main): connector-neutral
+log listener like the mirror (`processors.ts`, composed by main): connector-neutral
 — by the time audio is an event, its origin doesn't matter — and its model is a SHELL
 COMMAND from the org catalog (`processors.audio`: bytes on stdin → text on stdout), so the
 implementation is swappable without touching the harness; the repo ships

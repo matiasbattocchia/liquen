@@ -848,7 +848,7 @@ sleeping and ticking slowly.
 
 ### Voice notes become text — the audio processor (2026-08-23) — LANDED
 
-`connect/transcribe.ts` + `processors/qwen-asr/` (DESIGN §5 Media). The architecture note
+`src/processors.ts` + `processors/qwen-asr/` (DESIGN §5 Media). The architecture note
 lives there; what belongs here is the operational record. The processor is
 huanglizhuo/QwenASR (Rust, Qwen3-ASR 0.6B, CPU) — release binaries ≤0.9.1 hang on short
 clips on x86 (unbounded spin-join, fixed post-release; our build-fix PR:
@@ -910,9 +910,9 @@ move plus a proof:
 
 - **Per-service folders, role-named files**: `src/connect/<service>/{ingest,dispatch,
   oauth,connect}.ts` (slack · google · whatsapp — google's poll is `calendar.ts`, named
-  what it is). Cross-service helpers stay at the connect root; `transcribe.ts` turned out
-  to be an exec concern and moved to `src/exec/`. `mentions.ts` stayed shared — it serves
-  WhatsApp too, not just Slack.
+  what it is). Cross-service helpers stay at the connect root; the audio processor is
+  broker machinery rather than any connector's, and lives at `src/processors.ts`.
+  `mentions.ts` stayed shared — it serves WhatsApp too, not just Slack.
 - **One import seam**: `src/connector.ts` — the log, the vault + grant broker, the org
   config, `newId`, the event types, the dispatch error contract. A connector imports this
   and nothing deeper; the contract is documented in CONNECTORS.md §1.
