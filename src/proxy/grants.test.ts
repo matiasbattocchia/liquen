@@ -251,3 +251,60 @@ Deno.test("accessTokenFor: a github installation grant mints through the app's k
     assertEquals(mints.length, 1, "the fresh cached token must not re-mint");
   });
 });
+
+Deno.test("accessTokenFor: a github user grant refreshes, and the rotated token is kept", async () => {
+  await withVault(async (creds) => {
+    await creds.put({
+      key: "github:app:7",
+      value: { private_key: "unused here", client_id: "Iv1.abc", client_secret: "sec" },
+    });
+    await creds.put({
+      key: "github:ana",
+      value: { token: "", access_token: "ghu_old", refresh_token: "ghr_one" },
+      agentId: "ana",
+      // an app_id with no installation_id is the app's USER leg (the device flow's grant)
+      extra: { app_id: "7", login: "ana-dev", expiry: "2020-01-01T00:00:00Z" },
+    });
+    const asked: URLSearchParams[] = [];
+    const broker = createGrantBroker({
+      creds,
+      userToken: (body) => {
+        asked.push(body);
+        return Promise.resolve({
+          access_token: "ghu_new",
+          refresh_token: "ghr_two",
+          expires_in: 28800,
+        });
+      },
+    });
+    const h = broker.issue("github:ana", "ana");
+    assertEquals(await broker.accessTokenFor(h), "ghu_new");
+    assertEquals(asked[0].get("grant_type"), "refresh_token");
+    assertEquals(asked[0].get("refresh_token"), "ghr_one");
+    // the app's own pair spends it — the client secret never leaves the broker
+    assertEquals(asked[0].get("client_id"), "Iv1.abc");
+    assertEquals(asked[0].get("client_secret"), "sec");
+    // GitHub rotates: store the new refresh token or the next re-issue has nothing to spend
+    const row = (await creds.get("github:ana"))!;
+    assertEquals(row.value.access_token, "ghu_new");
+    assertEquals(row.value.refresh_token, "ghr_two");
+    assert(Date.parse(row.extra!.expiry as string) > Date.now());
+    assertEquals(await broker.accessTokenFor(h), "ghu_new");
+    assertEquals(asked.length, 1, "the fresh token must not re-spend the refresh token");
+  });
+});
+
+Deno.test("accessTokenFor: a github user grant with no app to refresh by is null", async () => {
+  await withVault(async (creds) => {
+    await creds.put({
+      key: "github:ana",
+      value: { token: "", access_token: "ghu_old", refresh_token: "ghr_one" },
+      extra: { app_id: "7" }, // the app row is gone — nothing can re-issue this
+    });
+    const broker = createGrantBroker({
+      creds,
+      userToken: () => Promise.reject(new Error("must not be called")),
+    });
+    assertEquals(await broker.accessTokenFor(broker.issue("github:ana")), null);
+  });
+});

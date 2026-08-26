@@ -20,8 +20,10 @@
  * The re-issue needs the app that minted the grant, and the grant's `extra` says which
  * issuer that is: `installation_id` names a GitHub App installation — the broker signs the
  * app's RS256 JWT with the private key in `github:app:<app_id>` and mints an hourly
- * installation token; `client_id` names a Google OAuth app — refresh_token + the secret in
- * `google:app:<client_id>`. The refresh_token and the private key never leave this module.
+ * installation token; a bare `app_id` names the same app's USER leg (the device flow's
+ * grant) — refresh_token + that app's client secret, rotated on every use; `client_id`
+ * names a Google OAuth app — refresh_token + the secret in `google:app:<client_id>`.
+ * The refresh_token and the private key never leave this module.
  * Concurrent calls for one grant share a single in-flight re-issue (no double-spend of the
  * one-time nonce, but also no redundant round-trips).
  */
@@ -57,12 +59,17 @@ export interface BrokerDeps {
   /** GitHub's installation-token endpoint — injectable for tests; default POSTs
    *  api.github.com with the app's JWT. */
   installationToken?: (jwt: string, installationId: string) => Promise<InstallationToken>;
+  /** GitHub's user-token endpoint (the device flow's, spent again to refresh) — injectable
+   *  for tests; default POSTs github.com/login/oauth/access_token. */
+  userToken?: (body: URLSearchParams) => Promise<TokenResponse>;
   now?: () => number; // epoch ms
 }
 
 export interface TokenResponse {
   access_token?: string;
   expires_in?: number; // seconds
+  /** GitHub rotates it on every use; Google's never changes and never rides the answer. */
+  refresh_token?: string;
   error?: string;
   error_description?: string;
 }
@@ -80,6 +87,7 @@ const HANDLE_PREFIX = "mu-grant-";
 export function createGrantBroker(deps: BrokerDeps): GrantBroker {
   const refresh = deps.refresh ?? defaultRefresh;
   const installationToken = deps.installationToken ?? defaultInstallationToken;
+  const userToken = deps.userToken ?? defaultUserToken;
   const now = deps.now ?? (() => Date.now());
   const byHandle = new Map<string, Grant>();
   const byKey = new Map<string, string>(); // credentialKey → handle (idempotence)
@@ -102,6 +110,40 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
       ...(tok.expires_at ? { extra: { expiry: tok.expires_at } } : {}),
     });
     return tok.token;
+  };
+
+  // github, the user leg: a user-to-server grant from the device flow — spend its
+  // refresh_token with the same app's client secret. GitHub ROTATES the refresh token on
+  // every use, so the answer's is stored back or the next re-issue has nothing to spend.
+  const refreshGithubUser = async (key: string, row: CredentialRow): Promise<string | null> => {
+    const refreshToken = row.value.refresh_token;
+    const appId = String(row.extra?.app_id ?? "");
+    const app = appId ? await deps.creds.get(`github:app:${appId}`) : null;
+    const clientId = app?.value.client_id;
+    const clientSecret = app?.value.client_secret;
+    if (!refreshToken || !clientId || !clientSecret) return null;
+
+    const tok = await userToken(
+      new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+    );
+    if (!tok.access_token) return null;
+
+    await deps.creds.put({
+      key,
+      value: {
+        access_token: tok.access_token,
+        ...(tok.refresh_token ? { refresh_token: tok.refresh_token } : {}),
+      },
+      ...(tok.expires_in
+        ? { extra: { expiry: new Date(now() + tok.expires_in * 1000).toISOString() } }
+        : {}),
+    });
+    return tok.access_token;
   };
 
   // google: spend the refresh_token with the app's own secret
@@ -138,6 +180,7 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
     if (!row) return null;
     // the row itself says which issuer re-issues it (see header)
     if (row.extra?.installation_id !== undefined) return refreshGithub(key, row);
+    if (row.extra?.app_id !== undefined) return refreshGithubUser(key, row);
     return refreshGoogle(key, row);
   };
 
@@ -196,6 +239,17 @@ async function defaultRefresh(body: URLSearchParams): Promise<TokenResponse> {
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  return await res.json() as TokenResponse;
+}
+
+/** The user-token endpoint lives on github.com, not the API host, and answers form-encoded
+ *  unless the `accept` header asks otherwise. */
+async function defaultUserToken(body: URLSearchParams): Promise<TokenResponse> {
+  const res = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
     body,
   });
   return await res.json() as TokenResponse;

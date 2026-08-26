@@ -5,10 +5,13 @@ import {
   connectGithubApp,
   connectGithubBot,
   connectGithubUser,
+  type DeviceCode,
+  githubDeviceFlow,
   GRANT_ENV,
   GRANT_HOSTS,
   type Installation,
   ORG_KEY,
+  type UserTokens,
 } from "./connect.ts";
 import { openCredentials } from "../../src/connector.ts";
 import type { Appender, Draft, Event, MessageEvent } from "../../src/connector.ts";
@@ -193,5 +196,129 @@ Deno.test("user door: a wrong-shaped paste or a rejected token writes nothing", 
     await assertRejects(() => connectGithubUser("ghp_rejected", deps), Error, "Bad credentials");
     assertEquals(h.connections, []);
     assertEquals(await creds.get("github:ana"), null);
+  });
+});
+
+Deno.test("device flow: the code reaches a human, and the poll waits it out", async () => {
+  const shown: DeviceCode[] = [];
+  const slept: number[] = [];
+  const answers: UserTokens[] = [
+    { error: "authorization_pending" },
+    { error: "slow_down" },
+    { access_token: "ghu_abc", refresh_token: "ghr_abc", expires_in: 28800 },
+  ];
+  const polled: URLSearchParams[] = [];
+  const tok = await githubDeviceFlow({
+    clientId: "Iv1.abc",
+    show: (c) => shown.push(c),
+    sleep: (ms) => {
+      slept.push(ms);
+      return Promise.resolve();
+    },
+    requestCode: () =>
+      Promise.resolve({
+        device_code: "dev",
+        user_code: "WXYZ-1234",
+        verification_uri: "https://github.com/login/device",
+        interval: 5,
+        expires_in: 900,
+      }),
+    poll: (body) => {
+      polled.push(body);
+      return Promise.resolve(answers.shift()!);
+    },
+  });
+  assertEquals(tok.access_token, "ghu_abc");
+  // the human sees the code BEFORE the first poll — it is what they are being waited on for
+  assertEquals(shown[0].user_code, "WXYZ-1234");
+  assertEquals(polled[0].get("grant_type"), "urn:ietf:params:oauth:grant-type:device_code");
+  assertEquals(polled[0].get("device_code"), "dev");
+  // GitHub's interval, then `slow_down` widens it — a faster caller gets errors, not tokens
+  assertEquals(slept, [5000, 5000, 10000]);
+});
+
+Deno.test("device flow: a decline throws, and so does a code nobody entered", async () => {
+  const start = { device_code: "dev", user_code: "WXYZ", interval: 1, expires_in: 3 };
+  await assertRejects(
+    () =>
+      githubDeviceFlow({
+        clientId: "Iv1.abc",
+        show: () => {},
+        sleep: () => Promise.resolve(),
+        requestCode: () => Promise.resolve(start),
+        poll: () =>
+          Promise.resolve({ error: "access_denied", error_description: "user cancelled" }),
+      }),
+    Error,
+    "user cancelled",
+  );
+  // the deadline is counted in the sleeps, so the poll cannot outlive the code it redeems
+  let polls = 0;
+  await assertRejects(
+    () =>
+      githubDeviceFlow({
+        clientId: "Iv1.abc",
+        show: () => {},
+        sleep: () => Promise.resolve(),
+        requestCode: () => Promise.resolve(start),
+        poll: () => {
+          polls++;
+          return Promise.resolve({ error: "authorization_pending" });
+        },
+      }),
+    Error,
+    "expired",
+  );
+  assertEquals(polls, 3); // 3s of life, one poll a second
+});
+
+Deno.test("user door: a device grant is stored refreshable — the paste stays static", async () => {
+  await withVault(async (creds) => {
+    const h = harness();
+    const deps = {
+      principal: "ana",
+      creds,
+      store: h.store,
+      publish: h.publish,
+      whoami: () => Promise.resolve({ login: "ana-dev" }),
+      now: () => "2026-08-26T00:00:00Z",
+    };
+    await connectGithubUser(
+      { access_token: "ghu_abc", refresh_token: "ghr_abc", expires_in: 28800, appId: "7" },
+      deps,
+    );
+    const row = (await creds.get("github:ana"))!;
+    assertEquals(row.value.access_token, "ghu_abc");
+    assertEquals(row.value.refresh_token, "ghr_abc");
+    assertEquals(row.value.token, "", "a refreshable grant must not also look static");
+    // app_id + expiry are the broker's re-issue coordinates (§9)
+    assertEquals(row.extra!.app_id, "7");
+    assertEquals(row.extra!.expiry, "2026-08-26T08:00:00.000Z");
+    assertEquals(row.extra!.login, "ana-dev");
+
+    // re-connecting by the other route blanks what it replaces: the vault merges, so a
+    // stale access_token left behind would shadow the token just pasted
+    await connectGithubUser("ghp_pasted", deps);
+    const after = (await creds.get("github:ana"))!;
+    assertEquals(after.value.token, "ghp_pasted");
+    assertEquals(after.value.access_token, "");
+    assertEquals(after.value.refresh_token, "");
+  });
+});
+
+Deno.test("user door: a user token from an app that doesn't expire them is static", async () => {
+  await withVault(async (creds) => {
+    const h = harness();
+    // no expires_in, no refresh_token: nothing to re-issue with, so it rides the token slot
+    await connectGithubUser({ access_token: "ghu_forever", appId: "7" }, {
+      principal: "ana",
+      creds,
+      store: h.store,
+      publish: h.publish,
+      whoami: () => Promise.resolve({ login: "ana-dev" }),
+    });
+    const row = (await creds.get("github:ana"))!;
+    assertEquals(row.value.token, "ghu_forever");
+    assertEquals(row.extra!.app_id, undefined, "nothing to refresh by, nothing to point at");
   });
 });
