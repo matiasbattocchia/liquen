@@ -150,7 +150,7 @@ Deno.test("connect: the default door mints a USER-ONLY app — every bot limb dr
 
 Deno.test("connect: the manifest's consent comes from the catalog, not the seed", async () => {
   const seed = JSON.parse(
-    await Deno.readTextFile(new URL("../../../seed/slack-manifest.json", import.meta.url)),
+    await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
   ) as { oauth_config: Record<string, unknown> };
   // the seed is the app's SHAPE — it must not carry a second copy of the scope lists
   assertEquals(seed.oauth_config.scopes, undefined);

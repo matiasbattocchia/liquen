@@ -607,11 +607,16 @@ Every inbound passes through ingest, which does identity resolution **and** may 
 - **The verdict is not ingest's** (landed 2026-08-18): a gate is answered in **xi**, which
   already derives what the log owes and therefore already knows which cards are open. The
   principal's line passes through as an ordinary `message`, and xi reads
-  `/{y,n} [conv|conn|all] [reason]` off it (`parseVerdict` — one syntax, every door) and
-  publishes the structured `{behavior, scope, reason?}` + ref before it reads the verdict
-  — so ONE invocation settles the gate and acts on it. The bare form settles the one
-  call; a scope word makes it STANDING (§9): an allow/deny row remembered for that
-  conversation, that connection, or the tool everywhere. That
+  `/{y,n} [once|conv|conn|always|all] [reason]` off it (`parseVerdict` — one syntax, every
+  door) and publishes the structured `{behavior, scope, reason?, every?}` + ref before it
+  reads the verdict — so ONE invocation settles the gate and acts on it. Two independent
+  axes, one word each: HOW LONG (`once`, the bare form — or `conv` · `conn` · `always`,
+  which make it STANDING (§9): an allow/deny row remembered for that conversation, that
+  connection, or the tool everywhere) and HOW MANY (`all` — every open card settled at
+  once, which is how a pile a phone cannot comfortably quote through gets cleared). The
+  widest scope is `always` rather than `all` so that the two axes keep one word each: a
+  bare `/y` reads as `/y once`, `/y always` is its natural opposite, and `all` is then free
+  to mean what it plainly says. That
   keeps every surface equal (the REPL's key handling is a shortcut, not the mechanism) and
   keeps the decision out of free text (Claude-Code discipline; its channels-relay does the
   same id-match). WHICH card an answer settles is the whole problem, and the rule is that
@@ -1482,7 +1487,7 @@ docs {
 ## 9. Deployment, storage, tools & security
 
 - **Distribution (DX)**: target = **scaffold-the-surface, package-the-core** (shadcn C2):
-  an init command copies what an org owns — `seed/docs/**` templates, config, `main.ts`
+  an init command copies what an org owns — `src/seed/**` templates, config, `main.ts`
   wiring, Dockerfile — while the harness core stays a JSR dependency (the `store/`/exec
   ports are the package boundary). Surface files are exactly what updates never touch;
   core updates are a version bump. The init is npx-shaped (`deno run -A jsr:@mu/init .`;
@@ -1494,15 +1499,15 @@ docs {
   the installer, wrapping the deterministic steps and carrying the interview; plainly
   readable (it is also the trust artifact), every step idempotent. `mu init` is the
   deterministic core the skill invokes once it exists. Near-term (v0.x, API churning): clone-the-repo, kept
-  **template-ready** — seeds live as real files under `seed/docs/`, copied write-if-absent
+  **template-ready** — seeds live as real files under `src/seed/` (flat, `<scope>-<name>.md`), copied write-if-absent
   into `{dir}/docs` at boot (interpolating `{{DOCS_ROOT}}`/`{{AGENT_ID}}`), never
   overwriting edits. **Seed vs data is template vs LIVING state**: agents co-author
   `{dir}/docs` at runtime (memories, later skills), so it drifts by design — git sees
-  `seed/` (the org definition, reproducible; private repo if sensitive), volumes hold
+  `src/seed/` (the org definition, reproducible; private repo if sensitive), volumes hold
   `data/`. Per-file if-absent ⇒ additive seed evolution flows to deployments; *edits* to
   existing seeds reach live orgs only via an explicit migration action (future, ⟺ db
   migration — on Postgres seeding IS an INSERT-if-absent migration). The Docker image is the *deploy* artifact of whichever mode
-  (`deno compile --include seed/docs`), not the dev artifact. **Isolation is per
+  (`deno compile --include src/seed`), not the dev artifact. **Isolation is per
   folder**: all state lives under the project dir (log, locks, docs, keys) — N inits =
   N unrelated orgs, co-runnable on one machine; never write global state. **Deno-less
   envs**: `deno compile` (cross-target) ships self-contained binaries — operator-mode
@@ -2064,7 +2069,7 @@ team), or global (no scope). xi resolves where a `send` lands before ruling, so 
 WhatsApp number asks, the Slack workspace flows, #general is blocked" is three rows, most
 specific first. The config rows are the BASE half; the REMEMBERED half is the `rules`
 table on the log (store/rules.ts), written by standing verdicts — the principal answers a
-card `/{y,n} [conv|conn|all] [reason]`, and a scope word pins an allow/deny row to where
+card `/{y,n} [once|conv|conn|always|all] [reason]`, and a scope word pins an allow/deny row to where
 that call landed (upserted by scope: a later verdict replaces the action). The gate
 compiles both, remembered first: the principal outranks the base, and among the
 remembered the most specific wins. Same division of labor as the registry — humans write
@@ -2198,6 +2203,20 @@ covers long tools (detach + `tail`, §9), and `local` always delivers. Likely on
   approval gates, destination maps (send with `to`), OneCLI credential injection.
 - **OpenClaw**: channel breadth, queue modes (steer/followup/collect ≈ xi + coalescing),
   per-channel-peer isolation.
+- **Hermes (Nous)**: the learning loop as a SECOND agent over the same transcript. After a
+  turn ends (every ~10th, not every one), a daemon thread forks the agent onto a snapshot
+  of the messages and hands it one prompt: *what here is worth keeping?* The fork inherits
+  the parent's provider, model and cached system prompt — so it rides the same prefix cache
+  — and runs under a tool whitelist of memory + skill writes only, everything else denied at
+  dispatch. Writes land on disk; the live conversation and its cache are never touched, and
+  memory reaches the prompt as a frozen snapshot at the NEXT session's start. A separate
+  idle-triggered curator (days, not turns) consolidates and archives what went stale, and
+  writes only skills the agent itself authored — hand-written and pinned ones refuse
+  autonomous edits *because no user is present to consent*. Three things worth stealing: a
+  correction is a first-class learning signal ("stop doing X" edits the skill, not just
+  memory); the review prompt names what NOT to learn (environment-dependent failures,
+  "tool X is broken") because a wrong lesson becomes a permanent self-imposed constraint;
+  and a `journey` view makes everything learned visible and prunable by the human.
 - **OpenCode**: harness-as-server + OpenAPI + SSE; generate clients from spec.
 - **Paper (arXiv 2604.14228)**: "minimal scaffolding, maximal operational harness"; no
   judge (environment ground truth); five-layer compaction; lazy CLAUDE.md; sidechain isolation.

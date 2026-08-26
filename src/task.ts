@@ -12,7 +12,7 @@
  * them), gates off, 10-minute bash timeout, org state in a throwaway temp dir. Env:
  * MU_MODEL · MU_EFFORT · MU_TASK_TIMEOUT_S (wall clock, default 1800).
  *
- * Compile: deno compile -A --include seed/docs -o mu-task src/task.ts
+ * Compile: deno compile -A --include src/seed -o mu-task src/task.ts
  */
 
 import { start } from "./main.ts";

@@ -26,9 +26,9 @@ deno task cli
 In the REPL: type to your agent · `/y [note]` / `/n [reason]` answer approval cards ·
 `/quit` exits.
 
-First run seeds `./data/` from the `seed/docs/` templates: the log, the agent's
+First run seeds `./data/` from the `src/seed/` templates: the log, the agent's
 workspace, and its docs (identity, org, memories — edit them, boot never overwrites).
-`data/` is living state and stays out of git; `seed/` is the versioned org definition.
+`data/` is living state and stays out of git; `src/seed/` is the versioned org definition.
 
 ## Knobs
 
@@ -52,12 +52,12 @@ gh webhook forward --repo=you/repo \
 ### Slack (bring-your-own app, per org)
 
 1. **Create the app** — print the prefill link and open it (creates the app in your
-   workspace, pre-configured from [`seed/slack-manifest.json`](./seed/slack-manifest.json);
+   workspace, pre-configured from [`src/seed/slack-manifest.json`](./src/seed/slack-manifest.json);
    edit the `redirect_urls` placeholder to your public host first):
 
    ```sh
    deno eval "console.log('https://api.slack.com/apps?new_app=1&manifest_json=' +
-     encodeURIComponent(await Deno.readTextFile('seed/slack-manifest.json')))"
+     encodeURIComponent(await Deno.readTextFile('src/seed/slack-manifest.json')))"
    ```
 
 2. **Install it** (admin, once): *Install to Workspace* on the app page → the workspace

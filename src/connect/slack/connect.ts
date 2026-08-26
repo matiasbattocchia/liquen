@@ -23,7 +23,7 @@
  *
  * Arg (user door): the principal (default: the OS username). Env: none.
  *
- * The manifest it prints is `seed/slack-manifest.json` — the app's SHAPE (name, events,
+ * The manifest it prints is `src/seed/slack-manifest.json` — the app's SHAPE (name, events,
  * redirect, socket mode) — with the consent lists filled from `connections.slack`
  * (`withScopes`), so what the app may do is a knob and lives in one place.
  */
@@ -397,7 +397,7 @@ if (import.meta.main) {
   const { botScopes, userScopes } = await slackConfig(dir);
   const manifest = userManifest(withScopes(
     JSON.parse(
-      await Deno.readTextFile(new URL("../../../seed/slack-manifest.json", import.meta.url)),
+      await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
     ),
     { bot: botScopes, user: userScopes },
   ));

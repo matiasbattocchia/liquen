@@ -43,12 +43,12 @@ deno task smoke     # live transport round-trip (needs credentials)
 deno task cli       # talk to the agent; /quit to exit
 ```
 
-The first run seeds `./data/docs/` from the `seed/docs/` templates and creates the
+The first run seeds `./data/docs/` from the `src/seed/` templates and creates the
 agent's workspace under `./data/workspace/`.
 
 ## 5. Customization — **interview**
 
-The templates under `seed/docs/` are the org's defaults; the live copies under
+The templates under `src/seed/` are the org's defaults; the live copies under
 `./data/docs/` are this deployment's. Both are meant to be edited; boot never
 overwrites. Ask the developer, then edit:
 

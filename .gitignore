@@ -10,10 +10,8 @@
 /data/
 dist/
 
-# reference clones (their own repos, not ours)
-/claude-agent-sdk-typescript/
-/nanoclaw/
-/pi/
+# reference clones (their own repos, read for ideas, never imported from)
+/ref/
 
 # python build noise (bench)
 __pycache__/

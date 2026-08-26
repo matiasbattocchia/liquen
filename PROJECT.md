@@ -412,7 +412,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
      + `/callback` (exchange → xoxb as org×workspace, xoxp as principal×workspace, principal
      bound from the Slack-verified `authed_user`; grant crosses the frontier as a log
      event). `store/credentials.ts` is the broker store (tokens keyed by the owner matrix +
-     one-time oauth states). BYO-app per org: `seed/slack-manifest.json` + the prefill link
+     one-time oauth states). BYO-app per org: `src/seed/slack-manifest.json` + the prefill link
      in the README (admin installs = workspace leg; everyone OAuths for their personal leg;
      promotion is the admin's, human, job — the log is the frontier, DESIGN §4).
    - `connect/slack.ts` — the ingest as ONE webhook function (Events API: challenge,
@@ -968,11 +968,11 @@ is the job. A user token acts AS that human, so enumerating their private channe
 group DMs needs `groups:read`/`im:read`/`mpim:read`, and `search:read`/`files:read` have no
 bot equivalent at all.
 
-Same pass: the scope lists lived twice — in the catalog and in `seed/slack-manifest.json` —
-kept in sync by hand. The seed now carries only the app's shape and the door fills the
-consent from the catalog (`withScopes`). And the manifest's path was one directory short
-(`src/seed/`), so the user door died on `NotFound` before printing its link; the new test
-reads the seed, which is what surfaced it.
+Same pass: the scope lists lived twice — in the catalog and in the slack manifest — kept in
+sync by hand. The seed now carries only the app's shape and the door fills the consent from
+the catalog (`withScopes`). And the manifest's relative path was one directory short, so
+the user door died on `NotFound` before printing its link; the new test reads the seed,
+which is what surfaced it.
 
 ### Outbound media: one door in, and mu stopped stating its own address (2026-08-25) — LANDED
 
@@ -1005,6 +1005,31 @@ So the leg stayed and its two defects went:
 states where mu is exactly once, on the bridge. The store's boundary is checked
 independently of the signature: a signed path outside `data/conversations` is a 404,
 because a signature proves who minted a path, never that the path is innocent.
+
+### GitHub's user door signs people in, instead of asking for a secret (2026-08-26) — LANDED
+
+The user door's route is now the **device flow**, off the app's own client id: `mu connect
+github user` asks GitHub for a code, the human types it at github.com/login/device, and the
+poll returns a user-to-server token. Nobody mints a credential by hand, nobody pastes one
+into a terminal, and the grant is bounded by the app's permissions and its installations
+rather than by whatever a PAT's checkboxes happened to allow. It is what `gh auth login`
+does with its own client id, done with ours.
+
+The token that comes back is **refreshable**, and that is the point of preferring it: with
+"expire user authorization tokens" left ON (what the app door now tells you to do), the
+grant is an 8h `access_token` plus a rotating `refresh_token`, so the broker re-issues it
+the way it already re-issues Google's and the installation's. A non-expiring `ghu_` sitting
+in the vault forever is the same liability as the PAT, so the door prefers the expiring
+shape and the broker gained the third branch: an `extra.app_id` with **no**
+`installation_id` is the app's user leg, spent against that app's client secret at
+github.com/login/oauth/access_token. GitHub rotates the refresh token on every use, so the
+answer's is written back — miss that and the grant dies at the second refresh.
+
+The paste survives as `--token`, and as the fallback when no app is vaulted (or when stdin
+is piped: a device flow wants a human at a browser, and a secret manager is not one). Both
+routes land on the same `connectGithubUser`, which writes **both credential slots every
+time** — the unused one blanked. The vault merges what it is given, so re-connecting by the
+other route without that would leave the old credential behind to shadow the new one.
 
 ## The honest framing
 
