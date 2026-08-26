@@ -41,7 +41,6 @@ import type {
   PolicyAction,
   Rule,
   Session,
-  ToolCall,
   ToolResultEvent,
   ToolUseEvent,
 } from "./types.ts";
@@ -54,7 +53,7 @@ import {
   DEFAULT_TIMEZONE,
   DEFAULT_WINDOW_LIMIT,
 } from "./config.ts";
-import { type Describe, describeCall, type Resolve } from "./describe.ts";
+import { type Describe, describeCall, nameResolver } from "./describe.ts";
 import type { Appender, Reader } from "./store/log.ts";
 import type { Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
@@ -394,22 +393,37 @@ function owedOf(events: Event[], session: Session): Owed[] {
 }
 
 /** The verdict, as the principal types it on any surface (§9):
- *  `/{y,n} [conv|conn|all] [reason]`. The bare form settles the one call; a scope word
- *  makes it STANDING — remembered for the conversation, the connection, or the tool
- *  everywhere. One syntax, every door: gateVerdict here, the REPL's own line. */
-const VERDICT = /^\/(y|n)\b(?:\s+(conv|conn|all)\b)?\s*(.*)$/s;
+ *  `/{y,n} [once|conv|conn|always|all] [reason]`. Two independent axes, one word each:
+ *
+ *    HOW LONG   `once` (the bare form) settles this call. `conv` · `conn` · `always` make
+ *               it STANDING — remembered for the conversation, the connection, or the tool
+ *               everywhere.
+ *    HOW MANY   `all` answers every open card at once, each settled `once` — the pile a
+ *               phone cannot comfortably quote through, cleared in one line.
+ *
+ *  `always` is the widest SCOPE precisely so `all` can mean all of them: a bare `/y` reads
+ *  as `/y once`, which makes `/y always` the natural opposite and leaves `all` free for
+ *  what it plainly says. One syntax, every door: gateVerdict here, the REPL's own line. */
+const VERDICT = /^\/(y|n)\b(?:\s+(all|once|conv|conn|always)(?=\s|$))?\s*(.*)$/s;
 
-const SCOPES = { conv: "conversation", conn: "connection", all: "all" } as const;
+const SCOPES = {
+  once: "once",
+  conv: "conversation",
+  conn: "connection",
+  always: "always",
+} as const;
 
 /** Parse a principal's line into a verdict, or nothing if it isn't one. */
 export function parseVerdict(text: string): PermissionVerdict | undefined {
   const said = VERDICT.exec(text.trim());
   if (!said) return undefined;
   const reason = said[3].trim();
+  const every = said[2] === "all";
   return {
     behavior: said[1] === "y" ? "allow" : "deny",
-    scope: said[2] ? SCOPES[said[2] as keyof typeof SCOPES] : "once",
+    scope: every || !said[2] ? "once" : SCOPES[said[2] as keyof typeof SCOPES],
     ...(reason ? { reason } : {}),
+    ...(every ? { every: true } : {}),
   };
 }
 
@@ -423,6 +437,8 @@ export function parseVerdict(text: string): PermissionVerdict | undefined {
  * WHICH card it answers is the whole problem, and the answer is: whichever one they pointed
  * at. A bare `/y` settles the single open card and nothing else — with two waiting, a bare
  * word is genuinely ambiguous, and guessing would send the wrong message under their name.
+ * `/y all` is that ambiguity answered rather than dodged: they mean all of them, every open
+ * card settles at once, and the pile a phone is bad at quoting through clears in one line.
  * To answer one of several they QUOTE it, which is what a chat app is for. The mirror
  * translates the quote at fan-in — the alias conversation is invisible to this port
  * (policy §6), so the join happens where visibility lives: the copy's `ref_id` names the
@@ -436,20 +452,33 @@ function gateVerdict(
   events: Event[],
   session: Session,
   homeEnv: Envelope,
-): Draft<PermissionResponseEvent> | Draft<ErrorEvent> | undefined {
+): (Draft<PermissionResponseEvent> | Draft<ErrorEvent>)[] {
   const live = openCards(events);
-  if (live.length === 0) return undefined;
+  if (live.length === 0) return [];
   const open = live.map((c) => c.payload.ref_id);
   // resolution reads EVERY card in the window, not just the open ones: a quote that lands on
   // a card already settled is a mistake worth naming (their phone shows the whole history,
   // and after a re-issue two identical-looking cards sit there, only one of them live).
   const cards = events.filter((e) => e.type === "permission_request");
   const last = live.at(-1);
-  if (!last) return undefined;
+  if (!last) return [];
+  /** One card settled, exactly as they typed it. */
+  const response = (card: Event): Draft<PermissionResponseEvent> => ({
+    ts: new Date().toISOString(),
+    type: "permission_response",
+    payload: { ref_id: card.payload!.ref_id as EventId },
+    envelope: homeEnv,
+    parts: [{
+      type: "data",
+      kind: "permission_response",
+      data: said!, // behavior + scope + reason, exactly as they typed it
+    }],
+  });
+  let said: PermissionVerdict | undefined;
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type !== "message" || !ownComplex(e, session.id) || ownVoice(e, session.id)) continue;
-    const said = parseVerdict(textOf(e));
+    said = parseVerdict(textOf(e));
     if (!said) break; // their latest word is not a verdict — they said something else
     // Answered already? While a gate waits, EVERY event re-reads this same latest line —
     // and a line stays latest long after it did its work. Two ways it is spent: a verdict
@@ -457,31 +486,24 @@ function gateVerdict(
     const spoken = events.slice(i + 1).some((x) =>
       x.type === "error" || x.type === "permission_response"
     );
+    // `all` points at no single card BECAUSE it points at all of them: no quote to resolve,
+    // no ambiguity to report, one response per open card in the order they were asked
+    if (said.every) return spoken ? [] : live.map(response);
     // a quote that hits no card at all (they replied to something else) is no quote: fall
     // back to the bare rule rather than dropping their word on the floor
     const quoted = (e.payload?.ref_external_id
       ? cards.find((c) => c.id === e.payload?.ref_id)
       : undefined) ??
       (live.length === 1 ? last : AMBIGUOUS);
-    if (quoted === AMBIGUOUS) return spoken ? undefined : ambiguity(live.length, homeEnv);
+    if (quoted === AMBIGUOUS) return spoken ? [] : [ambiguity(live.length, homeEnv)];
     if (!quoted || events.indexOf(quoted) > i) break; // answered before it was ever asked
     // the card they pointed at has already been answered — say so, with what is still open
     if (!open.includes(quoted.payload?.ref_id as EventId)) {
-      return spoken ? undefined : settled(live.length, homeEnv);
+      return spoken ? [] : [settled(live.length, homeEnv)];
     }
-    return {
-      ts: new Date().toISOString(),
-      type: "permission_response",
-      payload: { ref_id: quoted.payload!.ref_id as EventId },
-      envelope: homeEnv,
-      parts: [{
-        type: "data",
-        kind: "permission_response",
-        data: said, // behavior + scope + reason, exactly as they typed it
-      }],
-    };
+    return [response(quoted)];
   }
-  return undefined;
+  return [];
 }
 
 /** Several cards up and a bare word: the HARNESS says so, rather than guessing or going
@@ -493,7 +515,7 @@ const AMBIGUOUS = Symbol("ambiguous");
 function ambiguity(open: number, homeEnv: Envelope): Draft<ErrorEvent> {
   return harness(
     `${open} approvals are waiting — reply TO the one you mean (quote it), ` +
-      `or answer them one at a time`,
+      `or \`/y all\` · \`/n all\` to answer all ${open} at once`,
     homeEnv,
   );
 }
@@ -705,8 +727,9 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
     connection_address: "agent",
     conversation: { address: config.home },
   };
-  const answer = gateVerdict(events, session, homeEnv);
-  if (answer) {
+  // a `/y all` answers several cards at once, so this is a list — published together, in the
+  // order they were asked, before the verdict is read
+  for (const answer of gateVerdict(events, session, homeEnv)) {
     const settled = await ports.log.publish(answer);
     if (settled) events.push(settled);
   }
@@ -868,7 +891,7 @@ async function act(
   // report all read it, and resolving addresses to names takes the log (§9)
   const describers = describersOf(ports);
   const resolve = await nameResolver(
-    ports,
+    ports.log.read,
     [...pending, ...owed.map((o) => o.use)].map((u) => u.parts[0].data),
   );
   const describe = (use: ToolUseEvent, full = false) =>
@@ -882,7 +905,7 @@ async function act(
   const standing = async (use: ToolUseEvent, v: PermissionVerdict): Promise<void> => {
     if (v.scope === "once") return;
     const tool = use.parts[0].data.name;
-    if (v.scope === "all") {
+    if (v.scope === "always") {
       ports.log.remember({ agentId: session.agentId, tool, action: v.behavior });
       return;
     }
@@ -1034,24 +1057,6 @@ function describersOf(ports: XiPorts): Record<string, Describe> {
     if (tool.describe) out[name] = tool.describe;
   }
   return out;
-}
-
-/** A wire address → the name a human knows it by (§6): the conversation's own name off its
- *  rows, or — in a direct chat, which has no subject of its own — the person on the other
- *  end. So a card says `send(to: Vivian)` where the log says a phone number. */
-async function nameResolver(ports: XiPorts, calls: ToolCall[]): Promise<Resolve> {
-  const names = new Map<string, string>();
-  for (const { input } of calls) {
-    const to = (input as { to?: unknown } | null)?.to;
-    if (typeof to !== "string" || to === "" || names.has(to)) continue;
-    const rows = await ports.log.read({ conversation: to, limit: NAME_REACH });
-    const named = rows.find((r) => r.envelope.conversation.name)?.envelope.conversation.name ??
-      (rows.some((r) => r.envelope.conversation.kind === "direct")
-        ? rows.find((r) => r.envelope.sender?.name)?.envelope.sender?.name
-        : undefined);
-    if (named) names.set(to, named);
-  }
-  return (address) => names.get(address);
 }
 
 async function execute(
@@ -1328,7 +1333,11 @@ function specsOf(ports: XiPorts): Anthropic.Tool[] {
           re: {
             type: "string",
             description:
-              "the id of the message you are answering, exactly as its line shows it — quotes it on the wire",
+              "the id of the message you are answering, exactly as its line shows it — quotes it " +
+              "on the wire. For DISAMBIGUATION only: a busy group, several threads at once, an " +
+              "answer to something said well above the last line. In a normal back-and-forth " +
+              "leave it out — the previous message is already the context, and quoting it prints " +
+              "it twice",
           },
           react: {
             type: "string",

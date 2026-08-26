@@ -189,6 +189,50 @@ Deno.test("mirror fan-out: a tool call crosses as one redacted line", async () =
   });
 });
 
+Deno.test("mirror fan-out: a tool line names the addresses it points at, off the log", async () => {
+  await withMirror(async ({ publish, inConv, waitFor }) => {
+    // the group has to be IN the log for its name to be knowable — that is the directory
+    await publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "549",
+        external_id: "wa-g1",
+        conversation: {
+          address: "120363429869958481@g.us",
+          name: "Sprinters Friends",
+          kind: "group",
+        },
+        sender: { address: "5493", name: "Germán" },
+      },
+      parts: [{ type: "text", kind: "text", text: "salimos jueves" }],
+    });
+    await publish({
+      ts: new Date().toISOString(),
+      type: "tool_use",
+      payload: { turn_id: "t2" },
+      agent: { id: "ana", session_id: "ana" },
+      envelope: {
+        service: "local",
+        connection_address: "agent",
+        conversation: { address: "mind:ana" },
+      },
+      parts: [{
+        type: "data",
+        kind: "tool_use",
+        data: { name: "search", input: { in: "120363429869958481@g.us", text: "Catamarca" } },
+      }],
+    } as Draft<ToolUseEvent>);
+    await waitFor(async () => (await inConv("D1")).length === 1);
+    // the principal reads the call on a surface: it must say WHERE, not a wire handle
+    assertEquals(
+      textOf((await inConv("D1"))[0]),
+      "`[agent tool]` **search**(in: Sprinters Friends, text: Catamarca)",
+    );
+  });
+});
+
 Deno.test("mirror fan-out: the approval card crosses, arguments and reply syntax included", async () => {
   await withMirror(async ({ publish, inConv, waitFor }) => {
     // a gate is only a gate if the approver can see it: on a surface there are no key

@@ -8,8 +8,9 @@
  *   you type            → publish a principal `message` to home
  *   the agent thinks    → thinking deltas stream dim; assistant text streams live
  *   the agent acts      → tool_use/result lines; peer sends as `→ conv: text`
- *   a gate fires        → an approval card; answer `/{y,n} [conv|conn|all] [reason]` —
- *                         a scope word makes the verdict STANDING (remembered policy, §9)
+ *   a gate fires        → an approval card; answer `/{y,n} [once|conv|conn|always|all]
+ *                         [reason]` — a scope word makes the verdict STANDING (remembered
+ *                         policy, §9); `all` answers every card waiting at once
  *   /quit (or Ctrl-D)   → clean stop
  */
 
@@ -94,7 +95,9 @@ const respond = (
 
 const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
 
-let pendingRequest: string | undefined; // the last approval card — what /y and /n answer
+// every approval card still waiting, oldest first. A bare `/y` answers the newest (the one
+// just painted); `/y all` answers the whole pile, which is the point of having the list.
+const pending: string[] = [];
 
 // The REPL is a surface like any other, so `SILENCE` has to LOOK like silence here too —
 // but text arrives as deltas, before we know which word it is. So hold back whatever could
@@ -151,10 +154,18 @@ function paint(e: Event): void {
     }
     case "permission_request": {
       const { detail } = e.parts[0].data;
-      pendingRequest = e.payload?.ref_id;
+      const ref = e.payload?.ref_id;
+      if (ref && !pending.includes(ref)) pending.push(ref);
       write(
-        `\n${YELLOW}? approve ${detail}${RESET}\n  /{y,n} [conv|conn|all] [reason]\n> `,
+        `\n${YELLOW}? approve ${detail}${RESET}\n  /{y,n} [once|conv|conn|always|all] [reason]\n> `,
       );
+      return;
+    }
+    case "permission_response": {
+      // settled elsewhere (the agent withdrew it, a surface answered it) — it is no longer
+      // ours to answer, so `/y all` must not reach for it
+      const i = pending.indexOf(e.payload?.ref_id as string);
+      if (i >= 0) pending.splice(i, 1);
       return;
     }
     case "error": {
@@ -177,7 +188,9 @@ const main = await start({
 });
 const unpaint = main.log.subscribe(paint);
 
-write(`${DIM}mu — ${target} · ${model} · log: ${dir} · /y[conv|conn|all] /n /quit${RESET}\n> `);
+write(
+  `${DIM}mu — ${target} · ${model} · log: ${dir} · /y[once|conv|conn|always|all] /n /quit${RESET}\n> `,
+);
 
 const lines = Deno.stdin.readable
   .pipeThrough(new TextDecoderStream())
@@ -192,12 +205,15 @@ for await (const line of lines) {
   if (text === "/quit" || text === "/q") break;
   const verdict = text.startsWith("/y") || text.startsWith("/n") ? parseVerdict(text) : undefined;
   if (verdict) {
-    if (!pendingRequest) {
+    if (pending.length === 0) {
       write(`${DIM}nothing pending${RESET}\n> `);
       continue;
     }
-    await main.log.publish(respond(pendingRequest, verdict));
-    pendingRequest = undefined;
+    // `all` takes the pile in the order it was asked; a bare word takes the newest card,
+    // the one whose text is still on screen
+    const answered = verdict.every ? pending.splice(0) : [pending.pop()!];
+    for (const ref of answered) await main.log.publish(respond(ref, verdict));
+    if (answered.length > 1) write(`${DIM}${answered.length} approvals answered${RESET}\n`);
     continue;
   }
   await main.log.publish(principalMsg(text));

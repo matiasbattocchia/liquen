@@ -30,6 +30,35 @@ Deno.test("describeCall: send says WHO — the name, with the address as the fal
   assertEquals(describeCall(call), "send(to: 5492604586396, text: ya salgo)");
 });
 
+Deno.test("describeCall: search says WHERE and WHO — `in`/`from` are addresses too", () => {
+  const names: Record<string, string> = {
+    "120363429869958481@g.us": "Sprinters Friends",
+    "5492604586396": "Vivian Sobisch",
+  };
+  const resolve = (a: string) => names[a];
+  assertEquals(
+    describeCall({ name: "search", input: { in: "120363429869958481@g.us", text: "Catamarca" } }, {
+      resolve,
+    }),
+    "search(in: Sprinters Friends, text: Catamarca)",
+  );
+  // the bare form resolves too — one addressed argument still IS the call
+  assertEquals(
+    describeCall({ name: "search", input: { in: "5492604586396" } }, { resolve }),
+    "search(Vivian Sobisch)",
+  );
+  // these keys take a name as readily as an address, and a name resolves to nothing
+  assertEquals(
+    describeCall({ name: "search", input: { from: "matias", text: "hotel" } }, { resolve }),
+    "search(from: matias, text: hotel)",
+  );
+  // an unaddressed argument is prose, never a lookup
+  assertEquals(
+    describeCall({ name: "search", input: { text: "5492604586396" } }, { resolve }),
+    "search(5492604586396)",
+  );
+});
+
 Deno.test("describeCall: the line form bounds an argument, the card form keeps all of it", () => {
   const text = "x".repeat(200);
   const call = { name: "send", input: { to: "wa:x", text } };

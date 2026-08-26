@@ -20,10 +20,17 @@
  */
 
 import type { Json, ToolCall } from "./types.ts";
+import type { Reader } from "./store/log.ts";
 
 /** A wire address → the name a human knows it by. Resolution needs a directory (the log,
  *  the window), so it is supplied by the caller; unresolved ⇒ the address stands. */
 export type Resolve = (address: string) => string | undefined;
+
+/** The arguments that carry a wire address, and so are offered to `resolve`: `send(to:)` —
+ *  the one a human weighs before approving — and `search(in:/from:)`, which name the
+ *  conversation searched and the voice searched for. An argument under any other key is
+ *  prose and prints as written. */
+const ADDRESSED = new Set(["to", "in", "from"]);
 
 export interface DescribeOpts {
   resolve?: Resolve;
@@ -69,8 +76,40 @@ const BUILTIN: Record<string, Describe> = {
  *  `bash(git status)` reads the way a person would say it. */
 function generic(input: Json, opts: DescribeOpts): string {
   const args = Object.entries(argsOf(input)).filter(([, v]) => carries(v));
-  if (args.length === 1 && typeof args[0][1] === "string") return value(args[0][1], opts);
-  return args.map(([k, v]) => `${k}: ${value(v, opts)}`).join(", ");
+  if (args.length === 1 && typeof args[0][1] === "string") {
+    return value(named(args[0][0], args[0][1], opts), opts);
+  }
+  return args.map(([k, v]) => `${k}: ${value(named(k, v, opts), opts)}`).join(", ");
+}
+
+/** An addressed argument prints as the name a human knows it by — `in: Sprinters Friends`,
+ *  not `in: 1203…@g.us`. Anything unresolved (or unaddressed) stands as written: these keys
+ *  take a name as readily as an address, and a name needs no resolving. */
+function named(key: string, v: Json, opts: DescribeOpts): Json {
+  return typeof v === "string" && ADDRESSED.has(key) ? opts.resolve?.(v) ?? v : v;
+}
+
+/** How far back a name is looked for — a conversation names itself within a page or two. */
+const NAME_REACH = 200;
+
+/** The directory `resolve` needs, built from the log: every addressed argument in `calls`
+ *  looked up once. A conversation's own name wins (a group's title); a direct chat carries
+ *  none, so the other side's sender name is the name it goes by. An address nothing is
+ *  known about is simply absent — the address then stands, which is what it is for. */
+export async function nameResolver(read: Reader["read"], calls: ToolCall[]): Promise<Resolve> {
+  const names = new Map<string, string>();
+  for (const { input } of calls) {
+    for (const [k, v] of Object.entries(argsOf(input))) {
+      if (!ADDRESSED.has(k) || typeof v !== "string" || v === "" || names.has(v)) continue;
+      const rows = await read({ conversation: v, limit: NAME_REACH });
+      const named = rows.find((r) => r.envelope.conversation.name)?.envelope.conversation.name ??
+        (rows.some((r) => r.envelope.conversation.kind === "direct")
+          ? rows.find((r) => r.envelope.sender?.name)?.envelope.sender?.name
+          : undefined);
+      if (named) names.set(v, named);
+    }
+  }
+  return (address) => names.get(address);
 }
 
 function argsOf(input: Json): Record<string, Json> {

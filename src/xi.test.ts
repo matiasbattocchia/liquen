@@ -81,7 +81,7 @@ Deno.test("gateOf: scoped rules — where a send lands decides, most specific fi
   assertEquals(gate("bash", {}), "allow"); // a placed rule never leaks onto placeless tools
 });
 
-Deno.test("parseVerdict: /{y,n} [conv|conn|all] [reason] — one syntax, every door (§9)", () => {
+Deno.test("parseVerdict: /{y,n} [once|conv|conn|always] [reason] — one syntax, every door (§9)", () => {
   assertEquals(parseVerdict("/y"), { behavior: "allow", scope: "once" });
   assertEquals(parseVerdict("/n ahora no"), {
     behavior: "deny",
@@ -94,7 +94,13 @@ Deno.test("parseVerdict: /{y,n} [conv|conn|all] [reason] — one syntax, every d
     scope: "connection",
     reason: "spam",
   });
-  assertEquals(parseVerdict("/y all dale"), { behavior: "allow", scope: "all", reason: "dale" });
+  assertEquals(parseVerdict("/y always dale"), {
+    behavior: "allow",
+    scope: "always",
+    reason: "dale",
+  });
+  // the bare form said out loud — `/y` IS `/y once`, which is what makes `always` its opposite
+  assertEquals(parseVerdict("/y once"), { behavior: "allow", scope: "once" });
   // a note that merely STARTS like a scope word is a note — the word must stand alone
   assertEquals(parseVerdict("/y convenceme"), {
     behavior: "allow",
@@ -102,6 +108,26 @@ Deno.test("parseVerdict: /{y,n} [conv|conn|all] [reason] — one syntax, every d
     reason: "convenceme",
   });
   assertEquals(parseVerdict("hola"), undefined);
+});
+
+Deno.test("parseVerdict: `all` is HOW MANY cards, `always` is how long — two axes", () => {
+  assertEquals(parseVerdict("/y all"), { behavior: "allow", scope: "once", every: true });
+  assertEquals(parseVerdict("/n all después lo veo"), {
+    behavior: "deny",
+    scope: "once",
+    reason: "después lo veo",
+    every: true,
+  });
+  // the widest SCOPE is its own word, and answers the one card it was typed at
+  assertEquals(parseVerdict("/y always"), { behavior: "allow", scope: "always" });
+  // a bare word answers one card, once — the two words are the two ends of that sentence
+  assertEquals(parseVerdict("/y"), { behavior: "allow", scope: "once" });
+  // a word that merely STARTS like one of them is a reason: the token must stand alone
+  assertEquals(parseVerdict("/n allá vemos"), {
+    behavior: "deny",
+    scope: "once",
+    reason: "allá vemos",
+  });
 });
 
 /* ── owed: the one derivation every poke shares ───────────────────────── */

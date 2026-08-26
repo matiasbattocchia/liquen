@@ -330,8 +330,10 @@ export type PermissionBehavior = "allow" | "deny";
 /** How far a verdict reaches (§9): `once` settles the one call; the rest are STANDING —
  *  they write the remembered half of the permission table, pinned to where the call
  *  landed (`conversation`, `connection`) or to the tool everywhere (`all`). The
- *  principal's syntax: `/y conv` · `/n conn` · `/y all`. */
-export type PermissionScope = "once" | "conversation" | "connection" | "all";
+ *  principal's syntax: `/y conv` · `/n conn` · `/y always`. The bare `/y` is `/y once`,
+ *  which is why the widest scope is `always` and not `all`: `all` is the OTHER axis, how
+ *  many cards a verdict answers. */
+export type PermissionScope = "once" | "conversation" | "connection" | "always";
 
 export interface PermissionAsk {
   tool: string;
@@ -347,6 +349,10 @@ export interface PermissionVerdict {
   behavior: PermissionBehavior;
   scope: PermissionScope;
   reason?: string; // on deny
+  /** `/y all` · `/n all`: this verdict settles EVERY open card, not just the one pointed
+   *  at (§9). Orthogonal to `scope`, which is how long a verdict lasts; this is how many
+   *  cards it answers now. Each card gets its own response event. */
+  every?: boolean;
 }
 
 /** ingest-classified reserved word from the agent's principal (§3 classifier). */

@@ -1021,6 +1021,57 @@ Deno.test("two cards open: a bare /y settles nothing, the quoted one settles its
   );
 });
 
+Deno.test("two cards open: `/y all` settles the whole pile in one line (§9)", async () => {
+  const says = (text: string): Draft<MessageEvent> => ({
+    ts: new Date().toISOString(),
+    type: "message",
+    agent: { id: "a1", session_id: "s1" },
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "home" },
+      sender: { address: "matias", name: "Matías" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+
+  await scenario(
+    [
+      ok([
+        { kind: "tool_use", name: "send", input: { to: "wa:a", text: "uno" } },
+        { kind: "tool_use", name: "send", input: { to: "wa:b", text: "dos" } },
+      ], "tool_use"),
+      ok([], "end_turn"),
+      ok([], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(says("mandá los dos"));
+      await waitFor(async () => (await read("permission_request")).length === 2);
+      const cards = await read("permission_request");
+
+      // no quote, no ambiguity: `all` IS the answer to "which one" — both, and both go out
+      await publish(says("/y all"));
+      await waitFor(async () => (await read("permission_response")).length === 2);
+      const settled = await read("permission_response");
+      assertEquals(
+        settled.map((s) => s.payload?.ref_id),
+        cards.map((c) => c.payload?.ref_id), // asked order, answered in order
+      );
+      await waitFor(async () => {
+        const sent = new Set((await read("message")).map((e) => e.envelope.conversation.address));
+        return sent.has("wa:a") && sent.has("wa:b");
+      });
+      // the pile cleared without the harness ever having to say it was ambiguous
+      assertEquals((await read("error")).length, 0);
+
+      // and it is spent: the same latest line re-read on a later wake settles nothing twice
+      await new Promise((r) => setTimeout(r, 250)); // quiescence
+      assertEquals((await read("permission_response")).length, 2);
+    },
+    { gate: (name) => name === "send" ? "ask" : "allow" },
+  );
+});
+
 Deno.test("a standing verdict is REMEMBERED: /y conv settles that conversation's gate (§9)", async () => {
   await scenario(
     [

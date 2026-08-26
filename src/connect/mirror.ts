@@ -54,7 +54,7 @@
 import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { DEFAULT_MIRROR_CLAIM_MS, DEFAULT_MIRROR_SETTLE_MS } from "../config.ts";
 import { outcomeLine, silenced, silent } from "../render.ts";
-import { describeCall } from "../describe.ts";
+import { describeCall, nameResolver } from "../describe.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type {
   Draft,
@@ -102,8 +102,10 @@ export function createMirror(deps: MirrorDeps): () => void {
     //   and a muted chat's traffic never reaches a surface the principal silenced it from
     const mind = mindOf(e);
     if (mind !== null) {
-      const parts = ccParts(e);
-      if (parts) enqueue(e, () => fanOut(deps, e, mind, parts, now));
+      enqueue(e, async () => {
+        const parts = await ccParts(e, deps.read);
+        if (parts) await fanOut(deps, e, mind, parts, now);
+      });
       return;
     }
     // CCs and copies never re-enter. A CC is OURS-not-yet-on-the-wire: agent-stamped with
@@ -300,11 +302,18 @@ async function fanOut(
  *  principal's own words replayed as output. Null ⇒ this event kind never crosses
  *  (thinking, results, the verdict itself — which is the principal's own `/y`; the
  *  agent's own settlement, a `cancel`, crosses as a `[system]` withdrawal). */
-function ccParts(e: Event): Part[] | null {
+async function ccParts(e: Event, read: Reader["read"]): Promise<Part[] | null> {
   if (silent(e)) return null; // the model said nothing (§5) — nothing crosses to a surface
   if (e.type === "tool_use") {
-    const call = describeCall((e as ToolUseEvent).parts[0].data);
-    return [{ type: "text", kind: "text", text: `\`[agent tool]\` ${boldName(call)}` }];
+    // the same rendering the card gets (§9), addresses and all: a surface is where the
+    // principal READS the call, so `in: Sprinters Friends` beats `in: 1203…@g.us`
+    const call = (e as ToolUseEvent).parts[0].data;
+    const resolve = await nameResolver(read, [call]);
+    return [{
+      type: "text",
+      kind: "text",
+      text: `\`[agent tool]\` ${boldName(describeCall(call, { resolve }))}`,
+    }];
   }
   if (e.type === "tool_result" && e.payload.deferred) {
     // a call the principal approved, now run: they asked for it, so they hear how it went

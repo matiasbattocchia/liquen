@@ -3,7 +3,7 @@
  *
  * Config declares the BASE policy (`agent.rules` in org/agent config.jsonc — the human's
  * writing); this table holds what the principal ruled FROM A SURFACE: `/y conv`,
- * `/n conn`, `/y all` on an approval card land here as rows, upserted by scope — a later
+ * `/n conn`, `/y always` on an approval card land here as rows, upserted by scope — a later
  * verdict on the same scope replaces the action, it never piles up. The gate compiles
  * both, remembered rows first: the principal outranks the base table, and among the
  * remembered the most specific wins (conversation over connection over global), newest
