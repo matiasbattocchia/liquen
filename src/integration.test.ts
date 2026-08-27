@@ -55,9 +55,7 @@ function principalMsg(text: string): Draft<MessageEvent> {
   };
 }
 
-// tall cap on purpose: it only rules the failing case — green tests leave at the poll
-// that satisfies, and a loaded parallel suite makes short caps flake
-async function waitFor(cond: () => Promise<boolean> | boolean, ms = 20_000): Promise<void> {
+async function waitFor(cond: () => Promise<boolean> | boolean, ms = 4000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < ms) {
     if (await cond()) return;
@@ -1263,50 +1261,6 @@ Deno.test("cancel: the agent withdraws one of two asks — and a bare /y settles
     const outcome = (await log.read({ types: ["tool_result"] })).find((e) => e.payload?.deferred);
     assert(outcome?.type === "tool_result");
     assertEquals(outcome.payload.ref_id, b.payload!.ref_id);
-  } finally {
-    await log.close();
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-Deno.test("act-class work landing under a terse turn's lease still runs (§2)", async () => {
-  const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  // a door script publishes its use while the mind is mid-turn (§9): that event's poke
-  // bounces off the lock, and the terse close publishes nothing to re-fire it. Only the
-  // turn's own quiescence check stands between the ask and a permanent stall (the
-  // stalled cycle's second face) — think-class work has the settle and the attention
-  // alarms behind it; a pending use has nothing else.
-  let calls = 0;
-  let use: Event | null | undefined;
-  const transport: ModelTransport = async () => {
-    calls++;
-    if (calls === 1) {
-      use = await log.publish(
-        {
-          ts: new Date().toISOString(),
-          type: "tool_use",
-          payload: { turn_id: "job:x" },
-          agent: { id: "a1", session_id: "s1" },
-          envelope: {
-            service: "local",
-            connection_address: "agent",
-            conversation: { address: "mind:a1" },
-          },
-          parts: [{ type: "data", kind: "tool_use", data: { name: "echo", input: { v: 7 } } }],
-        } satisfies Draft<ToolUseEvent>,
-      );
-    }
-    return ok([]); // the terse close: an empty batch, no wake
-  };
-  const ports = { log, docs: openFileDocs(`${dir}/docs`), transport, exec: { echo: echoTool } };
-  try {
-    await log.publish(principalMsg("hola"));
-    await xi(CONFIG, ports); // the think closes tersely; quiescence finds the use and acts
-    assertEquals(calls, 1); // the recursion was an act — no extra model turn
-    const [res] = (await log.read({ types: ["tool_result"] })) as ToolResultEvent[];
-    assertEquals(res.payload.ref_id, use!.id);
-    assertEquals(res.parts[0].data.output, { echoed: { v: 7 } });
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

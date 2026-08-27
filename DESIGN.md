@@ -344,15 +344,10 @@ before acquiring would run a duplicate turn.
   ~40% of runs stalling a tool cycle, because `watchFs` latency is *shorter* than the rest of
   a turn's teardown. Committed together, an observer sees neither or both, so the wake always
   finds the lease free. This is why the lease lives in the store beside the events: two
-  substrates can't share a transaction. The invariant has a second face: a turn with an
-  **empty** batch — an ignore, a terse close — publishes nothing, so a poke that bounced
-  off *its* lease has no re-fire. Before resting on an empty batch, xi checks whether the
-  log moved under the lease and, only if the fresh window decides **act**, pokes itself
-  once — only that class (pending uses, owed errands) has no other wake; think-class work
-  is paced by the settle and backstopped by the attention alarms. It keeps the log the
-  only loop — nothing returns a "call me again", and no caller decides anything. What it
-  does NOT cover is a holder that dies mid-turn; that's the periodic poke's job, the
-  liveness floor (§10).
+  substrates can't share a transaction. Every turn publishes — a model with nothing to
+  add still closes with the `SILENCE` sentinel (§5) — so every release re-fires whatever
+  bounced off its lease; the millisecond-wide `ignore` path publishes nothing, and a poke
+  lost there waits for the periodic poke, the liveness floor (§10).
 - **Crash recovery = the steal + the sweep.** A stale lock (TTL) is *stolen*, and the
   steal is the crash signal: act then **sweeps** pending uses (cancelled results) instead
   of blindly re-running tools whose side-effects may already have happened — the model

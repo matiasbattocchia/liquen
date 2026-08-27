@@ -9,6 +9,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
+import { SILENCE } from "./render.ts";
 
 /** An `Emission[]` as the model would actually have sent it: real content blocks. */
 export function canned(
@@ -35,8 +36,9 @@ export function canned(
   } as Anthropic.Message;
 }
 
-/** A transport that hands back the script in order, then keeps returning an empty end_turn
- *  (a turn with nothing to add closes tersely — §2). `calls` counts model calls. */
+/** A transport that hands back the script in order, then keeps closing with the `SILENCE`
+ *  sentinel — the compliant model's terse close (§5): every turn publishes, so its batch
+ *  wakes whoever bounced off its lease. `calls` counts model calls. */
 export function scripted(
   script: (Anthropic.Message | Error)[],
 ): { transport: ModelTransport; calls: () => number } {
@@ -44,7 +46,7 @@ export function scripted(
   return {
     transport: (_params, emit) => {
       n++;
-      const next = script.shift() ?? canned([]);
+      const next = script.shift() ?? canned([{ kind: "assistant", text: SILENCE }]);
       if (next instanceof Error) return Promise.reject(next);
       for (const block of next.content) {
         if (block.type === "text") emit?.({ kind: "text", text: block.text });

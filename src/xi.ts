@@ -766,32 +766,8 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
     const settled = await ports.log.publish(answer);
     if (settled) events.push(settled);
   }
-  // A turn's batch is its wake: whoever bounced off this lease (line "held" above) is
-  // re-poked by the fan-out of what the turn publishes. A turn that publishes NOTHING —
-  // an ignore, or a think that closes tersely (§2) — wakes nobody, so a poke that landed
-  // while we held the lease would stall forever (§2 the stalled cycle, its second face).
-  // So before resting on an empty batch: if the log moved under the lease AND now holds
-  // ACT-class work — pending uses, an answered ask not yet run — re-poke ourselves. Only
-  // that class: it has no other wake (a verdict pokes exactly once), where think-class
-  // work is paced by main's settle and backstopped by the attention alarms — recursing on
-  // it would jump both. The probe wears the window's own filters (scope, silence, the
-  // boot floor), so it moves exactly when the window would.
-  const quiesce = async (): Promise<void> => {
-    const floor = config.since ? { after: config.since } : {};
-    const [latest] = await ports.log.read({ limit: 1, silenced: false, ...floor });
-    if (!latest || latest.id === events.at(-1)?.id) return; // the log rested — so do we
-    const fresh = anchored(
-      await ports.log.read({ limit: limit + WINDOW_SLACK, silenced: false, ...floor }),
-      limit,
-    );
-    if (decide(fresh, session, config) === "act") return await xi(config, ports);
-  };
-
   const v = decide(events, session, config);
-  if (v === "ignore") {
-    await lock.release();
-    return await quiesce();
-  }
+  if (v === "ignore") return await lock.release();
 
   // 4. the work, and 5. the end: ONE transaction holding its last events AND the release, so
   //    the wake they fire can never find the lease still held. Publishing first and releasing
@@ -806,7 +782,6 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
     throw err;
   }
   await ports.log.publishAndRelease(last, name);
-  if (last.length === 0) return await quiesce();
 }
 
 /* ── think: one locked turn ───────────────────────────────────────────── */

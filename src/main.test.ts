@@ -41,10 +41,7 @@ function principalMsg(home: string, text: string): Draft<MessageEvent> {
   };
 }
 
-// the cap only rules the FAILING case — green tests leave at the poll that satisfies, so
-// tall is free, and short flakes under a loaded parallel suite (a full start→gate→act
-// pipeline can take seconds when every worker runs at once)
-async function waitFor(cond: () => Promise<boolean> | boolean, ms = 20_000): Promise<void> {
+async function waitFor(cond: () => Promise<boolean> | boolean, ms = 4000): Promise<void> {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     if (await cond()) return;

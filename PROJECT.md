@@ -1046,21 +1046,20 @@ that would answer it (bash holds the lease), so a script fires and forgets and t
 narrates; no close either — a script's exit is its hang-up. Scheduler itself (item 10)
 still open — this is its execution half, trigger-agnostic: bash today, alarms later.
 
-### The stalled cycle's second face — empty turns quiesce before resting (2026-08-26) — LANDED
+### The empty-turn quiesce probe — reverted (2026-08-27)
 
-Chasing a test flake (an approved verdict's errand intermittently never ran) surfaced a
-real hole in the wake invariant: a turn's batch is its wake, but a turn that publishes
-NOTHING — an ignore, or a think that closes tersely (§2's designed terse close) — wakes
-nobody, so a poke that bounced off its lease was lost forever. In production: a verdict
-(or a door script's use) landing during a terse turn stalls until the next unrelated
-event. Fix in `xi`: on an empty-batch release, probe whether the log moved under the
-lease and, only if the fresh window decides **act**, re-poke self once. Only act-class:
-pending uses and owed errands have no other wake (a verdict pokes exactly once), while
-think-class work is paced by main's settle and backstopped by the attention alarms —
-recursing on it would jump both (the burst-settle test proves it). Regression:
-`integration.test.ts` "act-class work landing under a terse turn's lease still runs".
-Also raised every test `waitFor` cap to 20s — the cap only rules the failing case, so
-tall is free, and 3–4s flaked under a loaded parallel suite.
+The 2026-08-26 fix (on an empty-batch release, probe the log and re-poke self if act-class
+work landed under the lease) chased a test flake and overbuilt: production already holds
+the invariant without it. A model turn always publishes — the `SILENCE` sentinel is the
+terse close — so every real release re-fires whatever bounced off its lease; a poke lost
+in the millisecond-wide `ignore` window is caught by main's clock tick (the liveness
+floor, ≤`TICK_MS`), and a door script's sends land under a bash act turn whose
+`tool_result` batch wakes them. The flake was the test environment lacking both defenses:
+`scripted()` when dry closed with an empty batch (a model breaking the SILENCE
+convention) and `TICK_MS` never fires inside a test. Root fix instead: `scripted()` now
+closes with the sentinel like a compliant model. The quiesce closure, its two call sites,
+its regression test, and the 20s `waitFor` caps (a diagnostic to tell stall from slow)
+are gone.
 
 ### The attention ladder — six rules the principal can actually tune (2026-08-27) — LANDED
 
