@@ -1099,6 +1099,42 @@ until those exist. Rule 4 (the principal's floor) turned out to need no code at 
 already requires the agent's own word to be the last one AND recent, and the principal's
 line always lands after the agent's, so the two clocks can never disagree.
 
+### `send` at the principal is refused, not asked (2026-08-27) — LANDED
+
+Two live misfires in one morning, both the same root: the instructions said "never `send`
+to your principal" and the model did it anyway. Once it reached them as a third-person
+message about their own friend ("Gryngo pregunta si hay juntada… ¿le confirmás vos?"), once
+as an approval card asking permission to send them a message they were already receiving.
+An instruction that only the model enforces is a hope; this is the guard. `selfSend` runs at
+the top of act's fresh batch — **before the gate** — and refuses any `send` naming the
+agent's own id, its home, `mind:<id>`, the principal's declared `email`/`phone`, or an alias
+conversation bound to it. Before, because a call that can land nowhere is not a permission
+question, and the card is the worse of the two failures: it spends the principal's attention
+to tell them nothing.
+
+The error carries the fix rather than just the refusal ("that address is your principal —
+what you say to them is the assistant channel"), the `to` schema says it where the model
+picks the value, and §9's send bullet now says enforced rather than forbidden. `xi`'s log
+port gained `aliases` for the surface check.
+
+Second fix, instructions and the tool schema: the agent QUOTES almost everything it answers
+(`send(re: …)`), which on the wire is a visible quote block above an ordinary reply — the
+loudest tell that a machine is typing. What it says is fine; that it says it as a
+reply-to-a-message is not. There was already a `re`-is-for-disambiguation bullet and the
+model read straight past it, because it was written as guidance between two reasonable
+options. It now states the default outright — do not quote, bare `send(to:, text:)` almost
+every time — and makes the exception carry a burden: reach for `re` only when you can name
+the confusion it prevents, since "it is the message I am answering" is true of every reply
+ever sent. Same wording in the `re` schema, where the model actually picks the value, with
+the fact it hides made explicit: with plain `text` this QUOTES, it is not a bookkeeping
+field. The distinction both places have to keep is that `re` is REQUIRED for `react` and
+every `action` — those act on a specific message and have no object without it (xi already
+throws "a reaction needs `re`"), so the don't-quote rule is about `text` alone. Instructions
+only for now — a mechanical guard is available (an `re` naming the conversation's own last
+message is redundant by construction) and unbuilt, pending whether the wording holds.
+
+The seed template is now identical to what runs; it had drifted four blocks behind.
+
 ## The honest framing
 
 After 2b, nothing structural remains — the machine is complete and every later item is

@@ -816,7 +816,13 @@ cli/ui: native local conversations
 - **`send` exteriorizes the mind.** The one door from the mind to the world: `send`
   targets peer conversations only — the principal is never a send target, on any surface,
   because every principal-identified surface IS the mind and the voice reaches it by
-  mirroring, not dispatch-by-address.
+  mirroring, not dispatch-by-address. Enforced, not merely instructed: a `send` naming the
+  principal (their handles, the agent's own name, the mind, an alias conversation) is
+  refused with the hint **before the gate sees it**. It has to be before, because a card
+  for such a call asks the principal to approve a message they were already going to
+  receive — the live log grew both, a self-`send` that invented a conversation under their
+  own name and an approval card for another. A call that can land nowhere is not a
+  permission question.
 
 ### Credentials per service
 

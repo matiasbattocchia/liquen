@@ -242,6 +242,39 @@ Deno.test("send: directed message + sent result, both cause-linked", async () =>
   );
 });
 
+Deno.test("send at the principal lands nowhere — refused before it is ever gated", async () => {
+  // gating ON, so the test also proves no card is raised: the whole point is that the
+  // principal is not asked to approve a message they were already going to receive
+  for (const to of ["home", "a1", "mind:a1"]) {
+    await scenario(
+      [
+        ok([{ kind: "tool_use", name: "send", input: { to, text: "che, mirá esto" } }], "tool_use"),
+        ok([{ kind: "assistant", text: "che, mirá esto" }], "end_turn"),
+      ],
+      async ({ publish, read }) => {
+        await publish(principalMsg("contame"));
+        await waitFor(async () => (await read("tool_result")).length === 1);
+        const [answer] = await read("tool_result") as ToolResultEvent[];
+        assertEquals(answer.parts[0].data.is_error, true);
+        assertStringIncludes(
+          JSON.stringify(answer.parts[0].data.output),
+          "that address is your principal",
+        );
+        assertEquals((await read("permission_request")).length, 0);
+        // and nothing was dispatched — no invented conversation under their own name
+        assertEquals(
+          (await read("message")).filter((e) =>
+            e.envelope.conversation.address === to &&
+            e.payload?.ref_id !== undefined
+          ).length,
+          0,
+        );
+      },
+      { gate: () => "ask" },
+    );
+  }
+});
+
 Deno.test("gating: the ask is part of executing — the call is answered, then run or refused", async () => {
   const respond = (refId: string, behavior: "allow" | "deny"): Draft<Event> => ({
     ts: new Date().toISOString(),

@@ -669,19 +669,20 @@ function isOutcome(x: Json | ExecOutcome): x is ExecOutcome {
 }
 
 export interface XiPorts {
-  /** Publish · read · lock — plus the two team-chat slices the send path needs (§6):
-   *  `agents` to recognize a peer's name, `upsertMemberships` to enroll a DM's ends —
-   *  and the standing half of the permission table (§9): `remembered` compiles into the
-   *  gate, `remember` is where a scoped verdict lands. NOT `Subscriber`: the tail belongs
-   *  to main (§2). The lock is a store capability so a turn's writes and its release can
-   *  share one transaction later. */
+  /** Publish · read · lock — plus the three connection slices the send path needs (§6):
+   *  `agents` to recognize a peer's name, `upsertMemberships` to enroll a DM's ends,
+   *  `aliases` to recognize the principal's own surfaces so a send at them is refused
+   *  rather than gated — and the standing half of the permission table (§9): `remembered`
+   *  compiles into the gate, `remember` is where a scoped verdict lands. NOT `Subscriber`:
+   *  the tail belongs to main (§2). The lock is a store capability so a turn's writes and
+   *  its release can share one transaction later. */
   log:
     & Appender
     & Reader
     & Locker
     & Pick<Registry, "agents">
     & Pick<Standing, "remember" | "remembered">
-    & Pick<Connections, "upsertMemberships">;
+    & Pick<Connections, "upsertMemberships" | "aliases">;
   docs: Docs;
   /** The model edge. main picks it (Anthropic today) and it travels down the chain unchanged
    *  — the transport is where another provider adapts in, so nothing above it changes. */
@@ -987,6 +988,15 @@ async function act(
   //     closes and the mind stays free while the principal decides (§9).
   for (const use of pending) {
     const { name, input } = use.parts[0].data;
+    // a send AT THE PRINCIPAL is refused before it is gated: the assistant channel already
+    // reaches them, so this call has no destination to approve — asking would put a card
+    // in front of them whose only outcomes are a message they were already getting and a
+    // refusal. Cheap to raise, and the model reads the hint and says the thing instead.
+    const nowhere = selfSend(name, input, config, ports);
+    if (nowhere) {
+      out.push(resultOf(use, nowhere, { is_error: true }));
+      continue;
+    }
     const verdict = verdictOf(events, use.id);
     if (verdict) await standing(use, verdict);
     // the ruling (§9): where a send lands is part of the call, so the table can scope by
@@ -1102,6 +1112,39 @@ async function targetOf(
   return prior
     ? { connection: prior.envelope.connection_address, conversation: to }
     : { conversation: to };
+}
+
+/**
+ * Is this a `send` aimed at the agent's own principal? Then it lands NOWHERE and the tool
+ * says so instead of dispatching (§9). Their name, the mind, and the wire surfaces the
+ * mirror keeps their face on are all the same destination — the assistant channel — which
+ * the model is already writing when the turn closes. Sending there either invents a local
+ * conversation nobody reads (a bare handle is first contact, §5) or dies on the alias's
+ * visibility rule; both read to the principal as the agent talking about them in the third
+ * person, which is what the live log showed. The error carries the hint because the fix is
+ * a channel choice, not a retry.
+ */
+function selfSend(
+  name: string,
+  input: Json,
+  config: AgentConfig,
+  ports: XiPorts,
+): string | undefined {
+  if (name !== "send") return undefined;
+  const to = (input as { to?: unknown } | null)?.to;
+  if (typeof to !== "string" || to === "") return undefined;
+  const me = ports.log.agents().find((a) => a.agentId === config.agentId);
+  const mine = new Set(
+    [config.agentId, config.home, `mind:${config.agentId}`, me?.email, me?.phone]
+      .filter((x): x is string => typeof x === "string" && x !== ""),
+  );
+  const alias = ports.log.aliases().some((r) =>
+    r.agentId === config.agentId && r.conversation === to
+  );
+  if (!mine.has(to) && !alias) return undefined;
+  return "that address is your principal — `send` is for everyone ELSE. What you say to " +
+    "them is the assistant channel: write it as your reply and it reaches them when the " +
+    "turn closes.";
 }
 
 /** Tool-supplied renderings, by name (§9) — the built-ins' live in `describe.ts`. */
@@ -1388,17 +1431,22 @@ function specsOf(ports: XiPorts): Anthropic.Tool[] {
           to: {
             type: "string",
             description:
-              "target conversation address (as shown in its conv element), or a peer agent's name to DM them",
+              "target conversation address (as shown in its conv element), or a peer agent's " +
+              "name to DM them. Never your principal, their handles, or your own name: they " +
+              "read your reply itself, so a send at them is refused",
           },
           text: { type: "string", description: "the message body — omit only when reacting" },
           re: {
             type: "string",
             description:
-              "the id of the message you are answering, exactly as its line shows it — quotes it " +
-              "on the wire. For DISAMBIGUATION only: a busy group, several threads at once, an " +
-              "answer to something said well above the last line. In a normal back-and-forth " +
-              "leave it out — the previous message is already the context, and quoting it prints " +
-              "it twice",
+              "the message this call acts on, exactly as its line shows the id. REQUIRED with " +
+              "`react` and with every `action` — those have no object without it. With plain " +
+              "`text` it does something else: it QUOTES that message on the wire, a visible " +
+              "block above your words, so leave it out. Being a reply is already obvious from " +
+              "the fact that you replied, and quoting an ordinary answer is the loudest tell " +
+              "that a machine typed it. Set it there only when you can name the confusion it " +
+              "prevents: several threads live at once in one group, or an answer to something " +
+              "said well above the last line",
           },
           react: {
             type: "string",
