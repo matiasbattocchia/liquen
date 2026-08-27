@@ -480,10 +480,15 @@ export interface Tool {
   input_schema: JsonSchema;
 }
 
-/** `send(to?, parts)` — the only dispatch path, and the only tool nu gates (§9). */
+/** `send({to, ...})` — the only dispatch path (§9), as the tool schema names it. One
+ *  vocabulary for both callers: the model's tool call and a script's door ask. */
 export interface SendArgs {
-  to?: { service: Service; connection: string; conversation: string }; // defaults to the trigger
-  parts: Part[];
+  to: string; // conversation address, or a peer agent's name (canonicalizes to their DM)
+  text?: string;
+  files?: string[]; // workspace or media-store paths
+  re?: string; // the referenced message's short id
+  react?: string; // a glyph to land on `re` instead of a message
+  action?: "edit" | "delete" | "remove"; // what to do TO `re` (§3 MUTATIONS)
 }
 export interface SendResult {
   /** The call ran and the message is on the log — the wire is the dispatcher's problem, and
@@ -494,15 +499,26 @@ export interface SendResult {
   event_id: EventId;
 }
 
-/** `search({...})` — raw message events, RLS-scoped; Slack-search semantics (§6). */
+/** `search({...})` — message rows, RLS-scoped; Slack-search semantics (§6). */
 export interface SearchArgs {
-  in?: string; // conversation
-  from?: string; // sender
+  in?: string; // one conversation: its address, or a name (group's, or a DM's person)
+  from?: string; // one sender: their address, or any part of their name
   before?: Timestamp;
   after?: Timestamp;
-  text?: string;
+  text?: string; // words said in the message itself
 }
-export type SearchResult = MessageEvent[];
+/** One hit: the row's coordinates plus its text. `address` is what `in` and `send(to:)`
+ *  both take back. A type alias, not an interface — a hit must stay assignable to `Json`
+ *  (it rides in a tool_result). */
+export type SearchHit = {
+  id: EventId;
+  ts: Timestamp;
+  conversation: string; // display name, falling back to the address
+  address: string;
+  sender: string;
+  text: string;
+};
+export type SearchResult = SearchHit[];
 
 /** `bash(cmd)` — the sandbox's one primitive; everything exec-y is bash + a skill (§9). */
 export interface BashArgs {

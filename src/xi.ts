@@ -40,6 +40,8 @@ import type {
   PermissionVerdict,
   PolicyAction,
   Rule,
+  SearchArgs,
+  SearchResult,
   Session,
   ToolResultEvent,
   ToolUseEvent,
@@ -152,14 +154,20 @@ export function decide(
 /* ── attention (§2): three wake classes over the unanswered news ────────── */
 
 /**
- * Not every message is worth a model turn. The unanswered news is CLASSED, per
- * conversation: a SUMMONS — the mind alias, and nothing else — wakes now. An ENGAGED
- * conversation (the agent holds the floor there: its own word is the last our complex
- * said, and it is recent) wakes now: you don't drop out of a conversation you are in.
- * Everything else is AMBIENT and waits for the digest: a pile deep enough, or news old
- * enough for the interval — and during `sleepHours`, for morning. Deferring costs nothing
- * and loses nothing: the news stays owed in the log, and the clock poke (main's tick)
- * re-asks this same question until it is due.
+ * The baseline is that every message deserves a reaction; this is the LADDER that cools
+ * that down, and every rung is a fact about the news, never a timer deciding whether
+ * something was worth reading:
+ *
+ *   1. a SUMMONS — the mind alias, and nothing else — wakes now
+ *   2. during `sleepHours` the world gets nothing (3 and 4 still apply — see below)
+ *   3. an ENGAGED conversation wakes now: you don't drop out of one you are in
+ *   4. unless the principal took the floor there, which cancels 3 and only 3
+ *   5. otherwise the agent CHECKS the world every `digestMinutes`, counted from the last
+ *      time it looked — the way you put the phone down and pick it up again
+ *   6. or early, when `digestAfterMessages` have piled up across the whole world
+ *
+ * Deferring costs nothing and loses nothing: the news stays owed in the log, and the clock
+ * poke (main's tick) re-asks this same question until it is due.
  */
 function attention(events: Event[], session: Session, wake: Wake, now: number): Decision {
   const news = newsOf(events, session, wake.home);
@@ -173,12 +181,9 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // lands while the agent has the floor wakes it as engaged, and one that lands after the
   // floor decayed is the world talking, which is what the digest is for.
   if (news.some((e) => e.envelope.conversation.address === wake.home)) return "think";
-  const piles = new Map<string, MessageEvent[]>();
-  for (const e of news) {
-    const conv = e.envelope.conversation.address;
-    piles.set(conv, [...(piles.get(conv) ?? []), e]);
-  }
-  for (const conv of piles.keys()) {
+  // holding the floor is the one question that is per-conversation — so the news is grouped
+  // for it, and for nothing else: the two rules below weigh the world as one thing
+  for (const conv of new Set(news.map((e) => e.envelope.conversation.address))) {
     if (engaged(conv, events, session, wake, now)) return "think";
   }
   // ASLEEP: inside the span the ambient class wakes nobody, however deep the pile. The two
@@ -190,10 +195,7 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // than the ten they replaced, and each read a third of a night. Sleeping drops the
   // number: the night arrives once, whole, as the first digest of the morning.
   if (asleep(now, wake)) return "ignore";
-  for (const pile of piles.values()) {
-    if (digestDue(pile, wake, now)) return "think";
-  }
-  return "ignore";
+  return digestDue(news, lastLook(events, session, wake.home), wake, now) ? "think" : "ignore";
 }
 
 /**
@@ -228,12 +230,49 @@ function engaged(
   return false;
 }
 
-/** An ambient pile is due when it is deep enough, or its oldest news has waited out the
- *  interval. Only reached while awake — `asleep` answers for the whole class before this. */
-function digestDue(pile: MessageEvent[], wake: Wake, now: number): boolean {
-  if (pile.length >= (wake.digestAfterMessages ?? DEFAULT_DIGEST_AFTER_MESSAGES)) return true;
+/**
+ * Checking the phone (rules 5 and 6). Both weigh the world as ONE thing, and both are
+ * clocked off the agent, not off the messages.
+ *
+ * The interval runs from the LAST LOOK, not from the oldest unread — that is the whole
+ * difference between "I check every fifteen minutes" and "every message sits for fifteen
+ * minutes before I read it". The second is what a pile-age clock does, and it is not
+ * behaviour anyone would ask for: a line arriving fourteen minutes into the interval waits
+ * fifteen more. From the last look it waits one. It also means an agent that has been quiet
+ * for hours reads the next world message at once — the anchor is long past — which is what
+ * a person does when they pick up a phone they put down after lunch.
+ *
+ * The depth is a count across every conversation, so it measures how much has arrived,
+ * not how much arrived in any one room. There is nothing to exclude: home news never
+ * accumulates (it is answered on arrival and the horizon eats it), an engaged conversation
+ * wakes before it piles, and a silenced one never becomes news at all.
+ */
+function digestDue(news: MessageEvent[], looked: number, wake: Wake, now: number): boolean {
+  if (news.length >= (wake.digestAfterMessages ?? DEFAULT_DIGEST_AFTER_MESSAGES)) return true;
   const minutes = wake.digestMinutes ?? DEFAULT_DIGEST_MINUTES;
-  return now - Date.parse(pile[0].ts) >= minutes * 60_000;
+  return now - looked >= minutes * 60_000;
+}
+
+/** When the agent last LOOKED: the stamp on its last closing home message. That closing is
+ *  the end of a turn that read a whole window, so everything the world had said by then was
+ *  in front of the model — including the conversations it chose to leave alone. Which is why
+ *  one mark serves the whole world and none of this is per-conversation. `-Infinity` when
+ *  the agent has never closed a turn: it has never looked, so the world is due now. */
+function lastLook(events: Event[], session: Session, home: string): number {
+  const i = lastClosing(events, session, home);
+  return i === -1 ? -Infinity : Date.parse(events[i].ts);
+}
+
+/** Index of the agent's last message home — where a turn ends, §2. */
+function lastClosing(events: Event[], session: Session, home: string): number {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (
+      e.type === "message" && ownVoice(e, session.id) &&
+      e.envelope.conversation.address === home
+    ) return i;
+  }
+  return -1;
 }
 
 /** Is the org's clock inside the sleep span? "23-8" wraps midnight; null ⇒ never sleeps. */
@@ -553,14 +592,7 @@ function newsOf(events: Event[], session: Session, home: string): MessageEvent[]
   // but input never carries a turn_id, so it stays answerable
   const news = (e: Event): e is MessageEvent =>
     e.type === "message" && !ownVoice(e, session.id) && !silenced(e);
-  let last = -1;
-  for (let i = 0; i < events.length; i++) {
-    const e = events[i];
-    if (
-      e.type === "message" && ownVoice(e, session.id) &&
-      e.envelope.conversation.address === home
-    ) last = i;
-  }
+  const last = lastClosing(events, session, home);
   if (last === -1) return events.filter(news);
   // resolve the horizon to a POSITION — the window may be re-sorted for display (§5)
   const horizon = events[last].extra?.consumed;
@@ -733,10 +765,31 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
     const settled = await ports.log.publish(answer);
     if (settled) events.push(settled);
   }
+  // A turn's batch is its wake: whoever bounced off this lease (line "held" above) is
+  // re-poked by the fan-out of what the turn publishes. A turn that publishes NOTHING —
+  // an ignore, or a think that closes tersely (§2) — wakes nobody, so a poke that landed
+  // while we held the lease would stall forever (§2 the stalled cycle, its second face).
+  // So before resting on an empty batch: if the log moved under the lease AND now holds
+  // ACT-class work — pending uses, an answered ask not yet run — re-poke ourselves. Only
+  // that class: it has no other wake (a verdict pokes exactly once), where think-class
+  // work is paced by main's settle and backstopped by the attention alarms — recursing on
+  // it would jump both. The probe wears the window's own filters (scope, silence, the
+  // boot floor), so it moves exactly when the window would.
+  const quiesce = async (): Promise<void> => {
+    const floor = config.since ? { after: config.since } : {};
+    const [latest] = await ports.log.read({ limit: 1, silenced: false, ...floor });
+    if (!latest || latest.id === events.at(-1)?.id) return; // the log rested — so do we
+    const fresh = anchored(
+      await ports.log.read({ limit: limit + WINDOW_SLACK, silenced: false, ...floor }),
+      limit,
+    );
+    if (decide(fresh, session, config) === "act") return await xi(config, ports);
+  };
+
   const v = decide(events, session, config);
   if (v === "ignore") {
     await lock.release();
-    return;
+    return await quiesce();
   }
 
   // 4. the work, and 5. the end: ONE transaction holding its last events AND the release, so
@@ -752,6 +805,7 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
     throw err;
   }
   await ports.log.publishAndRelease(last, name);
+  if (last.length === 0) return await quiesce();
 }
 
 /* ── think: one locked turn ───────────────────────────────────────────── */
@@ -1210,34 +1264,7 @@ async function execute(
     const sent = await ports.log.publish(msg);
     return { sent: true, event_id: sent!.id }; // a full draft (parts present) always stores
   }
-  if (name === "search") {
-    // the filters narrow by ADDRESS; a name is only ever a way to find one (§6)
-    const [conversations, senders] = await Promise.all([
-      rooms(ports, args.in === undefined ? undefined : String(args.in)),
-      people(ports, args.from === undefined ? undefined : String(args.from)),
-    ]);
-    const rows = await ports.log.read({
-      ...(conversations ? { conversations } : {}),
-      ...(senders ? { senders } : {}),
-      before: args.before as string | undefined,
-      after: args.after as string | undefined,
-      text: args.text as string | undefined,
-      types: ["message"],
-      limit: 50,
-    });
-    return rows.map((e) => ({
-      id: e.id,
-      ts: e.ts,
-      conversation: e.envelope.conversation.name ?? e.envelope.conversation.address,
-      address: e.envelope.conversation.address, // what `in`/`send(to:)` take back
-      sender: e.envelope.sender?.name ?? e.envelope.sender?.address ?? "self",
-      // `?? []` because a row's payload may legitimately carry no parts — a merge-only
-      // draft that found no target inserts one (§3). Render already defends here; search
-      // threw, which took the whole query down over a single malformed row.
-      text: ((e as MessageEvent).parts ?? []).filter((p) => p.type === "text")
-        .map((p) => (p as { text: string }).text).join(" "),
-    }));
-  }
+  if (name === "search") return await search(ports.log, args as SearchArgs);
   const tool = ports.exec?.[name];
   if (!tool) throw new Error(`unknown tool: ${name}`);
   return await tool.execute(input, signal);
@@ -1275,6 +1302,40 @@ async function referent(ports: XiPorts, conversation: string, re: string): Promi
   return target;
 }
 
+/**
+ * `search` (§6) — the tool's implementation, reached only through act: a script's door
+ * search is a tool_use like any other (§9), so this runs for both under the same gate.
+ * Visibility is the log handle's — the caller's scoped port answers, RLS-style.
+ */
+async function search(log: Pick<Reader, "read">, args: SearchArgs): Promise<SearchResult> {
+  // the filters narrow by ADDRESS; a name is only ever a way to find one (§6)
+  const [conversations, senders] = await Promise.all([
+    rooms(log, args.in === undefined ? undefined : String(args.in)),
+    people(log, args.from === undefined ? undefined : String(args.from)),
+  ]);
+  const rows = await log.read({
+    ...(conversations ? { conversations } : {}),
+    ...(senders ? { senders } : {}),
+    before: args.before,
+    after: args.after,
+    text: args.text,
+    types: ["message"],
+    limit: 50,
+  });
+  return rows.map((e) => ({
+    id: e.id,
+    ts: e.ts,
+    conversation: e.envelope.conversation.name ?? e.envelope.conversation.address,
+    address: e.envelope.conversation.address, // what `in`/`send(to:)` take back
+    sender: e.envelope.sender?.name ?? e.envelope.sender?.address ?? "self",
+    // `?? []` because a row's payload may legitimately carry no parts — a merge-only
+    // draft that found no target inserts one (§3). Render already defends here; search
+    // threw, which took the whole query down over a single malformed row.
+    text: ((e as MessageEvent).parts ?? []).filter((p) => p.type === "text")
+      .map((p) => (p as { text: string }).text).join(" "),
+  }));
+}
+
 /** How deep a name lookup reads before giving up — the most recent rows that carry it. */
 const NAME_REACH = 200;
 
@@ -1290,13 +1351,13 @@ const NAME_REACH = 200;
  * the other. A name nobody wears is still an error — an empty result would read as "they
  * never said that" instead of "I don't know who that is".
  */
-async function rooms(ports: XiPorts, handle?: string): Promise<string[] | undefined> {
+async function rooms(log: Pick<Reader, "read">, handle?: string): Promise<string[] | undefined> {
   if (handle === undefined) return undefined;
-  if ((await ports.log.read({ conversation: handle, limit: 1 })).length > 0) return [handle];
-  const named = await ports.log.read({ conversationName: handle, limit: NAME_REACH });
+  if ((await log.read({ conversation: handle, limit: 1 })).length > 0) return [handle];
+  const named = await log.read({ conversationName: handle, limit: NAME_REACH });
   // a DM has no subject of its own: it is named by the person on the other end (§3), so a
   // sender's name names their direct chat — never a group's, which wears its own
-  const direct = await ports.log.read({
+  const direct = await log.read({
     senderName: handle,
     limit: NAME_REACH,
     filter: (e) => e.envelope.conversation.kind === "direct",
@@ -1306,10 +1367,10 @@ async function rooms(ports: XiPorts, handle?: string): Promise<string[] | undefi
   return found;
 }
 
-async function people(ports: XiPorts, handle?: string): Promise<string[] | undefined> {
+async function people(log: Pick<Reader, "read">, handle?: string): Promise<string[] | undefined> {
   if (handle === undefined) return undefined;
-  if ((await ports.log.read({ from: handle, limit: 1 })).length > 0) return [handle];
-  const named = await ports.log.read({ senderName: handle, limit: NAME_REACH });
+  if ((await log.read({ from: handle, limit: 1 })).length > 0) return [handle];
+  const named = await log.read({ senderName: handle, limit: NAME_REACH });
   const found = [...new Set(named.map((e) => e.envelope.sender?.address).filter((a) => !!a))];
   if (found.length === 0) throw new Error(`nobody named "${handle}" has spoken here`);
   return found as string[];

@@ -310,8 +310,8 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
    from the same recap: an **`acl` table** (actor × resource × action — agents AND
    connections are the resources), mirrored from an org-level config.json into POSIX
    ACLs on workspaces and broker checks at the frontier — `shared` is its degenerate
-   "everyone" row until then; identity at the broker door via unix socket + SO_PEERCRED
-   when multi-user lands.
+   "everyone" row until then; identity at the broker door is the per-agent socket's path,
+   filesystem-enforced when multi-user lands (§9 the door).
    **Slack legs — LANDED 2026-08-14** (the beast dissolved): a Slack user grant is its
    own connection, addressed `<team>:<user>` (the connector splits on `:`); the bot leg
    is the bare `<team>`. Ingest reads the leg a delivery arrived through off
@@ -777,23 +777,13 @@ It is only ever engaged where it was sent. Replayed against that hour, Luciano's
 ambient (and engagement would have been cut anyway, since the principal was replying there by
 hand) — 95 turns becomes ~10, on top of the anchored cache.
 
-**Next, and it is not optional**: with everything but home ambient, the digest becomes the
-main path — and the digest cannot currently count. `newsOf` measures owed news against
-`extra.consumed`, ONE global high-water mark stamped by every closing home message (nu.ts),
-so any turn at all drains every ambient pile. Chat with the agent regularly and no pile ever
-reaches `digestAfterMessages`: the config would promise a digest that silently never fires.
-The conflation is that one mark answers two questions — `consumed` answers *seen* (it was in
-the window); the digest needs *handled*, which is per-conversation and only the agent's own
-act can stamp it. Which is the **conversations table**, and it is not a mute list:
-`conversations(agent_id, address, read_through, defer_until, note, updated_at)` — ambient
-piles measure from `read_through`, and mute is just `defer_until`, a timestamp rather than a
-boolean so a defer set on partial information stays re-decidable. Three calls open: whether
-`defer_until` is agent-only or the principal writes it too, whether a deferred conversation
-still renders (recommend yes — suppress waking, not reading: the window read is one read and
-it is cached now, and hiding it blinds the agent to a conversation turning important), and
-whether a digest wake gets its own framing in the prompt. That last one matters: at 19:32 the
-model emitted the same 49-token "(sin novedad)" twenty-five times in a row, and a digest that
-renders identically to a summons will do it again, just less often.
+With everything but home ambient, the digest becomes the main path — and the per-conversation
+pile it counted could not count, because `extra.consumed` is ONE global high-water mark
+stamped by every closing home message, so any turn at all drained every pile. That is settled
+in "The attention ladder" (2026-08-27) below, which stopped counting per conversation
+altogether. Still open from here: whether a digest wake gets its own framing in the prompt.
+At 19:32 the model emitted the same 49-token "(sin novedad)" twenty-five times in a row, and
+a digest that renders identically to a summons will do it again, just less often.
 
 ### `<|SILENCE|>` — the model can finally say nothing (2026-08-21) — LANDED
 
@@ -1030,6 +1020,84 @@ is piped: a device flow wants a human at a browser, and a secret manager is not 
 routes land on the same `connectGithubUser`, which writes **both credential slots every
 time** — the unused one blanked. The vault merges what it is given, so re-connecting by the
 other route without that would leave the old credential behind to shadow the new one.
+
+### The door — scripts syscall by publishing tool_use events (2026-08-26) — LANDED
+
+The execution-model discussion (scheduler thread) settled two calls and this ships them:
+**a script's syscalls write `tool_use` events instead of executing** (even through the
+door, tools gate — no second gate, no bypass lane), and **script-published tool
+use/results wake the model**, which narrates outcomes to the principal. `src/door.ts`
+(main-composed: one socket per agent at `agents/<name>/door.sock`, serving that agent's
+scoped port) + `src/script.ts` (the zero-import user-space client) + the generated
+`agents/<name>/mu.ts` stub that binds the client by its own location — **no `MU_DOOR`
+env var**; the stub beside the socket is the pointer. Nothing in xi changed: `pendingOf`
+already finds the script's uses (they carry the agent stamp), the `job:<id>` turn key
+keeps them out of every session's turn machinery, `unclosedChain` is what wakes the
+narrating think once act answers them, and a steal still cancels rather than re-runs
+(a door use may have been mid-execution in the crashed act — same unknown, same sweep).
+The client API is two verbs in the model's own vocabulary (`SendArgs`/`SearchArgs` from
+`types.ts` — one set of types, no redefinition), and both are the same wire op: publish
+the gated tool_use, return `queued` the moment the ask is in the log. Search included —
+one path, so a policy on any tool rules scripts and model alike, and the hits land in the
+log for the mind, never in the script (a first cut answered search at the door, gateless;
+Matias called it: that re-branches the paths we had just unified and plants a policy
+bypass — 2026-08-27). No waiting call at all: a foreground script runs inside the turn
+that would answer it (bash holds the lease), so a script fires and forgets and the model
+narrates; no close either — a script's exit is its hang-up. Scheduler itself (item 10)
+still open — this is its execution half, trigger-agnostic: bash today, alarms later.
+
+### The stalled cycle's second face — empty turns quiesce before resting (2026-08-26) — LANDED
+
+Chasing a test flake (an approved verdict's errand intermittently never ran) surfaced a
+real hole in the wake invariant: a turn's batch is its wake, but a turn that publishes
+NOTHING — an ignore, or a think that closes tersely (§2's designed terse close) — wakes
+nobody, so a poke that bounced off its lease was lost forever. In production: a verdict
+(or a door script's use) landing during a terse turn stalls until the next unrelated
+event. Fix in `xi`: on an empty-batch release, probe whether the log moved under the
+lease and, only if the fresh window decides **act**, re-poke self once. Only act-class:
+pending uses and owed errands have no other wake (a verdict pokes exactly once), while
+think-class work is paced by main's settle and backstopped by the attention alarms —
+recursing on it would jump both (the burst-settle test proves it). Regression:
+`integration.test.ts` "act-class work landing under a terse turn's lease still runs".
+Also raised every test `waitFor` cap to 20s — the cap only rules the failing case, so
+tall is free, and 3–4s flaked under a loaded parallel suite.
+
+### The attention ladder — six rules the principal can actually tune (2026-08-27) — LANDED
+
+The rules were right but not legible, and a knob nobody can predict is a knob nobody tunes.
+Restated as a LADDER over one baseline — every message deserves a reaction; these are the
+rungs that cool it down — and three of them changed meaning in the restating.
+
+**The interval now runs from the last look, not from the oldest unread.** `digestMinutes`
+read as "let messages age fifteen minutes before reading them", so a line arriving fourteen
+minutes in waited fifteen more, and an agent quiet since lunch made the next message wait
+too. It now reads as "check the phone every fifteen minutes", counted from the stamp on the
+last closing home message. Same knob, opposite behavior at the edges, and the human version
+is the intuitive one.
+
+**The depth counts the whole world, not one room.** `digestAfterMessages` was per
+conversation, which made the wake rate depend on how the same volume happened to be spread.
+It is now `news.length` — and nothing needs excluding from it, because home news never
+accumulates (answered on arrival, the horizon eats it), an engaged conversation wakes before
+it piles, and a silenced one never becomes news.
+
+**Which killed the conversations table** (`read_through`/`defer_until`), planned above as
+"not optional". Its premise was that `consumed` answers *seen* while the digest needs
+*handled* — but the turn reads a WHOLE window, so the conversations a turn left alone were
+in front of the model too. Seen and handled are the same fact here; one global mark is
+honest, and per-conversation bookkeeping was buying a distinction that does not exist.
+
+Two renames for the same legibility reason: `settleMs` → `debounceMs` (it is a debounce),
+and `tickMs` left the catalog to become the constant `TICK_MS` (60s) — it is the resolution
+of the intervals, not one of them, and as a knob it silently added "give or take a tick" to
+every other one. The debounce stays keyed per AGENT: keying it per conversation looks like
+the fix for "a line landing 4.9s into somebody else's burst gets 0.1s of debounce", and
+isn't — a timer fires trigger-less and the invoke sweeps the whole window, so the earliest
+pending timer reads every room anyway and a second timer only adds wakes. The real fix is a
+wake that knows what it has already read, which is per-conversation `consumed` marks; parked
+until those exist. Rule 4 (the principal's floor) turned out to need no code at all: `engaged`
+already requires the agent's own word to be the last one AND recent, and the principal's
+line always lands after the agent's, so the two clocks can never disagree.
 
 ## The honest framing
 

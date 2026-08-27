@@ -44,11 +44,13 @@ export const DEFAULT_RULES: Rule[] = [
   { tool: "send", action: "ask" }, // dispatch leaves the org, in the principal's name
   { tool: "*", action: "allow" },
 ];
-// attention (§2): a summons wakes NOW; an engaged conversation wakes NOW; ambient piles
-// wake on the digest clock — reacting to every world message with a model turn is waste.
-// The digest carries the WHOLE world now that the summons is the mind alias alone, so its
-// interval sets the agent's idle cadence outright: measured against live traffic, five
-// minutes meant a turn every nine, and more than half of them said "nothing new".
+// attention (§2). The baseline is that every message deserves a reaction; these four knobs
+// are the cooling, and each names one rule of the ladder. `engagedMinutes` — how long the
+// agent's own last word keeps a conversation hot, and how long the principal's own line
+// there holds the floor back. `digestMinutes` — how often the agent CHECKS the world,
+// counted from the last time it looked, the way a person puts the phone down and picks it
+// up again. `digestAfterMessages` — how much unread has to pile up, across the whole world,
+// for it to check early.
 export const DEFAULT_ENGAGED_MINUTES = 15;
 export const DEFAULT_DIGEST_AFTER_MESSAGES = 25;
 export const DEFAULT_DIGEST_MINUTES = 15;
@@ -83,8 +85,13 @@ export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves un
 export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard (§5)
 export const DEFAULT_MIRROR_SETTLE_MS = 1_000; // echo settle before fan-in copies (§4)
 export const DEFAULT_MIRROR_CLAIM_MS = 60_000; // unclaimed-CC search window (§4)
-export const DEFAULT_TICK_MS = 60_000; // the clock poke — how often an idle agent re-looks
-export const DEFAULT_SETTLE_MS = 5_000; // a world trigger waits this long for its burst (§2)
+export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for its burst (§2)
+// The tick is not a knob. It is the RESOLUTION of the attention rules, not one of them:
+// `digestMinutes` says when the agent looks, and the tick only decides how late that look
+// may land. At a minute the promise is kept to the minute; raise it and every interval in
+// the catalog silently means "give or take a tick". A poke that finds nothing owed costs
+// one window read and no model call, so there is nothing to buy by making it rarer.
+export const TICK_MS = 60_000;
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const ACTIONS: readonly PolicyAction[] = ["allow", "ask", "deny"];
@@ -128,8 +135,7 @@ export interface OrgConfig {
     windowLimit: number;
     mirrorSettleMs: number;
     mirrorClaimMs: number;
-    tickMs: number;
-    settleMs: number;
+    debounceMs: number;
   };
 }
 
@@ -295,13 +301,8 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
         doc: "how far back an echo may claim an unclaimed CC",
       },
       {
-        key: "tickMs",
-        value: DEFAULT_TICK_MS,
-        doc: "the clock poke — how often an idle agent re-looks (the digest's metronome)",
-      },
-      {
-        key: "settleMs",
-        value: DEFAULT_SETTLE_MS,
+        key: "debounceMs",
+        value: DEFAULT_DEBOUNCE_MS,
         doc: "how long a world message waits for the rest of its burst before a turn runs",
       },
     ],

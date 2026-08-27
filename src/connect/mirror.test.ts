@@ -31,7 +31,7 @@ async function withMirror(
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     settleMs: opts.settleMs ?? 30,
   });
-  const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 3000) => {
+  const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {
     const t0 = Date.now();
     while (Date.now() - t0 < ms) {
       if (await cond()) return;

@@ -46,14 +46,15 @@ import { openCA } from "./proxy/ca.ts";
 import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
 import { createTranscriber } from "./processors.ts";
+import { installDoors } from "./door.ts";
 import type { Emit, Event } from "./types.ts";
 import {
-  DEFAULT_SETTLE_MS,
+  DEFAULT_DEBOUNCE_MS,
   DEFAULT_STOP_TIMEOUT_MS,
-  DEFAULT_TICK_MS,
   ensureOrgConfig,
   type OrgConfig,
   readAgentOverrides,
+  TICK_MS,
 } from "./config.ts";
 
 /** Start the egress proxy — the org's MANDATORY single egress point — and return the env
@@ -130,10 +131,9 @@ export interface MainConfig {
   lockTtlMs?: number;
   seed?: boolean; // install the doc cascade at boot (default true; task mode skips it)
   stopTimeoutMs?: number; // cap on how long stop() waits for an in-flight turn (default 5s)
-  tickMs?: number; // the clock poke (§2 attention): the digest's metronome (default 60s)
   /** How long a world trigger waits for the rest of its burst before the turn runs, in ms
-   *  (§2); 0 disables. Default 5s — see the settle in the fan-out. */
-  settleMs?: number;
+   *  (§2); 0 disables. Default 5s — see the debounce in the fan-out. */
+  debounceMs?: number;
 }
 
 export interface Main {
@@ -229,17 +229,23 @@ export async function start(
     outstanding.add(run);
   };
 
-  // The settle (§2): people type the way they talk — three lines two seconds apart are one
+  // The debounce (§2): people type the way they talk — three lines two seconds apart are one
   // thing said, and a turn per line reads the first two without their point and pays a full
   // window each time. So a world trigger arms a timer instead of a turn, and the rest of the
   // burst joins it; the turn that finally runs sees the whole thought. The trigger itself is
   // dropped, not queued (the invocation IS the poke): what the turn reads is the window, and
   // by then it holds every message that landed while the timer ran.
   //
+  // ONE timer per agent, not one per conversation, because a timer wakes the AGENT, not the
+  // conversation that armed it: it fires trigger-less and the invoke reads the whole window.
+  // So the earliest pending timer already sweeps every room, and a second timer could only
+  // add wakes — never give a burst a longer window than the first one leaves it. Which is
+  // the honest limit here: this bounds how long a burst may WAIT, not how little.
+  //
   // Only world triggers wait. A trigger-less poke (boot, the clock) has no burst to wait for,
   // and the agent's own writes are how a turn CHAINS to the next one — delaying those would
-  // put the settle between every step of a single piece of work.
-  const settleMs = config.settleMs ?? org?.system.settleMs ?? DEFAULT_SETTLE_MS;
+  // put the debounce between every step of a single piece of work.
+  const debounceMs = config.debounceMs ?? org?.system.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const settling = new Map<string, number>();
   const wake = (a: (typeof agents)[number]) => {
     const fire = invoke(a);
@@ -247,17 +253,29 @@ export async function start(
       const own = trigger?.agent?.session_id === a.config.sessionId;
       // the class gate, run here too: an irrelevant event must not even arm a timer, or
       // main would turn xi's free exit into a window read on a metronome
-      if (!trigger || own || settleMs <= 0 || !relevant(a.config, trigger)) return fire(trigger);
+      if (!trigger || own || debounceMs <= 0 || !relevant(a.config, trigger)) return fire(trigger);
       if (settling.has(a.config.agentId)) return; // its burst already has a timer
       settling.set(
         a.config.agentId,
         setTimeout(() => {
           settling.delete(a.config.agentId);
           fire();
-        }, settleMs),
+        }, debounceMs),
       );
     };
   };
+
+  // the door (§9): a script's syscalls, as gated tool_use events in the caller's name. The
+  // one boundary piece that HOLDS something in main — the sockets ARE the boundary; each
+  // serves its agent's scoped port, so even the door writes under §6 visibility.
+  const doors = await installDoors(
+    dir,
+    agents.map((a) => ({
+      agentId: a.config.agentId,
+      sessionId: a.config.sessionId,
+      log: a.log,
+    })),
+  );
 
   const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
   // the mirror rides the RAW log (§4): it copies between a mind and its alias surfaces, and
@@ -293,11 +311,9 @@ export async function start(
   // the clock poke (§2 attention): deferred ambient news needs someone to re-ask once the
   // digest comes due, and the log cannot wake on time passing — so the clock is a poke
   // source like the log, a trigger-less invoke on a metronome. Cheap: decide() re-reads
-  // one window and mostly answers `ignore`.
-  const ticker = setInterval(
-    () => agents.forEach((a) => invoke(a)()),
-    config.tickMs ?? org?.system.tickMs ?? DEFAULT_TICK_MS,
-  );
+  // one window and mostly answers `ignore`. A constant, not a knob: it is the resolution
+  // of the attention intervals, not one of them.
+  const ticker = setInterval(() => agents.forEach((a) => invoke(a)()), TICK_MS);
 
   return {
     log,
@@ -307,6 +323,7 @@ export async function start(
       for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
       settling.clear();
       for (const unsub of unsubs) unsub();
+      await doors.close(); // stop taking syscalls before the log goes away
       // Bound the settle. A turn wedged on a hung model connection (e.g. a network
       // outage during shutdown) must not block teardown forever — the exec-plane reap
       // and log.close have to run so no background job or file handle is left behind.

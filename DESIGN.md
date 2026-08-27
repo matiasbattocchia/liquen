@@ -138,17 +138,20 @@ decide(window) →
   last turn's `payload.stop_reason` was pause_turn / max_tokens (≤3) → think (CONTINUE it)
   trailing harness `error` (the last event in the window)          → ignore (idle-after-error)
   unclosed chain (all uses resolved, no turn output after)         → think (the closing turn)
-  unanswered news (non-self msgs beyond the last closing's CONSUMED horizon), CLASSED:
+  unanswered news (non-self msgs beyond the last closing's CONSUMED horizon), down the LADDER:
     a summons — the mind alias, and nothing else                   → think (never waits)
     an engaged conversation — it HOLDS THE FLOOR: our complex's    → think (you don't drop
       last word there is the agent's, and it is recent               out mid-conversation)
-    ambient, and a pile is due (deep enough, or old enough)        → think (the digest)
+    asleep (`sleepHours`)                                          → ignore (the world waits)
+    `digestAfterMessages` unread, across the whole world           → think (check early)
+    `digestMinutes` since the agent last LOOKED                    → think (check the phone)
   else                                                             → ignore (quiescence)
 ```
 
-**Attention**: not every message is worth a model turn — an agent sitting in busy group
-channels would otherwise spend a turn per line. The unanswered news is classed per
-conversation. A **summons** is the **mind alias** and nothing else: the one conversation
+**Attention**: the baseline is that every message deserves a reaction, and the ladder above
+is what cools that down — an agent sitting in busy group channels would otherwise spend a
+turn per line. Every rung is a fact about the news; no rung is a timer deciding whether
+something was worth reading. A **summons** is the **mind alias** and nothing else: the one conversation
 that addresses the agent. Not a DM, not a reply to something it said, not its name spoken
 as a word — those address the principal's account in a room the agent is a bystander in,
 and waking on each is a full turn per line of somebody else's conversation. What is
@@ -162,10 +165,20 @@ back, from their own phone, and an agent that answered over them for the rest of
 would be talking past its own principal. To hand the floor over again they say so at home,
 which is the one thing that still wakes the agent. So the world can never pull the agent in
 without the principal: it is only ever engaged where it was sent.
-Everything else is **ambient** and waits for the digest: a conversation's pile wakes the
-agent when it reaches `digestAfterMessages`, or when its oldest news has waited out
-`digestMinutes` — and inside `sleepHours` ("23-8"-style on the org clock, null ⇒ never
-sleeps), neither does: the ambient class wakes nobody until morning, however deep the pile.
+Everything else is **ambient**, and the agent **checks the world** the way a person checks a
+phone: every `digestMinutes`, counted from **the last time it looked** — the stamp on its
+last closing home message. Not from the oldest unread, which is the difference between "I
+check every fifteen minutes" and "every message sits fifteen minutes before I read it": on a
+pile-age clock a line arriving fourteen minutes in waits fifteen more, and an agent quiet
+since lunch makes the next message wait too. From the last look it reads that line at the
+next check, and picks up after a long quiet at once. It checks early when
+`digestAfterMessages` are unread **across the whole world** — the count measures how much has
+arrived, not how much arrived in one room, and there is nothing to exclude from it: home news
+never accumulates, an engaged conversation wakes before it piles, a silenced one is not news.
+One look answers for every conversation because one look SEES every conversation: the turn
+reads a whole window, so the rooms it left alone were in front of the model too.
+Inside `sleepHours` ("23-8"-style on the org clock, null ⇒ never sleeps) it checks nothing:
+the ambient class wakes nobody until morning, however deep the pile.
 Sleep sits between the classes, not over them, so the two that were addressed to someone
 still land at 3am — the principal's own line at home, and a conversation the agent is
 holding the floor in. What sleeps is the world. (It replaces a stretched night interval,
@@ -173,17 +186,27 @@ which was a number tuned against a cache TTL nobody controls: past an hour every
 a full uncached prefix write anyway, so three overnight wakes cost more than the ten they
 replaced and each read a third of a night. The night now arrives once, whole.)
 Deferring costs nothing and loses nothing: the news stays
-owed in the log, and main's **tick** (`tickMs`) — the clock as a poke source, a
-trigger-less invoke on a metronome — re-asks the same question until it comes due. All
-knobs live in the catalog's `agent` section (§9), per-agent overridable; the whole policy
-stays a pure derivation over one window, so a DB-tier `decide` can say the same thing.
+owed in the log, and main's **tick** — the clock as a poke source, a trigger-less invoke on
+a metronome — re-asks the same question until it comes due. The tick is a constant (60s),
+not a knob: it is the RESOLUTION of the intervals above, not one of them, and raising it
+would only make every interval in the catalog mean "give or take a tick". The four knobs
+that ARE the ladder live in the catalog's `agent` section (§9), per-agent overridable; the
+whole policy stays a pure derivation over one window, so a DB-tier `decide` can say the same
+thing.
 
-Before any of that runs, a world trigger **settles**. People type the way they talk — three
-lines two seconds apart are one thing said — so main arms a `settleMs` (5s) timer instead of
-a turn, and the rest of the burst joins it; the turn that finally runs reads a window holding
-the whole thought instead of answering its first line. The trigger is dropped, not queued
-(the invocation IS the poke, §2), and only world triggers wait: a trigger-less poke has no
-burst to wait for, and the agent's own writes are how one turn CHAINS to the next.
+Before any of that runs, a world trigger is **debounced**. People type the way they talk —
+three lines two seconds apart are one thing said — so main arms a `debounceMs` (5s) timer
+instead of a turn, and the rest of the burst joins it; the turn that finally runs reads a
+window holding the whole thought instead of answering its first line. One timer per AGENT:
+a timer wakes the agent, not the conversation that armed it — it fires trigger-less and the
+invoke reads the whole window — so the earliest pending timer already sweeps every room and
+a per-conversation timer could only add wakes, never lengthen anyone's window. Which is the
+honest limit: this bounds how long a burst may WAIT, not how little, and a room's lines can
+be swept up early by another conversation's timer landing inside their burst. Fixing that
+needs a wake that knows what it has already read — the per-conversation `consumed` marks,
+not more timers. The trigger is dropped, not queued (the invocation IS the poke, §2), and only world
+triggers wait: a trigger-less poke has no burst to wait for, and the agent's own writes are
+how one turn CHAINS to the next.
 
 Beneath all three classes sit the **silencing marks** — `extra.backfill` (imported
 history) and `extra.muted` · `extra.archived` (the chat's platform-synced state when the
@@ -321,9 +344,15 @@ before acquiring would run a duplicate turn.
   ~40% of runs stalling a tool cycle, because `watchFs` latency is *shorter* than the rest of
   a turn's teardown. Committed together, an observer sees neither or both, so the wake always
   finds the lease free. This is why the lease lives in the store beside the events: two
-  substrates can't share a transaction. It keeps the log the only loop — nothing returns a
-  "call me again", and no caller decides anything. What it does NOT cover is a holder that
-  dies mid-turn; that's the periodic poke's job, the liveness floor (§10).
+  substrates can't share a transaction. The invariant has a second face: a turn with an
+  **empty** batch — an ignore, a terse close — publishes nothing, so a poke that bounced
+  off *its* lease has no re-fire. Before resting on an empty batch, xi checks whether the
+  log moved under the lease and, only if the fresh window decides **act**, pokes itself
+  once — only that class (pending uses, owed errands) has no other wake; think-class work
+  is paced by the settle and backstopped by the attention alarms. It keeps the log the
+  only loop — nothing returns a "call me again", and no caller decides anything. What it
+  does NOT cover is a holder that dies mid-turn; that's the periodic poke's job, the
+  liveness floor (§10).
 - **Crash recovery = the steal + the sweep.** A stale lock (TTL) is *stolen*, and the
   steal is the crash signal: act then **sweeps** pending uses (cancelled results) instead
   of blindly re-running tools whose side-effects may already have happened — the model
@@ -445,7 +474,7 @@ off a still-held lease (fixed: `publishAndRelease`, §2). Mitigations, in order 
 one transaction for the turn's end, result-in-`finally`, the TTL steal-sweep, and — underneath
 all of them — a **periodic poke** as the liveness floor. Any poke does whatever the log owes, so a heartbeat
 makes every lost wake self-healing; that is the scheduler's first job, not its last (§10).
-main's **tick** (`system.tickMs`, §2 attention) is that heartbeat, live: a trigger-less
+main's **tick** (§2 attention) is that heartbeat, live: a trigger-less
 invoke per agent on a metronome — it re-asks the digest question AND floors liveness,
 one peripheral for both.
 
@@ -1731,6 +1760,44 @@ beats a bespoke tool):
 So the core surface is **`send` · `search` · the substrate primitive (`bash` / `sql`)** +
 dynamic MCP. Everything else is helpers (binaries/functions) + skill.
 
+### The door (`src/door.ts` + `src/script.ts`) — a script's syscalls are tool_use events
+
+A script an agent runs (`deno run job.ts`, foreground or `&`) reaches the log the way the
+model does: **as a gated tool call**. `agents/<name>/door.sock` — one unix socket per
+agent, served by main — takes `{tool, input}` and publishes a **draft `tool_use`** in that
+agent's name under a synthetic turn key (`job:<id>`, one per connection: a turn no session
+ever held, so act reads the run's uses as fresh work). Nothing executes at the door: the
+same permission table rules the use, the same act branch runs it, the same wake machinery
+then wakes the model — which narrates the outcome to its principal ("sent 5 reminders; the
+one for Juan Pérez failed"). One gate, one table, one audit trail; the door's whole
+authority is `publish(draft, as: this socket's agent)`, and it holds the agent's **scoped**
+port (§6), so even the boundary writes under visibility.
+
+**Identity is the socket's.** The protocol has no field a script could claim an identity
+in; the door stamps `agent` from the path it serves. Under the container split each
+`agents/<name>/` is owned by that agent's unix user, so *connecting* proves you may —
+filesystem permissions are the authenticator, no peer-credential syscall needed. Locally
+one user owns everything and the door is convention, like the rest of the exec plane.
+Under Postgres the door gives way to RLS — the script client is unchanged.
+
+**Discovery is a file, not an environment.** main writes `agents/<name>/mu.ts` each boot —
+a generated stub that binds `src/script.ts` to its own folder — so a script does
+`import { send } from "./mu.ts"` and holds a pipe, never a path of ours. The client is the
+model's own two-verb vocabulary (`SendArgs`/`SearchArgs`, one set of types), and **every
+verb is the same wire op**: publish the gated tool_use, return `{id, status: "queued"}`
+the moment the ask is in the log — never the outcome, not even search's rows. The answer
+belongs to the next turn: a foreground script runs *inside* the very turn that would
+answer it (bash holds the turn lease), so a waiting call could only deadlock there, and
+the API has none — a script fires and forgets; act runs the use on the agent's scoped
+port, the result lands in the log, and the model narrates. One path means one law: a
+policy of `ask` on *any* tool — search included — rules a script's call exactly as it
+rules the model's, and a search executes with the agent's eyes, no wider. Asks settle
+after the script's turn ends — pending tool uses make the next invocation an act, results
+make the one after that the narrating think. A gated ask crosses to the principal as the
+usual card, and a verdict hours later runs through the errand path (§9 gating) — the
+script is never re-run (a script that needed those rows simply ran too early: re-run it,
+or let the mind carry on with the result).
+
 ### Storage ports & backends (SQLite ⟺ Postgres — one SQL substrate, two coordinators)
 
 The durable store is **SQL on both tiers**; only the coordinator differs. Locally the
@@ -2056,7 +2123,7 @@ main preserves what it does not know, so custom connectors configure identically
 re-declares: model · effort · maxTokens · provider · timezone · locale · rules · the
 attention knobs) and `system` (harness machinery: stopTimeoutMs · lockTtlMs ·
 retryDelaysMs · compactAt · keepRecent · windowLimit · mirrorSettleMs · mirrorClaimMs ·
-tickMs · settleMs) — while the VALUE still funnels to the deepest function that needs it
+debounceMs) — while the VALUE still funnels to the deepest function that needs it
 (main → xi → nu → mu; `timezone` reads as org identity but lands in nu's render).
 `agents/<name>/config.jsonc` is sparse: an `agent` section carrying only the keys it
 overrides, plus `identity` (`email`/`phone`, the handles a human knows the principal by);

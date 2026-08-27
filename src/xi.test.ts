@@ -373,7 +373,7 @@ Deno.test("decide: a waiting gate never mutes the mind — the principal is stil
   assertEquals(decide([peerMsg(), use("u1"), req, pending, principal], SESSION, WAKE), "think");
 });
 
-/* ── attention: three wake classes over the unanswered news (§2) ──────── */
+/* ── attention: the ladder over the unanswered news (§2) ──────────────── */
 
 const NOON = Date.parse("2026-08-19T12:00:00Z"); // UTC — WAKE carries no timezone
 const at = (minAgo: number, base = NOON) => new Date(base - minAgo * 60_000).toISOString();
@@ -386,24 +386,44 @@ const world = (conv: string, minAgo: number, text = "shipping the report today")
       parts: [{ type: "text", kind: "text", text }],
     } as Partial<Event> & { conv?: string },
   );
+/** A turn closing at home — where the agent last LOOKED, and so where rule 5 counts from. */
+const looked = (minAgo: number, who: Partial<Event> = SELF) =>
+  ev(
+    "message",
+    { ...who, conv: HOME, ts: at(minAgo), payload: { turn_id: "T0" } } as
+      & Partial<Event>
+      & { conv?: string },
+  );
 
-Deno.test("attention: ambient world news defers until the digest interval", () => {
-  assertEquals(decide([world("slack:C1", 1)], SESSION, WAKE, NOON), "ignore"); // fresh: waits
-  assertEquals(decide([world("slack:C1", 16)], SESSION, WAKE, NOON), "think"); // past 15 min
+Deno.test("attention: the world is checked on the interval, counted from the LAST LOOK", () => {
+  assertEquals(decide([looked(1), world("slack:C1", 0)], SESSION, WAKE, NOON), "ignore");
+  assertEquals(decide([looked(16), world("slack:C1", 0)], SESSION, WAKE, NOON), "think");
+  // the news landing 14 min into the interval is read at the next check, one minute later —
+  // not fifteen minutes after ITSELF, which is what a pile-age clock would have done
+  assertEquals(decide([looked(16), world("slack:C1", 14)], SESSION, WAKE, NOON), "think");
+  // and an agent that has never looked is due now: it has been away, it picks the phone up
+  assertEquals(decide([world("slack:C1", 0)], SESSION, WAKE, NOON), "think");
 });
 
 Deno.test("attention: a pile deep enough wakes before the interval does", () => {
   const pile = Array.from({ length: 25 }, () => world("slack:C1", 0));
-  assertEquals(decide(pile, SESSION, WAKE, NOON), "think");
-  assertEquals(decide(pile.slice(0, 3), SESSION, WAKE, NOON), "ignore");
+  assertEquals(decide([looked(1), ...pile], SESSION, WAKE, NOON), "think");
+  assertEquals(decide([looked(1), ...pile.slice(0, 3)], SESSION, WAKE, NOON), "ignore");
+  // the depth is the WORLD's, not one room's: the same 25 spread over five conversations
+  // is the same amount of unread, and counts the same
+  const spread = Array.from({ length: 25 }, (_, i) => world(`slack:C${i % 5}`, 0));
+  assertEquals(decide([looked(1), ...spread], SESSION, WAKE, NOON), "think");
 });
 
 Deno.test("attention: the summons is the mind alias and NOTHING else", () => {
-  assertEquals(decide([world(HOME, 0)], SESSION, WAKE, NOON), "think");
+  assertEquals(decide([looked(1), world(HOME, 0)], SESSION, WAKE, NOON), "think");
   // a DM is a hail to the PRINCIPAL's account, in a room the agent is a bystander in
-  assertEquals(decide([world("wa:5491133585694", 0)], SESSION, WAKE, NOON), "ignore");
+  assertEquals(decide([looked(1), world("wa:5491133585694", 0)], SESSION, WAKE, NOON), "ignore");
   // its name said out loud, by someone who is not its principal, is still the world
-  assertEquals(decide([world("slack:C1", 0, "ping @a1 wdyt?")], SESSION, WAKE, NOON), "ignore");
+  assertEquals(
+    decide([looked(1), world("slack:C1", 0, "ping @a1 wdyt?")], SESSION, WAKE, NOON),
+    "ignore",
+  );
 });
 
 Deno.test("attention: a reply to us wakes only while we hold the floor — else the digest", () => {
@@ -425,9 +445,9 @@ Deno.test("attention: a reply to us wakes only while we hold the floor — else 
         & { conv?: string },
     );
   const fresh = spoke(3);
-  assertEquals(decide([fresh, reply(fresh, 1)], SESSION, WAKE, NOON), "think"); // engaged
+  assertEquals(decide([fresh, looked(1), reply(fresh, 0)], SESSION, WAKE, NOON), "think");
   const stale = spoke(60);
-  assertEquals(decide([stale, reply(stale, 1)], SESSION, WAKE, NOON), "ignore"); // decayed
+  assertEquals(decide([stale, looked(1), reply(stale, 0)], SESSION, WAKE, NOON), "ignore");
 });
 
 Deno.test("attention: engagement is HOLDING THE FLOOR — our word last, and recent", () => {
@@ -441,8 +461,9 @@ Deno.test("attention: engagement is HOLDING THE FLOOR — our word last, and rec
         payload: { turn_id: "T0" },
       } as Partial<Event> & { conv?: string },
     );
-  assertEquals(decide([spoke(3), world("slack:C1", 1)], SESSION, WAKE, NOON), "think");
-  assertEquals(decide([spoke(60), world("slack:C1", 1)], SESSION, WAKE, NOON), "ignore");
+  // the look is recent in both, so rule 5 says wait: what answers is the floor, or nothing
+  assertEquals(decide([spoke(3), looked(1), world("slack:C1", 0)], SESSION, WAKE, NOON), "think");
+  assertEquals(decide([spoke(60), looked(1), world("slack:C1", 0)], SESSION, WAKE, NOON), "ignore");
 });
 
 Deno.test("attention: the principal speaking in a conversation ENDS engagement, at once", () => {
@@ -466,12 +487,13 @@ Deno.test("attention: the principal speaking in a conversation ENDS engagement, 
         & Partial<Event>
         & { conv?: string },
     );
+  const look = looked(1, self); // recent, so rule 5 defers and only the floor can answer
   // our word is 4 min old — engaged, but for their line landing after it
-  assertEquals(decide([spoke(), world("slack:C1", 1)], s, WAKE, NOON), "think");
-  assertEquals(decide([spoke(), byHand(3), world("slack:C1", 1)], s, WAKE, NOON), "ignore");
+  assertEquals(decide([spoke(), look, world("slack:C1", 0)], s, WAKE, NOON), "think");
+  assertEquals(decide([spoke(), byHand(3), look, world("slack:C1", 0)], s, WAKE, NOON), "ignore");
   // and the floor comes back the moment the agent speaks again
   assertEquals(
-    decide([spoke(), byHand(3), spoke(), world("slack:C1", 1)], s, WAKE, NOON),
+    decide([spoke(), byHand(3), spoke(), look, world("slack:C1", 0)], s, WAKE, NOON),
     "think",
   );
 });
