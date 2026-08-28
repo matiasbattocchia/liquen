@@ -1833,9 +1833,13 @@ filesystem permissions are the authenticator, no peer-credential syscall needed.
 one user owns everything and the door is convention, like the rest of the exec plane.
 Under Postgres the door gives way to RLS — the script client is unchanged.
 
-**Discovery is a file, not an environment.** main writes `agents/<name>/mu.ts` each boot —
-a generated stub that binds `src/script.ts` to its own folder — so a script does
-`import { send } from "./mu.ts"` and holds a pipe, never a path of ours. The client is the
+**Discovery is a skill, not a file.** The agent is taught two lines — import `src/script.ts`
+and `bind` it to `new URL(".", import.meta.url).pathname` — and writes them into the script
+it was writing anyway. The script's location is the whole of its addressing: it needs no
+configuration to find the socket, and it can only ever find its own. A stub generated into
+the folder instead would be one more artifact to keep in sync, and it read as furniture the
+agent walks past rather than a capability it reaches for — nothing announced it. What
+teaches a capability is a skill. The client is the
 model's own two-verb vocabulary (`SendArgs`/`SearchArgs`, one set of types), and **every
 verb is the same wire op**: publish the gated tool_use, return `{id, status: "queued"}`
 the moment the ask is in the log — never the outcome, not even search's rows. The answer

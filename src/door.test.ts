@@ -4,14 +4,14 @@
  * on the caller's scoped port. One path: a policy on any tool rules scripts and model
  * alike, and the answers land in the log for the mind, never in the script.
  *
- * Every test that speaks through the stub runs with `sanitizeResources: false`: the client
+ * Every test that speaks through the door runs with `sanitizeResources: false`: the client
  * holds its socket for the life of the process — a script's exit is its hang-up, and the
  * API deliberately has no close.
  */
 
 import { assert, assertEquals, assertMatch, assertRejects } from "@std/assert";
 import { installDoors } from "./door.ts";
-import type { Mu } from "./script.ts";
+import { bind, type Mu } from "./script.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { scoped } from "./policy.ts";
@@ -26,8 +26,8 @@ async function up(policy?: Parameters<typeof scoped>[1]) {
   const log = await openLog(`${dir}/log`);
   const slog = policy ? scoped(log, policy) : log;
   const doors = await installDoors(dir, [{ ...AGENT, log: slog }]);
-  // the client exactly as a script gets it: the generated stub, bound to its own folder
-  const mu: Mu = await import(`file://${dir}/agents/ana/mu.ts`);
+  // the client exactly as a script builds it: this module, bound to the folder it sits in
+  const mu: Mu = bind(`${dir}/agents/ana`);
   const down = async () => {
     await doors.close();
     await log.close();

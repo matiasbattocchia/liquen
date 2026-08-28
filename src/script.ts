@@ -8,9 +8,11 @@
  * rules scripts and model alike. The runtime authenticates: identity is the socket's, and
  * there is no field here a script could claim another's in.
  *
- * Scripts bind through the generated stub (`agents/<name>/mu.ts` re-exports this module
- * bound to its own folder — `import { send } from "./mu.ts"`), so there is no MU_DOOR
- * variable and no path of ours in user space: the stub's own location is the pointer.
+ * A script binds this module to its own directory (`bind(new URL(".", import.meta.url)
+ * .pathname)`) — which is the agent's folder, because that is the only place a script can
+ * sit and reach a door. The script's location is therefore the whole of its addressing: it
+ * needs no configuration to find the socket, and it can only ever find its own. The agent
+ * learns those two lines from a skill and writes them itself.
  *
  * Every verb returns as soon as the ask is IN THE LOG (`{status: "queued"}`), never the
  * outcome — not even search's rows. The answer belongs to the next turn: act gates and
@@ -39,8 +41,8 @@ export interface Mu {
   search(args?: SearchArgs): Promise<Queued>;
 }
 
-/** Bind a client to the agent folder holding `door.sock` — the generated stub calls this
- *  with its own directory. Lazy: nothing connects until the first request. */
+/** Bind a client to the agent folder holding `door.sock` — a script passes its own
+ *  directory. Lazy: nothing connects until the first request. */
 export function bind(home: string): Mu {
   const path = `${home.replace(/\/+$/, "")}/door.sock`;
   let conn: Deno.UnixConn | undefined;
