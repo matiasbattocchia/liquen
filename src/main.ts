@@ -39,7 +39,7 @@ import type { ConnectionRow } from "./store/connections.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { seedDocs } from "./store/seed.ts";
 import { anthropicClient, anthropicTransport, metered, type ModelTransport } from "./transport.ts";
-import { installExecPlane } from "./exec/bash.ts";
+import { type ExecPlane, installExecPlane } from "./exec/bash.ts";
 import { openCredentials } from "./store/credentials.ts";
 import { createGrantBroker } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
@@ -185,11 +185,18 @@ export async function start(
   // the egress proxy (§9): front every credential row that declares an env var — user space
   // gets the placeholder + proxy env, never a real credential (see installProxy).
   const proxy = config.exec ? null : await installProxy(dir);
-  const plane = config.exec
-    ? null
-    : await installExecPlane(dir, proxy!.env, org?.system.bashTimeoutMs);
-  const exec = config.exec ?? plane!.exec;
-  const ambient = plane?.ambient ?? config.ambient; // per-agent planes arrive with multi-principal
+  // ONE PLANE PER AGENT: the shell is the agent's, not the org's — its cwd IS `agents/<id>`,
+  // the folder that already holds its docs and memories, and its background jobs are reaped
+  // with it. The binaries on PATH stay org-wide; what is private is the cwd and the job set.
+  const planes = new Map<string, ExecPlane>();
+  if (!config.exec) {
+    for (const p of principals) {
+      planes.set(
+        p.agentId,
+        await installExecPlane(dir, p.agentId, proxy!.env, org?.system.bashTimeoutMs),
+      );
+    }
+  }
 
   let stopped = false;
   const agents = principals.map(({ readable, writable, ...agent }) => {
@@ -207,9 +214,9 @@ export async function start(
         // metered per agent: every model call this agent makes lands in the usage table
         // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in
         transport: metered(transport, (row) => log.meter(row), agent.agentId),
-        exec,
+        exec: config.exec ?? planes.get(agent.agentId)!.exec,
         onDelta: config.onDelta,
-        ambient,
+        ambient: planes.get(agent.agentId)?.ambient ?? config.ambient,
       } satisfies XiPorts,
     };
   });
@@ -375,7 +382,8 @@ export async function start(
         Promise.all([...outstanding]),
         config.stopTimeoutMs ?? org?.system.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
       );
-      await plane?.reap(); // kill any background jobs the agents left running (§9)
+      // each agent's own jobs, reaped with its own plane (§9)
+      for (const plane of planes.values()) await plane.reap();
       await proxy?.close(); // stop the egress proxy and close its vault handle
       await log.close();
     },

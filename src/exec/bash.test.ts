@@ -3,6 +3,9 @@ import { bashTool, installExecPlane, type Job } from "./bash.ts";
 
 const live = () => new AbortController().signal;
 
+/** Where a plane lands an agent: its own folder under `agents/` — the cwd IS the tree. */
+const wsOf = (dir: string) => `${dir}/agents/a1`;
+
 async function withPlane(
   fn: (t: {
     run: (command: string, timeout?: number) => Promise<string>;
@@ -10,7 +13,7 @@ async function withPlane(
   }) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
-  const { exec, reap } = await installExecPlane(dir);
+  const { exec, reap } = await installExecPlane(dir, "a1");
   try {
     const run = async (command: string, timeout?: number) =>
       String(await exec.bash.execute({ command, ...(timeout ? { timeout } : {}) }, live()));
@@ -23,7 +26,7 @@ async function withPlane(
 
 Deno.test("bash: runs in the workspace, merges stdout+stderr", async () => {
   await withPlane(async ({ run, dir }) => {
-    assertEquals(await run("pwd"), await Deno.realPath(`${dir}/workspace`));
+    assertEquals(await run("pwd"), await Deno.realPath(wsOf(dir)));
     const both = await run("echo out; echo err >&2");
     assertStringIncludes(both, "out");
     assertStringIncludes(both, "err");
@@ -108,7 +111,7 @@ Deno.test("bash: tail-truncation persists the full output and points at it", asy
     assert(m, "footer names the persisted file");
     const full = await Deno.readTextFile(m![1]);
     assertStringIncludes(full, "\n500\n"); // nothing silently lost
-    assert(m![1].startsWith(`${dir}/workspace/.out/`));
+    assert(m![1].startsWith(`${wsOf(dir)}/.out/`));
   });
 });
 
@@ -242,7 +245,7 @@ Deno.test("bash: a backgrounded job returns immediately (pipe not held open)", a
 
 Deno.test("exec plane: reap() kills background jobs the agent left running (no orphans)", async () => {
   const dir = await Deno.makeTempDir();
-  const { exec, reap } = await installExecPlane(dir);
+  const { exec, reap } = await installExecPlane(dir, "a1");
   const marker = `mu_reap_${crypto.randomUUID().slice(0, 8)}`;
   try {
     // a detached background job that outlives the call — argv carries the marker (exec -a)
@@ -260,7 +263,7 @@ Deno.test("exec plane: reap() kills background jobs the agent left running (no o
 
 Deno.test("exec plane: ambient() reports cwd, git, and live background jobs", async () => {
   const dir = await Deno.makeTempDir();
-  const { exec, ambient, reap } = await installExecPlane(dir);
+  const { exec, ambient, reap } = await installExecPlane(dir, "a1");
   const marker = `mu_amb_${crypto.randomUUID().slice(0, 8)}`;
   try {
     // cwd only, no repo, no jobs
@@ -295,9 +298,9 @@ Deno.test("exec plane: ambient() reports cwd, git, and live background jobs", as
 
 Deno.test("exec plane: aread on a bytes file returns an ExecOutcome — path peeled, no mojibake", async () => {
   const dir = await Deno.makeTempDir();
-  const { exec, reap } = await installExecPlane(dir);
+  const { exec, reap } = await installExecPlane(dir, "a1");
   try {
-    const png = `${dir}/workspace/dot.png`;
+    const png = `${wsOf(dir)}/dot.png`;
     await Deno.writeFile(png, new Uint8Array([137, 80, 78, 71]));
     const out = await exec.bash.execute({ command: "aread dot.png" }, live());
     const outcome = out as { output: string; files: string[] };
@@ -305,7 +308,7 @@ Deno.test("exec plane: aread on a bytes file returns an ExecOutcome — path pee
     assert(outcome.output.includes("[media image/png · 4 bytes]"));
     assert(!outcome.output.includes("__MU_MEDIA__")); // the mark never reaches the model
     // a text file stays a plain string result — no outcome wrapper
-    await Deno.writeTextFile(`${dir}/workspace/a.txt`, "hola");
+    await Deno.writeTextFile(`${wsOf(dir)}/a.txt`, "hola");
     assertEquals(await exec.bash.execute({ command: "aread a.txt" }, live()), "hola");
   } finally {
     await reap();
@@ -315,17 +318,17 @@ Deno.test("exec plane: aread on a bytes file returns an ExecOutcome — path pee
 
 Deno.test("exec plane: aread classifies by bytes when the extension says nothing", async () => {
   const dir = await Deno.makeTempDir();
-  const { exec, reap } = await installExecPlane(dir);
+  const { exec, reap } = await installExecPlane(dir, "a1");
   try {
     // an extension-less PNG: sniffed → media mark → attachment
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    await Deno.writeFile(`${dir}/workspace/snapshot`, png);
+    await Deno.writeFile(`${wsOf(dir)}/snapshot`, png);
     const out = await exec.bash.execute({ command: "aread snapshot" }, live());
     const outcome = out as { output: string; files: string[] };
-    assertEquals(outcome.files, [`${dir}/workspace/snapshot`]);
+    assertEquals(outcome.files, [`${wsOf(dir)}/snapshot`]);
     assert(outcome.output.includes("[media image/png"));
     // an unknown binary (NUL bytes, no signature): a notice, never mojibake, no attachment
-    await Deno.writeFile(`${dir}/workspace/blob.xyz`, new Uint8Array([1, 0, 2, 0, 3]));
+    await Deno.writeFile(`${wsOf(dir)}/blob.xyz`, new Uint8Array([1, 0, 2, 0, 3]));
     const blob = await exec.bash.execute({ command: "aread blob.xyz" }, live());
     assertEquals(blob, "[binary · 5 bytes — not a text file]");
   } finally {

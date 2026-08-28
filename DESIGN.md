@@ -1740,8 +1740,11 @@ or RLS (SECURITY DEFINER).
 The `bash` tool and the binaries take their semantics from the two references — pi's
 truncation discipline and edit engine, Claude Code's timeout and workspace discipline:
 
-- **`bash(command, timeout?)`** — starts in the agent's **workspace** (`{dir}/workspace`),
-  but **cwd persists between calls like a terminal** (a pwd sentinel appended to each
+- **`bash(command, timeout?)`** — starts in the agent's **workspace**, which IS its own
+  scope folder (`{dir}/agents/<id>`): one plane per agent, so the cwd, the `.out` spool and
+  the background job set are private to it, and the docs a shell writes land where the doc
+  cascade already reads (`awrite memories/x.md` from where it stands). Binaries stay
+  org-wide. **cwd persists between calls like a terminal** (a pwd sentinel appended to each
   command reports the shell's final dir + real exit code; env/venv state does NOT persist)
   — the tbench audit showed the model re-`cd`ing on nearly every call under the old
   fresh-cwd contract. PATH is prefixed with `{dir}/bin` (the binaries). stdout+stderr

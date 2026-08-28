@@ -348,14 +348,23 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
   return lines;
 }
 
-/** Prepare the exec plane under the org data root: workspace, .out, PATH shims, job group.
+/** Prepare ONE agent's exec plane: its workspace, PATH shims, job group. The workspace IS
+ *  the agent's own folder — `agents/<id>`, the same tree its docs and memories live in —
+ *  because a shell is not org furniture: two agents sharing a cwd share half-written files,
+ *  clobber each other's scratch, and read each other's notes with no policy in the way (§6
+ *  stops at the log, not at the filesystem). Landing ON the folder rather than in a subdir
+ *  of it is what makes the docs reachable by relative path: the agent's notes are where it
+ *  already stands, so writing one is `awrite memories/x.md`, not a path it must be told.
+ *  The BINARIES stay org-wide (`bin/`): those are tools the org installs, identical for
+ *  everyone, and one copy on PATH is the point of them.
  *  `env` (optional) is issued into every spawn — the egress proxy's handoff vars (§9). */
 export async function installExecPlane(
   dir: string,
+  agentId: string,
   env?: () => Record<string, string>,
   defaultTimeoutMs?: number, // the system.bashTimeoutMs knob, funneled by main
 ): Promise<ExecPlane> {
-  const workspace = `${dir}/workspace`;
+  const workspace = `${dir}/agents/${agentId}`;
   const binDir = `${dir}/bin`;
   await Deno.mkdir(workspace, { recursive: true });
   await Deno.mkdir(binDir, { recursive: true });
