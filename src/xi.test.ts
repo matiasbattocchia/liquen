@@ -416,6 +416,56 @@ Deno.test("attention: a pile deep enough wakes before the interval does", () => 
   assertEquals(decide([looked(1), ...spread], SESSION, WAKE, NOON), "think");
 });
 
+/** A voice note: all it can show the model is `<audio/>` — somebody spoke, contents sealed. */
+const note = (conv: string, minAgo: number, id = "wa:n1") =>
+  ev(
+    "message",
+    {
+      ts: at(minAgo),
+      envelope: { ...env(conv), external_id: id },
+      parts: [{
+        type: "file",
+        kind: "audio",
+        file: { mime_type: "audio/ogg", uri: "file:///n.ogg" },
+      }],
+    } as Partial<Event> & { conv?: string },
+  );
+/** Its words, landing minutes later as an `add` riding on the note (§3). */
+const said = (conv: string, minAgo: number, ref = "wa:n1") =>
+  ev(
+    "message",
+    {
+      conv,
+      ts: at(minAgo),
+      payload: { action: "add", ref_external_id: ref },
+      parts: [{ type: "text", kind: "transcript", text: "te comento por qué te escribo" }],
+    } as Partial<Event> & { conv?: string },
+  );
+
+Deno.test("attention: the words of a note ALREADY LOOKED AT wake now — they are that note", () => {
+  const C = "slack:C1";
+  // the turn that read the note got `<audio/>` and could judge nothing; six minutes later
+  // the words arrive, and that is the first moment the message can be read at all
+  assertEquals(decide([note(C, 20), looked(10), said(C, 0)], SESSION, WAKE, NOON), "think");
+  // …and it is the WORDS that wake: the same window without them has nothing owed
+  assertEquals(decide([note(C, 20), looked(10)], SESSION, WAKE, NOON), "ignore");
+  // a note still unread needs none of this — its words sit in the same pile it does, and
+  // the digest reads the two together
+  assertEquals(decide([looked(10), note(C, 5), said(C, 4)], SESSION, WAKE, NOON), "ignore");
+  // inheritance is not an exemption: the night still swallows it, like the note itself
+  assertEquals(
+    decide([note(C, 20), looked(10), said(C, 0)], SESSION, { sleepHours: "0-23" }, NOON),
+    "ignore",
+  );
+});
+
+Deno.test("attention: a note and its words are ONE arrival, not two", () => {
+  const notes = Array.from({ length: 13 }, (_, i) => note(`slack:C${i % 5}`, 5, `wa:n${i}`));
+  const words = notes.map((_n, i) => said(`slack:C${i % 5}`, 4, `wa:n${i}`));
+  // 26 rows, 13 things that happened — counting both halves would fake a pile deep enough
+  assertEquals(decide([looked(10), ...notes, ...words], SESSION, WAKE, NOON), "ignore");
+});
+
 Deno.test("attention: the summons is the mind alias and NOTHING else", () => {
   assertEquals(decide([looked(1), world(MIND, 0)], SESSION, WAKE, NOON), "think");
   // a DM is a hail to the PRINCIPAL's account, in a room the agent is a bystander in

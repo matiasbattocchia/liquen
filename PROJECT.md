@@ -87,6 +87,23 @@ when). Status as of 2026-08-12 (Slack live, both directions, model in the loop).
   only EMIT XML, never parse it, so escaping-on-encode is the entire surface — a closed,
   exhaustively-testable rule, no dependency.
 
+- **A transcript inherits the attention of its note — LANDED 2026-08-28**: found live. A new
+  contact sent a voice note at 14:40; asked about it, the agent read `<audio/>`, said "te
+  aviso cuando esté" and closed. The words landed at 14:44, correctly and on time — and then
+  sat there, because to the ladder they were ambient news in a room the agent held no floor
+  in, due at the next digest 13 minutes out. The principal then wrote "ok" at 14:56; the
+  agent woke in 2s (rung 1 works), read the transcript, answered `<|SILENCE|>` — and that
+  silent turn, being an own-voice closing at home, reset the last look and pushed the world
+  another 15 minutes. Fix: a transcript is not new news, it is its note becoming readable, so
+  it wakes once the note is behind the last look and never counts as a second arrival in the
+  depth (§2). The other half of what the incident showed is DELIBERATE and stays: a turn that
+  answers `<|SILENCE|>` still spends the whole world's digest clock, because it still read
+  the whole window — the look is what the clock measures, not the output, and one look sees
+  every conversation (§2). What the agent still lacks is any notion of a **debt**: "te aviso
+  cuando esté" bought no attention, so the turn that finally read the words was free to drop
+  the promise. Watching it before building anything; the scheduler (§10) is the obvious
+  answer if it recurs — an undertaking to come back should arm the agent's own alarm.
+
 - **Prompt-cache breakpoints on the conversation — LANDED 2026-08-11**: the request now
   carries three marks, not one. The system prefix (already there), the **closed/trailing
   boundary** (collapsed history: written once, then read forever), and the **last block

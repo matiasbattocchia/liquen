@@ -167,6 +167,11 @@ export function decide(
  *      time it looked — the way you put the phone down and pick it up again
  *   6. or early, when `digestAfterMessages` have piled up across the whole world
  *
+ * A transcript is not a rung of its own: it INHERITS the attention of the note it names.
+ * The words ARE that message, arriving late — so they wake once the note has been looked at
+ * and could not be read (below the night, which swallows the note too), and they never count
+ * as a second arrival in the depth.
+ *
  * Deferring costs nothing and loses nothing: the news stays owed in the log, and the clock
  * poke (main's tick) re-asks this same question until it is due.
  */
@@ -202,7 +207,37 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // than the ten they replaced, and each read a third of a night. Sleeping drops the
   // number: the night arrives once, whole, as the first digest of the morning.
   if (asleep(now, wake)) return "ignore";
-  return digestDue(news, lastLook(events, session), wake, now) ? "think" : "ignore";
+  const looked = lastLook(events, session);
+  // WORDS FOR A NOTE THE AGENT HAS ALREADY LOOKED AT wake now — below the night, because a
+  // voice note is the ambient world and the night swallows that whole. A note reaches the
+  // model as `<audio/>`: a marker saying somebody spoke, with no way to tell what. A turn
+  // that "read" one did not read it — it was handed a sealed envelope and moved on, that
+  // being the only move available. The transcript is the first legible copy of a message the
+  // agent already spent its look on, and it lands out of band, minutes later, long after the
+  // wake that carried the note is gone. Making it queue for the next digest decides that
+  // message on the second chance when the first one was never usable. So the words inherit
+  // what the note could not use. A note still unread needs none of this: its words are in
+  // the same pile it is, and the digest reads the two together.
+  if (news.some((e) => lateWords(e, events, looked))) return "think";
+  return digestDue(news, looked, wake, now) ? "think" : "ignore";
+}
+
+/** Is this event a transcript — machine words ridden onto a message that carried none? */
+function words(e: Event): { ref: string } | undefined {
+  if (e.type !== "message" || e.payload?.action !== "add") return undefined;
+  if (!e.parts.some((p) => p.type === "text" && p.kind === "transcript")) return undefined;
+  const ref = e.payload.ref_external_id;
+  return typeof ref === "string" && ref !== "" ? { ref } : undefined;
+}
+
+/** A transcript whose note is already BEHIND the last look — the half of rung-inheritance
+ *  that wakes (the other half, not double-counting, lives in `digestDue`). A note the window
+ *  no longer holds is older than everything in it, so it is behind any look that happened. */
+function lateWords(e: Event, events: Event[], looked: number): boolean {
+  const w = words(e);
+  if (!w || looked === -Infinity) return false; // never looked ⇒ nothing is behind the look
+  const note = events.find((n) => n.envelope.external_id === w.ref);
+  return note === undefined || Date.parse(note.ts) < looked;
 }
 
 /**
@@ -255,7 +290,12 @@ function engaged(
  * wakes before it piles, and a silenced one never becomes news at all.
  */
 function digestDue(news: Event[], looked: number, wake: Wake, now: number): boolean {
-  if (news.length >= (wake.digestAfterMessages ?? DEFAULT_DIGEST_AFTER_MESSAGES)) return true;
+  // …and it counts ARRIVALS, not rows. A voice note still in the pile when its transcript
+  // lands is one thing that happened, not two — the words are that message becoming
+  // readable. Counting both would let a handful of notes fake a deep pile.
+  const unread = new Set(news.map((e) => e.envelope.external_id).filter(Boolean));
+  const depth = news.filter((e) => !unread.has(words(e)?.ref)).length;
+  if (depth >= (wake.digestAfterMessages ?? DEFAULT_DIGEST_AFTER_MESSAGES)) return true;
   const minutes = wake.digestMinutes ?? DEFAULT_DIGEST_MINUTES;
   return now - looked >= minutes * 60_000;
 }

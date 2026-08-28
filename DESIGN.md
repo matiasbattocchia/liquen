@@ -143,6 +143,8 @@ decide(window) →
     an engaged conversation — it HOLDS THE FLOOR: our complex's    → think (you don't drop
       last word there is the agent's, and it is recent               out mid-conversation)
     asleep (`sleepHours`)                                          → ignore (the world waits)
+    a transcript for a note already LOOKED at                      → think (the words are
+                                                                      that note, arriving)
     `digestAfterMessages` unread, across the whole world           → think (check early)
     `digestMinutes` since the agent last LOOKED                    → think (check the phone)
   else                                                             → ignore (quiescence)
@@ -187,6 +189,17 @@ holding the floor in. What sleeps is the world. (It replaces a stretched night i
 which was a number tuned against a cache TTL nobody controls: past an hour every wake pays
 a full uncached prefix write anyway, so three overnight wakes cost more than the ten they
 replaced and each read a third of a night. The night now arrives once, whole.)
+A **transcript inherits the attention of the note it names** — it is not a rung of its own,
+because the words are not a new message: they are that message, becoming readable. A voice
+note reaches the model as `<audio/>`, a marker saying somebody spoke with no way to tell
+what, so a turn that "read" one did not read it. The words land out of band minutes later
+(§4 processors), long after the wake that carried the note is spent, and queueing them for
+the next digest would decide that message on a second chance when the first was never
+usable. So a transcript whose note is already behind the last look wakes now. One whose note
+is still unread does not: its words are in the same pile the note is, and the digest reads
+the two together — and the depth counts them as the single arrival they are, so a handful of
+notes cannot fake a deep pile. The rung sits **below** sleep: a voice note is the ambient
+world, and the night swallows it like everything else.
 Deferring costs nothing and loses nothing: the news stays
 owed in the log, and main's **tick** — the clock as a poke source, a trigger-less invoke on
 a metronome — re-asks the same question until it comes due. The tick is a constant (60s),
