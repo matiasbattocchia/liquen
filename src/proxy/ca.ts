@@ -2,8 +2,8 @@
  * proxy/ca.ts — the egress proxy's certificate authority (DESIGN §9).
  *
  * The proxy terminates TLS on behalf of every host a tool dials, so it needs a leaf cert
- * for each host, signed by a root the tool trusts. That root is the mu CA: generated once
- * under `<dir>/proxy`, and handed to the child ONLY as `SSL_CERT_FILE` — which REPLACES the
+ * for each host, signed by a root the tool trusts. That root is the mu CA: shipped beside
+ * this module, and handed to the child ONLY as `SSL_CERT_FILE` — which REPLACES the
  * system trust store (verified: gws then rejects Google's real cert as UnknownIssuer). So
  * the CA is not "one more issuer the tool trusts"; inside user space it is the ONLY one, and
  * a tool physically cannot reach any host the proxy doesn't front. The CA private key never
@@ -34,12 +34,17 @@ async function sh(args: string[]): Promise<void> {
   }
 }
 
-/** Open (creating on first use) the CA under `<dir>/proxy`. */
+/** Open the CA — SHIPPED beside this module (`src/proxy/ca.pem` + `ca.key`), not minted per
+ *  install. It is plumbing, not a credential: nothing trusts it except the children we hand
+ *  `SSL_CERT_FILE`, so its whole job is making a tool dial our proxy instead of the host.
+ *  `dir` is only where leaf scratch goes — the source tree stays read-only at runtime.
+ *  (Regenerated here if absent, so a checkout that lost it still boots.) */
 export async function openCA(dir: string): Promise<CA> {
-  const root = `${dir}/proxy`;
+  const here = new URL(".", import.meta.url).pathname; // src/proxy/
+  const caPath = `${here}ca.pem`;
+  const caKey = `${here}ca.key`;
+  const root = `${dir}/proxy`; // leaf temp dirs — never the source tree
   await Deno.mkdir(root, { recursive: true });
-  const caPath = `${root}/ca.pem`;
-  const caKey = `${root}/ca.key`;
 
   const exists = await Deno.stat(caPath).then(() => true).catch(() => false);
   if (!exists) {

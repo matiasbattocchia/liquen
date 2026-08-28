@@ -1747,7 +1747,7 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   org-wide. **cwd persists between calls like a terminal** (a pwd sentinel appended to each
   command reports the shell's final dir + real exit code; env/venv state does NOT persist)
   — the tbench audit showed the model re-`cd`ing on nearly every call under the old
-  fresh-cwd contract. PATH is prefixed with `{dir}/bin` (the binaries). stdout+stderr
+  fresh-cwd contract. PATH is prefixed with `src/bin` then `{dir}/bin` (the shipped helpers, then the org's). stdout+stderr
   merged in arrival order. **Default timeout 120s** (a hung command otherwise holds the turn lock until
   the TTL steal); long work uses the background pattern (`cmd > log 2>&1 &` + `tail`).
   Non-zero exit ⇒ `is_error` result carrying the output + exit code — the agent's
@@ -1787,9 +1787,12 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   Gates are for outward effects (`send`, §9 gating); the workspace is the agent's own.
   (Both references promote file-ops to dedicated tools chiefly to gate/schedule them —
   a need we've explicitly declined for the exec plane.)
-- Dev shims: `{dir}/bin` holds `aread`/`awrite`/`aedit` as `deno run` shims over one
-  source; the Docker image compiles them (`deno compile`). The binaries' *contracts* are
-  the spec the db substrate's helper functions mirror later (§9 symmetry).
+- Shims: `src/bin` ships `aread`/`awrite`/`aedit` as committed `deno run` shims that locate
+  `afs.ts` beside themselves — code, versioned with the code that answers for them, written
+  by no boot. The Docker image compiles them (`deno compile`); task mode generates its own,
+  dispatching back into the compiled binary. PATH is `src/bin` then `{dir}/bin`, so what an
+  org installs (`gws`) is reachable but cannot shadow a harness contract. The binaries'
+  *contracts* are the spec the db substrate's helper functions mirror later (§9 symmetry).
 
 **Not tools** — deliberately, per the substrate principle (a generic tool + a skill
 beats a bespoke tool):
@@ -2026,7 +2029,9 @@ true for exec (kernel handles it), false for control (only harness/human authori
      literal file ownership (same move as docs-scopes → groups).
   3. *Egress proxy with header injection (MITM CA)* — **the one rung, for everything,
      live** (`src/proxy/`, mandatory at start): user space is issued `HTTPS_PROXY` +
-     `SSL_CERT_FILE` (the mu CA *replaces* the trust store — inside user space it is the
+     `SSL_CERT_FILE` — the mu CA ships with the source (`src/proxy/ca.pem` + `ca.key`):
+     nothing trusts it but the children we hand it to, so it is plumbing that makes a tool
+     dial our proxy, not a credential. It *replaces* the trust store — inside user space it is the
      only issuer, so TLS physically cannot bypass the proxy) + a `mu-grant-…` placeholder
      standing for the vault grant. The proxy terminates the tunnel with a per-host leaf
      (`ca.ts`), swaps the placeholder for a live token — refreshed broker-side against the

@@ -1,0 +1,3 @@
+#!/bin/sh
+# shipped shim (DESIGN §9): the binary is afs.ts beside this file.
+exec deno run --allow-read --allow-write "$(dirname "$0")/afs.ts" edit "$@"

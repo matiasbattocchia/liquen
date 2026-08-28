@@ -58,7 +58,7 @@ async function runTask(instruction: string): Promise<number> {
   const jobs = new Set<Job>(); // background jobs the task leaves running (reaped in finally)
   const state: BashState = { cwd: workspace };
   const exec = {
-    bash: bashTool({ workspace, binDir, defaultTimeoutMs: 600_000, jobs, state }),
+    bash: bashTool({ workspace, binPath: binDir, defaultTimeoutMs: 600_000, jobs, state }),
   };
   const reap = () => {
     for (const { pgid } of jobs) {

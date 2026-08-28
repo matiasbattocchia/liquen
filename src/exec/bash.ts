@@ -35,7 +35,7 @@ export interface BashState {
 
 export interface BashOptions {
   workspace: string; // the agent's cwd; created on install
-  binDir?: string; // prepended to PATH (the aread/awrite/aedit shims)
+  binPath?: string; // prepended to PATH — one or more dirs, `:`-joined (shipped, then org)
   defaultTimeoutMs?: number; // default 120s
   /** Per-AGENT background-job registry (§9): each command runs in its own process group; a
    *  group that still has members after the call (a `cmd &` job) is recorded here so the
@@ -81,13 +81,13 @@ const CWD_MARK = "__MU_CWD__";
 // here by name, with a reason — this list is what user space is allowed to know.
 const ENV_ALLOWLIST = ["HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "LOGNAME", "SHELL"];
 
-function userSpaceEnv(binDir?: string): Record<string, string> {
+function userSpaceEnv(binPath?: string): Record<string, string> {
   const env: Record<string, string> = { TERM: "dumb" };
   for (const name of ENV_ALLOWLIST) {
     const v = Deno.env.get(name);
     if (v !== undefined) env[name] = v;
   }
-  env.PATH = binDir ? `${binDir}:${Deno.env.get("PATH") ?? ""}` : Deno.env.get("PATH") ?? "";
+  env.PATH = binPath ? `${binPath}:${Deno.env.get("PATH") ?? ""}` : Deno.env.get("PATH") ?? "";
   return env;
 }
 
@@ -143,7 +143,7 @@ export function bashTool(opts: BashOptions): ExecTool {
         max_bytes?: number;
       };
       const timeoutMs = timeout !== undefined ? timeout * 1000 : timeoutMsDefault;
-      const env = { ...userSpaceEnv(opts.binDir), ...opts.env?.() };
+      const env = { ...userSpaceEnv(opts.binPath), ...opts.env?.() };
 
       // append a sentinel that prints the shell's final pwd + the command's REAL exit code
       // (the appended print would otherwise mask a non-zero exit). `cd` at start is honored,
@@ -355,8 +355,11 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
  *  stops at the log, not at the filesystem). Landing ON the folder rather than in a subdir
  *  of it is what makes the docs reachable by relative path: the agent's notes are where it
  *  already stands, so writing one is `awrite memories/x.md`, not a path it must be told.
- *  The BINARIES stay org-wide (`bin/`): those are tools the org installs, identical for
- *  everyone, and one copy on PATH is the point of them.
+ *  PATH carries two bins, in this order. `src/bin` is SHIPPED — `aread`/`awrite`/`aedit`
+ *  are committed shims that locate `afs.ts` beside themselves, so the harness's own tools
+ *  are code, versioned with the code that answers for them, and no boot writes them out.
+ *  `<dir>/bin` is the ORG's, and comes second: what an org installs there is its own
+ *  (`gws`), and it cannot shadow a contract the harness must be able to keep.
  *  `env` (optional) is issued into every spawn — the egress proxy's handoff vars (§9). */
 export async function installExecPlane(
   dir: string,
@@ -365,23 +368,22 @@ export async function installExecPlane(
   defaultTimeoutMs?: number, // the system.bashTimeoutMs knob, funneled by main
 ): Promise<ExecPlane> {
   const workspace = `${dir}/agents/${agentId}`;
-  const binDir = `${dir}/bin`;
+  const shipped = new URL("../bin", import.meta.url).pathname;
+  const binPath = `${shipped}:${dir}/bin`;
   await Deno.mkdir(workspace, { recursive: true });
-  await Deno.mkdir(binDir, { recursive: true });
-  const afs = new URL("../bin/afs.ts", import.meta.url).pathname;
-  for (const name of ["aread", "awrite", "aedit"]) {
-    const shim = `${binDir}/${name}`;
-    await Deno.writeTextFile(
-      shim,
-      `#!/bin/sh\nexec deno run --allow-read --allow-write "${afs}" ${name.slice(1)} "$@"\n`,
-    );
-    await Deno.chmod(shim, 0o755);
-  }
+  await Deno.mkdir(`${dir}/bin`, { recursive: true });
   const jobs = new Set<Job>();
   const state: BashState = { cwd: workspace };
   return {
     exec: {
-      bash: bashTool({ workspace, binDir, defaultTimeoutMs, jobs, state, ...(env ? { env } : {}) }),
+      bash: bashTool({
+        workspace,
+        binPath,
+        defaultTimeoutMs,
+        jobs,
+        state,
+        ...(env ? { env } : {}),
+      }),
     },
     ambient: () => bashAmbient(state, jobs),
     reap() {
