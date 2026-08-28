@@ -1159,6 +1159,10 @@ function selfSend(
     "turn closes.";
 }
 
+/** The schedule horizon (§10): a wake fires within a year. Leap-tolerant by a day, so "this
+ *  date next year" always fits. */
+const YEAR_MS = 366 * 864e5;
+
 /** `20m` · `3h` · `2d` · `90s` · `1w` → milliseconds. The units a person says out loud. */
 function durationMs(spec: string): number {
   const m = /^\s*(\d+(?:\.\d+)?)\s*(s|m|h|d|w)\s*$/i.exec(spec);
@@ -1182,7 +1186,9 @@ function momentOf(spec: string, tz: string): string {
     if (Number.isNaN(t)) throw new Error(`"${spec}" is not a moment I can read`);
     return new Date(t).toISOString();
   }
-  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(raw);
+  // anchored: a stamp with trailing garbage is refused, not silently truncated to its date;
+  // seconds are tolerated and dropped — the clock that fires it reads minutes (§10)
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?)?$/.exec(raw);
   if (!m) throw new Error(`"${spec}" is not a moment — try \`2026-09-01T17:00\``);
   const [year, month, day, hour, minute] = m.slice(1).map((x) => (x === undefined ? 0 : Number(x)));
   try {
@@ -1235,6 +1241,14 @@ async function execute(
       : args.in !== undefined
       ? new Date(Date.now() + durationMs(String(args.in))).toISOString()
       : momentOf(String(args.at), zone);
+    // the horizon (§10): a wake fires in the future, and within a year — past that, the
+    // fact belongs in a file, not a timer
+    if (Date.parse(fireAt) <= Date.now()) {
+      throw new Error(`${fireAt} already passed — a wake fires in the future`);
+    }
+    if (Date.parse(fireAt) > Date.now() + YEAR_MS) {
+      throw new Error(`${fireAt} is more than a year out — write it down instead`);
+    }
     // a wake belongs to the SESSION that armed it (§4): that session lists it, cancels it,
     // and is the one woken — so the row carries the session and the conversation it speaks
     // in, and firing needs no guess about where the note goes.
@@ -1589,7 +1603,8 @@ function specsOf(ports: XiPorts): Anthropic.Tool[] {
         "Wake yourself later with a note. At the time you set, the note arrives as an alarm " +
         "in this conversation and you decide then what to do about it — nothing is executed " +
         "for you. Write the note to your future self, who will read it cold: say the thing " +
-        "to do, not `as discussed`. Use `cancel` with the id to unset it.",
+        "to do, not `as discussed`. Use `cancel` with the id to unset it. The horizon is a " +
+        "year — anything further out belongs in your files, not a timer.",
       input_schema: {
         type: "object",
         properties: {

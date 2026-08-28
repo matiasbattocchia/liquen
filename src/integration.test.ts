@@ -1351,6 +1351,41 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
   }
 });
 
+Deno.test("schedule: the horizon — no wake in the past, none beyond a year, no half-read stamp", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  const transport = scripted([
+    ok([
+      { kind: "tool_use", name: "schedule", input: { at: "2020-01-01T09:00", note: "tarde" } },
+      {
+        kind: "tool_use",
+        name: "schedule",
+        // a real moment, but past the horizon — offset form so it reads the same any run day
+        input: { at: new Date(Date.now() + 400 * 864e5).toISOString(), note: "lejos" },
+      },
+      // trailing garbage after a valid date: refused whole, never truncated to its date part
+      { kind: "tool_use", name: "schedule", input: { at: "2030-01-01T09:00 mañana", note: "x" } },
+    ]),
+  ]).transport;
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("agendá cosas raras"));
+    await xi({ ...CONFIG, timezone: "UTC" }, ports); // the turn that calls…
+    await xi({ ...CONFIG, timezone: "UTC" }, ports); // …and the act that refuses, loudly
+    assertEquals(log.timers("s1"), [], "nothing armed — every call was refused");
+    const errors = (await log.read({ types: ["tool_result"] }))
+      .filter((e) => JSON.stringify(e.parts).includes("is_error"));
+    assertEquals(errors.length, 3);
+    const all = JSON.stringify(errors.map((e) => e.parts));
+    assertStringIncludes(all, "already passed");
+    assertStringIncludes(all, "more than a year out");
+    assertStringIncludes(all, "not a moment");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the open asks (§5)", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);

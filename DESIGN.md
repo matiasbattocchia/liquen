@@ -470,7 +470,8 @@ at fire time against today's window, which is what keeps the permission table me
 
 **Scheduling is a tool**, `schedule` — `at` a moment, `in` a delay, or `cron` to repeat,
 plus the note. Gated like every other call (§9): one path, so a policy on `schedule` rules
-scripts and model alike. `cancel` is the universal unset — an open approval or an armed
+scripts and model alike. The horizon is a year: a wake fires in the future and within one —
+a fact further out belongs in the agent's files, not a timer. `cancel` is the universal unset — an open approval or an armed
 wake, by id. **A wake belongs to the session that armed it** (§4): the row carries the
 session, that session's anchor lists it beside the background jobs and the open asks (§5) —
 which is where the ids come from — that session alone can cancel it, and the alarm lands in
