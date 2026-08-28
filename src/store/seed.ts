@@ -26,6 +26,8 @@ export async function seedDocs(root: string, agentId: string): Promise<void> {
   const files: [string, string][] = [
     ["system/instructions/principal.md", await read("system-principal.md")],
     ["system/instructions/compaction.md", await read("system-compaction.md")],
+    ["system/skills/workflows.md", await read("system-skills-workflows.md")],
+    ["system/skills/transcribe-audio.md", await read("system-skills-transcribe-audio.md")],
     ["org/instructions/org.md", await read("org.md")],
     [
       `agents/${agentId}/instructions/identity.md`,

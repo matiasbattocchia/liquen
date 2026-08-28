@@ -73,7 +73,7 @@ interface ProxyHandle {
 async function installProxy(dir: string): Promise<ProxyHandle> {
   const creds = await openCredentials(dir);
   const broker = createGrantBroker({ creds });
-  const ca = await openCA(dir);
+  const ca = await openCA();
   const proxy = startProxy({ ca, broker });
   const env: Record<string, string> = {
     HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,

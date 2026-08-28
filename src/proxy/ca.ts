@@ -37,14 +37,11 @@ async function sh(args: string[]): Promise<void> {
 /** Open the CA — SHIPPED beside this module (`src/proxy/ca.pem` + `ca.key`), not minted per
  *  install. It is plumbing, not a credential: nothing trusts it except the children we hand
  *  `SSL_CERT_FILE`, so its whole job is making a tool dial our proxy instead of the host.
- *  `dir` is only where leaf scratch goes — the source tree stays read-only at runtime.
  *  (Regenerated here if absent, so a checkout that lost it still boots.) */
-export async function openCA(dir: string): Promise<CA> {
+export async function openCA(): Promise<CA> {
   const here = new URL(".", import.meta.url).pathname; // src/proxy/
   const caPath = `${here}ca.pem`;
   const caKey = `${here}ca.key`;
-  const root = `${dir}/proxy`; // leaf temp dirs — never the source tree
-  await Deno.mkdir(root, { recursive: true });
 
   const exists = await Deno.stat(caPath).then(() => true).catch(() => false);
   if (!exists) {
@@ -70,7 +67,8 @@ export async function openCA(dir: string): Promise<CA> {
 
   const mint = async (host: string): Promise<Leaf> => {
     if (!HOST.test(host)) throw new Error(`refusing to mint a leaf for ${JSON.stringify(host)}`);
-    const tmp = await Deno.makeTempDir({ dir: root, prefix: "leaf-" });
+    // scratch for openssl's hand-off between key, csr and cert; the leaf lives in memory
+    const tmp = await Deno.makeTempDir({ prefix: "mu-leaf-" });
     try {
       const keyPath = `${tmp}/leaf.key`;
       const csrPath = `${tmp}/leaf.csr`;

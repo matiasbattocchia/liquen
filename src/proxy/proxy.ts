@@ -293,7 +293,7 @@ if (import.meta.main) {
   }
 
   const broker = createGrantBroker({ creds });
-  const ca = await openCA(dir);
+  const ca = await openCA();
   const proxy = startProxy({ ca, broker });
   const grant = await creds.get(key);
   const handle = broker.issue(key, grant?.agentId);

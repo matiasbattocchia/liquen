@@ -14,6 +14,8 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
       "org/instruction/instructions/org",
       "system/instruction/instructions/compaction",
       "system/instruction/instructions/principal",
+      "system/skill/skills/transcribe-audio",
+      "system/skill/skills/workflows",
     ]);
     const byName = new Map(docs.map((d) => [d.header.name, d]));
     assertStringIncludes(byName.get("instructions/principal")!.body!, "your principal"); // always

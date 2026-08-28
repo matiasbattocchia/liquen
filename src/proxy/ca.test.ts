@@ -32,7 +32,7 @@ async function certText(certPem: string): Promise<string> {
 Deno.test("openCA: mints a leaf that verifies against the CA and names the host", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const ca = await openCA(dir);
+    const ca = await openCA();
     const leaf = await ca.leafFor("www.googleapis.com");
     assert(leaf.cert.includes("BEGIN CERTIFICATE"));
     assert(leaf.key.includes("PRIVATE KEY"));
@@ -49,9 +49,9 @@ Deno.test("openCA: mints a leaf that verifies against the CA and names the host"
 Deno.test("openCA: the CA persists — reopening reuses the same root", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const first = await openCA(dir);
+    const first = await openCA();
     const caPem = await Deno.readTextFile(first.caPath);
-    const second = await openCA(dir);
+    const second = await openCA();
     assertEquals(await Deno.readTextFile(second.caPath), caPem); // not regenerated
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -61,7 +61,7 @@ Deno.test("openCA: the CA persists — reopening reuses the same root", async ()
 Deno.test("openCA: the same host is minted once (cached)", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const ca = await openCA(dir);
+    const ca = await openCA();
     const [a, b] = await Promise.all([
       ca.leafFor("x.googleapis.com"),
       ca.leafFor("x.googleapis.com"),
@@ -75,7 +75,7 @@ Deno.test("openCA: the same host is minted once (cached)", async () => {
 Deno.test("openCA: a bogus host is refused, not shelled out", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const ca = await openCA(dir);
+    const ca = await openCA();
     await assertRejects(() => ca.leafFor("evil/../$(whoami)"), Error, "refusing");
   } finally {
     await Deno.remove(dir, { recursive: true });

@@ -180,7 +180,7 @@ Deno.test("proxyRequest: a request with no placeholder passes through untouched"
 Deno.test("startProxy: a real TLS tunnel terminates and the swap reaches the origin", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const ca = await openCA(dir);
+    const ca = await openCA();
     let originAuth: string | null = null;
     const originUrls: string[] = [];
     const proxy = startProxy({
@@ -228,7 +228,7 @@ Deno.test("startProxy: a real TLS tunnel terminates and the swap reaches the ori
 Deno.test("startProxy: a tunnel that can't be stood up answers 502 — it never hangs", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const ca = await openCA(dir);
+    const ca = await openCA();
     const proxy = startProxy({ ca, broker: fakeBroker(), audit: () => {} });
     try {
       // `bad_host` fails the CA's host check, so no leaf can be minted for the tunnel
