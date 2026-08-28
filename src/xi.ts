@@ -27,6 +27,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   Action,
+  AlarmEvent,
   Draft,
   Emit,
   Envelope,
@@ -62,6 +63,7 @@ import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import type { Locker } from "./store/lock.ts";
+import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
 import { filePartOf, loadMediaBlock } from "./store/media.ts";
 import { hhmm, ownComplex, ownVoice, shortId, silenced, textOf } from "./render.ts"; // shared predicates: silenced never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
@@ -120,7 +122,6 @@ function inScope(r: Rule, t?: Target): boolean {
 /** The slice of AgentConfig the wake policy reads (§2 attention) — its own type so tests
  *  and future callers state exactly what deciding takes. Unset knobs are the catalog's. */
 export interface Wake {
-  home: string;
   timezone?: string;
   engagedMinutes?: number;
   digestAfterMessages?: number;
@@ -147,7 +148,7 @@ export function decide(
   if (owedOf(events, session).length > 0) return "act";
   if (cutOff(events)) return "think"; // a paced/truncated turn CONTINUES
   if (justFailed(events)) return "ignore"; // idle-after-error
-  if (unclosedChain(events, session, wake.home)) return "think";
+  if (unclosedChain(events, session)) return "think";
   return attention(events, session, wake, now);
 }
 
@@ -170,7 +171,7 @@ export function decide(
  * poke (main's tick) re-asks this same question until it is due.
  */
 function attention(events: Event[], session: Session, wake: Wake, now: number): Decision {
-  const news = newsOf(events, session, wake.home);
+  const news = newsOf(events, session);
   if (news.length === 0) return "ignore";
   // The summons is the MIND ALIAS and nothing else (§2). Not a DM, not a reply to the
   // agent, not its name said out loud: none of those address the agent, they address the
@@ -180,7 +181,13 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // and the world waits. Nothing is lost that `engaged` doesn't already hold: a reply that
   // lands while the agent has the floor wakes it as engaged, and one that lands after the
   // floor decayed is the world talking, which is what the digest is for.
-  if (news.some((e) => e.envelope.conversation.address === wake.home)) return "think";
+  if (news.some((e) => e.envelope.conversation.address === session.conversation)) {
+    return "think";
+  }
+  // an ALARM wakes now, wherever it landed: it fired at a time the agent itself chose, and
+  // deferring it to the digest (or sleeping through it) would answer a question nobody
+  // asked — "was 07:00 really what you meant?". The one wake class the agent set itself.
+  if (news.some((e) => e.type === "alarm")) return "think";
   // holding the floor is the one question that is per-conversation — so the news is grouped
   // for it, and for nothing else: the two rules below weigh the world as one thing
   for (const conv of new Set(news.map((e) => e.envelope.conversation.address))) {
@@ -195,7 +202,7 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // than the ten they replaced, and each read a third of a night. Sleeping drops the
   // number: the night arrives once, whole, as the first digest of the morning.
   if (asleep(now, wake)) return "ignore";
-  return digestDue(news, lastLook(events, session, wake.home), wake, now) ? "think" : "ignore";
+  return digestDue(news, lastLook(events, session), wake, now) ? "think" : "ignore";
 }
 
 /**
@@ -247,7 +254,7 @@ function engaged(
  * accumulates (it is answered on arrival and the horizon eats it), an engaged conversation
  * wakes before it piles, and a silenced one never becomes news at all.
  */
-function digestDue(news: MessageEvent[], looked: number, wake: Wake, now: number): boolean {
+function digestDue(news: Event[], looked: number, wake: Wake, now: number): boolean {
   if (news.length >= (wake.digestAfterMessages ?? DEFAULT_DIGEST_AFTER_MESSAGES)) return true;
   const minutes = wake.digestMinutes ?? DEFAULT_DIGEST_MINUTES;
   return now - looked >= minutes * 60_000;
@@ -258,18 +265,18 @@ function digestDue(news: MessageEvent[], looked: number, wake: Wake, now: number
  *  in front of the model — including the conversations it chose to leave alone. Which is why
  *  one mark serves the whole world and none of this is per-conversation. `-Infinity` when
  *  the agent has never closed a turn: it has never looked, so the world is due now. */
-function lastLook(events: Event[], session: Session, home: string): number {
-  const i = lastClosing(events, session, home);
+function lastLook(events: Event[], session: Session): number {
+  const i = lastClosing(events, session);
   return i === -1 ? -Infinity : Date.parse(events[i].ts);
 }
 
 /** Index of the agent's last message home — where a turn ends, §2. */
-function lastClosing(events: Event[], session: Session, home: string): number {
+function lastClosing(events: Event[], session: Session): number {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (
       e.type === "message" && ownVoice(e, session.id) &&
-      e.envelope.conversation.address === home
+      e.envelope.conversation.address === session.conversation
     ) return i;
   }
   return -1;
@@ -281,13 +288,8 @@ function asleep(now: number, wake: Wake): boolean {
   const m = span === null ? null : /^(\d{1,2})-(\d{1,2})$/.exec(span);
   if (!m) return false;
   const [from, to] = [Number(m[1]), Number(m[2])];
-  const hour = Number(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: wake.timezone ?? DEFAULT_TIMEZONE,
-      hour: "numeric",
-      hourCycle: "h23",
-    }).format(now),
-  );
+  const hour = Temporal.Instant.fromEpochMilliseconds(now)
+    .toZonedDateTimeISO(wake.timezone ?? DEFAULT_TIMEZONE).hour;
   return from <= to ? hour >= from && hour < to : hour >= from || hour < to;
 }
 
@@ -490,7 +492,7 @@ export function parseVerdict(text: string): PermissionVerdict | undefined {
 function gateVerdict(
   events: Event[],
   session: Session,
-  homeEnv: Envelope,
+  hereEnv: Envelope,
 ): (Draft<PermissionResponseEvent> | Draft<ErrorEvent>)[] {
   const live = openCards(events);
   if (live.length === 0) return [];
@@ -506,7 +508,7 @@ function gateVerdict(
     ts: new Date().toISOString(),
     type: "permission_response",
     payload: { ref_id: card.payload!.ref_id as EventId },
-    envelope: homeEnv,
+    envelope: hereEnv,
     parts: [{
       type: "data",
       kind: "permission_response",
@@ -534,11 +536,11 @@ function gateVerdict(
       ? cards.find((c) => c.id === e.payload?.ref_id)
       : undefined) ??
       (live.length === 1 ? last : AMBIGUOUS);
-    if (quoted === AMBIGUOUS) return spoken ? [] : [ambiguity(live.length, homeEnv)];
+    if (quoted === AMBIGUOUS) return spoken ? [] : [ambiguity(live.length, hereEnv)];
     if (!quoted || events.indexOf(quoted) > i) break; // answered before it was ever asked
     // the card they pointed at has already been answered — say so, with what is still open
     if (!open.includes(quoted.payload?.ref_id as EventId)) {
-      return spoken ? [] : [settled(live.length, homeEnv)];
+      return spoken ? [] : [settled(live.length, hereEnv)];
     }
     return [response(quoted)];
   }
@@ -551,31 +553,31 @@ function gateVerdict(
  *  taking a turn it would only spend re-issuing the tools it is already waiting on. */
 const AMBIGUOUS = Symbol("ambiguous");
 
-function ambiguity(open: number, homeEnv: Envelope): Draft<ErrorEvent> {
+function ambiguity(open: number, hereEnv: Envelope): Draft<ErrorEvent> {
   return harness(
     `${open} approvals are waiting — reply TO the one you mean (quote it), ` +
       `or \`/y all\` · \`/n all\` to answer all ${open} at once`,
-    homeEnv,
+    hereEnv,
   );
 }
 
 /** They answered a card that is no longer open — the usual cause is two copies of the same
  *  ask on the surface (a re-issue), where the newest is the DEAD one. Silence here reads as
  *  a broken gate, so the harness names it and points at what is actually waiting. */
-function settled(open: number, homeEnv: Envelope): Draft<ErrorEvent> {
+function settled(open: number, hereEnv: Envelope): Draft<ErrorEvent> {
   return harness(
     `that approval was already answered — ${open} still waiting, quote one of those ` +
       `(they are the OLDER cards: the newer copies are the ones already settled)`,
-    homeEnv,
+    hereEnv,
   );
 }
 
 /** The harness's own voice (§2): an `error` the mirror carries to the principal's surfaces. */
-function harness(error: string, homeEnv: Envelope): Draft<ErrorEvent> {
+function harness(error: string, hereEnv: Envelope): Draft<ErrorEvent> {
   return {
     ts: new Date().toISOString(),
     type: "error",
-    envelope: homeEnv,
+    envelope: hereEnv,
     parts: [{ type: "data", kind: "error", data: { error } }],
   };
 }
@@ -586,13 +588,15 @@ function harness(error: string, homeEnv: Envelope): Draft<ErrorEvent> {
  *  sits BEFORE the closing in the log yet was never seen (the live-bench coalescing race).
  *  Position is the fallback for messages without a horizon (pre-horizon logs). Returns the
  *  news itself: attention classes it (§2) rather than waking on its mere existence. */
-function newsOf(events: Event[], session: Session, home: string): MessageEvent[] {
+function newsOf(events: Event[], session: Session): (MessageEvent | AlarmEvent)[] {
   // news = a message our side didn't produce (§3 ownVoice) — which now includes the
   // principal's rows: they carry agent.id (and, typed into the session, session_id),
-  // but input never carries a turn_id, so it stays answerable
-  const news = (e: Event): e is MessageEvent =>
-    e.type === "message" && !ownVoice(e, session.id) && !silenced(e);
-  const last = lastClosing(events, session, home);
+  // but input never carries a turn_id, so it stays answerable — OR an alarm, which is
+  // the agent's own past self arriving with something to say (§10): harness-authored, so
+  // never our voice, and unanswered until a turn reads past it like any other news
+  const news = (e: Event): e is MessageEvent | AlarmEvent =>
+    e.type === "alarm" || (e.type === "message" && !ownVoice(e, session.id) && !silenced(e));
+  const last = lastClosing(events, session);
   if (last === -1) return events.filter(news);
   // resolve the horizon to a POSITION — the window may be re-sorted for display (§5)
   const horizon = events[last].extra?.consumed;
@@ -603,7 +607,7 @@ function newsOf(events: Event[], session: Session, home: string): MessageEvent[]
 
 /** All our uses have results but no turn output followed ⇒ the closing think is owed.
  *  Turn output = our thinking / tool_use / home message; a directed peer send is not. */
-function unclosedChain(events: Event[], session: Session, home: string): boolean {
+function unclosedChain(events: Event[], session: Session): boolean {
   const uses = new Set(
     events
       .filter((e) => e.type === "tool_use" && e.agent?.session_id === session.id)
@@ -619,7 +623,7 @@ function unclosedChain(events: Event[], session: Session, home: string): boolean
   return !events.slice(lastResult + 1).some((e) =>
     ownVoice(e, session.id) &&
     (e.type === "thinking" || e.type === "tool_use" ||
-      (e.type === "message" && e.envelope.conversation.address === home))
+      (e.type === "message" && e.envelope.conversation.address === session.conversation))
   );
 }
 
@@ -682,7 +686,8 @@ export interface XiPorts {
     & Locker
     & Pick<Registry, "agents">
     & Pick<Standing, "remember" | "remembered">
-    & Pick<Connections, "upsertMemberships" | "aliases">;
+    & Pick<Connections, "upsertMemberships" | "aliases">
+    & Pick<Timers, "arm" | "timers" | "disarm">;
   docs: Docs;
   /** The model edge. main picks it (Anthropic today) and it travels down the chain unchanged
    *  — the transport is where another provider adapts in, so nothing above it changes. */
@@ -729,7 +734,11 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
   const got = await lock.acquire();
   if (got === "held") return; // no retry: someone is on it, and their turn's end will poke
 
-  const session: Session = { id: config.sessionId, agentId: config.agentId };
+  const session: Session = {
+    id: config.sessionId,
+    agentId: config.agentId,
+    conversation: config.mind,
+  };
   // policy is a TABLE (§9), compiled from two halves: the remembered rows (standing
   // verdicts — the principal's rulings outrank the base) over the configured base. No
   // tool is special.
@@ -755,14 +764,14 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
   //    ONE read: the work's input as well as the decision's (§2)
   // 3a. a gate the principal answered on a SURFACE (§9): their `/y` · `/n [reason]` becomes
   //     the verdict before the verdict is read, so one invocation settles it AND acts on it
-  const homeEnv: Envelope = {
+  const hereEnv: Envelope = {
     service: "local",
     connection_address: "agent",
-    conversation: { address: config.home },
+    conversation: { address: session.conversation },
   };
   // a `/y all` answers several cards at once, so this is a list — published together, in the
   // order they were asked, before the verdict is read
-  for (const answer of gateVerdict(events, session, homeEnv)) {
+  for (const answer of gateVerdict(events, session, hereEnv)) {
     const settled = await ports.log.publish(answer);
     if (settled) events.push(settled);
   }
@@ -791,13 +800,17 @@ async function think(
   config: AgentConfig,
   ports: XiPorts,
 ): Promise<Draft<Event>[]> {
-  const docs = await ports.docs.list({ agent: config.agentId, conversation: config.home });
+  const docs = await ports.docs.list({ agent: config.agentId, conversation: config.mind });
   // the anchor (§5): the volatile environment, plus what is still in the air. A pending gate
   // is STATE, not history — the transcript already closed those calls with
   // `pending_approval`, so the only place they belong is the block that is rewritten every
   // turn. It also self-corrects: an ask that gets answered simply stops being listed.
   // `waitingOn` always has a line, so the anchor always carries the approval state.
-  const ambient = [...(ports.ambient ? await ports.ambient() : []), ...waitingOn(events, config)];
+  const ambient = [
+    ...(ports.ambient ? await ports.ambient() : []),
+    ...armedOn(config, ports),
+    ...waitingOn(events, config),
+  ];
   // ONE turn per invocation, and nu decides what the turn IS: an over-budget window makes it
   // the checkpoint (the summary's insert wakes the think it displaced); a paced/truncated
   // turn continues via `meta.stop` and `decide` (§2, §5). xi only gathers the I/O.
@@ -812,7 +825,7 @@ async function think(
       loadMedia: loadMediaBlock,
       // the checkpoint instruction is a DOC (§5/§8) — editable like any instruction
       compactPrompt: () =>
-        ports.docs.read({ agent: config.agentId, conversation: config.home }, {
+        ports.docs.read({ agent: config.agentId, conversation: config.mind }, {
           scope: "system",
           kind: "instruction",
           name: "instructions/compaction",
@@ -833,6 +846,29 @@ async function think(
  *  contradict one, so an invented "waiting for your ok" passes untouched. Present in one of
  *  two forms every turn, it is a ground truth the model reads instead of an absence it has
  *  to notice. */
+/** The anchor's scheduled-wake lines (§5, §10): what is armed, when it fires, and the note
+ *  it will arrive with — beside the background jobs and the open approvals, because they are
+ *  the same kind of fact (something of yours is still standing). The id is `cancel`'s handle.
+ *
+ *  This session's wakes only (§4): the anchor is what THIS session is holding, and an id
+ *  it can read is an id it can cancel.
+ *
+ *  Silence means nothing is armed: unlike an approval, a wake the model invents costs the
+ *  principal nothing and reveals itself when it doesn't fire. */
+function armedOn(config: AgentConfig, ports: XiPorts): string[] {
+  const rows = ports.log.timers(config.sessionId);
+  if (rows.length === 0) return [];
+  return [
+    `scheduled — ${rows.length} wake${rows.length === 1 ? "" : "s"}:`,
+    ...rows.map((t) =>
+      `· ${hhmm(t.fireAt, config.timezone)}${
+        t.cron ? ` (repeats \`${t.cron}\`)` : ""
+      } — ${t.note}` +
+      ` · id ${shortId(t.id)}`
+    ),
+  ];
+}
+
 function waitingOn(events: Event[], config: AgentConfig): string[] {
   const cards = openCards(events);
   if (cards.length === 0) return ["nothing is waiting on your principal — no approval is open"];
@@ -858,15 +894,11 @@ async function act(
   ports: XiPorts,
 ): Promise<Draft<Event>[]> {
   const self = { id: config.agentId, session_id: config.sessionId };
-  const mind = {
+  // one session, one place (§4): the harness's own rows land where the session speaks
+  const here = {
     service: "local" as const,
     connection_address: "agent",
-    conversation: { address: `mind:${config.agentId}` },
-  };
-  const homeEnv = {
-    service: "local" as const,
-    connection_address: "agent",
-    conversation: { address: config.home },
+    conversation: { address: config.mind },
   };
   const ts = () => new Date().toISOString();
 
@@ -888,7 +920,7 @@ async function act(
         ...(call !== undefined ? { deferred: true as const } : {}),
       },
       agent: self,
-      envelope: mind,
+      envelope: here,
       parts: [
         {
           type: "data",
@@ -945,7 +977,7 @@ async function act(
       out.push(harness(
         `cannot pin a ${v.scope} rule for ${tool} — the call lands nowhere; ` +
           "`all` makes it tool-wide",
-        homeEnv,
+        here,
       ));
       return;
     }
@@ -993,7 +1025,7 @@ async function act(
             type: "permission_request",
             payload: { ref_id: use.id },
             agent: self,
-            envelope: homeEnv,
+            envelope: here,
             parts: [{
               type: "data",
               kind: "permission_request",
@@ -1043,7 +1075,12 @@ async function act(
   out.push(
     ...await Promise.all(runnable.map(async ({ use, call }) => {
       try {
-        return resultOf(use, await execute(use, events, ctl.signal, self, ports), undefined, call);
+        return resultOf(
+          use,
+          await execute(use, events, ctl.signal, self, config, ports),
+          undefined,
+          call,
+        );
       } catch (err) {
         return resultOf(use, err instanceof Error ? err.message : String(err), {
           is_error: true,
@@ -1110,7 +1147,7 @@ function selfSend(
   if (typeof to !== "string" || to === "") return undefined;
   const me = ports.log.agents().find((a) => a.agentId === config.agentId);
   const mine = new Set(
-    [config.agentId, config.home, `mind:${config.agentId}`, me?.email, me?.phone]
+    [config.agentId, config.mind, me?.email, me?.phone]
       .filter((x): x is string => typeof x === "string" && x !== ""),
   );
   const alias = ports.log.aliases().some((r) =>
@@ -1120,6 +1157,40 @@ function selfSend(
   return "that address is your principal — `send` is for everyone ELSE. What you say to " +
     "them is the assistant channel: write it as your reply and it reaches them when the " +
     "turn closes.";
+}
+
+/** `20m` · `3h` · `2d` · `90s` · `1w` → milliseconds. The units a person says out loud. */
+function durationMs(spec: string): number {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(s|m|h|d|w)\s*$/i.exec(spec);
+  if (!m) throw new Error(`"${spec}" is not a delay — say it like \`20m\`, \`3h\`, \`2d\``);
+  const unit = { s: 1e3, m: 6e4, h: 36e5, d: 864e5, w: 6048e5 }[m[2].toLowerCase()]!;
+  const ms = Number(m[1]) * unit;
+  if (ms <= 0) throw new Error("a delay has to be in the future");
+  return ms;
+}
+
+/**
+ * An `at` moment → UTC ISO. A stamp carrying its own offset (or `Z`) is absolute and passes
+ * through; a bare one (`2026-09-01T17:00`) means the ORG's wall clock — which is the clock
+ * the model is reading, since every stamp it was shown was rendered in that zone. `zonedTime`
+ * does the zone math (§10), DST included.
+ */
+function momentOf(spec: string, tz: string): string {
+  const raw = spec.trim();
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) {
+    const t = Date.parse(raw);
+    if (Number.isNaN(t)) throw new Error(`"${spec}" is not a moment I can read`);
+    return new Date(t).toISOString();
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(raw);
+  if (!m) throw new Error(`"${spec}" is not a moment — try \`2026-09-01T17:00\``);
+  const [year, month, day, hour, minute] = m.slice(1).map((x) => (x === undefined ? 0 : Number(x)));
+  try {
+    // a reading that names no real date (31 February, hour 25) is refused there, not slid
+    return new Date(zonedTime({ year, month, day, hour, minute }, tz)).toISOString();
+  } catch {
+    throw new Error(`"${spec}" is not a moment — try \`2026-09-01T17:00\``);
+  }
 }
 
 /** Tool-supplied renderings, by name (§9) — the built-ins' live in `describe.ts`. */
@@ -1136,10 +1207,48 @@ async function execute(
   events: Event[],
   signal: AbortSignal,
   self: { id: string; session_id: string },
+  config: AgentConfig,
   ports: XiPorts,
 ): Promise<Json | ExecOutcome> {
   const { name, input } = use.parts[0].data;
   const args = input as Record<string, Json>;
+  if (name === "schedule") {
+    // a future wake is the one thing the log cannot hold (§10): it records what happened,
+    // and this hasn't. So it is a row — and the row is not the wake: when it comes due the
+    // clock publishes an alarm carrying the note, and THAT is the wake, log-shaped like
+    // everything else. What is stored is words, never a call: the agent re-decides at fire
+    // time with today's window in front of it, which is also what keeps the gate meaningful.
+    const note = String(args.note ?? "").trim();
+    if (!note) throw new Error("a wake needs a note — it is what you will read when it fires");
+    const when = ["at", "in", "cron"].filter((k) => args[k] !== undefined && args[k] !== "");
+    if (when.length !== 1) {
+      throw new Error(
+        when.length === 0
+          ? "say when: `at` a moment, `in` a delay, or `cron` to repeat"
+          : `pick one: ${when.join(", ")} — a wake fires one way`,
+      );
+    }
+    const cron = args.cron === undefined ? undefined : String(args.cron);
+    const zone = config.timezone ?? DEFAULT_TIMEZONE;
+    const fireAt = cron !== undefined
+      ? nextFire(cron, new Date().toISOString(), zone) // validates as it computes
+      : args.in !== undefined
+      ? new Date(Date.now() + durationMs(String(args.in))).toISOString()
+      : momentOf(String(args.at), zone);
+    // a wake belongs to the SESSION that armed it (§4): that session lists it, cancels it,
+    // and is the one woken — so the row carries the session and the conversation it speaks
+    // in, and firing needs no guess about where the note goes.
+    const armed = ports.log.arm({
+      agentId: self.id,
+      sessionId: self.session_id,
+      fireAt,
+      ...(cron !== undefined ? { cron } : {}),
+      note,
+      conversation: config.mind,
+      refId: use.id,
+    });
+    return { armed: shortId(armed.id), fires: hhmm(fireAt, config.timezone), at: fireAt };
+  }
   if (name === "cancel") {
     // withdraw an open ask (§9): the one settlement invariant does all the work — a
     // permission_response ref'ing the use closes the card, so the anchor line drops and a
@@ -1150,11 +1259,18 @@ async function execute(
     const byId = (ref: EventId) => ref === id || shortId(ref) === id;
     const card = openCards(events).find((c) => byId(c.payload.ref_id));
     if (!card) {
+      // the same verb unsets a scheduled wake (§10): one "withdraw by id" the model can
+      // reach for without knowing which list the id came from
+      const timer = ports.log.timers(self.session_id).find((t) => byId(t.id));
+      if (timer) {
+        ports.log.disarm(timer.id, self.session_id);
+        return { disarmed: shortId(timer.id), note: timer.note };
+      }
       const ever = events.some((e) => e.type === "permission_request" && byId(e.payload.ref_id));
       throw new Error(
         ever
           ? `"${id}" was already answered — the outcome is on its way`
-          : `no pending approval "${id}" — your pending list names the open ones`,
+          : `nothing of yours is called "${id}" — your pending and scheduled lists name them`,
       );
     }
     const call = card.parts[0].data.call;
@@ -1468,16 +1584,50 @@ function specsOf(ports: XiPorts): Anthropic.Tool[] {
       },
     },
     {
-      name: "cancel",
+      name: "schedule",
       description:
-        "Withdraw one of your pending approvals — a call awaiting a verdict that stopped " +
-        "being worth asking. Your principal is told; the call never runs.",
+        "Wake yourself later with a note. At the time you set, the note arrives as an alarm " +
+        "in this conversation and you decide then what to do about it — nothing is executed " +
+        "for you. Write the note to your future self, who will read it cold: say the thing " +
+        "to do, not `as discussed`. Use `cancel` with the id to unset it.",
+      input_schema: {
+        type: "object",
+        properties: {
+          note: {
+            type: "string",
+            description: "what you want to be told when it fires — your own words, self-contained",
+          },
+          at: {
+            type: "string",
+            description:
+              "a moment: ISO-8601, e.g. `2026-09-01T17:00` (your org's clock unless it carries " +
+              "an offset)",
+          },
+          in: {
+            type: "string",
+            description: "a delay from now: `20m`, `3h`, `2d` (also `90s`, `1w`)",
+          },
+          cron: {
+            type: "string",
+            description:
+              "instead, repeat forever: five fields on your org's clock — `0 9 * * *` is every " +
+              "day at 09:00, `*/15 9-18 * * 1-5` every quarter hour through the workweek",
+          },
+        },
+        required: ["note"],
+      },
+    },
+    {
+      name: "cancel",
+      description: "Unset something of yours that is still standing: a pending approval — a call " +
+        "awaiting a verdict that stopped being worth asking (your principal is told; the " +
+        "call never runs) — or a scheduled wake you no longer want.",
       input_schema: {
         type: "object",
         properties: {
           id: {
             type: "string",
-            description: "the pending ask's id, exactly as your pending list shows it",
+            description: "the id, exactly as your pending or scheduled list shows it",
           },
         },
         required: ["id"],

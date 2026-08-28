@@ -11,7 +11,7 @@
  * next think retries; nothing depends on a checkpoint existing.
  */
 
-import type { Draft, Event, SummaryEvent } from "./types.ts";
+import type { Draft, Event, Session, SummaryEvent } from "./types.ts";
 import { applySummary, closingBoundary, deferredInput, ownVoice } from "./render.ts";
 import { type ModelTransport, mu, type StepInput } from "./mu.ts";
 
@@ -51,9 +51,7 @@ Keep each section concise. Preserve exact names, paths and figures.`;
 
 export interface CompactInput {
   events: Event[]; // the window, log order
-  sessionId: string;
-  agentId: string;
-  home: string;
+  session: Session; // whose window it is, and where it speaks (§4)
   model: string;
   effort?: StepInput["effort"];
   /** Lazy source for the checkpoint instruction (the `harness/instruction/compaction` doc).
@@ -69,8 +67,7 @@ export interface CompactInput {
 /** Decide the covered span: closed events beyond the keep-recent budget. Null ⇒ nothing to do. */
 export function compactionSpan(
   events: Event[],
-  sessionId: string,
-  home: string,
+  session: Session,
   compactAt = DEFAULT_COMPACT_AT,
   keepRecent = DEFAULT_KEEP_RECENT,
 ): { covered: Event[]; covers: [string, string] } | null {
@@ -81,9 +78,9 @@ export function compactionSpan(
   // the visible window, so a new span covers it and `covers[0]` chains from it.
   events = applySummary(events);
   if (estTokens(events) <= compactAt) return null;
-  const boundary = closingBoundary(events, sessionId, home);
+  const boundary = closingBoundary(events, session);
   if (boundary < 0) return null; // no closed region yet — nothing safely coverable
-  const deferred = deferredInput(events, sessionId, boundary);
+  const deferred = deferredInput(events, session.id, boundary);
   const closed = events.slice(0, boundary + 1).filter((e) => !deferred.has(e));
   // walk back from the boundary keeping ~keepRecent est. tokens uncovered
   let keep = 0;
@@ -125,13 +122,12 @@ export async function buildSummary(
 ): Promise<Draft<SummaryEvent> | null> {
   const span = compactionSpan(
     input.events,
-    input.sessionId,
-    input.home,
+    input.session,
     input.compactAt,
     input.keepRecent,
   );
   if (!span) return null;
-  const { text, previous } = transcript(span.covered, input.sessionId);
+  const { text, previous } = transcript(span.covered, input.session.id);
 
   let prompt = `<conversation>\n${text}\n</conversation>\n\n`;
   if (previous) prompt += `<previous-summary>\n${previous}\n</previous-summary>\n\n`;
@@ -156,11 +152,11 @@ export async function buildSummary(
   return {
     ts: new Date().toISOString(),
     type: "summary",
-    agent: { id: input.agentId, session_id: input.sessionId },
+    agent: { id: input.session.agentId, session_id: input.session.id },
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: `mind:${input.agentId}` },
+      conversation: { address: input.session.conversation },
     },
     payload: { covers: span.covers, ...(input.turnId ? { turn_id: input.turnId } : {}) },
     parts: [{ type: "text", kind: "text", text: summary }],

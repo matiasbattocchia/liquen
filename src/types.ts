@@ -68,8 +68,9 @@ export interface Rule {
 export interface TextPart {
   type: "text";
   /** `transcript` = machine-derived words for a message that carried none (a voice note's
-   *  ASR text) — ridden by an `action: "add"` event pointing at the audio message (§3). */
-  kind: "text" | "reaction" | "transcript";
+   *  ASR text) — ridden by an `action: "add"` event pointing at the audio message (§3).
+   *  `alarm` = the note a scheduled wake carries (§10) — words, not a payload. */
+  kind: "text" | "reaction" | "transcript" | "alarm";
   text: string;
 }
 
@@ -152,7 +153,7 @@ export type CalendarPart = DataPart<"calendar", CalendarData>;
 export type Part = TextPart | FilePart | DataPart | SharePart;
 
 /* ────────────────────────────── envelope ────────────────────────────── */
-// WHICH CONVERSATION. Every event has a home — even internal ones (§3).
+// WHICH CONVERSATION. Every event names one — even internal ones (§3).
 
 /** Known services; open set — new channels extend it. `local` = the harness's own channel. */
 export type Service =
@@ -276,9 +277,10 @@ export interface Payload {
  *  the machine never branches on service keys. Known keys: `backfill` (imported history),
  *  `muted` · `archived` (the chat's platform-synced state when the message arrived) — any
  *  of the three SILENCES the row: wakes nothing, renders nowhere, `search` is the door
- *  (§2, §5) — `consumed` (on the agent's home messages: the last
+ *  (§2, §5) — `consumed` (on the agent's closing session messages: the last
  *  event id the step's window read — the coalescing horizon `unanswered` measures against,
- *  §2), `via` (mirror provenance, §4), and per-service provenance under the service name —
+ *  §2), `via` (mirror provenance, §4), `timer` (alarm provenance, §10: the row that fired,
+ *  who armed it and when), and per-service provenance under the service name —
  *  how the wire said it, not what the event means (`slack: {subtype, authorizations}`,
  *  `raw`). */
 export type Extra = Record<string, unknown>;
@@ -429,10 +431,21 @@ export interface SummaryEvent extends EventBase {
   payload: Payload & { covers: [EventId, EventId] };
 }
 
-/** A delayed, harness-delivered effect the agent scheduled — system-authored, so it wakes (§2). */
+/**
+ * A delayed, harness-delivered effect the agent scheduled — system-authored, so it wakes (§2).
+ *
+ * An alarm always INFORMS: its part is the note the agent left itself, and waking to words
+ * is the whole point (a pure poke needs no event — the clock invokes trigger-less, §10). So
+ * one shape, a text part, and `decide` counts it as news like anything else that arrives
+ * with something to say.
+ *
+ * It arrives in the session that armed it, and says where it came from: `payload.ref_id` is
+ * the `schedule` call, `extra.timer` the row that fired (§10). A note read cold deserves to
+ * be traceable to the moment it was written.
+ */
 export interface AlarmEvent extends EventBase {
   type: "alarm";
-  parts: [DataPart<"alarm", Json>];
+  parts: [TextPart & { kind: "alarm" }];
 }
 
 /** Permanent mu failure — rendered `system` (model awareness) + Stream (operator) (§2). */
@@ -463,10 +476,14 @@ export type Event =
 export type Draft<E extends Event = Event> = E extends unknown ? Omit<E, "id"> & { id?: EventId }
   : never;
 
-/** The agent's long-running unified session (§7). v0 = one per agent, cross-labeled. */
+/** The agent's long-running unified session (§7). v0 = one per agent, cross-labeled — the
+ *  MIND session, `mind:<agent>` (§4), the one with the tools, where the principal steers.
+ *  `conversation` is where it speaks and is spoken to: a session is not just an id, it is a
+ *  place, so everything scoped to a session — its window, its wakes — reads it from here. */
 export interface Session {
   id: SessionId;
   agentId: AgentId;
+  conversation: string;
 }
 
 /* ── xi — the consumer. Its verdict types live in xi.ts beside the table (§2). ── */

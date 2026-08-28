@@ -19,7 +19,7 @@ import { start } from "./main.ts";
 import { DEFAULT_MODEL } from "./config.ts";
 import { type AgentConfig, decide } from "./xi.ts";
 import { bashAmbient, type BashState, bashTool, type Job } from "./exec/bash.ts";
-import type { Draft, MessageEvent } from "./types.ts";
+import type { Draft, MessageEvent, Session } from "./types.ts";
 
 const TASK_DOC = `---
 kind: instruction
@@ -77,7 +77,7 @@ async function runTask(instruction: string): Promise<number> {
   const agent: AgentConfig = {
     agentId: "task",
     sessionId: "task",
-    home: "home",
+    mind: "mind:task",
     model: Deno.env.get("MU_MODEL") ?? DEFAULT_MODEL,
     effort: Deno.env.get("MU_EFFORT") as AgentConfig["effort"],
     // a maxed turn must fit under the wall: 64k output tokens takes ~13min (~60-80 tok/s),
@@ -86,7 +86,11 @@ async function runTask(instruction: string): Promise<number> {
     maxTokens: Number(Deno.env.get("MU_MAX_TOKENS") ?? 32_000),
     gate: () => "allow",
   };
-  const session = { id: agent.sessionId, agentId: agent.agentId };
+  const session: Session = {
+    id: agent.sessionId,
+    agentId: agent.agentId,
+    conversation: agent.mind,
+  };
 
   const main = await start({
     dir,
@@ -102,7 +106,7 @@ async function runTask(instruction: string): Promise<number> {
       envelope: {
         service: "local",
         connection_address: "agent",
-        conversation: { address: agent.home },
+        conversation: { address: session.conversation },
         sender: { address: "task", name: "task" },
       },
       parts: [{ type: "text", kind: "text", text: instruction }],
@@ -132,9 +136,13 @@ async function runTask(instruction: string): Promise<number> {
           envelope: {
             service: "local",
             connection_address: "agent",
-            conversation: { address: "mind:task" },
+            conversation: { address: session.conversation },
           },
-          parts: [{ type: "data", kind: "alarm", data: { reason: `stall-retry ${repokes}` } }],
+          parts: [{
+            type: "text",
+            kind: "alarm",
+            text: `the work above stalled — pick it up where it stopped (retry ${repokes})`,
+          }],
         });
         await new Promise((r) => setTimeout(r, 2_000));
         continue;
@@ -142,7 +150,7 @@ async function runTask(instruction: string): Promise<number> {
       if (still && decide(events, session, agent) === "ignore") {
         const closing = events.filter((e): e is MessageEvent =>
           e.type === "message" && e.agent?.session_id === session.id &&
-          e.envelope.conversation.address === agent.home
+          e.envelope.conversation.address === session.conversation
         ).at(-1);
         if (closing) {
           console.log(

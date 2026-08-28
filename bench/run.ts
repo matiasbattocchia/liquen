@@ -18,8 +18,8 @@ import type { Log } from "../src/store/log.ts";
 import { newId } from "../src/store/id.ts";
 
 const MODEL = "claude-sonnet-5";
-const SESSION = { id: "alter", agentId: "alter" };
-const HOME = "home";
+const MIND = "mind:alter";
+const SESSION = { id: "alter", agentId: "alter", conversation: MIND };
 
 interface Ctx {
   dir: string;
@@ -47,7 +47,7 @@ const principalMsg = (text: string): MessageEvent => ({
   envelope: {
     service: "local",
     connection_address: "agent",
-    conversation: { address: HOME },
+    conversation: { address: MIND },
     sender: { address: "principal", name: "Matias" },
   },
   parts: [{ type: "text", kind: "text", text }],
@@ -58,7 +58,7 @@ const textOf = (e: Event): string => JSON.stringify(e.type === "message" ? e.par
 const closings = (events: Event[]): MessageEvent[] =>
   events.filter((e): e is MessageEvent =>
     e.type === "message" && e.agent?.session_id === SESSION.id &&
-    e.envelope.conversation.address === HOME
+    e.envelope.conversation.address === MIND
   );
 
 /** Machine invariants every task must satisfy at the end. */
@@ -68,7 +68,7 @@ function invariants(events: Event[]): string | null {
   );
   const orphan = events.find((e) => e.type === "tool_use" && !answered.has(e.id));
   if (orphan) return `unanswered tool_use ${orphan.id}`;
-  if (decide(events, SESSION, { home: HOME }) !== "ignore") {
+  if (decide(events, SESSION, {}) !== "ignore") {
     return "not quiescent (work still owed)";
   }
   const err = events.find((e) => e.type === "error");
@@ -271,7 +271,7 @@ async function runTask(task: Task): Promise<{ note: string | null; ms: number; s
   const config: AgentConfig = {
     agentId: SESSION.agentId,
     sessionId: SESSION.id,
-    home: HOME,
+    mind: MIND,
     model: MODEL,
     maxTokens: 16_000,
     gate,
@@ -293,7 +293,7 @@ async function runTask(task: Task): Promise<{ note: string | null; ms: number; s
         const last = events.at(-1);
         const still = last ? Date.now() - Date.parse(last.ts) > 2_500 : false;
         if (
-          still && decide(events, SESSION, { home: HOME }) === "ignore"
+          still && decide(events, SESSION, {}) === "ignore"
         ) return events;
         await new Promise((r) => setTimeout(r, 500));
       }
@@ -310,7 +310,7 @@ async function runTask(task: Task): Promise<{ note: string | null; ms: number; s
         envelope: {
           service: "local",
           connection_address: "agent",
-          conversation: { address: HOME },
+          conversation: { address: MIND },
         },
         parts: [{
           type: "data",

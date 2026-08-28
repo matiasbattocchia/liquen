@@ -1,7 +1,8 @@
 /**
  * store/agents.ts — the agent registry (§9): the rows agents ARE.
  *
- * An agent is a row — identity + home; docs, workspace, memory may all be empty and the
+ * An agent is a row — identity + its mind session; docs, workspace, memory may all be empty
+ * and the
  * agent still fully exists. But rows are terrible DX to author, so agents are created "the
  * framework way": a folder under `data/agents/<name>/` declares the agent, an optional
  * `config.jsonc` inside it declares its settings (`provider`, `model`, `effort`) and the
@@ -20,7 +21,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 export interface AgentRow {
   agentId: string;
-  home: string; // the principal-DM conversation id
+  mind: string; // its mind session's conversation — `mind:<agent>` (§4)
   provider?: string; // model provider (the transport seam's future knob)
   model?: string;
   effort?: string;
@@ -37,7 +38,7 @@ export interface Registry {
 
 export const AGENTS_DDL = `CREATE TABLE IF NOT EXISTS agents (
   agent_id   TEXT PRIMARY KEY,
-  home       TEXT NOT NULL,
+  mind       TEXT NOT NULL,
   provider   TEXT,
   model      TEXT,
   effort     TEXT,
@@ -50,15 +51,15 @@ export const AGENTS_DDL = `CREATE TABLE IF NOT EXISTS agents (
 /** Bind the registry to an open DB (same pattern as `createLocker` — composed by openLog). */
 export function createRegistry(db: DatabaseSync): Registry {
   const put = db.prepare(
-    `INSERT INTO agents (agent_id, home, provider, model, effort, email, phone, created_at, updated_at)
+    `INSERT INTO agents (agent_id, mind, provider, model, effort, email, phone, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(agent_id) DO UPDATE SET
-       home = excluded.home, provider = excluded.provider, model = excluded.model,
+       mind = excluded.mind, provider = excluded.provider, model = excluded.model,
        effort = excluded.effort, email = excluded.email, phone = excluded.phone,
        updated_at = excluded.updated_at`,
   );
   const all = db.prepare(
-    "SELECT agent_id, home, provider, model, effort, email, phone FROM agents ORDER BY agent_id",
+    "SELECT agent_id, mind, provider, model, effort, email, phone FROM agents ORDER BY agent_id",
   );
   const del = db.prepare("DELETE FROM agents WHERE agent_id = ?");
 
@@ -69,7 +70,7 @@ export function createRegistry(db: DatabaseSync): Registry {
       for (const r of rows) {
         put.run(
           r.agentId,
-          r.home,
+          r.mind,
           r.provider ?? null,
           r.model ?? null,
           r.effort ?? null,
@@ -87,7 +88,7 @@ export function createRegistry(db: DatabaseSync): Registry {
     agents(): AgentRow[] {
       return (all.all() as Record<string, string | null>[]).map((r) => ({
         agentId: r.agent_id!,
-        home: r.home!,
+        mind: r.mind!,
         ...(r.provider ? { provider: r.provider } : {}),
         ...(r.model ? { model: r.model } : {}),
         ...(r.effort ? { effort: r.effort } : {}),

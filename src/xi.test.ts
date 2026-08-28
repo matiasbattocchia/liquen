@@ -10,9 +10,9 @@ import {
 } from "./xi.ts";
 import type { Envelope, Event, Session } from "./types.ts";
 
-const SESSION: Session = { id: "s1", agentId: "a1" };
-const HOME = "home";
-const WAKE: Wake = { home: HOME };
+const MIND = "mind:a1"; // the session's own conversation (§4)
+const SESSION: Session = { id: "s1", agentId: "a1", conversation: MIND };
+const WAKE: Wake = {};
 
 const env = (conversation: string): Envelope => ({
   service: "local",
@@ -29,7 +29,7 @@ function ev(type: Event["type"], over: Partial<Event> & { conv?: string } = {}):
     id: `e${String(++n).padStart(3, "0")}`,
     ts: "t",
     type,
-    envelope: env(conv ?? HOME),
+    envelope: env(conv ?? MIND),
     parts: [],
     ...rest,
   } as Event;
@@ -37,7 +37,7 @@ function ev(type: Event["type"], over: Partial<Event> & { conv?: string } = {}):
 const peerMsg = () => ev("message");
 // a self message is turn OUTPUT: turn_id is the voice mark (§3 — the stamp alone no
 // longer says which half, so ownVoice reads the turn)
-const selfMsg = (conv = HOME) =>
+const selfMsg = (conv = MIND) =>
   ev(
     "message",
     { ...SELF, conv, payload: { turn_id: "T0" } } as Partial<Event> & { conv?: string },
@@ -144,7 +144,7 @@ Deno.test("decide: the principal's stamped line is INPUT — agent + session, no
   const principal = () =>
     ev("message", {
       agent: { id: "a1", session_id: "s1" },
-      envelope: { ...env(HOME), sender: { address: "matias", name: "matias" } },
+      envelope: { ...env(MIND), sender: { address: "matias", name: "matias" } },
     } as Partial<Event>);
   assertEquals(decide([principal()], SESSION, WAKE), "think");
   assertEquals(decide([principal(), selfMsg()], SESSION, WAKE), "ignore");
@@ -244,7 +244,7 @@ Deno.test("decide: another session's unresolved uses are not ours", () => {
 const CONFIG: AgentConfig = {
   agentId: "a1",
   sessionId: "s1",
-  home: HOME,
+  mind: MIND,
   model: "m",
   maxTokens: 1024,
 };
@@ -308,7 +308,7 @@ Deno.test("silenced: a muted or archived chat's message never wakes — not even
   // the trigger predicate skips the invocation outright…
   assertEquals(relevant(CONFIG, muted), false);
   assertEquals(relevant(CONFIG, archived), false);
-  // …and the window side agrees: these land in HOME — the strongest summons — and still
+  // …and the window side agrees: these land in MIND — the strongest summons — and still
   // wake nothing (the principal muted the chat; the agent honors it)
   assertEquals(decide([muted], SESSION, WAKE), "ignore");
   assertEquals(decide([archived, muted], SESSION, WAKE), "ignore");
@@ -365,7 +365,7 @@ Deno.test("decide: a waiting gate never mutes the mind — the principal is stil
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: HOME },
+      conversation: { address: MIND },
       sender: { address: "matias" },
     },
     parts: [{ type: "text", kind: "text", text: "y las otras?" }],
@@ -386,11 +386,12 @@ const world = (conv: string, minAgo: number, text = "shipping the report today")
       parts: [{ type: "text", kind: "text", text }],
     } as Partial<Event> & { conv?: string },
   );
-/** A turn closing at home — where the agent last LOOKED, and so where rule 5 counts from. */
+/** A turn closing in the session's own room — where the agent last LOOKED, and so where
+ *  rule 5 counts from. */
 const looked = (minAgo: number, who: Partial<Event> = SELF) =>
   ev(
     "message",
-    { ...who, conv: HOME, ts: at(minAgo), payload: { turn_id: "T0" } } as
+    { ...who, conv: MIND, ts: at(minAgo), payload: { turn_id: "T0" } } as
       & Partial<Event>
       & { conv?: string },
   );
@@ -416,7 +417,7 @@ Deno.test("attention: a pile deep enough wakes before the interval does", () => 
 });
 
 Deno.test("attention: the summons is the mind alias and NOTHING else", () => {
-  assertEquals(decide([looked(1), world(HOME, 0)], SESSION, WAKE, NOON), "think");
+  assertEquals(decide([looked(1), world(MIND, 0)], SESSION, WAKE, NOON), "think");
   // a DM is a hail to the PRINCIPAL's account, in a room the agent is a bystander in
   assertEquals(decide([looked(1), world("wa:5491133585694", 0)], SESSION, WAKE, NOON), "ignore");
   // its name said out loud, by someone who is not its principal, is still the world
@@ -471,7 +472,7 @@ Deno.test("attention: the principal speaking in a conversation ENDS engagement, 
   // session_id — so it reads as our complex only through ownComplex's id fallback, which
   // is v0's session ≈ agent (§7). This session says so; the file's default deliberately
   // does not, to hold session_id to its own job.
-  const s: Session = { id: "a1", agentId: "a1" };
+  const s: Session = { id: "a1", agentId: "a1", conversation: MIND };
   const self = { agent: { id: "a1", session_id: "a1" } };
   const byHand = (minAgo: number) =>
     ev("message", {
@@ -517,15 +518,55 @@ Deno.test("attention: asleep, the ambient world waits for morning — the princi
   const pile = Array.from({ length: 40 }, (_, i) => ambient(night, 300 - i));
   assertEquals(decide(pile, SESSION, WAKE, night), "ignore");
   assertEquals(decide(pile, SESSION, { ...WAKE, sleepHours: null }, night), "think");
-  // what still gets through at 3am: their own line at home, and a conversation we hold
-  const home = ev(
+  // what still gets through at 3am: their own line to the session, and a conversation we hold
+  const own = ev(
     "message",
     {
       ts: at(1, night),
       parts: [{ type: "text", kind: "text", text: "che" }],
     } as Partial<Event> & { conv?: string },
   );
-  assertEquals(decide([...pile, home], SESSION, WAKE, night), "think");
+  assertEquals(decide([...pile, own], SESSION, WAKE, night), "think");
+});
+
+/* ── the scheduled wake (§10): an alarm is news the agent addressed to itself ── */
+
+/** A fired timer, as main publishes it: harness-authored (no `agent`), the note as text. */
+const alarm = (minAgo: number, base = NOON, conv = "slack:C1") =>
+  ev(
+    "alarm",
+    {
+      conv,
+      ts: at(minAgo, base),
+      parts: [{ type: "text", kind: "alarm", text: "send the appointment reminders" }],
+    } as Partial<Event> & { conv?: string },
+  );
+
+Deno.test("alarm: a fired wake is answered NOW — no digest to wait for, no night to sleep", () => {
+  // a turn closed five minutes ago, so the interval is not up: ambient news waits (§2)…
+  const looked = (base = NOON) =>
+    ev("message", { ...SELF, ts: at(5, base), payload: { turn_id: "T9" } } as Partial<Event>);
+  assertEquals(decide([looked(), world("slack:C1", 3)], SESSION, WAKE, NOON), "ignore");
+  // …but the agent set this one itself, at a time it chose: deferring it answers a question
+  // nobody asked
+  assertEquals(decide([looked(), alarm(3)], SESSION, WAKE, NOON), "think");
+  // and 3am is exactly when a 3am alarm means to fire
+  const night = Date.parse("2026-08-19T03:00:00Z"); // inside the default 23-8 span
+  assertEquals(decide([looked(night), world("slack:C1", 3, "x")], SESSION, WAKE, night), "ignore");
+  assertEquals(decide([looked(night), alarm(3, night)], SESSION, WAKE, night), "think");
+});
+
+Deno.test("alarm: once a turn has read past it, it stops asking — the horizon rules", () => {
+  const a = alarm(5);
+  // the closing message carries the horizon it consumed (§2): the alarm is behind it
+  const closed = ev("message", {
+    ...SELF,
+    ts: at(1),
+    payload: { turn_id: "T9" },
+    extra: { consumed: a.id },
+  } as Partial<Event>);
+  assertEquals(decide([a], SESSION, WAKE, NOON), "think");
+  assertEquals(decide([a, closed], SESSION, WAKE, NOON), "ignore");
 });
 
 /* ── anchored (§5): the window's floor stands still, so the prompt prefix caches ── */
@@ -537,7 +578,7 @@ const trickle = (count: number): Event[] =>
     id: `w${String(i).padStart(3, "0")}`,
     ts: new Date(T0 + i * 5 * 60_000).toISOString(),
     type: "message",
-    envelope: env(HOME),
+    envelope: env(MIND),
     parts: [],
   } as Event));
 

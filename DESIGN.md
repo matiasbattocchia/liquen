@@ -155,32 +155,34 @@ something was worth reading. A **summons** is the **mind alias** and nothing els
 that addresses the agent. Not a DM, not a reply to something it said, not its name spoken
 as a word — those address the principal's account in a room the agent is a bystander in,
 and waking on each is a full turn per line of somebody else's conversation. What is
-genuinely said TO the agent arrives at home, through the mirror's fan-in (§4); the rest is
+genuinely said TO the agent arrives in its mind session, through the mirror's fan-in (§4);
+the rest is
 the world, and the world waits. An **engaged** conversation wakes immediately too, and
 engagement is **holding the floor**: the last thing our complex said there was the agent's
 own voice (`ownVoice` — the `turn_id` discriminator, §3) and it is younger than
 `engagedMinutes`. Every reply refreshes the clock (ping-pong), silence lets it decay — and
 the **principal speaking there ends it at once, without a clock**: they took the floor
 back, from their own phone, and an agent that answered over them for the rest of the window
-would be talking past its own principal. To hand the floor over again they say so at home,
+would be talking past its own principal. To hand the floor over again they say so in the
+mind session,
 which is the one thing that still wakes the agent. So the world can never pull the agent in
 without the principal: it is only ever engaged where it was sent.
 Everything else is **ambient**, and the agent **checks the world** the way a person checks a
 phone: every `digestMinutes`, counted from **the last time it looked** — the stamp on its
-last closing home message. Not from the oldest unread, which is the difference between "I
+last closing message there. Not from the oldest unread, which is the difference between "I
 check every fifteen minutes" and "every message sits fifteen minutes before I read it": on a
 pile-age clock a line arriving fourteen minutes in waits fifteen more, and an agent quiet
 since lunch makes the next message wait too. From the last look it reads that line at the
 next check, and picks up after a long quiet at once. It checks early when
 `digestAfterMessages` are unread **across the whole world** — the count measures how much has
-arrived, not how much arrived in one room, and there is nothing to exclude from it: home news
-never accumulates, an engaged conversation wakes before it piles, a silenced one is not news.
+arrived, not how much arrived in one room, and there is nothing to exclude from it: what the
+principal says never accumulates, an engaged conversation wakes before it piles, a silenced one is not news.
 One look answers for every conversation because one look SEES every conversation: the turn
 reads a whole window, so the rooms it left alone were in front of the model too.
 Inside `sleepHours` ("23-8"-style on the org clock, null ⇒ never sleeps) it checks nothing:
 the ambient class wakes nobody until morning, however deep the pile.
 Sleep sits between the classes, not over them, so the two that were addressed to someone
-still land at 3am — the principal's own line at home, and a conversation the agent is
+still land at 3am — the principal's own line to the session, and a conversation the agent is
 holding the floor in. What sleeps is the world. (It replaces a stretched night interval,
 which was a number tuned against a cache TTL nobody controls: past an hour every wake pays
 a full uncached prefix write anyway, so three overnight wakes cost more than the ten they
@@ -226,7 +228,7 @@ arrives through the agent's scoped subscription, already readable (§6).
 | `message` | **yes** — a peer's IS the work; our own closing message is the **self-poke** that catches mid-turn arrivals |
 | `tool_use` · `tool_result` | ours **yes** · another session's **no** (never react to others' tools) |
 | `permission_response` | **yes** (the human moved — the settlement is now derivable) |
-| `alarm` | **yes** — the universal poke |
+| `alarm` | **yes** — a scheduled wake arriving with its note (§10) |
 | `control` | **no** — it never *starts* work. Cancelling a running turn is a `control` event xi checks for at tool boundaries (§10), log-derived because an out-of-process invocation can't be signalled |
 | `summary` | **yes** — a checkpoint DISPLACES a turn (§5): its insert carries the displaced think forward |
 | `permission_request` · `thinking` · *(unknown)* | **no** (spectators) |
@@ -266,7 +268,8 @@ history — also keeps the final user turn non-empty), and compaction never chec
 them away. Real model latency opens this race seconds wide; scripted steps never could.
 
 **`<|SILENCE|>`** — the word that closes a turn without speaking. Every turn ends with a
-home message, because that message is the close and the horizon rides on it; so an agent
+message in the session's own conversation, because that message is the close and the
+horizon rides on it; so an agent
 that looks at the world and finds nothing still had to write a sentence to somebody who
 did not ask, and that sentence then sat in the window being re-read for days. Most of what
 an always-on agent writes is that sentence. The sentinel is stamped `extra.silence` and
@@ -448,16 +451,43 @@ Apparent clock-needs, all clock-free: step continuation (control flow / delay-0 
 debounce (write-time abort + coalescing), await timeouts (conversation is the timeout;
 acts self-timeout), cron (a **peripheral producer**, like a webhook).
 
-**The clock is an optional peripheral** (pg_cron / delayed queue / in-mem wheel): timer
-rows fire by **inserting `alarm` events**. An `alarm` is a *delayed,
+**The clock is an optional peripheral** (main's tick today; pg_cron / a delayed queue at
+the edge): timer rows fire by **inserting `alarm` events**. An `alarm` is a *delayed,
 harness-delivered effect* — the agent **scheduled** it (a `tool_use`), the **harness
 fired** it (the sender), so it's `system`-authored (which is *required* — a self-authored
-alarm would be ignored by the relational rule and never wake). Provenance lives in
-`payload.ref_id` (→ the `schedule_wake`) + the data part. Invariants: anchored
-where scheduled (self-wakes) or in the principal-DM (config crons); `timers` table is the
-one non-log fact about the future (recovery = re-arm). Scheduling = a **timer-row write**
-(control-plane SQL/RLS) or `at`/cron (files/OS), **skill-guided — no dedicated tool**;
-the firing peripheral runs it.
+alarm would be ignored by the relational rule and never wake). Provenance is carried, not
+implied: `payload.ref_id` → the `schedule` call, `extra.timer` → the row that fired, the
+session that armed it and when. A note read cold leads back to the moment it was written.
+
+**An alarm always informs.** Its part is a `text` part of kind `alarm`: the note the agent
+left itself, handed back at the moment it asked for. One shape, no bare variant — a pure
+poke needs no event at all (the tick invokes trigger-less), so an alarm that said nothing
+would be a row with no reader. `decide` counts it as news like anything else that arrives
+with something to say, and it wakes **now**: neither the digest nor `sleepHours` defers a
+time the agent itself chose. What is stored is words, never a call — the agent re-decides
+at fire time against today's window, which is what keeps the permission table meaningful
+(a canned tool_use replayed blind is yesterday's judgment executing itself).
+
+**Scheduling is a tool**, `schedule` — `at` a moment, `in` a delay, or `cron` to repeat,
+plus the note. Gated like every other call (§9): one path, so a policy on `schedule` rules
+scripts and model alike. `cancel` is the universal unset — an open approval or an armed
+wake, by id. **A wake belongs to the session that armed it** (§4): the row carries the
+session, that session's anchor lists it beside the background jobs and the open asks (§5) —
+which is where the ids come from — that session alone can cancel it, and the alarm lands in
+`session.conversation`, where it speaks. Not in the conversation the `tool_use` carries:
+that is the plane every call is stamped on, which names a plane, not a session.
+
+The `timers` table is the one non-log fact about the future — the log records what
+happened, and this hasn't. Rows outlive the process, so recovery is nothing: the first tick
+after a restart fires whatever came due while it was down. Firing consumes the row in the
+same pass — one-shot ⇒ gone, cron ⇒ advanced past **now**, so a week of downtime costs one
+late fire, not one per missed occurrence. Cron is five fields on the **org's clock**
+(`Temporal` owns the zone math and the IANA database with it; DST resolves at the fire, not
+at the arming, and the hour a spring-forward erases lands just past the gap while an hour a
+fall-back repeats fires on its first pass), at minute resolution — the tick's own, so
+nothing is promised that the clock cannot keep. Finding the next fire is a SEARCH, since a
+cron expression is a predicate: candidate days, integer comparisons, and a zone conversion
+only on the days that match.
 
 Survey: **Pi** ships no scheduler; **Claude Code** makes the clock a harness peripheral
 (Cron*, ScheduleWakeup, /loop, remote /schedule); **Agent SDK** embedders host their own
@@ -484,7 +514,7 @@ one peripheral for both.
   type: "message" | "control" | "tool_use" | "tool_result"
       | "permission_request" | "permission_response" | "summary"
       | "thinking" | "alarm" | "error" | ...open set
-  envelope: {       // WHICH CONVERSATION — every event has a home (even internal ones)
+  envelope: {       // WHICH CONVERSATION — every event names one (even internal ones)
     service: "whatsapp" | "slack" | "email" | "local" | ...   // local = harness's own channel
     connection_address: string                // org account id / workspace
     conversation: { address, name?, thread?, kind? }  // kind: direct | group | channel (below)
@@ -611,7 +641,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · xi (the principal's `/y`·`/n`, any surface) · the REPL | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?}) · payload{ref_id→tool_use} |
 | `summary` | nu (the checkpoint IS the turn, §5) | leading text block (§5) | **think** (it displaced one) | parts(text) · payload{covers} |
-| `alarm` | main (boot) · task · timer (§10) | *(v0: a pure poke — not rendered; "a wake that informs" is the §10 open question)* | **think** | parts(payload) |
+| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `[system] scheduled wake: <note>` | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
 | `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
 
 - **mu emits 3**: `message` (say) + `tool_use` + `thinking`. Everything else is world + runtime.
@@ -702,7 +732,7 @@ ownership) only if double-answers show up.
   carries the wire user (`<team>:<user>`, written by the connect flow from `auth.test`),
   so a sender matching the leg's own user IS the owner — the ownership edge and the
   handle binding are one row. Ingest's classifier (§3) reads both: principal → the
-  mind-alias (the mirror copies it home, below); agent → echo/coexistence. With connections + credentials + the registry
+  mind-alias (the mirror copies it into the mind, below); agent → echo/coexistence. With connections + credentials + the registry
   the machinery is complete — N principals on one workspace are N owned legs, nothing
   shared to fight over.
 - **`conversation.kind` = `direct | group | channel | broadcast`** (landed 2026-08-05,
@@ -766,8 +796,8 @@ cli/ui: native local conversations
 - **The canonical principal-DM IS the mind session** (2026-08-04): `mind:<agent>` — the
   main session, the one with tools, where the agent is steered/controlled. The principal
   talks straight into it (the REPL does; platform DMs alias onto it at ingest via the rule
-  below). There is no separate `home` conversation: `home = mind:<agent>`, and every other
-  conversation is a peer conversation reached via connectors.
+  below). The session IS the conversation `mind:<agent>` — there is no second "home" room
+  beside it — and every other conversation is a peer conversation reached via connectors.
 - **Self-talk is special, even across connections.** An envelope identified as the
   principal — a conversation whose counterpart IS the agent's principal (the WA self-chat,
   the Slack self-DM, the REPL) — maps **to and from the mind**, by COPY, never rewrite
@@ -777,7 +807,7 @@ cli/ui: native local conversations
   - **fan-in**: an inbound on an alias conversation copies into `mind:<agent>` — the agent
     wakes on it exactly as on a REPL line (provenance in `extra.via`: origin event id +
     wire coordinates); in the agent's context every surface is the same **plain**
-    user/assistant chat (§5 home mode — one voice, one thread, whatever surface the
+    user/assistant chat (§5 mind mode — one voice, one thread, whatever surface the
     principal picked up).
   - **fan-out**: every mind event the REPL would show CCs to every alias binding except
     the origin surface (read off `extra.via`): the agent's voice as `[agent] …` (a
@@ -1082,7 +1112,8 @@ constraint, and render derives it **from the window's shape**:
   world-authored messages, so it never reorders the machine (tool cycles, thinking, the weld)
   and never rewrites history — a straggler arriving after the agent already answered stays
   put, because the answer breaks the run.
-- **Boundary** — the last self-authored *home* message whose step (`payload.turn_id`, stamped
+- **Boundary** — the last self-authored message *in the session's own conversation* whose
+  step (`payload.turn_id`, stamped
   by nu) emitted no `tool_use`: a closing assistant text. Everything before it is **closed**.
 - **Trailing chain** (after the boundary) is **welded API-faithfully** — `thinking` (replayed
   verbatim, with signature) + text + `tool_use`/`tool_result` pairs (per-use `ref_id` linkage).
@@ -1175,7 +1206,8 @@ events.
 Within a batch, render keeps **chronological order** — no priority reordering. Steering
 priority is won at *scheduling* (steering is never delayed, §2), not by rewriting the timeline.
 *Noted for later:* models weight the **end** of context most, so if principal messages prove
-to get lost in busy batches, the fix is ordering groups by class with the **home group last**
+to get lost in busy batches, the fix is ordering groups by class with the **session's own
+group last**
 (nearest generation) — not first. Observe the model's behavior before reaching for this.
 
 ### The system prompt (cacheable prefix)
@@ -1278,7 +1310,7 @@ compaction proper is only pi's **checkpoint layer**:
 
 ### render is pure
 
-`render({ events, docs, session, home, now }) → { system, messages }`. No I/O — nu resolves the
+`render({ events, docs, session, now }) → { system, messages }`. No I/O — nu resolves the
 log window, docs, and tool set and feeds them. Output uses `@anthropic-ai/sdk` message /
 content-block / system-block types, so it feeds `mu` untranslated.
 
@@ -1374,7 +1406,7 @@ Returns **raw events, type-filtered** (messages; never tool/permission noise).
   `thinking`/`tool_use`/`tool_result` have no single peer conversation when the agent
   reasons across many. The agent's assistant text anchors to the principal-DM; peer messages to
   their conversations; sends to their targets; render interleaves all into one chronological
-  feed (home bare, world labeled — §5).
+  feed (the session's own room bare, world labeled — §5).
 - **Agent memory dropped**: the long-running session **is** the memory. Only org memory
   (shared) and conversation working-state (optional projection) remain (§8).
 - **Oversight & control are trivial** (one context; the principal reads and steers
@@ -1579,12 +1611,10 @@ docs {
     `cmd &` grandchild is not our child to await), complementary to the clock (which keeps
     TTL reaping / boot recovery). Timing would sort the agent-kill noise: a mid-turn death
     coalesces into that turn's closing think (reads as the obvious consequence of the kill);
-    only a **lone** death spawns a fresh turn. **Open question, deliberately unresolved
-    until the clock/background design pass:** what event TYPE carries the wake — an `alarm`
-    today only *re-derives* what's owed (a lone alarm over a quiescent log is a no-op), so
-    either the exit is published as information the owed-derivation counts, or alarms grow
-    proper semantics; alarms are NOT messages, and the answer is part of the scheduler
-    design, not this bullet. Exit *codes* are unknowable either way — the signal says
+    only a **lone** death spawns a fresh turn. What carries the wake is settled (§10): an
+    `alarm`, whose text part names the job that ended — alarms inform, so the exit arrives
+    as information the owed-derivation counts, and nothing new has to be invented for it.
+    Exit *codes* are unknowable either way — the signal says
     "gone"; the agent `tail`s the job's log for the outcome.
     **The exit event generalizes to arbitrary conditions**: a watcher is just a background
     job whose death IS the signal — `(tail -f train.log | grep -qm1 DONE) &` or
@@ -1726,7 +1756,7 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
 - **Shared-workspace hardening** (an SMB mount as a workspace *folder* — workspace root stays
   local, external file domains mount as subtrees, each with its own credentials/mode; the
   mount table is the access policy — the INBOUND half of "the filesystem is the integration
-  surface"; the outbound half, sharing the agent's home to the principal, is §9 remote
+  surface"; the outbound half, sharing the agent's home DIRECTORY to the principal, is §9 remote
   steering): `aedit` holds an exclusive flock across its
   read-modify-write (cifs maps it to server byte-range locks → serializes against Office
   apps too; inode re-check after acquiring retries a rename-under-us), and both `aedit` and
@@ -1759,7 +1789,9 @@ beats a bespoke tool):
   injected by nu (§8) — real tools, but wired at runtime, not part of the core surface.
 
 So the core surface is **`send` · `search` · the substrate primitive (`bash` / `sql`)** +
-dynamic MCP. Everything else is helpers (binaries/functions) + skill.
+the two that act on the agent's own standing state (**`schedule`** arms a wake, **`cancel`**
+unsets a wake or an open approval, §10) + dynamic MCP. Everything else is helpers
+(binaries/functions) + skill.
 
 ### The door (`src/door.ts` + `src/script.ts`) — a script's syscalls are tool_use events
 
@@ -1870,7 +1902,7 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
 - Producers and dispatchers are **separate processes sharing `log.db`**; concurrent publishes
   serialize on SQLite's WAL lock — no central writer, no funnel.
 - **`store/agents.ts` (landed 2026-08-04):** the agent registry — each agent's identity,
-  home, and declared settings/handles (`provider · model · effort · email · phone`,
+  its mind session (`mind`), and declared settings/handles (`provider · model · effort · email · phone`,
   mirrored from `config.json` — the framework way below). Ingest/dispatch/main all read
   it; machine-discovered account bindings live on the connections map (§4), keyed to the
   same registry names. Named `agents` (not `principals`) deliberately — agent↔principal
@@ -2299,8 +2331,8 @@ covers long tools (detach + `tail`, §9), and `local` always delivers. Likely on
 - **Three channels** — think (`thinking`, private) · assistant (bare text → principal) ·
   send (tool → peer). `send` is never principal-directed. §2/§5.
 - **Concurrency** — one turn per agent (the turn lock); agents parallel (global cap). §2/§9.
-- **Tools** — core surface = **`send` · `search` · `bash`** + dynamic MCP; scheduling /
-  background / docs-memory = substrate + skill, *not tools*. §9.
+- **Tools** — core surface = **`send` · `search` · `schedule` · `cancel` · `bash`** +
+  dynamic MCP; background / docs-memory = substrate + skill, *not tools*. §9/§10.
 - **Internal-event anchoring** — per-agent `local` scratchpad. §7.
 - **Shared inbox** — every agent reads; coexistence-yield self-coordinates. §4.
 

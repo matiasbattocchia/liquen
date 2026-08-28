@@ -47,7 +47,7 @@ import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
 import { createTranscriber } from "./processors.ts";
 import { installDoors } from "./door.ts";
-import type { Emit, Event } from "./types.ts";
+import type { AlarmEvent, Draft, Emit, Event } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
   DEFAULT_STOP_TIMEOUT_MS,
@@ -111,7 +111,8 @@ export interface MainConfig {
   /** One agent per principal. The `Policy` half (readable/writable, §6) never reaches xi:
    *  main lifts it into the agent's scoped log — locally a wrapper, on Postgres a credential.
    *  OMIT to create agents "the framework way": every folder under `agents/` declares one
-   *  (a blank folder is a blank agent) — agentId = the folder name, home = `mind:<name>`,
+   *  (a blank folder is a blank agent) — agentId = the folder name, the session's
+   *  conversation = `mind:<name>`,
    *  model/effort/maxTokens from the defaults below. */
   principals?: (AgentConfig & Policy)[];
   model?: string; // defaults for folder-declared agents (ignored when `principals` is given)
@@ -164,7 +165,7 @@ export async function start(
   // and the ingest classifier scans the declared handles (email/phone → principal)
   log.syncAgents(principals.map((p) => ({
     agentId: p.agentId,
-    home: p.home,
+    mind: p.mind,
     provider: p.provider,
     model: p.model,
     effort: p.effort,
@@ -174,7 +175,7 @@ export async function start(
   // the mind is a ONE-MEMBER conversation (§6): seeding it as membership is what makes
   // "own mind readable, others' invisible" plain branch-3 policy, no special case
   log.upsertMemberships(principals.map((p) => (
-    { service: "local", connection: "agent", conversation: p.home, agentId: p.agentId }
+    { service: "local", connection: "agent", conversation: p.mind, agentId: p.agentId }
   )));
   if (config.connections) log.upsertConnections(config.connections);
   if (config.seed !== false) {
@@ -308,12 +309,53 @@ export async function start(
   }
   for (const a of agents) invoke(a)(); // boot: no trigger ⇒ look at whatever the log owes
 
+  // The scheduler's half of the clock (§10): a timer row whose moment has come becomes an
+  // `alarm` carrying its note, and the alarm's own fan-out is the wake — no direct invoke,
+  // so a scheduled wake reaches the agent by exactly the path everything else does. Firing
+  // is idempotent-ish by construction: `settle` consumes the row in the same pass (one-shot
+  // ⇒ gone, cron ⇒ advanced past now), so a long outage fires each cron once, late.
+  // Due wakes → alarms (§10). The alarm lands in the conversation the arming session
+  // speaks in, and says where it came from: `ref_id` the `schedule` call, `extra.timer` the
+  // row — a note read cold leads back to the moment it was written, and a repeating one
+  // says so. Firing consumes the row in the same pass (`settle`).
+  const fireDue = async () => {
+    const now = new Date().toISOString();
+    for (const t of log.due(now)) {
+      await log.publish(
+        {
+          ts: now,
+          type: "alarm", // harness-authored: no `agent`, so the relational rule wakes on it (§2)
+          payload: { ...(t.refId ? { ref_id: t.refId } : {}) },
+          envelope: {
+            service: "local",
+            connection_address: "agent",
+            conversation: { address: t.conversation },
+          },
+          extra: {
+            timer: {
+              id: t.id,
+              session_id: t.sessionId,
+              ...(t.cron ? { cron: t.cron } : {}),
+              ...(t.armedAt ? { armed_at: t.armedAt } : {}),
+            },
+          },
+          parts: [{ type: "text", kind: "alarm", text: t.note }],
+        } satisfies Draft<AlarmEvent>,
+      );
+      // a cron advances on the clock it was armed against — the agent's zone, not UTC
+      log.settle(t.id, now, agents.find((a) => a.config.agentId === t.agentId)?.config.timezone);
+    }
+  };
+
   // the clock poke (§2 attention): deferred ambient news needs someone to re-ask once the
   // digest comes due, and the log cannot wake on time passing — so the clock is a poke
   // source like the log, a trigger-less invoke on a metronome. Cheap: decide() re-reads
   // one window and mostly answers `ignore`. A constant, not a knob: it is the resolution
   // of the attention intervals, not one of them.
-  const ticker = setInterval(() => agents.forEach((a) => invoke(a)()), TICK_MS);
+  const ticker = setInterval(() => {
+    fireDue().catch((err) => console.error("[main] firing scheduled wakes failed:", err));
+    agents.forEach((a) => invoke(a)());
+  }, TICK_MS);
 
   return {
     log,
@@ -347,7 +389,7 @@ type Principal = AgentConfig & Policy & { provider?: string; email?: string; pho
 /** The framework way (§9): every directory under `agents/` declares one agent — a blank
  *  folder is a blank agent, and an optional `config.jsonc` inside it overrides the catalog
  *  key by key (config.ts). agentId = sessionId = the folder name (v0: session ≈ agent, §7),
- *  home = `mind:<name>` — the HOME IS THE MIND SESSION (§4): the main session is the one
+ *  the session's conversation = `mind:<name>` (§4): the mind session is the one
  *  with tools, where the agent is steered; the principal talks straight into it (the REPL
  *  needs no identity map — principal name = agent name), and platform DMs alias onto it at
  *  ingest ("principal handle → principal-DM alias", the special wiring).
@@ -374,7 +416,7 @@ async function scanAgents(
     found.push({
       agentId: entry.name,
       sessionId: entry.name,
-      home: `mind:${entry.name}`,
+      mind: `mind:${entry.name}`,
       model: cfg.model ?? defaults.model ?? org.agent.model,
       effort: cfg.effort ?? defaults.effort ?? org.agent.effort ?? undefined,
       maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.agent.maxTokens,

@@ -68,8 +68,8 @@ when). Status as of 2026-08-12 (Slack live, both directions, model in the loop).
   world messages render as `<conversation service id kind name>` elements of `<msg from
   at>` lines — inbound runs ts-sort then partition per conversation; the agent's sends
   join their element as `from="self"`; `&`/`<`/`"` escaping makes forged tags inert, so
-  plain user-role text is by construction the narrator or the principal (home stays the
-  ordinary user/assistant chat — plain, separated from the tagged world). Delivery
+  plain user-role text is by construction the narrator or the principal (the mind session
+  stays the ordinary user/assistant chat — plain, separated from the tagged world). Delivery
   failure became visible the same pass: permanent dispatch failure stamps
   `envelope.status = failed` (setDelivery; store already round-trips `status.state`) and
   the line renders `status="failed"`. Element `name` is empty until ingest stamps it:
@@ -429,12 +429,11 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
    `jsr:@mu/core`. DESIGN §9 "Distribution (DX)".
 9. **Docker image per org** — main + connections, env-var config, volume for the data
    dir. The deploy story.
-10. **Alarms / the scheduler** — the periodic poke. Its FIRST job is the liveness floor
-   (§2): any poke does whatever the log owes, so a heartbeat self-heals every stranded
-   obligation — a holder that dies mid-turn. (The self-inflicted case, a wake bouncing off
-   our own lease, is closed by `publishAndRelease`.) Digests and delays come after. Open:
-   what event type carries a wake that must *inform*, since an alarm only re-derives what's
-   owed (§9), and `control`→abort as a log query at tool boundaries.
+10. **Alarms / the scheduler** — **LANDED 2026-08-28** (both halves). The liveness floor is
+   main's tick: any poke does whatever the log owes, so a heartbeat self-heals every
+   stranded obligation. The scheduler proper is the `timers` table + the `schedule` tool +
+   alarms that inform — see the entry below. Still open: `control`→abort as a log query at
+   tool boundaries.
 
 ## v0.2 — WhatsApp + maturity
 
@@ -756,8 +755,9 @@ Two changes, both mostly deletion:
 1. **The summons is the mind alias and nothing else.** `summons` had four clauses; three are
    gone. A DM, a reply to something the agent said, its name spoken as a word — none of them
    address the agent, they address the principal's account in a room the agent is a bystander
-   in. What is genuinely said TO the agent arrives at home through the mirror's fan-in, and
-   `conv.address === wake.home` catches it (home is always `mind:<agent>`, never a wire
+   in. What is genuinely said TO the agent arrives in the mind session through the mirror's
+   fan-in, and `conv.address === session.conversation` catches it (always `mind:<agent>`,
+   never a wire
    address — so the `dm:` clause was redundant besides). Nothing is lost that `engaged` did
    not already hold: a reply landing while the agent has the floor still wakes it; one landing
    after the floor decayed is the world talking, which is what the digest is for. With
@@ -770,16 +770,16 @@ Two changes, both mostly deletion:
    half of the complex spoke last (`ownComplex`) and engagement holds only if that half was
    the model (`ownVoice`; the discriminator is `payload.turn_id`, §3 — a wire echo from their
    phone carries `agent.id` and neither `session_id` nor `turn_id`). Their line ends it at
-   once, without a clock. To hand the floor back they say so at home.
+   once, without a clock. To hand the floor back they say so in the mind session.
 
 The property that falls out: **the world can never pull the agent in without the principal.**
 It is only ever engaged where it was sent. Replayed against that hour, Luciano's 51 lines are
 ambient (and engagement would have been cut anyway, since the principal was replying there by
 hand) — 95 turns becomes ~10, on top of the anchored cache.
 
-With everything but home ambient, the digest becomes the main path — and the per-conversation
+With everything but the mind session ambient, the digest becomes the main path — and the per-conversation
 pile it counted could not count, because `extra.consumed` is ONE global high-water mark
-stamped by every closing home message, so any turn at all drained every pile. That is settled
+stamped by every closing session message, so any turn at all drained every pile. That is settled
 in "The attention ladder" (2026-08-27) below, which stopped counting per conversation
 altogether. Still open from here: whether a digest wake gets its own framing in the prompt.
 At 19:32 the model emitted the same 49-token "(sin novedad)" twenty-five times in a row, and
@@ -787,11 +787,11 @@ a digest that renders identically to a summons will do it again, just less often
 
 ### `<|SILENCE|>` — the model can finally say nothing (2026-08-21) — LANDED
 
-Measured on the first full day of the new attention rules (Sonnet 5 at $2/$10): 70 home
+Measured on the first full day of the new attention rules (Sonnet 5 at $2/$10): 70 session
 messages, **44 of them "(sin novedad …)"**, and in the window the agent actually reads its own
 messages were 45KB against the world's 97KB — a third of the context it pays to re-read, and
 the third that says nothing. The instruction had told it "close quietly — silence is valid"
-for weeks; it could not comply, because a turn ends with a home message and there was no way
+for weeks; it could not comply, because a turn ends with a session message and there was no way
 to write one that was not a message.
 
 `SILENCE` is that way: the model answers `<|SILENCE|>` alone, nu stamps `extra.silence`, and
@@ -831,7 +831,7 @@ them —`), so nothing new was needed for the morning.
 
 The guard sits BETWEEN the classes, not over them — after summons and engaged, before the
 piles — so it never silences anything that was addressed to someone: the principal's own line
-at home is answered at 3am, and a conversation the agent is holding the floor in is one it is
+in the mind session is answered at 3am, and a conversation the agent is holding the floor in is one it is
 IN. And sleep beats `digestAfterMessages`, deliberately: a pile-triggered 4am wake is exactly
 the thing a slower cadence could not rule out, and ruling it out is the difference between
 sleeping and ticking slowly.
@@ -1046,6 +1046,71 @@ that would answer it (bash holds the lease), so a script fires and forgets and t
 narrates; no close either — a script's exit is its hang-up. Scheduler itself (item 10)
 still open — this is its execution half, trigger-agnostic: bash today, alarms later.
 
+### `home` is gone — a session is a place (2026-08-28) — LANDED
+
+The word named a conversation that was already the mind session (`home = mind:<agent>` since
+2026-08-04), so it carried a distinction the machine did not have: `Wake.home`,
+`TurnConfig.home`, `RenderInput.home`, an `agents.home` column and a `(session, home)` pair
+threaded through every helper that had to ask "is this ours?". Two names for one fact is how
+`use.envelope` came to look like a plausible anchor for a scheduled wake — it agreed with
+`config.home` in production and disagreed in the fixtures.
+
+`Session` now carries where it speaks: `{ id, agentId, conversation }`. `closingBoundary`,
+`newsOf`, `lastLook`, `unclosedChain`, `compactionSpan` and `render` take the session and
+nothing else; `Wake` lost its only non-knob field; the config field is `mind` — the mind
+session's conversation (§4) — and so is the registry column (migration v4 renames it, and
+backfills `timers.session_id` from the agent id, which is what v0's session ≈ agent means).
+nu stamps one envelope instead of two: thinking, calls and the closing message all land in
+the session's conversation, which in production they always did.
+
+### The scheduler — a wake is a row, an alarm, and a note (2026-08-28) — LANDED
+
+Roadmap item 10's second half. The agent arranges its own future: `schedule({note, at | in
+| cron})` arms a row in the new `timers` table, main's tick fires whatever is due as an
+`alarm` carrying the note, and the alarm's own fan-out is the wake — no special path, no
+direct invoke. `cancel` gained the second half of its job (unset an armed wake, not just an
+open approval), and the anchor lists what THIS session has armed beside the jobs and the
+open asks, which is where the ids come from.
+
+Three calls settled it. **A tool, not a skill** — DESIGN said "timer-row write or at/cron,
+skill-guided, no dedicated tool", which predates the door: every verb is a gated tool_use
+now, so scheduling rides the same table and a policy on `schedule` binds scripts and model
+alike. **A note, never a canned call** — a stored tool_use would execute yesterday's
+judgment blind against today's state, which is the thing the permission table exists to
+prevent; the note costs nothing, subsumes the "run this job" case (the mind reads it and
+issues the calls itself), and keeps the veto. **One alarm shape** — the data-part variant
+is gone from the type: every alarm carries a text part of kind `alarm` and informs, because
+a pure poke needs no event at all (the tick invokes trigger-less). That closes the §9/§10
+open question about what carries a wake that must inform; the planned background-job exit
+watcher now has its answer for free.
+
+Alarms wake NOW — past the digest, past `sleepHours`: the agent chose the time, and
+deferring it would answer a question nobody asked. Cron is five fields on the org's clock,
+minute resolution (the tick's own), with `Intl` doing the zone math and DST measured at the
+fire rather than assumed; firing consumes the row in the same pass, so a week of downtime
+costs one late fire instead of one per missed occurrence. Recovery needed no code: rows
+outlive the process and the first tick sweeps them.
+
+**A wake belongs to a session.** The row carries `session_id`, so the session that armed it
+is the one that lists it in its anchor, the only one that can `cancel` it, and the one the
+alarm wakes — in `session.conversation`, the mind (§4), which is where that session speaks.
+Deliberately not read off the `tool_use` envelope: that address names the plane a call is
+stamped on, so it would be right by coincidence today and wrong the day sessions multiply.
+The alarm also carries its provenance — `payload.ref_id` the `schedule` call, `extra.timer`
+the row, who armed it and when — because a note read cold deserves to be traceable to the
+moment it was written.
+
+One implementation note worth keeping: the first `nextFire` walked minutes and hung the
+suite. The cost was never the date arithmetic — it was asking "what is the org's wall clock
+here?" once per candidate, on a path that built a fresh `Intl.DateTimeFormat` every time
+(73µs measured; ~2.1M candidates to reach a leap-day cron ≈ 150s, which is exactly the
+120s kill). Two fixes, both kept: walk DAYS and convert only on the ones that match
+(~1400 integer comparisons), and do the conversion with `Temporal` — `PlainDateTime
+.toZonedDateTime(tz)` is the instant←wall-clock direction `Intl` has no API for, so
+`zonedTime`'s measure-the-offset-twice hack is gone, DST disambiguation is named rather
+than emergent, and an impossible reading (31 February) is refused instead of slid. The zone
+cases in the timers suite went 76ms → 3ms.
+
 ### The empty-turn quiesce probe — reverted (2026-08-27)
 
 The 2026-08-26 fix (on an empty-batch release, probe the log and re-poke self if act-class
@@ -1071,12 +1136,12 @@ rungs that cool it down — and three of them changed meaning in the restating.
 read as "let messages age fifteen minutes before reading them", so a line arriving fourteen
 minutes in waited fifteen more, and an agent quiet since lunch made the next message wait
 too. It now reads as "check the phone every fifteen minutes", counted from the stamp on the
-last closing home message. Same knob, opposite behavior at the edges, and the human version
+last closing session message. Same knob, opposite behavior at the edges, and the human version
 is the intuitive one.
 
 **The depth counts the whole world, not one room.** `digestAfterMessages` was per
 conversation, which made the wake rate depend on how the same volume happened to be spread.
-It is now `news.length` — and nothing needs excluding from it, because home news never
+It is now `news.length` — and nothing needs excluding from it, because the principal's news never
 accumulates (answered on arrival, the horizon eats it), an engaged conversation wakes before
 it piles, and a silenced one never becomes news.
 
@@ -1106,7 +1171,7 @@ message about their own friend ("Gryngo pregunta si hay juntada… ¿le confirm�
 as an approval card asking permission to send them a message they were already receiving.
 An instruction that only the model enforces is a hope; this is the guard. `selfSend` runs at
 the top of act's fresh batch — **before the gate** — and refuses any `send` naming the
-agent's own id, its home, `mind:<id>`, the principal's declared `email`/`phone`, or an alias
+agent's own id, its mind session `mind:<id>`, the principal's declared `email`/`phone`, or an alias
 conversation bound to it. Before, because a call that can land nowhere is not a permission
 question, and the card is the worse of the two failures: it spends the principal's attention
 to tell them nothing.

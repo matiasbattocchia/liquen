@@ -24,7 +24,7 @@ if (import.meta.main) {
       .filter((k) => a[k])
       .map((k) => `${k}=${a[k]}`)
       .join("  ");
-    console.log(`  ${a.agentId}  home=${a.home}${opts ? "  " + opts : ""}`);
+    console.log(`  ${a.agentId}  mind=${a.mind}${opts ? "  " + opts : ""}`);
   }
 
   console.log("\nconnections (owned=private · org-credentialed=shared · stub=gate-only, §6):");

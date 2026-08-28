@@ -17,7 +17,7 @@ type Principal = AgentConfig & Policy;
 const agent = (n: string, over: Partial<Principal> = {}): Principal => ({
   agentId: `a${n}`,
   sessionId: `s${n}`,
-  home: `home${n}`,
+  mind: `mind:a${n}`,
   model: "claude-x",
   maxTokens: 1024,
   gate: () => "allow",
@@ -27,14 +27,14 @@ const agent = (n: string, over: Partial<Principal> = {}): Principal => ({
 
 const reply = (text: string) => canned([{ kind: "assistant", text }]);
 
-function principalMsg(home: string, text: string): Draft<MessageEvent> {
+function principalMsg(mind: string, text: string): Draft<MessageEvent> {
   return {
     ts: new Date().toISOString(),
     type: "message",
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: home },
+      conversation: { address: mind },
       sender: { address: "ana", name: "Ana" },
     },
     parts: [{ type: "text", kind: "text", text }],
@@ -55,13 +55,13 @@ Deno.test("a live message flows tail → fan-out → xi → reply; stop is clean
   const { transport, calls } = scripted([reply("¡Hola!")]);
   const main = await start({ dir, debounceMs: 0, principals: [agent("1")] }, { transport });
   try {
-    await main.log.publish(principalMsg("home1", "hola"));
+    await main.log.publish(principalMsg("mind:a1", "hola"));
     await waitFor(async () =>
       (await main.log.read({ types: ["message"] })).some((e) => e.agent?.session_id === "s1")
     );
     const [r] = (await main.log.read({ types: ["message"] }))
       .filter((e) => e.agent?.session_id === "s1");
-    assertEquals(r.envelope.conversation.address, "home1");
+    assertEquals(r.envelope.conversation.address, "mind:a1");
     assertEquals(calls(), 1);
   } finally {
     await main.stop();
@@ -80,7 +80,7 @@ Deno.test("stop is bounded: a turn wedged on a hung model call cannot block tear
     { transport },
   );
   try {
-    await main.log.publish(principalMsg("home1", "hola")); // pokes a turn that will wedge
+    await main.log.publish(principalMsg("mind:a1", "hola")); // pokes a turn that will wedge
     await new Promise((r) => setTimeout(r, 100)); // let the turn enter the hung step
     const t0 = Date.now();
     await main.stop(); // must return within ~stopTimeoutMs, not wait on `wedged`
@@ -94,7 +94,7 @@ Deno.test("stop is bounded: a turn wedged on a hung model call cannot block tear
 Deno.test("boot poke: work already in the log is answered at start", async () => {
   const dir = await Deno.makeTempDir();
   const pre = await openLog(`${dir}/log`);
-  await pre.publish(principalMsg("home1", "seguís ahí?"));
+  await pre.publish(principalMsg("mind:a1", "seguís ahí?"));
   await pre.close();
 
   const { transport } = scripted([reply("acá estoy")]);
@@ -122,11 +122,11 @@ Deno.test("the settle: a burst that arrives BETWEEN turns is one turn, not three
   const main = await start({ dir, debounceMs: 300, principals: [agent("1")] }, { transport });
   const pause = () => new Promise((r) => setTimeout(r, 60));
   try {
-    await main.log.publish(principalMsg("home1", "una"));
+    await main.log.publish(principalMsg("mind:a1", "una"));
     await pause();
-    await main.log.publish(principalMsg("home1", "cosa"));
+    await main.log.publish(principalMsg("mind:a1", "cosa"));
     await pause();
-    await main.log.publish(principalMsg("home1", "sola"));
+    await main.log.publish(principalMsg("mind:a1", "sola"));
     await waitFor(() => calls > 0);
     await new Promise((r) => setTimeout(r, 300)); // let any second turn show itself
     assertEquals(calls, 1);
@@ -155,9 +155,9 @@ Deno.test("three messages during a turn cause ONE follow-up turn, not three", as
   };
   const main = await start({ dir, debounceMs: 0, principals: [agent("1")] }, { transport });
   try {
-    await main.log.publish(principalMsg("home1", "1"));
+    await main.log.publish(principalMsg("mind:a1", "1"));
     await inStep; // turn 1 is inside the model call
-    for (const t of ["2", "3", "4"]) await main.log.publish(principalMsg("home1", t));
+    for (const t of ["2", "3", "4"]) await main.log.publish(principalMsg("mind:a1", t));
     await new Promise((r) => setTimeout(r, 400)); // all three delivered while the run is busy
     release();
     await waitFor(() => n >= 2);
@@ -178,7 +178,7 @@ Deno.test("every model call is metered: spend lands in the usage table, per agen
   const main = await start({ dir, debounceMs: 0, principals: [agent("1")] }, { transport });
   let turn: string | undefined;
   try {
-    await main.log.publish(principalMsg("home1", "hola"));
+    await main.log.publish(principalMsg("mind:a1", "hola"));
     await waitFor(async () =>
       (await main.log.read({ types: ["message"] })).some((e) => e.agent?.session_id === "s1")
     );
@@ -212,8 +212,8 @@ Deno.test("the framework way: folders under agents/ declare the org; the table m
   });
   try {
     assertEquals(main.log.agents(), [ // the registry mirrors the folders (the RLS substrate)
-      { agentId: "ana", home: "mind:ana", model: "claude-x" },
-      { agentId: "bo", home: "mind:bo", model: "claude-x" },
+      { agentId: "ana", mind: "mind:ana", model: "claude-x" },
+      { agentId: "bo", mind: "mind:bo", model: "claude-x" },
     ]);
     await main.log.publish(principalMsg("mind:ana", "hola ana"));
     await waitFor(async () =>
@@ -221,7 +221,7 @@ Deno.test("the framework way: folders under agents/ declare the org; the table m
     );
     const [r] = (await main.log.read({ types: ["message"] }))
       .filter((e) => e.agent?.session_id === "ana");
-    assertEquals(r.envelope.conversation.address, "mind:ana"); // folder name → home convention
+    assertEquals(r.envelope.conversation.address, "mind:ana"); // folder name → mind:<name> (§4)
   } finally {
     await main.stop();
     await Deno.remove(dir, { recursive: true });
@@ -245,7 +245,7 @@ Deno.test("config.jsonc declares the agent: settings override defaults, handles 
   try {
     assertEquals(main.log.agents(), [{
       agentId: "ana",
-      home: "mind:ana",
+      mind: "mind:ana",
       model: "claude-y", // config wins over the MainConfig default
       effort: "low",
       email: "ana@org.example",
@@ -361,7 +361,8 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
       parts: [{ type: "text", kind: "text", text: "@ana ping" }],
     } as Draft<Event>);
     // …and the principal sends the agent in. A channel line — even one saying its name — is
-    // ambient now (§2 attention: the summons is the mind alias), so the poke comes from home
+    // ambient now (§2 attention: the summons is the mind alias), so the poke comes from
+    // the session's own room
     await main.log.publish(principalMsg("mind:ana", "contestá en C1"));
     await waitFor(async () => (await main.log.read({ types: ["permission_request"] })).length > 0);
     const [req] = await main.log.read({ types: ["permission_request"] });
@@ -397,8 +398,7 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
 
 Deno.test("policy partitions the fan-out: each agent's subscription delivers only its view (§6)", async () => {
   const dir = await Deno.makeTempDir();
-  const scope = (n: string) => (e: Event) =>
-    [`home${n}`, `mind:a${n}`].includes(e.envelope.conversation.address);
+  const scope = (n: string) => (e: Event) => e.envelope.conversation.address === `mind:a${n}`;
   const { transport, calls } = scripted([reply("para vos")]);
   const main = await start({
     dir,
@@ -409,17 +409,17 @@ Deno.test("policy partitions the fan-out: each agent's subscription delivers onl
     ],
   }, { transport });
   try {
-    await main.log.publish(principalMsg("home1", "hola a1"));
+    await main.log.publish(principalMsg("mind:a1", "hola a1"));
     await waitFor(async () =>
       (await main.log.read({ types: ["message"] })).some((e) => e.agent?.session_id === "s1")
     );
     await new Promise((r) => setTimeout(r, 300)); // let any spurious a2 turn surface
-    assertEquals(calls(), 1); // a2's tail never even delivered — home1 isn't in its view
+    assertEquals(calls(), 1); // a2's tail never even delivered — a1's mind isn't in its view
     const agentMsgs = (await main.log.read({ types: ["message"] }))
       .filter((e) => e.agent !== undefined);
     assertEquals(agentMsgs.length, 1);
     assert(agentMsgs[0].agent?.session_id === "s1");
-    assertEquals(agentMsgs[0].envelope.conversation.address, "home1");
+    assertEquals(agentMsgs[0].envelope.conversation.address, "mind:a1");
   } finally {
     await main.stop();
     await Deno.remove(dir, { recursive: true });
@@ -429,8 +429,8 @@ Deno.test("policy partitions the fan-out: each agent's subscription delivers onl
 Deno.test("the mirror is main's own subscription: an alias inbound reaches the mind (§4)", async () => {
   const dir = await Deno.makeTempDir();
   const { transport } = scripted([reply("dale")]);
-  // v0 session ≈ agent, and the HOME is the mind the mirror copies into
-  const ana = agent("1", { agentId: "ana", sessionId: "ana", home: "mind:ana" });
+  // v0 session ≈ agent, and the session's conversation is the mind the mirror copies into
+  const ana = agent("1", { agentId: "ana", sessionId: "ana", mind: "mind:ana" });
   const main = await start({
     dir,
     debounceMs: 0,

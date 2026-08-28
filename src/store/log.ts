@@ -40,6 +40,7 @@ import { createLocker, type Locker, LOCKS_DDL, RELEASE_SQL } from "./lock.ts";
 import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
 import { type Connections, CONNECTIONS_DDL, createConnections } from "./connections.ts";
+import { createTimers, type Timers, TIMERS_DDL } from "./timers.ts";
 
 /** A bounded, filtered read over the log. Fields AND-combine (the `search` half, §6). */
 export interface ReadQuery {
@@ -132,14 +133,23 @@ export interface UsageRow {
   cache_write_tokens?: number;
 }
 
-export type Log = Appender & Reader & Subscriber & Locker & Registry & Standing & Connections & {
-  /** Record one model call's spend. Fire-and-forget telemetry — never read on the hot path. */
-  meter(row: UsageRow): void;
-  /** Delivery bookkeeping on an already-published event: backfill `external_id`, merge
-   *  `status` stages. An UPDATE — no new row, so it never wakes the tail (§3, §4). */
-  setDelivery(id: EventId, patch: DeliveryPatch): Promise<void>;
-  close(): Promise<void>;
-};
+export type Log =
+  & Appender
+  & Reader
+  & Subscriber
+  & Locker
+  & Registry
+  & Standing
+  & Connections
+  & Timers
+  & {
+    /** Record one model call's spend. Fire-and-forget telemetry — never read on the hot path. */
+    meter(row: UsageRow): void;
+    /** Delivery bookkeeping on an already-published event: backfill `external_id`, merge
+     *  `status` stages. An UPDATE — no new row, so it never wakes the tail (§3, §4). */
+    setDelivery(id: EventId, patch: DeliveryPatch): Promise<void>;
+    close(): Promise<void>;
+  };
 
 const DB_FILE = "log.db";
 const POLL_MS = 300; // backstop period — fs-watch can drop events under load
@@ -196,7 +206,8 @@ export async function openLog(dir: string): Promise<Log> {
      ${LOCKS_DDL}
      ${AGENTS_DDL}
      ${RULES_DDL}
-     ${CONNECTIONS_DDL}`,
+     ${CONNECTIONS_DDL}
+     ${TIMERS_DDL}`,
   );
   migrate(db); // schema versions below the current one are rewritten in place, exactly once
   const connections = createConnections(db); // the gate below reads its table
@@ -382,6 +393,7 @@ export async function openLog(dir: string): Promise<Log> {
     ...createLocker(db), // the turn lease lives HERE — same DB, so one transaction holds both
     //                      a turn's last writes and its release (`publishAndRelease`, §2)
     ...createRegistry(db), // the agent registry (§9): folders declare, this table mirrors
+    ...createTimers(db), // armed wakes (§10): the one non-log fact about the future
     ...createStanding(db), // remembered policies (§9): standing verdicts land here
     ...connections, // connections + memberships (§4, §6): what policy reads, live
 
@@ -495,6 +507,7 @@ function migrate(db: DatabaseSync) {
   if (v < 1) migrateV1(db);
   if (v < 2) migrateV2(db);
   if (v < 3) migrateV3(db);
+  if (v < 4) migrateV4(db);
 }
 
 function migrateV1(db: DatabaseSync) {
@@ -638,6 +651,21 @@ function migrateV3(db: DatabaseSync) {
     db.exec("ALTER TABLE usage ADD COLUMN turn_id TEXT");
   }
   db.exec("PRAGMA user_version = 3");
+}
+
+/** v4 — the vocabulary settles on SESSIONS (§4): an agent's row names its mind session
+ *  (`agents.mind`), and an armed wake names the session that armed it (`timers.session_id`,
+ *  §10). Pre-v4 rows had one session per agent, so the agent id is the honest backfill. */
+function migrateV4(db: DatabaseSync) {
+  const cols = (t: string) =>
+    (db.prepare(`SELECT name FROM pragma_table_info('${t}')`).all() as { name: string }[])
+      .map((c) => c.name);
+  if (cols("agents").includes("home")) db.exec("ALTER TABLE agents RENAME COLUMN home TO mind");
+  if (!cols("timers").includes("session_id")) {
+    db.exec("ALTER TABLE timers ADD COLUMN session_id TEXT NOT NULL DEFAULT ''");
+    db.exec("UPDATE timers SET session_id = agent_id WHERE session_id = ''");
+  }
+  db.exec("PRAGMA user_version = 4");
 }
 
 /** ONE clock in the column (§3): whatever offset the producer wrote — WhatsApp stamps

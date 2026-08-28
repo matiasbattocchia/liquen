@@ -8,7 +8,8 @@
  * Two halves:
  *   (a) `renderSystem`   — the cacheable prefix: always-doc bodies inlined + a pull-index
  *       of the lazy ones.
- *   (b) `renderMessages` — the volatile tail: home bare / world grouped; no turns anywhere —
+ *   (b) `renderMessages` — the volatile tail: the session's own room bare, the world
+ *       grouped; no turns anywhere —
  *       the closed/trailing boundary and the API-faithful weld are DERIVED from the window's
  *       shape (§5 "Trailing vs closed"), never tracked by nu.
  */
@@ -17,6 +18,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { isExternal, pathOf } from "./store/media.ts"; // pure uri helpers — no I/O
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
+  AlarmEvent,
   Conversation,
   DataPart,
   ErrorEvent as HarnessErrorEvent, // aliased: `ErrorEvent` is a DOM global in Deno's lib
@@ -26,6 +28,7 @@ import type {
   Json,
   MessageEvent,
   ReactionPart,
+  Session,
   SessionId,
   TextPart,
   ThinkingEvent,
@@ -114,8 +117,7 @@ const inlineable = (mime: string): boolean =>
 export interface RenderInput {
   events: Event[]; // the log window — render derives what's closed vs trailing itself
   docs: DocEntry[];
-  session: SessionId; // tells the agent's own output from the world
-  home: string; // the principal-DM conversation id (home vs world)
+  session: Session; // whose output is whose, and which conversation is the session's own
   now: string; // ISO — the `now:` anchor
   /** IANA timezone for every rendered stamp (`at=`, `now:`) — org config's `timezone`.
    *  Unset ⇒ the deployment's own zone. Stored `ts` is UTC either way (§3). */
@@ -143,16 +145,18 @@ export function render(input: RenderInput): RenderedRequest {
   return { system: renderSystem(input.docs), messages: renderMessages(input) };
 }
 
-/** The last closing assistant home message — a step that emitted no tool_use (§5). Shared
- *  with compaction: only events at or before this index may ever be summarized away. */
-export function closingBoundary(events: Event[], session: SessionId, home: string): number {
+/** The last closing assistant message in the session's own conversation — a step that
+ *  emitted no tool_use (§5). Shared with compaction: only events at or before this index
+ *  may ever be summarized away. */
+export function closingBoundary(events: Event[], session: Session): number {
   const toolTurnIds = new Set(
     events.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => u.payload.turn_id),
   );
   return findLastIndex(
     events,
     (e) =>
-      e.type === "message" && isSelf(e, session) && e.envelope.conversation.address === home &&
+      e.type === "message" && isSelf(e, session.id) &&
+      e.envelope.conversation.address === session.conversation &&
       !(typeof e.payload?.turn_id === "string" && toolTurnIds.has(e.payload.turn_id)),
   );
 }
@@ -343,7 +347,8 @@ export function silenced(event: Event): boolean {
 }
 
 /**
- * The one word the model can say to say NOTHING. A turn has to close with a home message —
+ * The one word the model can say to say NOTHING. A turn has to close with a message in the
+ * session's own conversation —
  * that message is what ends the chain and carries the horizon (`extra.consumed`, §2) — so
  * until now the model had no way to look at the world and not speak: every idle digest
  * cost a "(nothing new)" paragraph, addressed to a principal who did not ask, and that
@@ -379,8 +384,10 @@ function byConversation(run: Event[]): Event[] {
 const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 
 function renderMessages(
-  { events: window, session, home, now, zone, ambient, loadMedia }: RenderInput,
+  { events: window, session, now, zone, ambient, loadMedia }: RenderInput,
 ): MessageParam[] {
+  const me = session.id; // whose voice
+  const here = session.conversation; // the session's own room — everything else is world
   const { events, elisions } = byEventTime(applySummary(window.filter((e) => !silenced(e))));
   const out: MessageParam[] = [];
 
@@ -497,7 +504,7 @@ function renderMessages(
       const earlier = elisions.earlier.get(e);
       if (earlier) cluster.lines.push(`… ${earlier} earlier, not shown`);
     }
-    cluster.lines.push(msgLine(e, session, zone, refOf(e)));
+    cluster.lines.push(msgLine(e, me, zone, refOf(e)));
   };
 
   // No separators (§5). They went through `place()`, so every date break and gap marker
@@ -511,8 +518,8 @@ function renderMessages(
   // No turns, no nu state (§2 unrolled): render derives everything from the window's shape.
   // Everything the boundary step CONSUMED is CLOSED (collapsed); after it — including
   // horizon-deferred messages the step never saw — the TRAILING chain, welded API-faithfully.
-  const boundary = closingBoundary(events, session, home);
-  const deferred = deferredInput(events, session, boundary);
+  const boundary = closingBoundary(events, session);
+  const deferred = deferredInput(events, me, boundary);
 
   // Trailing weld sets — pairing is per *use* (a result's `ref_id` = its tool_use id), so
   // parallel tools weld order-independently and a half-filled barrier never leaves an
@@ -541,9 +548,9 @@ function renderMessages(
   {
     let budget = MEDIA_BUDGET;
     for (const e of [...trailing].reverse()) {
-      // world/home attachments, and tool-result attachments (the model asked to see those)
+      // world and own-room attachments, and tool-result attachments (the model asked to see those)
       if (e.type !== "message" && e.type !== "tool_result") continue;
-      if (e.type === "message" && isSelf(e, session)) continue;
+      if (e.type === "message" && isSelf(e, me)) continue;
       for (const p of filesOf(e)) {
         // local bytes only — external links inline as url-source blocks, budget-free
         if (isExternal(p.file.uri) || p.file.size === undefined) continue;
@@ -570,11 +577,15 @@ function renderMessages(
       place("user", { type: "text", text: `[system] error: ${errorTextOf(e)}` });
       continue;
     }
+    if (e.type === "alarm") {
+      place("user", { type: "text", text: alarmLine(e) });
+      continue;
+    }
     if (e.type !== "message") continue;
     if (silent(e)) continue; // said nothing — it closed the turn, it draws no block
-    if (e.envelope.conversation.address === home) {
-      // home: the plain user/assistant chat every LLM API means (§5)
-      place(isSelf(e, session) ? "assistant" : "user", { type: "text", text: bodyOf(e) });
+    if (e.envelope.conversation.address === here) {
+      // the session's own room: the plain user/assistant chat every LLM API means (§5)
+      place(isSelf(e, me) ? "assistant" : "user", { type: "text", text: bodyOf(e) });
     } else {
       world(e);
     }
@@ -604,6 +615,8 @@ function renderMessages(
       });
     } else if (e.type === "error") {
       place("user", { type: "text", text: `[system] error: ${errorTextOf(e)}` });
+    } else if (e.type === "alarm") {
+      place("user", { type: "text", text: alarmLine(e) });
     } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
       place("assistant", thinkingBlock(e));
     } else if (e.type === "tool_use" && welded.has(e.id)) place("assistant", toolUseBlock(e));
@@ -618,9 +631,9 @@ function renderMessages(
       // a directed send dispatched by a welded tool_use is already in the block — skip it
       if (e.payload?.ref_id && welded.has(e.payload.ref_id)) continue;
       if (silent(e)) continue; // said nothing — here too, so the last block stays the world's
-      if (isSelf(e, session) && e.envelope.conversation.address === home) {
+      if (isSelf(e, me) && e.envelope.conversation.address === here) {
         place("assistant", { type: "text", text: bodyOf(e) }); // mid-chain assistant text
-      } else if (e.envelope.conversation.address === home) {
+      } else if (e.envelope.conversation.address === here) {
         place("user", { type: "text", text: bodyOf(e) });
       } else {
         world(e);
@@ -628,7 +641,7 @@ function renderMessages(
       // TRAILING media (§5): after the marker, the picture itself — a real base64
       // image/document block in a user turn (which also closes any open cluster). The
       // agent's own attachments aren't re-shown; the closed region keeps markers only.
-      if (!isSelf(e, session)) {
+      if (!isSelf(e, me)) {
         const blocks = mediaBlocks(e);
         if (blocks.length) place("user", ...blocks);
       }
@@ -975,6 +988,14 @@ export function outcomeLine(e: ToolResultEvent, max = 0): string {
  *  (§5, live-smoke finding). */
 function errorTextOf(e: HarnessErrorEvent): string {
   return e.parts[0]?.data?.error ?? "unknown error";
+}
+
+/** A fired wake (§10), as the agent reads it: its own note handed back at the moment it
+ *  asked for. `[system]` because the harness is the one speaking — the note is quoted, not
+ *  ventriloquized as the principal. No room to name: an alarm fires in the session that
+ *  armed it, which is the session reading it. */
+function alarmLine(e: AlarmEvent): string {
+  return `[system] scheduled wake: ${e.parts[0]?.text ?? ""}`;
 }
 
 /** OUR SIDE produced this row (§3 authorship — presence, not equality): the model's turn

@@ -19,6 +19,7 @@ import type {
   Event,
   Extra,
   MessageEvent,
+  Session,
   SessionId,
   ThinkingEvent,
   ToolUseEvent,
@@ -36,7 +37,7 @@ export type { ModelTransport };
 export interface TurnConfig {
   agentId: AgentId;
   sessionId: SessionId;
-  home: string; // the principal-DM conversation id
+  mind: string; // the session's conversation — `mind:<agent>`, where the principal steers (§4)
   model: string;
   maxTokens: number;
   effort?: Effort;
@@ -78,21 +79,23 @@ export async function nu(
 ): Promise<TurnOutput> {
   const { config } = input;
   const self = { id: config.agentId, session_id: config.sessionId };
-  const mind = {
-    service: "local" as const,
-    connection_address: "agent",
-    conversation: { address: `mind:${config.agentId}` },
+  const session: Session = {
+    id: config.sessionId,
+    agentId: config.agentId,
+    conversation: config.mind,
   };
-  const home = {
+  // one session, one place: thinking, calls and the closing message all land in the
+  // conversation the session speaks in (§4) — the internal ones are simply not delivered.
+  const here = {
     service: "local" as const,
     connection_address: "agent",
-    conversation: { address: config.home },
+    conversation: { address: config.mind },
   };
   const ts = () => new Date().toISOString();
   const errorEvent = (error: string): Draft<Event> => ({
     ts: ts(),
     type: "error",
-    envelope: mind, // harness-authored: no `agent` (§3)
+    envelope: here, // harness-authored: no `agent` (§3)
     parts: [{ type: "data", kind: "error", data: { error } }],
   });
 
@@ -109,9 +112,7 @@ export async function nu(
   // silent: null falls through to a normal turn; the next think retries the checkpoint.
   const summary = await buildSummary({
     events: input.events,
-    sessionId: config.sessionId,
-    agentId: config.agentId,
-    home: config.home,
+    session,
     model: config.model,
     effort: config.effort,
     compactAt: config.compactAt,
@@ -124,8 +125,7 @@ export async function nu(
   const rendered = render({
     events: input.events,
     docs: input.docs,
-    session: config.sessionId,
-    home: config.home,
+    session,
     now: ts(),
     zone: config.timezone,
     ambient: input.ambient,
@@ -161,7 +161,7 @@ export async function nu(
         type: "thinking",
         payload: { turn_id: turnId },
         agent: self,
-        envelope: mind,
+        envelope: here,
         parts: [{
           type: "data",
           kind: "thinking",
@@ -188,7 +188,7 @@ export async function nu(
         ts: ts(),
         type: "message",
         agent: self,
-        envelope: home,
+        envelope: here,
         payload: { turn_id: turnId }, // render's boundary rule (§5)
         ...(Object.keys(extra).length > 0 ? { extra } : {}),
         parts: [{ type: "text", kind: "text", text: em.text }],
@@ -200,7 +200,7 @@ export async function nu(
         type: "tool_use",
         payload: { turn_id: turnId },
         agent: self,
-        envelope: mind,
+        envelope: here,
         parts: [{ type: "data", kind: "tool_use", data: { name: em.name, input: em.input } }],
       };
       events.push(e);

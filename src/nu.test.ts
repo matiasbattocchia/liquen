@@ -9,7 +9,7 @@ import type { Event, MessageEvent, ThinkingEvent, ToolUseEvent } from "./types.t
 const CONFIG: TurnConfig = {
   agentId: "a1",
   sessionId: "s1",
-  home: "home",
+  mind: "mind:a1",
   model: "claude-x",
   maxTokens: 1024,
   retryDelaysMs: [0, 0],
@@ -18,7 +18,7 @@ const CONFIG: TurnConfig = {
 const once = (emissions: Emission[], stop: Anthropic.StopReason = "end_turn") => () =>
   Promise.resolve(canned(emissions, stop));
 
-Deno.test("nu stamps emissions: thinking→mind, assistant→home(+meta.turnId), tool_use→mind", async () => {
+Deno.test("nu stamps emissions: one session, one place — all of them carry the turn", async () => {
   const out = await nu(
     { events: [], docs: [], tools: [], config: CONFIG },
     once([
@@ -33,7 +33,7 @@ Deno.test("nu stamps emissions: thinking→mind, assistant→home(+meta.turnId),
   assertEquals(th.type, "thinking");
   assertEquals(th.envelope.conversation.address, "mind:a1");
   assertEquals(th.agent, { id: "a1", session_id: "s1" });
-  assertEquals(msg.envelope.conversation.address, "home");
+  assertEquals(msg.envelope.conversation.address, "mind:a1");
   assertEquals(msg.payload?.turn_id, th.payload.turn_id); // one turn_id per step
   assertEquals(use.payload.turn_id, th.payload.turn_id);
   assertEquals(use.envelope.conversation.address, "mind:a1");
@@ -75,7 +75,7 @@ Deno.test("nu renders the window it was handed (events reach mu)", async () => {
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: "home" },
+      conversation: { address: "mind:a1" },
       sender: { address: "ana", name: "Ana" },
     },
     parts: [{ type: "text", kind: "text", text: "¿todo bien?" }],

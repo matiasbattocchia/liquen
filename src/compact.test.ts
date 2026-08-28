@@ -6,7 +6,9 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { canned } from "./testing.ts";
 
 let n = 0;
-const msg = (text: string, self: boolean, conv = "home"): MessageEvent => ({
+const SESSION = { id: "s1", agentId: "a1", conversation: "mind:a1" };
+
+const msg = (text: string, self: boolean, conv = "mind:a1"): MessageEvent => ({
   id: `e${String(++n).padStart(3, "0")}`,
   ts: "2026-07-20T10:00:00Z",
   type: "message",
@@ -33,12 +35,12 @@ const summaryEv = (covers: [string, string], text: string): SummaryEvent => ({
 
 Deno.test("span: under the threshold → null", () => {
   const events = [msg("hola", false), msg("¡hola!", true)];
-  assertEquals(compactionSpan(events, "s1", "home", 1_000_000), null);
+  assertEquals(compactionSpan(events, SESSION, 1_000_000), null);
 });
 
 Deno.test("span: no closed region → null even over threshold", () => {
   const events = [msg("hola", false)]; // no closing self message
-  assertEquals(compactionSpan(events, "s1", "home", 1, 0), null);
+  assertEquals(compactionSpan(events, SESSION, 1, 0), null);
 });
 
 Deno.test("span: covers the older closed events, keeps the recent budget", () => {
@@ -49,7 +51,7 @@ Deno.test("span: covers the older closed events, keeps the recent budget", () =>
     msg("respuesta dos", true), // boundary
     msg("tres — trailing", false),
   ];
-  const span = compactionSpan(events, "s1", "home", 1, 150)!;
+  const span = compactionSpan(events, SESSION, 1, 150)!;
   assert(span !== null);
   // ~150 est. tokens keeps the recent tail; the oldest exchange gets covered
   assertEquals(span.covers[0], events[0].id);
@@ -75,9 +77,7 @@ Deno.test("buildSummary: mints a summary event; the checkpoint prompt carries th
   };
   const out = await buildSummary({
     events,
-    sessionId: "s1",
-    agentId: "a1",
-    home: "home",
+    session: SESSION,
     model: "claude-x",
     compactAt: 1,
     keepRecent: 0,
@@ -87,8 +87,8 @@ Deno.test("buildSummary: mints a summary event; the checkpoint prompt carries th
   assertEquals(out.payload.covers[0], events[0].id);
   assertStringIncludes(out.parts[0].text, "informe viernes");
   const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
-  assertStringIncludes(prompt, "[Ana @ home] necesito el informe");
-  assertStringIncludes(prompt, "[me @ home] dale, lo agendo");
+  assertStringIncludes(prompt, "[Ana @ mind:a1] necesito el informe");
+  assertStringIncludes(prompt, "[me @ mind:a1] dale, lo agendo");
   // first checkpoint — no BLOCK (the unified instruction may mention the tag)
   assert(!prompt.includes("<previous-summary>\n"));
   assertEquals(seen[0].tools?.length ?? 0, 0); // bare call, no tools
@@ -108,9 +108,7 @@ Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", asyn
   };
   const out = await buildSummary({
     events,
-    sessionId: "s1",
-    agentId: "a1",
-    home: "home",
+    session: SESSION,
     model: "claude-x",
     compactAt: 1,
     keepRecent: 0,
@@ -126,9 +124,7 @@ Deno.test("buildSummary: a failed model call → null (silent; the next think re
   const events = [msg("hola", false), msg("¡hola!", true)];
   const out = await buildSummary({
     events,
-    sessionId: "s1",
-    agentId: "a1",
-    home: "home",
+    session: SESSION,
     model: "claude-x",
     compactAt: 1,
     keepRecent: 0,
@@ -181,7 +177,11 @@ Deno.test("compactAt sits below what a full window weighs — else the checkpoin
       "raise windowLimit or lower compactAt",
   );
   // and the span is real: older closed events get covered, the recent tail stays faithful
-  const span = compactionSpan(window, "matias", "5492614694650");
+  const span = compactionSpan(window, {
+    id: "matias",
+    agentId: "matias",
+    conversation: "5492614694650",
+  });
   assert(span !== null, "a full window must produce a checkpoint span");
   assert(span.covered.length > 0 && span.covered.length < window.length);
 });
