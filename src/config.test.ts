@@ -131,6 +131,13 @@ Deno.test("agent.tools: a list of names or null — anything else is a boot erro
     );
     assertEquals((await ensureOrgConfig(dir)).agent.tools, ["search", "bash"]);
   });
+  // a fresh file spells the whole default offer out — all the knobs, all the values
+  await withDir(async (dir) => {
+    assertEquals(
+      (await ensureOrgConfig(dir)).agent.tools,
+      ["send", "search", "schedule", "cancel", "bash"],
+    );
+  });
 });
 
 Deno.test("a connections subsection that is not an object is a boot error", async () => {

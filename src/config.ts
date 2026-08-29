@@ -40,6 +40,9 @@ export const DEFAULT_BACKLOG_HOURS = 24;
 export const DEFAULT_MODEL = "claude-sonnet-5";
 export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + tools + text
 export const DEFAULT_TIMEZONE = "UTC"; // explicit, so two boxes render the same stamps
+// the default deployment's whole offer: the four built-ins plus the exec plane's bash.
+// A name added at runtime (an MCP server's tools) joins the offer by being listed here.
+export const DEFAULT_TOOLS = ["send", "search", "schedule", "cancel", "bash"];
 export const DEFAULT_RULES: Rule[] = [
   { tool: "send", action: "ask" }, // dispatch leaves the org, in the principal's name
   { tool: "*", action: "allow" },
@@ -214,11 +217,9 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
       { key: "locale", value: null, doc: "parked until the i18n seam — render is English for now" },
       {
         key: "tools",
-        value: null,
-        doc:
-          "the tools offered to the model, by name — built-ins (send, search, schedule, cancel) " +
-          "and exec tools (bash, MCP) alike; null ⇒ every tool the deployment has. A coding-agent " +
-          'deployment drops "send" here',
+        value: DEFAULT_TOOLS,
+        doc: "the tools offered to the model, by name — built-ins and exec tools (bash, MCP) " +
+          'alike; null ⇒ every tool the deployment has. A coding-agent deployment drops "send"',
       },
       {
         key: "rules",
