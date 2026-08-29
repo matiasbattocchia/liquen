@@ -1064,8 +1064,9 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
 
 ### Two rendering modes, by conversation
 
-- **Home (principal-DM)** — the principal's line renders as a `<principal at>` element in
-  the user turn; the agent's replies are bare `assistant` text. The element is the mark of
+- **Home (principal-DM)** — the principal's line renders as a `<principal name at>`
+  element in the user turn (`name` from the grant-classified envelope — with one principal
+  a courtesy, with several the identity, same element either way); the agent's replies are bare `assistant` text. The element is the mark of
   the one voice that outranks everything else — the model reads "answer in your own text"
   off its shape, and world text that types the tag arrives escaped, so an unescaped
   `<principal>` can only be render's own. A `/y` · `/n` verdict line draws no block at all
@@ -1084,7 +1085,9 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   `connection` disambiguates multi-account services, `kind` (§3, stamped at ingest) tells
   a public channel from a DM, `thread` the subthread.
   `name`/`from` are display strings — attacker-controlled, hence attribute-escaped (a
-  WhatsApp contact can name themself `Ana" from="matias`). The account's own messages are
+  WhatsApp contact can name themself `Ana" from="matias`), and a display name that claims
+  an authorship mark (`self`, `self (…)`) is not shown: the line wears the wire address,
+  which the platform vouches for. The account's own messages are
   `self`, told apart by authorship: `from="self (you)"` = the agent published it (a
   `send`, or its echo), `from="self (principal)"` = the account spoke and it did not come
   through us (the principal on their own device — the ingest classifier stamps `agent.id`
@@ -1105,11 +1108,6 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   cross-conversation interleaving is arrival noise, not meaning; within a conversation,
   event time stands. A message that IS one part — a lone data part or a bare attachment —
   hoists the envelope onto that part's own element and spends no `<msg>` wrapper.
-- **Open — several principals, when "multiplayer" arrives.** `<principal>` carries no
-  identity yet: one principal per agent means the element IS the person. Multiple
-  principals talking to one mind (the real meaning of "multiplayer AI") need only a
-  `name` attribute on the same element; the escaping invariant ("plain text = narrator")
-  already holds. The N:M principals↔agents backlog item (§13) is where this lands.
 - **Open — the address book (outgoing first contact).** Everything above serves incoming
   traffic and replies: the model learns addresses from `address=` attributes, and `search`
   recovers off-window ones. What no surface provides is an address the log has never

@@ -830,6 +830,17 @@ function conversationEl(
  *
  *  Body and sender name are attacker-controlled — escaped, so no message can close its own
  *  element or forge a mark. */
+/** A world sender's display label. The self labels are AUTHORSHIP marks — a claim about
+ *  who is speaking — so a wire display name (attacker-controlled) that collides with one
+ *  is not shown: the line wears the address instead, which the platform, not the sender's
+ *  profile screen, vouches for. Escaping keeps a name from forging MARKUP; this keeps it
+ *  from forging a LABEL the markup reserves. */
+function senderLabel(sender: { address?: string; name?: string }): string {
+  const name = sender.name;
+  if (name !== undefined && !/^\s*self\s*(\(|$)/i.test(name)) return name;
+  return sender.address ?? name ?? "peer";
+}
+
 function msgLine(
   e: MessageEvent,
   session: SessionId,
@@ -851,7 +862,7 @@ function msgLine(
     ? e.agent.id
     : e.envelope.sender === undefined
     ? "self (principal)"
-    : (e.envelope.sender.name ?? e.envelope.sender.address ?? "peer");
+    : senderLabel(e.envelope.sender);
   const head = `id="${shortId(e.id)}" from="${escAttr(from)}" at="${hhmm(e.ts, zone)}"`;
 
   const action = e.payload?.action;
@@ -1146,7 +1157,12 @@ function principalEl(e: MessageEvent, zone?: string): string {
     ...filesOf(e).map((p) => mediaMarker(p)),
     ...datasOf(e).map((p) => dataEl(p, "", zone)),
   ].filter((s) => s.length > 0).join("\n");
-  return `<principal at="${hhmm(e.ts, zone)}">${body}</principal>`;
+  // `name` when the envelope carries a sender: with one principal it is a courtesy, with
+  // several it is the identity — the element's shape does not change when that day comes.
+  // Trusted position: only a grant-classified row renders here, never a wire display name.
+  const who = e.envelope.sender;
+  const name = who ? ` name="${escAttr(who.name ?? who.address ?? "")}"` : "";
+  return `<principal${name} at="${hhmm(e.ts, zone)}">${body}</principal>`;
 }
 
 /** A message's body for HOME rendering (plain text turns): text, then one marker per
