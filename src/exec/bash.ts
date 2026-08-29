@@ -355,11 +355,16 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
  *  stops at the log, not at the filesystem). Landing ON the folder rather than in a subdir
  *  of it is what makes the docs reachable by relative path: the agent's notes are where it
  *  already stands, so writing one is `awrite memories/x.md`, not a path it must be told.
- *  PATH carries two bins, in this order. `src/bin` is SHIPPED — `aread`/`awrite`/`aedit`
- *  are committed shims that locate `afs.ts` beside themselves, so the harness's own tools
- *  are code, versioned with the code that answers for them, and no boot writes them out.
- *  `<dir>/bin` is the ORG's, and comes second: what an org installs there is its own
- *  (`gws`), and it cannot shadow a contract the harness must be able to keep.
+ *  PATH is the doc cascade in binary form — the same widening scopes, narrowest FIRST so
+ *  nothing below can shadow a contract the layer above must keep:
+ *    `src/bin`                SHIPPED — `aread`/`awrite`/`aedit`, committed shims that
+ *                             locate `afs.ts` beside themselves, so the harness's own tools
+ *                             are code, versioned with what answers for them, never written
+ *                             out by a boot.
+ *    `<dir>/org/bin`          what the org installs for all its agents (`gws`).
+ *    `<dir>/agents/<id>/bin`  what THIS agent installed for itself — its own folder, so a
+ *                             binary it fetched is as private as its notes.
+ *    the process's own PATH   inherited verbatim: the system underneath.
  *  `env` (optional) is issued into every spawn — the egress proxy's handoff vars (§9). */
 export async function installExecPlane(
   dir: string,
@@ -369,9 +374,10 @@ export async function installExecPlane(
 ): Promise<ExecPlane> {
   const workspace = `${dir}/agents/${agentId}`;
   const shipped = new URL("../bin", import.meta.url).pathname;
-  const binPath = `${shipped}:${dir}/bin`;
+  const binPath = `${shipped}:${dir}/org/bin:${workspace}/bin`;
   await Deno.mkdir(workspace, { recursive: true });
-  await Deno.mkdir(`${dir}/bin`, { recursive: true });
+  await Deno.mkdir(`${dir}/org/bin`, { recursive: true });
+  await Deno.mkdir(`${workspace}/bin`, { recursive: true });
   const jobs = new Set<Job>();
   const state: BashState = { cwd: workspace };
   return {

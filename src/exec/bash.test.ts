@@ -33,6 +33,26 @@ Deno.test("bash: runs in the workspace, merges stdout+stderr", async () => {
   });
 });
 
+Deno.test("bash: PATH widens by scope — the agent's own bin cannot shadow the shipped one", async () => {
+  await withPlane(async ({ run, dir }) => {
+    // same name in every writable layer: whoever answers is the one PATH reaches first
+    for (const at of [`${dir}/org/bin`, `${wsOf(dir)}/bin`]) {
+      await Deno.writeTextFile(`${at}/whose`, `#!/bin/sh\necho ${at}\n`);
+      await Deno.chmod(`${at}/whose`, 0o755);
+    }
+    assertEquals(await run("whose"), `${dir}/org/bin`);
+    assertEquals(
+      await run("command -v aread"),
+      `${new URL("../bin", import.meta.url).pathname}/aread`,
+    );
+    const path = (await run("echo $PATH")).split(":");
+    assert(
+      path.indexOf(`${dir}/org/bin`) < path.indexOf(`${wsOf(dir)}/bin`),
+      "the org's bin must precede the agent's",
+    );
+  });
+});
+
 Deno.test("bash: user space starts with an empty pocket — the harness env never leaks", async () => {
   Deno.env.set("MU_TEST_SECRET", "xoxp-leak");
   try {

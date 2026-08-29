@@ -1747,7 +1747,8 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   org-wide. **cwd persists between calls like a terminal** (a pwd sentinel appended to each
   command reports the shell's final dir + real exit code; env/venv state does NOT persist)
   — the tbench audit showed the model re-`cd`ing on nearly every call under the old
-  fresh-cwd contract. PATH is prefixed with `src/bin` then `{dir}/bin` (the shipped helpers, then the org's). stdout+stderr
+  fresh-cwd contract. PATH is prefixed with the scope cascade in binary form — `src/bin` · `{dir}/org/bin` ·
+  `{dir}/agents/<id>/bin` — ahead of the process's inherited PATH. stdout+stderr
   merged in arrival order. **Default timeout 120s** (a hung command otherwise holds the turn lock until
   the TTL steal); long work uses the background pattern (`cmd > log 2>&1 &` + `tail`).
   Non-zero exit ⇒ `is_error` result carrying the output + exit code — the agent's
@@ -1790,8 +1791,10 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
 - Shims: `src/bin` ships `aread`/`awrite`/`aedit` as committed `deno run` shims that locate
   `afs.ts` beside themselves — code, versioned with the code that answers for them, written
   by no boot. The Docker image compiles them (`deno compile`); task mode generates its own,
-  dispatching back into the compiled binary. PATH is `src/bin` then `{dir}/bin`, so what an
-  org installs (`gws`) is reachable but cannot shadow a harness contract. The binaries'
+  dispatching back into the compiled binary. PATH widens by scope — `src/bin` (shipped),
+  `{dir}/org/bin` (the org's, `gws`), `{dir}/agents/<id>/bin` (the agent's own), then the
+  system's — narrowest first, so a wider layer is reachable but cannot shadow a harness
+  contract, exactly as the doc cascade resolves. The binaries'
   *contracts* are the spec the db substrate's helper functions mirror later (§9 symmetry).
 
 **Not tools** — deliberately, per the substrate principle (a generic tool + a skill
