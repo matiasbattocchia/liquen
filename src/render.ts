@@ -82,8 +82,10 @@ function byCascade(a: DocEntry, b: DocEntry): number {
     (a.header.name < b.header.name ? -1 : a.header.name > b.header.name ? 1 : 0);
 }
 
+/** A doc's rendered handle: scope + name. The name already carries its folder
+ *  (`instructions/identity`, `skills/workflows`), so the kind would say it twice. */
 function ref(d: DocEntry): string {
-  return `${d.header.scope}/${d.header.kind}/${d.header.name}`;
+  return `${d.header.scope}/${d.header.name}`;
 }
 
 /** An inlined always-doc: a provenance header, then its body. */

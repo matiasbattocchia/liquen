@@ -40,16 +40,16 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
 
   assertEquals(
     prefix.text,
-    "[system/instruction/base]\nSos el alter-ego de Ana.\n\n" +
-      "[org/instruction/clinic]\nClínica Sur · 9–18h L–V.\n\n" +
-      "[agent/instruction/persona]\nHablás como Ana: cálida, breve.",
+    "[system/base]\nSos el alter-ego de Ana.\n\n" +
+      "[org/clinic]\nClínica Sur · 9–18h L–V.\n\n" +
+      "[agent/persona]\nHablás como Ana: cálida, breve.",
   );
   assertEquals(
     index.text,
     "Your on-demand docs — this index is COMPLETE (nothing else exists; never search " +
       "the docs tree). Pull a body with `aread`:\n" +
-      "- org/skill/reschedule — reprogramar un turno → aread /docs/org/skill/reschedule.md\n" +
-      "- org/memory/patients — notas de pacientes → aread /docs/org/memory/patients.md",
+      "- org/reschedule — reprogramar un turno → aread /docs/org/skill/reschedule.md\n" +
+      "- org/patients — notas de pacientes → aread /docs/org/memory/patients.md",
   );
 });
 
@@ -83,7 +83,7 @@ Deno.test("only-bodies ⇒ single block (cached); only-pointers ⇒ single index
 
 Deno.test("a pointer with no description shows its ref + pull path", () => {
   const [index] = renderSystem([doc("org", "skill", "bare", {})]);
-  assertEquals(index.text.endsWith("- org/skill/bare → aread /docs/org/skill/bare.md"), true);
+  assertEquals(index.text.endsWith("- org/bare → aread /docs/org/skill/bare.md"), true);
 });
 
 Deno.test("empty docs ⇒ empty system", () => {
