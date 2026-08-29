@@ -659,16 +659,19 @@ Deno.test("anchored: the window is the limit PLUS whatever shares the floor's bu
   assertEquals(kept.at(-1)!.id, "w011"); // and the newest is always kept
 });
 
-/* ── specsOf: send exists only where somebody is reachable ────────────── */
+/* ── specsOf: the offer is config's to shape ──────────────────────────── */
 
-Deno.test("specsOf: no wire and no peer ⇒ no send — the pure coding-agent shape", () => {
-  const ports = (connected: boolean, agents: { agentId: string }[]) =>
-    ({ log: { connected: () => connected, agents: () => agents } }) as unknown as XiPorts;
-  const names = (p: XiPorts) => specsOf(p, CONFIG).map((t) => t.name);
-  const alone = names(ports(false, [{ agentId: "a1" }]));
-  assertEquals(alone.includes("send"), false);
-  assertEquals(alone.includes("search"), true); // the log itself is still searchable
-  // a live connection reaches the world; a peer agent is reachable by DM — either restores it
-  assertEquals(names(ports(true, [{ agentId: "a1" }])).includes("send"), true);
-  assertEquals(names(ports(false, [{ agentId: "a1" }, { agentId: "b2" }])).includes("send"), true);
+Deno.test("specsOf: `tools` names what the model sees — unset offers everything", () => {
+  const bash = { spec: { name: "bash", description: "", input_schema: { type: "object" } } };
+  const ports = { exec: { bash } } as unknown as XiPorts;
+  const names = (tools?: string[]) => specsOf(ports, { ...CONFIG, tools }).map((t) => t.name);
+  assertEquals(names(), ["send", "search", "schedule", "cancel", "bash"]);
+  // the coding-agent shape: built-ins and exec filter alike, by name
+  assertEquals(names(["search", "schedule", "cancel", "bash"]), [
+    "search",
+    "schedule",
+    "cancel",
+    "bash",
+  ]);
+  assertEquals(names([]), []); // an empty list is a model with no tools at all
 });

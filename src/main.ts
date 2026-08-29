@@ -428,6 +428,8 @@ async function scanAgents(
       model: cfg.model ?? defaults.model ?? org.agent.model,
       effort: cfg.effort ?? defaults.effort ?? org.agent.effort ?? undefined,
       maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.agent.maxTokens,
+      // null survives the funnel: it means "every tool", not "unset"
+      tools: (cfg.tools !== undefined ? cfg.tools : org.agent.tools) ?? undefined,
       rules: cfg.rules ?? org.agent.rules,
       since,
       timezone: (cfg.timezone ?? org.agent.timezone) || undefined,

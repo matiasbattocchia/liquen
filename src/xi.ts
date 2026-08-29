@@ -652,6 +652,10 @@ function unclosedChain(events: Event[], session: Session): boolean {
 /** Turn input + the wake policy (`Wake`, §2 attention) + the permission table (§9) —
  *  main funnels every field from the catalog (org/agent config, config.ts). */
 export interface AgentConfig extends TurnConfig, Wake {
+  /** The tools offered to the model, by name (§9) — built-ins and exec alike; main
+   *  funnels it from `agent.tools`. Unset ⇒ every tool the deployment has. The offer is
+   *  config's to shape: a coding-agent deployment simply leaves `send` off the list. */
+  tools?: string[];
   /** Permission policy as DATA (§9) — the table `gate` is compiled from; main funnels it
    *  from org/agent config. Unset ⇒ the catalog's `DEFAULT_RULES`. */
   rules?: Rule[];
@@ -706,7 +710,7 @@ export interface XiPorts {
     & Locker
     & Pick<Registry, "agents">
     & Pick<Standing, "remember" | "remembered">
-    & Pick<Connections, "upsertMemberships" | "aliases" | "connected">
+    & Pick<Connections, "upsertMemberships" | "aliases">
     & Pick<Timers, "arm" | "timers" | "disarm">;
   docs: Docs;
   /** The model edge. main picks it (Anthropic today) and it travels down the chain unchanged
@@ -1545,12 +1549,8 @@ async function people(log: Pick<Reader, "read">, handle?: string): Promise<strin
 }
 
 export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
-  // `send` exists only where somebody is reachable: a live wire, or a peer agent to DM.
-  // A wireless single-agent deployment (the pure coding-agent shape) never sees it.
-  const reachable = ports.log.connected() ||
-    ports.log.agents().some((a) => a.agentId !== config.agentId);
-  const send: Anthropic.Tool[] = reachable
-    ? [{
+  const all: Anthropic.Tool[] = [
+    {
       name: "send",
       description:
         "Dispatch a message to a peer conversation (never to your principal — just answer them directly).",
@@ -1596,17 +1596,12 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
         },
         required: ["to"],
       },
-    }]
-    : [];
-  return [
-    ...send,
+    },
     {
       name: "search",
-      description: "Search the message log — including everything older than your window." +
-        (reachable
-          ? " Results carry the conversation's `address`, which `in` and `send(to:)` both " +
-            "take back."
-          : ""),
+      description:
+        "Search the message log — including everything older than your window. Results carry " +
+        "the conversation's `address`, which `in` and `send(to:)` both take back.",
       input_schema: {
         type: "object",
         properties: {
@@ -1679,4 +1674,6 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
     },
     ...Object.values(ports.exec ?? {}).map((t) => t.spec),
   ];
+  // the offer is config's to shape (§9): `agent.tools` names what the model sees
+  return config.tools ? all.filter((t) => config.tools!.includes(t.name)) : all;
 }

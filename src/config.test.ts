@@ -116,6 +116,23 @@ Deno.test("one connector's heal keeps the OTHER connectors' comments", async () 
   });
 });
 
+Deno.test("agent.tools: a list of names or null — anything else is a boot error", async () => {
+  await withDir(async (dir) => {
+    await Deno.writeTextFile(
+      `${dir}/config.jsonc`,
+      JSON.stringify({ agent: { tools: "send" } }),
+    );
+    await assertRejects(() => ensureOrgConfig(dir), Error, "tools must be an array of tool names");
+  });
+  await withDir(async (dir) => {
+    await Deno.writeTextFile(
+      `${dir}/config.jsonc`,
+      JSON.stringify({ agent: { tools: ["search", "bash"] } }),
+    );
+    assertEquals((await ensureOrgConfig(dir)).agent.tools, ["search", "bash"]);
+  });
+});
+
 Deno.test("a connections subsection that is not an object is a boot error", async () => {
   await withDir(async (dir) => {
     await Deno.writeTextFile(

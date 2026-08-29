@@ -109,6 +109,7 @@ export interface OrgConfig {
     provider: string | null; // the transport seam; null ⇒ Anthropic
     timezone: string; // IANA; every rendered stamp formats through it (§5)
     locale: string | null; // parked until the i18n seam
+    tools: string[] | null; // the tools offered to the model, by name; null ⇒ all of them
     rules: Rule[]; // permission policy as data (§9)
     engagedMinutes: number; // attention (§2): how long the agent's own last word keeps
     digestAfterMessages: number; //   a conversation hot · the ambient pile that forces a
@@ -211,6 +212,14 @@ const CATALOG: { section: Section; doc: string; entries: Entry[] }[] = [
         doc: "IANA zone every rendered stamp formats through",
       },
       { key: "locale", value: null, doc: "parked until the i18n seam — render is English for now" },
+      {
+        key: "tools",
+        value: null,
+        doc:
+          "the tools offered to the model, by name — built-ins (send, search, schedule, cancel) " +
+          "and exec tools (bash, MCP) alike; null ⇒ every tool the deployment has. A coding-agent " +
+          'deployment drops "send" here',
+      },
       {
         key: "rules",
         value: DEFAULT_RULES,
@@ -573,6 +582,13 @@ function validateAgent(a: Partial<OrgConfig["agent"]>, path: string): void {
       new Intl.DateTimeFormat("en-US", { timeZone: a.timezone });
     } catch {
       throw new Error(`${path}: unknown timezone "${a.timezone}" (IANA name expected)`);
+    }
+  }
+  if (a.tools != null) {
+    const ok = Array.isArray(a.tools) &&
+      (a.tools as unknown[]).every((t) => typeof t === "string" && t !== "");
+    if (!ok) {
+      throw new Error(`${path}: tools must be an array of tool names, or null (⇒ all)`);
     }
   }
   if (a.rules != null) {

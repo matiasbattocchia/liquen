@@ -386,10 +386,9 @@ before acquiring would run a duplicate turn.
 
 ### The send path
 
-`send` is a **plain tool** — full act cycle, no special casing. It is offered only where
-somebody is reachable: a live connection row, or a peer agent to DM. A wireless
-single-agent deployment — the harness as a pure coding agent — has no `send` in its tool
-list at all, so the door to nowhere never exists rather than being a call that fails.
+`send` is a **plain tool** — full act cycle, no special casing. Its existence, like every
+tool's, is config: `agent.tools` (§9) names what the model is offered, so a deployment
+that is a pure coding agent leaves `send` off the list and the door never exists.
 
 ```
 think: mu emits tool_use(send)
