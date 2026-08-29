@@ -65,7 +65,7 @@ import type { Docs } from "./store/docs.ts";
 import type { Locker } from "./store/lock.ts";
 import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
 import { filePartOf, loadMediaBlock } from "./store/media.ts";
-import { hhmm, ownComplex, ownVoice, shortId, silenced, textOf } from "./render.ts"; // shared predicates: silenced never wakes;
+import { hhmm, ownComplex, ownVoice, parseVerdict, shortId, silenced, textOf } from "./render.ts"; // shared predicates: silenced never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { type ModelTransport, nu, type TurnConfig } from "./nu.ts";
@@ -485,28 +485,8 @@ function owedOf(events: Event[], session: Session): Owed[] {
  *  `always` is the widest SCOPE precisely so `all` can mean all of them: a bare `/y` reads
  *  as `/y once`, which makes `/y always` the natural opposite and leaves `all` free for
  *  what it plainly says. One syntax, every door: gateVerdict here, the REPL's own line. */
-const VERDICT = /^\/(y|n)\b(?:\s+(all|once|conv|conn|always)(?=\s|$))?\s*(.*)$/s;
-
-const SCOPES = {
-  once: "once",
-  conv: "conversation",
-  conn: "connection",
-  always: "always",
-} as const;
-
-/** Parse a principal's line into a verdict, or nothing if it isn't one. */
-export function parseVerdict(text: string): PermissionVerdict | undefined {
-  const said = VERDICT.exec(text.trim());
-  if (!said) return undefined;
-  const reason = said[3].trim();
-  const every = said[2] === "all";
-  return {
-    behavior: said[1] === "y" ? "allow" : "deny",
-    scope: every || !said[2] ? "once" : SCOPES[said[2] as keyof typeof SCOPES],
-    ...(reason ? { reason } : {}),
-    ...(every ? { every: true } : {}),
-  };
-}
+export { parseVerdict } from "./render.ts"; // the steering vocabulary lives with the
+// predicate that hides it from the window — one parser, both doors
 
 /**
  * A gate answered from wherever the principal is (§9). The approval card crosses to their

@@ -1064,8 +1064,14 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
 
 ### Two rendering modes, by conversation
 
-- **Home (principal-DM)** — a bare `user`/`assistant` chat: no marks, no grouping, no
-  per-line time (the trailing `now:` anchor is the clock). The agent's console; `send` never appears
+- **Home (principal-DM)** — the principal's line renders as a `<principal at>` element in
+  the user turn; the agent's replies are bare `assistant` text. The element is the mark of
+  the one voice that outranks everything else — the model reads "answer in your own text"
+  off its shape, and world text that types the tag arrives escaped, so an unescaped
+  `<principal>` can only be render's own. A `/y` · `/n` verdict line draws no block at all
+  (it is steering — the gate consumes it), and the principal's room is exempt from the WUM
+  caps: their line is never redacted, whatever the world was doing around it. The agent's
+  console; `send` never appears
   here. Every principal-identified conversation reaches here (§4 self-talk): the mirror
   copies the WA self-chat and the Slack self-DM into the mind, so the principal is plain
   in this mode whichever surface they typed from — the surface lives in `extra.via`
@@ -1094,16 +1100,16 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   delete spell out what it removed. A `<reaction>` spends no id: nothing can point at one.
   Stamps format
   through the org's timezone (org config; stored ts is UTC, §3). Clustering: inbound runs
-  are ts-sorted, then partitioned per conversation in first-arrival order —
+  are ts-sorted, then partitioned per conversation, groups ordered by their last
+  message's ts (the room that just spoke renders nearest the answer point) —
   cross-conversation interleaving is arrival noise, not meaning; within a conversation,
-  event time stands.
-- **Open — XML for the principal too, when "multiplayer" arrives.** Plain-principal works
-  because the mind has ONE untagged voice. Multiple principals talking to one mind (the
-  real meaning of "multiplayer AI") breaks that: two plain voices are indistinguishable,
-  so the principal grows a mark (`<principal name>` or similar) the moment there are two —
-  and at that point the escaping invariant shifts from "plain text = narrator or
-  principal" to "plain text = narrator". Not built: v0 is one principal per agent, and the
-  N:M principals↔agents backlog item (§13) is where this lands.
+  event time stands. A message that IS one part — a lone data part or a bare attachment —
+  hoists the envelope onto that part's own element and spends no `<msg>` wrapper.
+- **Open — several principals, when "multiplayer" arrives.** `<principal>` carries no
+  identity yet: one principal per agent means the element IS the person. Multiple
+  principals talking to one mind (the real meaning of "multiplayer AI") need only a
+  `name` attribute on the same element; the escaping invariant ("plain text = narrator")
+  already holds. The N:M principals↔agents backlog item (§13) is where this lands.
 - **Open — the address book (outgoing first contact).** Everything above serves incoming
   traffic and replies: the model learns addresses from `address=` attributes, and `search`
   recovers off-window ones. What no surface provides is an address the log has never
@@ -1122,10 +1128,12 @@ constraint, and render derives it **from the window's shape**:
 - **Event time wins for the world** — inbound messages render in **`ts`** order, not append
   order: `ts` is real-world event time, `id` is only where the store put it (§3), and a lagged
   webhook or a backfill appends 14:02 after 14:05. Then the run partitions per conversation
-  (first-arrival order) so each room renders as one element. Scoped to contiguous runs of
-  world-authored messages, so it never reorders the machine (tool cycles, thinking, the weld)
-  and never rewrites history — a straggler arriving after the agent already answered stays
-  put, because the answer breaks the run.
+  (groups by last-message ts) so each room renders as one element. A run is every voice but
+  the model's own — the principal's phone-sent lines are lines of their rooms — and rows
+  that render nowhere (gate cards, verdicts) are transparent to it; what ends a run is a
+  rendered block of the machine's chain, so it never reorders the machine (tool cycles,
+  thinking, the weld) and never rewrites history — a straggler arriving after the agent
+  already answered stays put, because the answer breaks the run.
 - **Boundary** — the last self-authored message *in the session's own conversation* whose
   step (`payload.turn_id`, stamped
   by nu) emitted no `tool_use`: a closing assistant text. Everything before it is **closed**.

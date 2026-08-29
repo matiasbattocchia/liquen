@@ -27,6 +27,7 @@ import type {
   FilePart,
   Json,
   MessageEvent,
+  PermissionVerdict,
   ReactionPart,
   Session,
   SessionId,
@@ -196,30 +197,46 @@ export function applySummary(events: Event[]): Event[] {
 
 /** Re-sort inbound messages by `ts` — REAL-WORLD event time, which is what a conversation
  *  means; `id` is only the store's append order (§3), and a lagged webhook or a backfill
- *  appends 14:02 after 14:05. Then partition the run per CONVERSATION (first-arrival
- *  order): a room's messages render adjacent — one element below — because
- *  cross-conversation interleaving is arrival noise, not meaning; within a conversation,
- *  `ts` order stands. Scoped to contiguous runs of world-authored messages: a run
- *  can't span a tool cycle, an agent message, or a turn boundary, so the machine's order —
- *  which the API constrains and the weld depends on — is never touched. Nor is history
- *  rewritten: a straggler that arrives after the agent already answered stays where it
- *  landed, because the answer breaks the run. */
-function byEventTime(events: Event[]): { events: Event[]; elisions: Elisions } {
+ *  appends 14:02 after 14:05. Then partition the run per CONVERSATION: a room's messages
+ *  render adjacent — one element below — because cross-conversation interleaving is arrival
+ *  noise, not meaning; within a conversation, `ts` order stands. A run is WORLD CONTENT:
+ *  every voice but the model's own, in every conversation but the session's — the
+ *  principal's phone-sent lines are lines of their rooms, part of the run like any peer's.
+ *  Rows that render nowhere no matter the region (gate cards, their verdicts, the `/y`
+ *  line itself) are TRANSPARENT: the run flows across them. What ends a run is a rendered
+ *  block of the machine's own chain — the agent's voice, a tool cycle, a turn boundary —
+ *  so the order the API constrains and the weld depends on is never touched. Nor is
+ *  history rewritten: a straggler that arrives after the agent already answered stays
+ *  where it landed, because the answer breaks the run. */
+function byEventTime(
+  events: Event[],
+  session: SessionId,
+  here: string,
+): { events: Event[]; elisions: Elisions } {
   const out = [...events];
   const elisions: Elisions = { earlier: new Map(), rest: new Map() };
-  const inbound = (e: Event) => e.type === "message" && !e.agent;
+  const member = (e: Event) => e.type === "message" && !ownVoice(e, session);
+  const transparent = (e: Event) =>
+    e.type === "permission_request" || e.type === "permission_response" ||
+    (e.type === "message" && !ownVoice(e, session) &&
+      e.envelope.conversation.address === here && parseVerdict(textOf(e)) !== undefined);
   for (let i = 0; i < out.length; i++) {
-    if (!inbound(out[i])) continue;
+    if (!member(out[i])) continue;
     let j = i;
-    while (j + 1 < out.length && inbound(out[j + 1])) j++;
+    while (j + 1 < out.length && (member(out[j + 1]) || transparent(out[j + 1]))) j++;
+    while (!member(out[j])) j--; // a run ends on content, not on a card
+    const seg = out.slice(i, j + 1);
+    const pass = seg.filter((e) => !member(e));
     // stable sort ⇒ same-`ts` messages keep append order
     // the run IS one WUM (§5): sorted, grouped, then CAPPED — the burst does not get to
-    // decide the prompt's size, and what the caps leave out is stated where it was cut
-    const run = capRun(byConversation(out.slice(i, j + 1).sort(byTs)));
+    // decide the prompt's size, and what the caps leave out is stated where it was cut.
+    // The session's own room is exempt: the principal's line is the one input that must
+    // never be redacted, whatever the world was doing around it.
+    const run = capRun(byConversation(seg.filter(member).sort(byTs)), undefined, undefined, here);
     for (const [e, n] of run.elisions.earlier) elisions.earlier.set(e, n);
     for (const [e, r] of run.elisions.rest) elisions.rest.set(e, r);
-    out.splice(i, j - i + 1, ...run.kept);
-    i = i + run.kept.length - 1;
+    out.splice(i, seg.length, ...pass, ...run.kept);
+    i = i + pass.length + run.kept.length - 1;
   }
   return { events: out, elisions };
 }
@@ -260,11 +277,13 @@ export interface Elisions {
 /** Bound one run to the caps. `run` arrives ts-sorted and conversation-partitioned, so
  *  "most recent" is its tail — per group for the first cap, per group-recency for the
  *  second (whole conversations, never half a cluster: a room cut in the middle reads as if
- *  that IS the conversation). */
+ *  that IS the conversation). `exempt` names one conversation both caps pass over — the
+ *  session's own room, whose lines are the principal's and are never redacted. */
 export function capRun(
   run: Event[],
   perConversation = WUM_PER_CONVERSATION,
   total = WUM_TOTAL,
+  exempt?: string,
 ): { kept: Event[]; elisions: Elisions } {
   const elisions: Elisions = { earlier: new Map(), rest: new Map() };
   if (run.length <= perConversation && run.length <= total) return { kept: run, elisions };
@@ -278,9 +297,10 @@ export function capRun(
   }
 
   // cap 1: the tail of each conversation
-  const trimmed = [...groups.values()].map((g) => ({
-    kept: g.slice(-perConversation),
-    dropped: Math.max(0, g.length - perConversation),
+  const trimmed = [...groups.entries()].map(([key, g]) => ({
+    exempt: key === exempt,
+    kept: key === exempt ? g : g.slice(-perConversation),
+    dropped: key === exempt ? 0 : Math.max(0, g.length - perConversation),
   }));
 
   // cap 2: whole conversations, most recently active first — the budget buys the rooms
@@ -293,6 +313,10 @@ export function capRun(
   const chosen = new Set<typeof trimmed[number]>();
   let budget = total;
   for (const g of byRecency) {
+    if (g.exempt) {
+      chosen.add(g); // outside the budget entirely — never dropped, never counted
+      continue;
+    }
     if (g.kept.length > budget) continue; // a room that doesn't fit is left whole, not split
     chosen.add(g);
     budget -= g.kept.length;
@@ -314,8 +338,11 @@ export function capRun(
     return g.kept;
   });
 
-  if (dropped.length > 0 && kept.length > 0) {
-    elisions.rest.set(kept[0], {
+  // the rest-marker anchors on the first surviving WORLD line — world() is what prints it,
+  // and the exempt room's lines render outside any cluster
+  const anchor = kept.find((e) => (e as MessageEvent).envelope.conversation.address !== exempt);
+  if (dropped.length > 0 && anchor) {
+    elisions.rest.set(anchor, {
       conversations: dropped.length,
       messages: dropped.reduce((n, g) => n + g.kept.length + g.dropped, 0),
     });
@@ -370,7 +397,9 @@ export function silent(event: Event): boolean {
   return event.extra?.silence === true;
 }
 
-/** Stable-partition a run by conversation id, groups in first-arrival order. */
+/** Partition a run by conversation id, groups ordered by their LAST message's `ts` — the
+ *  room that spoke most recently renders last, adjacent to the point the model answers
+ *  from. Ties keep first-arrival order (stable sort over insertion order). */
 function byConversation(run: Event[]): Event[] {
   const groups = new Map<string, Event[]>();
   for (const e of run) {
@@ -379,7 +408,34 @@ function byConversation(run: Event[]): Event[] {
     if (!g) groups.set(key, g = []);
     g.push(e);
   }
-  return [...groups.values()].flat();
+  return [...groups.values()].sort((a, b) => byTs(a.at(-1)!, b.at(-1)!)).flat();
+}
+
+/* ── the principal's steering vocabulary (§9) ─────────────────────────── */
+
+const VERDICT = /^\/(y|n)\b(?:\s+(all|once|conv|conn|always)(?=\s|$))?\s*(.*)$/s;
+
+const SCOPES = {
+  once: "once",
+  conv: "conversation",
+  conn: "connection",
+  always: "always",
+} as const;
+
+/** Parse a principal's line into a verdict, or nothing if it isn't one. Lives here because
+ *  the two consumers are render (a verdict line is steering, never conversation — it draws
+ *  no block) and xi (the gate it answers), and xi already imports render's predicates. */
+export function parseVerdict(text: string): PermissionVerdict | undefined {
+  const said = VERDICT.exec(text.trim());
+  if (!said) return undefined;
+  const reason = said[3].trim();
+  const every = said[2] === "all";
+  return {
+    behavior: said[1] === "y" ? "allow" : "deny",
+    scope: every || !said[2] ? "once" : SCOPES[said[2] as keyof typeof SCOPES],
+    ...(reason ? { reason } : {}),
+    ...(every ? { every: true } : {}),
+  };
 }
 const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 
@@ -388,7 +444,11 @@ function renderMessages(
 ): MessageParam[] {
   const me = session.id; // whose voice
   const here = session.conversation; // the session's own room — everything else is world
-  const { events, elisions } = byEventTime(applySummary(window.filter((e) => !silenced(e))));
+  const { events, elisions } = byEventTime(
+    applySummary(window.filter((e) => !silenced(e))),
+    me,
+    here,
+  );
   const out: MessageParam[] = [];
 
   // ref resolution (§5): the WHOLE window, silenced rows included — a delete or a reply often
@@ -584,8 +644,12 @@ function renderMessages(
     if (e.type !== "message") continue;
     if (silent(e)) continue; // said nothing — it closed the turn, it draws no block
     if (e.envelope.conversation.address === here) {
-      // the session's own room: the plain user/assistant chat every LLM API means (§5)
-      place(isSelf(e, me) ? "assistant" : "user", { type: "text", text: bodyOf(e) });
+      if (isSelf(e, me)) {
+        place("assistant", { type: "text", text: bodyOf(e) }); // bare: the agent's own voice
+      } else if (parseVerdict(textOf(e)) === undefined) {
+        place("user", { type: "text", text: principalEl(e, zone) }); // a verdict line is
+        // steering, not conversation — the gate consumed it, so it draws no block
+      }
     } else {
       world(e);
     }
@@ -634,7 +698,9 @@ function renderMessages(
       if (isSelf(e, me) && e.envelope.conversation.address === here) {
         place("assistant", { type: "text", text: bodyOf(e) }); // mid-chain assistant text
       } else if (e.envelope.conversation.address === here) {
-        place("user", { type: "text", text: bodyOf(e) });
+        if (parseVerdict(textOf(e)) === undefined) {
+          place("user", { type: "text", text: principalEl(e, zone) });
+        }
       } else {
         world(e);
       }
@@ -822,6 +888,13 @@ function msgLine(
   }
 
   const failed = e.envelope.status === "failed" ? ' status="failed"' : "";
+  // the hoisting rule again, for attachments: a message that IS one file part — a bare
+  // voice note, a lone photo — wears the envelope on the marker itself and spends no
+  // `<msg>` wrapper. A caption keeps the wrapper: the words are the message's body.
+  const file = e.parts?.length === 1 && e.parts[0].type === "file" && textOf(e) === ""
+    ? e.parts[0]
+    : undefined;
+  if (file) return mediaMarker(file, `${head}${re}${failed}`);
   // canonical addresses (the text wears the display form) — `#` keeps its sigil,
   // a person's address rides bare
   const mentions = e.payload?.mentions?.length
@@ -835,7 +908,7 @@ function msgLine(
   // after (a data part beside text rides inline, attribute-escaped inside its own element)
   const body = [
     escText(textOf(e)),
-    ...filesOf(e).map(mediaMarker),
+    ...filesOf(e).map((p) => mediaMarker(p)),
     ...datasOf(e).map((p) => dataEl(p, "", zone)),
   ].filter((s) => s.length > 0).join(" ");
   return `<msg ${head}${re}${failed}${mentions}>${body}</msg>`;
@@ -1052,12 +1125,28 @@ function datasOf(e: Event): DataPart[] {
  *  `<document/>` — the same rule data parts follow, the durable face of an attachment in
  *  every region: name + the handle. Local uris show the PLAIN path (what `aread`/bash
  *  take); external links show the url itself. Untrusted strings (a wire filename) are
- *  attribute-escaped like everything else. */
-function mediaMarker(p: FilePart): string {
+ *  attribute-escaped like everything else. `head` carries hoisted envelope attributes when
+ *  the part IS the whole message (msgLine's hoisting rule), empty when it rides inline as
+ *  a marker beside text. */
+function mediaMarker(p: FilePart, head = ""): string {
   const tag = p.kind || p.type;
   const name = p.file.name ? ` name="${escAttr(p.file.name)}"` : "";
   const handle = isExternal(p.file.uri) ? p.file.uri : pathOf(p.file.uri);
-  return `<${tag}${name} path="${escAttr(handle)}"/>`;
+  return `<${tag}${head ? ` ${head}` : ""}${name} path="${escAttr(handle)}"/>`;
+}
+
+/** The principal's own line in the session's room (§5): a `<principal>` element, never
+ *  bare text. Bare text in the user role is the narrator's — anchors, `[system]` lines —
+ *  and the one voice that outranks everything else must be the marked one, so the model
+ *  reads "answer in your own text" off the element's shape, not off an absence. Composed
+ *  like a world line (escaped text, then markers), stamped with the org clock. */
+function principalEl(e: MessageEvent, zone?: string): string {
+  const body = [
+    escText(textOf(e)),
+    ...filesOf(e).map((p) => mediaMarker(p)),
+    ...datasOf(e).map((p) => dataEl(p, "", zone)),
+  ].filter((s) => s.length > 0).join("\n");
+  return `<principal at="${hhmm(e.ts, zone)}">${body}</principal>`;
 }
 
 /** A message's body for HOME rendering (plain text turns): text, then one marker per
@@ -1065,7 +1154,11 @@ function mediaMarker(p: FilePart): string {
  *  `msgLine` (escaped there). Every part shape yields a piece, so a location- or contacts-
  *  only message never renders as an empty text block — the API rejects those (400). */
 function bodyOf(e: Event): string {
-  return [textOf(e), ...filesOf(e).map(mediaMarker), ...datasOf(e).map((p) => dataEl(p, ""))]
+  return [
+    textOf(e),
+    ...filesOf(e).map((p) => mediaMarker(p)),
+    ...datasOf(e).map((p) => dataEl(p, "")),
+  ]
     .filter((s) => s.length > 0).join("\n");
 }
 
