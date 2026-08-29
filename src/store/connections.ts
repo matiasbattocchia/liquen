@@ -96,6 +96,10 @@ export interface Connections {
    *  or recorded. Soft-deleted rows KEEP answering — a revocation closes
    *  the gate, never the hiding: the mind copies are that surface's record. */
   aliases(): AliasRow[];
+  /** Is any wire live at all? One un-revoked connection row is enough. This is the
+   *  existence half of the map: capabilities that only mean something on a wire (the
+   *  `send` tool) hang on it, so a wireless deployment never grows a door to nowhere. */
+  connected(): boolean;
   /** Enroll agents in conversations. Upsert only — a re-enroll REVIVES a left row. */
   upsertMemberships(rows: MembershipRow[]): void;
   /** Soft-delete: a channel LEAVE ends the membership's lifetime — `isMember` keeps
@@ -165,6 +169,7 @@ export function createConnections(db: DatabaseSync): Connections {
      WHERE agent_id IS NOT NULL
        AND (json_extract(extra, '$.self_conversation') IS NOT NULL OR service = 'whatsapp')`,
   );
+  const anyC = db.prepare("SELECT 1 AS x FROM connections WHERE deleted_at IS NULL LIMIT 1");
   const putM = db.prepare(
     `INSERT INTO memberships (service, connection_address, conversation_address, agent_id, created_at)
      VALUES (?, ?, ?, ?, ?)
@@ -221,6 +226,10 @@ export function createConnections(db: DatabaseSync): Connections {
         ...(r.credential_key ? { credentialKey: r.credential_key } : {}),
         ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
       };
+    },
+
+    connected(): boolean {
+      return anyC.get() !== undefined;
     },
 
     aliases(): AliasRow[] {

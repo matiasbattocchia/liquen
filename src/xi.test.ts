@@ -6,7 +6,9 @@ import {
   gateOf,
   parseVerdict,
   relevant,
+  specsOf,
   type Wake,
+  type XiPorts,
 } from "./xi.ts";
 import type { Envelope, Event, Session } from "./types.ts";
 
@@ -655,4 +657,18 @@ Deno.test("anchored: the window is the limit PLUS whatever shares the floor's bu
   const kept = anchored(trickle(12), 4);
   assertEquals(kept.length, 6); // :30 … :55 — never fewer than the limit
   assertEquals(kept.at(-1)!.id, "w011"); // and the newest is always kept
+});
+
+/* ── specsOf: send exists only where somebody is reachable ────────────── */
+
+Deno.test("specsOf: no wire and no peer ⇒ no send — the pure coding-agent shape", () => {
+  const ports = (connected: boolean, agents: { agentId: string }[]) =>
+    ({ log: { connected: () => connected, agents: () => agents } }) as unknown as XiPorts;
+  const names = (p: XiPorts) => specsOf(p, CONFIG).map((t) => t.name);
+  const alone = names(ports(false, [{ agentId: "a1" }]));
+  assertEquals(alone.includes("send"), false);
+  assertEquals(alone.includes("search"), true); // the log itself is still searchable
+  // a live connection reaches the world; a peer agent is reachable by DM — either restores it
+  assertEquals(names(ports(true, [{ agentId: "a1" }])).includes("send"), true);
+  assertEquals(names(ports(false, [{ agentId: "a1" }, { agentId: "b2" }])).includes("send"), true);
 });

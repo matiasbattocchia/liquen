@@ -386,7 +386,10 @@ before acquiring would run a duplicate turn.
 
 ### The send path
 
-`send` is a **plain tool** — full act cycle, no special casing:
+`send` is a **plain tool** — full act cycle, no special casing. It is offered only where
+somebody is reachable: a live connection row, or a peer agent to DM. A wireless
+single-agent deployment — the harness as a pure coding agent — has no `send` in its tool
+list at all, so the door to nowhere never exists rather than being a call that fails.
 
 ```
 think: mu emits tool_use(send)

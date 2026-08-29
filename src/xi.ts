@@ -706,7 +706,7 @@ export interface XiPorts {
     & Locker
     & Pick<Registry, "agents">
     & Pick<Standing, "remember" | "remembered">
-    & Pick<Connections, "upsertMemberships" | "aliases">
+    & Pick<Connections, "upsertMemberships" | "aliases" | "connected">
     & Pick<Timers, "arm" | "timers" | "disarm">;
   docs: Docs;
   /** The model edge. main picks it (Anthropic today) and it travels down the chain unchanged
@@ -838,7 +838,7 @@ async function think(
     {
       events,
       docs,
-      tools: specsOf(ports),
+      tools: specsOf(ports, config),
       config,
       ambient,
       // trailing-region media → real image/document blocks (§5); the store loads, render picks
@@ -1544,9 +1544,13 @@ async function people(log: Pick<Reader, "read">, handle?: string): Promise<strin
   return found as string[];
 }
 
-function specsOf(ports: XiPorts): Anthropic.Tool[] {
-  return [
-    {
+export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
+  // `send` exists only where somebody is reachable: a live wire, or a peer agent to DM.
+  // A wireless single-agent deployment (the pure coding-agent shape) never sees it.
+  const reachable = ports.log.connected() ||
+    ports.log.agents().some((a) => a.agentId !== config.agentId);
+  const send: Anthropic.Tool[] = reachable
+    ? [{
       name: "send",
       description:
         "Dispatch a message to a peer conversation (never to your principal — just answer them directly).",
@@ -1592,12 +1596,17 @@ function specsOf(ports: XiPorts): Anthropic.Tool[] {
         },
         required: ["to"],
       },
-    },
+    }]
+    : [];
+  return [
+    ...send,
     {
       name: "search",
-      description:
-        "Search the message log — including everything older than your window. Results carry " +
-        "the conversation's `address`, which `in` and `send(to:)` both take back.",
+      description: "Search the message log — including everything older than your window." +
+        (reachable
+          ? " Results carry the conversation's `address`, which `in` and `send(to:)` both " +
+            "take back."
+          : ""),
       input_schema: {
         type: "object",
         properties: {
