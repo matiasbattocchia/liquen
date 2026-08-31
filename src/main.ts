@@ -51,9 +51,9 @@ import type { AlarmEvent, Draft, Emit, Event } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
   DEFAULT_STOP_TIMEOUT_MS,
-  ensureOrgConfig,
+  findRoot,
   type OrgConfig,
-  readAgentOverrides,
+  readConfig,
   TICK_MS,
 } from "./config.ts";
 
@@ -94,7 +94,7 @@ async function installProxy(dir: string): Promise<ProxyHandle> {
     fronted.push(pick.key);
   }
   console.error(
-    `[main] egress proxy on :${proxy.port}` +
+    `egress proxy on :${proxy.port}` +
       (fronted.length ? ` — fronting ${fronted.join(", ")}` : ""),
   );
   return {
@@ -110,12 +110,14 @@ export interface MainConfig {
   dir: string; // the org's data root (§9): log/ · system/ · org/ · agents/
   /** One agent per principal. The `Policy` half (readable/writable, §6) never reaches xi:
    *  main lifts it into the agent's scoped log — locally a wrapper, on Postgres a credential.
-   *  OMIT to create agents "the framework way": every folder under `agents/` declares one
-   *  (a blank folder is a blank agent) — agentId = the folder name, the session's
-   *  conversation = `mind:<name>`,
+   *  OMIT to create agents "the framework way": the catalog's `agents` roster declares
+   *  them — agentId = the entry's name, the session's conversation = `mind:<name>`,
    *  model/effort/maxTokens from the defaults below. */
   principals?: (AgentConfig & Policy)[];
-  model?: string; // defaults for folder-declared agents (ignored when `principals` is given)
+  /** The resolved catalog (readConfig at the entry point) — the roster and every funneled
+   *  knob when `principals` is omitted; ignored when it is given. */
+  catalog?: OrgConfig;
+  model?: string; // defaults for roster-declared agents (ignored when `principals` is given)
   effort?: AgentConfig["effort"];
   maxTokens?: number;
   /** The backlog an agent INHERITS when it comes up, in hours (§5); default 24. Read once,
@@ -153,16 +155,17 @@ export async function start(
   const dir = await Deno.realPath(config.dir);
   const log = await openLog(`${dir}/log`);
   const docs = openFileDocs(dir); // the doc cascade lives on the data root itself (§8, §9)
-  // the framework way (§9): no explicit principals ⇒ every folder under agents/ IS an agent
+  // the framework way (§9): no explicit principals ⇒ the catalog's roster IS the org
   const derived = config.principals === undefined; // …and gets the connections-map policy (§6)
-  // the catalog (config.ts): read once, here — main is the only reader, and it funnels the
-  // resolved values down the chain. Explicit principals (tests, task mode) skip the files.
-  const org = derived ? await ensureOrgConfig(dir) : null;
+  // the catalog: the entry point read the file once (readConfig) and hands main the VALUE —
+  // main funnels the resolved values down the chain. Explicit principals (tests, task mode)
+  // carry their own settings and need no catalog at all.
+  const catalog = derived ? config.catalog ?? null : null;
   const principals: Principal[] = config.principals ??
-    await scanAgents(dir, config, org!, Date.now());
-  // the registry mirrors what runs (§9): folders + config.jsonc are the source of truth, the
-  // table is their projection — it exists because policy derives from rows (RLS later, §6)
-  // and the ingest classifier scans the declared handles (email/phone → principal)
+    await compileRoster(dir, config, catalog!, Date.now());
+  // config → tables → folders (§9): the declaration compiles into the registry — the table
+  // exists because policy derives from rows (RLS later, §6) and the ingest classifier
+  // scans the declared handles (email/phone → principal)
   log.syncAgents(principals.map((p) => ({
     agentId: p.agentId,
     mind: p.mind,
@@ -193,7 +196,7 @@ export async function start(
     for (const p of principals) {
       planes.set(
         p.agentId,
-        await installExecPlane(dir, p.agentId, proxy!.env, org?.system.bashTimeoutMs),
+        await installExecPlane(dir, p.agentId, proxy!.env, catalog?.system.bashTimeoutMs),
       );
     }
   }
@@ -232,7 +235,7 @@ export async function start(
     const run = xi(a.config, a.ports, trigger)
       // a failed invocation never affects the next one — but it is SAID: a swallowed throw
       // reads as a healthy agent that chose silence
-      .catch((err) => console.error(`[main] ${a.config.agentId} invocation failed:`, err))
+      .catch((err) => console.error(`${a.config.agentId} invocation failed:`, err))
       .finally(() => outstanding.delete(run));
     outstanding.add(run);
   };
@@ -253,7 +256,7 @@ export async function start(
   // Only world triggers wait. A trigger-less poke (boot, the clock) has no burst to wait for,
   // and the agent's own writes are how a turn CHAINS to the next one — delaying those would
   // put the debounce between every step of a single piece of work.
-  const debounceMs = config.debounceMs ?? org?.system.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+  const debounceMs = config.debounceMs ?? catalog?.system.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const settling = new Map<string, number>();
   const wake = (a: (typeof agents)[number]) => {
     const fire = invoke(a);
@@ -296,22 +299,21 @@ export async function start(
     read: (q) => log.read(q),
     aliases: () => log.aliases(),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
-    settleMs: org?.system.mirrorSettleMs,
-    claimMs: org?.system.mirrorClaimMs,
-    onError: (e, err) =>
-      console.error(`[main] mirror FAILED on ${e.envelope.conversation.address}:`, err),
+    settleMs: catalog?.system.mirrorSettleMs,
+    claimMs: catalog?.system.mirrorClaimMs,
+    onError: (e, err) => console.error(`mirror FAILED on ${e.envelope.conversation.address}:`, err),
   }));
   // the transcriber rides the RAW log too (§5): connector-neutral — an audio message is an
   // audio message whatever surface it landed on, including alias conversations the scoped
   // ports hide. Inert unless the org configured an audio processor.
-  if (org?.processors.audio) {
+  if (catalog?.processors.audio) {
     unsubs.push(createTranscriber({
       subscribe: (l, o) => log.subscribe(l, o),
       publish: log.publish,
-      command: org.processors.audio,
-      locale: org.agent.locale,
+      command: catalog.processors.audio,
+      locale: catalog.org.locale,
       onError: (e, err) =>
-        console.error(`[main] transcriber FAILED on ${e.envelope.conversation.address}:`, err),
+        console.error(`transcriber FAILED on ${e.envelope.conversation.address}:`, err),
     }));
   }
   for (const a of agents) invoke(a)(); // boot: no trigger ⇒ look at whatever the log owes
@@ -360,7 +362,7 @@ export async function start(
   // one window and mostly answers `ignore`. A constant, not a knob: it is the resolution
   // of the attention intervals, not one of them.
   const ticker = setInterval(() => {
-    fireDue().catch((err) => console.error("[main] firing scheduled wakes failed:", err));
+    fireDue().catch((err) => console.error("firing scheduled wakes failed:", err));
     agents.forEach((a) => invoke(a)());
   }, TICK_MS);
 
@@ -380,7 +382,7 @@ export async function start(
       // mode, killed outright by the process exit that follows).
       await withTimeout(
         Promise.all([...outstanding]),
-        config.stopTimeoutMs ?? org?.system.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+        config.stopTimeoutMs ?? catalog?.system.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
       );
       // each agent's own jobs, reaped with its own plane (§9)
       for (const plane of planes.values()) await plane.reap();
@@ -394,59 +396,58 @@ export async function start(
  *  declared facts (`provider` for the transport seam, `email`/`phone` for the classifier). */
 type Principal = AgentConfig & Policy & { provider?: string; email?: string; phone?: string };
 
-/** The framework way (§9): every directory under `agents/` declares one agent — a blank
- *  folder is a blank agent, and an optional `config.jsonc` inside it overrides the catalog
- *  key by key (config.ts). agentId = sessionId = the folder name (v0: session ≈ agent, §7),
- *  the session's conversation = `mind:<name>` (§4): the mind session is the one
- *  with tools, where the agent is steered; the principal talks straight into it (the REPL
- *  needs no identity map — principal name = agent name), and platform DMs alias onto it at
- *  ingest ("principal handle → principal-DM alias", the special wiring).
+/** The framework way (§9): the catalog's `agents` roster declares the org — each entry
+ *  becomes a registry row and a home folder, config → tables → folders. agentId =
+ *  sessionId = the entry's name (v0: session ≈ agent, §7), the session's conversation =
+ *  `mind:<name>` (§4): the mind session is the one with tools, where the agent is steered;
+ *  the principal talks straight into it (the REPL needs no identity map — principal name =
+ *  agent name), and platform DMs alias onto it at ingest ("principal handle →
+ *  principal-DM alias", the special wiring).
  *
- *  Resolution, most specific wins: agent config.jsonc → MainConfig (the process: tests) →
- *  org config.jsonc — which always exposes the whole catalog, so nothing falls through. */
-async function scanAgents(
+ *  Resolution, most specific wins: agents.<name> → MainConfig (the process: tests) →
+ *  org.agent — every key has a default, so nothing falls through. The clock and locale
+ *  are the ORG's alone: one deployment, one wall time. */
+async function compileRoster(
   dir: string,
   defaults: Pick<MainConfig, "model" | "effort" | "maxTokens" | "backlogHours" | "lockTtlMs">,
-  org: OrgConfig,
+  catalog: OrgConfig,
   startedAt: number,
 ): Promise<Principal[]> {
-  await Deno.mkdir(`${dir}/agents`, { recursive: true });
   // the backlog is resolved ONCE, into an instant: every agent in this org comes up owing
   // the same stretch of history, and no later read re-decides where that stretch begins
-  const hours = defaults.backlogHours ?? org.organization.backlogHours;
+  const hours = defaults.backlogHours ?? catalog.org.backlogHours;
   const since = new Date(startedAt - hours * 3_600_000).toISOString();
+  const org = catalog.org.agent;
   const found: Principal[] = [];
-  for await (const entry of Deno.readDir(`${dir}/agents`)) {
-    if (!entry.isDirectory) continue;
-    const overrides = await readAgentOverrides(dir, entry.name);
-    const cfg = overrides.agent ?? {};
-    const identity = overrides.identity ?? {};
+  for (const [name, entry] of Object.entries(catalog.agents)) {
+    await Deno.mkdir(`${dir}/agents/${name}`, { recursive: true }); // the home is derived
+    const { identity = {}, ...cfg } = entry;
     found.push({
-      agentId: entry.name,
-      sessionId: entry.name,
-      mind: `mind:${entry.name}`,
-      model: cfg.model ?? defaults.model ?? org.agent.model,
-      effort: cfg.effort ?? defaults.effort ?? org.agent.effort ?? undefined,
-      maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.agent.maxTokens,
+      agentId: name,
+      sessionId: name,
+      mind: `mind:${name}`,
+      model: cfg.model ?? defaults.model ?? org.model,
+      effort: cfg.effort ?? defaults.effort ?? org.effort ?? undefined,
+      maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.maxTokens,
       // null survives the funnel: it means "every tool", not "unset"
-      tools: (cfg.tools !== undefined ? cfg.tools : org.agent.tools) ?? undefined,
-      rules: cfg.rules ?? org.agent.rules,
+      tools: (cfg.tools !== undefined ? cfg.tools : org.tools) ?? undefined,
+      rules: cfg.rules ?? org.rules,
       since,
-      timezone: (cfg.timezone ?? org.agent.timezone) || undefined,
-      locale: cfg.locale ?? org.agent.locale ?? undefined,
+      timezone: catalog.org.timezone || undefined,
+      locale: catalog.org.locale ?? undefined,
       // attention (§2): the wake policy is the agent's — hot, summoned, or on the digest
-      engagedMinutes: cfg.engagedMinutes ?? org.agent.engagedMinutes,
-      digestAfterMessages: cfg.digestAfterMessages ?? org.agent.digestAfterMessages,
-      digestMinutes: cfg.digestMinutes ?? org.agent.digestMinutes,
+      engagedMinutes: cfg.engagedMinutes ?? org.engagedMinutes,
+      digestAfterMessages: cfg.digestAfterMessages ?? org.digestAfterMessages,
+      digestMinutes: cfg.digestMinutes ?? org.digestMinutes,
       // null survives the funnel: it means "never sleeps", not "unset" (Wake, §2)
-      sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.agent.sleepHours,
+      sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.sleepHours,
       // the system half funnels too — org-wide, no per-agent seat (harness machinery)
-      lockTtlMs: defaults.lockTtlMs ?? org.system.lockTtlMs,
-      windowLimit: org.system.windowLimit,
-      retryDelaysMs: org.system.retryDelaysMs,
-      compactAt: org.system.compactAt,
-      keepRecent: org.system.keepRecent,
-      provider: cfg.provider ?? org.agent.provider ?? undefined,
+      lockTtlMs: defaults.lockTtlMs ?? catalog.system.lockTtlMs,
+      windowLimit: catalog.system.windowLimit,
+      retryDelaysMs: catalog.system.retryDelaysMs,
+      compactAt: catalog.system.compactAt,
+      keepRecent: catalog.system.keepRecent,
+      provider: cfg.provider ?? org.provider ?? undefined,
       email: identity.email,
       phone: identity.phone,
     });
@@ -464,4 +465,19 @@ function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
       resolve();
     });
   });
+}
+
+// Headless entry: the deployment's main. `mu start` spawns it; the REPL (cli.ts) instead
+// hosts start() in-process to paint the stream.
+if (import.meta.main) {
+  const root = findRoot();
+  const dir = `${root}/data`;
+  const catalog = await readConfig(root);
+  const main = await start({ dir, catalog });
+  console.error(`agents: ${Object.keys(catalog.agents).join(", ")} · log: ${dir}/log`);
+  for (const sig of ["SIGTERM", "SIGINT"] as const) {
+    Deno.addSignalListener(sig, () => {
+      main.stop().finally(() => Deno.exit(0));
+    });
+  }
 }

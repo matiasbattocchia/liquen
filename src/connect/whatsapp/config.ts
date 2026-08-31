@@ -11,7 +11,7 @@
  * and the bridge is single-tenant to it.
  */
 
-import { checkPort, type ConnectorSpec, ensureConnectorConfig } from "../../config.ts";
+import { checkPort, connectorConfig, type ConnectorSpec } from "../../config.ts";
 
 export const DEFAULT_INGEST_PORT = 8793;
 export const DEFAULT_BRIDGE_URL = "http://localhost:8081";
@@ -24,14 +24,15 @@ export interface WhatsappConfig {
 const aString = (v: unknown): string | null =>
   typeof v === "string" && v ? null : "must be a non-empty string";
 
-const SPEC: ConnectorSpec = {
+export const SPEC: ConnectorSpec = {
   name: "whatsapp",
   doc: "whatsapp — the whatsmeow bridge's mu side (ingest, dispatch, pairing)",
   entries: [
     {
       key: "ingestPort",
       value: DEFAULT_INGEST_PORT,
-      doc: "where the bridge POSTs webhook batches",
+      doc:
+        "where the bridge POSTs webhook batches — the bridge holds this address, so declare it (0 re-rolls per restart)",
       check: checkPort,
     },
     {
@@ -44,6 +45,6 @@ const SPEC: ConnectorSpec = {
 };
 
 /** Read (and heal) `connections.whatsapp` from the org's config.jsonc. */
-export function whatsappConfig(dir = "./data"): Promise<WhatsappConfig> {
-  return ensureConnectorConfig<WhatsappConfig>(dir, SPEC);
+export function whatsappConfig(root: string): Promise<WhatsappConfig> {
+  return connectorConfig<WhatsappConfig>(root, SPEC);
 }

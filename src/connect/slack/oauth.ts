@@ -31,6 +31,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
+import { findRoot } from "../../config.ts";
 
 export interface SlackOAuthConfig {
   clientId: string;
@@ -197,13 +198,14 @@ if (import.meta.main) {
   const { openCredentials } = await import("../../store/credentials.ts");
   const { pickSlackApp } = await import("./connect.ts");
   const { slackConfig } = await import("./config.ts");
-  const dir = "./data";
-  const { oauthPort: port, botScopes, userScopes } = await slackConfig(dir);
+  const root = findRoot();
+  const dir = `${root}/data`;
+  const { oauthPort: port, botScopes, userScopes } = await slackConfig(root);
   const creds = await openCredentials(dir);
   const appFlag = Deno.args.indexOf("--app");
   const app = await pickSlackApp(creds, appFlag >= 0 ? Deno.args[appFlag + 1] : undefined)
     .catch((e) => {
-      console.error(`[slack-oauth] ${e.message}`);
+      console.error(`[oauth] ${e.message}`);
       Deno.exit(2);
     });
   const config: SlackOAuthConfig = {
@@ -223,6 +225,6 @@ if (import.meta.main) {
     // v0 auto-registration: the Slack-verified identity IS the principal handle for now
     bindPrincipal: ({ team, user }) => Promise.resolve(`slack:${team}:${user}`),
   });
-  console.error(`[slack-oauth] on :${port} — share <public>/oauth/slack/start`);
+  console.error(`[oauth] on :${port} — share <public>/oauth/slack/start`);
   Deno.serve({ port }, handler);
 }

@@ -11,6 +11,7 @@ import type { Policy } from "./policy.ts";
 import type { Draft, Event, MessageEvent } from "./types.ts";
 import type { ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
+import { type OrgConfig, readConfig } from "./config.ts";
 
 type Principal = AgentConfig & Policy;
 
@@ -39,6 +40,15 @@ function principalMsg(mind: string, text: string): Draft<MessageEvent> {
     },
     parts: [{ type: "text", kind: "text", text }],
   };
+}
+
+/** A derived-mode org: the catalog's roster declares the agents (the framework way, §9). */
+async function orgDir(
+  agents: Record<string, unknown>,
+): Promise<{ root: string; dir: string; catalog: OrgConfig }> {
+  const root = await Deno.makeTempDir();
+  await Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ agents }));
+  return { root, dir: `${root}/data`, catalog: await readConfig(root) };
 }
 
 async function waitFor(cond: () => Promise<boolean> | boolean, ms = 4000): Promise<void> {
@@ -201,17 +211,16 @@ Deno.test("every model call is metered: spend lands in the usage table, per agen
   assertEquals(rows[0].turn_id, turn);
 });
 
-Deno.test("the framework way: folders under agents/ declare the org; the table mirrors them", async () => {
-  const dir = await Deno.makeTempDir();
-  await Deno.mkdir(`${dir}/agents/ana`, { recursive: true });
-  await Deno.mkdir(`${dir}/agents/bo`, { recursive: true });
+Deno.test("the framework way: the catalog's roster declares the org; the table mirrors it", async () => {
+  const { root, dir, catalog } = await orgDir({ ana: {}, bo: {} });
   const { transport } = scripted([reply("hola"), reply("hola")]);
-  // no `principals`: the folders ARE the agents — a blank folder is a blank agent (§9)
-  const main = await start({ dir, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  // no `principals`: the catalog's roster IS the org — a blank entry is a blank agent (§9)
+  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
     transport,
   });
   try {
-    assertEquals(main.log.agents(), [ // the registry mirrors the folders (the RLS substrate)
+    await Deno.stat(`${dir}/agents/ana`); // config → folders: boot derived the home
+    assertEquals(main.log.agents(), [ // the registry mirrors the roster (the RLS substrate)
       { agentId: "ana", mind: "mind:ana", model: "claude-x" },
       { agentId: "bo", mind: "mind:bo", model: "claude-x" },
     ]);
@@ -221,25 +230,20 @@ Deno.test("the framework way: folders under agents/ declare the org; the table m
     );
     const [r] = (await main.log.read({ types: ["message"] }))
       .filter((e) => e.agent?.session_id === "ana");
-    assertEquals(r.envelope.conversation.address, "mind:ana"); // folder name → mind:<name> (§4)
+    assertEquals(r.envelope.conversation.address, "mind:ana"); // entry name → mind:<name> (§4)
   } finally {
     await main.stop();
-    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(root, { recursive: true });
   }
 });
 
 Deno.test("config.jsonc declares the agent: settings override defaults, handles mirror in (§9)", async () => {
-  const dir = await Deno.makeTempDir();
-  await Deno.mkdir(`${dir}/agents/ana`, { recursive: true });
-  await Deno.writeTextFile(
-    `${dir}/agents/ana/config.jsonc`,
-    JSON.stringify({
-      agent: { model: "claude-y", effort: "low" }, // the catalog's agent keys, overridden
-      identity: { email: "ana@org.example" }, // the handles a human knows the agent by
-    }),
-  );
+  const { root, dir, catalog } = await orgDir({
+    // org.agent's keys, overridden per agent — plus the handles a human knows it by
+    ana: { model: "claude-y", effort: "low", identity: { email: "ana@org.example" } },
+  });
   const { transport } = scripted([reply("hola")]);
-  const main = await start({ dir, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
     transport,
   });
   try {
@@ -262,16 +266,14 @@ Deno.test("config.jsonc declares the agent: settings override defaults, handles 
   const db = new DatabaseSync(`${dir}/log/log.db`);
   const rows = db.prepare("SELECT model FROM usage").all();
   db.close();
-  await Deno.remove(dir, { recursive: true });
+  await Deno.remove(root, { recursive: true });
   assertEquals(rows, [{ model: "claude-y" }]);
 });
 
 Deno.test("derived policy: another agent's mind is invisible — no spurious turn (§6)", async () => {
-  const dir = await Deno.makeTempDir();
-  await Deno.mkdir(`${dir}/agents/ana`, { recursive: true });
-  await Deno.mkdir(`${dir}/agents/bo`, { recursive: true });
+  const { root, dir, catalog } = await orgDir({ ana: {}, bo: {} });
   const { transport, calls } = scripted([reply("hola")]);
-  const main = await start({ dir, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
     transport,
   });
   try {
@@ -283,19 +285,17 @@ Deno.test("derived policy: another agent's mind is invisible — no spurious tur
     assertEquals(calls(), 1); // bo's tail never delivered ana's mind; bo's boot read saw nothing
   } finally {
     await main.stop();
-    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(root, { recursive: true });
   }
 });
 
 Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls both (§6)", async () => {
-  const dir = await Deno.makeTempDir();
-  await Deno.mkdir(`${dir}/agents/ana`, { recursive: true });
-  await Deno.mkdir(`${dir}/agents/bo`, { recursive: true });
+  const { root, dir, catalog } = await orgDir({ ana: {}, bo: {} });
   // ana's first think emits a send to "bo"; every later think closes tersely (empty script)
   const { transport } = scripted([
     canned([{ kind: "tool_use", name: "send", input: { to: "bo", text: "hola bo" } }], "tool_use"),
   ]);
-  const main = await start({ dir, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
     transport,
   });
   try {
@@ -326,13 +326,12 @@ Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls
     assertEquals(dm.agent?.session_id, "ana");
   } finally {
     await main.stop();
-    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(root, { recursive: true });
   }
 });
 
 Deno.test("send anchors to the conversation's own connection — a reply lands where it came from (§4)", async () => {
-  const dir = await Deno.makeTempDir();
-  await Deno.mkdir(`${dir}/agents/ana`, { recursive: true });
+  const { root, dir, catalog } = await orgDir({ ana: {} });
   const { transport } = scripted([
     canned([{
       kind: "tool_use",
@@ -340,7 +339,7 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
       input: { to: "C1", text: "on it" },
     }], "tool_use"),
   ]);
-  const main = await start({ dir, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
     transport,
   });
   try {
@@ -392,7 +391,7 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
     assertEquals(out.envelope.conversation.kind, "channel");
   } finally {
     await main.stop();
-    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(root, { recursive: true });
   }
 });
 

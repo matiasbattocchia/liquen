@@ -42,6 +42,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Conversation, Draft, FilePart, MessageEvent, Part } from "../../types.ts";
 import { fromSlack } from "../flavor.ts";
+import { findRoot } from "../../config.ts";
 
 /** The wire's file attachment — only the fields the media seam reads. */
 export interface SlackFileRef {
@@ -575,7 +576,7 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => vo
         if (!closed) setTimeout(connect, 1_000); // Slack refreshes sockets routinely
       };
     } catch (err) {
-      console.error("[slack] socket error:", err instanceof Error ? err.message : err);
+      console.error("[ingest] socket error:", err instanceof Error ? err.message : err);
       if (!closed) setTimeout(connect, 5_000);
     }
   };
@@ -589,17 +590,19 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => vo
 
 /* ── local entry: Socket Mode carriers (from the vault) or HTTP ─────────────
  *
- *   deno task ingest:slack       # xapp in the vault → socket mode; else HTTP on :8789
+ *   deno task run:slack       # xapp in the vault → socket mode; else HTTP on :8789
  *
  * Env: none — everything comes from the vault. Socket carriers are the app-level
  * tokens the bot door stored (`mu connect slack bot`), one socket per app (§4). No
  * carrier ⇒ HTTP mode on connections.slack.ingestPort, verified by the app's
  * signing secret (`mu connect slack app` stores it). */
-if (import.meta.main) {
+/** Wire the inbound half over the org's log — resident once it returns (socket or server). */
+export async function runIngest(): Promise<void> {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { kindOf, saveMedia } = await import("../../store/media.ts");
-  const dir = "./data";
+  const root = findRoot();
+  const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
   // socket carriers: every org bot with an app-level token (the bot door stores it as
@@ -638,7 +641,7 @@ if (import.meta.main) {
       });
       return { type: "file", kind: kindOf(file.mime_type), file };
     } catch (err) {
-      console.error("[slack] media download failed:", err instanceof Error ? err.message : err);
+      console.error("[ingest] media download failed:", err instanceof Error ? err.message : err);
       return null;
     }
   };
@@ -659,12 +662,19 @@ if (import.meta.main) {
     signingSecret: app?.value.signing_secret || undefined,
   });
   if (carriers.length > 0) {
-    console.error(`[slack] socket-mode ingest, ${carriers.length} carrier(s) → ${dir}/log`);
+    console.error(`[ingest] socket mode, ${carriers.length} carrier(s) → ${dir}/log`);
     for (const t of carriers) slackSocket(t, handler);
   } else {
     const { slackConfig } = await import("./config.ts");
-    const port = (await slackConfig(dir)).ingestPort;
-    console.error(`[slack] HTTP ingest on :${port} → ${dir}/log (Events API request URL)`);
-    Deno.serve({ port }, handler);
+    const { serveIngest } = await import("../serve.ts");
+    const port = (await slackConfig(root)).ingestPort;
+    serveIngest(
+      "connections.slack.ingestPort",
+      port,
+      handler,
+      (bound) => console.error(`[ingest] HTTP on :${bound} → ${dir}/log (Events API request URL)`),
+    );
   }
 }
+
+if (import.meta.main) await runIngest();

@@ -17,7 +17,7 @@
 import { TextLineStream } from "@std/streams";
 import { userInfo } from "node:os";
 import { start } from "./main.ts";
-import { ensureOrgConfig, readAgentOverrides } from "./config.ts";
+import { findRoot, readConfig } from "./config.ts";
 import { outcomeLine, ownVoice, SILENCE, silent } from "./render.ts";
 import { describeCall } from "./describe.ts";
 import { parseVerdict } from "./xi.ts";
@@ -35,9 +35,11 @@ const YELLOW = "\x1b[33m";
 const CYAN = "\x1b[36m";
 const RESET = "\x1b[0m";
 
-// The org lives where you run mu — a path constant like any other. Every knob is in the
-// catalog (`data/config.jsonc`, config.ts); env is for secrets only.
-const dir = "./data";
+// The org lives where you run mu: the nearest config.jsonc up from cwd is the project
+// marker (findRoot), and the substrate sits beside it. Env is for secrets only.
+const root = findRoot();
+const dir = `${root}/data`;
+const catalog = await readConfig(root);
 
 // The trusted-localhost principal (§9): identity is the OS username — and when the agent
 // folder shares that name, no identity map exists at all (principal name = agent name).
@@ -53,13 +55,16 @@ const username = (() => {
 const target = Deno.args[0] ?? username;
 const session = target; // session_id ≈ agent id in v0 (§7)
 const home = `mind:${target}`; // the home IS the mind session (§4): steer where the tools live
-// resolved here in scanAgents' OWN order (agent file → org catalog) so the banner names
-// the model that will actually run: the agent's own config.jsonc outranks the org's
-const model = (await readAgentOverrides(dir, target)).agent?.model ??
-  (await ensureOrgConfig(dir)).agent.model;
-
-// the framework way: running IS scaffolding — a blank org bootstraps your alter-ego
-await Deno.mkdir(`${dir}/agents/${target}`, { recursive: true });
+// the roster is the catalog's: an agent the config does not declare cannot run
+if (!(target in catalog.agents)) {
+  console.error(
+    `no agent "${target}" in ${root}/config.jsonc — declare it: "agents": { "${target}": {} }`,
+  );
+  Deno.exit(1);
+}
+// resolved here in the roster's OWN order (agents.<name> → org.agent) so the banner names
+// the model that will actually run
+const model = catalog.agents[target].model ?? catalog.org.agent.model;
 
 const homeEnv = {
   service: "local" as const,
@@ -178,8 +183,8 @@ function paint(e: Event): void {
 }
 
 const main = await start({
-  dir, // no principals: the folders under agents/ declare the org (the framework way, §9)
-  // …and no settings either: everything funnels from the catalog (org/agent config.jsonc)
+  dir, // no principals: the catalog's roster declares the org (the framework way, §9)
+  catalog, // …and no settings either: everything funnels from it
   onDelta: (d) => {
     if (d.kind === "text") say(d.text ?? "");
     else if (d.kind === "thinking") write(`${DIM}${d.text ?? ""}${RESET}`);

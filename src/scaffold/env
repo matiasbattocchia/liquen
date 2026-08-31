@@ -1,0 +1,2 @@
+# .env — secrets only. Every knob lives in config.jsonc.
+# ANTHROPIC_API_KEY=

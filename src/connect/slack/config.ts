@@ -8,12 +8,7 @@
  * them (`withScopes`) — so the app you create and the consent you request cannot drift.
  */
 
-import {
-  checkPort,
-  checkStrings,
-  type ConnectorSpec,
-  ensureConnectorConfig,
-} from "../../config.ts";
+import { checkPort, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
 
 export const DEFAULT_INGEST_PORT = 8789;
 export const DEFAULT_OAUTH_PORT = 8790;
@@ -47,14 +42,14 @@ export interface SlackConfig {
   userScopes: string[];
 }
 
-const SPEC: ConnectorSpec = {
+export const SPEC: ConnectorSpec = {
   name: "slack",
   doc: "slack — ingest (HTTP mode), the hosted oauth door, dispatch",
   entries: [
     {
       key: "ingestPort",
       value: DEFAULT_INGEST_PORT,
-      doc: "the HTTP-mode ingest port (Socket Mode needs none)",
+      doc: "the HTTP-mode ingest port (Socket Mode needs none); 0 = any free port, announced",
       check: checkPort,
     },
     {
@@ -79,6 +74,6 @@ const SPEC: ConnectorSpec = {
 };
 
 /** Read (and heal) `connections.slack` from the org's config.jsonc. */
-export function slackConfig(dir = "./data"): Promise<SlackConfig> {
-  return ensureConnectorConfig<SlackConfig>(dir, SPEC);
+export function slackConfig(root: string): Promise<SlackConfig> {
+  return connectorConfig<SlackConfig>(root, SPEC);
 }

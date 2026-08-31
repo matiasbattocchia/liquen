@@ -32,6 +32,7 @@ import type {
   MessageEvent,
   Subscriber,
 } from "../../src/connector.ts";
+import { findRoot } from "../../src/connector.ts";
 
 export interface GhTarget {
   owner: string;
@@ -125,9 +126,11 @@ function textOf(e: Event): string {
 
 /* ── local entry: `post` shells `gh`, the resolved token issued into its spawn env ─────── */
 
-if (import.meta.main) {
+/** Wire the outbound half over the org's log — resident once it returns (subscribed). */
+export async function runDispatch(): Promise<void> {
   const { openLog, openCredentials, createGrantBroker } = await import("../../src/connector.ts");
-  const dir = "./data";
+  const root = findRoot();
+  const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
   const broker = createGrantBroker({ creds });
@@ -167,15 +170,17 @@ if (import.meta.main) {
     post: ghPost,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onSent: (e, id) =>
-      console.error(`[github-dispatch] sent → ${e.envelope.conversation.address} (comment ${id})`),
+      console.error(`[dispatch] sent → ${e.envelope.conversation.address} (comment ${id})`),
     onError: (e, err) =>
-      console.error(`[github-dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
+      console.error(`[dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
   });
   if (!(await creds.get("github:org"))) {
     console.error(
-      "[github-dispatch] WARNING: no github:org in the vault (`mu connect github bot`) — " +
+      "[dispatch] WARNING: no github:org in the vault (`mu connect github bot`) — " +
         "posts fall back to authors' own grants",
     );
   }
-  console.error(`[github-dispatch] watching ${dir}/log for outbound github sends`);
+  console.error(`[dispatch] watching ${dir}/log for outbound sends`);
 }
+
+if (import.meta.main) await runDispatch();

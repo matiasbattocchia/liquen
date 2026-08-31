@@ -32,8 +32,8 @@ workspace, and its docs (identity, org, memories — edit them, boot never overw
 
 ## Knobs
 
-Every knob lives in `data/config.jsonc` (the catalog, materialized on first boot — edit
-values there; comments document each key). Env is for secrets only. Task mode is the one
+Every knob lives in `config.jsonc` at the project root (the catalog — `mu init`
+materializes it, the system never writes it; comments document each key). Env is for secrets only. Task mode is the one
 exception left: `MU_MODEL` · `MU_EFFORT` (env, pending the same treatment).
 
 ## Connections
@@ -42,8 +42,7 @@ exception left: `MU_MODEL` · `MU_EFFORT` (env, pending the same treatment).
 
 ```sh
 deno task connect github     # app / bot / user doors → the vault (secrets live there)
-deno task ingest:github      # webhook receiver → the log
-deno task dispatch:github    # agent replies → gh api (token resolved from the vault)
+deno task run:github         # the connection: webhook receiver → the log, replies → gh api
 gh webhook forward --repo=you/repo \
   --events=issue_comment,pull_request,pull_request_review_comment \
   --url=http://localhost:8788/
@@ -80,8 +79,8 @@ gh webhook forward --repo=you/repo \
 5. **Run the connection** (both halves, over the shared `./data` root):
 
    ```sh
-   deno task ingest:slack      # xapp in the vault → Socket Mode; else HTTP (Events API)
-   deno task dispatch:slack    # agent replies → chat.postMessage (bot token from the store)
+   deno task run:slack         # both halves in one process: Socket Mode (or HTTP) in,
+                               # chat.postMessage out (tokens from the vault)
    ```
 
    The ingest is one webhook function either way — Socket Mode is just the local carrier;

@@ -30,6 +30,7 @@
 
 import type { GrantBroker } from "./grants.ts";
 import type { CA } from "./ca.ts";
+import { findRoot } from "../config.ts";
 
 // dropped when re-originating: hop-by-hop headers (RFC 7230 §6.1) + the tunnel's host
 const HOP_BY_HOP = new Set([
@@ -276,7 +277,8 @@ if (import.meta.main) {
   const { openCredentials } = await import("../store/credentials.ts");
   const { createGrantBroker } = await import("./grants.ts");
   const { openCA } = await import("./ca.ts");
-  const dir = "./data";
+  const root = findRoot();
+  const dir = `${root}/data`;
   const creds = await openCredentials(dir);
 
   let key = Deno.args[0];

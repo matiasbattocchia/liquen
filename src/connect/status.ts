@@ -11,9 +11,11 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { openLog } from "../store/log.ts";
+import { findRoot } from "../config.ts";
 
 if (import.meta.main) {
-  const dir = "./data";
+  const root = findRoot();
+  const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const db = new DatabaseSync(`${dir}/log/log.db`);
   const rows = (sql: string) => db.prepare(sql).all() as Record<string, unknown>[];

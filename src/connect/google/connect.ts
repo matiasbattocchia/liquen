@@ -20,6 +20,7 @@
  */
 
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
+import { findRoot } from "../../config.ts";
 
 export const APP_PREFIX = "google:app:";
 
@@ -75,7 +76,8 @@ export async function pickGoogleApp(
  * The account door serves its callback on connections.google.oauthPort. */
 if (import.meta.main) {
   const { openCredentials } = await import("../../store/credentials.ts");
-  const dir = "./data";
+  const root = findRoot();
+  const dir = `${root}/data`;
   const [verb, ...rest] = Deno.args;
 
   const flags = new Map<string, string>();
@@ -118,7 +120,7 @@ if (import.meta.main) {
       })();
       const app = await pickGoogleApp(creds, flags.get("app"));
       const { googleConfig } = await import("./config.ts");
-      const port = (await googleConfig("./data")).oauthPort;
+      const port = (await googleConfig(root)).oauthPort;
       const log = await openLog(`${dir}/log`);
       const done = Promise.withResolvers<void>();
       const handler = createGoogleOAuth({

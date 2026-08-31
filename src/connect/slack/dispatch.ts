@@ -25,6 +25,7 @@ import type { DeliveryPatch, Subscriber } from "../../store/log.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../../types.ts";
 import { type Directory, encodeSlackText } from "../mentions.ts";
 import { toSlack } from "../flavor.ts";
+import { findRoot } from "../../config.ts";
 
 export interface SlackTarget {
   connection: string; // the workspace the conversation anchors to (§4)
@@ -286,10 +287,12 @@ function textOf(e: Event): string {
 
 /* ── local entry: `post` = chat.postMessage with the workspace bot token ──────────────── */
 
-if (import.meta.main) {
+/** Wire the outbound half over the org's log — resident once it returns (subscribed). */
+export async function runDispatch(): Promise<void> {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
-  const dir = "./data";
+  const root = findRoot();
+  const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
 
@@ -427,9 +430,11 @@ if (import.meta.main) {
     directory: logDirectory((q) => log.read(q)),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onSent: (e, ts) =>
-      console.error(`[slack-dispatch] sent → ${e.envelope.conversation.address} (ts ${ts})`),
+      console.error(`[dispatch] sent → ${e.envelope.conversation.address} (ts ${ts})`),
     onError: (e, err) =>
-      console.error(`[slack-dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
+      console.error(`[dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
   });
-  console.error(`[slack-dispatch] watching ${dir}/log for outbound slack sends`);
+  console.error(`[dispatch] watching ${dir}/log for outbound sends`);
 }
+
+if (import.meta.main) await runDispatch();

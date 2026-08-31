@@ -33,6 +33,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
+import { findRoot } from "../../config.ts";
 
 export interface SlackConnectDeps {
   /** The registry name the pasted grant belongs to (v0: principal name = agent name). */
@@ -325,7 +326,8 @@ if (import.meta.main) {
   const { userInfo } = await import("node:os");
   const { slackConfig } = await import("./config.ts");
 
-  const dir = "./data";
+  const root = findRoot();
+  const dir = `${root}/data`;
   const [first, ...rest] = Deno.args;
   const verb = first === "app" || first === "bot" || first === "user" ? first : "user";
 
@@ -394,7 +396,7 @@ if (import.meta.main) {
     }
   })();
 
-  const { botScopes, userScopes } = await slackConfig(dir);
+  const { botScopes, userScopes } = await slackConfig(root);
   const manifest = userManifest(withScopes(
     JSON.parse(
       await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),

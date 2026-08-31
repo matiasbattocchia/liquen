@@ -4,12 +4,7 @@
  * into `data/config.jsonc` under `connections.google` and are validated at boot.
  */
 
-import {
-  checkPort,
-  checkStrings,
-  type ConnectorSpec,
-  ensureConnectorConfig,
-} from "../../config.ts";
+import { checkPort, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
 
 export const DEFAULT_CALENDARS = ["primary"];
 export const DEFAULT_OAUTH_PORT = 8791;
@@ -30,7 +25,7 @@ export interface GoogleConfig {
   scopes: string[];
 }
 
-const SPEC: ConnectorSpec = {
+export const SPEC: ConnectorSpec = {
   name: "google",
   doc: "google — the oauth door and the calendar poll",
   entries: [
@@ -56,6 +51,6 @@ const SPEC: ConnectorSpec = {
 };
 
 /** Read (and heal) `connections.google` from the org's config.jsonc. */
-export function googleConfig(dir = "./data"): Promise<GoogleConfig> {
-  return ensureConnectorConfig<GoogleConfig>(dir, SPEC);
+export function googleConfig(root: string): Promise<GoogleConfig> {
+  return connectorConfig<GoogleConfig>(root, SPEC);
 }

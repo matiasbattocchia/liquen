@@ -1214,7 +1214,99 @@ throws "a reaction needs `re`"), so the don't-quote rule is about `text` alone. 
 only for now — a mechanical guard is available (an `re` naming the conversation's own last
 message is redundant by construction) and unbuilt, pending whether the wording holds.
 
+### One config to declare the org — root catalog, roster, `mu init`, the Docker shape (2026-08-29) — LANDED
+
+The framework way completed its arc: **the org is a project, and `config.jsonc` at the
+project root is both its marker and its whole declaration**. `findRoot` walks up from cwd
+the way git finds `.git` (the `./data` constant is gone from every entry point — ~20 of
+them now derive `<root>/data`), and the file carries five sections split by audience:
+`system` (machinery tuning), `org` (deployment identity — timezone/locale/backlogHours,
+one clock for the whole org, plus `org.agent` defaults), `processors`, `agents` (the
+roster: sparse overrides + `identity` handles), `connections`. Per-agent
+`data/agents/<a>/config.jsonc` died with the move, and so did every write the system made
+to config: no materialize-on-boot, no heal-appends — `mu init` writes the full commented
+catalog ONCE, git is its history, a key left out takes its default, an unknown key still
+fails the boot loudly. Direction of truth flipped with it: **config → tables → folders** —
+boot compiles the roster into registry rows and creates the missing homes; what the system
+learns at runtime (grants, discovered handles, verdicts) lands in log.db tables, never in
+the file. main stopped reading files altogether: the entry point resolves the catalog and
+hands main the VALUE (`MainConfig.catalog`); `connectorConfig` replaced
+`ensureConnectorConfig` (read-only, same specs, same checks).
+
+`mu init <path> [agent…]` landed as the scaffolder (`deno task init` until `mu start`
+exists): materialize the catalog, copy `src/scaffold/` (AGENTS.md · Dockerfile ·
+entrypoint.sh · deno.jsonc · .env · .gitignore), interpolate the name, mkdir
+connectors/·processors/·data/. The scaffold's Docker pieces are the settled shape written
+down: one volume (`-v ./data:/data`, `/app/data` symlinked to it), the entrypoint turns
+the roster into Linux users (uid pinned by name-hash so volume ownership survives
+rebuilds), lays `/home/<a> → /data/agents/<a>` and the permission sweep (log/ 700 root ·
+org/ 2775+ACL · system/ read-only · homes 700), then execs `mu start`. The harness's half
+is live now: when the process runs as root and `/etc/passwd` knows the agent, every bash
+spawn drops to that uid with HOME/USER/LOGNAME following (exec/bash.ts) — the kernel,
+not the prompt, enforces the classification. Local dev keeps running as one user,
+unchanged; the repo's own org migrated to the root catalog in the same landing.
+
+Still open from this arc: `mu start` itself (the supervisor — roster the connector
+processes from `connections.<name>`), and the JSR split that makes a scaffolded project's
+`deno.jsonc` import `@mu/core` (local dev via Deno's `links`).
+
 The seed template is now identical to what runs; it had drifted four blocks behind.
+
+### `mu start` — the org as one command (2026-08-31) — LANDED
+
+The supervisor (`src/start.ts`) is a keep-alive loop and nothing more, written from zero
+because every off-the-shelf option (process-compose, supervisord, s6) is configured by its
+own manifest — and ours must derive from config.jsonc, so the generator keeping a second
+file in sync would outweigh the supervisor itself. The log-as-bus had already removed what
+supervisors are big for: no dependency order, no readiness probes, no IPC, no launch
+contract beyond `cwd: root`. What remains: spawn main + one child per `connections.<name>`
+(`Deno.execPath() run -A <run.ts>`, env untouched), respawn on exit with doubling backoff
+(1s → 60s, forgiven after a healthy minute), SIGTERM fan-out with `system.stopTimeoutMs`
+then SIGKILL. Death is loud on stderr and nowhere else; the outer layer (docker restart,
+`--init` for reaping, the terminal) supervises `mu start` itself.
+
+Two decisions shaped it beyond the loop:
+
+- **A connection is ONE process.** Ingest and dispatch merged into a per-connector
+  `run.ts` (the files stay separate; the halves became exported `runIngest`/`runDispatch`).
+  The mirror incident (2026-08-18) was a half-dead connection — one direction alive, cards
+  not crossing, both ends waiting. One process per connection makes half-alive
+  unrepresentable: either half dying takes the connection down, and the supervisor brings
+  both back together. Discovery collapsed with it: `connections.<name>` declared → spawn
+  the connector folder's `run.ts` (core's `src/connect/<name>/`, else the org's
+  `connectors/<name>/`); a declared connection with no `run.ts` fails the boot loudly.
+- **main gained a headless entry** (`import.meta.main` in main.ts): findRoot → readConfig →
+  start, SIGTERM-clean. cli.ts stays the interactive wrapper hosting start() in-process.
+  The egress proxy needs no seat of its own — main already hosts it (`installProxy`).
+
+The parallel-boot crash from the pending list died in passing: all processes open log.db
+at startup and the DDL takes the exclusive lock, but `PRAGMA busy_timeout` was set *after*
+`journal_mode=WAL` — which itself takes that lock — so a simultaneous boot's loser threw
+`database is locked` before the timeout applied. The pragma now comes first in both opens
+(log.ts, credentials.ts); losers wait instead of dying.
+
+Tasks renamed with the merge: `run:<name>` replaces each `ingest:`/`dispatch:` pair;
+`deno task start` is the headless org. Still open: the JSR split (`@mu/core` + `links`)
+that makes a scaffolded project's `mu start` real outside this repo.
+
+Two DX follow-ups landed the same day, prompted by a test flake traced to parallel
+harnesses fighting over ports (the suite's freePort() binds :0 and RELEASES it — a
+window another org's run can steal):
+
+- **`ingestPort: 0` = any free port, announced.** An ingest port is an address something
+  dials, and the dialer sets the rule: a peer that holds the org's address (the WA
+  bridge's URL, an Events API request URL) needs a declared port; a dialer that reads
+  your terminal (`gh webhook forward`, a test) can take 0. `serveIngest`
+  (src/connect/serve.ts) is the one front door: bind, announce the bound port, and on a
+  taken port fail naming the knob to set (`connections.slack.ingestPort`). The xproc
+  test now spawns on 0 and reads the announcement — the steal window is gone.
+- **The supervisor stamps every child line** — `HH:MM:SS [name] …`, stdout/stderr split
+  preserved — so attribution is the harness's property: panics and stack traces land
+  tagged, greppable by process, by devs and agents alike. After the boot lines, silence
+  from `mu start` means every process is up. Services stopped self-naming with it: the
+  process tag is the supervisor's (standalone, the terminal is the tag), and inside a
+  connection process a line carries at most a MODULE tag — `[ingest]`, `[dispatch]`,
+  `[oauth]`, `[exec]`, `[proxy]` — so a supervised line reads `[whatsapp] [dispatch] …`.
 
 ## The honest framing
 

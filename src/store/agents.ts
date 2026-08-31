@@ -2,16 +2,14 @@
  * store/agents.ts — the agent registry (§9): the rows agents ARE.
  *
  * An agent is a row — identity + its mind session; docs, workspace, memory may all be empty
- * and the
- * agent still fully exists. But rows are terrible DX to author, so agents are created "the
- * framework way": a folder under `data/agents/<name>/` declares the agent, an optional
- * `config.jsonc` inside it declares its settings (`provider`, `model`, `effort`) and the
- * handles a human knows (`email`, `phone`), and at start main scans the folders and SYNCS
- * this table to them. **Folders + config.jsonc are the source of truth; the table mirrors
- * them** — it exists because policy and the ingest classifier need rows (RLS derives from
- * the registry on Postgres, and the scoped-log policy derives from it here, §6; a sender
- * whose address matches an agent's `phone`/`email` is that agent's principal), not because
- * rows are how humans make agents.
+ * and the agent still fully exists. But rows are terrible DX to author, so agents are
+ * created "the framework way": the catalog's `agents` section declares the roster — each
+ * entry carries its settings (`provider`, `model`, `effort`) and the handles a human knows
+ * (`email`, `phone`) — and at boot main COMPILES the declaration: config → this table →
+ * home folders. The table exists because policy and the ingest classifier need rows (RLS
+ * derives from the registry on Postgres, and the scoped-log policy derives from it here,
+ * §6; a sender whose address matches an agent's `phone`/`email` is that agent's
+ * principal), not because rows are how humans make agents.
  *
  * Mirror semantics: sync upserts every given agent and DELETES the rest — the table is a
  * projection of what runs, never an archive (events keep their own `agent_id` stamps).

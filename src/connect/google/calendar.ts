@@ -56,6 +56,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
 import type { CalendarData, CalendarPart, Conversation, Draft, MessageEvent } from "../../types.ts";
+import { findRoot } from "../../config.ts";
 
 const SERVICE = "google" as const;
 const GRANT_PREFIX = "google:";
@@ -416,21 +417,23 @@ async function bootstrap(
 
 /* ── local entry: a standalone poll service into the org log (./data) ───────────────────────
  *
- *   deno task ingest:google        # sweeps every google grant on a metronome
+ *   deno task run:google        # sweeps every google grant on a metronome
  *
  * The harness (`deno task cli`) on the SAME data root turns each calendar change into a poke.
  * Env: none — the data root is `./data`; the calendars come from config
  * (`connections.google.calendars`), the cadence is a constant. The store imports are
  * dynamic so importing `createGoogleWebhook` (e.g. from an edge function) never pulls in
  * file I/O. */
-if (import.meta.main) {
+/** Wire the poller over the org's log — resident once it returns (interval armed). */
+export async function runIngest(): Promise<void> {
   const POLL_MS = 60_000;
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { createGrantBroker } = await import("../../proxy/grants.ts");
   const { googleConfig } = await import("./config.ts");
-  const dir = "./data";
-  const { calendars } = await googleConfig(dir);
+  const root = findRoot();
+  const dir = `${root}/data`;
+  const { calendars } = await googleConfig(root);
 
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
@@ -440,12 +443,14 @@ if (import.meta.main) {
     creds,
     broker,
     calendars,
-    onError: (key, err) => console.error(`[google] poll FAILED on ${key}:`, err),
-    onPolled: (key, cal, n) => n && console.error(`[google] ${key} ${cal}: +${n} changes`),
+    onError: (key, err) => console.error(`[ingest] poll FAILED on ${key}:`, err),
+    onPolled: (key, cal, n) => n && console.error(`[ingest] ${key} ${cal}: +${n} changes`),
   });
   console.error(
-    `[google] calendar poll every ${POLL_MS}ms → ${dir}/log  (calendars: ${calendars.join(", ")})`,
+    `[ingest] calendar poll every ${POLL_MS}ms → ${dir}/log  (calendars: ${calendars.join(", ")})`,
   );
   await poller.tick(); // once at boot: seed cursors / catch up
   setInterval(() => poller.tick(), POLL_MS);
 }
+
+if (import.meta.main) await runIngest();

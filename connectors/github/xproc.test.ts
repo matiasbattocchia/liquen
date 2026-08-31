@@ -8,16 +8,9 @@
  */
 
 import { assertEquals } from "@std/assert";
+import { TextLineStream } from "@std/streams";
 import type { Event, MessageEvent } from "../../src/connector.ts";
 import { openLog } from "../../src/connector.ts";
-
-/** Grab a free port by binding :0 and releasing it (small race, fine for a test). */
-function freePort(): number {
-  const l = Deno.listen({ port: 0 });
-  const port = (l.addr as Deno.NetAddr).port;
-  l.close();
-  return port;
-}
 
 /** Poll the ingest's ping until it answers (the process is up and serving). */
 async function waitReady(port: number, ms = 10_000): Promise<void> {
@@ -41,7 +34,6 @@ async function waitReady(port: number, ms = 10_000): Promise<void> {
 
 Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in ANOTHER process", async () => {
   const dir = await Deno.makeTempDir();
-  const port = freePort();
   const script = new URL("./ingest.ts", import.meta.url).pathname; // absolute — cwd-independent
 
   // a subscriber in THIS process — exactly what `main` does — resolves on the first gh message
@@ -54,20 +46,38 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
   });
 
   // the ingest runs as a SEPARATE OS process over the same org — the org lives where you
-  // run mu (a cwd, not an env var), and the port is its config knob, not an env var
+  // run mu (a cwd, not an env var). `ingestPort: 0` = any free port, read off the
+  // announcement — no bind-and-release race for a parallel suite to steal.
   await Deno.writeTextFile(
-    `${dir}/data/config.jsonc`,
-    JSON.stringify({ connections: { github: { ingestPort: port } } }),
+    `${dir}/config.jsonc`,
+    JSON.stringify({ connections: { github: { ingestPort: 0 } } }),
   );
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", script],
     cwd: dir,
     stdout: "null",
-    stderr: "null",
+    stderr: "piped",
   }).spawn();
+  let resolvePort!: (n: number) => void;
+  const announced = new Promise<number>((r) => (resolvePort = r));
+  const drain = (async () => { // scan for the announcement, then keep the pipe from filling
+    const lines = child.stderr.pipeThrough(new TextDecoderStream())
+      .pipeThrough(new TextLineStream());
+    for await (const line of lines) {
+      const m = line.match(/serving :(\d+)/);
+      if (m) resolvePort(Number(m[1]));
+    }
+  })();
 
   let timer: number | undefined;
   try {
+    const port = await Promise.race([
+      announced,
+      new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error("ingest never announced its port")), 10_000);
+      }),
+    ]);
+    clearTimeout(timer);
     await waitReady(port);
     const res = await fetch(`http://localhost:${port}/`, {
       method: "POST",
@@ -97,6 +107,7 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
     unsub();
     child.kill("SIGKILL");
     await child.status;
+    await drain; // the kill ends the stream; the reader must finish before the test does
     await log.close();
     await Deno.remove(dir, { recursive: true });
   }

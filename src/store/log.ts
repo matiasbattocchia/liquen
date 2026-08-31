@@ -162,8 +162,8 @@ export async function openLog(dir: string): Promise<Log> {
   // bound first — same DDL, same guarantee (evaluated at INSERT, under the write lock).
   db.function("uuidv7", () => newId());
   db.exec(
-    `PRAGMA journal_mode=WAL;
-     PRAGMA busy_timeout=5000;
+    `PRAGMA busy_timeout=5000;
+     PRAGMA journal_mode=WAL;
      PRAGMA synchronous=NORMAL;
      CREATE TABLE IF NOT EXISTS events (
        id     TEXT PRIMARY KEY DEFAULT (uuidv7()),  -- uuidv7: identity AND append order

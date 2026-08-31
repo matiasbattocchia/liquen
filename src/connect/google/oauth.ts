@@ -38,6 +38,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
+import { findRoot } from "../../config.ts";
 
 export interface GoogleOAuthConfig {
   clientId: string;
@@ -235,13 +236,14 @@ if (import.meta.main) {
   const { openCredentials } = await import("../../store/credentials.ts");
   const { pickGoogleApp } = await import("./connect.ts");
   const { googleConfig } = await import("./config.ts");
-  const dir = "./data";
-  const { oauthPort: port, scopes } = await googleConfig(dir);
+  const root = findRoot();
+  const dir = `${root}/data`;
+  const { oauthPort: port, scopes } = await googleConfig(root);
   const creds = await openCredentials(dir);
   const appFlag = Deno.args.indexOf("--app");
   const appId = appFlag >= 0 ? Deno.args[appFlag + 1] : undefined;
   const app = await pickGoogleApp(creds, appId).catch((e) => {
-    console.error(`[google-oauth] ${e.message}`);
+    console.error(`[oauth] ${e.message}`);
     Deno.exit(2);
   });
   const config: GoogleOAuthConfig = {
@@ -258,6 +260,6 @@ if (import.meta.main) {
     publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
     store: log, // connections live on the Log (§4) — the grant writes the map
   });
-  console.error(`[google-oauth] on :${port} — agents mint <public>/oauth/google/start?agent=…`);
+  console.error(`[oauth] on :${port} — agents mint <public>/oauth/google/start?agent=…`);
   Deno.serve({ port }, handler);
 }

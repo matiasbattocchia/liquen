@@ -20,6 +20,7 @@
 
 import { DEFAULT_EVENTS } from "./config.ts";
 import type { Appender, Draft, MessageEvent, Part } from "../../src/connector.ts";
+import { findRoot } from "../../src/connector.ts";
 
 export interface GithubWebhookDeps {
   /** → the EventLog (the connection's only write). Bind mu's `log.publish`. */
@@ -276,7 +277,7 @@ function text(status: number, message: string): Response {
 
 /* ── local entry: the thin Deno server (the edge wrapper is the same shape) ────────────
  *
- *   deno task ingest:github        # serves on :8788, publishing into the org log (./data)
+ *   deno task run:github        # serves on :8788, publishing into the org log (./data)
  *   gh webhook forward --repo=you/repo \
  *     --events=issue_comment,pull_request,pull_request_review_comment \
  *     --url=http://localhost:8788/        # dev: add --secret matching the app row's
@@ -285,11 +286,13 @@ function text(status: number, message: string): Response {
  * The secret is the app row's (`mu connect github app` → vault `github:app:<id>`); the
  * knobs are connections.github. Env: none. The store import is dynamic so importing
  * `createGithubWebhook` (e.g. from an edge function) never pulls in file I/O. */
-if (import.meta.main) {
+/** Wire the inbound half over the org's log — resident once it returns (serving). */
+export async function runIngest(): Promise<void> {
   const { openLog, openCredentials } = await import("../../src/connector.ts");
   const { githubConfig } = await import("./config.ts");
-  const dir = "./data";
-  const { ingestPort: port, events } = await githubConfig(dir);
+  const root = findRoot();
+  const dir = `${root}/data`;
+  const { ingestPort: port, events } = await githubConfig(root);
   const creds = await openCredentials(dir);
   const secret = (await creds.list("github:app:")).find((a) => a.value.webhook_secret)
     ?.value.webhook_secret;
@@ -298,13 +301,21 @@ if (import.meta.main) {
   const log = await openLog(`${dir}/log`);
   if (!secret) {
     console.error(
-      "[github] WARNING: no webhook secret in the vault (`mu connect github app`) — " +
+      "[ingest] WARNING: no webhook secret in the vault (`mu connect github app`) — " +
         "accepting UNSIGNED deliveries (dev only)",
     );
   }
-  console.error(
-    `[github] ingest on :${port} → ${dir}/log  (gh webhook forward --url=http://localhost:${port}/)`,
-  );
+  const { serveIngest } = await import("../../src/connector.ts");
   // `log.publish` passed straight through — a wrapper lambda would flatten its overloads
-  Deno.serve({ port }, createGithubWebhook({ publish: log.publish, secret, events }));
+  serveIngest(
+    "connections.github.ingestPort",
+    port,
+    createGithubWebhook({ publish: log.publish, secret, events }),
+    (bound) =>
+      console.error(
+        `[ingest] serving :${bound} → ${dir}/log  (gh webhook forward --url=http://localhost:${bound}/)`,
+      ),
+  );
 }
+
+if (import.meta.main) await runIngest();

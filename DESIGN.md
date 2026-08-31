@@ -2153,52 +2153,64 @@ into a sandbox; on files, docs stay files: `$EDITOR`-able, git-able).
 | exec | host fs, one user — insecure by design | container; **agent = linux user, workspace = its home**; main = root supervisor spawning bash as the agent's uid | none in v0 (send/search/docs), rented sandbox later |
 | agents · connections · credentials | sqlite under the data root | sqlite on the broker volume, **never under `/home`** | tables; credentials RLS deny-all |
 
-The Docker layout, concretely:
+The Docker layout, concretely — one volume, one project, root supervising:
 
 ```
-/var/lib/mu/                 root:root 0700 — BROKER plane
-  log/log.db                 events · locks · usage · agents · connections · credentials
-                             (the vault rides the same db behind its own accessor, §4)
-  connections/<service>/     connection state: cursors, manifests (NON-secret)
-  system/  org/              shared doc scopes (ownership below)
-/home/<agent>/               agent:agent — AGENT plane, one per registry row
-                             the workspace IS the docs source: frontmattered **/*.md (§8)
+/app/                        the project, baked into the image: config.jsonc (the
+                             declaration, git-tracked) · connectors/ · processors/ ·
+                             entrypoint.sh — /app/data is a symlink to /data
+/data/                       the single volume: the org's living state
+  log/                       root:root 0700 — the substrate; no agent reads it directly
+  org/                       root:agents 2775 + default ACL — the shared floor
+  system/                    read-only for everyone — the harness's docs
+  agents/<name>/             <name>:agents 0700 — personal, invisible to peers
+/home/<name> → /data/agents/<name>    the entrypoint's symlink: $HOME IS the workspace
 ```
 
-Local (dev, one user — same shape, no enforcement): `data/{log/, system/,
+The entrypoint materializes the roster as LINUX USERS — uid pinned by name-hash so volume
+ownership survives rebuilds and roster edits — lays the symlinks and the permission sweep,
+and execs `mu start`; bash spawns drop to the agent's own uid (exec/bash.ts), so the
+kernel enforces the classification above.
+
+Local (dev, one user — same shape, no enforcement): `<root>/data/{log/, system/,
 org/, agents/<name>/}` (the vault is a table in `log/log.db`) — `agents/<name>/` plays `/home/<agent>`. **Agents are created "the
-framework way"**: a folder under `agents/` declares one (a blank folder is a blank agent);
-at start main scans the folders and `syncAgents` MIRRORS the registry table to them
-(upsert present, delete absent). Folders are the DX and the source of truth; the table is
-their projection — it exists because policy derives from rows (RLS, §6). The REPL
-principal is the **OS username**, trusted because localhost; when `agents/<username>/`
-exists (auto-created on first run), principal name = agent name and **no identity map is
+framework way"**: the catalog's `agents` section is the roster — at boot each entry
+compiles into a registry row and a home folder (config → tables → folders; a blank entry
+is a blank agent). The REPL
+principal is the **OS username**, trusted because localhost; when the roster carries that
+name, principal name = agent name and **no identity map is
 needed** — and when they share user/pass, user and agent are one (the vision line). Later:
 N:M principals↔agents, and autonomous agents (no one holds the pass but the agent).
 **The same framework way extends to connectors**: the shipped ones live in
 `src/connect/<service>/` (role-named files: `ingest.ts` · `dispatch.ts` · `oauth.ts` ·
-`connect.ts`, each optional); an org's own live in **`connectors/<name>/`** at the repo
-root — code ships with the image, `data/` is the volume and carries state only. Both
-import one seam module, `src/connector.ts` (log, vault, broker, config, types); the
+`connect.ts`, each optional); an org's own live in **`connectors/<name>/`** at the
+project root — code ships with the image, `data/` is the volume and carries state only.
+Both import one seam module, `src/connector.ts` (log, vault, broker, config, types); the
 contract and the per-service map are CONNECTORS.md. The github connector lives in
 `connectors/` as the reference: a custom connector is a swap of places, nothing more.
 **The same framework way extends to settings — the catalog** (`src/config.ts`): every
-harness knob, its default, one file exposing them all. `data/config.jsonc` (the org root's
-one file) carries five sections, split by AUDIENCE — `organization` (org-wide facts, set
-there and nowhere else: backlogHours), `processors` (media→text commands, §5),
-`connections` (one subsection per connector, OWNED by the connector: its `config.ts`
-declares the defaults and heals `connections.<name>` through `ensureConnectorConfig`;
-main preserves what it does not know, so custom connectors configure identically),
-`agent` (every agent's defaults, the section an agent's own file
-re-declares: model · effort · maxTokens · provider · timezone · locale · rules · the
-attention knobs) and `system` (harness machinery: stopTimeoutMs · lockTtlMs ·
-retryDelaysMs · compactAt · keepRecent · windowLimit · mirrorSettleMs · mirrorClaimMs ·
-debounceMs) — while the VALUE still funnels to the deepest function that needs it
-(main → xi → nu → mu; `timezone` reads as org identity but lands in nu's render).
-`agents/<name>/config.jsonc` is sparse: an `agent` section carrying only the keys it
-overrides, plus `identity` (`email`/`phone`, the handles a human knows the principal by);
-at start the declaration MIRRORS into the registry's columns exactly as folders mirror
-into `agents`. `rules` is the permission policy as data (§2): ordered rows
+harness knob, its default, one file exposing them all. `config.jsonc` sits at the
+PROJECT ROOT — git-tracked, deployed with the image, and the project marker itself:
+`findRoot` walks up from cwd to the nearest one, the way git finds `.git`, and everything
+else (`data/`, the connectors, the processors) is addressed from the root it names — the
+org lives where you run mu, cwd selects it, no variable does. The file is a DECLARATION
+the system never writes: `mu init` materializes the whole catalog with its comments, git
+is its history from then on, and boot COMPILES it — the roster into registry rows and
+homes, everything else funneled to the deepest function that needs it (main → xi → nu →
+mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
+log.db tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
+tuning, every deployment works on the defaults: stopTimeoutMs · bashTimeoutMs ·
+lockTtlMs · retryDelaysMs · compactAt · keepRecent · windowLimit · mirrorSettleMs ·
+mirrorClaimMs · debounceMs), `org` (this deployment's identity: timezone · locale ·
+backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
+`org.agent`, the defaults every agent inherits: model · effort · maxTokens · provider ·
+tools · rules · the attention knobs), `processors` (media→text commands, §5), `agents`
+(the roster: each entry re-declares `org.agent` keys sparsely, plus `identity` —
+`email`/`phone`, the handles a human knows the principal by, mirrored into the
+registry's columns), and `connections` (one subsection per connector, OWNED by the
+connector: its `config.ts` declares the defaults and validates its subsection through
+`connectorConfig`, so custom connectors configure identically). `rules` is the
+permission policy as data (§2): ordered rows
 `{tool, action: allow|ask|deny, connection?, conversation?}` — first match decides, `*`
 matches any tool, and the scope fields pin a rule to the org's three gating levels: a
 conversation, a whole connection (the account/workspace — a WhatsApp number, a Slack
@@ -2210,19 +2222,17 @@ card `/{y,n} [once|conv|conn|always|all] [reason]`, and a scope word pins an all
 that call landed (upserted by scope: a later verdict replaces the action). The gate
 compiles both, remembered first: the principal outranks the base, and among the
 remembered the most specific wins. Same division of labor as the registry — humans write
-config, verdicts write rows, the reader merges. Resolution, most specific wins: agent
-file → MainConfig (the process: tests) → org file → the catalog's constants. The org file
-always exposes the WHOLE catalog: absent, it is materialized from the constants; when the
-catalog grows, the missing keys are appended (your values survive — the comments are the
-catalog's); an unknown key or malformed value fails the boot loudly — a typo must not run
-silently, and a silent fallback would run the org on settings the human believes
-overridden. The functions are 100% parametrized — `start`/`xi`/`nu`/`mu` take values as
+config, verdicts write rows, the reader merges. Resolution, most specific wins:
+`agents.<name>` → MainConfig (the process: tests) → `org.agent` → the catalog's
+constants — a key left out takes its default, and an unknown key or malformed value
+fails the boot loudly: a typo must not run silently, and a silent fallback would run the
+org on settings the human believes overridden. The functions are 100% parametrized —
+`start`/`xi`/`nu`/`mu` take values as
 arguments and never read env; their argument defaults are the same exported constants
 (ergonomics for direct callers: tests), so code and file cannot drift. Env is for secrets only
 (the tokens a service holds; `ANTHROPIC_API_KEY` belongs to the SDK's own credential
 chain, not to us); session choices — which agent the REPL faces, which principal a connect
-door binds — are CLI arguments, per-invocation by nature. The data root is a path
-constant (`./data`) for every process alike: the org lives where you run mu.
+door binds — are CLI arguments, per-invocation by nature.
 Machine-discovered bindings (a Slack user id from `auth.test`, the self-DM channel) land
 on the connections map directly — so the two tables are the merged QUERY surface (the
 classifier's lookups, the RLS substrate) and no human ever edits them: humans write
@@ -2268,22 +2278,42 @@ agents over events (§6), connections over credentials, and the docs write polic
   relation is orchestration RBAC in containers and RLS in Postgres (one model, three substrates —
   as with credentials and connections).
 
-**Process supervision — only the container needs it.** An org runs several processes over the
-shared log: `main` (the tail + fan-out) plus one **ingest process per enabled connection** (§7).
-Who starts them is tier-dependent, and only one tier needs a supervisor:
+**Process supervision — `mu start` (src/start.ts).** An org runs several processes over the
+shared log: `main` (the tail + fan-out, hosting the egress proxy) plus **one process per
+enabled connection** (§7). The supervisor is a keep-alive loop and nothing more, and the
+catalog is its manifest: `connections.<name>` declares a connection runs; the connector
+folder (`src/connect/<name>/` shipped with core, `<root>/connectors/<name>/` for the org's
+own) supplies its entry, `run.ts`. A declared connection with no `run.ts` fails the boot
+loudly, the same law as an unknown config key.
 
-- **Local dev — the user is the supervisor.** No launcher, nothing to build: the developer runs
-  `deno task cli` (and `deno task ingest:github` in another terminal if testing a channel). Running
-  the processes you want is the inner loop; a supervisor would be ceremony.
-- **Container — `process-compose`.** A single Go binary (declarative YAML, dependency order, health
-  checks, restarts) as the container CMD. The nice part: its `compose.yaml` **is** the "which
-  connections are enabled" manifest we'd define anyway — supervisor config and enablement config are
-  the *same file*, scaffolded by `mu init` from the connections you turned on. (s6-overlay / tini are
-  the older container-init route; not needed.)
-- **Cloud / edge — the platform.** One process per container (k8s pod / Fly Machines / Nomad), or
-  edge functions the webhooks hit directly — the platform supervises; no in-container supervisor, no
-  `mu`-authored launcher. (An earlier "built-in launcher" idea was dropped: it only duplicated what
-  the user does locally and `process-compose` does in the container.)
+- **A connection is ONE process.** `run.ts` starts both halves — ingest and dispatch — in a
+  single process, so a connection is *up or down*: either half dying takes the connection
+  down and the supervisor brings both back together. Half-alive (inbound flowing, outbound
+  silently dead — the failure that reads as a broken agent) is not a representable state.
+- **No dependency order, no readiness probes, no IPC.** The log is the bus; every process
+  tails it, so start order is irrelevant. A child finds the org the way every process does
+  (cwd walks up to `config.jsonc`) and env rides through untouched (secrets only).
+- **Death is loud on stderr and nowhere else.** Exits restart with doubling backoff (1s → 60s
+  cap, forgiven after a healthy minute); the supervisor never opens the log. The outer layer
+  supervises `mu start` itself: docker restart policy in the container (run with `--init` so
+  reparented grandchildren are reaped), the terminal locally. SIGTERM fans out to the
+  children, waits `system.stopTimeoutMs`, then SIGKILLs.
+- **Every child line arrives stamped** — `HH:MM:SS [name] …`, stdout/stderr split preserved
+  (stdout is data, stderr is diagnostics) — so attribution is the harness's property, not a
+  convention each service must remember: panics and stack traces land tagged too. Services
+  never self-name; a line carries at most a MODULE tag (`[ingest]`, `[dispatch]`, `[oauth]`,
+  `[exec]`, `[proxy]`), so a supervised line reads `[whatsapp] [dispatch] …` and a standalone
+  run's terminal is its own tag. After the boot lines, silence means every process is up;
+  process health is stderr, org health is the log (`deno task status`, log.db).
+- **Ports collide only when declared to.** An ingest port is an address something dials, and
+  the dialer sets the rule: a configured peer that holds the org's address (the bridge's
+  URL, an Events API request URL) needs a declared port — parallel orgs each declare their
+  own; a dialer that can read the announcement (`gh webhook forward`, a test, a terminal)
+  can take `ingestPort: 0` — bind any free port and announce it (re-rolled on restart). A
+  taken port fails naming its own knob (`serveIngest`, src/connect/serve.ts).
+- **Local dev keeps its inner loop.** `deno task cli` hosts main in-process behind the REPL,
+  and `deno task run:<name>` runs one connection alone; `deno task start` is the same
+  headless shape a deployment runs.
 
 ## 10. Deferred / parked
 

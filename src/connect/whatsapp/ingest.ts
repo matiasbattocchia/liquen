@@ -55,6 +55,7 @@ import type {
   Part,
   Payload,
 } from "../../types.ts";
+import { findRoot } from "../../config.ts";
 
 /* ── the bridge's wire shapes (openbsp.go is the source of truth — the bridge's own
  *    contract, not a platform API, so hand-rolled here is honest) ─────────────────── */
@@ -563,15 +564,17 @@ function json(status: number, body: unknown): Response {
 
 /* ── local entry: HTTP server the bridge's OPENBSP_URL points at ───────────────────
  *
- *   deno task ingest:whatsapp     # serves :8793; bridge env → OPENBSP_URL=http://localhost:8793
+ *   deno task run:whatsapp        # serves :8793; bridge env → OPENBSP_URL=http://localhost:8793
  *
  * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN); the port is
  * connections.whatsapp.ingestPort. */
-if (import.meta.main) {
+/** Wire the inbound half over the org's log — resident once it returns (serving). */
+export async function runIngest(): Promise<void> {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { mediaSecret, saveMedia, serveMedia } = await import("../../store/media.ts");
-  const dir = "./data";
+  const root = findRoot();
+  const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
 
@@ -586,13 +589,17 @@ if (import.meta.main) {
     bridgeToken: Deno.env.get("WA_BRIDGE_TOKEN") || undefined,
   });
   const { whatsappConfig } = await import("./config.ts");
-  const port = (await whatsappConfig(dir)).ingestPort;
-  console.error(`[whatsapp] bridge ingest on :${port} → ${dir}/log`);
+  const { serveIngest } = await import("../serve.ts");
+  const port = (await whatsappConfig(root)).ingestPort;
   // One door in: the bridge's own address serves the outbound bytes too. `/m/<signed>` is
   // minted by the dispatch process and verified here from the vault's key — the signature
   // IS the authorization, so the route sits BEFORE the bridge-token check.
-  Deno.serve(
-    { port },
+  serveIngest(
+    "connections.whatsapp.ingestPort",
+    port,
     async (req) => await serveMedia(req, dir, () => mediaSecret(creds)) ?? await handler(req),
+    (bound) => console.error(`[ingest] bridge on :${bound} → ${dir}/log`),
   );
 }
+
+if (import.meta.main) await runIngest();

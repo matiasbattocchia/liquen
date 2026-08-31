@@ -36,6 +36,7 @@ import {
   type CredentialRow,
   type Credentials,
   type Draft,
+  findRoot,
   type MessageEvent,
 } from "../../src/connector.ts";
 
@@ -418,7 +419,8 @@ if (import.meta.main) {
   const { openLog, openCredentials } = await import("../../src/connector.ts");
   const { userInfo } = await import("node:os");
 
-  const dir = "./data";
+  const root = findRoot();
+  const dir = `${root}/data`;
   const flags = new Set(Deno.args.filter((a) => a.startsWith("--")));
   const [first, ...rest] = Deno.args.filter((a) => !a.startsWith("--"));
   const verb = first === "app" || first === "bot" || first === "user" ? first : "user";

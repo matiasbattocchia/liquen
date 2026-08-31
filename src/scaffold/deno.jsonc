@@ -1,0 +1,3 @@
+// deno.jsonc — the project's own module config. The project ships no runnable code (the
+// `mu` CLI comes with core); this file serves the org's own connectors/ and processors/.
+{}

@@ -36,14 +36,14 @@ Nothing below needs a sixth piece. What some of them need is **new state**, whic
 A connector is a **standalone process over the org's substrate**: it reaches mu through
 the shared `./data` root and imports only the seam module, **`src/connector.ts`** — the log (`openLog`,
 `publish`, subscribe/`setDelivery`), the vault (`openCredentials`, the grant broker),
-`ensureConnectorConfig`, the event types, and the dispatch error contract. A deep import
+`connectorConfig`, the event types, and the dispatch error contract. A deep import
 from a connector is a contract violation, not a convenience.
 
 Configuration follows the harness's own config rules: the connector ships a `config.ts`
-declaring its DEFAULT_s and its `ConnectorSpec`; `ensureConnectorConfig` heals the
-`connections.<name>` subsection of `data/config.jsonc` (missing keys appended with the
-spec's comments, unknown keys a boot error, `check`s run at boot) and returns the merged
-values. Secrets never enter the file — they live in the vault (slack and github keep
+declaring its DEFAULT_s and its `ConnectorSpec`; `connectorConfig` reads the
+`connections.<name>` subsection of the root `config.jsonc` over the spec's defaults
+(missing keys default, unknown keys a boot error, `check`s run at boot) and returns the
+merged values — nothing is ever written back. Secrets never enter the file — they live in the vault (slack and github keep
 their app, bot, and grants there) or, for a local bridge, in env (`WA_BRIDGE_TOKEN`).
 
 A connector whose CLI should work from agent bash **fronts its grant through the egress
@@ -102,7 +102,7 @@ Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispat
   the bar every custom connector inherits. Its config lands under `connections.<name>`
   in the org catalog; its secrets in env/vault as ever.
 
-Tasks point at files (`deno task ingest:github` → `connectors/github/ingest.ts`). The
+Tasks point at files (`deno task run:github` → `connectors/github/run.ts`). The
 front door is **`mu connect`** (`deno task connect`, `src/connect/connect.ts`): bare, it
 prints the map (status); `mu connect <name> [args...]` resolves the shipped services
 first, then `connectors/<name>/connect.ts`, and runs the door as a child process with the

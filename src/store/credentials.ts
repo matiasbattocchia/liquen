@@ -48,8 +48,8 @@ export async function openCredentials(dir: string): Promise<Credentials> {
   await Deno.mkdir(`${dir}/log`, { recursive: true });
   const db = new DatabaseSync(`${dir}/log/log.db`);
   db.exec(
-    `PRAGMA journal_mode=WAL;
-     PRAGMA busy_timeout=5000;
+    `PRAGMA busy_timeout=5000;
+     PRAGMA journal_mode=WAL;
      CREATE TABLE IF NOT EXISTS credentials (
        key        TEXT PRIMARY KEY,
        value      TEXT NOT NULL,

@@ -26,6 +26,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { SERVICE } from "./ingest.ts";
+import { findRoot } from "../../config.ts";
 
 /** The tenant sessions are filed under on the bridge (its open-BSP `organization_id`).
  *  Not a knob: a data root is ONE org, and the bridge is that org's sidecar — the label
@@ -157,7 +158,8 @@ if (import.meta.main) {
   const { userInfo } = await import("node:os");
   const qrcode = (await import("qrcode-terminal")).default;
 
-  const dir = "./data";
+  const root = findRoot();
+  const dir = `${root}/data`;
   const flags = new Map<string, string>();
   const positional: string[] = [];
   for (let i = 0; i < Deno.args.length; i++) {
@@ -172,7 +174,7 @@ if (import.meta.main) {
     }
   })();
   const { whatsappConfig } = await import("./config.ts");
-  const { bridgeUrl: base } = await whatsappConfig(dir);
+  const { bridgeUrl: base } = await whatsappConfig(root);
   const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
   const phoneNumber = flags.get("phone") || undefined;
   if (flags.has("phone") && !phoneNumber) {
@@ -227,7 +229,7 @@ if (import.meta.main) {
       },
     });
     console.error(`\n✓ paired: ${address} → ${principal}`);
-    console.error("  (deno task status shows the map; run ingest:whatsapp to receive)");
+    console.error("  (deno task status shows the map; run:whatsapp to receive)");
   } finally {
     await log.close();
   }

@@ -48,6 +48,24 @@ export interface BashOptions {
    *  the egress proxy's HTTPS_PROXY/SSL_CERT_FILE/placeholder-token land here (§9). Never
    *  put a real secret in it — the whole point is that user space holds only handles. */
   env?: () => Record<string, string>;
+  /** The Linux user every spawn RUNS AS (§9, the container story): user space is not just
+   *  an empty pocket but a different owner — the kernel enforces the data classification.
+   *  Only meaningful when the harness runs as root; absent, spawns keep the process uid. */
+  user?: { name: string; uid: number; gid: number; home: string };
+}
+
+/** The agent's Linux user, when there is one to drop to: the harness runs as root (the
+ *  container) and the entrypoint materialized the roster as users named after the agents.
+ *  Local dev is neither, and spawns stay the process's own. */
+function agentUser(agentId: string): BashOptions["user"] {
+  if (Deno.build.os !== "linux" || Deno.uid() !== 0) return undefined;
+  try {
+    for (const line of Deno.readTextFileSync("/etc/passwd").split("\n")) {
+      const [name, , uid, gid, , home] = line.split(":");
+      if (name === agentId) return { name, uid: Number(uid), gid: Number(gid), home };
+    }
+  } catch { /* no passwd to read — nothing to drop to */ }
+  return undefined;
 }
 
 // Process-group isolation (`setsid`) lets us kill a command's whole tree — including a
@@ -144,6 +162,10 @@ export function bashTool(opts: BashOptions): ExecTool {
       };
       const timeoutMs = timeout !== undefined ? timeout * 1000 : timeoutMsDefault;
       const env = { ...userSpaceEnv(opts.binPath), ...opts.env?.() };
+      if (opts.user) {
+        // the identity trio follows the uid, not the harness process
+        Object.assign(env, { HOME: opts.user.home, USER: opts.user.name, LOGNAME: opts.user.name });
+      }
 
       // append a sentinel that prints the shell's final pwd + the command's REAL exit code
       // (the appended print would otherwise mask a non-zero exit). `cd` at start is honored,
@@ -157,6 +179,7 @@ export function bashTool(opts: BashOptions): ExecTool {
         cwd: state.cwd,
         clearEnv: true,
         env,
+        ...(opts.user ? { uid: opts.user.uid, gid: opts.user.gid } : {}),
         stdin: "null",
         stdout: "piped",
         stderr: "piped",
@@ -380,6 +403,8 @@ export async function installExecPlane(
   await Deno.mkdir(`${workspace}/bin`, { recursive: true });
   const jobs = new Set<Job>();
   const state: BashState = { cwd: workspace };
+  const user = agentUser(agentId);
+  if (user) console.error(`[exec] ${agentId}: spawns run as uid ${user.uid}`);
   return {
     exec: {
       bash: bashTool({
@@ -389,6 +414,7 @@ export async function installExecPlane(
         jobs,
         state,
         ...(env ? { env } : {}),
+        ...(user ? { user } : {}),
       }),
     },
     ambient: () => bashAmbient(state, jobs),

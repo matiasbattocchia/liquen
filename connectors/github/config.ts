@@ -9,8 +9,8 @@
 import {
   checkPort,
   checkStrings,
+  connectorConfig,
   type ConnectorSpec,
-  ensureConnectorConfig,
 } from "../../src/connector.ts";
 
 export const DEFAULT_INGEST_PORT = 8788;
@@ -28,14 +28,14 @@ export interface GithubConfig {
   events: string[];
 }
 
-const SPEC: ConnectorSpec = {
+export const SPEC: ConnectorSpec = {
   name: "github",
   doc: "github — webhook ingest and comment dispatch",
   entries: [
     {
       key: "ingestPort",
       value: DEFAULT_INGEST_PORT,
-      doc: "where GitHub (or `gh webhook forward`) delivers",
+      doc: "where GitHub (or `gh webhook forward`) delivers; 0 = any free port, announced",
       check: checkPort,
     },
     {
@@ -48,6 +48,6 @@ const SPEC: ConnectorSpec = {
 };
 
 /** Read (and heal) `connections.github` from the org's config.jsonc. */
-export function githubConfig(dir = "./data"): Promise<GithubConfig> {
-  return ensureConnectorConfig<GithubConfig>(dir, SPEC);
+export function githubConfig(root: string): Promise<GithubConfig> {
+  return connectorConfig<GithubConfig>(root, SPEC);
 }

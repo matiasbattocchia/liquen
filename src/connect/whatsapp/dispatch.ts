@@ -39,6 +39,7 @@ import type {
 import { externalId, SERVICE, type WAContent } from "./ingest.ts";
 import { type Directory, whatsappMentions } from "../mentions.ts";
 import { toWhatsApp } from "../flavor.ts";
+import { findRoot } from "../../config.ts";
 
 /** The bridge's dispatch request (server.go `dispatchRequest`) — record verbatim. */
 export interface WADispatchRecord {
@@ -261,18 +262,20 @@ function urlFor(c: WAContent, mediaUrl?: WAMediaUrl): Promise<string | undefined
 
 /* ── local entry: `send` = POST <bridgeUrl>/dispatch ──────────────────────────
  *
- *   deno task dispatch:whatsapp
+ *   deno task run:whatsapp
  *
  * Env: WA_BRIDGE_TOKEN (the secret); the bridge's address is connections.whatsapp. */
-if (import.meta.main) {
+/** Wire the outbound half over the org's log — resident once it returns (subscribed). */
+export async function runDispatch(): Promise<void> {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { mediaSecret, signMediaPath } = await import("../../store/media.ts");
   const { whatsappConfig } = await import("./config.ts");
-  const dir = "./data";
+  const root = findRoot();
+  const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
-  const { bridgeUrl: base } = await whatsappConfig(dir);
+  const { bridgeUrl: base } = await whatsappConfig(root);
   const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
 
   // The bytes leave by being FETCHED: a signed, expiring path rides `media_url`, the
@@ -307,9 +310,11 @@ if (import.meta.main) {
     directory: logDirectory((q) => log.read(q)),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onSent: (e, id) =>
-      console.error(`[wa-dispatch] sent → ${e.envelope.conversation.address} (${id})`),
+      console.error(`[dispatch] sent → ${e.envelope.conversation.address} (${id})`),
     onError: (e, err) =>
-      console.error(`[wa-dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
+      console.error(`[dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
   });
-  console.error(`[wa-dispatch] watching ${dir}/log → ${base}/dispatch`);
+  console.error(`[dispatch] watching ${dir}/log → ${base}/dispatch`);
 }
+
+if (import.meta.main) await runDispatch();
