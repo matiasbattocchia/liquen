@@ -286,8 +286,9 @@ function text(status: number, message: string): Response {
  * The secret is the app row's (`mu connect github app` → vault `github:app:<id>`); the
  * knobs are connections.github. Env: none. The store import is dynamic so importing
  * `createGithubWebhook` (e.g. from an edge function) never pulls in file I/O. */
-/** Wire the inbound half over the org's log — resident once it returns (serving). */
-export async function runIngest(): Promise<void> {
+/** Wire the inbound half over the org's log — resident once it returns (serving).
+ *  Returns stop: refuse new deliveries, finish the ones in flight, release the handles. */
+export async function runIngest(): Promise<() => Promise<void>> {
   const { openLog, openCredentials } = await import("../../src/connector.ts");
   const { githubConfig } = await import("./config.ts");
   const root = findRoot();
@@ -307,7 +308,7 @@ export async function runIngest(): Promise<void> {
   }
   const { serveIngest } = await import("../../src/connector.ts");
   // `log.publish` passed straight through — a wrapper lambda would flatten its overloads
-  serveIngest(
+  const server = serveIngest(
     "connections.github.ingestPort",
     port,
     createGithubWebhook({ publish: log.publish, secret, events }),
@@ -316,6 +317,10 @@ export async function runIngest(): Promise<void> {
         `[ingest] serving :${bound} → ${dir}/log  (gh webhook forward --url=http://localhost:${bound}/)`,
       ),
   );
+  return async () => {
+    await server.shutdown(); // stop accepting, finish the requests already in
+    await log.close();
+  };
 }
 
 if (import.meta.main) await runIngest();

@@ -145,10 +145,11 @@ export interface SlackDispatchDeps {
   onSent?: (event: MessageEvent, ts: string | undefined) => void;
 }
 
-/** Wire dispatch to the log. Returns unsubscribe. Posts serialized to preserve order. */
-export function createSlackDispatch(deps: SlackDispatchDeps): () => void {
+/** Wire dispatch to the log. Posts serialized to preserve order. Returns stop: take no
+ *  more work, settle the posts already in flight. */
+export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void> {
   let chain: Promise<void> = Promise.resolve();
-  return deps.subscribe(
+  const unsub = deps.subscribe(
     (e) => {
       const out = outbound(e);
       if (!out) return;
@@ -212,6 +213,10 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => void {
     },
     { from: deps.from, filter: isOutboundSlack },
   );
+  return async () => {
+    unsub();
+    await chain;
+  };
 }
 
 /** OURS and not yet on the wire (§3, §4): `agent` present AND no `external_id` at insert —
@@ -287,8 +292,9 @@ function textOf(e: Event): string {
 
 /* ── local entry: `post` = chat.postMessage with the workspace bot token ──────────────── */
 
-/** Wire the outbound half over the org's log — resident once it returns (subscribed). */
-export async function runDispatch(): Promise<void> {
+/** Wire the outbound half over the org's log — resident once it returns (subscribed).
+ *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
+export async function runDispatch(): Promise<() => Promise<void>> {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const root = findRoot();
@@ -422,7 +428,7 @@ export async function runDispatch(): Promise<void> {
   };
 
   const { logDirectory } = await import("../mentions.ts");
-  createSlackDispatch({
+  const stop = createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     post,
     react,
@@ -435,6 +441,11 @@ export async function runDispatch(): Promise<void> {
       console.error(`[dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
   });
   console.error(`[dispatch] watching ${dir}/log for outbound sends`);
+  return async () => {
+    await stop();
+    await creds.close();
+    await log.close();
+  };
 }
 
 if (import.meta.main) await runDispatch();

@@ -138,7 +138,7 @@ async function withDispatch(
       waitFor,
     });
   } finally {
-    stop();
+    await stop();
     await log.close();
     await Deno.remove(dir, { recursive: true });
   }

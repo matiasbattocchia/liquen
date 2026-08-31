@@ -1,39 +1,41 @@
 /**
- * cli.ts — the v0.0 principal interface (DESIGN §2, §9): a line REPL over the log.
+ * cli.ts — `mu repl`: the v0.0 principal interface, a line REPL attached to the daemon.
  *
- * The CLI is a *client* of the harness, shaped like any connection: it publishes the
- * principal's messages and subscribes to paint what the agent does. It holds no harness
- * state — main (hosted in-process here) does the fan-out; the log is the conversation.
+ * The REPL is an ATTACH client (DESIGN §2, §9): it never holds a log handle and hosts
+ * nothing — it speaks to its agent through the door (`agents/<name>/door.sock`),
+ * publishing the principal's messages and painting what the tail pushes back. "Is a
+ * daemon running?" is the connect itself: a refused socket means no, and the REPL raises
+ * one — main alone (`--ephemeral`), which reaps itself once nothing has been attached for
+ * a linger. `mu start` owns the standing org and its connections; the REPL only ever
+ * attaches — the attach path is the only path it has.
  *
- *   you type            → publish a principal `message` to home
+ *   you type            → {op: "message"} through the door
  *   the agent thinks    → thinking deltas stream dim; assistant text streams live
  *   the agent acts      → tool_use/result lines; peer sends as `→ conv: text`
  *   a gate fires        → an approval card; answer `/{y,n} [once|conv|conn|always|all]
  *                         [reason]` — a scope word makes the verdict STANDING (remembered
  *                         policy, §9); `all` answers every card waiting at once
- *   /quit (or Ctrl-D)   → clean stop
+ *   /quit (or Ctrl-D)   → hang up — the daemon's life is its attachments, not ours
  */
 
 import { TextLineStream } from "@std/streams";
 import { userInfo } from "node:os";
-import { start } from "./main.ts";
 import { findRoot, readConfig } from "./config.ts";
 import { outcomeLine, ownVoice, SILENCE, silent } from "./render.ts";
 import { describeCall } from "./describe.ts";
 import { parseVerdict } from "./xi.ts";
-import type {
-  Draft,
-  Event,
-  MessageEvent,
-  PermissionResponseEvent,
-  PermissionVerdict,
-} from "./types.ts";
+import type { Delta, Event } from "./types.ts";
 
 const DIM = "\x1b[2m";
 const RED = "\x1b[31m";
 const YELLOW = "\x1b[33m";
 const CYAN = "\x1b[36m";
 const RESET = "\x1b[0m";
+
+// A raised daemon owes the REPL a bound socket within this window — seeding, the exec
+// planes and the proxy all sit between spawn and bind.
+const ATTACH_TIMEOUT_MS = 20_000;
+const ATTACH_RETRY_MS = 250;
 
 // The org lives where you run mu: the nearest config.jsonc up from cwd is the project
 // marker (findRoot), and the substrate sits beside it. Env is for secrets only.
@@ -66,37 +68,60 @@ if (!(target in catalog.agents)) {
 // the model that will actually run
 const model = catalog.agents[target].model ?? catalog.org.agent.model;
 
-const homeEnv = {
-  service: "local" as const,
-  connection_address: "agent",
-  conversation: { address: home },
-};
+/** Attach to the agent's door. A refusal means no daemon — raise an ephemeral one and
+ *  keep connecting until it binds; the daemon takes itself down (the linger) when the
+ *  last attachment is gone. */
+async function attach(): Promise<Deno.UnixConn> {
+  const path = `${dir}/agents/${target}/door.sock`;
+  try {
+    return await Deno.connect({ transport: "unix", path });
+  } catch { /* nothing listening — raise a daemon */ }
+  const daemon = new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", new URL("./main.ts", import.meta.url).href, "--ephemeral"],
+    cwd: root,
+    stdin: "null",
+    stdout: "null",
+    stderr: "null",
+  }).spawn();
+  daemon.unref(); // its life is its attachments, never this process's exit
+  const deadline = Date.now() + ATTACH_TIMEOUT_MS;
+  for (;;) {
+    try {
+      return await Deno.connect({ transport: "unix", path });
+    } catch {
+      if (Date.now() > deadline) {
+        console.error(`no daemon answered on ${path} — run \`mu start\` to see it boot`);
+        Deno.exit(1);
+      }
+      await new Promise((r) => setTimeout(r, ATTACH_RETRY_MS));
+    }
+  }
+}
 
-const principalMsg = (text: string): Draft<MessageEvent> => ({
-  ts: new Date().toISOString(),
-  type: "message",
-  // the principal's stamp (§3): agent.id = whose mind, session_id = entered through the
-  // harness (deterministic in v0, so it stamps at append — even the session's first line).
-  // No turn_id, ever: that is the model's mark, and its absence is what keeps this row
-  // input. One complex, two halves, told apart by turn_id alone.
-  agent: { id: target, session_id: session },
-  envelope: {
-    ...homeEnv,
-    sender: { address: username, name: username },
-  },
-  parts: [{ type: "text", kind: "text", text }],
-});
+const conn = await attach();
+let leaving = false;
 
-const respond = (
-  refId: string, // the gated tool_use — request and response both point at it (§3)
-  verdict: PermissionVerdict, // behavior + scope + reason, as `parseVerdict` read them
-): Draft<PermissionResponseEvent> => ({
-  ts: new Date().toISOString(),
-  type: "permission_response",
-  payload: { ref_id: refId },
-  envelope: homeEnv,
-  parts: [{ type: "data", kind: "permission_response", data: verdict }],
-});
+/* ── the wire: newline-JSON requests answered in order, {event}/{delta} pushed after
+ *    a tail — writes ride one chain, replies resolve oldest-first ─────────────────── */
+
+interface Reply {
+  ok?: boolean;
+  error?: string;
+  id?: string;
+}
+
+const encoder = new TextEncoder();
+let wchain: Promise<void> = Promise.resolve();
+const awaiting: ((r: Reply) => void)[] = [];
+
+function request(req: Record<string, unknown>): Promise<Reply> {
+  const reply = new Promise<Reply>((resolve) => awaiting.push(resolve));
+  wchain = wchain.then(async () => {
+    const bytes = encoder.encode(JSON.stringify(req) + "\n");
+    for (let at = 0; at < bytes.length;) at += await conn.write(bytes.subarray(at));
+  }).catch(() => {/* the daemon hung up — the read pump reports and exits */});
+  return reply;
+}
 
 const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
 
@@ -115,6 +140,12 @@ const say = (text: string) => {
   write(held);
   held = "";
 };
+
+function onDelta(d: Delta): void {
+  if (d.kind === "text") say(d.text ?? "");
+  else if (d.kind === "thinking") write(`${DIM}${d.text ?? ""}${RESET}`);
+  else if (d.kind === "error") write(`\n${RED}! ${d.text ?? ""}${RESET}\n`);
+}
 
 function paint(e: Event): void {
   const self = ownVoice(e, session); // the model's output (§3) — the principal's own
@@ -182,16 +213,27 @@ function paint(e: Event): void {
   }
 }
 
-const main = await start({
-  dir, // no principals: the catalog's roster declares the org (the framework way, §9)
-  catalog, // …and no settings either: everything funnels from it
-  onDelta: (d) => {
-    if (d.kind === "text") say(d.text ?? "");
-    else if (d.kind === "thinking") write(`${DIM}${d.text ?? ""}${RESET}`);
-    else if (d.kind === "error") write(`\n${RED}! ${d.text ?? ""}${RESET}\n`);
-  },
+// the read pump: demux by shape — pushes carry {event}/{delta}, everything else is the
+// oldest outstanding request's reply
+(async () => {
+  const lines = conn.readable
+    .pipeThrough(new TextDecoderStream())
+    .pipeThrough(new TextLineStream());
+  for await (const line of lines) {
+    if (!line.trim()) continue;
+    const msg = JSON.parse(line) as { event?: Event; delta?: Delta } & Reply;
+    if (msg.event) paint(msg.event);
+    else if (msg.delta) onDelta(msg.delta);
+    else awaiting.shift()?.(msg);
+  }
+})().catch(() => {/* the socket died under the pump — same hang-up */}).finally(() => {
+  if (!leaving) {
+    write(`\n${RED}the daemon hung up${RESET}\n`);
+    Deno.exit(1);
+  }
 });
-const unpaint = main.log.subscribe(paint);
+
+await request({ op: "tail" }); // live: the screen is the present, the log holds the past
 
 write(
   `${DIM}mu — ${target} · ${model} · log: ${dir} · /y[once|conv|conn|always|all] /n /quit${RESET}\n> `,
@@ -217,13 +259,24 @@ for await (const line of lines) {
     // `all` takes the pile in the order it was asked; a bare word takes the newest card,
     // the one whose text is still on screen
     const answered = verdict.every ? pending.splice(0) : [pending.pop()!];
-    for (const ref of answered) await main.log.publish(respond(ref, verdict));
+    for (const ref of answered) {
+      const r = await request({ op: "permission_response", ref_id: ref, verdict });
+      if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
+    }
     if (answered.length > 1) write(`${DIM}${answered.length} approvals answered${RESET}\n`);
     continue;
   }
-  await main.log.publish(principalMsg(text));
+  const r = await request({
+    op: "message",
+    text,
+    sender: { address: username, name: username },
+  });
+  if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
 }
 
-unpaint();
-await main.stop();
+leaving = true;
+try {
+  conn.close();
+} catch { /* already closed */ }
 write(`\n${DIM}bye${RESET}\n`);
+Deno.exit(0);

@@ -539,10 +539,12 @@ function text(status: number, message: string): Response {
 /* ── the Socket Mode carrier (local transport for the same handler) ─────── */
 
 /** Open the `xapp` socket and feed every events_api envelope to `handler` as a synthetic
- *  POST, acking each envelope. Reconnects on disconnect/close. Returns a stop(). */
-export function slackSocket(appToken: string, handler: WebhookHandler): () => void {
+ *  POST, acking each envelope. Reconnects on disconnect/close. Returns stop: close the
+ *  socket, settle the deliveries already being handled. */
+export function slackSocket(appToken: string, handler: WebhookHandler): () => Promise<void> {
   let ws: WebSocket | undefined;
   let closed = false;
+  const inFlight = new Set<Promise<unknown>>();
 
   const connect = async () => {
     if (closed) return;
@@ -562,13 +564,16 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => vo
         };
         if (env.envelope_id) ws?.send(JSON.stringify({ envelope_id: env.envelope_id })); // ack fast
         if (env.type === "events_api" && env.payload) {
-          await handler(
+          const delivery = handler(
             new Request("http://socket-mode.local/", {
               method: "POST",
               body: JSON.stringify(env.payload),
               headers: { "content-type": "application/json" },
             }),
           );
+          inFlight.add(delivery);
+          delivery.finally(() => inFlight.delete(delivery));
+          await delivery;
         }
         if (env.type === "disconnect") ws?.close();
       };
@@ -582,9 +587,10 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => vo
   };
   connect();
 
-  return () => {
+  return async () => {
     closed = true;
     ws?.close();
+    await Promise.allSettled([...inFlight]);
   };
 }
 
@@ -596,8 +602,9 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => vo
  * tokens the bot door stored (`mu connect slack bot`), one socket per app (§4). No
  * carrier ⇒ HTTP mode on connections.slack.ingestPort, verified by the app's
  * signing secret (`mu connect slack app` stores it). */
-/** Wire the inbound half over the org's log — resident once it returns (socket or server). */
-export async function runIngest(): Promise<void> {
+/** Wire the inbound half over the org's log — resident once it returns (socket or server).
+ *  Returns stop: refuse new deliveries, finish the ones in flight, release the handles. */
+export async function runIngest(): Promise<() => Promise<void>> {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { kindOf, saveMedia } = await import("../../store/media.ts");
@@ -661,20 +668,31 @@ export async function runIngest(): Promise<void> {
     names,
     signingSecret: app?.value.signing_secret || undefined,
   });
+  const release = async () => {
+    await creds.close();
+    await log.close();
+  };
   if (carriers.length > 0) {
     console.error(`[ingest] socket mode, ${carriers.length} carrier(s) → ${dir}/log`);
-    for (const t of carriers) slackSocket(t, handler);
-  } else {
-    const { slackConfig } = await import("./config.ts");
-    const { serveIngest } = await import("../serve.ts");
-    const port = (await slackConfig(root)).ingestPort;
-    serveIngest(
-      "connections.slack.ingestPort",
-      port,
-      handler,
-      (bound) => console.error(`[ingest] HTTP on :${bound} → ${dir}/log (Events API request URL)`),
-    );
+    const stops = carriers.map((t) => slackSocket(t, handler));
+    return async () => {
+      await Promise.allSettled(stops.map((stop) => stop()));
+      await release();
+    };
   }
+  const { slackConfig } = await import("./config.ts");
+  const { serveIngest } = await import("../serve.ts");
+  const port = (await slackConfig(root)).ingestPort;
+  const server = serveIngest(
+    "connections.slack.ingestPort",
+    port,
+    handler,
+    (bound) => console.error(`[ingest] HTTP on :${bound} → ${dir}/log (Events API request URL)`),
+  );
+  return async () => {
+    await server.shutdown(); // stop accepting, finish the requests already in
+    await release();
+  };
 }
 
 if (import.meta.main) await runIngest();

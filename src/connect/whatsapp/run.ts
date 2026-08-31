@@ -2,11 +2,12 @@
  * run.ts — the whatsapp connection as ONE process: both halves of the bridge seam, one
  * restart unit. `mu start` spawns this for `connections.whatsapp`; either half dying
  * takes the whole connection down and both come back together — half-alive (inbound
- * flowing, outbound silently dead) is not a representable state.
+ * flowing, outbound silently dead) is not a representable state. SIGTERM stops both
+ * halves the way main stops: no new work, drain what is in flight, exit.
  */
 
 import { runIngest } from "./ingest.ts";
 import { runDispatch } from "./dispatch.ts";
+import { exitOnStop } from "../stop.ts";
 
-await runIngest();
-await runDispatch();
+exitOnStop([await runIngest(), await runDispatch()]);

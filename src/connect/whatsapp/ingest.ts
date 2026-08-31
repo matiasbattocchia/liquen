@@ -568,8 +568,9 @@ function json(status: number, body: unknown): Response {
  *
  * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN); the port is
  * connections.whatsapp.ingestPort. */
-/** Wire the inbound half over the org's log — resident once it returns (serving). */
-export async function runIngest(): Promise<void> {
+/** Wire the inbound half over the org's log — resident once it returns (serving).
+ *  Returns stop: refuse new deliveries, finish the ones in flight, release the handles. */
+export async function runIngest(): Promise<() => Promise<void>> {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { mediaSecret, saveMedia, serveMedia } = await import("../../store/media.ts");
@@ -594,12 +595,17 @@ export async function runIngest(): Promise<void> {
   // One door in: the bridge's own address serves the outbound bytes too. `/m/<signed>` is
   // minted by the dispatch process and verified here from the vault's key — the signature
   // IS the authorization, so the route sits BEFORE the bridge-token check.
-  serveIngest(
+  const server = serveIngest(
     "connections.whatsapp.ingestPort",
     port,
     async (req) => await serveMedia(req, dir, () => mediaSecret(creds)) ?? await handler(req),
     (bound) => console.error(`[ingest] bridge on :${bound} → ${dir}/log`),
   );
+  return async () => {
+    await server.shutdown(); // stop accepting, finish the requests already in
+    await creds.close();
+    await log.close();
+  };
 }
 
 if (import.meta.main) await runIngest();

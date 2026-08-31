@@ -17,7 +17,15 @@ import { openFileDocs } from "./store/docs.ts";
 import { scoped } from "./policy.ts";
 import { type AgentConfig, xi } from "./xi.ts";
 import { scripted } from "./testing.ts";
-import type { Draft, MessageEvent, SearchHit, ToolResultEvent, ToolUseEvent } from "./types.ts";
+import type {
+  Draft,
+  Event,
+  MessageEvent,
+  PermissionResponseEvent,
+  SearchHit,
+  ToolResultEvent,
+  ToolUseEvent,
+} from "./types.ts";
 
 const AGENT = { agentId: "ana", sessionId: "ana" };
 
@@ -147,6 +155,119 @@ Deno.test({
       assertEquals((res.parts[0].data.output as SearchHit[]).map((h) => h.text), ["visible"]);
     } finally {
       await blind.down();
+    }
+  },
+});
+
+/** A raw attach client — the interface's half of the wire, newline-JSON by hand:
+ *  requests answered in order, {event}/{delta} pushed after a tail. */
+async function rawClient(dir: string) {
+  const conn = await Deno.connect({ transport: "unix", path: `${dir}/agents/ana/door.sock` });
+  const events: Event[] = [];
+  const deltas: unknown[] = [];
+  const replies: ((r: Record<string, unknown>) => void)[] = [];
+  (async () => {
+    const lines = conn.readable
+      .pipeThrough(new TextDecoderStream())
+      .pipeThrough(new (await import("@std/streams")).TextLineStream());
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+      const msg = JSON.parse(line) as { event?: Event; delta?: unknown } & Record<string, unknown>;
+      if (msg.event) events.push(msg.event);
+      else if (msg.delta) deltas.push(msg.delta);
+      else replies.shift()?.(msg);
+    }
+  })().catch(() => {/* hang-up */});
+  const request = async (req: Record<string, unknown>) => {
+    const reply = new Promise<Record<string, unknown>>((resolve) => replies.push(resolve));
+    await conn.write(new TextEncoder().encode(JSON.stringify(req) + "\n"));
+    return await reply;
+  };
+  const settle = async (cond: () => boolean, ms = 5_000) => {
+    const t0 = Date.now();
+    while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 25));
+  };
+  return { conn, events, deltas, request, settle };
+}
+
+Deno.test({
+  name: "door: the attach verbs — a principal message, a tail, an answered gate",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { dir, log, down } = await up();
+    try {
+      const client = await rawClient(dir);
+      assertEquals(await client.request({ op: "tail" }), { ok: true, status: "tailing" });
+
+      // message: the principal's half of the complex — stamped for the mind, NO turn_id
+      const r = await client.request({
+        op: "message",
+        text: "hola",
+        sender: { address: "matias", name: "matias" },
+      });
+      assertEquals(r.ok, true);
+      const [msg] = await log.read({ types: ["message"] }) as MessageEvent[];
+      assertEquals(msg.id, r.id);
+      assertEquals(msg.agent, { id: "ana", session_id: "ana" });
+      assertEquals(msg.payload?.turn_id, undefined);
+      assertEquals(msg.envelope.sender, { address: "matias", name: "matias" });
+      assertEquals(msg.envelope.conversation.address, "mind:ana");
+
+      // the tail pushed the same row back — full disclosure, the interface decides
+      await client.settle(() => client.events.length >= 1);
+      assertEquals(client.events[0].id, msg.id);
+
+      // permission_response: the verdict lands referencing the gated use
+      const pr = await client.request({
+        op: "permission_response",
+        ref_id: msg.id, // any referent works for the door's own contract
+        verdict: { behavior: "allow", scope: "once" },
+      });
+      assertEquals(pr.ok, true);
+      const [resp] = await log.read({
+        types: ["permission_response"],
+      }) as PermissionResponseEvent[];
+      assertEquals(resp.payload.ref_id, msg.id);
+      assertEquals(resp.parts[0].data, { behavior: "allow", scope: "once" });
+
+      client.conn.close();
+    } finally {
+      await down();
+    }
+  },
+});
+
+Deno.test({
+  name: "door: attachments are the live connections, and a delta fans out to the tailers",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
+    const log = await openLog(`${dir}/log`);
+    const doors = await installDoors(dir, [{ ...AGENT, log }]);
+    try {
+      assertEquals(doors.attachments(), 0);
+      const tailing = await rawClient(dir);
+      await tailing.request({ op: "tail" });
+      const passive = await rawClient(dir); // attached, not tailing — a script mid-run
+      await tailing.settle(() => doors.attachments() === 2);
+      assertEquals(doors.attachments(), 2);
+
+      doors.emit("ana", { kind: "text", text: "hola" });
+      await tailing.settle(() => tailing.deltas.length >= 1);
+      assertEquals(tailing.deltas, [{ kind: "text", text: "hola" }]);
+      assertEquals(passive.deltas, []); // deltas reach only who asked for the stream
+
+      // a hang-up — clean or killed, the same event — leaves the count honest
+      tailing.conn.close();
+      passive.conn.close();
+      await tailing.settle(() => doors.attachments() === 0);
+      assertEquals(doors.attachments(), 0);
+    } finally {
+      await doors.close();
+      await log.close();
+      await Deno.remove(dir, { recursive: true });
     }
   },
 });

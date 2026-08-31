@@ -76,10 +76,11 @@ export interface WhatsAppDispatchDeps {
   onSent?: (event: MessageEvent, wmwId: string | undefined) => void;
 }
 
-/** Wire dispatch to the log. Returns unsubscribe. Posts serialized to preserve order. */
-export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => void {
+/** Wire dispatch to the log. Posts serialized to preserve order. Returns stop: take no
+ *  more work, settle the posts already in flight. */
+export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => Promise<void> {
   let chain: Promise<void> = Promise.resolve();
-  return deps.subscribe(
+  const unsub = deps.subscribe(
     (e) => {
       const out = outbound(e);
       if (!out) return;
@@ -127,6 +128,10 @@ export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => void {
     },
     { from: deps.from, filter: isOutboundWhatsApp },
   );
+  return async () => {
+    unsub();
+    await chain;
+  };
 }
 
 /** OURS and not yet on the wire (§3, §4): `agent` present (our side authored it) AND no
@@ -265,8 +270,9 @@ function urlFor(c: WAContent, mediaUrl?: WAMediaUrl): Promise<string | undefined
  *   deno task run:whatsapp
  *
  * Env: WA_BRIDGE_TOKEN (the secret); the bridge's address is connections.whatsapp. */
-/** Wire the outbound half over the org's log — resident once it returns (subscribed). */
-export async function runDispatch(): Promise<void> {
+/** Wire the outbound half over the org's log — resident once it returns (subscribed).
+ *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
+export async function runDispatch(): Promise<() => Promise<void>> {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { mediaSecret, signMediaPath } = await import("../../store/media.ts");
@@ -303,7 +309,7 @@ export async function runDispatch(): Promise<void> {
   };
 
   const { logDirectory } = await import("../mentions.ts");
-  createWhatsAppDispatch({
+  const stop = createWhatsAppDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     send,
     mediaUrl,
@@ -315,6 +321,11 @@ export async function runDispatch(): Promise<void> {
       console.error(`[dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
   });
   console.error(`[dispatch] watching ${dir}/log → ${base}/dispatch`);
+  return async () => {
+    await stop();
+    await creds.close();
+    await log.close();
+  };
 }
 
 if (import.meta.main) await runDispatch();

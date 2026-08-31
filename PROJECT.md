@@ -1308,6 +1308,89 @@ window another org's run can steal):
   connection process a line carries at most a MODULE tag — `[ingest]`, `[dispatch]`,
   `[oauth]`, `[exec]`, `[proxy]` — so a supervised line reads `[whatsapp] [dispatch] …`.
 
+### The system is a daemon, interfaces attach (2026-08-31) — LANDED
+
+Headless main and the container split settle what the harness is: a daemon holding the
+substrate, and interfaces that attach to it. Two axes, decided independently.
+
+The RUN mode answers "do the agents run while nobody is attached?" — `mu start` (the
+daemon: main plus a process per connection) against a run whose life is the command's.
+The ATTACH mode is what a human or a script drives it through: `mu repl` (the TUI),
+`mu task` (one input, streaming deltas and messages until the agent settles — a gate ends
+the turn like any other stopping point, since the interface decides what to do with a
+disclosed request), and whatever else. The illusion the user gets: `mu start` spins the
+org up; `task` and `repl` attach to it, and when nothing is running they bring a daemon up
+themselves and take it down when done. The REPL (`cli.ts`) holds no log handle and hosts
+nothing — the attach path is the only path it has; `mu task` owes the same shape when it
+is reconciled (below).
+
+CONNECTIONS BELONG TO `mu start`. A daemon an interface raised is main alone: the world's
+doors are the org's standing commitment, not a side effect of someone opening a REPL.
+
+A daemon's life is its ATTACHMENTS, never an interface's exit. One raised for an
+interface (`main.ts --ephemeral`, what a REPL that found nothing listening spawns and
+unrefs) reaps itself once nothing is attached and stays that way for a linger
+(`LINGER_MS`, 30s) — long enough that consecutive `mu task` runs reuse one org instead of
+paying for seeding, exec planes and the proxy three times over; one `mu start` raised
+never reads the count. The count (`main.attachments()`) is the door's live connections
+rather than bookkeeping, so a killed interface and a clean one are the same event — a
+hang-up — and the decision sits with the participant that is certainly still alive. "Is
+one running?" is a `connect()` whose refusal means no: the socket file outlives a hard
+kill, which is why `installDoors` unlinks a stale one before binding.
+
+**A STOP WAITS FOR THE SERVICES TO BE IDLE.** An in-flight turn is covered already
+(`system.stopTimeoutMs`), and a hard death leaves the lease recoverable — a `locks` row
+with a steal-reporting TTL. A connection answers SIGTERM in the shape main does: each
+half of every `run.ts` returns a stop — a dispatcher unsubscribes and settles the chain
+of posts in flight, an ingest server refuses new deliveries and finishes the ones it
+holds, the poller disarms and awaits its sweep — and `exitOnStop` (`connect/stop.ts`, on
+the connector seam) drives them all off the signal before exiting, so the supervisor's
+grace is a window the process actually uses.
+
+What that leaves is bounded and accepted. `send` answers **queued**, to agents and humans
+alike, and pending is simply the absence of a dispatch stamp — nothing claims delivery
+before `dispatched_at`. The exposure is one request/response cycle: a dispatcher torn down
+between its request and the bridge's answer restarts still holding queued work and asks
+again, so the wire may carry the message twice. That is the right trade against inventing
+a second source of truth for a state the log cannot observe, and nobody was ever promised
+otherwise. SIGKILL and crashes are known to have side effects — the exec plane is another
+of them: `stop()` reaps each agent's background jobs, and a hard death skips it, leaving
+those jobs attributable by uid in the container and leaked locally.
+
+The attach seam is the door (`door.ts`) — an interface never holds a log handle. The
+container makes that a fact rather than a style: `/data/log` is root's at 700, so an
+SSH'd principal reaches its agent only through the socket main serves. The door speaks
+four ops: `call` (a `tool_use` in the agent's name, gated as ever), `message` (the
+PRINCIPAL's half of the complex — no `turn_id`), `permission_response` (a gate answered),
+and `tail` (the agent's scoped view pushed from a cursor, model deltas riding the same
+wire). `onDelta` is a fan-out: zero tailers headless, N with three interfaces watching —
+and the tailer registry lives on the same live connections the attachment count reads.
+
+**The door discloses the whole session.** What to do with a permission request, with
+`<|SILENCE|>`, with a deferred outcome, is the interface's decision, not the door's — the
+REPL paints an approval card, an audio surface may refuse to carry approvals at all, a
+one-turn CLI may exit on the first gate. The door owes them everything that happened and
+no policy about it.
+
+**One door per (principal, agent) pair, when we get there.** One agent, one principal is
+the rule until then, and it is also what makes the pairing unbuildable today: the catalog
+declares `agents` (each with an `identity`) and no principals at all, so the roster stands
+in for both ends. Principals as declared things are the prerequisite, not the doors. The
+socket's path is the
+whole of a caller's identity and the filesystem is the enforcement, which holds exactly
+while agent and principal coincide. Once an agent has no principal, or several share one,
+the path still says which agent but no longer who is speaking — fine for `call` (the
+script acts as the agent), wrong for a principal `message`. The fix is another socket, not
+another field: a door per pair keeps identity in the path, so the protocol still has
+nowhere to claim someone else's. Peer credentials cannot rescue the single socket —
+Deno 2.7 exposes no socket options, no descriptor to reach `getsockopt` through FFI, and
+an accepted unix connection's `remoteAddr.path` is null; a kernel check on directory
+permissions at connect time is the same guarantee, one step earlier.
+
+`task.ts` sits on the other run mode and will be reconciled when it gets attention: it
+holds explicit principals, supplies its own exec plane, skips the seed, wants no
+connectors, and is the one module where env still carries knobs that are not secrets.
+
 ## The honest framing
 
 After 2b, nothing structural remains — the machine is complete and every later item is

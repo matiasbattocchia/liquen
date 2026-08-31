@@ -47,7 +47,7 @@ import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
 import { createTranscriber } from "./processors.ts";
 import { installDoors } from "./door.ts";
-import type { AlarmEvent, Draft, Emit, Event } from "./types.ts";
+import type { AlarmEvent, Delta, Draft, Emit, Event } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
   DEFAULT_STOP_TIMEOUT_MS,
@@ -141,6 +141,9 @@ export interface MainConfig {
 
 export interface Main {
   log: Log; // producers (connections, the CLI) publish here
+  /** Live door connections — what an attachment-derived lifetime reads (the ephemeral
+   *  entry below; `mu start`'s daemon never reads it). */
+  attachments(): number;
   stop(): Promise<void>;
 }
 
@@ -202,6 +205,9 @@ export async function start(
   }
 
   let stopped = false;
+  // the delta fan-out's late half: ports close over `cast` before the doors exist, and the
+  // doors — which know who is tailing — take it over once they are up
+  let cast: (agentId: string, delta: Delta) => void = () => {};
   const agents = principals.map(({ readable, writable, ...agent }) => {
     // the agent's VIEW of the log (§6): reads, writes, and the tail below all go through it.
     // Folder-declared agents get the connections-map policy (live read-through lookups);
@@ -218,7 +224,10 @@ export async function start(
         // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in
         transport: metered(transport, (row) => log.meter(row), agent.agentId),
         exec: config.exec ?? planes.get(agent.agentId)!.exec,
-        onDelta: config.onDelta,
+        onDelta: (d) => {
+          config.onDelta?.(d);
+          cast(agent.agentId, d);
+        },
         ambient: planes.get(agent.agentId)?.ambient ?? config.ambient,
       } satisfies XiPorts,
     };
@@ -287,6 +296,7 @@ export async function start(
       log: a.log,
     })),
   );
+  cast = (agentId, delta) => doors.emit(agentId, delta);
 
   const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
   // the mirror rides the RAW log (§4): it copies between a mind and its alias surfaces, and
@@ -368,6 +378,7 @@ export async function start(
 
   return {
     log,
+    attachments: () => doors.attachments(),
     async stop() {
       stopped = true;
       clearInterval(ticker);
@@ -467,8 +478,17 @@ function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
   });
 }
 
-// Headless entry: the deployment's main. `mu start` spawns it; the REPL (cli.ts) instead
-// hosts start() in-process to paint the stream.
+/** An interface-raised daemon reaps itself after this long with nothing attached — long
+ *  enough that consecutive `mu task` runs reuse one org instead of re-paying seeding,
+ *  the exec planes and the proxy each time. */
+const LINGER_MS = 30_000;
+const REAP_POLL_MS = 1_000;
+
+// Headless entry: the deployment's main. `mu start` spawns it bare; an attach client
+// (the REPL) that found no daemon spawns it with `--ephemeral`, and that daemon's life
+// is its ATTACHMENTS: the count is the door's live connections, so a killed interface
+// and a clean quit are the same hang-up, and zero held for the linger means nobody is
+// coming back — stop and exit. A bare daemon never reads the count.
 if (import.meta.main) {
   const root = findRoot();
   const dir = `${root}/data`;
@@ -479,5 +499,15 @@ if (import.meta.main) {
     Deno.addSignalListener(sig, () => {
       main.stop().finally(() => Deno.exit(0));
     });
+  }
+  if (Deno.args.includes("--ephemeral")) {
+    let occupied = Date.now(); // boot counts as occupied: the raiser gets the linger to arrive
+    const reaper = setInterval(() => {
+      if (main.attachments() > 0) occupied = Date.now();
+      else if (Date.now() - occupied >= LINGER_MS) {
+        clearInterval(reaper);
+        main.stop().finally(() => Deno.exit(0));
+      }
+    }, REAP_POLL_MS);
   }
 }

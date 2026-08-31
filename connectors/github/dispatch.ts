@@ -59,10 +59,11 @@ export interface GithubDispatchDeps {
   onSent?: (event: MessageEvent, externalId: string | undefined) => void;
 }
 
-/** Wire dispatch to the log. Returns unsubscribe. Posts are serialized to preserve order. */
-export function createGithubDispatch(deps: GithubDispatchDeps): () => void {
+/** Wire dispatch to the log. Posts are serialized to preserve order. Returns stop: take
+ *  no more work, settle the posts already in flight. */
+export function createGithubDispatch(deps: GithubDispatchDeps): () => Promise<void> {
   let chain: Promise<void> = Promise.resolve();
-  return deps.subscribe(
+  const unsub = deps.subscribe(
     (e) => {
       const out = outbound(e);
       if (!out) return;
@@ -82,6 +83,10 @@ export function createGithubDispatch(deps: GithubDispatchDeps): () => void {
     },
     { from: deps.from, filter: isOutboundGh },
   );
+  return async () => {
+    unsub();
+    await chain;
+  };
 }
 
 /** OURS and not yet on the wire (§3, §4): `agent` present AND no `external_id` at insert —
@@ -126,8 +131,9 @@ function textOf(e: Event): string {
 
 /* ── local entry: `post` shells `gh`, the resolved token issued into its spawn env ─────── */
 
-/** Wire the outbound half over the org's log — resident once it returns (subscribed). */
-export async function runDispatch(): Promise<void> {
+/** Wire the outbound half over the org's log — resident once it returns (subscribed).
+ *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
+export async function runDispatch(): Promise<() => Promise<void>> {
   const { openLog, openCredentials, createGrantBroker } = await import("../../src/connector.ts");
   const root = findRoot();
   const dir = `${root}/data`;
@@ -165,7 +171,7 @@ export async function runDispatch(): Promise<void> {
     return created.id !== undefined ? String(created.id) : undefined;
   };
 
-  createGithubDispatch({
+  const stop = createGithubDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     post: ghPost,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
@@ -181,6 +187,11 @@ export async function runDispatch(): Promise<void> {
     );
   }
   console.error(`[dispatch] watching ${dir}/log for outbound sends`);
+  return async () => {
+    await stop();
+    await creds.close();
+    await log.close();
+  };
 }
 
 if (import.meta.main) await runDispatch();

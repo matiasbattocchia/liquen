@@ -9,6 +9,7 @@
     "test": "deno test -A",
     "smoke": "deno test -A --env-file=.env src/transport.test.ts",
     "cli": "deno run -A --env-file=.env src/cli.ts",
+    "repl": "deno run -A --env-file=.env src/cli.ts",
     "start": "deno run -A --env-file=.env src/start.ts",
     "init": "deno run -A src/init.ts",
     "bench": "deno run -A --env-file=.env bench/run.ts",

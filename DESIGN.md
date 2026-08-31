@@ -844,8 +844,8 @@ cli/ui: native local conversations
   The alias conversation itself is **invisible to its own agent** (policy, §6): the
   copies are its face in the window — nothing to hide from the world render, and `send`
   can't reach it. **No backfill**: the mirror tails live — a surface connected
-  mid-conversation starts mid-stream; only the REPL reads the log, so only the REPL has
-  history. Per-service identification of the self-conversation (`aliases()`): **derived
+  mid-conversation starts mid-stream; history is asked of the log (an interface's `tail`
+  takes a cursor), never replayed onto a surface. Per-service identification of the self-conversation (`aliases()`): **derived
   where platform structure gives it away, recorded where the id is opaque** — WA, the
   self-chat is addressed by the connection's own number, so an owned connection IS the
   binding, nothing stored; Slack, the self-DM channel is resolved once at
@@ -1843,6 +1843,17 @@ in; the door stamps `agent` from the path it serves. Under the container split e
 filesystem permissions are the authenticator, no peer-credential syscall needed. Locally
 one user owns everything and the door is convention, like the rest of the exec plane.
 Under Postgres the door gives way to RLS — the script client is unchanged.
+
+**The door is also the attach seam.** An interface — the REPL, a one-turn CLI, whatever
+else — never holds a log handle: it speaks to its agent through the same socket, which
+serves four ops: `call` (above), `message` (the principal's half of the complex, no
+`turn_id`), `permission_response` (a gate answered), and `tail` (the agent's scoped view
+pushed from a cursor, model deltas riding the same wire — `onDelta` is a fan-out over the
+tailers). The door discloses the whole session; what to do with a gate or `<|SILENCE|>`
+is each interface's decision. The daemon's life derives from the same connections:
+`mu start`'s main runs regardless, while one an interface raised (`main.ts --ephemeral`)
+reaps itself after a linger with zero attachments — and "is one running?" is a
+`connect()`, never a `stat()`.
 
 **Discovery is a skill, not a file.** The agent is taught two lines — import `src/script.ts`
 and `bind` it to `new URL(".", import.meta.url).pathname` — and writes them into the script

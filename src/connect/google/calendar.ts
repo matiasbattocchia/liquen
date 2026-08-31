@@ -424,8 +424,9 @@ async function bootstrap(
  * (`connections.google.calendars`), the cadence is a constant. The store imports are
  * dynamic so importing `createGoogleWebhook` (e.g. from an edge function) never pulls in
  * file I/O. */
-/** Wire the poller over the org's log — resident once it returns (interval armed). */
-export async function runIngest(): Promise<void> {
+/** Wire the poller over the org's log — resident once it returns (interval armed).
+ *  Returns stop: disarm the metronome, finish the sweep in flight, release the handles. */
+export async function runIngest(): Promise<() => Promise<void>> {
   const POLL_MS = 60_000;
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
@@ -449,8 +450,17 @@ export async function runIngest(): Promise<void> {
   console.error(
     `[ingest] calendar poll every ${POLL_MS}ms → ${dir}/log  (calendars: ${calendars.join(", ")})`,
   );
-  await poller.tick(); // once at boot: seed cursors / catch up
-  setInterval(() => poller.tick(), POLL_MS);
+  let sweep = poller.tick(); // once at boot: seed cursors / catch up
+  await sweep;
+  const timer = setInterval(() => {
+    sweep = poller.tick();
+  }, POLL_MS);
+  return async () => {
+    clearInterval(timer);
+    await sweep.catch(() => {/* onError already said it */});
+    await creds.close();
+    await log.close();
+  };
 }
 
 if (import.meta.main) await runIngest();

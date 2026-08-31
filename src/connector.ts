@@ -22,6 +22,7 @@ export { checkPort, checkStrings, connectorConfig, findRoot } from "./config.ts"
 export type { ConnectorSpec } from "./config.ts";
 export { DispatchError, failedStatus } from "./connect/errors.ts";
 export { serveIngest } from "./connect/serve.ts";
+export { exitOnStop } from "./connect/stop.ts";
 export type {
   Conversation,
   DataPart,
