@@ -13,13 +13,16 @@
  *                    `credential_key` → the vault row below
  *     → vault:       key `slack:<team>:<principal>` — the `token` field of the blob
  *
- * Three doors, one map (google's twins):
+ * Four doors, one map (google's twins):
  *
- *   user   the paste above — the principal's own leg (xoxp), owned ⇒ private (§6)
- *   bot    the org's shared identity: xoxb (+ optional xapp, the socket carrier the
- *          ingest picks up) → vault `slack:<team>:org`, org-credentialed anchor
- *   app    the OAuth client (id + secret) → vault `slack:app:<client_id>` — what the
- *          hosted oauth door serves from
+ *   user    the paste above — the principal's own leg (xoxp), owned ⇒ private (§6)
+ *   bot     the org's shared identity: xoxb → vault `slack:<team>:org`, org-credentialed
+ *           anchor
+ *   socket  the app-level token (xapp) → vault `slack:socket:<app id>`. Not a grant: it
+ *           names no identity and grants no reach, it says HOW events arrive. App-scoped
+ *           where a grant is workspace-scoped, so it keys by the app id the token carries
+ *   app     the OAuth client (id + secret) → vault `slack:app:<client_id>` — what the
+ *           hosted oauth door serves from
  *
  * Arg (user door): the principal (default: the OS username). Env: none.
  *
@@ -212,12 +215,12 @@ export interface SlackBotDeps {
 
 /** Finish a pasted bot-token grant: verify with Slack, write the ORG-credentialed anchor
  *  (`credential_key` on the workspace row, no owner ⇒ the org's shared inbox, §6), vault
- *  the blob at `slack:<team>:org` — `token` (xoxb) plus `app_token` (xapp) when given,
- *  the socket carrier the ingest picks up. Throws (writing nothing) on a rejected token. */
+ *  the blob at `slack:<team>:org`. The identity and nothing else: the socket carrier is
+ *  its own door (`mu connect slack socket`), app-scoped where this is workspace-scoped.
+ *  Throws (writing nothing) on a rejected token. */
 export async function connectSlackBot(
   token: string,
   deps: SlackBotDeps,
-  appToken?: string,
 ): Promise<{ team: string; botUser: string; missing: string[] }> {
   const authTest = deps.authTest ?? defaultAuthTest;
   const now = deps.now ?? (() => new Date().toISOString());
@@ -225,12 +228,9 @@ export async function connectSlackBot(
     const got = token.startsWith("xoxp-")
       ? "the USER token (xoxp) — that one goes through `mu connect slack user`"
       : token.startsWith("xapp-")
-      ? "an app-level token (xapp) — that's the socket carrier, pasted SECOND at this door"
+      ? "an app-level token (xapp) — that's the socket carrier, `mu connect slack socket`"
       : "not a Slack bot token";
     throw new Error(`expected a bot token (xoxb-…), got ${got}`);
-  }
-  if (appToken && !appToken.startsWith("xapp-")) {
-    throw new Error("the second paste must be an app-level token (xapp-…), or empty");
   }
 
   const who = await authTest(token);
@@ -246,7 +246,7 @@ export async function connectSlackBot(
   deps.store.upsertConnections([{ service: "slack", address: team, credentialKey }]);
   await deps.creds.put({
     key: credentialKey,
-    value: { token, ...(appToken ? { app_token: appToken } : {}) },
+    value: { token },
     extra: { bot_user: botUser, ...(who.url ? { url: who.url } : {}) },
   });
 
@@ -264,12 +264,67 @@ export async function connectSlackBot(
         type: "text",
         kind: "text",
         text: `Slack bot connected on workspace ${team} (bot user ${botUser})` +
-          (appToken ? " — socket carrier stored" : " — no app-level token, HTTP ingest only") +
           (missing.length ? ` — NOT granted: ${missing.join(" ")}` : ""),
       }],
     } satisfies Draft<MessageEvent>,
   );
   return { team, botUser, missing };
+}
+
+/* ── the socket door: `mu connect slack socket` — the app-level token ───────────────── */
+
+export const SOCKET_PREFIX = "slack:socket:";
+
+/** The app id an app-level token carries: `xapp-1-<app id>-<issued>-<secret>`. Socket
+ *  Mode is APP-scoped — one socket serves every workspace the app is installed in — so
+ *  the app id is the carrier's whole identity, and keying by anything else (a team, a
+ *  client id) either duplicates the socket or invents a dependency the paste cannot see. */
+export function appIdOf(appToken: string): string | null {
+  const parts = appToken.split("-");
+  return parts.length >= 4 && parts[0] === "xapp" && /^A[A-Z0-9]+$/.test(parts[2])
+    ? parts[2]
+    : null;
+}
+
+export interface SlackSocketDeps {
+  creds: Pick<Credentials, "put">;
+  /** apps.connections.open — the ONE call an app-level token can make, so it is also the
+   *  only proof the token is live. Injectable; default POSTs. */
+  probe?: (appToken: string) => Promise<{ ok: boolean; error?: string }>;
+}
+
+/** Store a verified app-level token under its app id. No connection, no membership, no
+ *  event: a carrier is not a grant — it grants no reach and names no identity, it only
+ *  says HOW events arrive. */
+export async function connectSlackSocket(
+  appToken: string,
+  deps: SlackSocketDeps,
+): Promise<{ appId: string }> {
+  if (!appToken.startsWith("xapp-")) {
+    const got = appToken.startsWith("xoxb-")
+      ? "the BOT token (xoxb) — that one goes through `mu connect slack bot`"
+      : appToken.startsWith("xoxp-")
+      ? "a USER token (xoxp) — that one goes through `mu connect slack user`"
+      : "not a Slack app-level token";
+    throw new Error(`expected an app-level token (xapp-…), got ${got}`);
+  }
+  const appId = appIdOf(appToken);
+  if (!appId) throw new Error(`malformed app-level token — expected xapp-1-<app id>-…`);
+
+  const probe = deps.probe ?? defaultSocketProbe;
+  const live = await probe(appToken);
+  if (!live.ok) throw new Error(`apps.connections.open: ${live.error ?? "refused"}`);
+
+  await deps.creds.put({ key: `${SOCKET_PREFIX}${appId}`, value: { app_token: appToken } });
+  return { appId };
+}
+
+async function defaultSocketProbe(appToken: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch("https://slack.com/api/apps.connections.open", {
+    method: "POST",
+    headers: { authorization: `Bearer ${appToken}` },
+  });
+  return await res.json() as { ok: boolean; error?: string };
 }
 
 /* ── what the org still owes, read off the vault ─────────────────────────────────────── */
@@ -287,10 +342,9 @@ export function slackHave(rows: { key: string; value: Record<string, unknown> }[
   const have: SlackHave = { app: false, bot: false, appToken: false, user: false };
   for (const r of rows) {
     if (r.key.startsWith(APP_PREFIX)) have.app = true;
-    else if (r.key.endsWith(":org")) {
-      have.bot = true;
-      if (typeof r.value.app_token === "string" && r.value.app_token) have.appToken = true;
-    } else have.user = true;
+    else if (r.key.startsWith(SOCKET_PREFIX)) have.appToken = true;
+    else if (r.key.endsWith(":org")) have.bot = true;
+    else have.user = true;
   }
   return have;
 }
@@ -313,14 +367,15 @@ export function slackNext(have: SlackHave): string[] {
   }
   if (!have.bot) {
     next.push(
-      "no org identity — `mu connect slack bot`: the socket carrier that feeds ingest " +
-        "rides with it (without one, ingest needs a PUBLIC request URL on the ingest port)",
+      "no org identity — `mu connect slack bot` (the org's shared inbox; a bot is also " +
+        "what an app needs to be installed with bot events)",
     );
-  } else if (!have.appToken) {
+  }
+  if (!have.appToken) {
     next.push(
       "no socket carrier — Basic Information → App-Level Tokens → Generate Token and " +
-        "Scopes (`connections:write`), then run `mu connect slack bot` again and paste " +
-        "the xapp- second (without it, ingest needs a PUBLIC request URL)",
+        "Scopes (`connections:write`), then `mu connect slack socket` (without one, " +
+        "ingest needs a PUBLIC request URL)",
     );
   }
   if (!have.app) {
@@ -410,7 +465,9 @@ if (import.meta.main) {
   const root = findRoot();
   const dir = `${root}/data`;
   const [first, ...rest] = Deno.args;
-  const verb = first === "app" || first === "bot" || first === "user" ? first : "user";
+  const verb = first === "app" || first === "bot" || first === "socket" || first === "user"
+    ? first
+    : "user";
 
   /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
   const lines = Deno.stdin.isTerminal()
@@ -461,15 +518,35 @@ if (import.meta.main) {
     Deno.exit(0);
   }
 
+  if (verb === "socket") {
+    console.error("In the app: Basic Information → App-Level Tokens → Generate Token and");
+    console.error("Scopes, with the `connections:write` scope. Slack has no API for this.\n");
+    const appToken = ask("Paste the app-level token (xapp-…):");
+    if (!appToken) {
+      console.error("no token pasted — nothing written");
+      Deno.exit(2);
+    }
+    const creds = await openCredentials(dir);
+    try {
+      const { appId } = await connectSlackSocket(appToken, { creds });
+      console.error(`\n✓ socket carrier stored for app ${appId} — ingest reads events over it`);
+      await owed(creds);
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : String(e));
+      Deno.exit(2);
+    } finally {
+      await creds.close();
+    }
+    Deno.exit(0);
+  }
+
   if (verb === "bot") {
-    console.error("In the app: OAuth & Permissions → the Bot User OAuth Token (xoxb-…).");
-    console.error("Socket mode too? Basic Information → App-Level Tokens (xapp-…).\n");
+    console.error("In the app: OAuth & Permissions → the Bot User OAuth Token (xoxb-…).\n");
     const token = ask("Paste the bot token (xoxb-…):");
     if (!token) {
       console.error("no token pasted — nothing written");
       Deno.exit(2);
     }
-    const appToken = ask("App-level token (xapp-…, empty to skip):");
     const log = await openLog(`${dir}/log`);
     const creds = await openCredentials(dir);
     try {
@@ -479,7 +556,7 @@ if (import.meta.main) {
         store: log,
         publish: log.publish,
         asked: botScopes,
-      }, appToken);
+      });
       console.error(`\n✓ connected: workspace ${team}, bot user ${botUser} → the org`);
       report(missing, "Reinstall the app to the workspace after adding them.");
       await owed(creds);

@@ -7,8 +7,10 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { missingScopes } from "./config.ts";
 import {
+  appIdOf,
   connectSlackApp,
   connectSlackBot,
+  connectSlackSocket,
   connectSlackUser,
   manifestUrl,
   pickSlackApp,
@@ -179,20 +181,21 @@ Deno.test("connect: the prefill link embeds the manifest for api.slack.com to bu
   );
 });
 
-Deno.test("bot door: xoxb (+ xapp) → the org-credentialed anchor + the vault blob", async () => {
+Deno.test("bot door: xoxb → the org-credentialed anchor + the vault blob", async () => {
   const h = harness();
   const { team, botUser } = await connectSlackBot("xoxb-bot", {
     ...h.deps,
     authTest: () =>
       Promise.resolve({ ok: true, team_id: "T1", user_id: "UBOT", url: "https://x.slack.com" }),
-  }, "xapp-carrier");
+  });
 
   assertEquals({ team, botUser }, { team: "T1", botUser: "UBOT" });
   // ONE row: the workspace anchor, org-credentialed — no owner, no membership (§6)
   assertEquals(h.connections, [{ service: "slack", address: "T1", credentialKey: "slack:T1:org" }]);
   assertEquals(h.memberships.length, 0);
   assertEquals(h.credentials[0].key, "slack:T1:org");
-  assertEquals(h.credentials[0].value, { token: "xoxb-bot", app_token: "xapp-carrier" });
+  // the identity ALONE — the carrier is app-scoped and lives at its own door
+  assertEquals(h.credentials[0].value, { token: "xoxb-bot" });
   assertEquals(h.credentials[0].extra?.bot_user, "UBOT");
   assertEquals(h.published.length, 1); // the note crossed the frontier as an event
 });
@@ -297,24 +300,30 @@ Deno.test("slackHave: the vault's slack rows sort into app, bot, carrier, user",
   assertEquals(
     slackHave([
       { key: "slack:app:cid", value: { client_id: "cid" } },
-      { key: "slack:T1:org", value: { token: "xoxb-x", app_token: "xapp-x" } },
+      { key: "slack:socket:A1", value: { app_token: "xapp-x" } },
+      { key: "slack:T1:org", value: { token: "xoxb-x" } },
       { key: "slack:T1:matias", value: { token: "xoxp-x" } },
     ]),
     { app: true, bot: true, appToken: true, user: true },
   );
-  // a bot pasted without the second token is a bot with NO carrier
+  // an identity is not a carrier: the two are stored, and asked for, apart
   assertEquals(
     slackHave([{ key: "slack:T1:org", value: { token: "xoxb-x" } }]),
     { app: false, bot: true, appToken: false, user: false },
   );
+  assertEquals(
+    slackHave([{ key: "slack:socket:A1", value: { app_token: "xapp-x" } }]),
+    { app: false, bot: false, appToken: true, user: false },
+  );
 });
 
-Deno.test("slackNext: a user leg alone is told inbound has no carrier yet", () => {
+Deno.test("slackNext: a user leg alone is told what inbound still needs", () => {
   const next = slackNext({ app: false, bot: false, appToken: false, user: true });
-  assertEquals(next.length, 2); // the bot (with its carrier), and the oauth client
+  assertEquals(next.length, 3); // the bot, the carrier, the oauth client
   assertStringIncludes(next[0], "mu connect slack bot");
-  assertStringIncludes(next[0], "PUBLIC request URL"); // the alternative, named
-  assertStringIncludes(next[1], "mu connect slack app");
+  assertStringIncludes(next[1], "mu connect slack socket");
+  assertStringIncludes(next[1], "PUBLIC request URL"); // the alternative, named
+  assertStringIncludes(next[2], "mu connect slack app");
 });
 
 Deno.test("slackNext: a bot without its app-level token is told where to generate one", () => {
@@ -332,3 +341,52 @@ Deno.test("slackNext: an app and nothing else is told an app is not a grant", ()
 Deno.test("slackNext: carrier + both legs owes nothing", () => {
   assertEquals(slackNext({ app: true, bot: true, appToken: true, user: true }), []);
 });
+
+Deno.test("socket door: the app id comes from the token, so one app is one socket", () => {
+  assertEquals(appIdOf("xapp-1-A0BP6GSJ1S4-1175398670000-abc123"), "A0BP6GSJ1S4");
+  assertEquals(appIdOf("xoxb-not-an-app-token"), null);
+  assertEquals(appIdOf("xapp-1"), null); // truncated
+});
+
+Deno.test("socket door: a live token lands under its app id, as a carrier and nothing else", async () => {
+  const h = harness();
+  const { appId } = await connectSlackSocket("xapp-1-A99-123-secret", {
+    creds: h.deps.creds,
+    probe: () => Promise.resolve({ ok: true }),
+  });
+  assertEquals(appId, "A99");
+  assertEquals(h.credentials[0].key, "slack:socket:A99");
+  assertEquals(h.credentials[0].value, { app_token: "xapp-1-A99-123-secret" });
+  // a carrier is not a grant: no anchor, no membership, no event crossed the frontier
+  assertEquals(h.connections, []);
+  assertEquals(h.memberships, []);
+  assertEquals(h.published, []);
+});
+
+Deno.test("socket door: a refused token writes nothing", async () => {
+  const h = harness();
+  await assertRejects(
+    () =>
+      connectSlackSocket("xapp-1-A99-123-secret", {
+        creds: h.deps.creds,
+        probe: () => Promise.resolve({ ok: false, error: "invalid_auth" }),
+      }),
+    Error,
+    "invalid_auth",
+  );
+  assertEquals(h.credentials.length, 0);
+});
+
+Deno.test("socket door: an identity token is refused by shape, and pointed home", async () => {
+  const h = harness();
+  await assertRejects(
+    () => connectSlackSocket("xoxb-bot", { creds: h.deps.creds, probe: () => never() }),
+    Error,
+    "mu connect slack bot",
+  );
+  assertEquals(h.credentials.length, 0);
+});
+
+const never = (): Promise<{ ok: boolean }> => {
+  throw new Error("the shape guard must refuse before any call to Slack");
+};

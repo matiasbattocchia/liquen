@@ -599,7 +599,7 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => Pr
  *   deno task run:slack       # xapp in the vault → socket mode; else HTTP on :8789
  *
  * Env: none — everything comes from the vault. Socket carriers are the app-level
- * tokens the bot door stored (`mu connect slack bot`), one socket per app (§4). No
+ * tokens the socket door stored (`mu connect slack socket`), one socket per app (§4). No
  * carrier ⇒ HTTP mode on connections.slack.ingestPort, verified by the app's
  * signing secret (`mu connect slack app` stores it). */
 /** Wire the inbound half over the org's log — resident once it returns (socket or server).
@@ -607,17 +607,17 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => Pr
 export async function runIngest(): Promise<() => Promise<void>> {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
+  const { SOCKET_PREFIX } = await import("./connect.ts");
   const { kindOf, saveMedia } = await import("../../store/media.ts");
   const root = findRoot();
   const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
-  // socket carriers: every org bot with an app-level token (the bot door stores it as
-  // `app_token` on `slack:<team>:org`) — one socket per app (§4)
+  // socket carriers: one per app-level token in the vault — Socket Mode is app-scoped,
+  // and one socket carries every workspace that app is installed in (§4)
   const carriers = [
     ...new Set(
-      (await creds.list("slack:")).filter((r) => r.key.endsWith(":org"))
-        .map((r) => r.value.app_token).filter(Boolean),
+      (await creds.list(SOCKET_PREFIX)).map((r) => r.value.app_token).filter(Boolean),
     ),
   ];
 

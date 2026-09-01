@@ -954,7 +954,7 @@ The 3×2 grid, each cell real and distinct:
   *Credentials* is **the vault**: a key:value store in log.db (one substrate; its OWN
   accessor, so a policy-scoped log never carries credential capability into the agent
   plane) — `(key, value, agent_id?, extra)`, `value` the service-shaped secret blob
-  (`{token, app_token}`, `{client_id, client_secret}`, `{api_key}`); it serves
+  (`{token}`, `{app_token}`, `{client_id, client_secret}`, `{api_key}`); it serves
   connections AND tools (a tool config's `credential_key` points into the same vault).
   `put` MERGES `value`/`extra` fields: each door writes the field it holds and never
   clobbers a sibling's. Broker-side by construction: on Postgres, RLS deny-all (the
