@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { createSlackOAuth, type SlackAccess } from "./oauth.ts";
+import { DEFAULT_BOT_SCOPES } from "./config.ts";
 import { openCredentials } from "../../store/credentials.ts";
 import type { Draft, Event, MessageEvent } from "../../types.ts";
 import { newId } from "../../store/id.ts";
@@ -13,12 +14,19 @@ const CONFIG = {
   userScopes: ["chat:write", "channels:history"],
 };
 
+// a FULL install: both legs come back carrying what the door asked for — Slack states
+// the granted scopes on the exchange, and a token short of them fails at the call
 const ACCESS: SlackAccess = {
   ok: true,
   access_token: "xoxb-bot-token",
+  scope: DEFAULT_BOT_SCOPES.join(","),
   bot_user_id: "UBOT",
   team: { id: "T1", name: "turtle" },
-  authed_user: { id: "U9", access_token: "xoxp-ana-token", scope: "chat:write" },
+  authed_user: {
+    id: "U9",
+    access_token: "xoxp-ana-token",
+    scope: "chat:write,channels:history",
+  },
 };
 
 async function withOAuth(
@@ -187,5 +195,24 @@ Deno.test("callback: a user-only grant (member connect, app already installed) s
     ok: true,
     team: { id: "T1" },
     authed_user: { id: "U9", access_token: "xoxp-ana-token", scope: "chat:write" },
+  });
+});
+
+Deno.test("callback: an install that granted less than the ask says which scopes", async () => {
+  await withOAuth(async ({ start, callback, creds, published }) => {
+    const res = await callback("code-1", stateOf(await start()));
+    // the install COMPLETED — both legs are stored; the reach is what fell short
+    assertEquals(res.status, 200);
+    const page = await res.text();
+    assertStringIncludes(page, "did not grant");
+    assertStringIncludes(page, "im:history"); // a bot scope the install withheld
+    assertStringIncludes(page, "channels:history"); // and a user one
+    assert(await creds.get("slack:T1:org") !== undefined);
+    const note = published[0] as MessageEvent;
+    assertStringIncludes(note.parts[0].type === "text" ? note.parts[0].text : "", "NOT granted");
+  }, {
+    ...ACCESS,
+    scope: "channels:history",
+    authed_user: { ...ACCESS.authed_user!, scope: "chat:write" },
   });
 });

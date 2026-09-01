@@ -26,7 +26,7 @@
  */
 
 import type { OauthV2AccessResponse } from "@slack/web-api";
-import { DEFAULT_BOT_SCOPES } from "./config.ts";
+import { DEFAULT_BOT_SCOPES, missingScopes } from "./config.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Credentials } from "../../store/credentials.ts";
@@ -96,6 +96,15 @@ export function createSlackOAuth(deps: SlackOAuthDeps): OAuthHandler {
       const acc = await exchange(code, config);
       if (!acc.ok || !acc.team?.id) return text(502, `exchange failed: ${acc.error ?? "?"}`);
       const team = acc.team.id;
+      // what each leg came back with, against what /start asked for: an install can grant
+      // less than the app requests, and the token then fails at the CALL, not here
+      const short = [
+        ...missingScopes(acc.access_token ? config.scopes ?? DEFAULT_BOT_SCOPES : [], acc.scope),
+        ...missingScopes(
+          acc.authed_user?.access_token ? config.userScopes ?? [] : [],
+          acc.authed_user?.scope,
+        ),
+      ];
 
       // the bare WORKSPACE — the anchor of personal-witnessed deliveries; registering
       // it opens the log (§4, the gate). It stays a STUB (§6): membership-only.
@@ -153,12 +162,16 @@ export function createSlackOAuth(deps: SlackOAuthDeps): OAuthHandler {
           type: "text",
           kind: "text",
           text: `Slack connected on workspace ${team}: ${who}` +
-            (acc.authed_user?.id ? ` (slack user ${acc.authed_user.id})` : ""),
+            (acc.authed_user?.id ? ` (slack user ${acc.authed_user.id})` : "") +
+            (short.length ? ` — NOT granted: ${short.join(" ")}` : ""),
         }],
       };
       await deps.publish(note);
       return new Response(
-        "✓ Connected. You can close this window.",
+        short.length
+          ? `Connected on ${team}, but the install did not grant:\n  ${short.join("\n  ")}\n\n` +
+            `Calls needing them answer missing_scope. Add them to the app and install again.`
+          : "✓ Connected. You can close this window.",
         { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } },
       );
     }

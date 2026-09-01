@@ -1600,6 +1600,15 @@ to be registered on the client — `redirect_uri_mismatch` is what Google reject
 this door waits on localhost, so the app's hosted callback is the served door's, not this
 one's — and exits 2 with one line when the vault holds no app.
 
+Slack answers the same question in two other places, so its doors ask it too: a PASTED
+token states its reach only in `x-oauth-scopes` on the auth.test response, and an install
+states it in the exchange's `scope` / `authed_user.scope`. Both paste doors weigh the
+paste against `connections.slack.{bot,user}Scopes` and the hosted callback weighs the
+install against what /start asked for. The shape guards were already there — xoxp at the
+user door, xoxb (+ xapp second) at the bot door, checked before auth.test so a paste-slip
+never reaches Slack — and the user and bot doors need no app row at all: the paste IS the
+grant, and `slack:app:` exists only for the hosted door.
+
 ## The honest framing
 
 After 2b, nothing structural remains — the machine is complete and every later item is

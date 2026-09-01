@@ -73,6 +73,16 @@ export const SPEC: ConnectorSpec = {
   ],
 };
 
+/** What the ask did not get. Slack states what a token MAY do in two places — the
+ *  `x-oauth-scopes` header on every Web API response, `scope` on an oauth exchange —
+ *  and a token short of the ask fails at the CALL, with `missing_scope`, long after the
+ *  door that stored it said it was connected. Comma- or space-separated, both arrive. */
+export function missingScopes(asked: string[], granted?: string[] | string): string[] {
+  const list = Array.isArray(granted) ? granted : (granted ?? "").split(/[,\s]+/);
+  const has = new Set(list.filter(Boolean));
+  return asked.filter((s) => !has.has(s));
+}
+
 /** Read (and heal) `connections.slack` from the org's config.jsonc. */
 export function slackConfig(root: string): Promise<SlackConfig> {
   return connectorConfig<SlackConfig>(root, SPEC);

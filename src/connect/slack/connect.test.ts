@@ -4,7 +4,8 @@
  * string never identifies one) and a rejected token writes NOTHING.
  */
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { missingScopes } from "./config.ts";
 import {
   connectSlackApp,
   connectSlackBot,
@@ -232,4 +233,60 @@ Deno.test("app door: the client lands under its own id; pick = only one, or by i
   );
   await connectSlackApp({ clientId: "789.000", clientSecret: "sec2" }, creds);
   await assertRejects(() => pickSlackApp(creds), Error, "--app"); // several ⇒ pick explicitly
+});
+
+Deno.test("connect: a paste short of the ask is stored, and says what it cannot do", async () => {
+  const h = harness();
+  const { missing } = await connectSlackUser("xoxp-secret", {
+    ...h.deps,
+    asked: ["chat:write", "channels:history", "files:read"],
+    // the header Slack answers with — the only account a PASTED token gives of its reach
+    authTest: () =>
+      Promise.resolve({
+        ok: true,
+        team_id: "T1",
+        user_id: "U7",
+        scopes: ["identify", "chat:write", "channels:history"],
+      }),
+  });
+
+  assertEquals(missing, ["files:read"]);
+  // the grant still LANDS — it is real, it just cannot do everything asked of it
+  assertEquals(h.connections.length, 2);
+  const note = h.published[0];
+  assert(note.type === "message" && note.parts[0].type === "text");
+  assertStringIncludes(note.parts[0].text, "NOT granted: files:read");
+});
+
+Deno.test("connect: a token carrying the whole ask claims no shortfall", async () => {
+  const h = harness();
+  const { missing } = await connectSlackUser("xoxp-secret", {
+    ...h.deps,
+    asked: ["chat:write"],
+    authTest: () =>
+      Promise.resolve({ ok: true, team_id: "T1", user_id: "U7", scopes: ["chat:write"] }),
+  });
+  assertEquals(missing, []);
+  const note = h.published[0];
+  assert(note.type === "message" && note.parts[0].type === "text");
+  assert(!note.parts[0].text.includes("NOT granted"));
+});
+
+Deno.test("connect: the bot door weighs the paste against the org's bot scopes", async () => {
+  const h = harness();
+  const { missing } = await connectSlackBot("xoxb-secret", {
+    creds: h.deps.creds,
+    store: h.deps.store,
+    publish: h.deps.publish,
+    asked: ["chat:write", "users:read"],
+    authTest: () =>
+      Promise.resolve({ ok: true, team_id: "T1", user_id: "UBOT", scopes: ["chat:write"] }),
+  });
+  assertEquals(missing, ["users:read"]);
+});
+
+Deno.test("missingScopes: a token with no scopes on the wire owes the whole ask", () => {
+  assertEquals(missingScopes(["a", "b"], undefined), ["a", "b"]);
+  assertEquals(missingScopes(["a", "b"], "b,a"), []); // comma-separated, any order
+  assertEquals(missingScopes(["a"], ["a", "extra"]), []); // extra reach is not a shortfall
 });

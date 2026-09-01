@@ -35,6 +35,12 @@ import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { findRoot } from "../../config.ts";
 import { declared } from "../declare.ts";
+import { missingScopes } from "./config.ts";
+
+/** auth.test's answer, plus what the token may DO: the granted scopes ride the response
+ *  header (`x-oauth-scopes`), never the body — for a pasted token it is the only account
+ *  Slack gives of its reach. */
+export type AuthTest = AuthTestResponse & { scopes?: string[] };
 
 export interface SlackConnectDeps {
   /** The registry name the pasted grant belongs to (v0: principal name = agent name). */
@@ -45,7 +51,11 @@ export interface SlackConnectDeps {
   /** → the EventLog: the grant notification crosses the frontier as an event (§4). */
   publish: Appender["publish"];
   /** auth.test — injectable for tests; default POSTs with the pasted token. */
-  authTest?: (token: string) => Promise<AuthTestResponse>;
+  authTest?: (token: string) => Promise<AuthTest>;
+  /** The scopes this leg is supposed to carry (`connections.slack.userScopes`): what the
+   *  installed app granted is compared against it, and the difference is the caller's to
+   *  report. Absent ⇒ nothing to compare, and the grant claims nothing about its reach. */
+  asked?: string[];
   /** conversations.open on the granting user's own id → the self-DM channel (the
    *  mind-alias binding, §4). Injectable; undefined result ⇒ no binding recorded. */
   openSelfIm?: (token: string, user: string) => Promise<string | undefined>;
@@ -57,7 +67,7 @@ export interface SlackConnectDeps {
 export async function connectSlackUser(
   token: string,
   deps: SlackConnectDeps,
-): Promise<{ team: string; user: string }> {
+): Promise<{ team: string; user: string; missing: string[] }> {
   const authTest = deps.authTest ?? defaultAuthTest;
   const now = deps.now ?? (() => new Date().toISOString());
 
@@ -78,6 +88,7 @@ export async function connectSlackUser(
     throw new Error(`auth.test: ${who.error ?? "no team/user in response"}`);
   }
   const { team_id: team, user_id: user } = who;
+  const missing = missingScopes(deps.asked ?? [], who.scopes);
 
   // two rows (§4): the WORKSPACE — the anchor every event carries; registering it is
   // what OPENS the log (the publish gate) — and the OWNED grant `<team>:<user>`, the
@@ -127,11 +138,12 @@ export async function connectSlackUser(
       text: `Slack connected on workspace ${team}: ${deps.principal} (slack user ${user})` +
         (selfIm
           ? ` — mind-alias bound to self-DM ${selfIm}`
-          : " — self-DM unresolved, no mind-alias"),
+          : " — self-DM unresolved, no mind-alias") +
+        (missing.length ? ` — NOT granted: ${missing.join(" ")}` : ""),
     }],
   };
   await deps.publish(note);
-  return { team, user };
+  return { team, user, missing };
 }
 
 /* ── the app door: `mu connect slack app` — the OAuth client into the vault ──────────── */
@@ -192,7 +204,9 @@ export interface SlackBotDeps {
   creds: Pick<Credentials, "put">;
   store: Pick<Connections, "upsertConnections">;
   publish: Appender["publish"];
-  authTest?: (token: string) => Promise<AuthTestResponse>;
+  authTest?: (token: string) => Promise<AuthTest>;
+  /** `connections.slack.botScopes` — the same comparison the user door makes. */
+  asked?: string[];
   now?: () => string;
 }
 
@@ -204,7 +218,7 @@ export async function connectSlackBot(
   token: string,
   deps: SlackBotDeps,
   appToken?: string,
-): Promise<{ team: string; botUser: string }> {
+): Promise<{ team: string; botUser: string; missing: string[] }> {
   const authTest = deps.authTest ?? defaultAuthTest;
   const now = deps.now ?? (() => new Date().toISOString());
   if (!token.startsWith("xoxb-")) {
@@ -224,6 +238,7 @@ export async function connectSlackBot(
     throw new Error(`auth.test: ${who.error ?? "no team/user in response"}`);
   }
   const { team_id: team, user_id: botUser } = who;
+  const missing = missingScopes(deps.asked ?? [], who.scopes);
 
   const credentialKey = `slack:${team}:org`;
   // ONE row: the workspace anchor, org-credentialed — that account itself reads as the
@@ -249,11 +264,12 @@ export async function connectSlackBot(
         type: "text",
         kind: "text",
         text: `Slack bot connected on workspace ${team} (bot user ${botUser})` +
-          (appToken ? " — socket carrier stored" : " — no app-level token, HTTP ingest only"),
+          (appToken ? " — socket carrier stored" : " — no app-level token, HTTP ingest only") +
+          (missing.length ? ` — NOT granted: ${missing.join(" ")}` : ""),
       }],
     } satisfies Draft<MessageEvent>,
   );
-  return { team, botUser };
+  return { team, botUser, missing };
 }
 
 /** Fill the manifest's consent lists from the catalog — the seed carries the app's shape
@@ -306,12 +322,16 @@ async function defaultOpenSelfIm(token: string, user: string): Promise<string | 
   return out.ok ? out.channel?.id : undefined;
 }
 
-async function defaultAuthTest(token: string): Promise<AuthTestResponse> {
+async function defaultAuthTest(token: string): Promise<AuthTest> {
   const res = await fetch("https://slack.com/api/auth.test", {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
   });
-  return await res.json() as AuthTestResponse;
+  const scopes = res.headers.get("x-oauth-scopes");
+  return {
+    ...await res.json() as AuthTestResponse,
+    ...(scopes ? { scopes: scopes.split(/[,\s]+/).filter(Boolean) } : {}),
+  };
 }
 
 /* ── local entry: the three doors ───────────────────────────────────────────────────────
@@ -338,6 +358,16 @@ if (import.meta.main) {
     : (await new Response(Deno.stdin.readable).text()).split("\n").map((l) => l.trim());
   const ask = (label: string): string | undefined =>
     (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
+
+  /** The grant landed and is stored; what it cannot do is the part worth saying out loud,
+   *  because Slack only mentions it again at the call that fails. */
+  const report = (missing: string[], remedy: string): void => {
+    if (missing.length === 0) return;
+    console.error(
+      `⚠ this token does NOT carry:\n  ${missing.join("\n  ")}\n` +
+        `  Calls needing them answer missing_scope. ${remedy}`,
+    );
+  };
 
   if (verb === "app") {
     const creds = await openCredentials(dir);
@@ -375,12 +405,15 @@ if (import.meta.main) {
     const log = await openLog(`${dir}/log`);
     const creds = await openCredentials(dir);
     try {
-      const { team, botUser } = await connectSlackBot(token, {
+      const { botScopes } = await slackConfig(root);
+      const { team, botUser, missing } = await connectSlackBot(token, {
         creds,
         store: log,
         publish: log.publish,
+        asked: botScopes,
       }, appToken);
       console.error(`\n✓ connected: workspace ${team}, bot user ${botUser} → the org`);
+      report(missing, "Reinstall the app to the workspace after adding them.");
       console.error("  (deno task status shows the map)");
       await declared(root, "slack");
     } finally {
@@ -429,13 +462,15 @@ if (import.meta.main) {
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
   try {
-    const { team, user } = await connectSlackUser(token, {
+    const { team, user, missing } = await connectSlackUser(token, {
       principal,
       creds,
       store: log, // connections live on the Log (§4)
       publish: log.publish,
+      asked: userScopes,
     });
     console.error(`\n✓ connected: workspace ${team}, slack user ${user} → ${principal}`);
+    report(missing, 'Add them under "User Token Scopes", then "Reinstall to Workspace".');
     console.error("  (deno task status shows the map)");
     await declared(root, "slack");
   } finally {
