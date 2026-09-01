@@ -1462,7 +1462,7 @@ agent's working directory; (B) `mu repl` outside an org scaffolds one, harness f
 stage. Neither is built, and A's open question is whose cwd wins when several attachments
 sit in different folders.
 
-### Many sessions per agent (2026-09-01) — steps 1–5 landed, 6 open
+### Many sessions per agent (2026-09-01) — LANDED (all six steps)
 
 DESIGN §7 deferred subagents and settled for `session_id ≈ agent id`. This is the design
 that lifts it: an agent runs MANY sessions, each its own window, lock, compaction and
@@ -1570,8 +1570,10 @@ the wire needs no tag and a CLI's idle-cursor logic works per session unchanged;
 session targets: a bare agent name is its mind, `mind@matias` (any roster session
 address) canonicalizes to the `dm:` pair with both ends enrolled as the sessions they
 are; `selfSend` refuses the session's OWN room (the bare agent name only from the mind),
-so a sibling can always reach `mind@matias`. Still open: (6) render's
-`<msg from="build@matias">` for sibling lines.
+so a sibling can always reach `mind@matias`. (6) **landed** — a peer session's line
+wears its address, `<msg from="build@matias">`; another agent's mind wears the bare agent
+name (an agent IS its mind) — either way the label is the handle `send` takes back.
+`<principal>` stays the human's alone.
 
 ## The honest framing
 

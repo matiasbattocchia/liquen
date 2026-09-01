@@ -1150,8 +1150,18 @@ Deno.test("authorship labels (§3): turn_id = (you); the stamp alone = (principa
     payload: { turn_id: "T2" },
     parts: [{ type: "text", kind: "text", text: "puedo ayudar" }],
   };
+  // a SIBLING session's line wears its full address (§4) — the bare name would read as
+  // this very agent's own voice, and it is the handle send takes back
+  const sibling: MessageEvent = {
+    ...base,
+    id: "e4",
+    envelope: { ...base.envelope, conversation: { address: "dm:build@ana:mind@ana" } },
+    agent: { id: "ana", session_id: "build" },
+    payload: { turn_id: "T3" },
+    parts: [{ type: "text", kind: "text", text: "terminé el refactor" }],
+  };
   const { messages } = render({
-    events: [voice, principal, peerAgent],
+    events: [voice, principal, peerAgent, sibling],
     docs: [],
     session: { id: "mind", agentId: "ana", conversation: "mind@ana" },
     zone: "UTC",
@@ -1160,7 +1170,8 @@ Deno.test("authorship labels (§3): turn_id = (you); the stamp alone = (principa
   const dump = JSON.stringify(messages);
   assertStringIncludes(dump, 'from=\\"self (you)\\" at=\\"12 Aug 9:00\\">yo me encargo');
   assertStringIncludes(dump, 'from=\\"self (principal)\\" at=\\"12 Aug 9:00\\">mejor lo veo yo');
-  assertStringIncludes(dump, 'from=\\"robo\\" at=\\"12 Aug 9:00\\">puedo ayudar');
+  assertStringIncludes(dump, 'from=\\"robo\\" at=\\"12 Aug 9:00\\">puedo ayudar'); // an agent IS its mind
+  assertStringIncludes(dump, 'from=\\"build@ana\\" at=\\"12 Aug 9:00\\">terminé el refactor');
 });
 
 Deno.test("actions on the element (§5): <msg action>, id/re references, <reaction>, mentions", () => {

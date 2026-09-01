@@ -16,7 +16,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { isExternal, pathOf } from "./store/media.ts"; // pure uri helpers — no I/O
-import { routedSession } from "./session.ts";
+import { MIND, routedSession } from "./session.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
   AlarmEvent,
@@ -844,6 +844,16 @@ function senderLabel(sender: { address?: string; name?: string }): string {
   return sender.address ?? name ?? "peer";
 }
 
+/** Another session's line wears its ADDRESS — the handle `send` takes back (§4). An
+ *  agent's mind wears the bare agent name (an agent IS its mind); a named session the
+ *  full `build@matias`. Composed by hand, not `sessionAddress`: render never throws on
+ *  an odd stored name. */
+function peerSession(e: Event): string {
+  const a = e.agent!;
+  const s = a.session_id ?? routedSession(e.envelope);
+  return s === MIND ? a.id : `${s}@${a.id}`;
+}
+
 function msgLine(
   e: MessageEvent,
   session: SessionRef,
@@ -854,15 +864,16 @@ function msgLine(
   // `self` for both hands, because on the wire there IS only one: the account — the halves
   // are told apart by AUTHORSHIP (§3): turn_id ⇒ the model's voice; the classifier's
   // `agent.id` stamp without one ⇒ the principal (their grant named the mind, whichever
-  // device they typed on). A DIFFERENT agent.id is a peer agent's voice (team chat). The
-  // sender-less fallback keeps pre-classifier coexistence rows labelled: no sender means
-  // the account spoke and it did not come through us — the principal, on their own phone.
+  // device they typed on). A DIFFERENT session is a peer's voice — a teammate agent or a
+  // sibling session (team chat) — labelled by its address (§4). The sender-less fallback
+  // keeps pre-classifier coexistence rows labelled: no sender means the account spoke and
+  // it did not come through us — the principal, on their own phone.
   const from = isSelf(e, session)
     ? "self (you)"
     : ownComplex(e, session)
     ? "self (principal)"
     : e.agent !== undefined
-    ? e.agent.id
+    ? peerSession(e)
     : e.envelope.sender === undefined
     ? "self (principal)"
     : senderLabel(e.envelope.sender);

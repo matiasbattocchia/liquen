@@ -1095,7 +1095,10 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   `self`, told apart by authorship: `from="self (you)"` = the agent published it (a
   `send`, or its echo), `from="self (principal)"` = the account spoke and it did not come
   through us (the principal on their own device — the ingest classifier stamps `agent.id`
-  from the sender's grant row on both wires, §3). The reply sits with what it answers. A dead delivery carries
+  from the sender's grant row on both wires, §3). A PEER session's line wears its address
+  (§4) — `from="build@matias"`; another agent's mind wears the bare agent name, an agent
+  being its mind — which is the handle `send` takes back. The reply sits with what it
+  answers. A dead delivery carries
   `status="failed"`; wire mentions ride a `mentions=` attribute. **Two elements, the
   deviation marked** (§3): `<msg>` carries text — `action="edit"` renders the new
   content, `action="delete"` the removed content; `<reaction>` carries the glyph —
