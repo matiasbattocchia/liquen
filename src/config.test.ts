@@ -2,6 +2,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   connectorConfig,
   type ConnectorSpec,
+  declareConnection,
   findRoot,
   materialize,
   readConfig,
@@ -34,7 +35,7 @@ async function withDir(fn: (root: string) => Promise<void>): Promise<void> {
 Deno.test("the reader only reads: an absent file is the defaults, and stays absent", async () => {
   await withDir(async (root) => {
     const cfg = await readConfig(root);
-    assertEquals(cfg.org.agent.tools, ["send", "search", "schedule", "cancel", "bash"]);
+    assertEquals(cfg.org.agent.tools, ["search", "schedule", "cancel", "bash"]);
     assertEquals(cfg.agents, {});
     await assertRejects(() => Deno.stat(`${root}/config.jsonc`), Deno.errors.NotFound);
   });
@@ -210,6 +211,25 @@ Deno.test("materialize: the whole catalog, commented, and it reads back verbatim
     await Deno.writeTextFile(`${root}/config.jsonc`, raw);
     const back = await readConfig(root);
     assertEquals(back, cfg);
+  });
+});
+
+Deno.test("declareConnection: the grant's own line, every other byte as it was", async () => {
+  await withDir(async (root) => {
+    const raw = materialize(starterConfig(["ana"]), [SPEC]);
+    await Deno.writeTextFile(`${root}/config.jsonc`, raw);
+
+    assertEquals(await declareConnection(root, "slack"), true);
+    assertEquals((await readConfig(root)).connections, { slack: {} });
+    const after = await Deno.readTextFile(`${root}/config.jsonc`);
+    assert(after.includes("// the model an agent runs on"), "the comments survive");
+    assertEquals(after.replace('\n    "slack": {}', ""), raw); // one line, nothing else
+
+    // a second service joins the same block, and declaring twice is not a second line
+    assertEquals(await declareConnection(root, "acme"), true);
+    assertEquals(await declareConnection(root, "slack"), false);
+    assertEquals(await declareConnection(root, "acme"), false);
+    assertEquals((await readConfig(root)).connections, { slack: {}, acme: {} });
   });
 });
 

@@ -34,6 +34,7 @@ import type { Connections } from "../../store/connections.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { findRoot } from "../../config.ts";
+import { declared } from "../declare.ts";
 
 export interface SlackConnectDeps {
   /** The registry name the pasted grant belongs to (v0: principal name = agent name). */
@@ -381,6 +382,7 @@ if (import.meta.main) {
       }, appToken);
       console.error(`\n✓ connected: workspace ${team}, bot user ${botUser} → the org`);
       console.error("  (deno task status shows the map)");
+      await declared(root, "slack");
     } finally {
       await creds.close();
       await log.close();
@@ -435,6 +437,7 @@ if (import.meta.main) {
     });
     console.error(`\n✓ connected: workspace ${team}, slack user ${user} → ${principal}`);
     console.error("  (deno task status shows the map)");
+    await declared(root, "slack");
   } finally {
     await creds.close();
     await log.close();

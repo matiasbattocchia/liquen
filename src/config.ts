@@ -8,11 +8,14 @@
  *     with the image. The file is the project marker: `findRoot` walks up from cwd the way
  *     git finds `.git`, and everything else (`data/`, the connectors, the processors) is
  *     addressed from the root it lands on.
- *   · The file is a DECLARATION and the system never writes it. Boot compiles it: the
- *     `agents` section becomes registry rows and home folders, `connections` subsections
- *     configure the connector processes, the rest funnels down the chain (main → xi → nu →
- *     mu). What the system learns at runtime — grants, discovered handles, verdicts —
- *     lives in log.db tables, never in this file; git is the file's only history.
+ *   · The file is a DECLARATION, and only the setup doors write it: `mu init` materializes
+ *     it, `mu connect` declares the connection a grant just earned (`declareConnection`).
+ *     Both are human-time acts with a human watching, and both leave a diff for git, which
+ *     is the file's only history. The RUNNING system never writes it: boot compiles it —
+ *     the `agents` section becomes registry rows and home folders, `connections`
+ *     subsections configure the connector processes, the rest funnels down the chain
+ *     (main → xi → nu → mu) — and what a turn learns (grants, discovered handles,
+ *     verdicts) lives in log.db tables, never here.
  *   · `mu init` materializes the whole catalog with these comments, so every knob is in
  *     view. A key left out takes the default defined HERE (the file may be sparse); an
  *     unknown key or section is a boot error — a typo must not run silently.
@@ -45,7 +48,7 @@ export const DEFAULT_MODEL = "claude-sonnet-5";
 export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + tools + text
 // the default deployment's whole offer: the four built-ins plus the exec plane's bash.
 // A name added at runtime (an MCP server's tools) joins the offer by being listed here.
-export const DEFAULT_TOOLS = ["send", "search", "schedule", "cancel", "bash"];
+export const DEFAULT_TOOLS = ["search", "schedule", "cancel", "bash"];
 export const DEFAULT_RULES: Rule[] = [
   { tool: "send", action: "ask" }, // dispatch leaves the org, in the principal's name
   { tool: "*", action: "allow" },
@@ -273,7 +276,8 @@ const AGENT: Entry[] = [
     key: "tools",
     value: DEFAULT_TOOLS,
     doc: "the tools offered to the model, by name — built-ins and exec tools (bash, MCP) " +
-      'alike; null ⇒ every tool the deployment has. A coding-agent deployment drops "send"',
+      'alike; null ⇒ every tool the deployment has. Add "send" where the agent has peers ' +
+      "or a world to write to — a reply to its own principal is its plain answer, never a call",
   },
   {
     key: "rules",
@@ -480,15 +484,17 @@ export async function connectorConfig<T extends object>(
   return merged as unknown as T;
 }
 
-/* ── the writer (mu init only) ───────────────────────────────────────────── */
+/* ── the writers (the setup doors) ───────────────────────────────────────── */
 
 /** Render the whole catalog with its comments — what `mu init` writes, once. From then on
- *  the file is the human's and git's; boot only reads it. */
+ *  the file is the human's and git's, edited only where a door has something to declare
+ *  (`declareConnection`); boot only reads it. */
 export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string {
   const lines: string[] = [
     "// config.jsonc — the org's declaration: every harness knob (the catalog, DESIGN §9).",
-    "// The system never writes this file — git is its history, boot compiles it into the",
-    "// registry. A key left out takes its default; an unknown key is a boot error.",
+    "// Only the setup doors write it (`mu init` materializes it, `mu connect` declares the",
+    "// connection it just earned) — git is its history, boot compiles it into the registry.",
+    "// A key left out takes its default; an unknown key is a boot error.",
     "{",
   ];
   const emit = (indent: string, entries: Entry[], values: Record<string, unknown>, last = "") => {
@@ -544,6 +550,42 @@ export function starterConfig(agents: string[]): OrgConfig {
   cfg.org.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? DEFAULT_TIMEZONE;
   for (const name of agents) cfg.agents[name] = {};
   return cfg;
+}
+
+/** Declare `connections.<name>` in the file — what a grant needs before `mu start` will
+ *  spawn its process. The connect doors call this the moment a grant lands: the human has
+ *  already decided by connecting, and the subsection is written empty so every knob stays
+ *  the connector's default until someone edits it.
+ *
+ *  A surgical text edit, not a re-render: the file is the operator's, comments and layout
+ *  included, so the insertion is one line inside the existing `connections` block and
+ *  every other byte is left as it was found. The result is parsed before it lands — a
+ *  write that would not read back is no write at all. Returns whether it added anything. */
+export async function declareConnection(root: string, name: string): Promise<boolean> {
+  const path = `${root}/config.jsonc`;
+  const before = await readConfig(root); // an unparseable file fails HERE, editing nothing
+  if (name in before.connections) return false;
+  const raw = await Deno.readTextFile(path);
+  const at = raw.search(/"connections"\s*:/);
+  const open = at < 0 ? -1 : raw.indexOf("{", at);
+  if (open < 0) throw new Error(`${path}: no "connections" section to declare "${name}" in`);
+  let depth = 0, close = open;
+  for (; close < raw.length; close++) {
+    if (raw[close] === "{") depth++;
+    else if (raw[close] === "}" && --depth === 0) break;
+  }
+  if (close === raw.length) throw new Error(`${path}: "connections" is never closed`);
+  const body = raw.slice(open + 1, close);
+  const entry = `\n    "${name}": {}${body.trim() ? "," : ""}`;
+  const edited = raw.slice(0, open + 1) + entry + raw.slice(open + 1);
+  await Deno.writeTextFile(path, edited);
+  try {
+    await readConfig(root);
+  } catch (err) {
+    await Deno.writeTextFile(path, raw);
+    throw err;
+  }
+  return true;
 }
 
 /* ── validation ──────────────────────────────────────────────────────────── */

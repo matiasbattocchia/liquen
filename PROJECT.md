@@ -1435,6 +1435,33 @@ message alone on stdout, exit 0; the REPL attaches to the daemon the CLI raised.
 open: `bench/tbench`'s Harbor adapter uploads the compiled `mu-task` binary that no longer
 builds — re-point it at `mu cli` next time the bench gets attention.
 
+### A fresh org is a coding agent; a grant declares its own process (2026-08-31) — LANDED
+
+The default tool offer is `search · schedule · cancel · bash` — `send` is out. A reply to
+one's own principal is the model's plain answer, never a call, so in a one-agent org with
+no connections `send` addressed nothing; an org adds it where its agents have peers or a
+world. The `rules` default keeps `send: ask` for when it comes back.
+
+`mu connect <service>` now writes `connections.<name>: {}` into config.jsonc itself
+(`declareConnection`, reported by `connect/declare.ts`'s `declared`, called by all four
+doors when a grant lands). Until now a grant wrote the map and nothing ran: `mu start`
+spawns per DECLARED connection, and the operator was never told the file needed a line.
+The edit is surgical — the `connections` block gets one line, every other byte stays as
+found (comments, layout, order), and the result is parsed before it lands, restoring the
+original if it would not read back. The catalog's rule is now "only the setup doors write
+it": `mu init` materializes it, `mu connect` declares what a grant earned, both at human
+time with a human watching, both leaving a diff for git. The running system still never
+writes it.
+
+Open: where a coding agent STANDS. `mu start` gives each agent `data/agents/<name>/` as
+its cwd, which is right for a resident agent whose instructions live there and wrong for
+`mu cli "fix the test"` typed inside a repo — the hint the agent reads is its home, not
+the work. Two shapes were named: (A) attaching in a directory makes that directory the
+agent's working directory; (B) `mu repl` outside an org scaffolds one, harness files under
+`.mu/` rather than scattered at the project root. A is wanted; B is acceptable at this
+stage. Neither is built, and A's open question is whose cwd wins when several attachments
+sit in different folders.
+
 ## The honest framing
 
 After 2b, nothing structural remains — the machine is complete and every later item is

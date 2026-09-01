@@ -35,6 +35,7 @@ import {
   type Connections,
   type CredentialRow,
   type Credentials,
+  declared,
   type Draft,
   findRoot,
   type MessageEvent,
@@ -482,6 +483,7 @@ if (import.meta.main) {
         } (installation ${installationId}) → the org`,
       );
       console.error("  (deno task status shows the map)");
+      await declared(root, "github");
     } finally {
       await creds.close();
       await log.close();
@@ -544,6 +546,7 @@ if (import.meta.main) {
     });
     console.error(`\n✓ connected: github user ${login} → ${principal}`);
     console.error("  (deno task status shows the map)");
+    await declared(root, "github");
   } finally {
     await creds.close();
     await log.close();

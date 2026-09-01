@@ -21,6 +21,7 @@
 
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot } from "../../config.ts";
+import { declared } from "../declare.ts";
 
 export const APP_PREFIX = "google:app:";
 
@@ -157,6 +158,7 @@ if (import.meta.main) {
       await server.shutdown();
       await log.close();
       console.error("\n✓ connected (deno task status shows the map)");
+      await declared(root, "google");
     } else {
       console.error(
         'usage: connect:google app | account [principal] [--org] [--app <client_id>] [--scopes "…"]',

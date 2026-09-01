@@ -2209,9 +2209,12 @@ harness knob, its default, one file exposing them all. `config.jsonc` sits at th
 PROJECT ROOT — git-tracked, deployed with the image, and the project marker itself:
 `findRoot` walks up from cwd to the nearest one, the way git finds `.git`, and everything
 else (`data/`, the connectors, the processors) is addressed from the root it names — the
-org lives where you run mu, cwd selects it, no variable does. The file is a DECLARATION
-the system never writes: `mu init` materializes the whole catalog with its comments, git
-is its history from then on, and boot COMPILES it — the roster into registry rows and
+org lives where you run mu, cwd selects it, no variable does. The file is a DECLARATION,
+written only by the setup doors: `mu init` materializes the whole catalog with its
+comments, and `mu connect` adds the one line a grant earns — `connections.<name>`, the
+subsection that makes `mu start` spawn that connector — since the map alone never starts
+a process. Git is its history, a human is watching for both, and boot COMPILES it — the
+roster into registry rows and
 homes, everything else funneled to the deepest function that needs it (main → xi → nu →
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
 log.db tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
@@ -2415,7 +2418,9 @@ covers long tools (detach + `tail`, §9), and `local` always delivers. Likely on
   send (tool → peer). `send` is never principal-directed. §2/§5.
 - **Concurrency** — one turn per agent (the turn lock); agents parallel (global cap). §2/§9.
 - **Tools** — core surface = **`send` · `search` · `schedule` · `cancel` · `bash`** +
-  dynamic MCP; background / docs-memory = substrate + skill, *not tools*. §9/§10.
+  dynamic MCP; background / docs-memory = substrate + skill, *not tools*. The default
+  OFFER is the surface minus `send`, which an org adds where its agents have peers or a
+  world to write to. §9/§10.
 - **Internal-event anchoring** — per-agent `local` scratchpad. §7.
 - **Shared inbox** — every agent reads; coexistence-yield self-coordinates. §4.
 

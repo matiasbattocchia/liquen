@@ -27,6 +27,7 @@ import type { Connections } from "../../store/connections.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { SERVICE } from "./ingest.ts";
 import { findRoot } from "../../config.ts";
+import { declared } from "../declare.ts";
 
 /** The tenant sessions are filed under on the bridge (its open-BSP `organization_id`).
  *  Not a knob: a data root is ONE org, and the bridge is that org's sidecar — the label
@@ -230,6 +231,7 @@ if (import.meta.main) {
     });
     console.error(`\n✓ paired: ${address} → ${principal}`);
     console.error("  (deno task status shows the map; run:whatsapp to receive)");
+    await declared(root, "whatsapp");
   } finally {
     await log.close();
   }
