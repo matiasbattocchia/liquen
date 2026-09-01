@@ -24,9 +24,14 @@ import { MIND, sessionAddress } from "./session.ts";
 import { DIM, painter, RED, RESET } from "./paint.ts";
 import { parseVerdict } from "./xi.ts";
 
-// `mu <agent>` — a session choice, so an argument, not config — talks to another agent.
-const a = await resolveAgent(Deno.args[0]);
-const home = sessionAddress(a.target, MIND); // the home IS the mind session (§4)
+// `mu repl [agent] [--session name]` — both are session choices, so arguments, not
+// config: the agent picks the door, the session picks the room behind it (default: the
+// mind). Naming a session is what births it (§4).
+const args = [...Deno.args];
+const si = args.indexOf("--session");
+const session = si >= 0 ? args.splice(si, 2)[1] ?? "" : MIND;
+const a = await resolveAgent(args[0]);
+const home = sessionAddress(a.target, session); // refuses a malformed session name
 
 const conn = await attach(a);
 let leaving = false;
@@ -39,7 +44,7 @@ const prompt = () => write("\n> ");
 const pending: string[] = [];
 
 const p = painter({
-  session: { agentId: a.target, id: MIND }, // the pair — bare names collide (§4)
+  session: { agentId: a.target, id: session }, // the pair — bare names collide (§4)
   home,
   write,
   error: (t) => {
@@ -66,10 +71,10 @@ w.hangup.then(() => {
   }
 });
 
-await w.request({ op: "tail" }); // live: the screen is the present, the log holds the past
+await w.request({ op: "tail", session }); // live: the screen is the present, the log holds the past
 
 write(
-  `${DIM}mu — ${a.target} · ${a.model} · log: ${a.dir} · /y[once|conv|conn|always|all] /n /quit${RESET}\n> `,
+  `${DIM}mu — ${home} · ${a.model} · log: ${a.dir} · /y[once|conv|conn|always|all] /n /quit${RESET}\n> `,
 );
 
 const lines = Deno.stdin.readable
@@ -93,7 +98,7 @@ for await (const line of lines) {
     // the one whose text is still on screen
     const answered = verdict.every ? pending.splice(0) : [pending.pop()!];
     for (const ref of answered) {
-      const r = await w.request({ op: "permission_response", ref_id: ref, verdict });
+      const r = await w.request({ op: "permission_response", ref_id: ref, verdict, session });
       if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
     }
     if (answered.length > 1) write(`${DIM}${answered.length} approvals answered${RESET}\n`);
@@ -103,6 +108,7 @@ for await (const line of lines) {
     op: "message",
     text,
     sender: { address: a.username, name: a.username },
+    session,
   });
   if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
 }

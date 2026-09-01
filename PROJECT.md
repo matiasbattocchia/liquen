@@ -1462,7 +1462,7 @@ agent's working directory; (B) `mu repl` outside an org scaffolds one, harness f
 stage. Neither is built, and A's open question is whose cwd wins when several attachments
 sit in different folders.
 
-### Many sessions per agent (2026-09-01) — steps 1–4 landed, 5–6 open
+### Many sessions per agent (2026-09-01) — steps 1–5 landed, 6 open
 
 DESIGN §7 deferred subagents and settled for `session_id ≈ agent id`. This is the design
 that lifts it: an agent runs MANY sessions, each its own window, lock, compaction and
@@ -1561,11 +1561,17 @@ main keeps no session registry — the trigger's own address names the session (
 or a `dm:` it is an end of), a runner is built on first contact (its own room enrolled
 then: born when first named), and at boot every `enrolled()` pair gets the mind's backlog
 look. The window and compaction were already per-session through the scoped port and the
-session-anchored boundary. DESIGN §7 now describes many sessions per agent. Still open:
-(5) the seam: `session` on the door's `message`/`tail`, on `{status}`, `--session` on
-both clients — plus session-address send targets (`send(to="mind@matias")` canonicalizes
-to the `dm:` pair) and `selfSend`'s per-session refusal; (6) render's
-`<msg from="build@matias">`.
+session-anchored boundary. DESIGN §7 now describes many sessions per agent. (5)
+**landed** — every door verb takes an optional `session` (bare name; absent, the mind)
+and speaks through THAT session's scoped port (asking is what births it — the port
+resolver is main's runner); deltas and status fan only to tailers of the same session, so
+the wire needs no tag and a CLI's idle-cursor logic works per session unchanged;
+`mu repl --session build` and `mu cli --session build` on both clients. `send` now takes
+session targets: a bare agent name is its mind, `mind@matias` (any roster session
+address) canonicalizes to the `dm:` pair with both ends enrolled as the sessions they
+are; `selfSend` refuses the session's OWN room (the bare agent name only from the mind),
+so a sibling can always reach `mind@matias`. Still open: (6) render's
+`<msg from="build@matias">` for sibling lines.
 
 ## The honest framing
 

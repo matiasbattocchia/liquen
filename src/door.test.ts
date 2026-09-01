@@ -33,7 +33,7 @@ async function up(policy?: Parameters<typeof scoped>[1]) {
   const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
   const log = await openLog(`${dir}/log`);
   const slog = policy ? scoped(log, policy) : log;
-  const doors = await installDoors(dir, [{ ...AGENT, log: slog }]);
+  const doors = await installDoors(dir, [{ ...AGENT, port: () => slog }]);
   // the client exactly as a script builds it: this module, bound to the folder it sits in
   const mu: Mu = bind(`${dir}/agents/ana`);
   const down = async () => {
@@ -241,13 +241,59 @@ Deno.test({
 });
 
 Deno.test({
+  name: "door: a request that names a session speaks through THAT session's port (§4)",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
+    const log = await openLog(`${dir}/log`);
+    const asked: string[] = [];
+    const doors = await installDoors(dir, [{
+      ...AGENT,
+      port: (s: string) => {
+        asked.push(s);
+        return log;
+      },
+    }]);
+    try {
+      const client = await rawClient(dir);
+      const r = await client.request({
+        op: "message",
+        text: "seguí con el refactor",
+        sender: { address: "matias", name: "matias" },
+        session: "build",
+      });
+      assertEquals(r.ok, true);
+      const [msg] = await log.read({ types: ["message"] }) as MessageEvent[];
+      assertEquals(msg.agent, { id: "ana", session_id: "build" });
+      assertEquals(msg.envelope.conversation.address, "build@ana");
+      assertEquals(asked, ["build"]); // the port resolver is where main births the session
+      // a malformed session name dies before anything is written
+      const bad = await client.request({ op: "message", text: "x", session: "no vale" });
+      assertEquals(bad.ok, false);
+      // deltas and status fan per session: a mind tailer never hears build's stream
+      await client.request({ op: "tail", session: "build" });
+      doors.emit("ana", "mind", { kind: "text", text: "del mind" });
+      doors.emit("ana", "build", { kind: "text", text: "del build" });
+      await client.settle(() => client.deltas.length >= 1);
+      assertEquals(client.deltas, [{ kind: "text", text: "del build" }]);
+      client.conn.close();
+    } finally {
+      await doors.close();
+      await log.close();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
   name: "door: attachments are the live connections, and a delta fans out to the tailers",
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
-    const doors = await installDoors(dir, [{ ...AGENT, log }]);
+    const doors = await installDoors(dir, [{ ...AGENT, port: () => log }]);
     try {
       assertEquals(doors.attachments(), 0);
       const tailing = await rawClient(dir);
@@ -256,13 +302,13 @@ Deno.test({
       await tailing.settle(() => doors.attachments() === 2);
       assertEquals(doors.attachments(), 2);
 
-      doors.emit("ana", { kind: "text", text: "hola" });
+      doors.emit("ana", "mind", { kind: "text", text: "hola" });
       await tailing.settle(() => tailing.deltas.length >= 1);
       assertEquals(tailing.deltas, [{ kind: "text", text: "hola" }]);
       assertEquals(passive.deltas, []); // deltas reach only who asked for the stream
 
       // a turn edge rides the same law: pushed to tailers, never to a passive attach
-      doors.status("ana", { status: "idle", after: "01X" });
+      doors.status("ana", "mind", { status: "idle", after: "01X" });
       await tailing.settle(() => tailing.statuses.length >= 1);
       assertEquals(tailing.statuses, [{ status: "idle", after: "01X" }]);
       assertEquals(passive.statuses, []);

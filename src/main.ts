@@ -207,19 +207,26 @@ export async function start(
   let stopped = false;
   // the fan-outs' late half: ports close over `cast`/`castStatus` before the doors exist,
   // and the doors — which know who is tailing — take them over once they are up
-  let cast: (agentId: string, delta: Delta) => void = () => {};
-  let castStatus: (agentId: string, line: Status) => void = () => {};
+  let cast: (agentId: string, sessionId: string, delta: Delta) => void = () => {};
+  let castStatus: (agentId: string, sessionId: string, line: Status) => void = () => {};
   // the status push is EDGE-triggered (§2): one line per change of what the daemon would
-  // say, so a quiet org tails quietly — the ticker's steady `ignore`s all collapse here
+  // say — per SESSION, so siblings' edges never collide — and a quiet org tails quietly:
+  // the ticker's steady `ignore`s all collapse here
   const reported = new Map<string, string>();
-  const disclose = (agentId: string, verdict: Decision, cursor: string | undefined) => {
+  const disclose = (
+    agentId: string,
+    sessionId: string,
+    verdict: Decision,
+    cursor: string | undefined,
+  ) => {
     const line: Status = verdict === "ignore"
       ? { status: "idle", ...(cursor !== undefined ? { after: cursor } : {}) }
       : { status: "busy" };
+    const who = sessionAddress(agentId, sessionId);
     const key = line.status + (line.after ?? "");
-    if (reported.get(agentId) === key) return;
-    reported.set(agentId, key);
-    castStatus(agentId, line);
+    if (reported.get(who) === key) return;
+    reported.set(who, key);
+    castStatus(agentId, sessionId, line);
   };
   const agents = principals.map(({ readable, writable, ...agent }) => {
     // the agent's VIEW of the log (§6): reads, writes, and the tail below all go through it.
@@ -239,8 +246,8 @@ export async function start(
         // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in
         transport: metered(transport, (row) => log.meter(row), agent.agentId),
         exec: planes.get(agent.agentId)!.exec,
-        onDelta: (d) => cast(agent.agentId, d),
-        onDecision: (v, cursor) => disclose(agent.agentId, v, cursor),
+        onDelta: (d) => cast(agent.agentId, agent.sessionId, d),
+        onDecision: (v, cursor) => disclose(agent.agentId, agent.sessionId, v, cursor),
         ambient: planes.get(agent.agentId)!.ambient,
       } satisfies XiPorts,
     };
@@ -299,26 +306,11 @@ export async function start(
     };
   };
 
-  // the door (§9): a script's syscalls, as gated tool_use events in the caller's name. The
-  // one boundary piece that HOLDS something in main — the sockets ARE the boundary; each
-  // serves its agent's scoped port, so even the door writes under §6 visibility.
-  const doors = await installDoors(
-    dir,
-    agents.map((a) => ({
-      agentId: a.config.agentId,
-      sessionId: a.config.sessionId,
-      log: a.log,
-    })),
-  );
-  cast = (agentId, delta) => doors.emit(agentId, delta);
-  castStatus = (agentId, line) => doors.status(agentId, line);
-
-  const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
   // NAMED sessions (§4): reactive — no standing subscription and no registry. The
   // trigger's own address names the session to invoke (its room, or a dm: it is an end
   // of), so main builds a runner on first contact and a quiet session costs nothing.
   // Bursts bounce off the session's own turn lease; the mind's ladder never applies.
-  const named = new Map<string, { config: AgentConfig; ports: XiPorts }>();
+  const named = new Map<string, { config: AgentConfig; ports: XiPorts; log: Log }>();
   const runnerOf = (agentId: string, sessionId: string) => {
     const key = sessionAddress(agentId, sessionId);
     const hit = named.get(key);
@@ -332,21 +324,43 @@ export async function start(
     ]);
     const slog = scoped(log, policyFor({ agentId, id: sessionId }, log));
     // the identity is shared (§4): one exec plane, one metered transport, one home —
-    // only the log view is the session's. Deltas and status stay unwired until the
-    // door speaks sessions.
+    // only the log view, the lease, and the stream are the session's
     const r = {
       config: { ...base.config, sessionId },
+      log: slog,
       ports: {
         log: slog,
         docs,
         transport: base.ports.transport,
         exec: base.ports.exec,
+        onDelta: (d: Delta) => cast(agentId, sessionId, d),
+        onDecision: (v: Decision, cursor: string | undefined) =>
+          disclose(agentId, sessionId, v, cursor),
         ambient: base.ports.ambient,
       } satisfies XiPorts,
     };
     named.set(key, r);
     return r;
   };
+
+  // the door (§9): a script's syscalls, as gated tool_use events in the caller's name. The
+  // one boundary piece that HOLDS something in main — the sockets ARE the boundary; each
+  // serves its agent's scoped ports, so even the door writes under §6 visibility. A
+  // request that names a session speaks through THAT session's port — asking for one is
+  // what births it.
+  const doors = await installDoors(
+    dir,
+    agents.map((a) => ({
+      agentId: a.config.agentId,
+      sessionId: a.config.sessionId,
+      port: (sessionId: string) =>
+        sessionId === a.config.sessionId ? a.log : runnerOf(a.config.agentId, sessionId)!.log,
+    })),
+  );
+  cast = (agentId, sessionId, delta) => doors.emit(agentId, sessionId, delta);
+  castStatus = (agentId, sessionId, line) => doors.status(agentId, sessionId, line);
+
+  const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
   /** The named sessions an event's address names — its own room, or the dm: ends. */
   const namedIn = (e: Event): { agentId: string; sessionId: string }[] => {
     const address = e.envelope.conversation.address;

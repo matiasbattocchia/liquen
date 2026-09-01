@@ -65,7 +65,7 @@ import type { Docs } from "./store/docs.ts";
 import type { Locker } from "./store/lock.ts";
 import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
 import { filePartOf, loadMediaBlock } from "./store/media.ts";
-import { dmAddress, MIND, sessionAddress } from "./session.ts";
+import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import { hhmm, ownComplex, ownVoice, parseVerdict, shortId, silenced, textOf } from "./render.ts"; // shared predicates: silenced never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
@@ -1151,11 +1151,28 @@ const PENDING_APPROVAL = {
     "being worth asking, withdraw it with cancel(id) — your pending list names the id.",
 };
 
-/** A bare peer name means the AGENT (§4), and contact is a DM room: `dm:` + the sorted
- *  pair of session addresses — the caller's own session and the peer's mind, which is
- *  what a bare name canonicalizes to. One rule for sessions of one agent and of two. */
-function peerDm(self: { id: string; session_id: string }, peerId: string): string {
-  return dmAddress(sessionAddress(self.id, self.session_id), sessionAddress(peerId, MIND));
+/** A send target that names a SESSION (§4): a peer agent's bare name (an agent IS its
+ *  mind), or a full session address wearing a roster agent's name. Anything else — a
+ *  wire address, a local room — is not a session target. */
+function sessionTarget(
+  to: string,
+  agents: { agentId: string }[],
+): { agentId: string; sessionId: string } | null {
+  if (agents.some((a) => a.agentId === to)) return { agentId: to, sessionId: MIND };
+  const s = parseSession(to);
+  return s !== null && agents.some((a) => a.agentId === s.agentId) ? s : null;
+}
+
+/** Contact between sessions is a DM room (§4): `dm:` + the sorted pair of session
+ *  addresses — one rule for sessions of one agent and sessions of two. */
+function sessionDm(self: { id: string; session_id: string }, target: {
+  agentId: string;
+  sessionId: string;
+}): string {
+  return dmAddress(
+    sessionAddress(self.id, self.session_id),
+    sessionAddress(target.agentId, target.sessionId),
+  );
 }
 
 /** Where a send LANDS (§9): the destination's own envelope — the same anchoring read and
@@ -1171,8 +1188,10 @@ async function targetOf(
   const raw = (input as { to?: unknown } | null)?.to;
   if (typeof raw !== "string" || raw === "") return undefined;
   let to = raw;
-  const peer = ports.log.agents().find((a) => a.agentId === to);
-  if (peer && peer.agentId !== self.id) to = peerDm(self, peer.agentId);
+  const target = sessionTarget(to, ports.log.agents());
+  if (target && !(target.agentId === self.id && target.sessionId === self.session_id)) {
+    to = sessionDm(self, target);
+  }
   const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
   return prior
     ? { connection: prior.envelope.connection_address, conversation: to }
@@ -1199,9 +1218,16 @@ function selfSend(
   const to = (input as { to?: unknown } | null)?.to;
   if (typeof to !== "string" || to === "") return undefined;
   const me = ports.log.agents().find((a) => a.agentId === config.agentId);
+  // the session's OWN ROOM, and the principal's handles. The bare agent name is refused
+  // only from the mind — an agent IS its mind (§4), so from a sibling it is a real
+  // target, the dm: with the mind, not a self-send.
   const mine = new Set(
-    [config.agentId, sessionAddress(config.agentId, config.sessionId), me?.email, me?.phone]
-      .filter((x): x is string => typeof x === "string" && x !== ""),
+    [
+      sessionAddress(config.agentId, config.sessionId),
+      ...(config.sessionId === MIND ? [config.agentId] : []),
+      me?.email,
+      me?.phone,
+    ].filter((x): x is string => typeof x === "string" && x !== ""),
   );
   const alias = ports.log.aliases().some((r) =>
     r.agentId === config.agentId && r.conversation === to
@@ -1370,13 +1396,13 @@ async function execute(
     // the only dispatch path (§9): directed message + sent result (two appends on
     // files — atomic pair on DB later; the steal-sweep covers the crash window)
     let to = String(args.to);
-    // team chat (§6): a peer AGENT's name canonicalizes to the pair's DM conversation,
-    // and both ends are enrolled — membership is what makes it visible to exactly them
+    // team chat (§6): a session target — a peer agent's name, a session address —
+    // canonicalizes to the pair's DM conversation, and both ends are enrolled as the
+    // SESSIONS they are: membership is what makes it visible to exactly them
     // (upsert-only and live, so the scoped publish below already passes WITH CHECK)
-    const peer = ports.log.agents().find((a) => a.agentId === to);
-    if (peer && peer.agentId !== self.id) {
-      to = peerDm(self, peer.agentId);
-      // both ends enrolled as the SESSIONS they are (§4): the sender's own, the peer's mind
+    const peer = sessionTarget(to, ports.log.agents());
+    if (peer && !(peer.agentId === self.id && peer.sessionId === self.session_id)) {
+      to = sessionDm(self, peer);
       ports.log.upsertMemberships([
         {
           service: "local",
@@ -1390,7 +1416,7 @@ async function execute(
           connection: "agent",
           conversation: to,
           agentId: peer.agentId,
-          sessionId: MIND,
+          sessionId: peer.sessionId,
         },
       ]);
     }

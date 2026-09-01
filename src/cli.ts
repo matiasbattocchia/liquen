@@ -22,29 +22,34 @@ import { attach, resolveAgent, wire } from "./attach.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { painter } from "./paint.ts";
 
-const flags: { agent?: string; timeout?: number } = {};
+const flags: { agent?: string; session?: string; timeout?: number } = {};
 const words: string[] = [];
 for (let i = 0; i < Deno.args.length; i++) {
   const arg = Deno.args[i];
   if (arg === "--agent") flags.agent = Deno.args[++i];
+  else if (arg === "--session") flags.session = Deno.args[++i];
   else if (arg === "--timeout") flags.timeout = Number(Deno.args[++i]);
   else words.push(arg);
 }
 const instruction = words.join(" ").trim();
 if (!instruction || (flags.timeout !== undefined && !(flags.timeout > 0))) {
-  console.error("usage: mu cli [--agent <name>] [--timeout <seconds>] <instruction…>");
+  console.error(
+    "usage: mu cli [--agent <name>] [--session <name>] [--timeout <seconds>] <instruction…>",
+  );
   Deno.exit(2);
 }
 
 const a = await resolveAgent(flags.agent);
+const session = flags.session ?? MIND;
+sessionAddress(a.target, session); // refuses a malformed session name before attaching
 const conn = await attach(a);
 let leaving = false;
 
 const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
 
 const p = painter({
-  session: { agentId: a.target, id: MIND },
-  home: sessionAddress(a.target, MIND),
+  session: { agentId: a.target, id: session },
+  home: sessionAddress(a.target, session),
   write,
   error: (t) => console.error(t),
   prompt: () => write("\n"),
@@ -78,11 +83,12 @@ w.hangup.then(() => {
   }
 });
 
-await w.request({ op: "tail" }); // live: the transcript starts at our instruction
+await w.request({ op: "tail", session }); // live: the transcript starts at our instruction
 const r = await w.request({
   op: "message",
   text: instruction,
   sender: { address: a.username, name: a.username },
+  session,
 });
 if (!r.ok || r.id === undefined) {
   console.error(`the door refused the message: ${r.error}`);
