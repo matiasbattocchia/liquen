@@ -179,6 +179,10 @@ export function decide(
 function attention(events: Event[], session: Session, wake: Wake, now: number): Decision {
   const news = newsOf(events, session);
   if (news.length === 0) return "ignore";
+  // a NAMED session is REACTIVE (§4): only its own rooms reach it at all — its window is
+  // its enrollments — so every piece of news is addressed to it, and the ladder below
+  // (digest cadence, the night) is the MIND's, built for a world that talks around you.
+  if (session.id !== MIND) return "think";
   // The summons is the MIND ALIAS and nothing else (§2). Not a DM, not a reply to the
   // agent, not its name said out loud: none of those address the agent, they address the
   // principal's account in a room the agent is a bystander in — and answering each at wake
@@ -763,8 +767,9 @@ export async function xi(
   if (trigger && !relevant(config, trigger)) return;
 
   // 2. the lease. Taken BEFORE the read: one read per invocation, and the read is then
-  //    already up to date w.r.t. whatever landed while we were acquiring
-  const name = `turn-${config.agentId}`;
+  //    already up to date w.r.t. whatever landed while we were acquiring. Keyed by the
+  //    SESSION (§4): the lock serializes one session's turns; siblings run concurrently.
+  const name = `turn-${sessionAddress(config.agentId, config.sessionId)}`;
   const lock = ports.log.lock(name, config.lockTtlMs);
   const got = await lock.acquire();
   if (got === "held") return "held"; // no retry: someone is on it, and their turn's end will poke

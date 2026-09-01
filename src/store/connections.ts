@@ -119,6 +119,10 @@ export interface Connections {
     sessionId: string,
     ts?: string,
   ): boolean;
+  /** The distinct (agent, session) pairs enrolled anywhere — boot's backlog scan (§4):
+   *  a session with rooms owes them a look when the org comes up, and the enrollments
+   *  are the only record a named session leaves. */
+  enrolled(): { agentId: string; sessionId: string }[];
 }
 
 export const CONNECTIONS_DDL = `CREATE TABLE IF NOT EXISTS connections (
@@ -190,6 +194,9 @@ export function createConnections(db: DatabaseSync): Connections {
     `UPDATE memberships SET deleted_at = ?
      WHERE service = ? AND connection_address = ? AND conversation_address = ? AND agent_id = ?
        AND session_id = ? AND deleted_at IS NULL`,
+  );
+  const pairs = db.prepare(
+    "SELECT DISTINCT agent_id, session_id FROM memberships WHERE deleted_at IS NULL",
   );
   // a row that names no session enrolls the ROUTED one — the wire writers never decide
   const sessionOf = (r: MembershipRow) =>
@@ -275,6 +282,11 @@ export function createConnections(db: DatabaseSync): Connections {
     ): boolean {
       return getM.get(service, connection, conversation, agentId, sessionId, ts ?? null) !==
         undefined;
+    },
+
+    enrolled(): { agentId: string; sessionId: string }[] {
+      return (pairs.all() as { agent_id: string; session_id: string }[])
+        .map((r) => ({ agentId: r.agent_id, sessionId: r.session_id }));
     },
   };
 }

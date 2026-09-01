@@ -32,7 +32,7 @@ export interface TurnLock {
   held(): Promise<boolean>;
 }
 
-/** The store's locking capability — one named lease per agent (`turn-<agentId>`). */
+/** The store's locking capability — one named lease per session (`turn-<session address>`). */
 export interface Locker {
   lock(name: string, ttlMs?: number): TurnLock;
 }

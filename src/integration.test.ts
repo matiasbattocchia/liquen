@@ -552,7 +552,7 @@ Deno.test("the gate is free: a spectator event takes no lease and reads nothing"
     // …but a `thinking` trigger never gets far enough to find out
     await xi(CONFIG, ports, thinking!);
     assertEquals(calls(), 0);
-    assertEquals(await log.lock("turn-a1").held(), false); // the lease was never taken
+    assertEquals(await log.lock("turn-mind@a1").held(), false); // the lease was never taken
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -565,7 +565,7 @@ Deno.test("recovery: a stale lock (crashed holder) → pending uses swept, then 
   await log.publish(principalMsg("seguís ahí?"));
   const use = (await log.publish(orphanUse()))!;
   // the crashed holder left its lease in the store; age it past the TTL
-  assertEquals(await log.lock("turn-a1", 50).acquire(), "acquired");
+  assertEquals(await log.lock("turn-mind@a1", 50).acquire(), "acquired");
   await new Promise((r) => setTimeout(r, 80));
 
   const { transport, calls } = scripted([

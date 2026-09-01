@@ -34,7 +34,7 @@
 
 import { type AgentConfig, type Decision, relevant, xi, type XiPorts } from "./xi.ts";
 import { ownComplex } from "./render.ts";
-import { MIND, sessionAddress } from "./session.ts";
+import { MIND, parseSession, sessionAddress } from "./session.ts";
 import { type Policy, policyFor, scoped } from "./policy.ts";
 import { type Log, openLog } from "./store/log.ts";
 import type { ConnectionRow } from "./store/connections.ts";
@@ -252,7 +252,7 @@ export async function start(
   // is the concurrency control). `outstanding` is lifecycle, not scheduling: teardown must
   // not close the log or reap the exec plane under a live turn.
   const outstanding = new Set<Promise<unknown>>();
-  const invoke = (a: (typeof agents)[number]) => (trigger?: Event) => {
+  const invoke = (a: { config: AgentConfig; ports: XiPorts }) => (trigger?: Event) => {
     if (stopped) return; // teardown, not routing — main takes no other decision
     const run = xi(a.config, a.ports, trigger)
       // a failed invocation never affects the next one — but it is SAID: a swallowed throw
@@ -314,6 +314,54 @@ export async function start(
   castStatus = (agentId, line) => doors.status(agentId, line);
 
   const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
+  // NAMED sessions (§4): reactive — no standing subscription and no registry. The
+  // trigger's own address names the session to invoke (its room, or a dm: it is an end
+  // of), so main builds a runner on first contact and a quiet session costs nothing.
+  // Bursts bounce off the session's own turn lease; the mind's ladder never applies.
+  const named = new Map<string, { config: AgentConfig; ports: XiPorts }>();
+  const runnerOf = (agentId: string, sessionId: string) => {
+    const key = sessionAddress(agentId, sessionId);
+    const hit = named.get(key);
+    if (hit) return hit;
+    const base = agents.find((a) => a.config.agentId === agentId);
+    if (!base) return undefined; // an address wearing a name the roster doesn't
+    // born when first named (§4): the session's own room is a one-member conversation,
+    // and this enrollment is what lets its closing messages land there (WITH CHECK)
+    log.upsertMemberships([
+      { service: "local", connection: "agent", conversation: key, agentId, sessionId },
+    ]);
+    const slog = scoped(log, policyFor({ agentId, id: sessionId }, log));
+    // the identity is shared (§4): one exec plane, one metered transport, one home —
+    // only the log view is the session's. Deltas and status stay unwired until the
+    // door speaks sessions.
+    const r = {
+      config: { ...base.config, sessionId },
+      ports: {
+        log: slog,
+        docs,
+        transport: base.ports.transport,
+        exec: base.ports.exec,
+        ambient: base.ports.ambient,
+      } satisfies XiPorts,
+    };
+    named.set(key, r);
+    return r;
+  };
+  /** The named sessions an event's address names — its own room, or the dm: ends. */
+  const namedIn = (e: Event): { agentId: string; sessionId: string }[] => {
+    const address = e.envelope.conversation.address;
+    if (e.envelope.service !== "local") return [];
+    const parts = address.startsWith("dm:") ? address.slice(3).split(":") : [address];
+    return parts.map(parseSession)
+      .filter((p): p is { agentId: string; sessionId: string } => p !== null)
+      .filter((p) => p.sessionId !== MIND); // the minds tail their own scoped views
+  };
+  unsubs.push(log.subscribe((e) => {
+    for (const p of namedIn(e)) {
+      const r = runnerOf(p.agentId, p.sessionId);
+      if (r) invoke(r)(e);
+    }
+  }));
   // the mirror rides the RAW log (§4): it copies between a mind and its alias surfaces, and
   // an agent's own alias conversation is invisible to that agent's scoped port (§6) — the
   // join has to happen where visibility isn't filtered. Inert until a surface is bound, so
@@ -342,6 +390,13 @@ export async function start(
     }));
   }
   for (const a of agents) invoke(a)(); // boot: no trigger ⇒ look at whatever the log owes
+  // …and every enrolled named session gets the same look (§4): the backlog rule applies
+  // to it as to the mind, and its enrollments are the only record it leaves
+  for (const p of log.enrolled()) {
+    if (p.sessionId === MIND) continue; // the roster's own runners just looked
+    const r = runnerOf(p.agentId, p.sessionId);
+    if (r) invoke(r)();
+  }
 
   // The scheduler's half of the clock (§10): a timer row whose moment has come becomes an
   // `alarm` carrying its note, and the alarm's own fan-out is the wake — no direct invoke,

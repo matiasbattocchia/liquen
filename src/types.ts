@@ -5,8 +5,9 @@
  *   §2 mu/nu/xi · §3 event schema · §4 identity · §5 render · §6 contexts · §9 tools.
  *
  * The spine: producers and handlers append `Event`s to the EventLog; `xi` turns each poke
- * into whatever the log owes; `mu` (the pure step) turns events into events. One long-running
- * `Session` per agent holds the principal-DM plus every peer conversation (§7).
+ * into whatever the log owes; `mu` (the pure step) turns events into events. An agent runs
+ * many long-running `Session`s over one identity; the mind holds the principal-DM plus
+ * every peer conversation (§7).
  */
 
 /* ───────────────────────────── primitives ───────────────────────────── */

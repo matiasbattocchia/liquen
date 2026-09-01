@@ -13,7 +13,7 @@ import {
 import type { Envelope, Event, Session } from "./types.ts";
 
 const MIND = "mind@a1"; // the session's own conversation (§4)
-const SESSION: Session = { id: "s1", agentId: "a1", conversation: MIND };
+const SESSION: Session = { id: "mind", agentId: "a1", conversation: MIND };
 const WAKE: Wake = {};
 
 const env = (conversation: string): Envelope => ({
@@ -21,7 +21,7 @@ const env = (conversation: string): Envelope => ({
   connection_address: "agent",
   conversation: { address: conversation },
 });
-const SELF = { agent: { id: "a1", session_id: "s1" } };
+const SELF = { agent: { id: "a1", session_id: "mind" } };
 
 let n = 0;
 /** Minimal event; ids are minted in call order so windows read as append order. */
@@ -145,7 +145,7 @@ Deno.test("decide: the principal's stamped line is INPUT — agent + session, no
   // the missing turn_id keeps it answerable — session equality would call it ours
   const principal = () =>
     ev("message", {
-      agent: { id: "a1", session_id: "s1" },
+      agent: { id: "a1", session_id: "mind" },
       envelope: { ...env(MIND), sender: { address: "matias", name: "matias" } },
     } as Partial<Event>);
   assertEquals(decide([principal()], SESSION, WAKE), "think");
@@ -245,7 +245,7 @@ Deno.test("decide: another session's unresolved uses are not ours", () => {
 
 const CONFIG: AgentConfig = {
   agentId: "a1",
-  sessionId: "s1",
+  sessionId: "mind",
   model: "m",
   maxTokens: 1024,
 };
@@ -362,7 +362,7 @@ Deno.test("decide: a waiting gate never mutes the mind — the principal is stil
   // the principal says something while the ask is still up: the model is free to reply —
   // its tool_use is already answered (`pending_approval`), so a turn has nothing to re-issue
   const principal = ev("message", {
-    agent: { id: "a1", session_id: "s1" },
+    agent: { id: "a1", session_id: "mind" },
     envelope: {
       service: "local",
       connection_address: "agent",
@@ -405,6 +405,24 @@ Deno.test("attention: the world is checked on the interval, counted from the LAS
   assertEquals(decide([looked(16), world("slack:C1", 14)], SESSION, WAKE, NOON), "think");
   // and an agent that has never looked is due now: it has been away, it picks the phone up
   assertEquals(decide([world("slack:C1", 0)], SESSION, WAKE, NOON), "think");
+});
+
+Deno.test("attention: a NAMED session is reactive — no digest cadence, no sleep window (§4)", () => {
+  const s: Session = { id: "build", agentId: "a1", conversation: "build@a1" };
+  const self = { agent: { id: "a1", session_id: "build" } };
+  const dm = "dm:build@a1:mind@a1";
+  const line = world(dm, 0);
+  const look = ev(
+    "message",
+    { ...self, conv: "build@a1", ts: at(1), payload: { turn_id: "T0" } } as
+      & Partial<Event>
+      & { conv?: string },
+  );
+  // a look one minute ago would defer the MIND to the digest; the named session answers now
+  assertEquals(decide([look, line], s, WAKE, NOON), "think");
+  // …and the night never falls on it either
+  const night = Date.parse("2026-08-19T03:00:00Z"); // inside the default 23-8 span (UTC)
+  assertEquals(decide([world(dm, 0, "seguí")], s, WAKE, night), "think");
 });
 
 Deno.test("attention: a pile deep enough wakes before the interval does", () => {
@@ -520,9 +538,8 @@ Deno.test("attention: engagement is HOLDING THE FLOOR — our word last, and rec
 
 Deno.test("attention: the principal speaking in a conversation ENDS engagement, at once", () => {
   // A wire echo carries `agent.id` (the classifier stamps it from their grant) and NO
-  // session_id — an unstamped row reads as the MIND's, the session world traffic routes
-  // to (§4). This session IS the mind; the file's default deliberately is not, to hold
-  // session_id to its own job.
+  // session_id — an unstamped row reads as the ROUTED session's, the one world traffic
+  // belongs to (§4): the mind, which this session is.
   const s: Session = { id: "mind", agentId: "a1", conversation: MIND };
   const self = { agent: { id: "a1", session_id: "mind" } };
   const byHand = (minAgo: number) =>

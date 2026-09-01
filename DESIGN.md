@@ -26,8 +26,9 @@ contact — a customer — or another agent). The agent↔principal conversation
   process; Postgres + edge later) · CLI as first control client · Anthropic-native protocol**.
   Reuses open-bsp-api concepts heavily (messages/parts model, producers/dispatchers,
   agents table).
-- **v0 = the unified session** (§7): one long-running session per agent holding the
-  principal-DM + all its peer conversations. Subagents/tree are **deferred** (§10).
+- **Sessions** (§7): an agent runs many, over one identity — the MIND (the routed one,
+  holding the principal-DM + all its peer conversations) and named siblings for work.
+  Subagents/tree are **deferred** (§10).
 - **Build order:**
   - **v0.0 — CLI-only.** One agent, one conversation (the CLI principal-DM, `local`
     service), files storage, single process, Anthropic-native mu, tools `send`+`search`+
@@ -1409,42 +1410,57 @@ Returns **raw events, type-filtered** (messages; never tool/permission noise).
 - Dedicated control tools reduce to **`send` + `search`**; everything else is substrate
   CRUD (docs, timers via SQL/RLS) or runtime-owned.
 
-## 7. The unified session (v0 — subagents deferred)
+## 7. Sessions: many per agent, one identity
 
-- **One long-running session per agent** = the **principal-DM + all its peer
-  conversations**, cross-labeled by envelope. This is cabra-bot, event-driven and
-  multi-channel: *one coherent mind* with general workspace knowledge **and** in-context
-  answers — a human-like alter-ego, which is *philosophically* the point (one mind per
-  principal, not a fragmented tree).
-- No tree, no spawn, no inter-session message-passing. The agent handles all its
-  conversations in one context and replies via `send(→envelope)`.
+- **An agent runs MANY sessions**, each a long-running conversation of its own —
+  `mind@<agent>` the default, `build@<agent>` a sibling — over ONE identity: one home,
+  one docs cascade, one memory, one exec plane, one permission table, one registry row.
+  A session's runtime identity is the `(agent_id, session_id)` pair (`session_id` holds
+  the bare name; bare names collide across agents, so every authorship comparison takes
+  the pair); its address is the pair's spelling.
+- **The MIND is not a special shape** — the same machine, distinguished by ONE thing: it
+  is the session world traffic is ROUTED to (`routedSession`, §6). It holds the
+  principal-DM + all peer conversations, cross-labeled by envelope: *one coherent mind*
+  with general workspace knowledge **and** in-context answers — a human-like alter-ego
+  (one mind per principal, not a fragmented tree). Named sessions hold only the rooms
+  they are ENROLLED in — their own room and the `dm:` rooms they are an end of — which
+  is the whole enforcement (§6 memberships on the pair).
+- **Sessions reach each other the way two agents do**: a `dm:` room both are in
+  (`dm:<sorted session addresses>`), so agent-to-agent contact is a case of one rule. No
+  tree, no spawn, no inter-session message-passing beyond `send(→envelope)`.
+- **Per session: the turn lock, the window, compaction, its timers.** The lease is
+  `turn-<session address>`, so siblings run concurrently; the window is the session's
+  scoped view; a checkpoint covers one session's transcript; a wake belongs to the
+  session that armed it (`timers` keys on the pair).
 - **Reactive + coalesced, no cursor.** The event log *is* the queue; every readable event
   pokes an xi invocation, coalescing (the turn lock + the closing message's self-poke) →
-  one turn per burst. Responsive on arrival, batched when busy — better than cabra-bot's
-  fixed 5-min poll.
+  one turn per burst. The MIND keeps the attention ladder (§2: summons · engaged · the
+  digest · the night); a NAMED session is purely reactive — only its own rooms reach it,
+  so every piece of news is addressed to it, and no digest or sleep applies. main keeps
+  no session registry: the trigger's own address names the session to invoke, a runner is
+  built on first contact (born when first named — its own room enrolled then), and at
+  boot every enrolled pair gets the same backlog look the mind does.
 - **No processing cursor** (we're push-based, not polling — cabra-bot needed
-  `last_checked_ts` only to *fetch* from Slack). **Context = a bounded query**: the agent's
-  relevant envelopes, from the last `summary` forward, up to a limit — the model responds
-  to whatever's **unanswered** in that window (a peer message with no agent send after it).
-  Scheduling state per agent is **the turn lock alone**; pending work, barriers, and gates
-  are log queries. **Recovery re-derives** everything (the boot alarm + the steal-sweep);
-  re-processing an ignored message is cheap/idempotent. `session_id` holds the session's
-  bare name (`mind` — one session per agent runs today); identity is always the
-  `(agent_id, session_id)` pair.
-- **Internal events anchor to a per-agent `local` scratchpad** (the agent's "mind") —
-  `thinking`/`tool_use`/`tool_result` have no single peer conversation when the agent
-  reasons across many. The agent's assistant text anchors to the principal-DM; peer messages to
-  their conversations; sends to their targets; render interleaves all into one chronological
-  feed (the session's own room bare, world labeled — §5).
+  `last_checked_ts` only to *fetch* from Slack). **Context = a bounded query**: the
+  session's relevant envelopes, from the last `summary` forward, up to a limit — the
+  model responds to whatever's **unanswered** in that window (a peer message with no
+  agent send after it). Scheduling state per session is **the turn lock alone**; pending
+  work, barriers, and gates are log queries. **Recovery re-derives** everything (the boot
+  alarm + the steal-sweep); re-processing an ignored message is cheap/idempotent.
+- **Internal events anchor to the session's own room** — `thinking`/`tool_use`/
+  `tool_result` have no single peer conversation when the agent reasons across many. The
+  session's assistant text anchors there too; peer messages to their conversations; sends
+  to their targets; render interleaves all into one chronological feed (the session's own
+  room bare, world labeled — §5).
 - **Agent memory dropped**: the long-running session **is** the memory. Only org memory
   (shared) and conversation working-state (optional projection) remain (§8).
-- **Oversight & control are trivial** (one context; the principal reads and steers
-  directly). Undirected `stop` cancels the agent's in-flight work. Coexistence = the model
+- **Oversight & control are trivial** (one context per session; the principal reads and
+  steers directly). Undirected `stop` cancels the in-flight work. Coexistence = the model
   yields when it sees the principal reply; explicit per-conversation takeover is deferred (§10).
-- **The limit + the deferral signal**: context capacity — one session holds all
-  conversations, so it **dilutes at high volume**. Add subagents (the deferred tree) when
-  compaction can't keep active conversations in useful detail. Until then, unified is
-  simpler and truer to the concept.
+- **The limit + the deferral signal**: context capacity — the mind holds all world
+  conversations, so it **dilutes at high volume**. Named sessions are the split for WORK
+  (a coding task, a project thread); a subagent tree stays deferred until compaction
+  can't keep active conversations in useful detail.
 
 ### The principal's view is a projection (not the model's context)
 

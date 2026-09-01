@@ -433,6 +433,47 @@ Deno.test("policy partitions the fan-out: each agent's subscription delivers onl
   }
 });
 
+Deno.test("a named session wakes on its dm and answers in its own room (§4)", async () => {
+  const dir = await Deno.makeTempDir();
+  const { transport } = scripted([reply("en eso estoy")]);
+  // the mind's view is pinned to its own room so the dm line is the named session's alone
+  const main = await start({
+    dir,
+    debounceMs: 0,
+    principals: [agent("1", { readable: (e) => e.envelope.conversation.address === "mind@a1" })],
+  }, { transport });
+  try {
+    const dm = "dm:build@a1:mind@a1";
+    // what the mind's send would have written: the room, both ends enrolled (§4)
+    main.log.upsertMemberships([
+      { service: "local", connection: "agent", conversation: dm, agentId: "a1", sessionId: "mind" },
+      {
+        service: "local",
+        connection: "agent",
+        conversation: dm,
+        agentId: "a1",
+        sessionId: "build",
+      },
+    ]);
+    await main.log.publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      agent: { id: "a1", session_id: "mind" },
+      payload: { turn_id: "T9" },
+      envelope: { service: "local", connection_address: "agent", conversation: { address: dm } },
+      parts: [{ type: "text", kind: "text", text: "seguí con el refactor" }],
+    } as Draft<Event>);
+    // the dm's address names the session (§4): main built a runner on first contact, the
+    // session woke REACTIVELY (no digest), and its closing landed in its own room
+    await waitFor(async () => (await main.log.read({ conversation: "build@a1" })).length > 0);
+    const [r] = await main.log.read({ conversation: "build@a1" });
+    assertEquals(r.agent, { id: "a1", session_id: "build" });
+  } finally {
+    await main.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("the mirror is main's own subscription: an alias inbound reaches the mind (§4)", async () => {
   const dir = await Deno.makeTempDir();
   const { transport } = scripted([reply("dale")]);

@@ -1462,7 +1462,7 @@ agent's working directory; (B) `mu repl` outside an org scaffolds one, harness f
 stage. Neither is built, and A's open question is whose cwd wins when several attachments
 sit in different folders.
 
-### Many sessions per agent (2026-09-01) — steps 1–3 landed, 4–6 open
+### Many sessions per agent (2026-09-01) — steps 1–4 landed, 5–6 open
 
 DESIGN §7 deferred subagents and settled for `session_id ≈ agent id`. This is the design
 that lifts it: an agent runs MANY sessions, each its own window, lock, compaction and
@@ -1554,13 +1554,18 @@ memberships key on the pair (`session_id` joined the primary key, migration v5 b
 `mind`); a row that names no session enrolls the ROUTED one, so the wire writers never
 decide; `policyFor(session, map)`'s branch 3 checks the pair and branches 1–2 open only
 the routed session (`routedSession` in session.ts — the one decision policy, enrollment
-defaults, and unstamped-row authorship all consult). Still open: (4) the per-session
-lock, window, compaction — the point of the whole thing; (5) the seam: `session` on the
-door's `message`/`tail`, on `{status}`, `--session` on both clients; (6) render's
+defaults, and unstamped-row authorship all consult). (4) **landed** — the lease is
+`turn-<session address>` (siblings run concurrently); a NAMED session is purely reactive
+in `attention` (only its rooms reach it, so its news never waits for a digest or sleeps);
+main keeps no session registry — the trigger's own address names the session (its room,
+or a `dm:` it is an end of), a runner is built on first contact (its own room enrolled
+then: born when first named), and at boot every `enrolled()` pair gets the mind's backlog
+look. The window and compaction were already per-session through the scoped port and the
+session-anchored boundary. DESIGN §7 now describes many sessions per agent. Still open:
+(5) the seam: `session` on the door's `message`/`tail`, on `{status}`, `--session` on
+both clients — plus session-address send targets (`send(to="mind@matias")` canonicalizes
+to the `dm:` pair) and `selfSend`'s per-session refusal; (6) render's
 `<msg from="build@matias">`.
-
-DESIGN §7 keeps describing one session per agent until step 4 lands — the architecture
-doc describes what runs.
 
 ## The honest framing
 
