@@ -94,7 +94,7 @@ Deno.test("empty docs ⇒ empty system", () => {
 
 const SELF = { id: "a1", session_id: "s1" };
 /** The mind session (§4): whose voice, and which conversation is its own. */
-const SESSION = { id: "s1", agentId: "a1", conversation: "mind:a1" };
+const SESSION = { id: "s1", agentId: "a1", conversation: "mind@a1" };
 
 function mindMsg(
   id: string,
@@ -110,7 +110,7 @@ function mindMsg(
     envelope: {
       service: "local",
       connection_address: "org",
-      conversation: { address: "mind:a1" },
+      conversation: { address: "mind@a1" },
       ...(self ? {} : { sender: { address: "ana", name: "Ana" } }),
     },
     parts: [{ type: "text", kind: "text", text }],
@@ -146,7 +146,7 @@ function waMsg(id: string, ts: string, text: string, self: boolean, cause?: stri
 const inbox = {
   service: "local",
   connection_address: "org",
-  conversation: { address: "mind:a1" },
+  conversation: { address: "mind@a1" },
 } as const;
 
 function thinkingE(
@@ -394,7 +394,7 @@ Deno.test("error events render as [system] text — the model stays aware (§2)"
       envelope: {
         service: "local",
         connection_address: "org",
-        conversation: { address: "mind:a1" },
+        conversation: { address: "mind@a1" },
       },
       parts: [{ type: "data", kind: "error", data: { error: "model overloaded, gave up" } }],
     },
@@ -479,7 +479,7 @@ Deno.test("a summary hides what it covers and renders as the leading checkpoint 
       envelope: {
         service: "local",
         connection_address: "agent",
-        conversation: { address: "mind:a1" },
+        conversation: { address: "mind@a1" },
       },
       payload: { covers: ["e01", "e02"] },
       parts: [{ type: "text", kind: "text", text: "## Ongoing threads\n- hilo viejo" }],
@@ -1132,28 +1132,28 @@ Deno.test("authorship labels (§3): turn_id = (you); the stamp alone = (principa
   const voice: MessageEvent = {
     ...base,
     id: "e1",
-    agent: { id: "ana", session_id: "ana" }, // v0: session ≈ agent
+    agent: { id: "ana", session_id: "mind" },
     payload: { turn_id: "T1" },
     parts: [{ type: "text", kind: "text", text: "yo me encargo" }],
   };
   const principal: MessageEvent = {
     ...base,
     id: "e2",
-    agent: { id: "ana" }, // the classifier's echo stamp: id alone
+    agent: { id: "ana" }, // the classifier's echo stamp: id alone — reads as the mind's
     envelope: { ...base.envelope, sender: { address: "5491", name: "ana" } },
     parts: [{ type: "text", kind: "text", text: "mejor lo veo yo" }],
   };
   const peerAgent: MessageEvent = {
     ...base,
     id: "e3",
-    agent: { id: "robo", session_id: "robo" },
+    agent: { id: "robo", session_id: "mind" },
     payload: { turn_id: "T2" },
     parts: [{ type: "text", kind: "text", text: "puedo ayudar" }],
   };
   const { messages } = render({
     events: [voice, principal, peerAgent],
     docs: [],
-    session: { id: "ana", agentId: "ana", conversation: "mind:ana" },
+    session: { id: "mind", agentId: "ana", conversation: "mind@ana" },
     zone: "UTC",
     now: t,
   });
@@ -1465,7 +1465,7 @@ Deno.test("a fired wake renders as the harness handing back the agent's own note
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: "mind:a1" },
+      conversation: { address: "mind@a1" },
     },
     parts: [{ type: "text", kind: "alarm", text: "llamar a la clínica" }],
   } as Event;

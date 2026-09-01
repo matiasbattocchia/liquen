@@ -81,7 +81,7 @@ const mindMsg = (
   envelope: {
     service: "local",
     connection_address: "agent",
-    conversation: { address: "mind:ana" },
+    conversation: { address: "mind@ana" },
     sender: { address: "ana", name: "ana" },
   },
   parts: [{ type: "text", kind: "text", text }],
@@ -99,11 +99,11 @@ Deno.test("mirror fan-in: an alias inbound copies to the mind and cross-CCs the 
     }));
 
     // the mind copy: wakes like a REPL line — sender kept, provenance in `via`, cause home
-    await waitFor(async () => (await inConv("mind:ana")).length === 1);
-    const [copy] = await inConv("mind:ana");
+    await waitFor(async () => (await inConv("mind@ana")).length === 1);
+    const [copy] = await inConv("mind@ana");
     // the principal's stamp (§3): whose mind + through the harness — and no turn_id,
     // which is what keeps the copy input rather than voice
-    assertEquals(copy.agent, { id: "ana", session_id: "ana" });
+    assertEquals(copy.agent, { id: "ana", session_id: "mind" });
     assertEquals(copy.payload?.turn_id, undefined);
     assertEquals(copy.envelope.sender?.address, "U1");
     assertEquals(textOf(copy), "pick up milk");
@@ -130,7 +130,7 @@ Deno.test("mirror fan-in: an alias inbound copies to the mind and cross-CCs the 
 Deno.test("mirror fan-out: the agent's voice CCs tagged to every alias, and CCs never re-enter", async () => {
   await withMirror(async ({ publish, inConv, waitFor }) => {
     await publish(
-      mindMsg("done!", { agent: { id: "ana", session_id: "ana" }, payload: { turn_id: "t9" } }),
+      mindMsg("done!", { agent: { id: "ana", session_id: "mind" }, payload: { turn_id: "t9" } }),
     );
 
     await waitFor(async () =>
@@ -145,12 +145,12 @@ Deno.test("mirror fan-out: the agent's voice CCs tagged to every alias, and CCs 
       assertEquals(cc.extra?.via, {
         event: cc.payload?.ref_id,
         service: "local",
-        conversation: "mind:ana",
+        conversation: "mind@ana",
       });
     }
     // the loop guard: the CCs are copies (agent + via) — nothing fans back in or out again
     await new Promise((r) => setTimeout(r, 200));
-    assertEquals((await inConv("mind:ana")).length, 1);
+    assertEquals((await inConv("mind@ana")).length, 1);
     assertEquals((await inConv("D1")).length, 1);
     assertEquals((await inConv("549")).length, 1);
   });
@@ -171,11 +171,11 @@ Deno.test("mirror fan-out: a tool call crosses as one redacted line", async () =
       ts: new Date().toISOString(),
       type: "tool_use",
       payload: { turn_id: "t1" },
-      agent: { id: "ana", session_id: "ana" },
+      agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
         connection_address: "agent",
-        conversation: { address: "mind:ana" },
+        conversation: { address: "mind@ana" },
       },
       parts: [{
         type: "data",
@@ -212,11 +212,11 @@ Deno.test("mirror fan-out: a tool line names the addresses it points at, off the
       ts: new Date().toISOString(),
       type: "tool_use",
       payload: { turn_id: "t2" },
-      agent: { id: "ana", session_id: "ana" },
+      agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
         connection_address: "agent",
-        conversation: { address: "mind:ana" },
+        conversation: { address: "mind@ana" },
       },
       parts: [{
         type: "data",
@@ -241,11 +241,11 @@ Deno.test("mirror fan-out: the approval card crosses, arguments and reply syntax
       ts: new Date().toISOString(),
       type: "permission_request",
       payload: { ref_id: "01a0-use" },
-      agent: { id: "ana", session_id: "ana" },
+      agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
         connection_address: "agent",
-        conversation: { address: "mind:ana" },
+        conversation: { address: "mind@ana" },
       },
       parts: [{
         type: "data",
@@ -274,11 +274,11 @@ Deno.test("mirror fan-in: a quoted CC is TRANSLATED — the copy's ref_id names 
       ts: new Date().toISOString(),
       type: "permission_request",
       payload: { ref_id: "01a0-use" },
-      agent: { id: "ana", session_id: "ana" },
+      agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
         connection_address: "agent",
-        conversation: { address: "mind:ana" },
+        conversation: { address: "mind@ana" },
       },
       parts: [{
         type: "data",
@@ -301,13 +301,13 @@ Deno.test("mirror fan-in: a quoted CC is TRANSLATED — the copy's ref_id names 
     // the mind copy of the QUOTED /y joins the card itself: xi's port never sees the alias
     // conversation (policy §6), so the mirror is where the quote becomes a mu-side ref
     await waitFor(async () =>
-      (await inConv("mind:ana")).some((e) => e.payload?.ref_external_id !== undefined)
+      (await inConv("mind@ana")).some((e) => e.payload?.ref_external_id !== undefined)
     );
-    const copy = (await inConv("mind:ana")).find((e) => e.payload?.ref_external_id)!;
+    const copy = (await inConv("mind@ana")).find((e) => e.payload?.ref_external_id)!;
     assertEquals(copy.payload?.ref_id, (cc.extra?.via as { event: string }).event);
     assertEquals(copy.payload?.ref_external_id, "slack:T1:D1:666.6");
     // …while the unquoted /y keeps plain provenance
-    const bare = (await inConv("mind:ana")).find((e) => !e.payload?.ref_external_id)!;
+    const bare = (await inConv("mind@ana")).find((e) => !e.payload?.ref_external_id)!;
     assertEquals(bare.payload?.ref_id, reply.id);
   });
 });
@@ -316,8 +316,8 @@ Deno.test("mirror fan-in: a transcript lands on the mind's COPY of the audio it 
   await withMirror(async ({ publish, inConv, waitFor }) => {
     // the voice note arrives on the surface and crosses to the mind
     await publish(aliasInbound("", { external_id: "slack:T1:D1:111.1" }));
-    await waitFor(async () => (await inConv("mind:ana")).length === 1);
-    const [audioCopy] = await inConv("mind:ana");
+    await waitFor(async () => (await inConv("mind@ana")).length === 1);
+    const [audioCopy] = await inConv("mind@ana");
 
     // the transcriber publishes the words into the AUDIO's conversation — an `add` naming
     // the surface row, which is the only id it has
@@ -328,8 +328,8 @@ Deno.test("mirror fan-in: a transcript lands on the mind's COPY of the audio it 
 
     // in the mind that id names nothing — the copy has its own. The mirror joins from the
     // other end (`extra.via.external_id`), so the words land on the note they came from
-    await waitFor(async () => (await inConv("mind:ana")).length === 2);
-    const words = (await inConv("mind:ana")).find((e) => textOf(e).startsWith("hola"))!;
+    await waitFor(async () => (await inConv("mind@ana")).length === 2);
+    const words = (await inConv("mind@ana")).find((e) => textOf(e).startsWith("hola"))!;
     assertEquals(words.payload?.ref_id, audioCopy.id);
     assertEquals(words.payload?.ref_external_id, "slack:T1:D1:111.1");
   });
@@ -339,7 +339,7 @@ Deno.test("mirror fan-in settles: an echo absorbed by the dispatch backfill copi
   await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
     // the agent speaks → a CC to the self-DM lands (what a dispatcher would then post)
     await publish(
-      mindMsg("done!", { agent: { id: "ana", session_id: "ana" }, payload: { turn_id: "t9" } }),
+      mindMsg("done!", { agent: { id: "ana", session_id: "mind" }, payload: { turn_id: "t9" } }),
     );
     await waitFor(async () => (await inConv("D1")).length === 1);
     const [cc] = await inConv("D1");
@@ -353,7 +353,7 @@ Deno.test("mirror fan-in settles: an echo absorbed by the dispatch backfill copi
     // past the settle: the echo is gone, so the mirror found nothing to copy — the mind
     // still holds only the original voice line
     await new Promise((r) => setTimeout(r, 300));
-    assertEquals((await inConv("mind:ana")).length, 1);
+    assertEquals((await inConv("mind@ana")).length, 1);
     assertEquals((await inConv("D1")).length, 1);
   }, { settleMs: 150 });
 });
@@ -363,7 +363,7 @@ Deno.test("mirror fan-in: an echo whose claim never lands is absorbed by the CC 
     // the agent speaks → a CC to the self-DM, which a dispatcher posts and then dies on:
     // no `setDelivery`, so the row never gets the id its own post came back with
     await publish(
-      mindMsg("done!", { agent: { id: "ana", session_id: "ana" }, payload: { turn_id: "t9" } }),
+      mindMsg("done!", { agent: { id: "ana", session_id: "mind" }, payload: { turn_id: "t9" } }),
     );
     await waitFor(async () => (await inConv("D1")).length === 1);
     const [cc] = await inConv("D1");
@@ -378,7 +378,7 @@ Deno.test("mirror fan-in: an echo whose claim never lands is absorbed by the CC 
     await new Promise((r) => setTimeout(r, 200));
     assertEquals((await inConv("D1")).length, 1); // the echo row is gone, absorbed
     assertEquals((await inConv("D1"))[0].envelope.external_id, "slack:T1:D1:333.3");
-    assertEquals((await inConv("mind:ana")).length, 1); // the mind never heard itself
+    assertEquals((await inConv("mind@ana")).length, 1); // the mind never heard itself
     assertEquals((await inConv("549")).length, 1); // …and nothing crossed to the other surface
   });
 });
@@ -386,7 +386,7 @@ Deno.test("mirror fan-in: an echo whose claim never lands is absorbed by the CC 
 Deno.test("mirror fan-in: a CLAIMED CC never swallows the principal repeating its words", async () => {
   await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
     await publish(
-      mindMsg("done!", { agent: { id: "ana", session_id: "ana" }, payload: { turn_id: "t9" } }),
+      mindMsg("done!", { agent: { id: "ana", session_id: "mind" }, payload: { turn_id: "t9" } }),
     );
     await waitFor(async () => (await inConv("D1")).length === 1);
     const [cc] = await inConv("D1");
@@ -395,8 +395,8 @@ Deno.test("mirror fan-in: a CLAIMED CC never swallows the principal repeating it
     // the principal, typing the same words a moment later — a different id, and the CC is
     // claimed: the guard's whole safety is that an unstamped row is otherwise unobservable
     await publish(aliasInbound("`[agent]` done!", { external_id: "slack:T1:D1:555.5" }));
-    await waitFor(async () => (await inConv("mind:ana")).length === 2);
-    assertEquals(textOf((await inConv("mind:ana"))[1]), "`[agent]` done!");
+    await waitFor(async () => (await inConv("mind@ana")).length === 2);
+    assertEquals(textOf((await inConv("mind@ana"))[1]), "`[agent]` done!");
   });
 });
 
@@ -404,7 +404,7 @@ Deno.test("mirror: imported history never mirrors (no backfill — the REPL alon
   await withMirror(async ({ publish, inConv }) => {
     await publish(aliasInbound("old news", { extra: { backfill: true } }));
     await new Promise((r) => setTimeout(r, 200));
-    assertEquals((await inConv("mind:ana")).length, 0);
+    assertEquals((await inConv("mind@ana")).length, 0);
   });
 });
 
@@ -416,7 +416,7 @@ Deno.test("mirror fan-out: a harness error crosses — the one voice left when a
       envelope: {
         service: "local",
         connection_address: "agent",
-        conversation: { address: "mind:ana" },
+        conversation: { address: "mind@ana" },
       },
       parts: [{
         type: "data",
@@ -438,11 +438,11 @@ Deno.test("mirror fan-out: a withdrawal crosses, a verdict never does — turn_i
       ts: new Date().toISOString(),
       type: "permission_response",
       payload,
-      agent: { id: "ana", session_id: "ana" },
+      agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
         connection_address: "agent",
-        conversation: { address: "mind:ana" },
+        conversation: { address: "mind@ana" },
       },
       parts: [{
         type: "data",
@@ -466,7 +466,7 @@ Deno.test("mirror fan-out: a withdrawal crosses, a verdict never does — turn_i
 Deno.test("mirror: a SILENCE note reaches no surface — nothing said is nothing sent", async () => {
   await withMirror(async ({ publish, inConv, waitFor }) => {
     await publish(mindMsg(SILENCE, {
-      agent: { id: "ana", session_id: "ana" },
+      agent: { id: "ana", session_id: "mind" },
       payload: { turn_id: "t9" },
       extra: { silence: true },
     }));
@@ -475,7 +475,7 @@ Deno.test("mirror: a SILENCE note reaches no surface — nothing said is nothing
     assertEquals((await inConv("549")).length, 0);
     // and the next real word still crosses — silence is per message, not a state
     await publish(mindMsg("ahí va", {
-      agent: { id: "ana", session_id: "ana" },
+      agent: { id: "ana", session_id: "mind" },
       payload: { turn_id: "t10" },
     }));
     await waitFor(async () => (await inConv("D1")).length === 1);

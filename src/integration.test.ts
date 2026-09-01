@@ -17,7 +17,7 @@ import type { Draft, Event, Json, MessageEvent, ToolResultEvent, ToolUseEvent } 
 const CONFIG: AgentConfig = {
   agentId: "a1",
   sessionId: "s1",
-  mind: "mind:a1",
+  mind: "mind@a1",
   model: "claude-x",
   maxTokens: 1024,
   gate: () => "allow", // gating off unless a test opts in
@@ -48,7 +48,7 @@ function principalMsg(text: string): Draft<MessageEvent> {
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: "mind:a1" },
+      conversation: { address: "mind@a1" },
       sender: { address: "ana", name: "Ana" },
     },
     parts: [{ type: "text", kind: "text", text }],
@@ -134,7 +134,7 @@ Deno.test("a principal message spawns a turn; stamped events are published", asy
 
       const replies = (await read("message")).filter((e) => e.agent?.session_id === "s1");
       assertEquals(replies.length, 1);
-      assertEquals(replies[0].envelope.conversation.address, "mind:a1");
+      assertEquals(replies[0].envelope.conversation.address, "mind@a1");
       assertEquals(typeof replies[0].payload?.turn_id, "string");
       assertEquals(calls(), 1);
     },
@@ -243,7 +243,7 @@ Deno.test("send: directed message + sent result, both cause-linked", async () =>
 Deno.test("send at the principal lands nowhere — refused before it is ever gated", async () => {
   // gating ON, so the test also proves no card is raised: the whole point is that the
   // principal is not asked to approve a message they were already going to receive
-  for (const to of ["a1", "mind:a1"]) {
+  for (const to of ["a1", "mind@a1"]) {
     await scenario(
       [
         ok([{ kind: "tool_use", name: "send", input: { to, text: "che, mirá esto" } }], "tool_use"),
@@ -281,7 +281,7 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: "mind:a1" },
+      conversation: { address: "mind@a1" },
     },
     parts: [{
       type: "data",
@@ -305,7 +305,7 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
       await waitFor(async () => (await read("permission_request")).length === 1);
       const [req] = await read("permission_request");
       assert(req.type === "permission_request");
-      assertEquals(req.envelope.conversation.address, "mind:a1");
+      assertEquals(req.envelope.conversation.address, "mind@a1");
       // the card names the call the way a person reads it — not a slice of its JSON
       assertEquals(req.parts[0].data.call, "send(to: wa:x, text: hi)");
       assertEquals(req.parts[0].data.detail, "send(to: wa:x, text: hi)");
@@ -503,7 +503,7 @@ const orphanUse = (): Draft<Event> => ({
   type: "tool_use",
   payload: { turn_id: "T-crashed" },
   agent: { id: "a1", session_id: "s1" },
-  envelope: { service: "local", connection_address: "agent", conversation: { address: "mind:a1" } },
+  envelope: { service: "local", connection_address: "agent", conversation: { address: "mind@a1" } },
   parts: [{ type: "data", kind: "tool_use", data: { name: "echo", input: { v: 1 } } }],
 });
 
@@ -546,7 +546,7 @@ Deno.test("the gate is free: a spectator event takes no lease and reads nothing"
       envelope: {
         service: "local",
         connection_address: "agent",
-        conversation: { address: "mind:a1" },
+        conversation: { address: "mind@a1" },
       },
       parts: [{ type: "data", kind: "thinking", data: { thinking: "…", signature: "s" } }],
     });
@@ -904,7 +904,7 @@ Deno.test("the gate answers from a surface: the principal's own /y and /n settle
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: "mind:a1" },
+      conversation: { address: "mind@a1" },
       sender: { address: "matias", name: "Matías" },
     },
     parts: [{ type: "text", kind: "text", text }],
@@ -991,7 +991,7 @@ Deno.test("two cards open: a bare /y settles nothing, the quoted one settles its
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: "mind:a1" },
+      conversation: { address: "mind@a1" },
       sender: { address: "matias", name: "Matías" },
     },
     parts: [{ type: "text", kind: "text", text }],
@@ -1066,7 +1066,7 @@ Deno.test("two cards open: `/y all` settles the whole pile in one line (§9)", a
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: "mind:a1" },
+      conversation: { address: "mind@a1" },
       sender: { address: "matias", name: "Matías" },
     },
     parts: [{ type: "text", kind: "text", text }],
@@ -1131,7 +1131,7 @@ Deno.test("a standing verdict is REMEMBERED: /y conv settles that conversation's
         envelope: {
           service: "local",
           connection_address: "agent",
-          conversation: { address: "mind:a1" },
+          conversation: { address: "mind@a1" },
         },
         parts: [{
           type: "data",
@@ -1177,7 +1177,7 @@ Deno.test("a standing verdict is PINNED: the ruled conversation runs, its neighb
         envelope: {
           service: "local",
           connection_address: "agent",
-          conversation: { address: "mind:a1" },
+          conversation: { address: "mind@a1" },
         },
         parts: [{
           type: "data",
@@ -1290,10 +1290,10 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
     const armed = res.parts[0].data.output as { armed: string; at: string };
     assert(armed.armed.length > 0, "the result hands back the id cancel takes");
     // the row is the ONLY record of the future — nothing is in the log yet
-    const [row] = log.timers("s1"); // the SESSION's wakes (§4)
+    const [row] = log.timers("a1", "s1"); // the SESSION's wakes (§4)
     assertEquals(row.note, "llamar a la clínica");
     assertEquals(row.sessionId, "s1"); // the session that armed it owns it
-    assertEquals(row.conversation, "mind:a1"); // and is where the note comes back
+    assertEquals(row.conversation, "mind@a1"); // and is where the note comes back
     assertEquals(row.refId, res.payload.ref_id); // provenance: the scheduling use
     assertEquals(await log.read({ types: ["alarm"] }), []);
     await xi(config, ports); // …and the turn that closes on it
@@ -1319,7 +1319,7 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
       log.settle(t.id, now);
     }
     // one-shot: fired, consumed, gone — and the note is in the log for the mind to read
-    assertEquals(log.timers("s1"), []);
+    assertEquals(log.timers("a1", "s1"), []);
     const [fired] = await log.read({ types: ["alarm"] });
     assertEquals(fired.parts[0].text, "llamar a la clínica");
     assertEquals(fired.agent, undefined); // harness-authored, so it wakes (§2)
@@ -1333,7 +1333,7 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
       sessionId: "s1",
       fireAt: "2030-01-01T09:00:00.000Z",
       note: "la otra cosa",
-      conversation: "mind:a1",
+      conversation: "mind@a1",
     });
     const cancelling = scripted([
       ok([{ kind: "tool_use", name: "cancel", input: { id: shortId(second.id) } }]),
@@ -1344,7 +1344,7 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
       .map((e) => (e as ToolResultEvent).parts[0].data.output as Json)
       .find((o) => o && typeof o === "object" && "disarmed" in o);
     assertEquals((undone as { note: string }).note, "la otra cosa");
-    assertEquals(log.timers("s1"), []);
+    assertEquals(log.timers("a1", "s1"), []);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -1372,7 +1372,7 @@ Deno.test("schedule: the horizon — no wake in the past, none beyond a year, no
     await log.publish(principalMsg("agendá cosas raras"));
     await xi({ ...CONFIG, timezone: "UTC" }, ports); // the turn that calls…
     await xi({ ...CONFIG, timezone: "UTC" }, ports); // …and the act that refuses, loudly
-    assertEquals(log.timers("s1"), [], "nothing armed — every call was refused");
+    assertEquals(log.timers("a1", "s1"), [], "nothing armed — every call was refused");
     const errors = (await log.read({ types: ["tool_result"] }))
       .filter((e) => JSON.stringify(e.parts).includes("is_error"));
     assertEquals(errors.length, 3);
@@ -1408,7 +1408,7 @@ Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the ope
       fireAt: "2030-03-04T09:30:00.000Z",
       cron: "30 9 * * *",
       note: "mandar los recordatorios",
-      conversation: "mind:a1",
+      conversation: "mind@a1",
     });
     // another session's wake: armed on the same agent, and none of this session's business
     log.arm({
@@ -1416,7 +1416,7 @@ Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the ope
       sessionId: "s2",
       fireAt: "2030-03-04T08:00:00.000Z",
       note: "lo de la otra sesión",
-      conversation: "mind:a1",
+      conversation: "mind@a1",
     });
     await log.publish(principalMsg("hola"));
     await xi(config, ports);

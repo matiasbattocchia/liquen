@@ -10,10 +10,10 @@ import { nextFire, type TimerRow, zonedTime } from "./timers.ts";
 
 const wake = (over: Partial<TimerRow> = {}): Omit<TimerRow, "id" | "armedAt"> => ({
   agentId: "ana",
-  sessionId: "ana", // v0: session ≈ agent (§7) — the row is the SESSION's either way
+  sessionId: "mind", // the row is the SESSION's — keyed by the (agent, session) pair (§4)
   fireAt: "2026-09-01T17:00:00.000Z",
   note: "call the clinic",
-  conversation: "mind:ana",
+  conversation: "mind@ana",
   ...over,
 });
 
@@ -27,7 +27,7 @@ Deno.test("timers: a one-shot fires once and is gone", async () => {
     assertEquals(log.due("2026-09-01T17:00:00.000Z").map((r) => r.id), [t.id]); // due AT the moment
     log.settle(t.id, "2026-09-01T17:00:00.000Z");
     assertEquals(log.due("2026-09-02T00:00:00.000Z"), []); // consumed
-    assertEquals(log.timers("ana"), []);
+    assertEquals(log.timers("ana", "mind"), []);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -43,7 +43,7 @@ Deno.test("timers: a cron advances past NOW — a week down fires once, not 168 
     const now = "2026-09-08T11:30:00.000Z";
     assertEquals(log.due(now).map((r) => r.id), [t.id]);
     log.settle(t.id, now);
-    const [after] = log.timers("ana");
+    const [after] = log.timers("ana", "mind");
     assertEquals(after.fireAt, "2026-09-09T09:00:00.000Z"); // the next 09:00 after now
     assertEquals(after.cron, "0 9 * * *"); // still armed — a cron is forever
     assertEquals(log.due(now), []); // and not due again in the same pass
@@ -61,7 +61,7 @@ Deno.test("timers: a cron advances on the clock it was armed against, not UTC", 
     // to UTC would silently shift the second fire to 10:00 or 11:00 local
     const t = log.arm(wake({ cron: "0 9 * * *", fireAt: "2026-09-08T07:00:00.000Z" }));
     log.settle(t.id, "2026-09-08T11:30:00.000Z", "Europe/Madrid");
-    const [after] = log.timers("ana");
+    const [after] = log.timers("ana", "mind");
     assertEquals(after.fireAt, "2026-09-09T07:00:00.000Z"); // 09:00 CEST, not 09:00Z
   } finally {
     await log.close();
@@ -76,15 +76,15 @@ Deno.test("timers: rows outlive the process — recovery is just reading them", 
   await log.close();
   const reopened = await openLog(dir);
   try {
-    const [row] = reopened.timers("ana");
+    const [row] = reopened.timers("ana", "mind");
     assertEquals(row, {
       id: t.id,
       agentId: "ana",
-      sessionId: "ana",
+      sessionId: "mind",
       fireAt: "2026-09-01T17:00:00.000Z",
       cron: "*/5 * * * *",
       note: "call the clinic",
-      conversation: "mind:ana",
+      conversation: "mind@ana",
       refId: "use-1",
       armedAt: t.armedAt, // stamped at arm — the other half of an alarm's provenance
     });
@@ -100,12 +100,13 @@ Deno.test("timers: a wake is the session's — disarm is theirs alone, and the l
   try {
     const late = log.arm(wake({ fireAt: "2026-09-03T10:00:00.000Z", note: "later" }));
     const soon = log.arm(wake({ fireAt: "2026-09-02T10:00:00.000Z", note: "sooner" }));
-    const theirs = log.arm(wake({ agentId: "bo", sessionId: "bo", note: "bo's" }));
-    assertEquals(log.timers("ana").map((r) => r.note), ["sooner", "later"]);
-    assertEquals(log.disarm(theirs.id, "ana"), false); // not ana's session's to unset (§6)
-    assertEquals(log.timers("bo").length, 1);
-    assertEquals(log.disarm(soon.id, "ana"), true);
-    assertEquals(log.timers("ana").map((r) => r.id), [late.id]);
+    // bo's session shares ana's bare name — the PAIR is what keeps them apart (§4)
+    const theirs = log.arm(wake({ agentId: "bo", note: "bo's" }));
+    assertEquals(log.timers("ana", "mind").map((r) => r.note), ["sooner", "later"]);
+    assertEquals(log.disarm(theirs.id, "ana", "mind"), false); // not ana's to unset (§6)
+    assertEquals(log.timers("bo", "mind").length, 1);
+    assertEquals(log.disarm(soon.id, "ana", "mind"), true);
+    assertEquals(log.timers("ana", "mind").map((r) => r.id), [late.id]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

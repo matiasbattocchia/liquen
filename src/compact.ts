@@ -80,7 +80,7 @@ export function compactionSpan(
   if (estTokens(events) <= compactAt) return null;
   const boundary = closingBoundary(events, session);
   if (boundary < 0) return null; // no closed region yet — nothing safely coverable
-  const deferred = deferredInput(events, session.id, boundary);
+  const deferred = deferredInput(events, session, boundary);
   const closed = events.slice(0, boundary + 1).filter((e) => !deferred.has(e));
   // walk back from the boundary keeping ~keepRecent est. tokens uncovered
   let keep = 0;
@@ -96,14 +96,14 @@ export function compactionSpan(
 }
 
 /** The covered span as a plain transcript + the previous checkpoint (if one is inside). */
-function transcript(covered: Event[], sessionId: string): { text: string; previous?: string } {
+function transcript(covered: Event[], session: Session): { text: string; previous?: string } {
   let previous: string | undefined;
   const lines: string[] = [];
   for (const e of covered) {
     if (e.type === "summary") {
       previous = e.parts.map((p) => p.text).join("\n");
     } else if (e.type === "message") {
-      const who = ownVoice(e, sessionId)
+      const who = ownVoice(e, session)
         ? "me"
         : e.envelope.sender?.name ?? e.envelope.sender?.address ?? "?";
       const text = e.parts.filter((p) => p.type === "text")
@@ -127,7 +127,7 @@ export async function buildSummary(
     input.keepRecent,
   );
   if (!span) return null;
-  const { text, previous } = transcript(span.covered, input.session.id);
+  const { text, previous } = transcript(span.covered, input.session);
 
   let prompt = `<conversation>\n${text}\n</conversation>\n\n`;
   if (previous) prompt += `<previous-summary>\n${previous}\n</previous-summary>\n\n`;

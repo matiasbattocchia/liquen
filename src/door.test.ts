@@ -27,7 +27,7 @@ import type {
   ToolUseEvent,
 } from "./types.ts";
 
-const AGENT = { agentId: "ana", sessionId: "ana" };
+const AGENT = { agentId: "ana", sessionId: "mind" };
 
 async function up(policy?: Parameters<typeof scoped>[1]) {
   const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
@@ -49,8 +49,8 @@ async function up(policy?: Parameters<typeof scoped>[1]) {
 async function act(dir: string, log: Log) {
   const config: AgentConfig = {
     agentId: "ana",
-    sessionId: "ana",
-    mind: "mind:ana",
+    sessionId: "mind",
+    mind: "mind@ana",
     model: "claude-test",
     maxTokens: 1000,
     gate: () => "allow", // the clinic's standing rule, compiled (§9)
@@ -84,10 +84,10 @@ Deno.test({
       const [use] = await log.read({ types: ["tool_use"] }) as ToolUseEvent[];
       assertEquals(use.id, q.id);
       // identity is the runtime's (§9): the socket stamped it, the script never could
-      assertEquals(use.agent, { id: "ana", session_id: "ana" });
+      assertEquals(use.agent, { id: "ana", session_id: "mind" });
       // a turn no session ever held — act reads the use as fresh work, never as stolen
       assertMatch(use.payload.turn_id, /^job:/);
-      assertEquals(use.envelope.conversation.address, "mind:ana");
+      assertEquals(use.envelope.conversation.address, "mind@ana");
       assertEquals(use.parts[0].data, {
         name: "send",
         input: { to: "wa:+34600", text: "recordatorio" },
@@ -212,10 +212,10 @@ Deno.test({
       assertEquals(r.ok, true);
       const [msg] = await log.read({ types: ["message"] }) as MessageEvent[];
       assertEquals(msg.id, r.id);
-      assertEquals(msg.agent, { id: "ana", session_id: "ana" });
+      assertEquals(msg.agent, { id: "ana", session_id: "mind" });
       assertEquals(msg.payload?.turn_id, undefined);
       assertEquals(msg.envelope.sender, { address: "matias", name: "matias" });
-      assertEquals(msg.envelope.conversation.address, "mind:ana");
+      assertEquals(msg.envelope.conversation.address, "mind@ana");
 
       // the tail pushed the same row back — full disclosure, the interface decides
       await client.settle(() => client.events.length >= 1);

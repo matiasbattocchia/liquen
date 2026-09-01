@@ -1462,7 +1462,7 @@ agent's working directory; (B) `mu repl` outside an org scaffolds one, harness f
 stage. Neither is built, and A's open question is whose cwd wins when several attachments
 sit in different folders.
 
-### Many sessions per agent (2026-09-01) — DESIGNED, not started
+### Many sessions per agent (2026-09-01) — step 1 landed, 2–6 open
 
 DESIGN §7 deferred subagents and settled for `session_id ≈ agent id`. This is the design
 that lifts it: an agent runs MANY sessions, each its own window, lock, compaction and
@@ -1539,16 +1539,22 @@ rules. A session that needs more window is a config edit on the agent.
 
 #### Sequence
 
-Each step is a green-tests checkpoint: (1) the address — `mind:<agent>` → `mind@matias`,
-`session_id` to bare names, `dm:` to the sorted pair; (2) `config.mind` stops being a
+Each step is a green-tests checkpoint: (1) **landed** — the address (`mind:<agent>` →
+`mind@matias`), `session_id` to the bare name, `dm:` to the sorted pair of session
+addresses, and every authorship comparison to the `(agent_id, session_id)` pair
+(`SessionRef` — the predicates take the pair, so the compiler enumerated the sites); the
+timers pair-keying (`timers`/`disarm` take agent + session) came forward from step 4
+because bare names collide the moment they land. `src/session.ts` is the vocabulary:
+`MIND`, `sessionAddress`, `parseSession`, `dmAddress` — one name grammar, checked at the
+one door every construction passes through. Still open: (2) `config.mind` stops being a
 per-agent constant, xi and nu anchor to the turn's session; (3) memberships on (agent,
 session) + the routing function both visibility and waking consult; (4) the per-session
-lock, window, compaction and timers — the point of the whole thing; (5) the seam:
-`session` on the door's `message`/`tail`, on `{status}`, `--session` on both clients;
-(6) render's `<msg from="build@matias">`.
+lock, window, compaction — the point of the whole thing; (5) the seam: `session` on the
+door's `message`/`tail`, on `{status}`, `--session` on both clients; (6) render's
+`<msg from="build@matias">`.
 
-DESIGN §7 keeps saying `session_id ≈ agent id` until step 4 lands — the architecture doc
-describes what runs.
+DESIGN §7 keeps describing one session per agent until step 4 lands — the architecture
+doc describes what runs.
 
 ## The honest framing
 

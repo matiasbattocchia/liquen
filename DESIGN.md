@@ -301,7 +301,8 @@ readable filter / RLS, §6) *is* the wake filter. It decides relevance itself: a
 (`send`/assistant text) or stay quiet. (Mention-only wake = deferred cost optimization, §10.)
 
 - **The relational rule** (the discriminator): a message is `ignore` iff
-  `event.agent.session_id == this_session` (own output). The **same bit** assigns the
+  `event.agent` names this session — the `(agent_id, session_id)` PAIR; bare session
+  names collide across agents (own output). The **same bit** assigns the
   LLM role (self → assistant, else → user; §5) *and* the wake verdict. One bit, two
   derivations.
 - **Two error channels, never conflated**: **tool failure** → `tool_result{is_error}`
@@ -601,11 +602,11 @@ Decisions:
   route on `envelope.service` and target with `connection_address` +
   `conversation.address`. `external_id` is the one prefixed string
   (`slack:T:C:ts`) — a global merge key in one store-wide map, where cross-service
-  uniqueness is the point. The local service names its conversations `mind:<agent>` and
-  `dm:<sorted>`. An address is meaningful WITH its envelope (or its `<conv>` element);
+  uniqueness is the point. The local service names its conversations by session —
+  `mind@<agent>` — and `dm:<sorted session addresses>`. An address is meaningful WITH its envelope (or its `<conv>` element);
   single-string positions (`send.to`, log filters) rely on addresses not colliding
   across services — acceptable: platform id spaces (Slack C/D ids, jids, `owner/repo#N`,
-  `mind:`/`dm:` names) are disjoint in practice.
+  `@`/`dm:` names) are disjoint in practice.
 - **`envelope` is on the base** — every event belongs to a conversation (internal events
   carry the conversation's own coordinates; `visibility` keeps them off the wire).
 - **`payload` vs `extra`, one admission rule**: `payload` is what the event MEANS — the
@@ -754,7 +755,7 @@ ownership) only if double-answers show up.
 - **`conversation.kind` = `direct | group | channel | broadcast`** (landed 2026-08-05,
   column `conversation_kind`; broadcast added 2026-08-11 with the WhatsApp connector):
   *direct* = member-DEFINED identity (Slack im AND mpim — the member set is the address;
-  local `dm:<sorted names>` makes that literal, and it scales to n parties unchanged);
+  local `dm:<sorted session addresses>` makes that literal, and it scales to n parties unchanged);
   *group* = private room; *channel* = public room (room-defined: identity survives
   membership churn); *broadcast* = fan-out, not a room anyone is in (a WA broadcast list
   — replies land in the individual chats; open-bsp carries `…@broadcast` in production).
@@ -809,10 +810,10 @@ email:  not a mind surface
 cli/ui: native local conversations
         → all alias to the canonical local principal-DM (the agent's own DM)
 ```
-- **The canonical principal-DM IS the mind session** (2026-08-04): `mind:<agent>` — the
+- **The canonical principal-DM IS the mind session** (2026-08-04): `mind@<agent>` — the
   main session, the one with tools, where the agent is steered/controlled. The principal
   talks straight into it (the REPL does; platform DMs alias onto it at ingest via the rule
-  below). The session IS the conversation `mind:<agent>` — there is no second "home" room
+  below). The session IS the conversation `mind@<agent>` — there is no second "home" room
   beside it — and every other conversation is a peer conversation reached via connectors.
 - **Self-talk is special, even across connections.** An envelope identified as the
   principal — a conversation whose counterpart IS the agent's principal (the WA self-chat,
@@ -820,7 +821,7 @@ cli/ui: native local conversations
   (an event with the right envelope must exist in the log for a dispatcher to carry it,
   and the wire original stays honest where it landed). The **mirror**
   (`connect/mirror.ts`, broker-side, one per org) holds both legs:
-  - **fan-in**: an inbound on an alias conversation copies into `mind:<agent>` — the agent
+  - **fan-in**: an inbound on an alias conversation copies into `mind@<agent>` — the agent
     wakes on it exactly as on a REPL line (provenance in `extra.via`: origin event id +
     wire coordinates); in the agent's context every surface is the same **plain**
     user/assistant chat (§5 mind mode — one voice, one thread, whatever surface the
@@ -1368,7 +1369,7 @@ Returns **raw events, type-filtered** (messages; never tool/permission noise).
   and writable alike:
   `member(service, connection, conversation, agent, ts)` (branch 3: Slack channel/DM ·
   local team chat · **the mind is a one-member conversation** — its privacy is plain
-  membership, no special case; the registry seeds `(local, agent, mind:<name>, <name>)`;
+  membership, no special case; the registry seeds `(local, agent, mind@<name>, <name>)`;
   the event's `ts` rides in so a LEFT membership keeps granting what the agent has
   seen, §4)
   ∨ connection ownerless AND org-credentialed (branch 1: the org's — the bot/org
@@ -1386,7 +1387,8 @@ Returns **raw events, type-filtered** (messages; never tool/permission noise).
   mid-run bind is visible on the next event, no reload, no restart. Applied to folder-declared agents;
   explicit `principals` (tests) stay allow-all unless they pass their own.
   **Local is a team chat**: a local conversation is visible iff you're a member; `send`
-  to a peer agent's NAME canonicalizes to `dm:<sorted pair>` and enrolls both ends
+  to a peer agent's NAME canonicalizes to `dm:` + the sorted pair of session addresses
+  and enrolls both ends
   (the Slack membership mirror, landed 2026-08-12, fills the same rows from the wire —
   §4 "the wire fills the map").
 - **Privacy = a property of the conversation**: `public` (org-readable) | `private`
@@ -1423,7 +1425,9 @@ Returns **raw events, type-filtered** (messages; never tool/permission noise).
   to whatever's **unanswered** in that window (a peer message with no agent send after it).
   Scheduling state per agent is **the turn lock alone**; pending work, barriers, and gates
   are log queries. **Recovery re-derives** everything (the boot alarm + the steal-sweep);
-  re-processing an ignored message is cheap/idempotent. `session_id ≈ agent id` in v0.
+  re-processing an ignored message is cheap/idempotent. `session_id` holds the session's
+  bare name (`mind` — one session per agent runs today); identity is always the
+  `(agent_id, session_id)` pair.
 - **Internal events anchor to a per-agent `local` scratchpad** (the agent's "mind") —
   `thinking`/`tool_use`/`tool_result` have no single peer conversation when the agent
   reasons across many. The agent's assistant text anchors to the principal-DM; peer messages to

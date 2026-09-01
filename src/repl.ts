@@ -20,12 +20,13 @@
 
 import { TextLineStream } from "@std/streams";
 import { attach, resolveAgent, wire } from "./attach.ts";
+import { MIND, sessionAddress } from "./session.ts";
 import { DIM, painter, RED, RESET } from "./paint.ts";
 import { parseVerdict } from "./xi.ts";
 
 // `mu <agent>` — a session choice, so an argument, not config — talks to another agent.
 const a = await resolveAgent(Deno.args[0]);
-const home = `mind:${a.target}`; // the home IS the mind session (§4)
+const home = sessionAddress(a.target, MIND); // the home IS the mind session (§4)
 
 const conn = await attach(a);
 let leaving = false;
@@ -38,7 +39,7 @@ const prompt = () => write("\n> ");
 const pending: string[] = [];
 
 const p = painter({
-  session: a.target, // session_id ≈ agent id in v0 (§7)
+  session: { agentId: a.target, id: MIND }, // the pair — bare names collide (§4)
   home,
   write,
   error: (t) => {

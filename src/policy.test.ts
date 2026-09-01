@@ -114,7 +114,7 @@ const at = (service: string, connection: string, conversation: string, ts?: stri
 Deno.test("policyFor: three branches — membership · shared (ownerless) · owned (private)", async () => {
   await withLog((log) => {
     log.upsertMemberships([
-      { service: "local", connection: "agent", conversation: "mind:ana", agentId: "ana" },
+      { service: "local", connection: "agent", conversation: "mind@ana", agentId: "ana" },
     ]);
     log.upsertConnections([
       // ownerless + org-credentialed ⇒ the org's shared inbox (§6)
@@ -126,8 +126,8 @@ Deno.test("policyFor: three branches — membership · shared (ownerless) · own
     const bo = policyFor("bo", log);
 
     // branch 3: the mind is a one-member conversation — private by membership, no special case
-    assert(ana.readable!(at("local", "agent", "mind:ana")));
-    assert(!bo.readable!(at("local", "agent", "mind:ana")));
+    assert(ana.readable!(at("local", "agent", "mind@ana")));
+    assert(!bo.readable!(at("local", "agent", "mind@ana")));
     // branch 1: ownerless + org credential = the org's — every agent reads it
     assert(ana.readable!(at("whatsapp", "+549", "wa:cust1")));
     assert(bo.readable!(at("whatsapp", "+549", "wa:cust1")));

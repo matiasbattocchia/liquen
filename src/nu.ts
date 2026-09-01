@@ -37,7 +37,7 @@ export type { ModelTransport };
 export interface TurnConfig {
   agentId: AgentId;
   sessionId: SessionId;
-  mind: string; // the session's conversation — `mind:<agent>`, where the principal steers (§4)
+  mind: string; // the session's conversation — `mind@<agent>`, where the principal steers (§4)
   model: string;
   maxTokens: number;
   effort?: Effort;

@@ -431,7 +431,7 @@ Deno.test("the publish gate: only a registered, live connection may log (§4); l
     log.upsertConnections([{ service: "slack", address: "T1:U7" }]);
     await log.publish(more);
 
-    await log.publish(msg("03", "mind:m", "local needs no grant")); // the exempt service
+    await log.publish(msg("03", "mind@m", "local needs no grant")); // the exempt service
     assertEquals((await log.read()).length, 3);
   });
 });

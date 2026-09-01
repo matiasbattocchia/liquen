@@ -6,9 +6,9 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { canned } from "./testing.ts";
 
 let n = 0;
-const SESSION = { id: "s1", agentId: "a1", conversation: "mind:a1" };
+const SESSION = { id: "s1", agentId: "a1", conversation: "mind@a1" };
 
-const msg = (text: string, self: boolean, conv = "mind:a1"): MessageEvent => ({
+const msg = (text: string, self: boolean, conv = "mind@a1"): MessageEvent => ({
   id: `e${String(++n).padStart(3, "0")}`,
   ts: "2026-07-20T10:00:00Z",
   type: "message",
@@ -28,7 +28,7 @@ const summaryEv = (covers: [string, string], text: string): SummaryEvent => ({
   ts: "2026-07-20T10:00:00Z",
   type: "summary",
   agent: { id: "a1", session_id: "s1" },
-  envelope: { service: "local", connection_address: "agent", conversation: { address: "mind:a1" } },
+  envelope: { service: "local", connection_address: "agent", conversation: { address: "mind@a1" } },
   payload: { covers },
   parts: [{ type: "text", kind: "text", text }],
 });
@@ -87,8 +87,8 @@ Deno.test("buildSummary: mints a summary event; the checkpoint prompt carries th
   assertEquals(out.payload.covers[0], events[0].id);
   assertStringIncludes(out.parts[0].text, "informe viernes");
   const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
-  assertStringIncludes(prompt, "[Ana @ mind:a1] necesito el informe");
-  assertStringIncludes(prompt, "[me @ mind:a1] dale, lo agendo");
+  assertStringIncludes(prompt, "[Ana @ mind@a1] necesito el informe");
+  assertStringIncludes(prompt, "[me @ mind@a1] dale, lo agendo");
   // first checkpoint — no BLOCK (the unified instruction may mention the tag)
   assert(!prompt.includes("<previous-summary>\n"));
   assertEquals(seen[0].tools?.length ?? 0, 0); // bare call, no tools

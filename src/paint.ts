@@ -12,7 +12,7 @@
 
 import { outcomeLine, ownVoice, SILENCE, silent } from "./render.ts";
 import { describeCall } from "./describe.ts";
-import type { Delta, Event } from "./types.ts";
+import type { Delta, Event, SessionRef } from "./types.ts";
 
 export const DIM = "\x1b[2m";
 export const RED = "\x1b[31m";
@@ -25,8 +25,8 @@ export const RESET = "\x1b[0m";
  *  REPL's screen, the CLI's stderr); the gate hooks let a surface keep an approval pile —
  *  the painter only reports what the tail disclosed. */
 export interface Surface {
-  session: string; // the ownVoice discriminator (§3)
-  home: string; // the mind conversation this surface fronts
+  session: SessionRef; // the ownVoice discriminator (§3) — the pair, never the bare name
+  home: string; // the session conversation this surface fronts
   write(s: string): void;
   error(s: string): void;
   prompt(): void;

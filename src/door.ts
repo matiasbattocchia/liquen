@@ -52,6 +52,7 @@ import type {
 } from "./types.ts";
 import type { Log } from "./store/log.ts";
 import { newId } from "./store/id.ts";
+import { sessionAddress } from "./session.ts";
 
 export interface DoorAgent {
   agentId: string;
@@ -206,12 +207,12 @@ async function handle(
   turnId: string,
   tail: (from?: string) => void,
 ): Promise<Record<string, unknown>> {
-  // every verb the door speaks lands in the agent's mind — the session where its tools
-  // live (§4); the socket already decided which one
+  // every verb the door speaks lands in the session's own room (§4); the socket already
+  // decided whose
   const envelope = {
     service: "local" as const,
     connection_address: "agent",
-    conversation: { address: `mind:${agent.agentId}` },
+    conversation: { address: sessionAddress(agent.agentId, agent.sessionId) },
   };
   if (req.op === "call") {
     const tool = req.tool;

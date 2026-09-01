@@ -52,10 +52,11 @@ export interface Timers {
    *  same clock the cron was armed against (§10): "0 9" means 9 on the org's wall, every
    *  fire, not just the first. */
   settle(id: string, nowIso: string, tz?: string): void;
-  /** A session's armed wakes, next first — what its anchor lists (§5). */
-  timers(sessionId: string): TimerRow[];
+  /** A session's armed wakes, next first — what its anchor lists (§5). The pair, because
+   *  bare session names collide across agents (§4): `mind` alone names everyone's. */
+  timers(agentId: string, sessionId: string): TimerRow[];
   /** Disarm by id, but only the session's own. `false` ⇒ no such timer of theirs. */
-  disarm(id: string, sessionId: string): boolean;
+  disarm(id: string, agentId: string, sessionId: string): boolean;
 }
 
 export const TIMERS_DDL = `CREATE TABLE IF NOT EXISTS timers (
@@ -94,10 +95,14 @@ export function createTimers(db: DatabaseSync): Timers {
   );
   const ripe = db.prepare("SELECT * FROM timers WHERE fire_at <= ? ORDER BY fire_at, id");
   const byId = db.prepare("SELECT * FROM timers WHERE id = ?");
-  const mine = db.prepare("SELECT * FROM timers WHERE session_id = ? ORDER BY fire_at, id");
+  const mine = db.prepare(
+    "SELECT * FROM timers WHERE agent_id = ? AND session_id = ? ORDER BY fire_at, id",
+  );
   const advance = db.prepare("UPDATE timers SET fire_at = ? WHERE id = ?");
   const del = db.prepare("DELETE FROM timers WHERE id = ?");
-  const delMine = db.prepare("DELETE FROM timers WHERE id = ? AND session_id = ?");
+  const delMine = db.prepare(
+    "DELETE FROM timers WHERE id = ? AND agent_id = ? AND session_id = ?",
+  );
 
   return {
     arm(row: Omit<TimerRow, "id" | "armedAt">): TimerRow {
@@ -129,12 +134,12 @@ export function createTimers(db: DatabaseSync): Timers {
       advance.run(nextFire(row.cron, nowIso, tz), id);
     },
 
-    timers(sessionId: string): TimerRow[] {
-      return (mine.all(sessionId) as Raw[]).map(rowOf);
+    timers(agentId: string, sessionId: string): TimerRow[] {
+      return (mine.all(agentId, sessionId) as Raw[]).map(rowOf);
     },
 
-    disarm(id: string, sessionId: string): boolean {
-      return delMine.run(id, sessionId).changes > 0;
+    disarm(id: string, agentId: string, sessionId: string): boolean {
+      return delMine.run(id, agentId, sessionId).changes > 0;
     },
   };
 }

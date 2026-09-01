@@ -19,6 +19,7 @@
  */
 
 import { attach, resolveAgent, wire } from "./attach.ts";
+import { MIND, sessionAddress } from "./session.ts";
 import { painter } from "./paint.ts";
 
 const flags: { agent?: string; timeout?: number } = {};
@@ -42,8 +43,8 @@ let leaving = false;
 const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
 
 const p = painter({
-  session: a.target,
-  home: `mind:${a.target}`,
+  session: { agentId: a.target, id: MIND },
+  home: sessionAddress(a.target, MIND),
   write,
   error: (t) => console.error(t),
   prompt: () => write("\n"),

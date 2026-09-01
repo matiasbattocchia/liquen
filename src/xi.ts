@@ -65,6 +65,7 @@ import type { Docs } from "./store/docs.ts";
 import type { Locker } from "./store/lock.ts";
 import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
 import { filePartOf, loadMediaBlock } from "./store/media.ts";
+import { dmAddress, MIND, sessionAddress } from "./session.ts";
 import { hhmm, ownComplex, ownVoice, parseVerdict, shortId, silenced, textOf } from "./render.ts"; // shared predicates: silenced never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
@@ -265,9 +266,9 @@ function engaged(
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (
-      e.type === "message" && ownComplex(e, session.id) &&
+      e.type === "message" && ownComplex(e, session) &&
       e.envelope.conversation.address === conversation
-    ) return ownVoice(e, session.id) && now - Date.parse(e.ts) < minutes * 60_000;
+    ) return ownVoice(e, session) && now - Date.parse(e.ts) < minutes * 60_000;
   }
   return false;
 }
@@ -315,7 +316,7 @@ function lastClosing(events: Event[], session: Session): number {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (
-      e.type === "message" && ownVoice(e, session.id) &&
+      e.type === "message" && ownVoice(e, session) &&
       e.envelope.conversation.address === session.conversation
     ) return i;
   }
@@ -389,8 +390,8 @@ export function relevant(config: AgentConfig, event: Event): boolean {
     case "message": // a peer's IS the work; our own closing message is the self-poke that
       return !silenced(event); //   catches whatever landed mid-turn (§2)
     case "tool_use":
-    case "tool_result":
-      return event.agent?.session_id === config.sessionId; // never react to others' tools
+    case "tool_result": // never react to others' tools — ownership is the PAIR (§4)
+      return ownComplex(event, { agentId: config.agentId, id: config.sessionId });
     case "permission_response": // the human moved — the settlement is derivable now
     case "alarm": // the universal poke (§2)
       return true;
@@ -414,7 +415,7 @@ function pendingOf(events: Event[], session: Session): ToolUseEvent[] {
     events.filter((e) => e.type === "tool_result").map((e) => e.payload?.ref_id),
   );
   return events.filter((e): e is ToolUseEvent =>
-    e.type === "tool_use" && e.agent?.session_id === session.id && !answered.has(e.id)
+    e.type === "tool_use" && ownComplex(e, session) && !answered.has(e.id)
   );
 }
 
@@ -464,7 +465,7 @@ function owedOf(events: Event[], session: Session): Owed[] {
     // already reported ⇒ done. Only the middle case is the harness's late errand.
     if (seen.has(ref) || reported.has(ref) || !answered.has(ref)) continue;
     const use = events.find((x): x is ToolUseEvent =>
-      x.type === "tool_use" && x.id === ref && x.agent?.session_id === session.id
+      x.type === "tool_use" && x.id === ref && ownComplex(x, session)
     );
     if (!use) continue;
     seen.add(ref);
@@ -538,7 +539,7 @@ function gateVerdict(
   let said: PermissionVerdict | undefined;
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if (e.type !== "message" || !ownComplex(e, session.id) || ownVoice(e, session.id)) continue;
+    if (e.type !== "message" || !ownComplex(e, session) || ownVoice(e, session)) continue;
     said = parseVerdict(textOf(e));
     if (!said) break; // their latest word is not a verdict — they said something else
     // Answered already? While a gate waits, EVERY event re-reads this same latest line —
@@ -615,7 +616,7 @@ function newsOf(events: Event[], session: Session): (MessageEvent | AlarmEvent)[
   // the agent's own past self arriving with something to say (§10): harness-authored, so
   // never our voice, and unanswered until a turn reads past it like any other news
   const news = (e: Event): e is MessageEvent | AlarmEvent =>
-    e.type === "alarm" || (e.type === "message" && !ownVoice(e, session.id) && !silenced(e));
+    e.type === "alarm" || (e.type === "message" && !ownVoice(e, session) && !silenced(e));
   const last = lastClosing(events, session);
   if (last === -1) return events.filter(news);
   // resolve the horizon to a POSITION — the window may be re-sorted for display (§5)
@@ -630,7 +631,7 @@ function newsOf(events: Event[], session: Session): (MessageEvent | AlarmEvent)[
 function unclosedChain(events: Event[], session: Session): boolean {
   const uses = new Set(
     events
-      .filter((e) => e.type === "tool_use" && e.agent?.session_id === session.id)
+      .filter((e) => e.type === "tool_use" && ownComplex(e, session))
       .map((e) => e.id),
   );
   if (uses.size === 0) return false;
@@ -641,7 +642,7 @@ function unclosedChain(events: Event[], session: Session): boolean {
   }
   if (lastResult < 0) return false;
   return !events.slice(lastResult + 1).some((e) =>
-    ownVoice(e, session.id) &&
+    ownVoice(e, session) &&
     (e.type === "thinking" || e.type === "tool_use" ||
       (e.type === "message" && e.envelope.conversation.address === session.conversation))
   );
@@ -895,7 +896,7 @@ async function think(
  *  Silence means nothing is armed: unlike an approval, a wake the model invents costs the
  *  principal nothing and reveals itself when it doesn't fire. */
 function armedOn(config: AgentConfig, ports: XiPorts): string[] {
-  const rows = ports.log.timers(config.sessionId);
+  const rows = ports.log.timers(config.agentId, config.sessionId);
   if (rows.length === 0) return [];
   return [
     `scheduled — ${rows.length} wake${rows.length === 1 ? "" : "s"}:`,
@@ -1144,12 +1145,19 @@ const PENDING_APPROVAL = {
     "being worth asking, withdraw it with cancel(id) — your pending list names the id.",
 };
 
+/** A bare peer name means the AGENT (§4), and contact is a DM room: `dm:` + the sorted
+ *  pair of session addresses — the caller's own session and the peer's mind, which is
+ *  what a bare name canonicalizes to. One rule for sessions of one agent and of two. */
+function peerDm(self: { id: string; session_id: string }, peerId: string): string {
+  return dmAddress(sessionAddress(self.id, self.session_id), sessionAddress(peerId, MIND));
+}
+
 /** Where a send LANDS (§9): the destination's own envelope — the same anchoring read and
  *  peer-name canonicalization `execute` does, so a scoped rule matches the conversation
  *  the log will record. Tools that dispatch nowhere have no target. */
 async function targetOf(
   use: ToolUseEvent,
-  self: { id: string },
+  self: { id: string; session_id: string },
   ports: XiPorts,
 ): Promise<Target | undefined> {
   const { name, input } = use.parts[0].data;
@@ -1158,7 +1166,7 @@ async function targetOf(
   if (typeof raw !== "string" || raw === "") return undefined;
   let to = raw;
   const peer = ports.log.agents().find((a) => a.agentId === to);
-  if (peer && peer.agentId !== self.id) to = `dm:${[self.id, peer.agentId].sort().join(":")}`;
+  if (peer && peer.agentId !== self.id) to = peerDm(self, peer.agentId);
   const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
   return prior
     ? { connection: prior.envelope.connection_address, conversation: to }
@@ -1314,9 +1322,9 @@ async function execute(
     if (!card) {
       // the same verb unsets a scheduled wake (§10): one "withdraw by id" the model can
       // reach for without knowing which list the id came from
-      const timer = ports.log.timers(self.session_id).find((t) => byId(t.id));
+      const timer = ports.log.timers(self.id, self.session_id).find((t) => byId(t.id));
       if (timer) {
-        ports.log.disarm(timer.id, self.session_id);
+        ports.log.disarm(timer.id, self.id, self.session_id);
         return { disarmed: shortId(timer.id), note: timer.note };
       }
       const ever = events.some((e) => e.type === "permission_request" && byId(e.payload.ref_id));
@@ -1361,9 +1369,8 @@ async function execute(
     // (upsert-only and live, so the scoped publish below already passes WITH CHECK)
     const peer = ports.log.agents().find((a) => a.agentId === to);
     if (peer && peer.agentId !== self.id) {
-      const pair = [self.id, peer.agentId].sort();
-      to = `dm:${pair.join(":")}`;
-      ports.log.upsertMemberships(pair.map((agentId) => (
+      to = peerDm(self, peer.agentId);
+      ports.log.upsertMemberships([self.id, peer.agentId].map((agentId) => (
         { service: "local", connection: "agent", conversation: to, agentId }
       )));
     }

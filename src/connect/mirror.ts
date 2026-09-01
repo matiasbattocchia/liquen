@@ -7,7 +7,7 @@
  * (never rewrite — an event with the right envelope must exist in the log for a dispatcher
  * to carry it, and the wire original stays honest where it landed):
  *
- *   fan-in    an inbound on an alias conversation → a COPY into `mind:<agent>` — the agent
+ *   fan-in    an inbound on an alias conversation → a COPY into `mind@<agent>` — the agent
  *             wakes on it exactly as on a REPL line. `extra.via` holds the provenance
  *             (origin event id + wire coordinates); `cause` points home.
  *   fan-out   every mind event the REPL would show → a CC to every alias binding EXCEPT
@@ -52,6 +52,7 @@
  */
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
+import { MIND, parseSession, sessionAddress } from "../session.ts";
 import { DEFAULT_MIRROR_CLAIM_MS, DEFAULT_MIRROR_SETTLE_MS } from "../config.ts";
 import { outcomeLine, silenced, silent } from "../render.ts";
 import { describeCall, nameResolver } from "../describe.ts";
@@ -173,7 +174,7 @@ async function fanIn(
   // only the mirror, reading unscoped, can make the join. A quoted CC resolves to the mind
   // event it was made from (`extra.via.event`); that id rides the copy as `ref_id`, which
   // is how a `/y` quoting one of several cards names the card itself.
-  const origin = await quotedOrigin(deps, e, `mind:${binding.agentId}`);
+  const origin = await quotedOrigin(deps, e, sessionAddress(binding.agentId, MIND));
   await deps.publish({
     ts: now(),
     type: "message",
@@ -183,14 +184,14 @@ async function fanIn(
       ref_id: origin ?? e.id,
       ...(e.payload?.ref_external_id ? { ref_external_id: e.payload.ref_external_id } : {}),
     },
-    // the principal's stamp (§3): whose mind + entered through the harness — session_id
-    // is deterministic in v0 (session ≈ agent), so even a first-message copy stamps at
-    // append. No turn_id: input, not voice — exactly a REPL line in wire clothing.
-    agent: { id: binding.agentId, session_id: binding.agentId },
+    // the principal's stamp (§3): whose mind + entered through the harness — a surface is
+    // the mind's face, so the copy is the MIND session's row. No turn_id: input, not
+    // voice — exactly a REPL line in wire clothing.
+    agent: { id: binding.agentId, session_id: MIND },
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: `mind:${binding.agentId}` },
+      conversation: { address: sessionAddress(binding.agentId, MIND) },
       // WA self-chat carries no sender (the account spoke) — but in an alias conversation
       // the account IS the principal, and v0 principal name = agent name
       sender: e.envelope.sender ?? { address: binding.agentId, name: binding.agentId },
@@ -283,15 +284,15 @@ async function fanOut(
     type: "message",
     payload: { ref_id: e.id },
     // the CC is the agent's leg speaking on that surface (dispatch resolves the author's
-    // alter-ego token off `agent.id`); v0 session ≈ agent (§7)
-    agent: { id: agentId, session_id: agentId },
+    // alter-ego token off `agent.id`) — mind content, so the MIND session's row (§4)
+    agent: { id: agentId, session_id: MIND },
     envelope: {
       service: a.service as Service, // the map stores wire strings; bindings are known services
       connection_address: a.connection,
       conversation: { address: a.conversation },
     },
     parts,
-    extra: { via: { event: e.id, service: "local", conversation: `mind:${agentId}` } },
+    extra: { via: { event: e.id, service: "local", conversation: sessionAddress(agentId, MIND) } },
   })));
 }
 
@@ -388,10 +389,11 @@ function textOf(e: MessageEvent): string {
 
 /* ── plumbing ─────────────────────────────────────────────────────────── */
 
-/** The agent whose mind this event lives in, or null. */
+/** The agent whose MIND this event lives in, or null. A sibling session's room is a
+ *  session address too, and it never mirrors: surfaces are the mind's faces alone (§4). */
 function mindOf(e: Event): string | null {
-  const address = e.envelope.conversation.address;
-  return address.startsWith("mind:") ? address.slice("mind:".length) : null;
+  const s = parseSession(e.envelope.conversation.address);
+  return s !== null && s.sessionId === MIND ? s.agentId : null;
 }
 
 interface Via {

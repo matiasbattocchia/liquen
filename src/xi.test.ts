@@ -12,7 +12,7 @@ import {
 } from "./xi.ts";
 import type { Envelope, Event, Session } from "./types.ts";
 
-const MIND = "mind:a1"; // the session's own conversation (§4)
+const MIND = "mind@a1"; // the session's own conversation (§4)
 const SESSION: Session = { id: "s1", agentId: "a1", conversation: MIND };
 const WAKE: Wake = {};
 
@@ -78,7 +78,7 @@ Deno.test("gateOf: scoped rules — where a send lands decides, most specific fi
   assertEquals(gate("send", {}, { connection: "T042", conversation: "C042" }), "deny");
   assertEquals(gate("send", {}, { connection: "T042", conversation: "C099" }), "allow");
   assertEquals(gate("send", {}, { connection: "549115550000", conversation: "wa:g1" }), "ask");
-  assertEquals(gate("send", {}, { conversation: "mind:a1" }), "ask"); // local: the bare rule
+  assertEquals(gate("send", {}, { conversation: "mind@a1" }), "ask"); // local: the bare rule
   assertEquals(gate("send", {}), "ask"); // no target ⇒ scoped rules never match
   assertEquals(gate("bash", {}), "allow"); // a placed rule never leaks onto placeless tools
 });
@@ -521,11 +521,11 @@ Deno.test("attention: engagement is HOLDING THE FLOOR — our word last, and rec
 
 Deno.test("attention: the principal speaking in a conversation ENDS engagement, at once", () => {
   // A wire echo carries `agent.id` (the classifier stamps it from their grant) and NO
-  // session_id — so it reads as our complex only through ownComplex's id fallback, which
-  // is v0's session ≈ agent (§7). This session says so; the file's default deliberately
-  // does not, to hold session_id to its own job.
-  const s: Session = { id: "a1", agentId: "a1", conversation: MIND };
-  const self = { agent: { id: "a1", session_id: "a1" } };
+  // session_id — an unstamped row reads as the MIND's, the session world traffic routes
+  // to (§4). This session IS the mind; the file's default deliberately is not, to hold
+  // session_id to its own job.
+  const s: Session = { id: "mind", agentId: "a1", conversation: MIND };
+  const self = { agent: { id: "a1", session_id: "mind" } };
   const byHand = (minAgo: number) =>
     ev("message", {
       agent: { id: "a1" }, // their phone in hand: no session_id, and never a turn_id

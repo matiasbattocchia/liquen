@@ -221,7 +221,9 @@ export interface Envelope {
  *   `session_id`  entered THROUGH THE HARNESS: turn output, a repl line, an alias copy.
  *                 A principal typing into the live session carries it too — so it cannot
  *                 discriminate the halves. Absent on a principal's wire echo (phone in
- *                 hand). Deterministic in v0 (session ≈ agent), so it stamps at append.
+ *                 hand) — an unstamped row reads as the MIND's, the session world traffic
+ *                 routes to. The bare name only identifies beside `id`: the pair is the
+ *                 unit (`SessionRef`).
  *
  * The half-discriminator is `payload.turn_id`: only rows PRODUCED BY a model turn carry
  * one. `render.ownVoice` is the predicate — it assigns the LLM role (§5), the xi verdict
@@ -476,13 +478,19 @@ export type Event =
 export type Draft<E extends Event = Event> = E extends unknown ? Omit<E, "id"> & { id?: EventId }
   : never;
 
-/** The agent's long-running unified session (§7). v0 = one per agent, cross-labeled — the
- *  MIND session, `mind:<agent>` (§4), the one with the tools, where the principal steers.
- *  `conversation` is where it speaks and is spoken to: a session is not just an id, it is a
- *  place, so everything scoped to a session — its window, its wakes — reads it from here. */
-export interface Session {
+/** A session's runtime identity: the PAIR (§4, §7). `id` is the bare name (`mind`,
+ *  `build`) and bare names collide across agents — every agent has a `mind` — so every
+ *  authorship comparison takes the pair, never the string alone. */
+export interface SessionRef {
   id: SessionId;
   agentId: AgentId;
+}
+
+/** The agent's long-running session (§7): the pair plus where it speaks. The MIND session
+ *  (`mind@<agent>`, §4) is the one world traffic routes to, where the principal steers.
+ *  `conversation` is where it speaks and is spoken to: a session is not just an id, it is a
+ *  place, so everything scoped to a session — its window, its wakes — reads it from here. */
+export interface Session extends SessionRef {
   conversation: string;
 }
 

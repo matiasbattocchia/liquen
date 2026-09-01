@@ -16,6 +16,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { isExternal, pathOf } from "./store/media.ts"; // pure uri helpers — no I/O
+import { MIND } from "./session.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
   AlarmEvent,
@@ -30,7 +31,7 @@ import type {
   PermissionVerdict,
   ReactionPart,
   Session,
-  SessionId,
+  SessionRef,
   TextPart,
   ThinkingEvent,
   ToolResultEvent,
@@ -158,7 +159,7 @@ export function closingBoundary(events: Event[], session: Session): number {
   return findLastIndex(
     events,
     (e) =>
-      e.type === "message" && isSelf(e, session.id) &&
+      e.type === "message" && isSelf(e, session) &&
       e.envelope.conversation.address === session.conversation &&
       !(typeof e.payload?.turn_id === "string" && toolTurnIds.has(e.payload.turn_id)),
   );
@@ -170,7 +171,7 @@ export function closingBoundary(events: Event[], session: Session): number {
  *  unprocessed INPUT, not history. Shared with compaction (never checkpoint these away). */
 export function deferredInput(
   events: Event[],
-  session: SessionId,
+  session: SessionRef,
   boundary: number,
 ): Set<Event> {
   const out = new Set<Event>();
@@ -212,7 +213,7 @@ export function applySummary(events: Event[]): Event[] {
  *  where it landed, because the answer breaks the run. */
 function byEventTime(
   events: Event[],
-  session: SessionId,
+  session: SessionRef,
   here: string,
 ): { events: Event[]; elisions: Elisions } {
   const out = [...events];
@@ -444,7 +445,7 @@ const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 function renderMessages(
   { events: window, session, now, zone, ambient, loadMedia }: RenderInput,
 ): MessageParam[] {
-  const me = session.id; // whose voice
+  const me = session; // whose voice — the (agent, session) pair
   const here = session.conversation; // the session's own room — everything else is world
   const { events, elisions } = byEventTime(
     applySummary(window.filter((e) => !silenced(e))),
@@ -845,7 +846,7 @@ function senderLabel(sender: { address?: string; name?: string }): string {
 
 function msgLine(
   e: MessageEvent,
-  session: SessionId,
+  session: SessionRef,
   zone?: string,
   ref: Ref = { attr: "" },
 ): string {
@@ -1088,9 +1089,8 @@ function alarmLine(e: AlarmEvent): string {
  *  output (`payload.turn_id`), or a mirror CC replaying mind content outward
  *  (`extra.via.service === "local"`). A principal's rows carry `agent.id` — and, typed
  *  through the harness, `session_id` — yet never a turn_id: they are input, not voice.
- *  THE predicate for the LLM role here, the xi verdict (§2), and the self labels; v0
- *  session ≈ agent, so `session` matches `agent.id` (§7). */
-export function ownVoice(e: Event, session: SessionId): boolean {
+ *  THE predicate for the LLM role here, the xi verdict (§2), and the self labels. */
+export function ownVoice(e: Event, session: SessionRef): boolean {
   if (!ownComplex(e, session)) return false;
   if (e.payload?.turn_id !== undefined) return true;
   const via = e.extra?.via;
@@ -1098,14 +1098,16 @@ export function ownVoice(e: Event, session: SessionId): boolean {
     (via as { service?: string }).service === "local";
 }
 
-/** OUR COMPLEX authored it — either half. Matched on `session_id` when stamped (harness
- *  rows), else `agent.id` (the classifier's echo stamp carries no session — and v0
- *  session ≈ agent, §7, so the id answers the same question). */
-export function ownComplex(e: Event, session: SessionId): boolean {
-  return e.agent !== undefined && (e.agent.session_id ?? e.agent.id) === session;
+/** OUR COMPLEX authored it — either half. The identity is the PAIR (§4): bare session
+ *  names collide across agents, so `agent.id` must match too. A stamped row names its
+ *  session; an unstamped one (the classifier's echo stamp carries none) is the MIND's —
+ *  the session world traffic routes to. */
+export function ownComplex(e: Event, session: SessionRef): boolean {
+  return e.agent !== undefined && e.agent.id === session.agentId &&
+    (e.agent.session_id ?? MIND) === session.id;
 }
 
-function isSelf(e: Event, session: SessionId): boolean {
+function isSelf(e: Event, session: SessionRef): boolean {
   return ownVoice(e, session);
 }
 

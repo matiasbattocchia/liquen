@@ -19,7 +19,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 export interface AgentRow {
   agentId: string;
-  mind: string; // its mind session's conversation — `mind:<agent>` (§4)
+  mind: string; // its mind session's conversation — `mind@<agent>` (§4)
   provider?: string; // model provider (the transport seam's future knob)
   model?: string;
   effort?: string;

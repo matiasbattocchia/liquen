@@ -33,6 +33,8 @@
  */
 
 import { type AgentConfig, type Decision, relevant, xi, type XiPorts } from "./xi.ts";
+import { ownComplex } from "./render.ts";
+import { MIND, sessionAddress } from "./session.ts";
 import { type Policy, policyFor, scoped } from "./policy.ts";
 import { type Log, openLog } from "./store/log.ts";
 import type { ConnectionRow } from "./store/connections.ts";
@@ -111,7 +113,7 @@ export interface MainConfig {
   /** One agent per principal. The `Policy` half (readable/writable, §6) never reaches xi:
    *  main lifts it into the agent's scoped log — locally a wrapper, on Postgres a credential.
    *  OMIT to create agents "the framework way": the catalog's `agents` roster declares
-   *  them — agentId = the entry's name, the session's conversation = `mind:<name>`,
+   *  them — agentId = the entry's name, the session's conversation = `mind@<name>`,
    *  model/effort/maxTokens from the defaults below. */
   principals?: (AgentConfig & Policy)[];
   /** The resolved catalog (readConfig at the entry point) — the roster and every funneled
@@ -273,7 +275,8 @@ export async function start(
   const wake = (a: (typeof agents)[number]) => {
     const fire = invoke(a);
     return (trigger?: Event) => {
-      const own = trigger?.agent?.session_id === a.config.sessionId;
+      const own = trigger !== undefined &&
+        ownComplex(trigger, { agentId: a.config.agentId, id: a.config.sessionId });
       // the class gate, run here too: an irrelevant event must not even arm a timer, or
       // main would turn xi's free exit into a window read on a metronome
       if (!trigger || own || debounceMs <= 0 || !relevant(a.config, trigger)) return fire(trigger);
@@ -412,12 +415,12 @@ export async function start(
 type Principal = AgentConfig & Policy & { provider?: string; email?: string; phone?: string };
 
 /** The framework way (§9): the catalog's `agents` roster declares the org — each entry
- *  becomes a registry row and a home folder, config → tables → folders. agentId =
- *  sessionId = the entry's name (v0: session ≈ agent, §7), the session's conversation =
- *  `mind:<name>` (§4): the mind session is the one with tools, where the agent is steered;
- *  the principal talks straight into it (the REPL needs no identity map — principal name =
- *  agent name), and platform DMs alias onto it at ingest ("principal handle →
- *  principal-DM alias", the special wiring).
+ *  becomes a registry row and a home folder, config → tables → folders. agentId = the
+ *  entry's name, sessionId = `mind` (the pair is the identity, §4), the session's
+ *  conversation = `mind@<name>`: the mind session is the one world traffic routes to,
+ *  where the agent is steered; the principal talks straight into it (the REPL needs no
+ *  identity map — principal name = agent name), and platform DMs alias onto it at ingest
+ *  ("principal handle → principal-DM alias", the special wiring).
  *
  *  Resolution, most specific wins: agents.<name> → MainConfig (the process: tests) →
  *  org.agent — every key has a default, so nothing falls through. The clock and locale
@@ -439,8 +442,8 @@ async function compileRoster(
     const { identity = {}, ...cfg } = entry;
     found.push({
       agentId: name,
-      sessionId: name,
-      mind: `mind:${name}`,
+      sessionId: MIND,
+      mind: sessionAddress(name, MIND),
       model: cfg.model ?? defaults.model ?? org.model,
       effort: cfg.effort ?? defaults.effort ?? org.effort ?? undefined,
       maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.maxTokens,

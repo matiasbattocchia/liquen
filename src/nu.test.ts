@@ -9,7 +9,7 @@ import type { Event, MessageEvent, ThinkingEvent, ToolUseEvent } from "./types.t
 const CONFIG: TurnConfig = {
   agentId: "a1",
   sessionId: "s1",
-  mind: "mind:a1",
+  mind: "mind@a1",
   model: "claude-x",
   maxTokens: 1024,
   retryDelaysMs: [0, 0],
@@ -31,12 +31,12 @@ Deno.test("nu stamps emissions: one session, one place — all of them carry the
   assertEquals(out.at(-1)?.payload?.stop_reason, "tool_use"); // the outcome rides the last event
   const [th, msg, use] = out as [ThinkingEvent, MessageEvent, ToolUseEvent];
   assertEquals(th.type, "thinking");
-  assertEquals(th.envelope.conversation.address, "mind:a1");
+  assertEquals(th.envelope.conversation.address, "mind@a1");
   assertEquals(th.agent, { id: "a1", session_id: "s1" });
-  assertEquals(msg.envelope.conversation.address, "mind:a1");
+  assertEquals(msg.envelope.conversation.address, "mind@a1");
   assertEquals(msg.payload?.turn_id, th.payload.turn_id); // one turn_id per step
   assertEquals(use.payload.turn_id, th.payload.turn_id);
-  assertEquals(use.envelope.conversation.address, "mind:a1");
+  assertEquals(use.envelope.conversation.address, "mind@a1");
 });
 
 Deno.test("nu: persistent step failure → a single harness-authored error event", async () => {
@@ -75,7 +75,7 @@ Deno.test("nu renders the window it was handed (events reach mu)", async () => {
     envelope: {
       service: "local",
       connection_address: "agent",
-      conversation: { address: "mind:a1" },
+      conversation: { address: "mind@a1" },
       sender: { address: "ana", name: "Ana" },
     },
     parts: [{ type: "text", kind: "text", text: "¿todo bien?" }],
