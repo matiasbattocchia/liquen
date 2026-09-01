@@ -1462,6 +1462,94 @@ agent's working directory; (B) `mu repl` outside an org scaffolds one, harness f
 stage. Neither is built, and A's open question is whose cwd wins when several attachments
 sit in different folders.
 
+### Many sessions per agent (2026-09-01) — DESIGNED, not started
+
+DESIGN §7 deferred subagents and settled for `session_id ≈ agent id`. This is the design
+that lifts it: an agent runs MANY sessions, each its own window, lock, compaction and
+timers, over one identity — one home, one docs cascade, one memory, one exec plane, one
+permission table. `mu repl --session build` is the entry point; the session is born when
+first named.
+
+**A session is a conversation.** `mind@matias` is the default; `build@matias` is a session
+of the same agent. The pair `(agent_id, session_id)` is the key — both columns already
+exist on `events` and `timers` — and `session_id` holds the BARE name (`mind`, `build`),
+the address being how the pair is written in an envelope, a prompt or a `send` target. `@`
+because `:` is already the segment separator of world addresses (`slack:T0AB:C123`), so
+`dm:mind@matias:build@matias` splits cleanly; and because a local address lands in paths
+(`conversations/<address>/` is a doc scope walked as a directory) where `/` could not.
+
+**A session is a mini mind.** Not a special shape: the same machine, minus the world. The
+mind is distinguished by ONE thing — it is the session world traffic is routed to. So no
+"non-mind sessions load only local" rule lives in the code: `connections` and credentials
+stay AGENT-owned (tomorrow's routing criteria may be finer than per-agent), and a single
+routing function answers "which session does this connection's traffic belong to" for both
+purposes that need it — whose window may see those rows, and whose xi is woken. Today it
+answers `mind`.
+
+**Memberships key on (agent, session).** That is the whole enforcement: a session reads
+and writes where it is enrolled. "Sessions don't mix" stops being etiquette and becomes
+the WITH-CHECK — a session is not enrolled in a sibling's room, so it can neither read it
+nor write into it. Sessions reach each other the way two agents do: a DM room both are in,
+`dm:` + the sorted pair of session addresses, which makes today's agent-to-agent
+`dm:<a>:<b>` a case of one rule rather than its own. A bare name in `send(to=…)` means an
+AGENT, canonicalizing to its mind; a session must be addressed in full.
+
+**Render.** `here` is already a parameter (`session.conversation`), so a session renders
+by the same path the mind does: its own room bare, everything else a `<conv>` element —
+its DMs included. A sibling's line reads `<msg from="build@matias">`; `<principal>` stays
+the human's alone. A session's own sends stay visible after the tool pair collapses
+because the window includes rows it authored, which is what `events.session_id` is for.
+
+**Wakes and attention.** A session wakes on its own rooms' events only. World traffic and
+mirrors reach the mind. Named sessions are reactive — no digest cadence, no sleep window;
+the mind keeps the ambient ladder. Idle sessions are never poked: the trigger's own
+address names the session to invoke, so main needs no session registry and a quiet session
+costs nothing. Backlog applies at boot as it does for the mind.
+
+**The knobs stay the agent's**: `compactAt`, `windowLimit`, `keepRecent`, the model, the
+rules. A session that needs more window is a config edit on the agent.
+
+#### The quirks this refactor has to survive
+
+- **Session identity is a bare string, compared by `===`, in 33 places** (`ownVoice`,
+  `ownComplex`, `isSelf`, xi's tool-ownership filters, main's debounce `own` check). Today
+  that is safe because the value is the agent id, globally unique. Bare names COLLIDE —
+  every agent has a `mind` — so ana's row would read as matias's own voice. The refactor
+  must make the runtime identity the pair and let the type system enumerate the sites; a
+  missed one mis-attributes voice silently, and only in a multi-agent org.
+- **`timers(sessionId)` and `disarm(id, sessionId)` key on the session alone.** With bare
+  names one agent could list and cancel another's wakes. They take the pair.
+- **`selfSend`'s refusal set is `[agentId, mind, email, phone]`** — "that address is your
+  principal". Per session it becomes "your own room": otherwise a session could never
+  write to `mind@matias`, and the mind could never be reached at all.
+- **`scoped()` reads filter-before-limit**: a `filter` disables the SQL `LIMIT` and scans
+  the table backwards until N visible rows. One scan per agent today; one per SESSION per
+  turn after. The fix is already in the query builder — pass the session's enrolled rooms
+  as `q.conversations` (an IN clause) and keep `filter` only for the authored-rows leg.
+- **Two escapes for one address.** The doc scope walks `conversations/<address>/` raw
+  while media writes `conversations/<safe(address)>/`, where `safe` maps `@` to `_`. `@`
+  is harmless in both; it is worth knowing they differ.
+- **`agents.mind` and `mirror.ts`'s `mindOf`** parse the `mind:` prefix to recover an
+  agent. They become an `@` split, and the registry column is derivable from the pair.
+- **The fixtures.** 16 test files carry `mind:`/`session_id` literals, plus `dm:ana:bo`
+  and `mind: "dm:ana"` — addresses that only work because nothing parses them today. After
+  this, something does.
+- **Prompt caches multiply.** Each session anchors its own window floor, so the cache
+  prefix per session is its own. Cheaper per turn, more of them.
+
+#### Sequence
+
+Each step is a green-tests checkpoint: (1) the address — `mind:<agent>` → `mind@matias`,
+`session_id` to bare names, `dm:` to the sorted pair; (2) `config.mind` stops being a
+per-agent constant, xi and nu anchor to the turn's session; (3) memberships on (agent,
+session) + the routing function both visibility and waking consult; (4) the per-session
+lock, window, compaction and timers — the point of the whole thing; (5) the seam:
+`session` on the door's `message`/`tail`, on `{status}`, `--session` on both clients;
+(6) render's `<msg from="build@matias">`.
+
+DESIGN §7 keeps saying `session_id ≈ agent id` until step 4 lands — the architecture doc
+describes what runs.
+
 ## The honest framing
 
 After 2b, nothing structural remains — the machine is complete and every later item is
