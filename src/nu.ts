@@ -26,6 +26,7 @@ import type {
 } from "./types.ts";
 import type { DocEntry } from "./store/docs.ts";
 import { newId } from "./store/id.ts";
+import { sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
 import { DEFAULT_RETRY_DELAYS_MS } from "./config.ts";
 import { render, SILENCE } from "./render.ts";
@@ -36,8 +37,7 @@ export type { ModelTransport };
 
 export interface TurnConfig {
   agentId: AgentId;
-  sessionId: SessionId;
-  mind: string; // the session's conversation — `mind@<agent>`, where the principal steers (§4)
+  sessionId: SessionId; // the pair IS the anchor: the session's conversation derives from it (§4)
   model: string;
   maxTokens: number;
   effort?: Effort;
@@ -82,14 +82,14 @@ export async function nu(
   const session: Session = {
     id: config.sessionId,
     agentId: config.agentId,
-    conversation: config.mind,
+    conversation: sessionAddress(config.agentId, config.sessionId),
   };
   // one session, one place: thinking, calls and the closing message all land in the
   // conversation the session speaks in (§4) — the internal ones are simply not delivered.
   const here = {
     service: "local" as const,
     connection_address: "agent",
-    conversation: { address: config.mind },
+    conversation: { address: session.conversation },
   };
   const ts = () => new Date().toISOString();
   const errorEvent = (error: string): Draft<Event> => ({

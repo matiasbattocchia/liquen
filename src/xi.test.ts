@@ -246,7 +246,6 @@ Deno.test("decide: another session's unresolved uses are not ours", () => {
 const CONFIG: AgentConfig = {
   agentId: "a1",
   sessionId: "s1",
-  mind: MIND,
   model: "m",
   maxTokens: 1024,
 };

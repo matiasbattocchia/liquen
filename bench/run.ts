@@ -18,8 +18,8 @@ import type { Log } from "../src/store/log.ts";
 import { newId } from "../src/store/id.ts";
 
 const MODEL = "claude-sonnet-5";
-const MIND = "mind:alter";
-const SESSION = { id: "alter", agentId: "alter", conversation: MIND };
+const MIND = "mind@alter";
+const SESSION = { id: "mind", agentId: "alter", conversation: MIND };
 
 interface Ctx {
   dir: string;
@@ -271,7 +271,6 @@ async function runTask(task: Task): Promise<{ note: string | null; ms: number; s
   const config: AgentConfig = {
     agentId: SESSION.agentId,
     sessionId: SESSION.id,
-    mind: MIND,
     model: MODEL,
     maxTokens: 16_000,
     gate,

@@ -772,7 +772,7 @@ export async function xi(
   const session: Session = {
     id: config.sessionId,
     agentId: config.agentId,
-    conversation: config.mind,
+    conversation: sessionAddress(config.agentId, config.sessionId),
   };
   // policy is a TABLE (§9), compiled from two halves: the remembered rows (standing
   // verdicts — the principal's rulings outrank the base) over the configured base. No
@@ -840,7 +840,8 @@ async function think(
   config: AgentConfig,
   ports: XiPorts,
 ): Promise<Draft<Event>[]> {
-  const docs = await ports.docs.list({ agent: config.agentId, conversation: config.mind });
+  const home = sessionAddress(config.agentId, config.sessionId); // where this turn speaks (§4)
+  const docs = await ports.docs.list({ agent: config.agentId, conversation: home });
   // the anchor (§5): the volatile environment, plus what is still in the air. A pending gate
   // is STATE, not history — the transcript already closed those calls with
   // `pending_approval`, so the only place they belong is the block that is rewritten every
@@ -865,7 +866,7 @@ async function think(
       loadMedia: loadMediaBlock,
       // the checkpoint instruction is a DOC (§5/§8) — editable like any instruction
       compactPrompt: () =>
-        ports.docs.read({ agent: config.agentId, conversation: config.mind }, {
+        ports.docs.read({ agent: config.agentId, conversation: home }, {
           scope: "system",
           kind: "instruction",
           name: "instructions/compaction",
@@ -938,7 +939,7 @@ async function act(
   const here = {
     service: "local" as const,
     connection_address: "agent",
-    conversation: { address: config.mind },
+    conversation: { address: session.conversation },
   };
   const ts = () => new Date().toISOString();
 
@@ -1194,7 +1195,7 @@ function selfSend(
   if (typeof to !== "string" || to === "") return undefined;
   const me = ports.log.agents().find((a) => a.agentId === config.agentId);
   const mine = new Set(
-    [config.agentId, config.mind, me?.email, me?.phone]
+    [config.agentId, sessionAddress(config.agentId, config.sessionId), me?.email, me?.phone]
       .filter((x): x is string => typeof x === "string" && x !== ""),
   );
   const alias = ports.log.aliases().some((r) =>
@@ -1305,7 +1306,7 @@ async function execute(
       fireAt,
       ...(cron !== undefined ? { cron } : {}),
       note,
-      conversation: config.mind,
+      conversation: sessionAddress(self.id, self.session_id),
       refId: use.id,
     });
     return { armed: shortId(armed.id), fires: hhmm(fireAt, config.timezone), at: fireAt };

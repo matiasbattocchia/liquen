@@ -1462,7 +1462,7 @@ agent's working directory; (B) `mu repl` outside an org scaffolds one, harness f
 stage. Neither is built, and A's open question is whose cwd wins when several attachments
 sit in different folders.
 
-### Many sessions per agent (2026-09-01) — step 1 landed, 2–6 open
+### Many sessions per agent (2026-09-01) — steps 1–2 landed, 3–6 open
 
 DESIGN §7 deferred subagents and settled for `session_id ≈ agent id`. This is the design
 that lifts it: an agent runs MANY sessions, each its own window, lock, compaction and
@@ -1546,8 +1546,11 @@ addresses, and every authorship comparison to the `(agent_id, session_id)` pair
 timers pair-keying (`timers`/`disarm` take agent + session) came forward from step 4
 because bare names collide the moment they land. `src/session.ts` is the vocabulary:
 `MIND`, `sessionAddress`, `parseSession`, `dmAddress` — one name grammar, checked at the
-one door every construction passes through. Still open: (2) `config.mind` stops being a
-per-agent constant, xi and nu anchor to the turn's session; (3) memberships on (agent,
+one door every construction passes through. (2) **landed** — `TurnConfig` lost `mind`:
+xi and nu derive the turn's conversation from the pair (`sessionAddress(agentId,
+sessionId)`), and main derives the registry's `mind` column and the seed membership the
+same way — the pair is the anchor, the address only its spelling. Still open: (3)
+memberships on (agent,
 session) + the routing function both visibility and waking consult; (4) the per-session
 lock, window, compaction — the point of the whole thing; (5) the seam: `session` on the
 door's `message`/`tail`, on `{status}`, `--session` on both clients; (6) render's

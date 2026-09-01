@@ -8,8 +8,7 @@ import type { Event, MessageEvent, ThinkingEvent, ToolUseEvent } from "./types.t
 
 const CONFIG: TurnConfig = {
   agentId: "a1",
-  sessionId: "s1",
-  mind: "mind@a1",
+  sessionId: "mind",
   model: "claude-x",
   maxTokens: 1024,
   retryDelaysMs: [0, 0],
@@ -32,7 +31,7 @@ Deno.test("nu stamps emissions: one session, one place — all of them carry the
   const [th, msg, use] = out as [ThinkingEvent, MessageEvent, ToolUseEvent];
   assertEquals(th.type, "thinking");
   assertEquals(th.envelope.conversation.address, "mind@a1");
-  assertEquals(th.agent, { id: "a1", session_id: "s1" });
+  assertEquals(th.agent, { id: "a1", session_id: "mind" });
   assertEquals(msg.envelope.conversation.address, "mind@a1");
   assertEquals(msg.payload?.turn_id, th.payload.turn_id); // one turn_id per step
   assertEquals(use.payload.turn_id, th.payload.turn_id);

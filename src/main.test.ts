@@ -18,8 +18,7 @@ type Principal = AgentConfig & Policy;
 
 const agent = (n: string, over: Partial<Principal> = {}): Principal => ({
   agentId: `a${n}`,
-  sessionId: `s${n}`,
-  mind: `mind@a${n}`,
+  sessionId: "mind",
   model: "claude-x",
   maxTokens: 1024,
   gate: () => "allow",
@@ -68,10 +67,10 @@ Deno.test("a live message flows tail → fan-out → xi → reply; stop is clean
   try {
     await main.log.publish(principalMsg("mind@a1", "hola"));
     await waitFor(async () =>
-      (await main.log.read({ types: ["message"] })).some((e) => e.agent?.session_id === "s1")
+      (await main.log.read({ types: ["message"] })).some((e) => e.agent?.id === "a1")
     );
     const [r] = (await main.log.read({ types: ["message"] }))
-      .filter((e) => e.agent?.session_id === "s1");
+      .filter((e) => e.agent?.id === "a1");
     assertEquals(r.envelope.conversation.address, "mind@a1");
     assertEquals(calls(), 1);
   } finally {
@@ -112,7 +111,7 @@ Deno.test("boot poke: work already in the log is answered at start", async () =>
   const main = await start({ dir, debounceMs: 0, principals: [agent("1")] }, { transport });
   try {
     await waitFor(async () =>
-      (await main.log.read({ types: ["message"] })).some((e) => e.agent?.session_id === "s1")
+      (await main.log.read({ types: ["message"] })).some((e) => e.agent?.id === "a1")
     );
   } finally {
     await main.stop();
@@ -191,10 +190,10 @@ Deno.test("every model call is metered: spend lands in the usage table, per agen
   try {
     await main.log.publish(principalMsg("mind@a1", "hola"));
     await waitFor(async () =>
-      (await main.log.read({ types: ["message"] })).some((e) => e.agent?.session_id === "s1")
+      (await main.log.read({ types: ["message"] })).some((e) => e.agent?.id === "a1")
     );
     const said = (await main.log.read({ types: ["message"] }))
-      .find((e) => e.agent?.session_id === "s1");
+      .find((e) => e.agent?.id === "a1");
     turn = said?.payload?.turn_id as string;
   } finally {
     await main.stop();
@@ -419,14 +418,14 @@ Deno.test("policy partitions the fan-out: each agent's subscription delivers onl
   try {
     await main.log.publish(principalMsg("mind@a1", "hola a1"));
     await waitFor(async () =>
-      (await main.log.read({ types: ["message"] })).some((e) => e.agent?.session_id === "s1")
+      (await main.log.read({ types: ["message"] })).some((e) => e.agent?.id === "a1")
     );
     await new Promise((r) => setTimeout(r, 300)); // let any spurious a2 turn surface
     assertEquals(calls(), 1); // a2's tail never even delivered — a1's mind isn't in its view
     const agentMsgs = (await main.log.read({ types: ["message"] }))
       .filter((e) => e.agent !== undefined);
     assertEquals(agentMsgs.length, 1);
-    assert(agentMsgs[0].agent?.session_id === "s1");
+    assert(agentMsgs[0].agent?.id === "a1");
     assertEquals(agentMsgs[0].envelope.conversation.address, "mind@a1");
   } finally {
     await main.stop();
@@ -438,7 +437,7 @@ Deno.test("the mirror is main's own subscription: an alias inbound reaches the m
   const dir = await Deno.makeTempDir();
   const { transport } = scripted([reply("dale")]);
   // the mirror copies into the MIND session's room — the pair names it (§4)
-  const ana = agent("1", { agentId: "ana", sessionId: "mind", mind: "mind@ana" });
+  const ana = agent("1", { agentId: "ana", sessionId: "mind" });
   const main = await start({
     dir,
     debounceMs: 0,

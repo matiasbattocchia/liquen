@@ -169,7 +169,7 @@ export async function start(
   // scans the declared handles (email/phone → principal)
   log.syncAgents(principals.map((p) => ({
     agentId: p.agentId,
-    mind: p.mind,
+    mind: sessionAddress(p.agentId, MIND),
     provider: p.provider,
     model: p.model,
     effort: p.effort,
@@ -179,7 +179,12 @@ export async function start(
   // the mind is a ONE-MEMBER conversation (§6): seeding it as membership is what makes
   // "own mind readable, others' invisible" plain branch-3 policy, no special case
   log.upsertMemberships(principals.map((p) => (
-    { service: "local", connection: "agent", conversation: p.mind, agentId: p.agentId }
+    {
+      service: "local",
+      connection: "agent",
+      conversation: sessionAddress(p.agentId, MIND),
+      agentId: p.agentId,
+    }
   )));
   if (config.connections) log.upsertConnections(config.connections);
   for (const agent of principals) await seedDocs(dir, agent.agentId);
@@ -443,7 +448,6 @@ async function compileRoster(
     found.push({
       agentId: name,
       sessionId: MIND,
-      mind: sessionAddress(name, MIND),
       model: cfg.model ?? defaults.model ?? org.model,
       effort: cfg.effort ?? defaults.effort ?? org.effort ?? undefined,
       maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.maxTokens,

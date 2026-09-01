@@ -50,7 +50,6 @@ async function act(dir: string, log: Log) {
   const config: AgentConfig = {
     agentId: "ana",
     sessionId: "mind",
-    mind: "mind@ana",
     model: "claude-test",
     maxTokens: 1000,
     gate: () => "allow", // the clinic's standing rule, compiled (§9)
