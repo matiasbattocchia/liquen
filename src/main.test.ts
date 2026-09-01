@@ -328,8 +328,8 @@ Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls
       (await main.log.read({ conversation: "dm:mind@ana:mind@bo" })).length > 0
     );
     // the executor canonicalized the name and enrolled the pair — visibility is membership
-    assert(main.log.isMember("local", "agent", "dm:mind@ana:mind@bo", "ana"));
-    assert(main.log.isMember("local", "agent", "dm:mind@ana:mind@bo", "bo"));
+    assert(main.log.isMember("local", "agent", "dm:mind@ana:mind@bo", "ana", "mind"));
+    assert(main.log.isMember("local", "agent", "dm:mind@ana:mind@bo", "bo", "mind"));
     const [dm] = await main.log.read({ conversation: "dm:mind@ana:mind@bo" });
     assertEquals(dm.agent, { id: "ana", session_id: "mind" });
   } finally {

@@ -16,7 +16,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { isExternal, pathOf } from "./store/media.ts"; // pure uri helpers — no I/O
-import { MIND } from "./session.ts";
+import { routedSession } from "./session.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
   AlarmEvent,
@@ -1100,11 +1100,12 @@ export function ownVoice(e: Event, session: SessionRef): boolean {
 
 /** OUR COMPLEX authored it — either half. The identity is the PAIR (§4): bare session
  *  names collide across agents, so `agent.id` must match too. A stamped row names its
- *  session; an unstamped one (the classifier's echo stamp carries none) is the MIND's —
- *  the session world traffic routes to. */
+ *  session; an unstamped one (the classifier's echo stamp carries none) is a wire row,
+ *  and it reads as the session its connection ROUTES to — the same single decision
+ *  policy and enrollment consult. */
 export function ownComplex(e: Event, session: SessionRef): boolean {
   return e.agent !== undefined && e.agent.id === session.agentId &&
-    (e.agent.session_id ?? MIND) === session.id;
+    (e.agent.session_id ?? routedSession(e.envelope)) === session.id;
 }
 
 function isSelf(e: Event, session: SessionRef): boolean {

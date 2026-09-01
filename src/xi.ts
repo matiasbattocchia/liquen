@@ -1371,9 +1371,23 @@ async function execute(
     const peer = ports.log.agents().find((a) => a.agentId === to);
     if (peer && peer.agentId !== self.id) {
       to = peerDm(self, peer.agentId);
-      ports.log.upsertMemberships([self.id, peer.agentId].map((agentId) => (
-        { service: "local", connection: "agent", conversation: to, agentId }
-      )));
+      // both ends enrolled as the SESSIONS they are (§4): the sender's own, the peer's mind
+      ports.log.upsertMemberships([
+        {
+          service: "local",
+          connection: "agent",
+          conversation: to,
+          agentId: self.id,
+          sessionId: self.session_id,
+        },
+        {
+          service: "local",
+          connection: "agent",
+          conversation: to,
+          agentId: peer.agentId,
+          sessionId: MIND,
+        },
+      ]);
     }
     // The tool gave us an address; the envelope is ours to write (§2). The conversation's
     // events ARE its record: complete service · connection · kind from the latest visible

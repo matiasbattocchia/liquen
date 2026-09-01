@@ -184,6 +184,7 @@ export async function start(
       connection: "agent",
       conversation: sessionAddress(p.agentId, MIND),
       agentId: p.agentId,
+      sessionId: MIND,
     }
   )));
   if (config.connections) log.upsertConnections(config.connections);
@@ -224,7 +225,9 @@ export async function start(
     // the agent's VIEW of the log (§6): reads, writes, and the tail below all go through it.
     // Folder-declared agents get the connections-map policy (live read-through lookups);
     // explicit principals stay allow-all unless they carry their own (tests).
-    const policy = derived ? policyFor(agent.agentId, log) : { readable, writable };
+    const policy = derived
+      ? policyFor({ agentId: agent.agentId, id: agent.sessionId }, log)
+      : { readable, writable };
     const slog = scoped(log, policy);
     return {
       config: { ...agent, lockTtlMs: agent.lockTtlMs ?? config.lockTtlMs },

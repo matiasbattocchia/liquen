@@ -52,3 +52,15 @@ export function parseSession(
 export function dmAddress(a: string, b: string): string {
   return `dm:${[a, b].sort().join(":")}`;
 }
+
+/** Which of an agent's sessions a connection's traffic belongs to (§4): whose window may
+ *  see those rows, whose xi wakes for them, which session a wire-filled membership
+ *  enrolls, and whose complex an unstamped echo row reads as. ONE decision, consulted
+ *  everywhere it matters — connections and credentials stay agent-owned, and this is the
+ *  only place that says what that means session-wise. Today every connection routes to
+ *  the mind. */
+export function routedSession(
+  _envelope: { service: string; connection_address: string },
+): SessionId {
+  return MIND;
+}

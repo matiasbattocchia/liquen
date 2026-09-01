@@ -17,9 +17,11 @@
  *
  * A *membership* row is open-bsp's `conversations_agents`, address-keyed (mu has no
  * conversations entity table): `(service, connection_address, conversation_address,
- * agent_id)` — the membership branch of visibility (channel/DM membership), and the
- * local team-chat substrate (a mind is just a one-member conversation; a DM is a
- * two-member one). A membership is a LIFETIME: a live row grants the conversation
+ * agent_id, session_id)` — the MEMBER is a session, the (agent, session) pair (§4) —
+ * the membership branch of visibility (channel/DM membership), and the local team-chat
+ * substrate (a session's own room is a one-member conversation; a DM is a two-member
+ * one). A row that names no session enrolls the ROUTED one (`routedSession`) — the wire
+ * writers never decide which session a conversation belongs to. A membership is a LIFETIME: a live row grants the conversation
  * whole; a channel LEAVE stamps `deleted_at`, and the stamped row keeps granting
  * events up to the stamp — the agent keeps what it has seen, never what came after.
  * A rejoin revives the row: the conversation whole again (join-shows-history, Slack's
@@ -34,6 +36,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { routedSession } from "../session.ts";
 
 export interface ConnectionRow {
   service: string;
@@ -48,6 +51,10 @@ export interface MembershipRow {
   connection: string; // the connection address the conversation anchors to
   conversation: string;
   agentId: string;
+  /** Whose enrollment it is: the (agent, session) pair is the member (§4). Absent — the
+   *  wire writers never name one — the store enrolls the ROUTED session, the one this
+   *  connection's traffic belongs to (`routedSession`). */
+  sessionId?: string;
 }
 
 /** A mind-alias binding (§4): an OWNED connection's principal-identified conversation
@@ -109,6 +116,7 @@ export interface Connections {
     connection: string,
     conversation: string,
     agentId: string,
+    sessionId: string,
     ts?: string,
   ): boolean;
 }
@@ -129,9 +137,10 @@ CREATE TABLE IF NOT EXISTS memberships (
   connection_address   TEXT NOT NULL,
   conversation_address TEXT NOT NULL,
   agent_id             TEXT NOT NULL,
+  session_id           TEXT NOT NULL,
   created_at           TEXT NOT NULL,
   deleted_at           TEXT,
-  PRIMARY KEY (service, connection_address, conversation_address, agent_id)
+  PRIMARY KEY (service, connection_address, conversation_address, agent_id, session_id)
 );`;
 
 /** Bind the connections capability to an open DB (composed by openLog, like the registry). */
@@ -166,21 +175,25 @@ export function createConnections(db: DatabaseSync): Connections {
        AND (json_extract(extra, '$.self_conversation') IS NOT NULL OR service = 'whatsapp')`,
   );
   const putM = db.prepare(
-    `INSERT INTO memberships (service, connection_address, conversation_address, agent_id, created_at)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(service, connection_address, conversation_address, agent_id)
+    `INSERT INTO memberships
+       (service, connection_address, conversation_address, agent_id, session_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(service, connection_address, conversation_address, agent_id, session_id)
      DO UPDATE SET deleted_at = NULL`,
   );
   const getM = db.prepare(
     `SELECT 1 AS x FROM memberships
      WHERE service = ? AND connection_address = ? AND conversation_address = ? AND agent_id = ?
-       AND (deleted_at IS NULL OR ? <= deleted_at)`,
+       AND session_id = ? AND (deleted_at IS NULL OR ? <= deleted_at)`,
   );
   const delM = db.prepare(
     `UPDATE memberships SET deleted_at = ?
      WHERE service = ? AND connection_address = ? AND conversation_address = ? AND agent_id = ?
-       AND deleted_at IS NULL`,
+       AND session_id = ? AND deleted_at IS NULL`,
   );
+  // a row that names no session enrolls the ROUTED one — the wire writers never decide
+  const sessionOf = (r: MembershipRow) =>
+    r.sessionId ?? routedSession({ service: r.service, connection_address: r.connection });
 
   return {
     upsertConnections(rows: ConnectionRow[]): void {
@@ -240,12 +253,16 @@ export function createConnections(db: DatabaseSync): Connections {
 
     upsertMemberships(rows: MembershipRow[]): void {
       const now = new Date().toISOString();
-      for (const r of rows) putM.run(r.service, r.connection, r.conversation, r.agentId, now);
+      for (const r of rows) {
+        putM.run(r.service, r.connection, r.conversation, r.agentId, sessionOf(r), now);
+      }
     },
 
     deleteMemberships(rows: MembershipRow[]): void {
       const now = new Date().toISOString();
-      for (const r of rows) delM.run(now, r.service, r.connection, r.conversation, r.agentId);
+      for (const r of rows) {
+        delM.run(now, r.service, r.connection, r.conversation, r.agentId, sessionOf(r));
+      }
     },
 
     isMember(
@@ -253,9 +270,11 @@ export function createConnections(db: DatabaseSync): Connections {
       connection: string,
       conversation: string,
       agentId: string,
+      sessionId: string,
       ts?: string,
     ): boolean {
-      return getM.get(service, connection, conversation, agentId, ts ?? null) !== undefined;
+      return getM.get(service, connection, conversation, agentId, sessionId, ts ?? null) !==
+        undefined;
     },
   };
 }

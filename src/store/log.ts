@@ -508,6 +508,7 @@ function migrate(db: DatabaseSync) {
   if (v < 2) migrateV2(db);
   if (v < 3) migrateV3(db);
   if (v < 4) migrateV4(db);
+  if (v < 5) migrateV5(db);
 }
 
 function migrateV1(db: DatabaseSync) {
@@ -651,6 +652,46 @@ function migrateV3(db: DatabaseSync) {
     db.exec("ALTER TABLE usage ADD COLUMN turn_id TEXT");
   }
   db.exec("PRAGMA user_version = 3");
+}
+
+/** v5 — memberships enroll the (agent, session) PAIR (§4): the member is a session, so
+ *  `session_id` joins the primary key. Pre-v5 rows enrolled agents with one session each
+ *  — the mind — so `mind` is the honest backfill. SQLite cannot extend a primary key in
+ *  place; the table is rebuilt. */
+function migrateV5(db: DatabaseSync) {
+  const cols = (db.prepare("SELECT name FROM pragma_table_info('memberships')").all() as {
+    name: string;
+  }[]).map((c) => c.name);
+  if (!cols.includes("session_id")) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec(
+        `ALTER TABLE memberships RENAME TO memberships_old;
+         CREATE TABLE memberships (
+           service              TEXT NOT NULL,
+           connection_address   TEXT NOT NULL,
+           conversation_address TEXT NOT NULL,
+           agent_id             TEXT NOT NULL,
+           session_id           TEXT NOT NULL,
+           created_at           TEXT NOT NULL,
+           deleted_at           TEXT,
+           PRIMARY KEY (service, connection_address, conversation_address, agent_id, session_id)
+         );
+         INSERT INTO memberships
+           SELECT service, connection_address, conversation_address, agent_id, 'mind',
+                  created_at, deleted_at
+           FROM memberships_old;
+         DROP TABLE memberships_old;`,
+      );
+      db.exec("PRAGMA user_version = 5");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  } else {
+    db.exec("PRAGMA user_version = 5");
+  }
 }
 
 /** v4 — the vocabulary settles on SESSIONS (§4): an agent's row names its mind session

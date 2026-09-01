@@ -21,8 +21,9 @@
  * the place policy will stand.
  */
 
-import type { Draft, Envelope, Event } from "./types.ts";
+import type { Draft, Envelope, Event, SessionRef } from "./types.ts";
 import type { Appender, Filter, Log } from "./store/log.ts";
+import { routedSession } from "./session.ts";
 import { aliasOf, type Connections } from "./store/connections.ts";
 
 export interface Policy {
@@ -34,14 +35,16 @@ export interface Policy {
 }
 
 /**
- * Derive an agent's Policy from the connections map (§6) — THE three-branch visibility
+ * Derive a session's Policy from the connections map (§6) — THE three-branch visibility
  * predicate, shared by readable and writable:
  *
- *   member(service, connection, conversation, agent, ts)  -- branch 3: membership (Slack
- *                                                             channel/DM · local team chat ·
- *                                                             the mind: a 1-member conv)
- *   ∨ connection is ownerless AND org-credentialed        -- branch 1: the org's, shared
- *   ∨ connection.owner resolves to me                     -- branch 2: owned ⇒ private
+ *   member(service, connection, conversation, agent, session, ts)  -- branch 3: membership
+ *                                                             (Slack channel/DM · local
+ *                                                             team chat · an own room:
+ *                                                             a 1-member conv)
+ *   ∨ routed here AND connection is ownerless AND org-credentialed -- branch 1: the org's
+ *   ∨ routed here AND connection.owner resolves to me              -- branch 2: owned ⇒
+ *                                                                     private
  *
  * OWNERSHIP IS THE PRIVACY SWITCH (§4): a row with `agent_id` is that agent's private
  * account view. An ownerless row is the org's ONLY when the org actually holds its
@@ -62,19 +65,29 @@ export interface Policy {
  * this resolver changes — the predicate's shape doesn't (§4).
  */
 export function policyFor(
-  agentId: string,
+  session: SessionRef,
   map: Pick<Connections, "connection" | "isMember" | "aliases">,
 ): Policy {
+  const { agentId, id: sessionId } = session;
   const visible = (e: { ts?: string; envelope: Envelope }): boolean => {
     const { service, connection_address: connection, conversation } = e.envelope;
     // the mind-alias (§4): an agent's own alias conversation is INVISIBLE to it — the
     // mirror's mind copies are its face in the window, and hiding the wire conversation
     // is what keeps the surface out of the world render and out of `send`'s reach (the
-    // principal is never a send target). One predicate, reads and writes alike.
+    // principal is never a send target). One predicate, reads and writes alike — and
+    // agent-wide: a surface is the AGENT's face, no session of it reads the wire copy.
     if (aliasOf(map.aliases(), service, connection, conversation.address)?.agentId === agentId) {
       return false;
     }
-    if (map.isMember(service, connection, conversation.address, agentId, e.ts)) return true;
+    // branch 3: the member is the (agent, session) PAIR (§4) — a session reads and
+    // writes where it is enrolled, and a sibling's room is simply not its
+    if (map.isMember(service, connection, conversation.address, agentId, sessionId, e.ts)) {
+      return true;
+    }
+    // branches 1–2 are CONNECTION grants, and a connection's traffic belongs to ONE of
+    // the agent's sessions — the routed one (§4). Ownership stays the agent's; which
+    // session it opens is the routing function's single say.
+    if (sessionId !== routedSession(e.envelope)) return false;
     const conn = map.connection(service, connection);
     if (conn === null) return false;
     return conn.agentId === agentId ||

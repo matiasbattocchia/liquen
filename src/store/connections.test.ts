@@ -12,7 +12,7 @@ Deno.test("memberships: a lifetime — leave keeps seen history, refuses the fut
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   const row = { service: "slack", connection: "T1", conversation: "slack:T1:C1", agentId: "ana" };
-  const member = (ts?: string) => log.isMember("slack", "T1", "slack:T1:C1", "ana", ts);
+  const member = (ts?: string) => log.isMember("slack", "T1", "slack:T1:C1", "ana", "mind", ts);
   try {
     assertEquals(member(), false);
     log.upsertMemberships([row, row]); // re-enroll: no duplicate, no error

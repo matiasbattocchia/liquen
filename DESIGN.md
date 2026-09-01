@@ -1364,17 +1364,20 @@ Returns **raw events, type-filtered** (messages; never tool/permission noise).
   longer result), a **write refuses** (irreversible, so the model re-reads). A name nobody
   wears is an error, never an empty result — "I don't know who that is" and "they never
   said that" are different answers.
-- **The connections map v0** (landed 2026-08-05): `policyFor(agent, map)` derives the
-  §6 Policy from the two tables — THE three-branch predicate, one boolean for readable
-  and writable alike:
-  `member(service, connection, conversation, agent, ts)` (branch 3: Slack channel/DM ·
-  local team chat · **the mind is a one-member conversation** — its privacy is plain
-  membership, no special case; the registry seeds `(local, agent, mind@<name>, <name>)`;
-  the event's `ts` rides in so a LEFT membership keeps granting what the agent has
-  seen, §4)
-  ∨ connection ownerless AND org-credentialed (branch 1: the org's — the bot/org
-  account IS the shared inbox) ∨ `connection.agent_id → agent` (branch 2: owned ⇒
-  private) — all under one guard: an agent's own **mind-alias conversation is invisible
+- **The connections map** (landed 2026-08-05; sessions 2026-09-01): `policyFor(session,
+  map)` derives the §6 Policy from the two tables — THE three-branch predicate, one
+  boolean for readable and writable alike. The MEMBER is the (agent, session) pair:
+  `member(service, connection, conversation, agent, session, ts)` (branch 3: Slack
+  channel/DM · local team chat · **a session's own room is a one-member conversation** —
+  its privacy is plain membership, no special case; the registry seeds
+  `(local, agent, mind@<name>, <name>, mind)`; the event's `ts` rides in so a LEFT
+  membership keeps granting what the agent has seen, §4). Branches 1–2 are CONNECTION
+  grants, and a connection's traffic belongs to ONE of the agent's sessions — the ROUTED
+  one (`routedSession`, today: the mind; the same single decision defaults a wire-filled
+  membership's session and reads an unstamped echo row's authorship):
+  ∨ routed here AND connection ownerless AND org-credentialed (branch 1: the org's — the
+  bot/org account IS the shared inbox) ∨ routed here AND `connection.agent_id → agent`
+  (branch 2: owned ⇒ private) — all under one guard: an agent's own **mind-alias conversation is invisible
   to it** (§4 self-talk: the mirror's copies are its face in the window; the same
   predicate on the write side is what keeps the principal out of `send`'s reach).
   **Ownership is the privacy switch**; an ownerless row WITHOUT an org

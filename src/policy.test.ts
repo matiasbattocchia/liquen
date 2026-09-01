@@ -122,8 +122,8 @@ Deno.test("policyFor: three branches — membership · shared (ownerless) · own
       { service: "email", address: "ana@org", agentId: "ana" }, // owned ⇒ private
       { service: "slack", address: "T9" }, // a registration STUB: gate admission only
     ]);
-    const ana = policyFor("ana", log);
-    const bo = policyFor("bo", log);
+    const ana = policyFor({ agentId: "ana", id: "mind" }, log);
+    const bo = policyFor({ agentId: "bo", id: "mind" }, log);
 
     // branch 3: the mind is a one-member conversation — private by membership, no special case
     assert(ana.readable!(at("local", "agent", "mind@ana")));
@@ -152,12 +152,14 @@ Deno.test("policyFor: three branches — membership · shared (ownerless) · own
 Deno.test("policyFor: soft-delete never touches visibility — revocation closes the gate only", async () => {
   await withLog((log) => {
     log.upsertConnections([{ service: "email", address: "ana@org", agentId: "ana" }]);
-    const ana = policyFor("ana", log);
+    const ana = policyFor({ agentId: "ana", id: "mind" }, log);
     assert(ana.readable!(at("email", "ana@org", "thread-7")));
     log.deleteConnections([{ service: "email", address: "ana@org" }]);
     // the history the grant ingested stays in ana's view — a running session is unaffected
     assert(ana.readable!(at("email", "ana@org", "thread-7")));
-    assert(!policyFor("bo", log).readable!(at("email", "ana@org", "thread-7"))); // still private
+    assert(
+      !policyFor({ agentId: "bo", id: "mind" }, log).readable!(at("email", "ana@org", "thread-7")),
+    ); // still private
   });
 });
 
@@ -165,7 +167,7 @@ Deno.test("policyFor: a membership is a lifetime — a leave keeps what the agen
   await withLog((log) => {
     const row = { service: "slack", connection: "T1", conversation: "C1", agentId: "ana" };
     log.upsertMemberships([row]);
-    const ana = policyFor("ana", log);
+    const ana = policyFor({ agentId: "ana", id: "mind" }, log);
     assert(ana.readable!(at("slack", "T1", "C1", "2026-08-11T10:00:00Z")));
 
     log.deleteMemberships([row]);
@@ -181,7 +183,7 @@ Deno.test("policyFor: a membership is a lifetime — a leave keeps what the agen
 
 Deno.test("policyFor is LIVE: a mid-run bind is visible to the same closure (no restart)", async () => {
   await withLog((log) => {
-    const bo = policyFor("bo", log); // built BEFORE the connection exists
+    const bo = policyFor({ agentId: "bo", id: "mind" }, log); // built BEFORE the connection exists
     assert(!bo.readable!(at("whatsapp", "+549", "wa:c")));
     log.upsertConnections([
       { service: "whatsapp", address: "+549", credentialKey: "whatsapp:+549:org" },
@@ -191,13 +193,101 @@ Deno.test("policyFor is LIVE: a mid-run bind is visible to the same closure (no 
   });
 });
 
+Deno.test("policyFor: the member is the (agent, session) pair — a sibling's room is not yours (§4)", async () => {
+  await withLog((log) => {
+    log.upsertMemberships([
+      {
+        service: "local",
+        connection: "agent",
+        conversation: "mind@ana",
+        agentId: "ana",
+        sessionId: "mind",
+      },
+      {
+        service: "local",
+        connection: "agent",
+        conversation: "build@ana",
+        agentId: "ana",
+        sessionId: "build",
+      },
+    ]);
+    const mind = policyFor({ agentId: "ana", id: "mind" }, log);
+    const build = policyFor({ agentId: "ana", id: "build" }, log);
+
+    // each session reads and writes where it is enrolled — enrollment IS the enforcement
+    assert(mind.readable!(at("local", "agent", "mind@ana")));
+    assert(build.readable!(at("local", "agent", "build@ana")));
+    assert(!mind.readable!(at("local", "agent", "build@ana")));
+    assert(!build.readable!(at("local", "agent", "mind@ana")));
+    assert(!build.writable!(at("local", "agent", "mind@ana") as Draft));
+    // …and a DM room both are in is how they reach each other, like two agents
+    log.upsertMemberships([
+      {
+        service: "local",
+        connection: "agent",
+        conversation: "dm:build@ana:mind@ana",
+        agentId: "ana",
+        sessionId: "mind",
+      },
+      {
+        service: "local",
+        connection: "agent",
+        conversation: "dm:build@ana:mind@ana",
+        agentId: "ana",
+        sessionId: "build",
+      },
+    ]);
+    assert(mind.readable!(at("local", "agent", "dm:build@ana:mind@ana")));
+    assert(build.readable!(at("local", "agent", "dm:build@ana:mind@ana")));
+  });
+});
+
+Deno.test("policyFor: a connection grant opens the ROUTED session only — today the mind (§4)", async () => {
+  await withLog((log) => {
+    log.upsertConnections([
+      { service: "whatsapp", address: "+549", credentialKey: "whatsapp:+549:org" }, // the org's
+      { service: "email", address: "ana@org", agentId: "ana" }, // ana's own
+    ]);
+    const mind = policyFor({ agentId: "ana", id: "mind" }, log);
+    const build = policyFor({ agentId: "ana", id: "build" }, log);
+
+    // ownership stays the AGENT's; which session it opens is the routing function's say
+    assert(mind.readable!(at("whatsapp", "+549", "wa:cust1")));
+    assert(!build.readable!(at("whatsapp", "+549", "wa:cust1")));
+    assert(mind.readable!(at("email", "ana@org", "thread-7")));
+    assert(!build.readable!(at("email", "ana@org", "thread-7")));
+    // an explicit enrollment still reaches a named session — routing is the default, not a wall
+    log.upsertMemberships([
+      {
+        service: "email",
+        connection: "ana@org",
+        conversation: "thread-7",
+        agentId: "ana",
+        sessionId: "build",
+      },
+    ]);
+    assert(build.readable!(at("email", "ana@org", "thread-7")));
+  });
+});
+
+Deno.test("memberships: a wire-filled row (no session named) enrolls the routed session (§4)", async () => {
+  await withLog((log) => {
+    // the Slack membership mirror writes what the wire says — agent and room, no session
+    log.upsertMemberships([
+      { service: "slack", connection: "T1", conversation: "C1", agentId: "ana" },
+    ]);
+    assert(log.isMember("slack", "T1", "C1", "ana", "mind"));
+    assert(!log.isMember("slack", "T1", "C1", "ana", "build"));
+  });
+});
+
 Deno.test("policyFor: the mind-alias conversation is invisible to its own agent (§4)", async () => {
   await withLog((log) => {
     log.upsertConnections([
       { service: "slack", address: "T1" }, // the workspace anchor inbound events carry
       { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
     ]);
-    const ana = policyFor("ana", log);
+    const ana = policyFor({ agentId: "ana", id: "mind" }, log);
 
     // the self-DM is the mind's surface, not a world conversation: the mirror's copies are
     // ana's view of it — the wire events (anchored to the workspace OR the grant) are not,
