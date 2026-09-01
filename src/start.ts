@@ -100,8 +100,10 @@ if (import.meta.main) {
       const wait = backoffMs(failures);
       stamp(
         "mu",
-        `${name} exited (code ${status.code}) after ${Math.round(uptime / 1000)}s — ` +
-          `restarting in ${wait / 1000}s`,
+        // the signal is the whole diagnosis when a child dies quietly: a killed process
+        // reports code 0, so the code alone reads like a clean exit
+        `${name} exited (${status.signal ?? `code ${status.code}`}) after ` +
+          `${Math.round(uptime / 1000)}s — restarting in ${wait / 1000}s`,
       );
       await new Promise((r) => setTimeout(r, wait));
     }
