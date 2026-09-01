@@ -2,6 +2,9 @@
  * attach.ts — the attach client's shared half (DESIGN §2, §9): resolve which agent, find
  * its door, raise a daemon when nothing answers, and speak the wire. The REPL and the CLI
  * are surfaces over this; neither holds a log handle — the attach path is the only path.
+ *
+ * Every failure here raises: no project, no such agent, no daemon on the socket. They are
+ * errors, and an error is a throw — a surface that wants to dress one up catches it.
  */
 
 import { TextLineStream } from "@std/streams";
@@ -29,18 +32,8 @@ export interface Attached {
  *  identity map exists at all (principal name = agent name); an explicit argument talks
  *  to another agent — a session choice, so an argument, not config. */
 export async function resolveAgent(explicit?: string): Promise<Attached> {
-  // cwd is the whole of the addressing, so "which org" can fail before anything else can:
-  // a missing marker and an unparseable catalog are both a sentence to the operator, not a
-  // stack trace — this is the client's outermost edge, and there is no layer above to catch.
-  let root: string;
-  let catalog: Awaited<ReturnType<typeof readConfig>>;
-  try {
-    root = findRoot();
-    catalog = await readConfig(root);
-  } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
-    Deno.exit(1);
-  }
+  const root = findRoot();
+  const catalog = await readConfig(root);
   const username = (() => {
     try {
       return userInfo().username;
@@ -50,10 +43,9 @@ export async function resolveAgent(explicit?: string): Promise<Attached> {
   })();
   const target = explicit ?? username;
   if (!(target in catalog.agents)) {
-    console.error(
+    throw new Error(
       `no agent "${target}" in ${root}/config.jsonc — declare it: "agents": { "${target}": {} }`,
     );
-    Deno.exit(1);
   }
   const model = catalog.agents[target].model ?? catalog.org.agent.model;
   return { root, dir: `${root}/data`, target, username, model };
@@ -81,8 +73,7 @@ export async function attach(a: Attached): Promise<Deno.UnixConn> {
       return await Deno.connect({ transport: "unix", path });
     } catch {
       if (Date.now() > deadline) {
-        console.error(`no daemon answered on ${path} — run \`mu start\` to see it boot`);
-        Deno.exit(1);
+        throw new Error(`no daemon answered on ${path} — run \`mu start\` to see it boot`);
       }
       await new Promise((r) => setTimeout(r, ATTACH_RETRY_MS));
     }
