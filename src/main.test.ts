@@ -4,6 +4,7 @@
  */
 
 import { assert, assertEquals } from "@std/assert";
+import { TextLineStream } from "@std/streams";
 import { start } from "./main.ts";
 import { openLog } from "./store/log.ts";
 import type { AgentConfig } from "./xi.ts";
@@ -467,4 +468,48 @@ Deno.test("the mirror is main's own subscription: an alias inbound reaches the m
     await main.stop();
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test({
+  name: "the door discloses the turn's edges: busy at the decision, idle with the cursor",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir();
+    const { transport } = scripted([reply("hecho")]);
+    const main = await start({ dir, debounceMs: 0, principals: [agent("1")] }, { transport });
+    try {
+      const conn = await Deno.connect({ transport: "unix", path: `${dir}/agents/a1/door.sock` });
+      const statuses: { status: string; after?: string }[] = [];
+      const replies: ((r: Record<string, unknown>) => void)[] = [];
+      (async () => {
+        const lines = conn.readable
+          .pipeThrough(new TextDecoderStream())
+          .pipeThrough(new TextLineStream());
+        for await (const line of lines) {
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line) as Record<string, unknown>;
+          if (msg.event !== undefined || msg.delta !== undefined) continue;
+          else if (msg.ok !== undefined) replies.shift()?.(msg);
+          else if (msg.status !== undefined) statuses.push(msg as { status: string });
+        }
+      })().catch(() => {/* hang-up */});
+      const request = async (req: Record<string, unknown>) => {
+        const p = new Promise<Record<string, unknown>>((r) => replies.push(r));
+        await conn.write(new TextEncoder().encode(JSON.stringify(req) + "\n"));
+        return await p;
+      };
+      await request({ op: "tail" });
+      const r = await request({ op: "message", text: "hola", sender: { address: "ana" } });
+      const id = r.id as string;
+      // the ending an attach client waits for: idle whose cursor covers its own write
+      await waitFor(() => statuses.some((s) => s.status === "idle" && (s.after ?? "") >= id));
+      // …and the turn's opening edge came through first
+      assertEquals(statuses[0]?.status, "busy");
+      conn.close();
+    } finally {
+      await main.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });

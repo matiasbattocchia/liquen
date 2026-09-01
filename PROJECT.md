@@ -1391,6 +1391,50 @@ permissions at connect time is the same guarantee, one step earlier.
 holds explicit principals, supplies its own exec plane, skips the seed, wants no
 connectors, and is the one module where env still carries knobs that are not secrets.
 
+### The CLI is an attach client; the daemon discloses the turn (2026-08-31) — LANDED
+
+Task mode is gone. `src/task.ts` — the second harness: `start()` in-process, a hand-rolled
+exec plane and shims, a temp org, the stall-repoke, the `MU_MODEL`/`MU_EFFORT`/
+`MU_MAX_TOKENS`/`MU_TASK_TIMEOUT_S`/`MU_TASK_TRACE` env knobs, the compiled multi-call
+binary (`compile:task`) — is deleted, and `mu cli` (`src/cli.ts`) replaces it as a pure
+attach client: resolve the agent from the catalog like the REPL, connect (raising an
+ephemeral daemon on refusal), `tail`, publish ONE `message`, stream the transcript, exit
+when the daemon goes quiet over it. The old file's polling loop guessed at quiescence from
+outside (`age > 3s`, five repokes, a wall clock) because the harness had the verdict and
+wasn't saying; now it says.
+
+**The turn's end is the harness's disclosure, not the client's calculation.** `decide()`
+under the lease is the only honest source of "nothing is owed", so xi now returns the
+verdict it acted on and reports it the moment it is made (`XiPorts.onDecision`); main
+collapses the stream to edges (`disclose` — the ticker's steady ignores dedup away) and
+the door pushes `{status: "busy"}` / `{status: "idle", after}` to tailers, beside `{event}`
+and `{delta}` — a sibling line shape, not a `Delta` kind: `Delta` stays the model's
+in-progress output. `after` is the last event the deciding read saw; a client that wrote
+id M is done when `after >= M` (UUIDv7 order). The daemon discloses, the client decides:
+no `reason` field (an error row already reaches the client on its own tail — a failed
+command; the fix is running it again, and `nu` already retried transients before writing
+it), no `waiting` count (an idle over an open approval is the interface's call), no exit-1
+on empty output (whether the work succeeded is stdout's reader's judgment). CLI contract:
+stdout = the transcript as the REPL paints it (thinking stays silent), stderr = error
+rows and the CLI's own failures, exit 0 = idle arrived over our message, 1 = no daemon /
+hang-up / `--timeout` (no default), 2 = usage.
+
+**One painter, one wire.** `src/paint.ts` renders deltas and events for every attach
+surface (the `<|SILENCE|>` hold-back included); what differs — the prompt redraw, where
+errors land, whether thinking streams, the approval pile — arrives as surface hooks.
+`src/attach.ts` holds the shared client half: `resolveAgent` (catalog roster), `attach`
+(connect-or-raise), `wire` (requests answered in order; pushes demuxed by shape — a reply
+always carries `ok`, a push never does). `cli.ts` → `repl.ts` carries the interactive
+surface over it; `mu cli` is smaller than the REPL, as it should be. `MainConfig` lost the
+seams only task mode used (`exec`, `ambient`, `seed`, `onDelta`): the proxy, the per-agent
+exec planes and the doc seeding now install unconditionally.
+
+Verified live against a scratch org: dummy key → three retry deltas and the terminal error
+row on stderr, empty stdout, exit 0 on the idle that followed; real key → the closing
+message alone on stdout, exit 0; the REPL attaches to the daemon the CLI raised. Still
+open: `bench/tbench`'s Harbor adapter uploads the compiled `mu-task` binary that no longer
+builds — re-point it at `mu cli` next time the bench gets attention.
+
 ## The honest framing
 
 After 2b, nothing structural remains — the machine is complete and every later item is

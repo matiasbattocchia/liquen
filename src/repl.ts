@@ -1,0 +1,114 @@
+/**
+ * repl.ts — `mu repl`: the v0.0 principal interface, a line REPL attached to the daemon.
+ *
+ * The REPL is an ATTACH client (DESIGN §2, §9): it never holds a log handle and hosts
+ * nothing — it speaks to its agent through the door (`agents/<name>/door.sock`),
+ * publishing the principal's messages and painting what the tail pushes back. "Is a
+ * daemon running?" is the connect itself: a refused socket means no, and the REPL raises
+ * one — main alone (`--ephemeral`), which reaps itself once nothing has been attached for
+ * a linger. `mu start` owns the standing org and its connections; the REPL only ever
+ * attaches — the attach path is the only path it has.
+ *
+ *   you type            → {op: "message"} through the door
+ *   the agent thinks    → thinking deltas stream dim; assistant text streams live
+ *   the agent acts      → tool_use/result lines; peer sends as `→ conv: text`
+ *   a gate fires        → an approval card; answer `/{y,n} [once|conv|conn|always|all]
+ *                         [reason]` — a scope word makes the verdict STANDING (remembered
+ *                         policy, §9); `all` answers every card waiting at once
+ *   /quit (or Ctrl-D)   → hang up — the daemon's life is its attachments, not ours
+ */
+
+import { TextLineStream } from "@std/streams";
+import { attach, resolveAgent, wire } from "./attach.ts";
+import { DIM, painter, RED, RESET } from "./paint.ts";
+import { parseVerdict } from "./xi.ts";
+
+// `mu <agent>` — a session choice, so an argument, not config — talks to another agent.
+const a = await resolveAgent(Deno.args[0]);
+const home = `mind:${a.target}`; // the home IS the mind session (§4)
+
+const conn = await attach(a);
+let leaving = false;
+
+const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
+const prompt = () => write("\n> ");
+
+// every approval card still waiting, oldest first. A bare `/y` answers the newest (the
+// one just painted); `/y all` answers the whole pile, which is the point of the list.
+const pending: string[] = [];
+
+const p = painter({
+  session: a.target, // session_id ≈ agent id in v0 (§7)
+  home,
+  write,
+  error: (t) => {
+    write(`\n${RED}! ${t}${RESET}`);
+    prompt();
+  },
+  prompt,
+  thinking: true,
+  gateHint: "  /{y,n} [once|conv|conn|always|all] [reason]",
+  onGate: (ref) => {
+    if (!pending.includes(ref)) pending.push(ref);
+  },
+  onGateSettled: (ref) => {
+    const i = pending.indexOf(ref);
+    if (i >= 0) pending.splice(i, 1);
+  },
+});
+
+const w = wire(conn, { event: p.event, delta: p.delta });
+w.hangup.then(() => {
+  if (!leaving) {
+    write(`\n${RED}the daemon hung up${RESET}\n`);
+    Deno.exit(1);
+  }
+});
+
+await w.request({ op: "tail" }); // live: the screen is the present, the log holds the past
+
+write(
+  `${DIM}mu — ${a.target} · ${a.model} · log: ${a.dir} · /y[once|conv|conn|always|all] /n /quit${RESET}\n> `,
+);
+
+const lines = Deno.stdin.readable
+  .pipeThrough(new TextDecoderStream())
+  .pipeThrough(new TextLineStream());
+
+for await (const line of lines) {
+  const text = line.trim();
+  if (text === "") {
+    write("> ");
+    continue;
+  }
+  if (text === "/quit" || text === "/q") break;
+  const verdict = text.startsWith("/y") || text.startsWith("/n") ? parseVerdict(text) : undefined;
+  if (verdict) {
+    if (pending.length === 0) {
+      write(`${DIM}nothing pending${RESET}\n> `);
+      continue;
+    }
+    // `all` takes the pile in the order it was asked; a bare word takes the newest card,
+    // the one whose text is still on screen
+    const answered = verdict.every ? pending.splice(0) : [pending.pop()!];
+    for (const ref of answered) {
+      const r = await w.request({ op: "permission_response", ref_id: ref, verdict });
+      if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
+    }
+    if (answered.length > 1) write(`${DIM}${answered.length} approvals answered${RESET}\n`);
+    continue;
+  }
+  const r = await w.request({
+    op: "message",
+    text,
+    sender: { address: a.username, name: a.username },
+  });
+  if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
+}
+
+leaving = true;
+try {
+  conn.close();
+} catch { /* already closed */ }
+write(`\n${DIM}bye${RESET}\n`);
+Deno.exit(0);

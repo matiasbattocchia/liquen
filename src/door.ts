@@ -27,8 +27,9 @@
  *   tail                 {op, from?}             → {ok} — then the connection also PUSHES:
  *                                                  {event} per row of the agent's scoped
  *                                                  view (from the cursor), {delta} per
- *                                                  model delta. Full disclosure: what to
- *                                                  do with a gate or `<|SILENCE|>` is the
+ *                                                  model delta, {status} on a turn's edges
+ *                                                  (below). Full disclosure: what to do
+ *                                                  with a gate or `<|SILENCE|>` is the
  *                                                  interface's decision, never the door's.
  *
  * One synthetic turn key per connection (`job:<id>`): a `call` run is a turn no session
@@ -59,9 +60,21 @@ export interface DoorAgent {
   log: Pick<Log, "publish" | "subscribe">;
 }
 
+/** A turn's edges, volunteered on the tail (§2): the verdict `decide` reached under the
+ *  lease, which is the one fact an attach client cannot compute for itself. `after` on
+ *  idle is the last event the deciding read saw — a client that wrote id M knows its line
+ *  was weighed once `after >= M` (UUIDv7 order), an address comparison, never a judgment.
+ *  Ephemeral like a delta: pushed to tailers, never stored, correctness never rides it. */
+export interface Status {
+  status: "idle" | "busy";
+  after?: string;
+}
+
 export interface Doors {
   /** Fan a model delta out to every connection tailing this agent's door. */
   emit(agentId: string, delta: Delta): void;
+  /** Fan a turn edge out the same way — the daemon discloses, the interface decides. */
+  status(agentId: string, line: Status): void;
   /** Live connections across every door — what an attachment-derived lifetime reads. */
   attachments(): number;
   close(): Promise<void>;
@@ -107,6 +120,9 @@ export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Do
   return {
     emit(agentId: string, delta: Delta) {
       for (const push of casts.get(agentId) ?? []) push({ delta });
+    },
+    status(agentId: string, line: Status) {
+      for (const push of casts.get(agentId) ?? []) push({ ...line });
     },
     attachments: () => conns.size,
     async close() {

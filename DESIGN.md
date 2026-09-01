@@ -347,8 +347,8 @@ before acquiring would run a duplicate turn.
   overflows) against a runaway generation and carries an advisory to steer large output to
   files; `refusal` alone is terminal (surfaced as an error, no continuation). Corollary:
   per-turn `maxTokens` must leave headroom under any wall-clock budget — a turn that runs
-  to a 64k ceiling takes ~13min and can't finish inside an 840s task wall, so task mode caps
-  at 32k and lets the continuation span turns.
+  to a 64k ceiling takes ~13min, so a deployment under a wall caps lower and lets the
+  continuation span turns.
 - **Costs, by case**: a `relevant`-rejected spectator is FREE (no read, no lease); a
   relevant event that decides ignore costs one lease pair + one read (the lease comes first
   — deciding before acquiring would act on a stale verdict); work costs the same plus the
@@ -1384,7 +1384,7 @@ Returns **raw events, type-filtered** (messages; never tool/permission noise).
   (§4, the gate). The lookups **read
   through** prepared statements — live like the Postgres RLS join they emulate: a
   mid-run bind is visible on the next event, no reload, no restart. Applied to folder-declared agents;
-  explicit `principals` (tests, task mode) stay allow-all unless they pass their own.
+  explicit `principals` (tests) stay allow-all unless they pass their own.
   **Local is a team chat**: a local conversation is visible iff you're a member; `send`
   to a peer agent's NAME canonicalizes to `dm:<sorted pair>` and enrolls both ends
   (the Slack membership mirror, landed 2026-08-12, fills the same rows from the wire —
@@ -1656,7 +1656,7 @@ docs {
     the cap a turn wedged on a hung model connection (an API/network outage exactly at
     shutdown) blocks teardown *forever* — the reap and `log.close` never run, so the very
     safety net above is defeated. The orphaned turn is swallowed by the fan-out queue's
-    catch (and in task mode killed outright by the process exit that follows). The deeper
+    catch. The deeper
     fix — threading an `AbortSignal` through `step`→transport so shutdown actively cancels
     the model call — is deferred; the cap is the correctness floor. (Surfaced by a
     Terminal-Bench run where a mid-outage trial wrote its trace but hung in `stop()`.)
@@ -1669,9 +1669,8 @@ docs {
     groups older than ~1h unless marked persistent; job-reaping is periodic maintenance
     under the lock, the alarm's exact shape); **(3) agent visibility (v0.2)** — surface the
     live-job set in the ambient block + a hygiene skill (only the agent knows if a job is
-    still needed). For a *delegate* (conversational) agent bg jobs are rare/short — the
-    heavy-background use is task mode, which the container reaps — so a generous TTL rarely
-    bites a legit job. The registry already self-prunes dead groups so it stays bounded to
+    still needed). For a *delegate* (conversational) agent bg jobs are rare/short, so a
+    generous TTL rarely bites a legit job. The registry already self-prunes dead groups so it stays bounded to
     live jobs even before the clock lands.
 - **Control seam** (CLI, web console — clients that *drive* the harness): harness-as-server
   (OpenCode model), HTTP/WS + SSE, OpenAPI-defined. **Driver API** (the same for every
@@ -1798,8 +1797,7 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   a need we've explicitly declined for the exec plane.)
 - Shims: `src/bin` ships `aread`/`awrite`/`aedit` as committed `deno run` shims that locate
   `afs.ts` beside themselves — code, versioned with the code that answers for them, written
-  by no boot. The Docker image compiles them (`deno compile`); task mode generates its own,
-  dispatching back into the compiled binary. PATH widens by scope — `src/bin` (shipped),
+  by no boot. The Docker image compiles them (`deno compile`). PATH widens by scope — `src/bin` (shipped),
   `{dir}/org/bin` (the org's, `gws`), `{dir}/agents/<id>/bin` (the agent's own), then the
   system's — narrowest first, so a wider layer is reachable but cannot shadow a harness
   contract, exactly as the doc cascade resolves. The binaries'
@@ -1849,8 +1847,15 @@ else — never holds a log handle: it speaks to its agent through the same socke
 serves four ops: `call` (above), `message` (the principal's half of the complex, no
 `turn_id`), `permission_response` (a gate answered), and `tail` (the agent's scoped view
 pushed from a cursor, model deltas riding the same wire — `onDelta` is a fan-out over the
-tailers). The door discloses the whole session; what to do with a gate or `<|SILENCE|>`
-is each interface's decision. The daemon's life derives from the same connections:
+tailers). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
+begins, `{status: "idle", after}` when `decide` answers `ignore` — the one fact an attach
+client cannot compute, since only the deciding read runs under the lease. `after` is the
+last event that read saw, so a client that wrote id M knows its line was weighed once
+`after >= M` (UUIDv7 order) — an address comparison, never a judgment. Edge-triggered and
+ephemeral like a delta: never stored, correctness never rides it. The door discloses the
+whole session; what to do with a gate, `<|SILENCE|>`, an error row, or an idle over an
+open approval is each interface's decision. The daemon's life derives from the same
+connections:
 `mu start`'s main runs regardless, while one an interface raised (`main.ts --ephemeral`)
 reaps itself after a linger with zero attachments — and "is one running?" is a
 `connect()`, never a `stat()`.
@@ -1953,7 +1958,7 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   it; machine-discovered account bindings live on the connections map (§4), keyed to the
   same registry names. Named `agents` (not `principals`) deliberately — agent↔principal
   is N:M in the limit (an agent managed by many or any principals), so the *agent* is the
-  entity. `MainConfig.principals` remains the in-code seam (tests, task mode); process
+  entity. `MainConfig.principals` remains the in-code seam (tests); process
   bootstrap (data dir, API key) stays env — it exists before any substrate is open.
   **An agent IS its row** — identity + bindings; docs, workspace, memory may all be empty
   and the agent still fully exists (agents start blank). Everything else is a *projection*

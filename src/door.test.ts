@@ -10,7 +10,7 @@
  */
 
 import { assert, assertEquals, assertMatch, assertRejects } from "@std/assert";
-import { installDoors } from "./door.ts";
+import { installDoors, type Status } from "./door.ts";
 import { bind, type Mu } from "./script.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { openFileDocs } from "./store/docs.ts";
@@ -160,11 +160,13 @@ Deno.test({
 });
 
 /** A raw attach client — the interface's half of the wire, newline-JSON by hand:
- *  requests answered in order, {event}/{delta} pushed after a tail. */
+ *  requests answered in order, {event}/{delta}/{status} pushed after a tail (a reply
+ *  always carries `ok`; a push never does). */
 async function rawClient(dir: string) {
   const conn = await Deno.connect({ transport: "unix", path: `${dir}/agents/ana/door.sock` });
   const events: Event[] = [];
   const deltas: unknown[] = [];
+  const statuses: Status[] = [];
   const replies: ((r: Record<string, unknown>) => void)[] = [];
   (async () => {
     const lines = conn.readable
@@ -175,7 +177,8 @@ async function rawClient(dir: string) {
       const msg = JSON.parse(line) as { event?: Event; delta?: unknown } & Record<string, unknown>;
       if (msg.event) events.push(msg.event);
       else if (msg.delta) deltas.push(msg.delta);
-      else replies.shift()?.(msg);
+      else if (msg.ok !== undefined) replies.shift()?.(msg);
+      else if (msg.status !== undefined) statuses.push(msg as unknown as Status);
     }
   })().catch(() => {/* hang-up */});
   const request = async (req: Record<string, unknown>) => {
@@ -187,7 +190,7 @@ async function rawClient(dir: string) {
     const t0 = Date.now();
     while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 25));
   };
-  return { conn, events, deltas, request, settle };
+  return { conn, events, deltas, statuses, request, settle };
 }
 
 Deno.test({
@@ -258,6 +261,12 @@ Deno.test({
       await tailing.settle(() => tailing.deltas.length >= 1);
       assertEquals(tailing.deltas, [{ kind: "text", text: "hola" }]);
       assertEquals(passive.deltas, []); // deltas reach only who asked for the stream
+
+      // a turn edge rides the same law: pushed to tailers, never to a passive attach
+      doors.status("ana", { status: "idle", after: "01X" });
+      await tailing.settle(() => tailing.statuses.length >= 1);
+      assertEquals(tailing.statuses, [{ status: "idle", after: "01X" }]);
+      assertEquals(passive.statuses, []);
 
       // a hang-up — clean or killed, the same event — leaves the count honest
       tailing.conn.close();

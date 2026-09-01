@@ -168,7 +168,7 @@ async function commit(path: string, content: string): Promise<void> {
   }
 }
 
-/** CLI entry — also callable from the multi-call task binary (`mu-task afs …`). */
+/** Entry for the shipped shims (`aread`/`awrite`/`aedit` dispatch here). */
 export async function run(args: string[]): Promise<number> {
   const [cmd, path, ...rest] = args;
   try {

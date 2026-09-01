@@ -32,7 +32,7 @@
  * holds a token.
  */
 
-import { type AgentConfig, type ExecTool, relevant, xi, type XiPorts } from "./xi.ts";
+import { type AgentConfig, type Decision, relevant, xi, type XiPorts } from "./xi.ts";
 import { type Policy, policyFor, scoped } from "./policy.ts";
 import { type Log, openLog } from "./store/log.ts";
 import type { ConnectionRow } from "./store/connections.ts";
@@ -46,8 +46,8 @@ import { openCA } from "./proxy/ca.ts";
 import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
 import { createTranscriber } from "./processors.ts";
-import { installDoors } from "./door.ts";
-import type { AlarmEvent, Delta, Draft, Emit, Event } from "./types.ts";
+import { installDoors, type Status } from "./door.ts";
+import type { AlarmEvent, Delta, Draft, Event } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
   DEFAULT_STOP_TIMEOUT_MS,
@@ -128,11 +128,7 @@ export interface MainConfig {
    *  `mu connect` is the real writer). */
   connections?: ConnectionRow[];
   apiKey?: string; // default: env ANTHROPIC_API_KEY
-  exec?: Record<string, ExecTool>; // default: the filesystem exec plane (bash + binaries, §9)
-  onDelta?: Emit; // → the Stream (the CLI attaches here)
-  ambient?: () => Promise<string[]>; // env lines when config.exec is supplied (task mode)
   lockTtlMs?: number;
-  seed?: boolean; // install the doc cascade at boot (default true; task mode skips it)
   stopTimeoutMs?: number; // cap on how long stop() waits for an in-flight turn (default 5s)
   /** How long a world trigger waits for the rest of its burst before the turn runs, in ms
    *  (§2); 0 disables. Default 5s — see the debounce in the fan-out. */
@@ -161,8 +157,8 @@ export async function start(
   // the framework way (§9): no explicit principals ⇒ the catalog's roster IS the org
   const derived = config.principals === undefined; // …and gets the connections-map policy (§6)
   // the catalog: the entry point read the file once (readConfig) and hands main the VALUE —
-  // main funnels the resolved values down the chain. Explicit principals (tests, task mode)
-  // carry their own settings and need no catalog at all.
+  // main funnels the resolved values down the chain. Explicit principals (tests) carry
+  // their own settings and need no catalog at all.
   const catalog = derived ? config.catalog ?? null : null;
   const principals: Principal[] = config.principals ??
     await compileRoster(dir, config, catalog!, Date.now());
@@ -184,34 +180,43 @@ export async function start(
     { service: "local", connection: "agent", conversation: p.mind, agentId: p.agentId }
   )));
   if (config.connections) log.upsertConnections(config.connections);
-  if (config.seed !== false) {
-    for (const agent of principals) await seedDocs(dir, agent.agentId);
-  }
+  for (const agent of principals) await seedDocs(dir, agent.agentId);
   const transport = overrides.transport ?? anthropicTransport(anthropicClient(config.apiKey));
   // the egress proxy (§9): front every credential row that declares an env var — user space
   // gets the placeholder + proxy env, never a real credential (see installProxy).
-  const proxy = config.exec ? null : await installProxy(dir);
+  const proxy = await installProxy(dir);
   // ONE PLANE PER AGENT: the shell is the agent's, not the org's — its cwd IS `agents/<id>`,
   // the folder that already holds its docs and memories, and its background jobs are reaped
   // with it. The binaries on PATH stay org-wide; what is private is the cwd and the job set.
   const planes = new Map<string, ExecPlane>();
-  if (!config.exec) {
-    for (const p of principals) {
-      planes.set(
-        p.agentId,
-        await installExecPlane(dir, p.agentId, proxy!.env, catalog?.system.bashTimeoutMs),
-      );
-    }
+  for (const p of principals) {
+    planes.set(
+      p.agentId,
+      await installExecPlane(dir, p.agentId, proxy.env, catalog?.system.bashTimeoutMs),
+    );
   }
 
   let stopped = false;
-  // the delta fan-out's late half: ports close over `cast` before the doors exist, and the
-  // doors — which know who is tailing — take it over once they are up
+  // the fan-outs' late half: ports close over `cast`/`castStatus` before the doors exist,
+  // and the doors — which know who is tailing — take them over once they are up
   let cast: (agentId: string, delta: Delta) => void = () => {};
+  let castStatus: (agentId: string, line: Status) => void = () => {};
+  // the status push is EDGE-triggered (§2): one line per change of what the daemon would
+  // say, so a quiet org tails quietly — the ticker's steady `ignore`s all collapse here
+  const reported = new Map<string, string>();
+  const disclose = (agentId: string, verdict: Decision, cursor: string | undefined) => {
+    const line: Status = verdict === "ignore"
+      ? { status: "idle", ...(cursor !== undefined ? { after: cursor } : {}) }
+      : { status: "busy" };
+    const key = line.status + (line.after ?? "");
+    if (reported.get(agentId) === key) return;
+    reported.set(agentId, key);
+    castStatus(agentId, line);
+  };
   const agents = principals.map(({ readable, writable, ...agent }) => {
     // the agent's VIEW of the log (§6): reads, writes, and the tail below all go through it.
     // Folder-declared agents get the connections-map policy (live read-through lookups);
-    // explicit principals stay allow-all unless they carry their own (tests, task mode).
+    // explicit principals stay allow-all unless they carry their own (tests).
     const policy = derived ? policyFor(agent.agentId, log) : { readable, writable };
     const slog = scoped(log, policy);
     return {
@@ -223,12 +228,10 @@ export async function start(
         // metered per agent: every model call this agent makes lands in the usage table
         // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in
         transport: metered(transport, (row) => log.meter(row), agent.agentId),
-        exec: config.exec ?? planes.get(agent.agentId)!.exec,
-        onDelta: (d) => {
-          config.onDelta?.(d);
-          cast(agent.agentId, d);
-        },
-        ambient: planes.get(agent.agentId)?.ambient ?? config.ambient,
+        exec: planes.get(agent.agentId)!.exec,
+        onDelta: (d) => cast(agent.agentId, d),
+        onDecision: (v, cursor) => disclose(agent.agentId, v, cursor),
+        ambient: planes.get(agent.agentId)!.ambient,
       } satisfies XiPorts,
     };
   });
@@ -238,7 +241,7 @@ export async function start(
   // the class gate. No poke payload (the invocation IS the poke), no queue (the turn lock
   // is the concurrency control). `outstanding` is lifecycle, not scheduling: teardown must
   // not close the log or reap the exec plane under a live turn.
-  const outstanding = new Set<Promise<void>>();
+  const outstanding = new Set<Promise<unknown>>();
   const invoke = (a: (typeof agents)[number]) => (trigger?: Event) => {
     if (stopped) return; // teardown, not routing — main takes no other decision
     const run = xi(a.config, a.ports, trigger)
@@ -297,6 +300,7 @@ export async function start(
     })),
   );
   cast = (agentId, delta) => doors.emit(agentId, delta);
+  castStatus = (agentId, line) => doors.status(agentId, line);
 
   const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
   // the mirror rides the RAW log (§4): it copies between a mind and its alias surfaces, and
@@ -479,7 +483,7 @@ function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
 }
 
 /** An interface-raised daemon reaps itself after this long with nothing attached — long
- *  enough that consecutive `mu task` runs reuse one org instead of re-paying seeding,
+ *  enough that consecutive `mu cli` runs reuse one org instead of re-paying seeding,
  *  the exec planes and the proxy each time. */
 const LINGER_MS = 30_000;
 const REAP_POLL_MS = 1_000;

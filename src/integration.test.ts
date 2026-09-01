@@ -69,7 +69,7 @@ async function waitFor(cond: () => Promise<boolean> | boolean, ms = 4000): Promi
  *  can await what's in flight. */
 function fanOut(config: AgentConfig, log: Log, ports: XiPorts): { stop(): Promise<void> } {
   let stopped = false;
-  const outstanding = new Set<Promise<void>>();
+  const outstanding = new Set<Promise<unknown>>();
   const invoke = (trigger?: Event) => {
     if (stopped) return;
     const run = xi(config, ports, trigger).catch(() => {}).finally(() => outstanding.delete(run));
@@ -1429,6 +1429,35 @@ Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the ope
     assertStringIncludes(anchor, shortId(armed.id)); // the handle `cancel` takes
     assertStringIncludes(anchor, "cwd: /work"); // the other state facts still stand
     assertStringIncludes(anchor, "nothing is waiting on your principal");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("xi returns what it decided, and discloses it the moment it decides", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  const { transport } = scripted([ok([{ kind: "assistant", text: "hola" }])]);
+  const seen: [string, string | undefined][] = [];
+  const ports: XiPorts = {
+    log,
+    docs: openFileDocs(`${dir}/docs`),
+    transport,
+    onDecision: (v, cursor) => seen.push([v, cursor]),
+  };
+  try {
+    // an empty log owes nothing — and the disclosure says so before the invocation ends
+    assertEquals(await xi(CONFIG, ports), "ignore");
+    assertEquals(seen, [["ignore", undefined]]);
+    const m = (await log.publish(principalMsg("hola")))!;
+    // the verdict comes back at the end; the disclosure carried the read's last event
+    assertEquals(await xi(CONFIG, ports), "think");
+    assertEquals(seen[1], ["think", m.id]);
+    // quiescence again — the cursor now covers the turn's own closing
+    assertEquals(await xi(CONFIG, ports), "ignore");
+    const last = (await log.read()).at(-1)!;
+    assertEquals(seen[2], ["ignore", last.id]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

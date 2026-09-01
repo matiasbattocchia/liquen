@@ -381,7 +381,7 @@ export function findRoot(from: string = Deno.cwd()): string {
 /* ── the readers (main only) ─────────────────────────────────────────────── */
 
 /** Read `<root>/config.jsonc` — and only read: the file is git's, never the system's to
- *  write. Absent file ⇒ the defaults (tests, task mode); a key left out takes its default;
+ *  write. Absent file ⇒ the defaults (tests); a key left out takes its default;
  *  an unknown key or section is a boot error. `connections` subsections are the
  *  connectors' and pass through opaque (each connector validates its own). */
 export async function readConfig(root: string): Promise<OrgConfig> {

@@ -9,7 +9,7 @@
     "test": "deno test -A",
     "smoke": "deno test -A --env-file=.env src/transport.test.ts",
     "cli": "deno run -A --env-file=.env src/cli.ts",
-    "repl": "deno run -A --env-file=.env src/cli.ts",
+    "repl": "deno run -A --env-file=.env src/repl.ts",
     "start": "deno run -A --env-file=.env src/start.ts",
     "init": "deno run -A src/init.ts",
     "bench": "deno run -A --env-file=.env bench/run.ts",
@@ -25,8 +25,7 @@
     "run:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp/run.ts",
     "connect:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp/connect.ts",
     "run:github": "deno run -A --env-file=.env connectors/github/run.ts",
-    "connect:github": "deno run -A --env-file=.env connectors/github/connect.ts",
-    "compile:task": "deno compile -A --include src/seed -o dist/mu-task src/task.ts"
+    "connect:github": "deno run -A --env-file=.env connectors/github/connect.ts"
   },
   "fmt": {
     "lineWidth": 100

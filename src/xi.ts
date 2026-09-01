@@ -718,6 +718,10 @@ export interface XiPorts {
   transport: ModelTransport;
   exec?: Record<string, ExecTool>; // bash + MCP; send/search are built-in
   onDelta?: Emit; // → the harness stream (fire-and-forget)
+  /** The decision, disclosed the moment it is made — fire-and-forget like onDelta: main
+   *  fans it to the door's tailers as a turn edge ({status}), the one fact an attach
+   *  client cannot compute for itself. `cursor` is the last event the deciding read saw. */
+  onDecision?: (verdict: Decision, cursor: string | undefined) => void;
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
 }
 
@@ -746,8 +750,14 @@ export function anchored(rows: Event[], limit: number): Event[] {
   return rows.filter((e) => Date.parse(e.ts) >= grid);
 }
 
-/** One xi invocation: poke → owed → (think/act: acquire-or-exit → work) → return. */
-export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): Promise<void> {
+/** One xi invocation: poke → owed → (think/act: acquire-or-exit → work) → return what it
+ *  decided — `"held"` when the lease was taken (someone is on it: busy by definition),
+ *  `undefined` when the trigger was irrelevant (no read happened; nothing to say). */
+export async function xi(
+  config: AgentConfig,
+  ports: XiPorts,
+  trigger?: Event,
+): Promise<Decision | "held" | undefined> {
   // 1. the gate — free: no read, no lease. Most invocations end here (§2)
   if (trigger && !relevant(config, trigger)) return;
 
@@ -756,7 +766,7 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
   const name = `turn-${config.agentId}`;
   const lock = ports.log.lock(name, config.lockTtlMs);
   const got = await lock.acquire();
-  if (got === "held") return; // no retry: someone is on it, and their turn's end will poke
+  if (got === "held") return "held"; // no retry: someone is on it, and their turn's end will poke
 
   const session: Session = {
     id: config.sessionId,
@@ -800,7 +810,11 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
     if (settled) events.push(settled);
   }
   const v = decide(events, session, config);
-  if (v === "ignore") return await lock.release();
+  ports.onDecision?.(v, events.at(-1)?.id);
+  if (v === "ignore") {
+    await lock.release();
+    return v;
+  }
 
   // 4. the work, and 5. the end: ONE transaction holding its last events AND the release, so
   //    the wake they fire can never find the lease still held. Publishing first and releasing
@@ -815,6 +829,7 @@ export async function xi(config: AgentConfig, ports: XiPorts, trigger?: Event): 
     throw err;
   }
   await ports.log.publishAndRelease(last, name);
+  return v;
 }
 
 /* ── think: one locked turn ───────────────────────────────────────────── */

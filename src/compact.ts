@@ -24,7 +24,7 @@ export const estTokens = (events: Event[]): number => Math.ceil(JSON.stringify(e
  *  prompt itself branches on <previous-summary>, so the code doesn't). The LIVE copy is a doc
  *  — `harness/instruction/compaction` (seeded from seed/docs) — so it's readable and editable
  *  like any instruction, not hidden in code; this constant is the fallback when the doc is
- *  absent (task mode, unseeded stores). */
+ *  absent (unseeded stores). */
 export const DEFAULT_PROMPT =
   `The conversation above is being archived. Write a structured checkpoint summary that a later step of the same agent will rely on to continue seamlessly.
 
