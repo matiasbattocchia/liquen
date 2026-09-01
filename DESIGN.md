@@ -67,8 +67,8 @@ Two planes:
 - **EventLog** — durable, append-only. *The API and the queue.* Producers (webhooks)
   publish; consumers (dispatchers) subscribe to the log's change feed (fs-watch on files /
   DB-webhook·Realtime·pgmq·cron on Postgres) — the `publish` is itself the trigger.
-- **Stream** — ephemeral broadcast for token deltas, thinking, tool progress, and errors
-  the operator watches. Never stored. Rule: **stream the in-progress, log the completed.**
+- **Stream** — ephemeral broadcast for token deltas, thinking, and errors the operator
+  watches. Never stored. Rule: **stream the in-progress, log the completed.**
 
 The ReAct loop is **unrolled across invocations** (invocation = step = one model call):
 

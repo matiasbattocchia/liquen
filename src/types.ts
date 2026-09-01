@@ -561,7 +561,7 @@ export interface Usage {
 
 /** Ephemeral broadcast — stream the in-progress; never stored. Correctness never depends on it. */
 export interface Delta {
-  kind: "text" | "thinking" | "tool" | "error";
+  kind: "text" | "thinking" | "error";
   text?: string;
 }
 export type Emit = (delta: Delta) => void;
