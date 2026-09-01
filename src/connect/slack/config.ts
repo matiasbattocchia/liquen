@@ -33,6 +33,9 @@ export const DEFAULT_USER_SCOPES = [
   "mpim:read",
   "search:read",
   "files:read",
+  // conversations.open, which the user door calls to resolve the self-DM: notes-to-self
+  // IS the mind on this surface (§4), and without this the binding cannot be made
+  "im:write",
 ];
 
 export interface SlackConfig {

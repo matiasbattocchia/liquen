@@ -12,6 +12,8 @@ import {
   connectSlackUser,
   manifestUrl,
   pickSlackApp,
+  slackHave,
+  slackNext,
   userManifest,
   withScopes,
 } from "./connect.ts";
@@ -289,4 +291,44 @@ Deno.test("missingScopes: a token with no scopes on the wire owes the whole ask"
   assertEquals(missingScopes(["a", "b"], undefined), ["a", "b"]);
   assertEquals(missingScopes(["a", "b"], "b,a"), []); // comma-separated, any order
   assertEquals(missingScopes(["a"], ["a", "extra"]), []); // extra reach is not a shortfall
+});
+
+Deno.test("slackHave: the vault's slack rows sort into app, bot, carrier, user", () => {
+  assertEquals(
+    slackHave([
+      { key: "slack:app:cid", value: { client_id: "cid" } },
+      { key: "slack:T1:org", value: { token: "xoxb-x", app_token: "xapp-x" } },
+      { key: "slack:T1:matias", value: { token: "xoxp-x" } },
+    ]),
+    { app: true, bot: true, appToken: true, user: true },
+  );
+  // a bot pasted without the second token is a bot with NO carrier
+  assertEquals(
+    slackHave([{ key: "slack:T1:org", value: { token: "xoxb-x" } }]),
+    { app: false, bot: true, appToken: false, user: false },
+  );
+});
+
+Deno.test("slackNext: a user leg alone is told inbound has no carrier yet", () => {
+  const next = slackNext({ app: false, bot: false, appToken: false, user: true });
+  assertEquals(next.length, 2); // the bot (with its carrier), and the oauth client
+  assertStringIncludes(next[0], "mu connect slack bot");
+  assertStringIncludes(next[0], "PUBLIC request URL"); // the alternative, named
+  assertStringIncludes(next[1], "mu connect slack app");
+});
+
+Deno.test("slackNext: a bot without its app-level token is told where to generate one", () => {
+  const next = slackNext({ app: true, bot: true, appToken: false, user: false });
+  assertEquals(next.length, 1);
+  assertStringIncludes(next[0], "App-Level Tokens");
+  assertStringIncludes(next[0], "connections:write");
+});
+
+Deno.test("slackNext: an app and nothing else is told an app is not a grant", () => {
+  const next = slackNext({ app: true, bot: false, appToken: false, user: false });
+  assertStringIncludes(next[0], "no identity yet");
+});
+
+Deno.test("slackNext: carrier + both legs owes nothing", () => {
+  assertEquals(slackNext({ app: true, bot: true, appToken: true, user: true }), []);
 });

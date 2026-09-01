@@ -102,7 +102,9 @@
         "im:read",
         "mpim:read",
         "search:read",
-        "files:read"
+        "files:read",
+        // conversations.open: the self-DM binding the user door makes
+        "im:write"
       ]
     },
     // whatsapp — the whatsmeow bridge's mu side (ingest, dispatch, pairing)

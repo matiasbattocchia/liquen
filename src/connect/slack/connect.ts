@@ -272,6 +272,66 @@ export async function connectSlackBot(
   return { team, botUser, missing };
 }
 
+/* ── what the org still owes, read off the vault ─────────────────────────────────────── */
+
+/** The four things a working Slack connection is made of. */
+export interface SlackHave {
+  app: boolean; // the OAuth client — `slack:app:<client_id>`, the hosted door's key
+  bot: boolean; // the org's identity — `slack:<team>:org`
+  appToken: boolean; // the socket carrier, stored beside the bot token
+  user: boolean; // at least one principal's own leg — `slack:<team>:<principal>`
+}
+
+/** Sort the vault's slack rows into the four. */
+export function slackHave(rows: { key: string; value: Record<string, unknown> }[]): SlackHave {
+  const have: SlackHave = { app: false, bot: false, appToken: false, user: false };
+  for (const r of rows) {
+    if (r.key.startsWith(APP_PREFIX)) have.app = true;
+    else if (r.key.endsWith(":org")) {
+      have.bot = true;
+      if (typeof r.value.app_token === "string" && r.value.app_token) have.appToken = true;
+    } else have.user = true;
+  }
+  return have;
+}
+
+/** What is still owed, in the order a dev would do it — one door finishing is the natural
+ *  moment to learn what the next one is, and the pieces are bought at different counters
+ *  (a token is pasted, an app-level token is GENERATED, a grant is approved).
+ *
+ *  Inbound is the sharp one: ingest reads events over one of two carriers — the app-level
+ *  token's socket, or an HTTP request URL on the ingest port — and the second needs a
+ *  public address. An org with an identity and no `app_token` receives nothing and is
+ *  told so here rather than by silence. */
+export function slackNext(have: SlackHave): string[] {
+  const next: string[] = [];
+  if (!have.user && !have.bot) {
+    next.push(
+      "no identity yet — `mu connect slack user` (your own leg) or " +
+        "`mu connect slack bot` (the org's)",
+    );
+  }
+  if (!have.bot) {
+    next.push(
+      "no org identity — `mu connect slack bot`: the socket carrier that feeds ingest " +
+        "rides with it (without one, ingest needs a PUBLIC request URL on the ingest port)",
+    );
+  } else if (!have.appToken) {
+    next.push(
+      "no socket carrier — Basic Information → App-Level Tokens → Generate Token and " +
+        "Scopes (`connections:write`), then run `mu connect slack bot` again and paste " +
+        "the xapp- second (without it, ingest needs a PUBLIC request URL)",
+    );
+  }
+  if (!have.app) {
+    next.push(
+      "no OAuth client — `mu connect slack app` (only the HOSTED door needs it; the " +
+        "paste doors do not)",
+    );
+  }
+  return next;
+}
+
 /** Fill the manifest's consent lists from the catalog — the seed carries the app's shape
  *  (name, events, redirect, socket mode), the config carries what it may do, so the app a
  *  door creates asks for exactly what the oauth door later requests. */
@@ -359,6 +419,13 @@ if (import.meta.main) {
   const ask = (label: string): string | undefined =>
     (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
 
+  /** What the org still owes after this door — read off the vault, so finishing one door
+   *  is where you learn what the next one is. */
+  const owed = async (creds: { list: (p: string) => Promise<CredentialRow[]> }) => {
+    const next = slackNext(slackHave(await creds.list("slack:")));
+    if (next.length) console.error(`\nstill to do:\n  ${next.join("\n  ")}`);
+  };
+
   /** The grant landed and is stored; what it cannot do is the part worth saying out loud,
    *  because Slack only mentions it again at the call that fails. */
   const report = (missing: string[], remedy: string): void => {
@@ -387,6 +454,7 @@ if (import.meta.main) {
       console.error(
         `✓ app stored: ${key}` + (redirectUri ? ` (hosted callback: ${redirectUri})` : ""),
       );
+      await owed(creds);
     } finally {
       await creds.close();
     }
@@ -414,6 +482,7 @@ if (import.meta.main) {
       }, appToken);
       console.error(`\n✓ connected: workspace ${team}, bot user ${botUser} → the org`);
       report(missing, "Reinstall the app to the workspace after adding them.");
+      await owed(creds);
       console.error("  (deno task status shows the map)");
       await declared(root, "slack");
     } finally {
@@ -471,6 +540,7 @@ if (import.meta.main) {
     });
     console.error(`\n✓ connected: workspace ${team}, slack user ${user} → ${principal}`);
     report(missing, 'Add them under "User Token Scopes", then "Reinstall to Workspace".');
+    await owed(creds);
     console.error("  (deno task status shows the map)");
     await declared(root, "slack");
   } finally {
