@@ -536,3 +536,39 @@ Deno.test("a PARTLESS draft is merge-only: no referent ⇒ NOTHING stored (§3)"
     assertEquals((row as MessageEvent).parts.length, 1); // the content survived the stamp
   });
 });
+
+Deno.test("migrate v6: a pre-sessions log settles on the pair vocabulary (§4, §7)", async () => {
+  const dir = await Deno.makeTempDir();
+  // an old-shaped database: agent-id session stamps, `mind:` rooms, version 5
+  const first = await openLog(dir);
+  await first.publish({
+    ts: "2026-08-30T10:00:00.000Z",
+    type: "message",
+    agent: { id: "ana", session_id: "mind" },
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "mind@ana" },
+    },
+    parts: [{ type: "text", kind: "text", text: "dale" }],
+  } as Draft<MessageEvent>);
+  await first.close();
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(`${dir}/log.db`);
+  db.exec(
+    `UPDATE events SET session_id = 'ana', conversation_address = 'mind:ana';
+     UPDATE memberships SET conversation_address = 'mind:ana';
+     PRAGMA user_version = 5;`,
+  );
+  db.close();
+
+  const log = await openLog(dir); // reopening IS the migration
+  try {
+    const [e] = await log.read();
+    assertEquals(e.agent, { id: "ana", session_id: "mind" });
+    assertEquals(e.envelope.conversation.address, "mind@ana");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

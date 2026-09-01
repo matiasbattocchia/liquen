@@ -18,10 +18,6 @@
     "keepRecent": 20000,
     // history query cap — the prompt's size guard
     "windowLimit": 500,
-    // echo settle before the mirror's fan-in copies
-    "mirrorSettleMs": 1000,
-    // how far back an echo may claim an unclaimed CC
-    "mirrorClaimMs": 60000,
     // how long a world message waits for the rest of its burst before a turn runs
     "debounceMs": 5000
   },

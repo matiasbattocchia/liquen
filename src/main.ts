@@ -386,8 +386,6 @@ export async function start(
     read: (q) => log.read(q),
     aliases: () => log.aliases(),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
-    settleMs: catalog?.system.mirrorSettleMs,
-    claimMs: catalog?.system.mirrorClaimMs,
     onError: (e, err) => console.error(`mirror FAILED on ${e.envelope.conversation.address}:`, err),
   }));
   // the transcriber rides the RAW log too (§5): connector-neutral — an audio message is an

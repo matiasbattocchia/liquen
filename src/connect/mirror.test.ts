@@ -14,7 +14,6 @@ async function withMirror(
     setDelivery: (id: string, patch: { external_id: string }) => Promise<void>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
   }) => Promise<void>,
-  opts: { settleMs?: number } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -29,7 +28,6 @@ async function withMirror(
     read: (q) => log.read(q),
     aliases: () => log.aliases(),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
-    settleMs: opts.settleMs ?? 30,
   });
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {
     const t0 = Date.now();
@@ -352,10 +350,10 @@ Deno.test("mirror fan-in settles: an echo absorbed by the dispatch backfill copi
 
     // past the settle: the echo is gone, so the mirror found nothing to copy — the mind
     // still holds only the original voice line
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 1_500));
     assertEquals((await inConv("mind@ana")).length, 1);
     assertEquals((await inConv("D1")).length, 1);
-  }, { settleMs: 150 });
+  });
 });
 
 Deno.test("mirror fan-in: an echo whose claim never lands is absorbed by the CC it came from", async () => {

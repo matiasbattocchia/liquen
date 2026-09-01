@@ -42,7 +42,7 @@
  * for), and it has two failure modes, each with its own defence:
  *
  *   the echo lands EARLY, before the dispatcher's backfill claims the CC (the 小-window) —
- *     fan-in settles (`settleMs`) and re-reads the origin row; the backfill has absorbed it
+ *     fan-in settles (`SETTLE_MS`) and re-reads the origin row; the backfill has absorbed it
  *     by then, and a row that is gone copies nothing.
  *   the claim NEVER lands — the dispatcher died between posting and backfilling, or the API
  *     returned no id to stamp (a Slack file share). Then the echo stays a first-class
@@ -53,7 +53,6 @@
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { MIND, parseSession, sessionAddress } from "../session.ts";
-import { DEFAULT_MIRROR_CLAIM_MS, DEFAULT_MIRROR_SETTLE_MS } from "../config.ts";
 import { outcomeLine, silenced, silent } from "../render.ts";
 import { describeCall, nameResolver } from "../describe.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
@@ -81,10 +80,6 @@ export interface MirrorDeps {
   /** The unclaimed-CC repair: stamp a CC with the id its own post came back carrying —
    *  the dispatcher's `setDelivery`, run late by the mirror (it absorbs the echo row). */
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
-  /** How long fan-in waits for a dispatch backfill to absorb an early echo. */
-  settleMs?: number;
-  /** How far back the unclaimed-CC guard looks for an echo's twin (default 60s). */
-  claimMs?: number;
   now?: () => string;
   onError?: (event: Event, err: unknown) => void;
 }
@@ -92,7 +87,6 @@ export interface MirrorDeps {
 /** Wire the mirror to the log. Returns unsubscribe. Serialized: copies keep log order. */
 export function createMirror(deps: MirrorDeps): () => void {
   const now = deps.now ?? (() => new Date().toISOString());
-  const settleMs = deps.settleMs ?? DEFAULT_MIRROR_SETTLE_MS;
   let chain: Promise<void> = Promise.resolve();
   const enqueue = (e: Event, work: () => Promise<void>) => {
     chain = chain.then(work).catch((err) => deps.onError?.(e, err));
@@ -117,35 +111,32 @@ export function createMirror(deps: MirrorDeps): () => void {
     const { service, connection_address, conversation } = e.envelope;
     const binding = aliasOf(deps.aliases(), service, connection_address, conversation.address);
     if (binding) {
-      enqueue(
-        e,
-        () =>
-          fanIn(
-            deps,
-            e as MessageEvent,
-            binding,
-            settleMs,
-            deps.claimMs ?? DEFAULT_MIRROR_CLAIM_MS,
-            now,
-          ),
-      );
+      enqueue(e, () => fanIn(deps, e as MessageEvent, binding, now));
     }
   });
 }
 
 /* ── fan-in: alias surface → the mind ─────────────────────────────────── */
 
+/** The 小-window: how long fan-in waits for a dispatch backfill to absorb an early echo.
+ *  It measures one thing — the gap between a post going out and its id being written down —
+ *  so it is a property of the code, not of a deployment. */
+const SETTLE_MS = 1_000;
+
+/** How far back the unclaimed-CC guard looks for an echo's twin. A false-positive bound,
+ *  not a latency budget: past it, saying the same words again stops being confusable with
+ *  a post whose claim never landed. */
+const CLAIM_MS = 60_000;
+
 async function fanIn(
   deps: MirrorDeps,
   e: MessageEvent,
   binding: AliasRow,
-  settleMs: number,
-  claimMs: number,
   now: () => string,
 ): Promise<void> {
   // settle, then re-read: an early echo of our own CC is absorbed by the dispatcher's
   // backfill (dropped, merged into the CC) — if the row is gone, there is nothing to copy
-  await new Promise((r) => setTimeout(r, settleMs));
+  await new Promise((r) => setTimeout(r, SETTLE_MS));
   const still = await deps.read({
     conversation: e.envelope.conversation.address,
     after: new Date(Date.parse(e.ts) - 1).toISOString(),
@@ -161,7 +152,7 @@ async function fanIn(
   // stamp absorbs this row into the CC — and copy nothing. Without it the echo reads as the
   // principal speaking, and fan-out sends that reading to the OTHER surfaces, which echo in
   // turn: two aliases feed each other and the mind fills with its own words (§4).
-  const twin = await unclaimed(deps, e, claimMs);
+  const twin = await unclaimed(deps, e);
   if (twin) {
     if (e.envelope.external_id) {
       await deps.setDelivery?.(twin.id, { external_id: e.envelope.external_id });
@@ -247,16 +238,12 @@ async function quotedOrigin(
  *  no `external_id`. A healthy dispatcher stamps its row in milliseconds, so an unstamped
  *  one means the claim never landed — the state is otherwise unobservable, which is what
  *  makes the match safe. Newest first: the last thing we said is what just came back. */
-async function unclaimed(
-  deps: MirrorDeps,
-  e: MessageEvent,
-  claimMs: number,
-): Promise<Event | undefined> {
+async function unclaimed(deps: MirrorDeps, e: MessageEvent): Promise<Event | undefined> {
   const words = textOf(e);
   const rows = await deps.read({
     conversation: e.envelope.conversation.address,
     types: ["message"],
-    after: new Date(Date.parse(e.ts) - claimMs).toISOString(),
+    after: new Date(Date.parse(e.ts) - CLAIM_MS).toISOString(),
     filter: (x) =>
       x.agent !== undefined && x.envelope.external_id === undefined &&
       textOf(x as MessageEvent) === words,

@@ -509,6 +509,7 @@ function migrate(db: DatabaseSync) {
   if (v < 3) migrateV3(db);
   if (v < 4) migrateV4(db);
   if (v < 5) migrateV5(db);
+  if (v < 6) migrateV6(db);
 }
 
 function migrateV1(db: DatabaseSync) {
@@ -652,6 +653,35 @@ function migrateV3(db: DatabaseSync) {
     db.exec("ALTER TABLE usage ADD COLUMN turn_id TEXT");
   }
   db.exec("PRAGMA user_version = 3");
+}
+
+/** v6 — the stored rows settle on the session vocabulary (§4, §7). Pre-sessions logs
+ *  stamped `session_id` with the agent id (one session per agent) and named the mind's
+ *  room `mind:<agent>`; under pair semantics those rows would read as a foreign
+ *  session's — the mind failing to recognize its own closings re-answers its backlog.
+ *  So: a stamp equal to the agent id becomes `mind`, and the local `mind:` rooms take
+ *  the `@` spelling, in events, memberships and timers alike. `extra.via` provenance
+ *  keeps the old strings — nothing branches on a local via's conversation. */
+function migrateV6(db: DatabaseSync) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(
+      `UPDATE events SET session_id = 'mind'
+        WHERE agent_id IS NOT NULL AND session_id = agent_id;
+       UPDATE events SET conversation_address = 'mind@' || substr(conversation_address, 6)
+        WHERE service = 'local' AND conversation_address LIKE 'mind:%';
+       UPDATE memberships SET conversation_address = 'mind@' || substr(conversation_address, 6)
+        WHERE service = 'local' AND conversation_address LIKE 'mind:%';
+       UPDATE timers SET conversation = 'mind@' || substr(conversation, 6)
+        WHERE conversation LIKE 'mind:%';
+       UPDATE timers SET session_id = 'mind' WHERE session_id = agent_id;`,
+    );
+    db.exec("PRAGMA user_version = 6");
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 /** v5 — memberships enroll the (agent, session) PAIR (§4): the member is a session, so

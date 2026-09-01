@@ -92,8 +92,6 @@ export const DEFAULT_RETRY_DELAYS_MS = [5_000, 20_000]; // slow outer retries (�
 export const DEFAULT_COMPACT_AT = 50_000;
 export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves uncovered
 export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard (§5)
-export const DEFAULT_MIRROR_SETTLE_MS = 1_000; // echo settle before fan-in copies (§4)
-export const DEFAULT_MIRROR_CLAIM_MS = 60_000; // unclaimed-CC search window (§4)
 export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for its burst (§2)
 // The tick is not a knob. It is the RESOLUTION of the attention rules, not one of them:
 // `digestMinutes` says when the agent looks, and the tick only decides how late that look
@@ -138,8 +136,6 @@ export interface OrgConfig {
     compactAt: number;
     keepRecent: number;
     windowLimit: number;
-    mirrorSettleMs: number;
-    mirrorClaimMs: number;
     debounceMs: number;
   };
   org: {
@@ -227,16 +223,6 @@ const SYSTEM: Entry[] = [
     key: "windowLimit",
     value: DEFAULT_WINDOW_LIMIT,
     doc: "history query cap — the prompt's size guard",
-  },
-  {
-    key: "mirrorSettleMs",
-    value: DEFAULT_MIRROR_SETTLE_MS,
-    doc: "echo settle before the mirror's fan-in copies",
-  },
-  {
-    key: "mirrorClaimMs",
-    value: DEFAULT_MIRROR_CLAIM_MS,
-    doc: "how far back an echo may claim an unclaimed CC",
   },
   {
     key: "debounceMs",

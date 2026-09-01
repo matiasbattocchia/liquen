@@ -1575,6 +1575,14 @@ wears its address, `<msg from="build@matias">`; another agent's mind wears the b
 name (an agent IS its mind) — either way the label is the handle `send` takes back.
 `<principal>` stays the human's alone.
 
+A live pre-sessions org needs its ROWS migrated too, not just its schema: old logs stamp
+`session_id` with the agent id and name the mind's room `mind:<agent>`, and under pair
+semantics the mind would fail to recognize its own closings and re-answer its backlog on
+the first post-upgrade boot. Migration v6 settles them — stamp = agent id becomes `mind`,
+local `mind:` rooms take the `@` spelling, in events, memberships and timers. Restart
+every process of an org together: an old-code writer beside a migrated database
+re-creates old-format rows.
+
 ## The honest framing
 
 After 2b, nothing structural remains — the machine is complete and every later item is

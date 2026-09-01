@@ -2245,8 +2245,8 @@ homes, everything else funneled to the deepest function that needs it (main → 
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
 log.db tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
 tuning, every deployment works on the defaults: stopTimeoutMs · bashTimeoutMs ·
-lockTtlMs · retryDelaysMs · compactAt · keepRecent · windowLimit · mirrorSettleMs ·
-mirrorClaimMs · debounceMs), `org` (this deployment's identity: timezone · locale ·
+lockTtlMs · retryDelaysMs · compactAt · keepRecent · windowLimit · debounceMs), `org`
+(this deployment's identity: timezone · locale ·
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
 `org.agent`, the defaults every agent inherits: model · effort · maxTokens · provider ·
 tools · rules · the attention knobs), `processors` (media→text commands, §5), `agents`
