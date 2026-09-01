@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { createGoogleOAuth, type GoogleTokens } from "./oauth.ts";
+import { createGoogleOAuth, type GoogleTokens, missingScopes } from "./oauth.ts";
 import { openCredentials } from "../../store/credentials.ts";
 import type { Draft, Event } from "../../types.ts";
 import { newId } from "../../store/id.ts";
@@ -33,6 +33,7 @@ async function withOAuth(
     connections: ConnectionRow[];
     memberships: MembershipRow[];
     creds: Awaited<ReturnType<typeof openCredentials>>;
+    grants: { email: string; agent?: string; missing: string[] }[];
     start: (query?: string) => Promise<Response>;
     callback: (code: string, state: string) => Promise<Response>;
   }) => Promise<void>,
@@ -44,9 +45,11 @@ async function withOAuth(
   const exchanged: string[] = [];
   const connections: ConnectionRow[] = [];
   const memberships: MembershipRow[] = [];
+  const grants: { email: string; agent?: string; missing: string[] }[] = [];
   const handler = createGoogleOAuth({
     config: CONFIG,
     creds,
+    onGrant: (g) => grants.push(g),
     // the map's write side in miniature: the grant creates anchor + binding (§4)
     store: {
       upsertConnections: (rows) => connections.push(...rows),
@@ -71,6 +74,7 @@ async function withOAuth(
       connections,
       memberships,
       creds,
+      grants,
       start: (query = "") => handler(new Request(`https://x.example/oauth/google/start${query}`)),
       callback: (code, state) =>
         handler(
@@ -188,4 +192,36 @@ Deno.test("callback: an exchange without identity is a failure, not a nameless r
     assertEquals(res.status, 502);
     assertEquals(t.connections, []);
   }, { access_token: "ya29.short" }); // no id_token on the wire
+});
+
+Deno.test("missingScopes: Google's shorthands are the same scope, not a shortfall", () => {
+  // the ask says `email`, the grant says the full userinfo URL — comparing the two
+  // spellings naively reports every healthy grant as partial
+  assertEquals(
+    missingScopes(
+      ["openid", "email", "https://www.googleapis.com/auth/calendar"],
+      "https://www.googleapis.com/auth/userinfo.email openid " +
+        "https://www.googleapis.com/auth/calendar",
+    ),
+    [],
+  );
+  assertEquals(missingScopes(["openid", "profile"], "openid"), ["profile"]);
+  assertEquals(missingScopes(["openid"], undefined), ["openid"]); // no scope on the wire
+});
+
+Deno.test("callback: a grant that dropped a scope says so — page, event, hook", async () => {
+  await withOAuth(async (t) => {
+    const state = stateOf(await t.start("?agent=ana"));
+    const res = await t.callback("c0de", state);
+    // the flow COMPLETED — the grant is real and stored; it just cannot do the work
+    assertEquals(res.status, 200);
+    assertStringIncludes(await res.text(), "auth/calendar");
+    assertEquals(t.grants, [{
+      email: "ana@example.com",
+      agent: "ana",
+      missing: ["https://www.googleapis.com/auth/calendar"],
+    }]);
+    assertStringIncludes(t.published[0].parts[0].text!, "NOT granted: ");
+    assert((await t.creds.get("google:ana@example.com")) !== undefined);
+  }, { ...TOKENS, scope: "openid email" }); // the member left calendar unticked
 });

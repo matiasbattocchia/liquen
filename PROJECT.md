@@ -1583,6 +1583,23 @@ local `mind:` rooms take the `@` spelling, in events, memberships and timers. Re
 every process of an org together: an old-code writer beside a migrated database
 re-creates old-format rows.
 
+### The google grant's silent shortfall (2026-09-01) — LANDED
+
+A re-consent came back carrying `openid` and `email` but not `calendar`, the account door
+printed `✓ connected` over it, and the poller reported the truth a minute later as a 403.
+`scope` on the token response is the authority on what a grant can DO — the ask is only a
+request, and a member ticks permissions one at a time — so the callback compares the two
+and names the difference everywhere a grant is reported: the page, the grant event, and
+`onGrant` for a door with a terminal in front of it. `missingScopes` canonicalizes
+Google's `email`/`profile` shorthands against the `userinfo.*` URLs they expand to, or
+every healthy grant reads as partial.
+
+The account verb asks for `connections.google.scopes` (the catalog, not the module
+default), prints the ask before opening the browser, names the localhost callback that has
+to be registered on the client — `redirect_uri_mismatch` is what Google rejects first, and
+this door waits on localhost, so the app's hosted callback is the served door's, not this
+one's — and exits 2 with one line when the vault holds no app.
+
 ## The honest framing
 
 After 2b, nothing structural remains — the machine is complete and every later item is

@@ -67,6 +67,9 @@ export interface GoogleOAuthDeps {
   store: Pick<Connections, "upsertConnections" | "upsertMemberships">;
   /** The code exchange — injectable for tests; default POSTs the token endpoint. */
   exchange?: (code: string, config: GoogleOAuthConfig) => Promise<GoogleTokens>;
+  /** Called once the grant is written, before the page returns: a door that has a
+   *  terminal in front of it (the account verb) reports the shortfall there and then. */
+  onGrant?: (grant: { email: string; agent?: string; missing: string[] }) => void;
   now?: () => string;
 }
 
@@ -118,6 +121,10 @@ export function createGoogleOAuth(deps: GoogleOAuthDeps): OAuthHandler {
       const id = claimsOf(tok.id_token);
       if (!id?.email) return text(502, "exchange carried no identity");
       const agent = typeof bound.agent === "string" ? bound.agent : undefined;
+      const asked = Array.isArray(bound.scopes)
+        ? bound.scopes.filter((s): s is string => typeof s === "string")
+        : [];
+      const missing = missingScopes(asked, tok.scope);
 
       const credentialKey = `google:${id.email}`;
       await deps.creds.put({
@@ -169,18 +176,43 @@ export function createGoogleOAuth(deps: GoogleOAuthDeps): OAuthHandler {
           type: "text",
           kind: "text",
           text: `Google connected: ${id.email}` + (agent ? ` for ${agent}` : " (org)") +
-            (tok.scope ? ` — scopes: ${tok.scope}` : ""),
+            (tok.scope ? ` — scopes: ${tok.scope}` : "") +
+            (missing.length ? ` — NOT granted: ${missing.join(" ")}` : ""),
         }],
       };
       await deps.publish(note);
+      deps.onGrant?.({ email: id.email, ...(agent ? { agent } : {}), missing });
       return new Response(
-        "✓ Connected. You can close this window.",
+        missing.length
+          ? `Connected as ${id.email}, but these permissions were not granted:\n` +
+            `  ${missing.join("\n  ")}\n\n` +
+            `Approve them on the consent screen and connect again — consent is ` +
+            `incremental, so it merges into this grant.`
+          : "✓ Connected. You can close this window.",
         { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } },
       );
     }
 
     return text(404, "not found");
   };
+}
+
+/** `email` and `profile` are shorthands Google expands on the way back: the ask says
+ *  `email`, the grant says `.../auth/userinfo.email`, and they are one scope. */
+const ALIAS: Record<string, string> = {
+  email: "https://www.googleapis.com/auth/userinfo.email",
+  profile: "https://www.googleapis.com/auth/userinfo.profile",
+};
+
+/** What the ask did not get, in the ask's own spelling. A member ticks permissions one by
+ *  one and the consent screen offers only what the app registered, so `scope` on the wire
+ *  is the authority on what the grant can actually do — a subset is a grant that opens the
+ *  door and still cannot do the work, and the API says so only at the first 403. */
+export function missingScopes(asked: string[], granted?: string): string[] {
+  const has = new Set(
+    (granted ?? "").split(/\s+/).filter(Boolean).map((s) => ALIAS[s] ?? s),
+  );
+  return asked.filter((s) => !has.has(ALIAS[s] ?? s));
 }
 
 /** The id_token's payload — decoded, not verified: it arrived from Google's own token
@@ -259,6 +291,11 @@ if (import.meta.main) {
     creds,
     publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
     store: log, // connections live on the Log (§4) — the grant writes the map
+    onGrant: (g) =>
+      console.error(
+        `[oauth] granted ${g.email}${g.agent ? ` → ${g.agent}` : " (org)"}` +
+          (g.missing.length ? ` — WITHOUT ${g.missing.join(" ")}` : ""),
+      ),
   });
   console.error(`[oauth] on :${port} — agents mint <public>/oauth/google/start?agent=…`);
   Deno.serve({ port }, handler);
