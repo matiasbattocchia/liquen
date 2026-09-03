@@ -7,6 +7,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { type AgentConfig, xi, type XiPorts } from "./xi.ts";
 import { type Log, openLog } from "./store/log.ts";
+import { LOCK_TTL_MS } from "./store/lock.ts";
 import { openFileDocs } from "./store/docs.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
@@ -561,15 +562,17 @@ Deno.test("the gate is free: a spectator event takes no lease and reads nothing"
 
 Deno.test("recovery: a stale lock (crashed holder) → pending uses swept, then the closing turn", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  // the lease reads a clock this test moves (§9): the TTL is aged, not waited out
+  let skew = 0;
+  const log = await openLog(dir, { now: () => Date.now() + skew });
   await log.publish(principalMsg("seguís ahí?"));
   const use = (await log.publish(orphanUse()))!;
   // a CRASHED holder: it took the lease and its process went away, so nothing re-stamps
   // the heartbeat. Closing a second handle is that exactly — the beats stop with it.
   const dead = await openLog(dir);
-  assertEquals(await dead.lock("turn-mind@a1", 50).acquire(), "acquired");
+  assertEquals(await dead.lock("turn-mind@a1").acquire(), "acquired");
   await dead.close();
-  await new Promise((r) => setTimeout(r, 80));
+  skew = LOCK_TTL_MS + 1; // …and the org that boots next finds it a TTL stale
 
   const { transport, calls } = scripted([
     ok([{ kind: "assistant", text: "acá estoy" }], "end_turn"),
@@ -579,7 +582,6 @@ Deno.test("recovery: a stale lock (crashed holder) → pending uses swept, then 
     docs: openFileDocs(`${dir}/docs`),
     transport,
     exec: { echo: echoTool },
-    lockTtlMs: 50,
   });
   try {
     await waitFor(async () => (await log.read({ types: ["tool_result"] })).length === 1);

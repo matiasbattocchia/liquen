@@ -67,7 +67,6 @@ export interface TranscriberDeps {
    *  makes of it is its own business — the harness knows nothing about ASR languages, and
    *  the mapping from a locale to a model's own vocabulary belongs beside that model. */
   locale?: string | null;
-  timeoutMs?: number;
   now?: () => string;
   onError?: (event: Event, err: unknown) => void;
 }
@@ -108,7 +107,7 @@ async function transcribe(
     text = (await run(
       deps.command,
       await Deno.readFile(path),
-      deps.timeoutMs ?? TIMEOUT_MS,
+      TIMEOUT_MS,
       deps.locale,
     )).trim();
     if (text) await Deno.writeTextFile(sidecar, text + "\n");

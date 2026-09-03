@@ -69,21 +69,25 @@ export interface WhatsAppConnectDeps {
   publish: Appender["publish"];
   /** UI hook: fires on every visible change (first QR, each rotation, the code). */
   onState?: (state: WAPairingState) => void;
-  pollMs?: number;
-  timeoutMs?: number;
+  /** The clock every stamp and the pairing deadline read (§9: the seam a test moves). */
   now?: () => string;
 }
 
+/** How often the bridge is asked whether the phone has answered. */
+const POLL_MS = 1_000;
+/** Mirrors the bridge's own pendingTTL — past it the poll only ever answers error. */
+const PAIRING_TTL_MS = 10 * 60_000;
+
 /** Drive one pairing to completion: create, poll, and on `paired` write the map and
- *  notify the log. Throws (writing nothing) on error or timeout. */
+ *  notify the log. Throws (writing nothing) on error or timeout. `pollMs` is `POLL_MS` —
+ *  a waited constant, so the value is the seam (§9): a test drives the loop faster. */
 export async function connectWhatsApp(
   deps: WhatsAppConnectDeps,
+  pollMs: number = POLL_MS,
 ): Promise<{ address: string }> {
   const now = deps.now ?? (() => new Date().toISOString());
-  const org = deps.organizationId ?? "mu";
-  const pollMs = deps.pollMs ?? 1000;
-  // mirrors the bridge's own pendingTTL — past it the poll only ever answers error
-  const deadline = Date.now() + (deps.timeoutMs ?? 10 * 60 * 1000);
+  const org = deps.organizationId ?? BRIDGE_ORG;
+  const deadline = Date.parse(now()) + PAIRING_TTL_MS;
 
   let state = await deps.bridge.create({
     organization_id: org,
@@ -93,7 +97,7 @@ export async function connectWhatsApp(
   deps.onState?.(state);
 
   while (state.status === "pending") {
-    if (Date.now() >= deadline) throw new Error("pairing timed out — run the door again");
+    if (Date.parse(now()) >= deadline) throw new Error("pairing timed out — run the door again");
     await new Promise((r) => setTimeout(r, pollMs));
     const next = await deps.bridge.pending(state.session_id);
     if (

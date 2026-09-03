@@ -162,8 +162,12 @@ export type Log =
 const DB_FILE = "log.db";
 const POLL_MS = 300; // backstop period — fs-watch can drop events under load
 
-/** Open (or create) a SQLite-backed, multi-process Log rooted at `dir`. */
-export async function openLog(dir: string): Promise<Log> {
+/** Open (or create) a SQLite-backed, multi-process Log rooted at `dir`. `now` is the
+ *  clock the lease reads (§9): a test moves it to age a lease instead of waiting one out. */
+export async function openLog(
+  dir: string,
+  opts: { now?: () => number } = {},
+): Promise<Log> {
   await Deno.mkdir(dir, { recursive: true });
   const db = new DatabaseSync(`${dir}/${DB_FILE}`);
   // the store's id authority: Postgres writes `DEFAULT uuidv7()`, SQLite needs the function
@@ -310,6 +314,7 @@ export async function openLog(dir: string): Promise<Log> {
   const drop = db.prepare("DELETE FROM events WHERE id = ?");
   const unlock = db.prepare(RELEASE_SQL);
   const owns = db.prepare(OWNS_SQL);
+  const locker = createLocker(db, opts.now);
 
   /** One upsert — or, for a PARTLESS draft, one patch (merge-only: nothing stored when the
    *  referenced row doesn't exist ⇒ null). Returns the STORED id (minted here, or the
@@ -405,8 +410,8 @@ export async function openLog(dir: string): Promise<Log> {
       );
     },
 
-    ...createLocker(db), // the turn lease lives HERE — same DB, so one transaction holds both
-    //                      a turn's last writes and its release (`publishAndRelease`, §2)
+    lock: locker.lock, // the turn lease lives HERE — same DB, so one transaction holds both
+    //                    a turn's last writes and its release (`publishAndRelease`, §2)
     ...createRegistry(db), // the agent registry (§9): folders declare, this table mirrors
     ...createTimers(db), // armed wakes (§10): the one non-log fact about the future
     ...createStanding(db), // remembered policies (§9): standing verdicts land here
@@ -479,6 +484,7 @@ export async function openLog(dir: string): Promise<Log> {
     },
 
     close(): Promise<void> {
+      locker.stop(); // no holder is left to speak for once the store is gone
       db.close();
       return Promise.resolve();
     },

@@ -2259,8 +2259,8 @@ roster into registry rows and
 homes, everything else funneled to the deepest function that needs it (main → xi → nu →
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
 log.db tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
-tuning, every deployment works on the defaults: stopTimeoutMs · bashTimeoutMs ·
-retryDelaysMs · compactAt · keepRecent · windowLimit · debounceMs), `org`
+tuning, every deployment works on the defaults: bashTimeoutMs ·
+compactAt · keepRecent · windowLimit · debounceMs), `org`
 (this deployment's identity: timezone · locale ·
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
 `org.agent`, the defaults every agent inherits: model · effort · maxTokens · provider ·
@@ -2293,6 +2293,27 @@ arguments and never read env; their argument defaults are the same exported cons
 (the tokens a service holds; `ANTHROPIC_API_KEY` belongs to the SDK's own credential
 chain, not to us); session choices — which agent the REPL faces, which principal a connect
 door binds — are CLI arguments, per-invocation by nature.
+**Which numbers are knobs, and how a test moves the rest.** One question sorts every
+number in the codebase: *would two healthy deployments ever want different values?* Yes
+⇒ a catalog knob, funneled as a parameter. No ⇒ a constant, `const` in the module that
+owns the mechanism (in `config.ts` only when two modules read it: `TICK_MS`,
+`STOP_TIMEOUT_MS`). A number never enters the catalog because a test needs it smaller —
+a constant made a knob is a setting a deployer can set to something incoherent, and the
+test that wanted it has a better seam. Which seam depends on how the constant is USED,
+and the split is mechanical. A constant that is *compared* against a stored timestamp
+(`seen <= now − TTL`; the lease TTL, a media or OAuth-state TTL, the echo-claim window,
+the window anchor's grid) is pure arithmetic on a clock, so the module takes
+`now?: () => number` (epoch ms — the one shape at the store layer; ISO is derived where
+an event is stamped) and the constant never moves: the test advances the clock and pays no
+wall time. A constant that is *waited out* by a timer (a settle, a poll, a backoff, a
+shutdown grace, the heartbeat interval) has to shrink for a test to run, and the value
+itself is the seam — as a function parameter whose default is the constant
+(`lock(name, ttlMs = LOCK_TTL_MS)`), or a field on the struct that IS a function's
+argument list (`MainConfig`, `BashOptions`). Never on a ports/deps struct: those carry
+collaborators (a log, a transport, a docs store), and a scalar among them reads as
+configuration and drifts back toward the catalog. What a test cannot fake is that a
+timer fires at all, so the one test that proves the heartbeat beats waits real time, and
+it is the only one that does.
 Machine-discovered bindings (a Slack user id from `auth.test`, the self-DM channel) land
 on the connections map directly — so the two tables are the merged QUERY surface (the
 classifier's lookups, the RLS substrate) and no human ever edits them: humans write

@@ -101,8 +101,14 @@ export const RELEASE_SQL = "DELETE FROM locks WHERE name = ?1 AND born = ?2";
 export const OWNS_SQL = "SELECT 1 AS x FROM locks WHERE name = ?1 AND born = ?2";
 
 /** Bind the locker to an open DB. Statements are prepared ONCE — `lock()` is called per xi
- *  invocation, and with a fan-out that invokes every agent per event that adds up. */
-export function createLocker(db: DatabaseSync, now: () => number = Date.now): Locker {
+ *  invocation, and with a fan-out that invokes every agent per event that adds up. `now`
+ *  is the clock every stamp and every comparison reads (§9: the seam a test moves).
+ *  `stop()` ends every heartbeat this locker started — a closing store has no holder left
+ *  to speak for, and an abandoned turn's beat must not outlive the DB it beats into. */
+export function createLocker(
+  db: DatabaseSync,
+  now: () => number = Date.now,
+): Locker & { stop(): void } {
   const take = db.prepare(
     "INSERT INTO locks (name, born, seen) VALUES (?1, ?2, ?2) ON CONFLICT(name) DO NOTHING",
   );
@@ -113,13 +119,21 @@ export function createLocker(db: DatabaseSync, now: () => number = Date.now): Lo
   const beat = db.prepare("UPDATE locks SET seen = ?3 WHERE name = ?1 AND born = ?2");
   const free = db.prepare(RELEASE_SQL);
   const live = db.prepare("SELECT 1 AS x FROM locks WHERE name = ? AND seen > ?");
+  const hearts = new Set<number>();
 
   return {
+    stop() {
+      for (const h of hearts) clearInterval(h);
+      hearts.clear();
+    },
     lock(name: string, ttlMs: number = LOCK_TTL_MS): TurnLock {
       let born = 0; // no acquire yet — a stamp that matches no row
       let heart: number | undefined;
       const stop = () => {
-        if (heart !== undefined) clearInterval(heart);
+        if (heart !== undefined) {
+          clearInterval(heart);
+          hearts.delete(heart);
+        }
         heart = undefined;
       };
       const start = () => {
@@ -142,6 +156,7 @@ export function createLocker(db: DatabaseSync, now: () => number = Date.now): Lo
         // the heartbeat must never be a reason for the process to stay up: a supervisor's
         // SIGTERM has to end it, and a leaked lock has to stop holding the test open
         Deno.unrefTimer(heart);
+        hearts.add(heart);
       };
       return {
         acquire(): Promise<Acquired> {

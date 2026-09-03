@@ -28,12 +28,18 @@ import type { DocEntry } from "./store/docs.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
-import { DEFAULT_RETRY_DELAYS_MS } from "./config.ts";
 import { render, SILENCE } from "./render.ts";
 import { type Effort, type ModelTransport, mu, type StepResult } from "./mu.ts";
 
 /** Re-exported so the layer above talks to nu, not past it (main → xi → nu → mu). */
 export type { ModelTransport };
+
+/** Slow OUTER retries for a failed model step, after the SDK client's own fast ones (2×,
+ *  backoff + jitter, honoring retry-after on 429/5xx). This layer covers persistent
+ *  failure — API weather, the same for every deployment — so it is a constant, not a knob
+ *  (§9). The sleeps are wall time a turn spends holding its lease, which the heartbeat
+ *  covers. */
+export const RETRY_DELAYS_MS = [5_000, 20_000];
 
 export interface TurnConfig {
   agentId: AgentId;
@@ -46,8 +52,8 @@ export interface TurnConfig {
   timezone?: string;
   /** Parked until the i18n seam — org config carries it; render is English for now (§5). */
   locale?: string;
-  /** Slow OUTER retries for mu failures. The SDK client already retries fast (2×, backoff +
-   *  jitter, honors retry-after on 429/5xx); this layer covers persistent failure (§2). */
+  /** Slow OUTER retries for mu failures — `RETRY_DELAYS_MS` unless a caller says otherwise
+   *  (a test runs them at zero). */
   retryDelaysMs?: number[];
   compactAt?: number; // est. tokens before a checkpoint displaces the turn (§5; default 150K)
   keepRecent?: number; // est. tokens left uncovered by a checkpoint (default ~20K)
@@ -133,7 +139,7 @@ export async function nu(
   });
 
   let res: StepResult = { ok: false, error: "not attempted" };
-  const delays = config.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const delays = config.retryDelaysMs ?? RETRY_DELAYS_MS;
   for (let attempt = 0; attempt <= delays.length; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, delays[attempt - 1]));
     res = await mu(

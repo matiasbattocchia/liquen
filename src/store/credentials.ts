@@ -44,7 +44,13 @@ export interface Credentials {
 const STATE_TTL_MS = 10 * 60 * 1000; // OAuth codes live ~10min; states match
 
 /** Open the vault on the org's log.db (its own connection — WAL serves both). */
-export async function openCredentials(dir: string): Promise<Credentials> {
+/** `now` is the clock the OAuth-state TTL is measured against (§9): a test ages a state
+ *  by moving it rather than waiting ten minutes. */
+export async function openCredentials(
+  dir: string,
+  opts: { now?: () => number } = {},
+): Promise<Credentials> {
+  const now = opts.now ?? Date.now;
   await Deno.mkdir(`${dir}/log`, { recursive: true });
   const db = new DatabaseSync(`${dir}/log/log.db`);
   db.exec(
@@ -125,12 +131,12 @@ export async function openCredentials(dir: string): Promise<Credentials> {
 
     mintState(service, extra): Promise<string> {
       const state = crypto.randomUUID();
-      putS.run(state, service, extra ? JSON.stringify(extra) : null, Date.now());
+      putS.run(state, service, extra ? JSON.stringify(extra) : null, now());
       return Promise.resolve(state);
     },
 
     consumeState(service, state): Promise<Record<string, unknown> | null> {
-      const r = takeS.get(state, service, Date.now() - STATE_TTL_MS) as
+      const r = takeS.get(state, service, now() - STATE_TTL_MS) as
         | { extra: string | null }
         | undefined;
       if (r === undefined) return Promise.resolve(null);

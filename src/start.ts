@@ -10,7 +10,7 @@
  *
  * Death is loud on stderr and nowhere else — the supervisor never opens the log; the
  * outer layer (docker restart, systemd, the terminal) supervises `mu start` itself.
- * SIGTERM fans out to the children, waits `system.stopTimeoutMs`, then SIGKILLs.
+ * SIGTERM fans out to the children, waits `STOP_TIMEOUT_MS`, then SIGKILLs.
  *
  * Every line a child writes arrives stamped — `HH:MM:SS [name] …` — so attribution is
  * the harness's property, not a convention each service must remember: panics and
@@ -19,7 +19,7 @@
  */
 
 import { TextLineStream } from "@std/streams";
-import { findRoot, readConfig } from "./config.ts";
+import { findRoot, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
 
 const RESTART_BASE_MS = 1_000;
 const RESTART_CAP_MS = 60_000;
@@ -124,7 +124,7 @@ if (import.meta.main) {
           c.kill("SIGKILL");
         } catch { /* already gone */ }
       }
-    }, catalog.system.stopTimeoutMs);
+    }, STOP_TIMEOUT_MS);
     Deno.unrefTimer(hammer); // children all exiting cleanly must let the process end
   };
   Deno.addSignalListener("SIGTERM", stop);

@@ -4,12 +4,8 @@
 {
   // harness machinery — every deployment works on the defaults
   "system": {
-    // cap on stop() awaiting an in-flight turn
-    "stopTimeoutMs": 5000,
     // a bash call's wall cap unless the model asks for another
     "bashTimeoutMs": 120000,
-    // slow outer retries after the SDK's own fast ones
-    "retryDelaysMs": [5000, 20000],
     // est. tokens of raw event JSON (~1.8x the prompt) before a checkpoint runs
     "compactAt": 50000,
     // est. tokens a checkpoint leaves uncovered

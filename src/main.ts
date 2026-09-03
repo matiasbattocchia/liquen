@@ -52,10 +52,10 @@ import { installDoors, type Status } from "./door.ts";
 import type { AlarmEvent, Delta, Draft, Event } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
-  DEFAULT_STOP_TIMEOUT_MS,
   findRoot,
   type OrgConfig,
   readConfig,
+  STOP_TIMEOUT_MS,
   TICK_MS,
 } from "./config.ts";
 
@@ -130,7 +130,9 @@ export interface MainConfig {
    *  `mu connect` is the real writer). */
   connections?: ConnectionRow[];
   apiKey?: string; // default: env ANTHROPIC_API_KEY
-  stopTimeoutMs?: number; // cap on how long stop() waits for an in-flight turn (default 5s)
+  /** Dev/test seam: the shutdown grace (`STOP_TIMEOUT_MS`) — so a test can watch a wedged
+   *  turn be abandoned without sitting out the real one. */
+  stopTimeoutMs?: number;
   /** How long a world trigger waits for the rest of its burst before the turn runs, in ms
    *  (§2); 0 disables. Default 5s — see the debounce in the fan-out. */
   debounceMs?: number;
@@ -474,7 +476,7 @@ export async function start(
       // mode, killed outright by the process exit that follows).
       await withTimeout(
         Promise.all([...outstanding]),
-        config.stopTimeoutMs ?? catalog?.system.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+        config.stopTimeoutMs ?? STOP_TIMEOUT_MS,
       );
       // each agent's own jobs, reaped with its own plane (§9)
       for (const plane of planes.values()) await plane.reap();
@@ -534,7 +536,6 @@ async function compileRoster(
       sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.sleepHours,
       // the system half funnels too — org-wide, no per-agent seat (harness machinery)
       windowLimit: catalog.system.windowLimit,
-      retryDelaysMs: catalog.system.retryDelaysMs,
       compactAt: catalog.system.compactAt,
       keepRecent: catalog.system.keepRecent,
       provider: cfg.provider ?? org.provider ?? undefined,

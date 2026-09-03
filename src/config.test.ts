@@ -55,7 +55,6 @@ Deno.test("a sparse file: a set key wins, a left-out key defaults", async () => 
     assertEquals(cfg.org.agent.effort, "low");
     assertEquals(cfg.org.agent.model, "claude-sonnet-5"); // the default filled in
     assertEquals(cfg.system.debounceMs, 0);
-    assertEquals(cfg.system.stopTimeoutMs, 5000);
   });
 });
 

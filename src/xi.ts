@@ -727,11 +727,6 @@ export interface XiPorts {
    *  client cannot compute for itself. `cursor` is the last event the deciding read saw. */
   onDecision?: (verdict: Decision, cursor: string | undefined) => void;
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
-  /** How long without a heartbeat before this turn's lease is stealable. The constant
-   *  (`LOCK_TTL_MS`) is the answer for every deployment — it rides here, beside the other
-   *  injected edges, only so a test can watch a crash be recovered from without waiting
-   *  out a real one. */
-  lockTtlMs?: number;
 }
 
 /** How coarse the window's floor is: the grid the oldest kept event snaps DOWN to. */
@@ -775,7 +770,7 @@ export async function xi(
   //    already up to date w.r.t. whatever landed while we were acquiring. Keyed by the
   //    SESSION (§4): the lock serializes one session's turns; siblings run concurrently.
   const name = `turn-${sessionAddress(config.agentId, config.sessionId)}`;
-  const lock = ports.log.lock(name, ports.lockTtlMs);
+  const lock = ports.log.lock(name);
   const got = await lock.acquire();
   if (got === "held") return "held"; // no retry: someone is on it, and their turn's end will poke
 

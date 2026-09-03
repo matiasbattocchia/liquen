@@ -84,8 +84,10 @@ export interface MirrorDeps {
   onError?: (event: Event, err: unknown) => void;
 }
 
-/** Wire the mirror to the log. Returns unsubscribe. Serialized: copies keep log order. */
-export function createMirror(deps: MirrorDeps): () => void {
+/** Wire the mirror to the log. Returns unsubscribe. Serialized: copies keep log order.
+ *  `settleMs` is `SETTLE_MS` — a waited constant, so the value is the seam (§9): a test
+ *  passes a smaller one rather than sitting out the real window. */
+export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): () => void {
   const now = deps.now ?? (() => new Date().toISOString());
   let chain: Promise<void> = Promise.resolve();
   const enqueue = (e: Event, work: () => Promise<void>) => {
@@ -111,7 +113,7 @@ export function createMirror(deps: MirrorDeps): () => void {
     const { service, connection_address, conversation } = e.envelope;
     const binding = aliasOf(deps.aliases(), service, connection_address, conversation.address);
     if (binding) {
-      enqueue(e, () => fanIn(deps, e as MessageEvent, binding, now));
+      enqueue(e, () => fanIn(deps, e as MessageEvent, binding, settleMs, now));
     }
   });
 }
@@ -132,11 +134,12 @@ async function fanIn(
   deps: MirrorDeps,
   e: MessageEvent,
   binding: AliasRow,
+  settleMs: number,
   now: () => string,
 ): Promise<void> {
   // settle, then re-read: an early echo of our own CC is absorbed by the dispatcher's
   // backfill (dropped, merged into the CC) — if the row is gone, there is nothing to copy
-  await new Promise((r) => setTimeout(r, SETTLE_MS));
+  await new Promise((r) => setTimeout(r, settleMs));
   const still = await deps.read({
     conversation: e.envelope.conversation.address,
     after: new Date(Date.parse(e.ts) - 1).toISOString(),

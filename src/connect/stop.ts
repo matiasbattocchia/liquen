@@ -3,7 +3,7 @@
  *
  * A connection process (run.ts) is resident halves — an ingest serving, a dispatcher
  * subscribed. Stopping is: stop taking work, await what is in flight, exit — so the
- * supervisor's grace (`system.stopTimeoutMs`, then SIGKILL) is a window the process
+ * supervisor's grace (`STOP_TIMEOUT_MS`, then SIGKILL) is a window the process
  * actually uses. What a hard kill can leave — a send on the wire whose stamp never
  * landed — is bounded by the delivery contract: `send` answers queued, nothing claims
  * delivery before `dispatched_at`, and a restart may duplicate that one message.

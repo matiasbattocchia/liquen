@@ -41,7 +41,6 @@ function harness(bridge: WABridgeSessions, over: Partial<WhatsAppConnectDeps> = 
       return Promise.resolve(stored);
     }) as Appender["publish"],
     onState: (s) => states.push(s),
-    pollMs: 1,
     ...over,
   };
   return { deps, connections, memberships, published, states };
@@ -62,7 +61,7 @@ Deno.test("QR flow: poll to paired writes the owned anchor, membership, and note
   );
   const { deps, connections, memberships, published, states } = harness(bridge);
 
-  const { address } = await connectWhatsApp(deps);
+  const { address } = await connectWhatsApp(deps, 1);
 
   assertEquals(address, "5491100000000");
   assertEquals(creates[0].agent_id, "matias"); // the pairing binds the principal
@@ -93,7 +92,7 @@ Deno.test("phone flow: the number rides create; the pairing code surfaces", asyn
   );
   const { deps, states } = harness(bridge, { phoneNumber: "5491100000000" });
 
-  await connectWhatsApp(deps);
+  await connectWhatsApp(deps, 1);
   assertEquals(creates[0].phone_number, "5491100000000");
   assertEquals(states[0].pairing_code, "ABCD-EFGH");
 });
@@ -105,7 +104,7 @@ Deno.test("a failed pairing throws and writes NOTHING", async () => {
   );
   const { deps, connections, memberships, published } = harness(bridge);
 
-  await assertRejects(() => connectWhatsApp(deps), Error, "pairing timed out");
+  await assertRejects(() => connectWhatsApp(deps, 1), Error, "pairing timed out");
   assertEquals(connections.length, 0);
   assertEquals(memberships.length, 0);
   assertEquals(published.length, 0);

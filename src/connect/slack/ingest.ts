@@ -148,7 +148,9 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     if (deps.signingSecret) {
       const ts = req.headers.get("x-slack-request-timestamp") ?? "";
       const sig = req.headers.get("x-slack-signature") ?? "";
-      if (!(await verify(deps.signingSecret, ts, body, sig))) return text(401, "bad signature");
+      if (!(await verify(deps.signingSecret, ts, body, sig, now))) {
+        return text(401, "bad signature");
+      }
     }
 
     let payload: EventsEnvelope;
@@ -493,9 +495,20 @@ function mirrorMember(
 
 const encoder = new TextEncoder();
 const FRESH_MS = 5 * 60 * 1000;
+/** Slack refreshes sockets routinely, so a close is the normal case and reconnects fast;
+ *  an error means the far side is unwell and the wait is longer. */
+const RECONNECT_MS = 1_000;
+const RECONNECT_ERROR_MS = 5_000;
 
-async function verify(secret: string, ts: string, body: string, header: string): Promise<boolean> {
-  if (!ts || Math.abs(Date.now() - Number(ts) * 1000) > FRESH_MS) return false; // replay guard
+async function verify(
+  secret: string,
+  ts: string,
+  body: string,
+  header: string,
+  now: () => string,
+): Promise<boolean> {
+  // the replay guard, against the ingest's own clock (§9) — ms derived from the ISO stamp
+  if (!ts || Math.abs(Date.parse(now()) - Number(ts) * 1000) > FRESH_MS) return false;
   const key = await crypto.subtle.importKey(
     "raw",
     encoder.encode(secret),
@@ -578,11 +591,11 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => Pr
         if (env.type === "disconnect") ws?.close();
       };
       ws.onclose = () => {
-        if (!closed) setTimeout(connect, 1_000); // Slack refreshes sockets routinely
+        if (!closed) setTimeout(connect, RECONNECT_MS);
       };
     } catch (err) {
       console.error("[ingest] socket error:", err instanceof Error ? err.message : err);
-      if (!closed) setTimeout(connect, 5_000);
+      if (!closed) setTimeout(connect, RECONNECT_ERROR_MS);
     }
   };
   connect();
