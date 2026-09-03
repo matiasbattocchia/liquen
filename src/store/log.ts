@@ -36,7 +36,15 @@
 import { DatabaseSync } from "node:sqlite";
 import type { Conversation, Draft, Envelope, Event, EventId } from "../types.ts";
 import { newId } from "./id.ts";
-import { createLocker, type Locker, LOCKS_DDL, RELEASE_SQL } from "./lock.ts";
+import {
+  createLocker,
+  type Lease,
+  LeaseLost,
+  type Locker,
+  LOCKS_DDL,
+  OWNS_SQL,
+  RELEASE_SQL,
+} from "./lock.ts";
 import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
 import { type Connections, CONNECTIONS_DDL, createConnections } from "./connections.ts";
@@ -106,8 +114,8 @@ export interface Appender {
   /** PUBLISH, and DROP A LEASE, in one transaction (§2). This is how a turn ends: its last
    *  events and its turn-lease release become visible together, so the wake they fire can
    *  never find the lease still held — that bounced wake was a real stalled-cycle bug. */
-  publishAndRelease(event: Draft, lock: string): Promise<Event | null>;
-  publishAndRelease(events: Draft[], lock: string): Promise<Event[]>;
+  publishAndRelease(event: Draft, lease: Lease): Promise<Event | null>;
+  publishAndRelease(events: Draft[], lease: Lease): Promise<Event[]>;
 }
 export interface Reader {
   /** QUERY. A point-in-time slice in append order. The escape hatch beyond a pushed event. */
@@ -301,6 +309,7 @@ export async function openLog(dir: string): Promise<Log> {
   );
   const drop = db.prepare("DELETE FROM events WHERE id = ?");
   const unlock = db.prepare(RELEASE_SQL);
+  const owns = db.prepare(OWNS_SQL);
 
   /** One upsert — or, for a PARTLESS draft, one patch (merge-only: nothing stored when the
    *  referenced row doesn't exist ⇒ null). Returns the STORED id (minted here, or the
@@ -349,7 +358,7 @@ export async function openLog(dir: string): Promise<Log> {
    *  out with unstored merge-only drafts omitted. */
   const commit = (
     one: Draft | Draft[],
-    lock?: string,
+    lease?: Lease,
   ): Promise<Event | Event[] | null> => {
     const drafts = Array.isArray(one) ? one : [one];
     for (const d of drafts) {
@@ -361,8 +370,14 @@ export async function openLog(dir: string): Promise<Log> {
     const now = new Date().toISOString();
     db.exec("BEGIN IMMEDIATE");
     try {
+      // a turn ending under a lease proves it still holds it, INSIDE the write transaction
+      // so no steal can land between the check and the inserts. A holder declared dead has
+      // a successor redoing this very window: its events would be that turn twice over.
+      if (lease !== undefined && owns.get(lease.name, lease.born) === undefined) {
+        throw new LeaseLost(lease);
+      }
       const stored = drafts.map((e) => write(e, now)).filter((e): e is Event => e !== null);
-      if (lock !== undefined) unlock.run(lock);
+      if (lease !== undefined) unlock.run(lease.name, lease.born);
       db.exec("COMMIT");
       return Promise.resolve(Array.isArray(one) ? stored : stored[0] ?? null);
     } catch (err) {
@@ -401,8 +416,8 @@ export async function openLog(dir: string): Promise<Log> {
       return await (commit(one) as Promise<Event & Event[]>);
     },
 
-    async publishAndRelease(one: Draft | Draft[], lock: string): Promise<Event & Event[]> {
-      return await (commit(one, lock) as Promise<Event & Event[]>);
+    async publishAndRelease(one: Draft | Draft[], lease: Lease): Promise<Event & Event[]> {
+      return await (commit(one, lease) as Promise<Event & Event[]>);
     },
     // (the casts above serve the overload pairs; commit itself is honest about null)
 

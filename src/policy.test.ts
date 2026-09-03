@@ -77,7 +77,7 @@ Deno.test("publishAndRelease: an unwritable draft aborts BEFORE the lease is tou
     const view = scoped(log, { writable: writesTo("a") });
     const lock = log.lock("turn-x", 60_000);
     assertEquals(await lock.acquire(), "acquired");
-    await assertRejects(() => view.publishAndRelease(msg("01", "b", "no"), "turn-x"));
+    await assertRejects(() => view.publishAndRelease(msg("01", "b", "no"), lock.lease()));
     // the lease survives: the failed write released nothing (xi's catch pairs the release)
     const other = log.lock("turn-x", 60_000);
     assertEquals(await other.acquire(), "held");

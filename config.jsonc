@@ -8,8 +8,6 @@
     "stopTimeoutMs": 5000,
     // a bash call's wall cap unless the model asks for another
     "bashTimeoutMs": 120000,
-    // turn-lease TTL; an older lease is stolen (the crash signal)
-    "lockTtlMs": 120000,
     // slow outer retries after the SDK's own fast ones
     "retryDelaysMs": [5000, 20000],
     // est. tokens of raw event JSON (~1.8x the prompt) before a checkpoint runs

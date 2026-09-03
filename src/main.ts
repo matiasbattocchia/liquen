@@ -130,7 +130,6 @@ export interface MainConfig {
    *  `mu connect` is the real writer). */
   connections?: ConnectionRow[];
   apiKey?: string; // default: env ANTHROPIC_API_KEY
-  lockTtlMs?: number;
   stopTimeoutMs?: number; // cap on how long stop() waits for an in-flight turn (default 5s)
   /** How long a world trigger waits for the rest of its burst before the turn runs, in ms
    *  (§2); 0 disables. Default 5s — see the debounce in the fan-out. */
@@ -237,7 +236,7 @@ export async function start(
       : { readable, writable };
     const slog = scoped(log, policy);
     return {
-      config: { ...agent, lockTtlMs: agent.lockTtlMs ?? config.lockTtlMs },
+      config: agent,
       log: slog,
       ports: {
         log: slog,
@@ -502,7 +501,7 @@ type Principal = AgentConfig & Policy & { provider?: string; email?: string; pho
  *  are the ORG's alone: one deployment, one wall time. */
 async function compileRoster(
   dir: string,
-  defaults: Pick<MainConfig, "model" | "effort" | "maxTokens" | "backlogHours" | "lockTtlMs">,
+  defaults: Pick<MainConfig, "model" | "effort" | "maxTokens" | "backlogHours">,
   catalog: OrgConfig,
   startedAt: number,
 ): Promise<Principal[]> {
@@ -534,7 +533,6 @@ async function compileRoster(
       // null survives the funnel: it means "never sleeps", not "unset" (Wake, §2)
       sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.sleepHours,
       // the system half funnels too — org-wide, no per-agent seat (harness machinery)
-      lockTtlMs: defaults.lockTtlMs ?? catalog.system.lockTtlMs,
       windowLimit: catalog.system.windowLimit,
       retryDelaysMs: catalog.system.retryDelaysMs,
       compactAt: catalog.system.compactAt,

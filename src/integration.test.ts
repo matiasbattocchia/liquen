@@ -564,18 +564,22 @@ Deno.test("recovery: a stale lock (crashed holder) → pending uses swept, then 
   const log = await openLog(dir);
   await log.publish(principalMsg("seguís ahí?"));
   const use = (await log.publish(orphanUse()))!;
-  // the crashed holder left its lease in the store; age it past the TTL
-  assertEquals(await log.lock("turn-mind@a1", 50).acquire(), "acquired");
+  // a CRASHED holder: it took the lease and its process went away, so nothing re-stamps
+  // the heartbeat. Closing a second handle is that exactly — the beats stop with it.
+  const dead = await openLog(dir);
+  assertEquals(await dead.lock("turn-mind@a1", 50).acquire(), "acquired");
+  await dead.close();
   await new Promise((r) => setTimeout(r, 80));
 
   const { transport, calls } = scripted([
     ok([{ kind: "assistant", text: "acá estoy" }], "end_turn"),
   ]);
-  const main = fanOut({ ...CONFIG, lockTtlMs: 50 }, log, {
+  const main = fanOut(CONFIG, log, {
     log,
     docs: openFileDocs(`${dir}/docs`),
     transport,
     exec: { echo: echoTool },
+    lockTtlMs: 50,
   });
   try {
     await waitFor(async () => (await log.read({ types: ["tool_result"] })).length === 1);

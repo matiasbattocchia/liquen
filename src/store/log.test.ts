@@ -203,13 +203,16 @@ Deno.test("publishAndRelease: the batch and the lease release commit together (�
       const { id: _, ...rest } = msg("00", "c1", text);
       return rest;
     };
-    const stored = await log.publishAndRelease([draft("one"), draft("two")], "turn-a1");
+    const stored = await log.publishAndRelease([draft("one"), draft("two")], lock.lease());
     assertEquals(stored.length, 2);
     assertEquals((await log.read()).map((e) => e.id), stored.map((e) => e.id)); // in order
     // the lease is gone in the SAME transaction: a wake fired by those inserts can never
     // find it still held — that was the stalled-cycle bug (§2)
     assertEquals(await lock.held(), false);
-    assertEquals(await log.lock("turn-a1").acquire(), "acquired"); // clean, not a steal
+    await lock.release(); // the row is gone; this stops the holder's heartbeat
+    const next = log.lock("turn-a1");
+    assertEquals(await next.acquire(), "acquired"); // clean, not a steal
+    await next.release();
   });
 });
 
@@ -222,13 +225,14 @@ Deno.test("publishAndRelease is atomic: a bad draft leaves neither events nor a 
     const bad = { ...ok, type: undefined }; // NOT NULL violation on `type`
     let threw = false;
     try {
-      await log.publishAndRelease([ok, bad] as never, "turn-a1");
+      await log.publishAndRelease([ok, bad] as never, lock.lease());
     } catch {
       threw = true;
     }
     assertEquals(threw, true);
     assertEquals((await log.read()).length, 0); // the first insert rolled back with it
     assertEquals(await lock.held(), true); // and the lease is still ours to release
+    await lock.release();
   });
 });
 

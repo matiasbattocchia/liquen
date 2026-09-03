@@ -366,8 +366,23 @@ before acquiring would run a duplicate turn.
   add still closes with the `SILENCE` sentinel (§5) — so every release re-fires whatever
   bounced off its lease; the millisecond-wide `ignore` path publishes nothing, and a poke
   lost there waits for the periodic poke, the liveness floor (§10).
-- **Crash recovery = the steal + the sweep.** A stale lock (TTL) is *stolen*, and the
-  steal is the crash signal: act then **sweeps** pending uses (cancelled results) instead
+- **The lease carries two stamps.** `born` is WHO holds it — minted once per acquisition
+  and quoted by every write the holder makes. `seen` is WHETHER ANYONE IS THERE — re-stamped
+  by a heartbeat (`LOCK_TTL_MS / 3`) for as long as the holder lives, and the only thing the
+  TTL measures. Splitting them is what lets the TTL be small: a turn's length is not knowable
+  from here — `think` spans a model call and its retry sleeps, `act` spans the slowest tool
+  in a parallel batch, whose timeout the MODEL picks per call — so a single stamp would have
+  to cover the longest turn imaginable. Against a heartbeat the TTL asks only *did the
+  process die?*, which a timer answers in seconds, because a dead process cannot run one.
+  Slow stops being confusable with dead, and `LOCK_TTL_MS` is 20s rather than minutes.
+- **Crash recovery = the steal + the sweep.** A lease nobody has re-stamped within the TTL is
+  *stolen*, and the steal is the crash signal — still a *guess*, since a holder wedged for
+  three straight beats is declared dead while alive. The guess is made unfalsifiable
+  afterwards: every write quotes `born`, and a row whose stamp moved on accepts none of them.
+  A returning zombie can neither release the lease its successor works under nor land its
+  turn's events (`LeaseLost` — dropped loudly), because that successor is already redoing the
+  same window and two turns publishing one window is what the lock exists to prevent. Act
+  then **sweeps** pending uses (cancelled results) instead
   of blindly re-running tools whose side-effects may already have happened — the model
   sees the cancellations and re-decides. A cleanly released lock over pending uses means
   nothing crashed: just run them. At boot, main simply invokes every agent once — whatever
@@ -2245,7 +2260,7 @@ homes, everything else funneled to the deepest function that needs it (main → 
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
 log.db tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
 tuning, every deployment works on the defaults: stopTimeoutMs · bashTimeoutMs ·
-lockTtlMs · retryDelaysMs · compactAt · keepRecent · windowLimit · debounceMs), `org`
+retryDelaysMs · compactAt · keepRecent · windowLimit · debounceMs), `org`
 (this deployment's identity: timezone · locale ·
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
 `org.agent`, the defaults every agent inherits: model · effort · maxTokens · provider ·

@@ -62,7 +62,7 @@ import type { Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
-import type { Locker } from "./store/lock.ts";
+import { LeaseLost, type Locker } from "./store/lock.ts";
 import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
 import { filePartOf, loadMediaBlock } from "./store/media.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
@@ -675,7 +675,6 @@ export interface AgentConfig extends TurnConfig, Wake {
    *  when a pile of unanswered messages is history rather than a mandate; from then on the
    *  count cap is what bounds the prompt. Older rows stay readable through `search` (§6). */
   since?: string;
-  lockTtlMs?: number; // turn-lease TTL; a lease older than this is STOLEN (the crash signal)
 }
 
 /** A tool outcome carrying ATTACHMENTS (§5 media): `files` are local paths the result
@@ -728,6 +727,11 @@ export interface XiPorts {
    *  client cannot compute for itself. `cursor` is the last event the deciding read saw. */
   onDecision?: (verdict: Decision, cursor: string | undefined) => void;
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
+  /** How long without a heartbeat before this turn's lease is stealable. The constant
+   *  (`LOCK_TTL_MS`) is the answer for every deployment — it rides here, beside the other
+   *  injected edges, only so a test can watch a crash be recovered from without waiting
+   *  out a real one. */
+  lockTtlMs?: number;
 }
 
 /** How coarse the window's floor is: the grid the oldest kept event snaps DOWN to. */
@@ -757,12 +761,13 @@ export function anchored(rows: Event[], limit: number): Event[] {
 
 /** One xi invocation: poke → owed → (think/act: acquire-or-exit → work) → return what it
  *  decided — `"held"` when the lease was taken (someone is on it: busy by definition),
+ *  `"lost"` when this turn was declared dead mid-work and its writes refused,
  *  `undefined` when the trigger was irrelevant (no read happened; nothing to say). */
 export async function xi(
   config: AgentConfig,
   ports: XiPorts,
   trigger?: Event,
-): Promise<Decision | "held" | undefined> {
+): Promise<Decision | "held" | "lost" | undefined> {
   // 1. the gate — free: no read, no lease. Most invocations end here (§2)
   if (trigger && !relevant(config, trigger)) return;
 
@@ -770,7 +775,7 @@ export async function xi(
   //    already up to date w.r.t. whatever landed while we were acquiring. Keyed by the
   //    SESSION (§4): the lock serializes one session's turns; siblings run concurrently.
   const name = `turn-${sessionAddress(config.agentId, config.sessionId)}`;
-  const lock = ports.log.lock(name, config.lockTtlMs);
+  const lock = ports.log.lock(name, ports.lockTtlMs);
   const got = await lock.acquire();
   if (got === "held") return "held"; // no retry: someone is on it, and their turn's end will poke
 
@@ -834,7 +839,23 @@ export async function xi(
     await lock.release(); // nothing to pair the release with
     throw err;
   }
-  await ports.log.publishAndRelease(last, name);
+  try {
+    await ports.log.publishAndRelease(last, lock.lease());
+  } catch (err) {
+    // declared dead mid-turn: a successor took the lease and is redoing this window from
+    // the same events. Dropping the work is the point — landing it would publish the turn
+    // twice. Loud, because a live turn losing its lease means the process stalled past the
+    // TTL, and that is worth seeing.
+    if (err instanceof LeaseLost) {
+      console.error(`[xi] ${name}: ${err.message}, ${last.length} event(s) dropped`);
+      return "lost";
+    }
+    throw err;
+  } finally {
+    // the lease row is already gone (the transaction dropped it), but the HEARTBEAT is this
+    // object's, and only this object can stop it — the release doubles as that off-switch.
+    await lock.release();
+  }
   return v;
 }
 

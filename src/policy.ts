@@ -23,6 +23,7 @@
 
 import type { Draft, Envelope, Event, SessionRef } from "./types.ts";
 import type { Appender, Filter, Log } from "./store/log.ts";
+import type { Lease } from "./store/lock.ts";
 import { routedSession } from "./session.ts";
 import { aliasOf, type Connections } from "./store/connections.ts";
 
@@ -114,9 +115,9 @@ export function scoped(log: Log, policy: Policy): Log {
       check(one); // rejects BEFORE the write — nothing lands, like an aborted transaction
       return await log.publish(one as Draft[]);
     }) as Appender["publish"],
-    publishAndRelease: (async (one: Draft | Draft[], lock: string) => {
+    publishAndRelease: (async (one: Draft | Draft[], lease: Lease) => {
       check(one); // and before the release: the lease outlives a refused turn-end
-      return await log.publishAndRelease(one as Draft[], lock);
+      return await log.publishAndRelease(one as Draft[], lease);
     }) as Appender["publishAndRelease"],
     read: (q = {}) => log.read({ ...q, filter: and(q.filter) }),
     subscribe: (listener, opts = {}) =>

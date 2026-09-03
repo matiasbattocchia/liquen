@@ -74,7 +74,6 @@ export const DEFAULT_SLEEP_HOURS = "23-8";
 // system — harness machinery
 export const DEFAULT_STOP_TIMEOUT_MS = 5_000; // cap on stop() awaiting an in-flight turn
 export const DEFAULT_BASH_TIMEOUT_MS = 120_000; // a bash call's cap unless the model asks
-export const DEFAULT_LOCK_TTL_MS = 120_000; // a turn lease older than this is STOLEN
 export const DEFAULT_RETRY_DELAYS_MS = [5_000, 20_000]; // slow outer retries (§2)
 // est. tokens of RAW EVENT JSON (`estTokens`, chars/4) — roughly 1.8x the prompt those
 // events render to, since the estimate counts ids, envelopes and the tool traffic the
@@ -131,7 +130,6 @@ export interface OrgConfig {
   system: {
     stopTimeoutMs: number;
     bashTimeoutMs: number;
-    lockTtlMs: number;
     retryDelaysMs: number[];
     compactAt: number;
     keepRecent: number;
@@ -198,11 +196,6 @@ const SYSTEM: Entry[] = [
     key: "bashTimeoutMs",
     value: DEFAULT_BASH_TIMEOUT_MS,
     doc: "a bash call's wall cap unless the model asks for another",
-  },
-  {
-    key: "lockTtlMs",
-    value: DEFAULT_LOCK_TTL_MS,
-    doc: "turn-lease TTL; an older lease is stolen (the crash signal)",
   },
   {
     key: "retryDelaysMs",
