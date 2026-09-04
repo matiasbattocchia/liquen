@@ -250,12 +250,21 @@ async function verify(secret: string, payload: string, mac: string): Promise<boo
 
 const encode = (s: string): BufferSource => new TextEncoder().encode(s) as BufferSource;
 
+/** Where an agent's file references may point (§9 data classification): `home` is what a
+ *  relative path is from — the agent's own folder — and `roots` are the directories a
+ *  reference may resolve INTO, symlinks followed first, so a link is judged by where it
+ *  points. The same ground the agent's uid can read; the harness reads no further. */
+export interface FileScope {
+  home: string;
+  roots: string[];
+}
+
 /** A file reference → a `FilePart` (the send side). A local path (bare or `file://`)
- *  is statted and classified — throws when it doesn't exist, and the tool_result
- *  carries that back as the error it is. An `http(s)` link passes through UNTOUCHED
- *  (no fetch, no size — mime guessed from the URL's extension): the platforms that
- *  take links send it as-is. */
-export function filePartOf(ref: string): FilePart {
+ *  is statted and classified — throws when it doesn't exist or, under a `scope`, when it
+ *  resolves outside the scope's roots, and the tool_result carries that back as the error
+ *  it is. An `http(s)` link passes through UNTOUCHED (no fetch, no size — mime guessed
+ *  from the URL's extension): the platforms that take links send it as-is. */
+export function filePartOf(ref: string, scope?: FileScope): FilePart {
   if (isExternal(ref)) {
     const path = new URL(ref).pathname;
     const mime = mimeOf(path) ?? "application/octet-stream";
@@ -266,7 +275,12 @@ export function filePartOf(ref: string): FilePart {
       file: { mime_type: mime, uri: ref, ...(name && name !== "/" ? { name } : {}) },
     };
   }
-  const abs = resolve(pathOf(ref));
+  const abs = scope ? Deno.realPathSync(resolve(scope.home, pathOf(ref))) : resolve(pathOf(ref));
+  if (scope && !scope.roots.some((root) => abs === root || abs.startsWith(`${root}/`))) {
+    throw new Error(
+      `${ref}: outside your files — attach from your folder, the org's, or the media store`,
+    );
+  }
   const size = Deno.statSync(abs).size;
   const mime = mimeOf(abs) ?? sniffMime(headSync(abs)) ?? "application/octet-stream";
   return {

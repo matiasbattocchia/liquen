@@ -223,6 +223,32 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
   };
 }
 
+/** The vault rows an agent's user space is fronted with — one placeholder per row, under
+ *  the var the row declares (`extra.env`). Per var: the org's own row (no owner) when
+ *  there is exactly one, else the agent's own when there is exactly one. A row a peer
+ *  holds never fronts this agent's var, and a var several rows contend for stays unset:
+ *  the plane is the agent's, and which token it spends is that agent's grant to make. */
+export function frontedFor<R extends { agentId?: string; extra?: Record<string, unknown> }>(
+  rows: R[],
+  agentId: string,
+): R[] {
+  const byVar = new Map<string, R[]>();
+  for (const r of rows) {
+    const name = r.extra?.env;
+    if (typeof name !== "string") continue;
+    if (r.agentId && r.agentId !== agentId) continue;
+    byVar.set(name, [...(byVar.get(name) ?? []), r]);
+  }
+  const picked: R[] = [];
+  for (const candidates of byVar.values()) {
+    const org = candidates.filter((r) => !r.agentId);
+    const own = candidates.filter((r) => r.agentId === agentId);
+    const pick = org.length === 1 ? org[0] : org.length === 0 && own.length === 1 ? own[0] : null;
+    if (pick) picked.push(pick);
+  }
+  return picked;
+}
+
 /** The grant's host binding: a row declaring `extra.hosts` spends only toward them.
  *  Entries are exact hostnames or `*.suffix` wildcards; the dialed authority may carry a
  *  port, which doesn't bind. A row declaring none (or a malformed sidecar) is unbound. */

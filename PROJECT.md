@@ -1792,3 +1792,39 @@ was refused whole at the gate for the dead one, so the live surfaces lost their 
 Items of the audit's section that the earlier pass had already closed: the `max_tokens`
 cut inside a `tool_use`, the alarm double-fire (atomic claim), `credentials.put` merging in
 SQL, the unscoped door verdict, and the GitHub failure stamp (the shared dispatcher).
+
+## Isolation and secrets, audited (2026-09-04) — LANDED
+
+Every fix below has a test that failed first, except the ownership pass, which needs root
+to observe. Full suite green; nothing here changes the schema.
+
+**One pocket per agent.** The proxy env is built per agent (`frontedFor`): a var is
+fronted with the org's row, or the agent's own, never a peer's, and a var several rows
+contend for stays unset. The handle in an agent's pocket names a grant that agent holds,
+so the egress audit's agent is the caller.
+
+**Broker-side reads stay on the agent's ground.** `send({files})` and tool-result
+attachments resolve through `FileScope` (xi's `files` port, set by main): the path is
+followed through its links and must land in the agent's folder, `org/`, `system/` or the
+media store, else the tool_result carries the refusal. Relative paths are from the agent's
+folder. Dispatchers read only uris the log holds, which entered through this check.
+
+**The container scaffold.** `.dockerignore` keeps `data/`, `.env` and `.git/` out of the
+image. The entrypoint's `/app/data` link replaces an empty folder and refuses a populated
+one (`ln -sfnT`), so state can no longer land off-volume behind a nested link. The harness
+gives what it creates inside an agent's folder to the agent (`exec/user.ts`): the seeded
+docs and `bin/` when the plane installs, an output spill as it lands, and the door socket
+— owned by the agent, mode 0600 (the socket was 0755, so agent-uid scripts got EACCES
+connecting). The Dockerfile's `jsr:@mu/core` install stays as it is: the JSR split is the
+open item above, and the scaffold names the package it will resolve to.
+
+**No unauthenticated ingest binds.** Slack HTTP mode verifies against every app row's
+signing secret and refuses to serve with none (`httpSigningSecrets`); a delivery signed by
+any installed app passes. The WhatsApp ingest requires `WA_BRIDGE_TOKEN` (`bridgeTokenOf`)
+and refuses to bind without it.
+
+Open, not taken here: the CA key shipped with the source (mint per install) and the
+proxy's egress allowlist and Authorization normalization, which DESIGN lists as controls
+the proxy does not yet have. Also seen in passing: `conversations/` is created by the
+connectors with the process umask, so on the container every agent uid can read every
+conversation's media shelf — the log hides the rows, the disk does not hide the bytes.

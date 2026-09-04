@@ -1,6 +1,7 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   createSlackWebhook,
+  httpSigningSecrets,
   looksLikeSignIn,
   slackNames,
   slackSocket,
@@ -75,7 +76,7 @@ function harness(
     store,
     media,
     names,
-    signingSecret: secret,
+    ...(secret ? { signingSecrets: [secret] } : {}),
     track: (w) => work.push(w),
   });
   // the acked delivery keeps processing behind the response — `handler` settles it too,
@@ -865,4 +866,24 @@ Deno.test("slack socket: an envelope is acked only after its delivery landed —
   assertEquals(wire.order, ["handled:1:500", "handled:2:200", "ack:env-1"]); // ack AFTER the landing
   assertEquals(logged.length, 1); // the refusal is on stderr
   assertStringIncludes(logged[0], "env-1");
+});
+
+Deno.test("HTTP mode: every app's signing secret verifies, and no app means no server", async () => {
+  const many = createSlackWebhook({
+    publish: (() => Promise.resolve(undefined)) as unknown as Appender["publish"],
+    signingSecrets: ["another-app", SECRET],
+  });
+  const challenge = { type: "url_verification", challenge: "c1" };
+  assertEquals((await many(await signedReq(challenge))).status, 200);
+  const other = createSlackWebhook({
+    publish: (() => Promise.resolve(undefined)) as unknown as Appender["publish"],
+    signingSecrets: ["another-app"],
+  });
+  assertEquals((await other(await signedReq(challenge))).status, 401);
+  // the vault's app rows → the secrets the server verifies with; an empty set is a refusal
+  // to bind, never an open door
+  const row = (s: string) => ({ key: `slack:app:${s}`, value: { signing_secret: s } });
+  assertEquals(httpSigningSecrets([row("a"), row(""), row("b")]), ["a", "b"]);
+  assertThrows(() => httpSigningSecrets([]), Error, "signing secret");
+  assertThrows(() => httpSigningSecrets([row("")]), Error, "signing secret");
 });

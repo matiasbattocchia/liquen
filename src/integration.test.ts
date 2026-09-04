@@ -104,6 +104,7 @@ async function scenario(
   }) => Promise<void>,
   config: Partial<AgentConfig> = {},
   preload: Draft<Event>[] = [], // events in the log before the fan-out starts (recovery)
+  ports: Partial<XiPorts> = {}, // what a scenario adds to the agent's ports (a tool, a scope)
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -115,6 +116,7 @@ async function scenario(
     docs: openFileDocs(`${dir}/docs`),
     transport,
     exec: { echo: echoTool },
+    ...ports,
   });
   try {
     await fn({
@@ -1476,5 +1478,42 @@ Deno.test("xi returns what it decided, and discloses it the moment it decides", 
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a tool's attachment outside the agent's ground is refused, and the result says so", async () => {
+  const ground = await Deno.realPath(await Deno.makeTempDir());
+  const home = `${ground}/agents/a1`;
+  await Deno.mkdir(home, { recursive: true });
+  await Deno.mkdir(`${ground}/log`, { recursive: true });
+  await Deno.writeTextFile(`${home}/mine.png`, "\x89PNG");
+  await Deno.writeTextFile(`${ground}/log/log.db`, "sqlite");
+  const attach = {
+    spec: { name: "attach", description: "", input_schema: { type: "object" as const } },
+    // a bytes read as `aread` reports one: the output plus the paths it read
+    execute: () =>
+      Promise.resolve({ output: "read two", files: [`${home}/mine.png`, `${ground}/log/log.db`] }),
+  };
+  try {
+    await scenario(
+      [
+        ok([{ kind: "tool_use", name: "attach", input: {} }], "tool_use"),
+        ok([{ kind: "assistant", text: "ok" }], "end_turn"),
+      ],
+      async ({ publish, read }) => {
+        await publish(principalMsg("look at both"));
+        await waitFor(async () => (await read("tool_result")).length === 1);
+        const [result] = await read("tool_result") as ToolResultEvent[];
+        // the agent's own file rides; the substrate's does not, and the refusal is in the output
+        assertEquals(result.parts.filter((p) => p.type === "file").length, 1);
+        assertStringIncludes(String(result.parts[0].data.output), "attachment refused");
+        assertStringIncludes(String(result.parts[0].data.output), "log.db");
+      },
+      {},
+      [],
+      { exec: { attach }, files: { home, roots: [home] } },
+    );
+  } finally {
+    await Deno.remove(ground, { recursive: true });
   }
 });

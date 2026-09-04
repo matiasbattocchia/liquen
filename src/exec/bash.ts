@@ -14,6 +14,7 @@
  */
 
 import type { ExecOutcome, ExecTool } from "../xi.ts";
+import { type AgentUser, agentUser, own, ownTree } from "./user.ts";
 import type { Json } from "../types.ts";
 import { newId } from "../store/id.ts";
 import { MEDIA_MARK } from "../store/media.ts";
@@ -51,21 +52,7 @@ export interface BashOptions {
   /** The Linux user every spawn RUNS AS (§9, the container story): user space is not just
    *  an empty pocket but a different owner — the kernel enforces the data classification.
    *  Only meaningful when the harness runs as root; absent, spawns keep the process uid. */
-  user?: { name: string; uid: number; gid: number; home: string };
-}
-
-/** The agent's Linux user, when there is one to drop to: the harness runs as root (the
- *  container) and the entrypoint materialized the roster as users named after the agents.
- *  Local dev is neither, and spawns stay the process's own. */
-function agentUser(agentId: string): BashOptions["user"] {
-  if (Deno.build.os !== "linux" || Deno.uid() !== 0) return undefined;
-  try {
-    for (const line of Deno.readTextFileSync("/etc/passwd").split("\n")) {
-      const [name, , uid, gid, , home] = line.split(":");
-      if (name === agentId) return { name, uid: Number(uid), gid: Number(gid), home };
-    }
-  } catch { /* no passwd to read — nothing to drop to */ }
-  return undefined;
+  user?: AgentUser;
 }
 
 // Process-group isolation (`setsid`) lets us kill a command's whole tree — including a
@@ -268,6 +255,9 @@ export function bashTool(opts: BashOptions): ExecTool {
           const path = `${state.cwd}/.out/bash-${newId()}.log`;
           await Deno.mkdir(`${state.cwd}/.out`, { recursive: true });
           await Deno.writeTextFile(path, output);
+          // the spill sits in the agent's cwd: written by the harness, the agent's to keep
+          await own(`${state.cwd}/.out`, opts.user);
+          await own(path, opts.user);
           text +=
             `\n\n[showing lines ${t.startLine}-${t.totalLines} of ${t.totalLines} — full output: ${path}]`;
         }
@@ -407,6 +397,9 @@ export async function installExecPlane(
   const jobs = new Set<Job>();
   const state: BashState = { cwd: workspace };
   const user = agentUser(agentId);
+  // the folder is the agent's: the seeded docs and `bin/` were laid by the harness, and
+  // the uid that works here must be able to edit them
+  await ownTree(workspace, user);
   if (user) console.error(`[exec] ${agentId}: spawns run as uid ${user.uid}`);
   return {
     exec: {

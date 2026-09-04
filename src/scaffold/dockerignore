@@ -1,0 +1,6 @@
+# .dockerignore — what the image never carries: the org's living state rides the volume,
+# and secrets ride --env-file. `COPY . .` takes the rest: config.jsonc, connectors/,
+# processors/, the entrypoint.
+data/
+.env
+.git/

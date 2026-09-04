@@ -566,8 +566,17 @@ function json(status: number, body: unknown): Response {
  *
  *   deno task run:whatsapp        # serves :8793; bridge env → OPENBSP_URL=http://localhost:8793
  *
- * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN); the port is
+ * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN; required); the port is
  * connections.whatsapp.ingestPort. */
+/** The bridge token the served ingest requires — unset is a refusal to bind: an open
+ *  route would take any POST as the bridge's word. */
+export function bridgeTokenOf(env: string | undefined): string {
+  if (!env) {
+    throw new Error("WA_BRIDGE_TOKEN unset — the ingest serves only the bridge that holds it");
+  }
+  return env;
+}
+
 /** Wire the inbound half over the org's log — resident once it returns (serving).
  *  Returns stop: refuse new deliveries, finish the ones in flight, release the handles. */
 export async function runIngest(): Promise<() => Promise<void>> {
@@ -587,7 +596,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
         ...(meta.mime_type ? { mime_type: meta.mime_type } : {}),
         ...(meta.name ? { name: meta.name } : {}),
       }),
-    bridgeToken: Deno.env.get("WA_BRIDGE_TOKEN") || undefined,
+    bridgeToken: bridgeTokenOf(Deno.env.get("WA_BRIDGE_TOKEN")),
   });
   const { whatsappConfig } = await import("./config.ts");
   const { serveIngest } = await import("../serve.ts");

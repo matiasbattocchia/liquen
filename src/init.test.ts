@@ -17,6 +17,7 @@ Deno.test("init scaffolds a project the reader accepts, and refuses to do it twi
         "AGENTS.md",
         "Dockerfile",
         "entrypoint.sh",
+        ".dockerignore",
         "deno.jsonc",
         ".env",
         ".gitignore",

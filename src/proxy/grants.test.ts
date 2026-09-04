@@ -1,6 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
 import { createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
-import { appJwt, createGrantBroker, type TokenResponse } from "./grants.ts";
+import { appJwt, createGrantBroker, frontedFor, type TokenResponse } from "./grants.ts";
 import { openCredentials } from "../store/credentials.ts";
 
 async function withVault(
@@ -307,4 +307,20 @@ Deno.test("accessTokenFor: a github user grant with no app to refresh by is null
     });
     assertEquals(await broker.accessTokenFor(broker.issue("github:ana")), null);
   });
+});
+
+Deno.test("frontedFor: an agent is fronted with the org's rows and its OWN — never a peer's", () => {
+  const rows = [
+    { key: "github:org", extra: { env: "GH_TOKEN" } },
+    { key: "google:ana@x", agentId: "ana", extra: { env: "GOOGLE_WORKSPACE_CLI_TOKEN" } },
+    { key: "google:bo@x", agentId: "bo", extra: { env: "GOOGLE_WORKSPACE_CLI_TOKEN" } },
+    { key: "acme:one", extra: { env: "ACME_TOKEN" } },
+    { key: "acme:two", extra: { env: "ACME_TOKEN" } },
+    { key: "slack:T1:org", extra: {} }, // declares no var: nothing to front
+  ];
+  const keys = (agentId: string) => frontedFor(rows, agentId).map((r) => r.key);
+  assertEquals(keys("ana"), ["github:org", "google:ana@x"]);
+  assertEquals(keys("bo"), ["github:org", "google:bo@x"]);
+  // a var only peers hold stays unset for the third agent; two org rows contending stay out
+  assertEquals(keys("cy"), ["github:org"]);
 });

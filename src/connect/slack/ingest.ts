@@ -141,9 +141,10 @@ export interface SlackWebhookDeps {
   media?: SlackMedia;
   /** The name directory (absent ⇒ senders ship bare ids, mentions decode to `@<id>`). */
   names?: SlackNames;
-  /** App signing secret. If set, `X-Slack-Signature` is REQUIRED and verified; absent ⇒
-   *  unsigned accepted (dev / the Socket Mode carrier, already authed by `xapp`). */
-  signingSecret?: string;
+  /** The apps' signing secrets. Set ⇒ `X-Slack-Signature` is REQUIRED and must verify
+   *  under one of them (one server, every app the vault holds); absent ⇒ unsigned
+   *  accepted — the Socket Mode carrier, already authed by `xapp`. */
+  signingSecrets?: string[];
   /** The response's timing. PRESENT (HTTP mode): the 200 goes out first and each
    *  delivery's processing is handed here as it starts — Slack re-delivers anything
    *  unanswered within its window, so the wire is answered before the log is, and the
@@ -164,12 +165,14 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     if (req.method !== "POST") return text(405, "method not allowed");
     const body = await req.text(); // raw bytes — verify BEFORE parsing
 
-    if (deps.signingSecret) {
+    if (deps.signingSecrets) {
       const ts = req.headers.get("x-slack-request-timestamp") ?? "";
       const sig = req.headers.get("x-slack-signature") ?? "";
-      if (!(await verify(deps.signingSecret, ts, body, sig, now))) {
-        return text(401, "bad signature");
+      let signed = false;
+      for (const secret of deps.signingSecrets) {
+        if (await verify(secret, ts, body, sig, now)) signed = true;
       }
+      if (!signed) return text(401, "bad signature");
     }
 
     let payload: EventsEnvelope;
@@ -702,8 +705,22 @@ export function slackSocket(
  *
  * Env: none — everything comes from the vault. Socket carriers are the app-level
  * tokens the socket door stored (`mu connect slack socket`), one socket per app (§4). No
- * carrier ⇒ HTTP mode on connections.slack.ingestPort, verified by the app's
- * signing secret (`mu connect slack app` stores it). */
+ * carrier ⇒ HTTP mode on connections.slack.ingestPort, verified by the apps' signing
+ * secrets (`mu connect slack app` stores them); no app, no server. */
+/** The secrets an HTTP-mode server verifies with: every app row's `signing_secret`. None
+ *  is a refusal to serve — an unverified Events URL would take any POST as the workspace's
+ *  word, `authorizations` included. */
+export function httpSigningSecrets(apps: { value: Record<string, string> }[]): string[] {
+  const secrets = apps.map((a) => a.value.signing_secret).filter((s) => s);
+  if (secrets.length === 0) {
+    throw new Error(
+      "HTTP mode needs a signing secret — `mu connect slack app` stores it, or " +
+        "`mu connect slack socket` for Socket Mode",
+    );
+  }
+  return secrets;
+}
+
 /** Wire the inbound half over the org's log — resident once it returns (socket or server).
  *  Returns stop: refuse new deliveries, finish the ones in flight, release the handles. */
 export async function runIngest(): Promise<() => Promise<void>> {
@@ -791,15 +808,15 @@ export async function runIngest(): Promise<() => Promise<void>> {
       await release();
     };
   }
-  // HTTP mode verifies with the app's signing secret (the app door stores it); deliveries
-  // are acked before they are processed, so what is still processing at stop finishes
-  // before the handles close
-  const { pickSlackApp } = await import("./connect.ts");
-  const app = await pickSlackApp(creds).catch(() => null);
+  // HTTP mode verifies with the apps' signing secrets (the app door stores them) and
+  // serves nothing without one; deliveries are acked before they are processed, so what
+  // is still processing at stop finishes before the handles close
+  const { APP_PREFIX } = await import("./connect.ts");
+  const signingSecrets = httpSigningSecrets(await creds.list(APP_PREFIX));
   const inFlight = new Set<Promise<void>>();
   const handler = createSlackWebhook({
     ...base,
-    signingSecret: app?.value.signing_secret || undefined,
+    signingSecrets,
     track: (work) => {
       inFlight.add(work);
       work.finally(() => inFlight.delete(work));

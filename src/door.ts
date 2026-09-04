@@ -45,6 +45,7 @@
  * needs no bookkeeping a dead client could fail to update.
  */
 
+import { agentUser, own } from "./exec/user.ts";
 import type {
   Delta,
   Draft,
@@ -115,6 +116,10 @@ export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Do
       await Deno.remove(path); // a stale socket from a crashed run refuses the bind
     } catch { /* none */ }
     const listener = Deno.listen({ transport: "unix", path });
+    // the agent's alone: connecting takes write permission on the socket, so its owner
+    // is the agent's uid and no peer holds a bit on it
+    await Deno.chmod(path, 0o600);
+    await own(path, agentUser(agent.agentId));
     listeners.push({ listener, path });
     const cast = new Set<Tailer>();
     casts.set(agent.agentId, cast);

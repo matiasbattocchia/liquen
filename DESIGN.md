@@ -1202,7 +1202,11 @@ BROKER-side with the connection's credential into the conversation's media shelf
 re-downloads and the dispatch echo converge on one file; platform URL + token never
 cross the frontier, §9). Outbound uris are local or public: `send` takes
 `files: string[]` — paths statted broker-side, links kept as-is (no secret in a public
-URL, the frontier rule is untouched).
+URL, the frontier rule is untouched). A path is resolved through its links and must land
+inside the agent's own ground — its folder (relative paths are from there), `org/`,
+`system/`, the media store — before a byte is read: the same boundary the agent's uid
+has, kept by the broker, since the broker reads as itself (`FileScope`, xi's `files`
+port; tool-result attachments pass the same check).
 
 A `FilePart` renders as its kind's element — `<image name path/>`, `<audio/>`, `<document/>` — in EVERY region — the durable
 handle (local: the plain path, re-viewable via `aread`/bash; external: the url). In the
@@ -2127,7 +2131,9 @@ true for exec (kernel handles it), false for control (only harness/human authori
      swap is a substitution over header values (the handle is the marker, not any
      particular header), so a new tool costs no proxy change — its connect door declares
      the placeholder's env var and the grant's hosts on the vault row (`extra.env`,
-     `extra.hosts`), main fronts what's declared, and the swap refuses any dial outside
+     `extra.hosts`), main fronts what's declared PER AGENT — the org's row, or the
+     agent's own, never a peer's (`frontedFor`), so the handle in a pocket names a grant
+     its holder has and the audit's agent is the caller — and the swap refuses any dial outside
      the declaration (so a handle can't be aimed at an echo endpoint to read the token
      back). The terminated plaintext is where further policy (method/path) would attach.
      Not the nicest (CA to manage, cert-pinning
@@ -2241,7 +2247,12 @@ The Docker layout, concretely — one volume, one project, root supervising:
 The entrypoint materializes the roster as LINUX USERS — uid pinned by name-hash so volume
 ownership survives rebuilds and roster edits — lays the symlinks and the permission sweep,
 and execs `mu start`; bash spawns drop to the agent's own uid (exec/bash.ts), so the
-kernel enforces the classification above.
+kernel enforces the classification above. What the HARNESS creates inside an agent's
+folder it gives to the agent (exec/user.ts): the seeded docs and `bin/` at plane install,
+an output spill as it lands, and `door.sock` — owned by the agent, mode 0600, so the
+socket a script connects to is its own agent's and no peer holds a bit on it. The image
+carries no state and no secret: `.dockerignore` keeps `data/` and `.env` out of `COPY`,
+and the entrypoint's `/app/data` link refuses a populated folder in its place.
 
 Local (dev, one user — same shape, no enforcement): `<root>/data/{log/, system/,
 org/, agents/<name>/}` (the vault is a table in `log/log.db`) — `agents/<name>/` plays `/home/<agent>`. **Agents are created "the

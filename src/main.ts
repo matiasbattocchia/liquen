@@ -43,7 +43,7 @@ import { seedDocs } from "./store/seed.ts";
 import { anthropicClient, anthropicTransport, metered, type ModelTransport } from "./transport.ts";
 import { type ExecPlane, installExecPlane } from "./exec/bash.ts";
 import { openCredentials } from "./store/credentials.ts";
-import { createGrantBroker } from "./proxy/grants.ts";
+import { createGrantBroker, frontedFor } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
 import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
@@ -60,15 +60,15 @@ import {
 } from "./config.ts";
 
 /** Start the egress proxy — the org's MANDATORY single egress point — and return the env
- *  provider bash issues into every spawn (§9). HTTPS_PROXY/SSL_CERT_FILE always ride; the
- *  proxy rewrites requests carrying a placeholder and passes everything else through
- *  untouched. Which placeholders ride is the VAULT's say, not this file's: a credential
- *  row that declares `extra.env` (the connect doors write it) is fronted under that var —
- *  the org's own row (no agentId) when one exists, else a lone candidate. Several rows
- *  contending for one var is the per-agent plane's call — which token? — so we hold off
- *  rather than guess. */
+ *  provider bash issues into every spawn (§9), PER AGENT. HTTPS_PROXY/SSL_CERT_FILE always
+ *  ride; the proxy rewrites requests carrying a placeholder and passes everything else
+ *  through untouched. Which placeholders ride is the VAULT's say, not this file's: a
+ *  credential row that declares `extra.env` (the connect doors write it) is fronted under
+ *  that var, and which row fronts which agent is `frontedFor` — the org's, or the agent's
+ *  own, never a peer's. So the handle in an agent's pocket names a grant that agent holds,
+ *  and the audit line's agent is the caller. */
 interface ProxyHandle {
-  env: () => Record<string, string>;
+  env: (agentId: string) => Record<string, string>;
   close(): Promise<void>;
 }
 
@@ -77,30 +77,27 @@ async function installProxy(dir: string): Promise<ProxyHandle> {
   const broker = createGrantBroker({ creds });
   const ca = await openCA();
   const proxy = startProxy({ ca, broker });
-  const env: Record<string, string> = {
+  const base: Record<string, string> = {
     HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
     SSL_CERT_FILE: proxy.caPath,
   };
-  const fronted: string[] = [];
-  const rows = (await creds.list("")).filter((r) => typeof r.extra?.env === "string");
-  const byVar = new Map<string, typeof rows>();
-  for (const r of rows) {
-    const name = r.extra!.env as string;
-    byVar.set(name, [...(byVar.get(name) ?? []), r]);
-  }
-  for (const [name, candidates] of byVar) {
-    const org = candidates.filter((r) => !r.agentId);
-    const pick = org.length === 1 ? org[0] : candidates.length === 1 ? candidates[0] : undefined;
-    if (!pick) continue;
-    env[name] = broker.issue(pick.key, pick.agentId);
-    fronted.push(pick.key);
-  }
-  console.error(
-    `egress proxy on :${proxy.port}` +
-      (fronted.length ? ` — fronting ${fronted.join(", ")}` : ""),
-  );
+  const rows = await creds.list("");
+  const pockets = new Map<string, Record<string, string>>();
+  console.error(`egress proxy on :${proxy.port}`);
   return {
-    env: () => env,
+    env: (agentId) => {
+      let env = pockets.get(agentId);
+      if (!env) {
+        env = { ...base };
+        const fronted = frontedFor(rows, agentId);
+        for (const r of fronted) env[r.extra!.env as string] = broker.issue(r.key, r.agentId);
+        if (fronted.length) {
+          console.error(`[proxy] ${agentId} fronted: ${fronted.map((r) => r.key).join(", ")}`);
+        }
+        pockets.set(agentId, env);
+      }
+      return env;
+    },
     async close() {
       await proxy.shutdown();
       await creds.close();
@@ -201,13 +198,20 @@ export async function start(
   // the org's language reaches user space as MU_LOCALE — the same name the processors get
   // (§9), so a script the agent runs by hand speaks the org's language too
   const locale = catalog?.org.locale;
-  const userEnv = locale ? () => ({ ...proxy.env(), MU_LOCALE: locale }) : proxy.env;
   for (const p of principals) {
+    const userEnv = () => ({ ...proxy.env(p.agentId), ...(locale ? { MU_LOCALE: locale } : {}) });
     planes.set(
       p.agentId,
       await installExecPlane(dir, p.agentId, userEnv, catalog?.system.bashTimeoutMs),
     );
   }
+  // what an agent may ATTACH (§9 data classification): its own folder, the shared floor,
+  // the system docs, and the media store — the same ground its uid can read. A `send`
+  // naming a path elsewhere is refused broker-side, before any byte is read.
+  const filesOf = (agentId: string) => {
+    const home = `${dir}/agents/${agentId}`;
+    return { home, roots: [home, `${dir}/org`, `${dir}/system`, `${dir}/conversations`] };
+  };
 
   let stopped = false;
   // the fan-outs' late half: ports close over `cast`/`castStatus` before the doors exist,
@@ -251,6 +255,7 @@ export async function start(
         // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in
         transport: metered(transport, (row) => log.meter(row), agent.agentId),
         exec: planes.get(agent.agentId)!.exec,
+        files: filesOf(agent.agentId),
         onDelta: (d) => cast(agent.agentId, agent.sessionId, d),
         onDecision: (v, cursor) => disclose(agent.agentId, agent.sessionId, v, cursor),
         ambient: planes.get(agent.agentId)!.ambient,
@@ -338,6 +343,7 @@ export async function start(
         docs,
         transport: base.ports.transport,
         exec: base.ports.exec,
+        files: base.ports.files,
         onDelta: (d: Delta) => cast(agentId, sessionId, d),
         onDecision: (v: Decision, cursor: string | undefined) =>
           disclose(agentId, sessionId, v, cursor),

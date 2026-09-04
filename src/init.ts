@@ -18,6 +18,7 @@ const SCAFFOLD: [string, string][] = [
   ["AGENTS.md", "AGENTS.md"],
   ["Dockerfile", "Dockerfile"],
   ["entrypoint.sh", "entrypoint.sh"],
+  ["dockerignore", ".dockerignore"],
   ["deno.jsonc", "deno.jsonc"],
   ["env", ".env"],
   ["gitignore", ".gitignore"],

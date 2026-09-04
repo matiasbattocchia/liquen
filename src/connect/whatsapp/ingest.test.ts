@@ -1,5 +1,6 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import {
+  bridgeTokenOf,
   createWhatsAppWebhook,
   externalId,
   kindOf,
@@ -525,4 +526,10 @@ Deno.test("media route stores bytes and answers the uri", async () => {
   assertEquals(res.status, 200);
   const out = await res.json() as { uri: string };
   assertStringIncludes(out.uri, "5491100000000/foto.jpg (3b)");
+});
+
+Deno.test("the served ingest needs the bridge token — unset is a refusal to bind", () => {
+  assertEquals(bridgeTokenOf(TOKEN), TOKEN);
+  assertThrows(() => bridgeTokenOf(undefined), Error, "WA_BRIDGE_TOKEN");
+  assertThrows(() => bridgeTokenOf(""), Error, "WA_BRIDGE_TOKEN");
 });

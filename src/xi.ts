@@ -64,7 +64,8 @@ import type { Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
-import { filePartOf, loadMediaBlock, memoizedLoader } from "./store/media.ts";
+import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./store/media.ts";
+import type { FilePart } from "./types.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import { hhmm, ownComplex, ownVoice, parseVerdict, shortId, silenced, textOf } from "./render.ts"; // shared predicates: silenced never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
@@ -721,6 +722,10 @@ export interface XiPorts {
    *  — the transport is where another provider adapts in, so nothing above it changes. */
   transport: ModelTransport;
   exec?: Record<string, ExecTool>; // bash + MCP; send/search are built-in
+  /** Where this agent's file references may point (§9): `send({files})` and a tool's
+   *  attachments resolve through it — its own folder, the org floor, the system docs, the
+   *  media store. Absent (an edge port, a test): whatever the process can read. */
+  files?: FileScope;
   onDelta?: Emit; // → the harness stream (fire-and-forget)
   /** The decision, disclosed the moment it is made — fire-and-forget like onDelta: main
    *  fans it to the door's tailers as a turn edge ({status}), the one fact an attach
@@ -980,7 +985,23 @@ async function act(
      *  reporting on: its `tool_use` has already collapsed out of the transcript (§5). */
     call?: string,
   ): Draft<ToolResultEvent> => {
-    const { output, files } = isOutcome(outcome) ? outcome : { output: outcome, files: [] };
+    const { output: raw, files } = isOutcome(outcome) ? outcome : { output: outcome, files: [] };
+    // the tool's attachments (§5 media): a path that vanished mid-turn drops; one outside
+    // the agent's ground is refused, and the refusal is SAID in the output — the model
+    // asked for bytes and must learn why none came
+    const parts: FilePart[] = [];
+    const refused: string[] = [];
+    for (const f of files) {
+      try {
+        parts.push(filePartOf(f, ports.files));
+      } catch (err) {
+        if (err instanceof Deno.errors.NotFound) continue;
+        refused.push(err instanceof Error ? err.message : String(err));
+      }
+    }
+    const output = refused.length && typeof raw === "string"
+      ? `${raw}${raw ? "\n" : ""}${refused.map((r) => `[attachment refused: ${r}]`).join("\n")}`
+      : raw;
     return {
       ts: ts(),
       type: "tool_result",
@@ -998,14 +1019,7 @@ async function act(
           data: { output, ...flags },
           ...(call !== undefined ? { text: call } : {}),
         },
-        // the tool's attachments (§5 media) — a path that vanished mid-turn just drops
-        ...files.flatMap((f) => {
-          try {
-            return [filePartOf(f)];
-          } catch {
-            return [];
-          }
-        }),
+        ...parts,
       ],
     };
   };
@@ -1468,7 +1482,9 @@ async function execute(
       };
     // attachments (§5 media): paths → FileParts, statted and classified broker-side; a
     // missing path throws here and the tool_result carries the error back to the model
-    const files = Array.isArray(args.files) ? args.files.map((f) => filePartOf(String(f))) : [];
+    const files = Array.isArray(args.files)
+      ? args.files.map((f) => filePartOf(String(f), ports.files))
+      : [];
     const body = args.text === undefined ? "" : String(args.text);
     const glyph = args.react === undefined ? "" : String(args.react);
     // the reference (§5): the model points with the `id` its window showed. Resolving it
@@ -1683,7 +1699,8 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
           files: {
             type: "array",
             items: { type: "string" },
-            description: "file paths to attach (workspace or media-store paths)",
+            description:
+              "file paths to attach — from your folder (relative paths are from there), the org's, or the media store",
           },
         },
         required: ["to"],

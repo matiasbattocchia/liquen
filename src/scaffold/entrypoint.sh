@@ -4,8 +4,11 @@
 # on the same state, so restarts and roster edits are safe.
 set -eu
 
-# the single volume: the project addresses ./data, the container mounts /data
-ln -sfn /data /app/data
+# the single volume: the project addresses ./data, the container mounts /data. The link
+# replaces an empty folder and refuses a populated one — state baked into the image would
+# otherwise shadow the volume.
+rmdir /app/data 2>/dev/null || true
+ln -sfnT /data /app/data
 
 # one Linux user per agent. The uid is pinned by NAME (a hash, probed past collisions),
 # so file ownership on the volume survives rebuilds and roster edits alike.

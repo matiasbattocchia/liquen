@@ -469,3 +469,17 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: "door: the socket is the agent's alone — no peer uid can open it",
+  sanitizeResources: false,
+  async fn() {
+    const { dir, down } = await up();
+    try {
+      const mode = (await Deno.stat(`${dir}/agents/ana/door.sock`)).mode! & 0o777;
+      assertEquals(mode, 0o600);
+    } finally {
+      await down();
+    }
+  },
+});

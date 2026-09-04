@@ -244,3 +244,36 @@ Deno.test("memoizedLoader: a uri loads once, and the memo is bounded by bytes he
   memo("/a");
   assertEquals(loads, 6);
 });
+
+Deno.test("filePartOf: a scoped reference resolves from the agent's home and stays inside its roots", async () => {
+  const tmp = await Deno.realPath(await Deno.makeTempDir());
+  try {
+    const home = `${tmp}/agents/ana`;
+    const scope = { home, roots: [home, `${tmp}/org`] };
+    await Deno.mkdir(`${home}/notes`, { recursive: true });
+    await Deno.mkdir(`${tmp}/org`, { recursive: true });
+    await Deno.mkdir(`${tmp}/log`, { recursive: true });
+    await Deno.mkdir(`${tmp}/agents/bo`, { recursive: true });
+    await Deno.writeTextFile(`${home}/notes/plan.md`, "# plan");
+    await Deno.writeTextFile(`${tmp}/org/shared.csv`, "a,b");
+    await Deno.writeTextFile(`${tmp}/log/log.db`, "sqlite");
+    await Deno.writeTextFile(`${tmp}/agents/bo/secret.md`, "bo's");
+    // relative = from the agent's home, not the harness's cwd
+    assertEquals(filePartOf("notes/plan.md", scope).file.uri, `file://${home}/notes/plan.md`);
+    assertEquals(filePartOf(`${tmp}/org/shared.csv`, scope).file.name, "shared.csv");
+    // the substrate and a peer's folder are outside — the tool_result carries the refusal
+    assertThrows(() => filePartOf(`${tmp}/log/log.db`, scope), Error, "outside");
+    assertThrows(() => filePartOf(`${tmp}/agents/bo/secret.md`, scope), Error, "outside");
+    assertThrows(() => filePartOf("../bo/secret.md", scope), Error, "outside");
+    // a symlink inside pointing outside is judged by where it POINTS
+    await Deno.symlink(`${tmp}/log/log.db`, `${home}/innocent.db`);
+    assertThrows(() => filePartOf(`${home}/innocent.db`, scope), Error, "outside");
+    // links pass untouched: nothing local is read
+    assertEquals(
+      filePartOf("https://example.com/a.pdf", scope).file.uri,
+      "https://example.com/a.pdf",
+    );
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
