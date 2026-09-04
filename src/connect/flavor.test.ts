@@ -30,3 +30,25 @@ Deno.test("fromSlack: mrkdwn → common markdown, meaning kept (a Slack single s
     "**bold** ~~gone~~ [docs](https://a.io) https://b.io `*raw*`",
   );
 });
+
+Deno.test("toSlack: the three control characters escape everywhere, code included", () => {
+  assertEquals(toSlack("a < b & c > d"), "a &lt; b &amp; c &gt; d");
+  assertEquals(toSlack("`x < y`"), "`x &lt; y`");
+});
+
+Deno.test("toSlack: a link with `&` in its url escapes inside the angle form", () => {
+  assertEquals(
+    toSlack("[docs](https://a.io/p?x=1&y=2)"),
+    "<https://a.io/p?x=1&amp;y=2|docs>",
+  );
+});
+
+Deno.test("fromSlack: entities unescape after the link forms are consumed", () => {
+  assertEquals(fromSlack("a &lt; b &amp; c"), "a < b & c");
+  // a literal `<foo>` in a message is text, never a wire form — it survives the round trip
+  assertEquals(fromSlack(toSlack("<foo> and <https://a.io>")), "<foo> and <https://a.io>");
+  assertEquals(
+    fromSlack("&lt;https://a.io|docs&gt; <https://a.io|docs>"),
+    "<https://a.io|docs> [docs](https://a.io)",
+  );
+});

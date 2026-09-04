@@ -83,6 +83,7 @@ async function withDispatch(
     directory?: SlackDispatchDeps["directory"];
     /** a deployment with no reaction leg — the send must stamp failed, not vanish */
     noReact?: boolean;
+    rootOf?: SlackDispatchDeps["rootOf"];
   } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
@@ -119,6 +120,7 @@ async function withDispatch(
       return log.setDelivery(id, patch);
     },
     directory: opts.directory,
+    rootOf: opts.rootOf,
   });
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {
     const t0 = Date.now();
@@ -299,6 +301,36 @@ Deno.test("slack dispatch: `re` posts into the referent's thread (§5)", async (
     await waitFor(() => posts.length === 1);
     assertEquals(posts[0].threadTs, "111.222"); // the ts, dug out of the external id
   });
+});
+
+Deno.test("slack dispatch: `re` at a reply posts into the ROOT's thread — chat.postMessage takes the root's ts", async () => {
+  const asked: string[] = [];
+  await withDispatch(async ({ publish, posts, waitFor }) => {
+    await publish({
+      ...agentMsg("e1", "sigo el hilo"),
+      payload: { ref_external_id: "slack:T1:C1:222.333", action: "reply" },
+    });
+    await waitFor(() => posts.length === 1);
+    assertEquals(posts[0].threadTs, "111.222"); // the root, not the referent
+    assertEquals(asked, ["slack:T1:C1:222.333"]);
+  }, {
+    // the referent row is itself a reply: its ref names the thread root
+    rootOf: (externalId) => {
+      asked.push(externalId);
+      return Promise.resolve("slack:T1:C1:111.222");
+    },
+  });
+});
+
+Deno.test("slack dispatch: `re` at a root posts into that root's thread — rootOf finds no parent", async () => {
+  await withDispatch(async ({ publish, posts, waitFor }) => {
+    await publish({
+      ...agentMsg("e1", "voy yo"),
+      payload: { ref_external_id: "slack:T1:C1:111.222", action: "reply" },
+    });
+    await waitFor(() => posts.length === 1);
+    assertEquals(posts[0].threadTs, "111.222");
+  }, { rootOf: () => Promise.resolve(undefined) });
 });
 
 Deno.test("slack dispatch: a reaction lands as reactions.add — no ts to backfill", async () => {

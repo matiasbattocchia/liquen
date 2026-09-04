@@ -1,7 +1,9 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   createSlackWebhook,
+  looksLikeSignIn,
   slackNames,
+  slackSocket,
   type SlackWebhookDeps,
   type WebhookHandler,
 } from "./ingest.ts";
@@ -149,7 +151,13 @@ Deno.test("slack: message_changed is its OWN event — action edit + ref to the 
         subtype: "message_changed",
         channel: "C1",
         event_ts: "111.900",
-        message: { ts: "111.222", user: "U7", text: "hola equipo (edited)" },
+        message: {
+          ts: "111.222",
+          user: "U7",
+          text: "hola equipo (edited)",
+          edited: { user: "U7", ts: "111.900" },
+        },
+        previous_message: { ts: "111.222", user: "U7", text: "hola equipo" },
       },
     })),
   );
@@ -159,6 +167,43 @@ Deno.test("slack: message_changed is its OWN event — action edit + ref to the 
   assertEquals(m.payload?.action, "edit");
   assertEquals(m.payload?.ref_external_id, "slack:T1:C1:111.222"); // the original, untouched
   assertEquals((m.parts[0] as { text: string }).text, "hola equipo (edited)");
+});
+
+Deno.test("slack: a message_changed with the same text and no `edited` is not an edit — nothing publishes", async () => {
+  const { handler, published } = harness(SECRET);
+  // a link unfurl: Slack re-delivers the message with attachments, the text untouched
+  const res = await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        subtype: "message_changed",
+        channel: "C1",
+        event_ts: "111.900",
+        message: { ts: "111.222", user: "U7", text: "mira https://a.io" },
+        previous_message: { ts: "111.222", user: "U7", text: "mira https://a.io" },
+      },
+    })),
+  );
+  assertEquals(res.status, 200);
+  assertEquals(published.length, 0);
+});
+
+Deno.test("slack: a message_changed whose text differs is an edit even without `edited`", async () => {
+  const { handler, published } = harness(SECRET);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        subtype: "message_changed",
+        channel: "C1",
+        event_ts: "111.900",
+        message: { ts: "111.222", user: "U7", text: "b" },
+        previous_message: { ts: "111.222", user: "U7", text: "a" },
+      },
+    })),
+  );
+  assertEquals(published.length, 1);
+  assertEquals((published[0] as MessageEvent).payload?.action, "edit");
 });
 
 Deno.test("slack: a bad signature is rejected before the log", async () => {
@@ -641,4 +686,183 @@ Deno.test("slack: a delivery whose processing fails is still acked 200, and the 
   }
   assertEquals(logged.length, 1);
   assertStringIncludes(logged[0], "disk full");
+});
+
+Deno.test("looksLikeSignIn: an HTML answer to a non-HTML file is Slack's sign-in page", () => {
+  assertEquals(looksLikeSignIn("image/png", "text/html; charset=utf-8"), true);
+  assertEquals(looksLikeSignIn(undefined, "text/html"), true);
+  assertEquals(looksLikeSignIn("text/html", "text/html; charset=utf-8"), false); // an HTML share IS html
+  assertEquals(looksLikeSignIn("image/png", "image/png"), false);
+  assertEquals(looksLikeSignIn("image/png", null), false); // no header, no verdict
+});
+
+Deno.test("slack: a threaded reply carries action reply + ref to the thread root", async () => {
+  const { handler, published } = harness(SECRET);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U7",
+        text: "en el hilo",
+        ts: "222.333",
+        thread_ts: "111.222", // the root's ts — Slack threads are one level deep
+      },
+    })),
+  );
+  assertEquals(published.length, 1);
+  const m = published[0] as MessageEvent;
+  assertEquals(m.envelope.external_id, "slack:T1:C1:222.333");
+  assertEquals(m.payload?.action, "reply");
+  assertEquals(m.payload?.ref_external_id, "slack:T1:C1:111.222");
+});
+
+Deno.test("slack: a thread root (thread_ts = its own ts) is a plain message, not a reply", async () => {
+  const { handler, published } = harness(SECRET);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U7",
+        text: "abro hilo",
+        ts: "111.222",
+        thread_ts: "111.222",
+        reply_count: 3,
+      },
+    })),
+  );
+  assertEquals(published.length, 1);
+  assertEquals((published[0] as MessageEvent).payload, undefined);
+});
+
+Deno.test("slack: an edit inside a thread stays an edit — the reply relation is the original's", async () => {
+  const { handler, published } = harness(SECRET);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        subtype: "message_changed",
+        channel: "C1",
+        event_ts: "222.900",
+        message: {
+          ts: "222.333",
+          thread_ts: "111.222",
+          user: "U7",
+          text: "en el hilo (edited)",
+          edited: { user: "U7", ts: "222.900" },
+        },
+        previous_message: { ts: "222.333", thread_ts: "111.222", user: "U7", text: "en el hilo" },
+      },
+    })),
+  );
+  const m = published[0] as MessageEvent;
+  assertEquals(m.payload?.action, "edit");
+  assertEquals(m.payload?.ref_external_id, "slack:T1:C1:222.333");
+});
+
+Deno.test("slack: without `track` the handler answers only once the publish landed — 500 on failure", async () => {
+  const stored: Event[] = [];
+  let fail = true;
+  const publish = ((one: Draft | Draft[]) => {
+    if (fail) return Promise.reject(new Error("disk full"));
+    const drafts = Array.isArray(one) ? one : [one];
+    const rows = drafts.map((e) => ({ ...e, id: e.id ?? newId() } as Event));
+    stored.push(...rows);
+    return Promise.resolve(Array.isArray(one) ? rows : rows[0]);
+  }) as Appender["publish"];
+  const handler = createSlackWebhook({ publish });
+  const logged: string[] = [];
+  const real = console.error;
+  console.error = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+  try {
+    const refused = await handler(
+      new Request("http://localhost/", { method: "POST", body: JSON.stringify(messageEvent()) }),
+    );
+    assertEquals(refused.status, 500);
+    assertStringIncludes(await refused.text(), "disk full");
+    assertEquals(stored.length, 0);
+    fail = false;
+    const accepted = await handler(
+      new Request("http://localhost/", { method: "POST", body: JSON.stringify(messageEvent()) }),
+    );
+    assertEquals(accepted.status, 200);
+    assertEquals(stored.length, 1); // the answer came AFTER the row landed
+  } finally {
+    console.error = real;
+  }
+});
+
+/** A Slack Socket Mode endpoint in miniature: on open it delivers one events_api envelope
+ *  and redelivers it every `RESEND_MS` until an ack names it. Records every ack. */
+function fakeSocketMode(envelope: { envelope_id: string; payload: unknown }, RESEND_MS: number) {
+  const acks: string[] = [];
+  const order: string[] = [];
+  const timers = new Set<number>();
+  const server = Deno.serve({ port: 0, onListen: () => {} }, (req) => {
+    const { socket, response } = Deno.upgradeWebSocket(req);
+    const deliver = () => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: "events_api", ...envelope }));
+      const t = setTimeout(() => {
+        timers.delete(t);
+        if (!acks.includes(envelope.envelope_id)) deliver();
+      }, RESEND_MS);
+      timers.add(t);
+    };
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ type: "hello" })); // no envelope_id — nothing to ack
+      deliver();
+    };
+    socket.onmessage = (e) => {
+      const ack = JSON.parse(String(e.data)) as { envelope_id?: string };
+      if (ack.envelope_id) {
+        acks.push(ack.envelope_id);
+        order.push(`ack:${ack.envelope_id}`);
+      }
+    };
+    return response;
+  });
+  const url = `ws://127.0.0.1:${server.addr.port}/`;
+  const close = async () => {
+    for (const t of timers) clearTimeout(t);
+    await server.shutdown();
+  };
+  return { url, acks, order, close };
+}
+
+Deno.test("slack socket: an envelope is acked only after its delivery landed — a refused one is redelivered", async () => {
+  const wire = fakeSocketMode({ envelope_id: "env-1", payload: messageEvent() }, 200);
+  let calls = 0;
+  const handler: WebhookHandler = async (req) => {
+    const body = await req.json() as { event: { text: string } };
+    assertEquals(body.event.text, "hola equipo"); // the payload rides as the synthetic POST
+    calls += 1;
+    const status = calls === 1 ? 500 : 200;
+    await new Promise((r) => setTimeout(r, 10));
+    wire.order.push(`handled:${calls}:${status}`);
+    return new Response(status === 200 ? "accepted" : "disk full", { status });
+  };
+  const logged: string[] = [];
+  const real = console.error;
+  console.error = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+  const stop = slackSocket("xapp-1-A1-2-3", handler, { open: () => Promise.resolve(wire.url) });
+  try {
+    const t0 = Date.now();
+    while (wire.acks.length === 0 && Date.now() - t0 < 5_000) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await new Promise((r) => setTimeout(r, 250)); // long enough for a stray second ack
+  } finally {
+    console.error = real;
+    await stop();
+    await wire.close();
+  }
+  assertEquals(wire.acks, ["env-1"]); // exactly one ack, naming the envelope
+  assertEquals(calls, 2); // the refusal was redelivered
+  assertEquals(wire.order, ["handled:1:500", "handled:2:200", "ack:env-1"]); // ack AFTER the landing
+  assertEquals(logged.length, 1); // the refusal is on stderr
+  assertStringIncludes(logged[0], "env-1");
 });

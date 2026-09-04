@@ -108,8 +108,9 @@ export type SlackPost = (
   text: string,
   author?: string,
   files?: FilePart[],
-  /** The message being answered (§5 `re`): Slack's reply IS a thread, so a reference posts
-   *  into the referent's thread — the parent's `ts` when it has one, else its own. */
+  /** The thread to post into (§5 `re`): Slack's reply IS a thread, and `chat.postMessage`
+   *  takes the thread ROOT's `ts` — the referent's own when it is a root, its parent's
+   *  when it is itself a reply. */
   threadTs?: string,
 ) => Promise<{ ts?: string; user?: string }>;
 
@@ -141,6 +142,11 @@ export interface SlackDispatchDeps {
    *  claim user ids for the wire encoding. Specials (`@here`) and bare ids encode
    *  regardless; unclaimed names stay literal text. */
   directory?: Directory;
+  /** The thread root of a referent (§5 `re`): the external id the referent's own row
+   *  names in `payload.ref_external_id` when that row is itself a reply; undefined when
+   *  the referent is a root or unknown to the log. Absent ⇒ the referent's ts is the
+   *  thread — right for a root, and the only answer a deployment without the log has. */
+  rootOf?: (externalId: string) => Promise<string | undefined>;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
   from?: EventId;
   onError?: (event: MessageEvent, err: unknown) => void;
@@ -159,7 +165,7 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void
     setDelivery: deps.setDelivery,
     onError: deps.onError,
     onSent: deps.onSent,
-    post: async ({ target, text, files, re, glyph }, event) => {
+    post: async ({ target, text, files, re, ref, glyph }, event) => {
       const action = event.payload?.action;
       if (action === "edit" || action === "delete") {
         if (!re) throw new DispatchError(`a ${action} needs the message it acts on`, 400);
@@ -180,7 +186,9 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void
       // wire's forms here at the frontier; unclaimed names stay literal text
       const dir = /[@#]/.test(text) ? await deps.directory?.("slack", target.channel) : null;
       const encoded = text ? encodeSlackText(text, dir ?? []) : text;
-      const { ts, user } = await deps.post(target, encoded, event.agent?.id, files, re);
+      // the thread is the referent's ROOT: a reply to a reply lands in the same thread
+      const threadTs = re && ref ? tsOf(await deps.rootOf?.(ref)) ?? re : re;
+      const { ts, user } = await deps.post(target, encoded, event.agent?.id, files, threadTs);
       // sender stamps WITH dispatched_at when the response names the posting identity
       // (§4): the wire states its own side twice, and we take the first statement —
       // the echo's merge still fills what only it knows (the display name)
@@ -201,6 +209,9 @@ interface Outbound {
   files: FilePart[];
   /** The referent's `ts` — a thread to post into, or the message a glyph lands on. */
   re?: string;
+  /** The referent's external id whole (`slack:<team>:<channel>:<ts>`) — the log's key
+   *  for it, which is what a thread-root lookup takes. */
+  ref?: string;
   /** Present ⇒ this send is a reaction, not a message (empty on a remove). */
   glyph?: string;
 }
@@ -214,20 +225,21 @@ function outbound(event: MessageEvent): Outbound | null {
   // common markdown → mrkdwn, here at the frontier (flavor.ts)
   const text = toSlack(textOf(e));
   const files = filesOf(e);
-  const re = tsOf(event.payload?.ref_external_id);
+  const ref = event.payload?.ref_external_id;
+  const re = tsOf(ref);
   const reaction = (event.parts ?? []).find((p) => p.type === "data" && p.kind === "reaction") as {
     data?: { unicode?: string; name?: string };
   } | undefined;
   if (reaction) {
     const glyph = reaction.data?.unicode ?? reaction.data?.name ?? "";
-    return { target: { connection, channel }, text: "", files: [], re, glyph };
+    return { target: { connection, channel }, text: "", files: [], re, ref, glyph };
   }
   const action = event.payload?.action;
   if (action === "delete") {
-    return { target: { connection, channel }, text: "", files: [], re };
+    return { target: { connection, channel }, text: "", files: [], re, ref };
   }
   if (!text && files.length === 0) return null;
-  return { target: { connection, channel }, text, files, re };
+  return { target: { connection, channel }, text, files, re, ref };
 }
 
 /** `slack:<team>:<channel>:<ts>` → the `ts` the API takes. A reference minted anywhere else
@@ -410,12 +422,18 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   const { post, react, amend } = slackWire({ tokenFor });
 
   const { logDirectory } = await import("../mentions.ts");
+  // the referent's row, by its external id: a reply row's ref names the thread root
+  const rootOf = async (externalId: string): Promise<string | undefined> => {
+    const [row] = await log.read({ externalId, types: ["message"] });
+    return row?.payload?.action === "reply" ? row.payload.ref_external_id : undefined;
+  };
   const stop = createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     post,
     react,
     amend,
     directory: logDirectory((q) => log.read(q)),
+    rootOf,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onSent: (e, ts) =>
       console.error(`[dispatch] sent → ${e.envelope.conversation.address} (ts ${ts})`),

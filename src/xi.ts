@@ -751,7 +751,11 @@ export function anchored(rows: Event[], limit: number): Event[] {
   const oldest = Date.parse(rows[rows.length - limit].ts); // the floor a plain tail would use
   if (!Number.isFinite(oldest)) return rows.slice(-limit);
   const grid = Math.floor(oldest / WINDOW_ANCHOR_MS) * WINDOW_ANCHOR_MS;
-  return rows.filter((e) => Date.parse(e.ts) >= grid);
+  // the floor is a POSITION: the first row stamped in the bucket, and everything appended
+  // after it — a late-stamped row (an offline sync, a lagged webhook) is news by position,
+  // whatever its clock says
+  const floor = rows.findIndex((e) => Date.parse(e.ts) >= grid);
+  return floor === -1 ? rows.slice(-limit) : rows.slice(floor);
 }
 
 /** One xi invocation: poke → owed → (think/act: acquire-or-exit → work) → return what it

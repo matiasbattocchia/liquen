@@ -74,6 +74,9 @@ export interface ReadQuery {
    *  slots on rows that are then thrown away — a window of pure history renders empty.
    *  Omitted ⇒ included, which is what `search` wants: silenced rows are its whole point. */
   silenced?: boolean;
+  /** Exact match on the wire's artifact id (`envelope.external_id`) — how a dispatcher
+   *  finds the row a `re` points at. */
+  externalId?: string;
   limit?: number; // keep only the most recent N (still returned in append order)
   /** Row-level predicate applied BEFORE `limit` — RLS `USING` semantics: the window fills
    *  with N *visible* events, never N-minus-the-private-ones. `scoped()` (§6) pins it; on
@@ -944,6 +947,7 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
   eq("service", q.service);
   eq("connection_address", q.connection);
   eq("conversation_address", q.conversation);
+  eq("external_id", q.externalId);
   if (q.conversations && q.conversations.length > 0) {
     // the readable scope pushed into WHERE — private rows never leave the store (§6)
     where.push(`conversation_address IN (${q.conversations.map(() => "?").join(",")})`);

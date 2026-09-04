@@ -13,7 +13,9 @@ import { checkPort, checkStrings, connectorConfig, type ConnectorSpec } from "..
 export const DEFAULT_INGEST_PORT = 8789;
 export const DEFAULT_OAUTH_PORT = 8790;
 /** The BOT is one identity for the whole org: it sees a channel only once invited, so
- *  reading the roster and the history of what it was invited to is the whole job. */
+ *  reading the roster and the history of what it was invited to is the whole job — the
+ *  attachments included: `files:read` is what lets the bot token fetch a shared file's
+ *  `url_private` (the media seam's download); without it Slack answers a sign-in page. */
 export const DEFAULT_BOT_SCOPES = [
   "channels:history",
   "groups:history",
@@ -21,18 +23,18 @@ export const DEFAULT_BOT_SCOPES = [
   "mpim:history",
   "channels:read",
   "users:read",
+  "files:read",
   "chat:write",
 ];
 /** A USER token acts AS that human and therefore sees what they see — which is why the
  *  list is longer: enumerating their private channels, DMs and group DMs needs the three
- *  `:read`s a bot has no use for, and search/files have no bot equivalent at all. */
+ *  `:read`s a bot has no use for, and search has no bot equivalent at all. */
 export const DEFAULT_USER_SCOPES = [
   ...DEFAULT_BOT_SCOPES,
   "groups:read",
   "im:read",
   "mpim:read",
   "search:read",
-  "files:read",
   // conversations.open, which the user door calls to resolve the self-DM: notes-to-self
   // IS the mind on this surface (§4), and without this the binding cannot be made
   "im:write",

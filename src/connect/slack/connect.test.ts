@@ -192,8 +192,14 @@ Deno.test("bot door: xoxb → the org-credentialed anchor + the vault blob", asy
   });
 
   assertEquals({ team, botUser }, { team: "T1", botUser: "UBOT" });
-  // ONE row: the workspace anchor, org-credentialed — no owner, no membership (§6)
-  assertEquals(h.connections, [{ service: "slack", address: "T1", credentialKey: "slack:T1:org" }]);
+  // TWO rows, the same pair the hosted door writes: the bare workspace stub (the anchor
+  // of personal-witnessed deliveries, membership-only) and the bot's own grant row
+  // `<team>:<bot user>`, org-credentialed — where bot-witnessed deliveries anchor (§4);
+  // neither has an owner or a membership (§6)
+  assertEquals(h.connections, [
+    { service: "slack", address: "T1" },
+    { service: "slack", address: "T1:UBOT", credentialKey: "slack:T1:org" },
+  ]);
   assertEquals(h.memberships.length, 0);
   assertEquals(h.credentials[0].key, "slack:T1:org");
   // the identity ALONE — the carrier is app-scoped and lives at its own door
@@ -409,4 +415,10 @@ Deno.test("socket door: the default probe's apps.connections.open call carries a
   }
   assertEquals(seen.length, 1);
   assert(seen[0].signal instanceof AbortSignal, "the probe is bounded");
+});
+
+Deno.test("config: the bot leg reads files — `url_private` answers a sign-in page otherwise", () => {
+  assert(DEFAULT_BOT_SCOPES.includes("files:read"));
+  assert(DEFAULT_USER_SCOPES.includes("files:read")); // the user list spreads the bot list
+  assertEquals(new Set(DEFAULT_USER_SCOPES).size, DEFAULT_USER_SCOPES.length); // no duplicates
 });

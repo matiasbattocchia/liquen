@@ -643,3 +643,29 @@ Deno.test("publish outlasts a writer holding the lock past the busy timeout (slo
     await holder.status;
   });
 });
+
+Deno.test("read: externalId is an exact match on the wire id", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  try {
+    log.upsertConnections([{ service: "slack", address: "T1" }]);
+    const draft = (ext: string) => ({
+      ts: new Date().toISOString(),
+      type: "message" as const,
+      envelope: {
+        service: "slack" as const,
+        connection_address: "T1",
+        conversation: { address: "C1" },
+        external_id: ext,
+      },
+      parts: [{ type: "text" as const, kind: "text" as const, text: ext }],
+    });
+    await log.publish(draft("slack:T1:C1:1.0"));
+    await log.publish(draft("slack:T1:C1:1.01"));
+    const rows = await log.read({ externalId: "slack:T1:C1:1.0" });
+    assertEquals(rows.map((r) => r.envelope.external_id), ["slack:T1:C1:1.0"]);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

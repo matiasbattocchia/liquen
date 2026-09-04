@@ -258,7 +258,9 @@ on every append, and since a prompt cache matches a PREFIX, that shift alone voi
 rendered history and every breakpoint behind it — the transcript re-written each turn at
 1.25× instead of read back at 0.1×. Snapped, the floor stands still for a bucket of turns
 and jumps once; the window is `windowLimit` plus whatever else shares the floor's bucket.
-`since` bounds the
+The floor is a POSITION — the first row stamped inside the bucket, and everything appended
+after it — so a late-stamped row (an offline sync, a lagged webhook) is inside the window by
+where it landed, whatever its clock says. `since` bounds the
 BACKLOG: a fixed instant, set once when the agent comes up to start − `backlogHours` (24,
 org-configurable: `organization.backlogHours`), before which nothing is ever owed. An
 agent coming up after a week off answers the last day, not the week, and the rest is history
@@ -277,9 +279,12 @@ was answered, so a floor cutting BETWEEN a message and its reply would answer it
 `extra.consumed` — the last event id in the window its step actually read. `unanswered`
 measures against the horizon's POSITION, not the closing's: a message landing between the
 window-read and the closing's publish sits before the closing in the log yet was never
-seen. render honors the same horizon (unconsumed messages render as trailing INPUT, not
-history — also keeps the final user turn non-empty), and compaction never checkpoints
-them away. Real model latency opens this race seconds wide; scripted steps never could.
+seen. The position is a LOG position: render takes the unconsumed set in append order,
+before event time reorders the world's runs, so a lagged message with an older `ts` is still
+input. render renders them as trailing INPUT, not history (which also keeps the final user
+turn non-empty), and compaction keeps its cut below the first of them — `covers` is an id
+range, and a range reaching past unconsumed input would hide it. Real model latency opens
+this race seconds wide; scripted steps never could.
 
 **`<|SILENCE|>`** — the word that closes a turn without speaking. Every turn ends with a
 message in the session's own conversation, because that message is the close and the

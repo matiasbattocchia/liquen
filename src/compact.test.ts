@@ -332,3 +332,21 @@ Deno.test("estTokens weighs what renders — the wire sidecar never reaches the 
   const heavy = { ...e, extra: { raw: { blob: "x".repeat(40_000) } } } as MessageEvent;
   assert(estTokens([heavy]) < estTokens([e]) + 50, `${estTokens([heavy])} vs ${estTokens([e])}`);
 });
+
+Deno.test("span: a message the closing never consumed is never checkpointed away", () => {
+  const m1 = msg("uno", false);
+  const m2 = msg("respuesta uno", true);
+  const m3 = msg("dos", false);
+  const late = msg("tres — landed mid-turn", false); // before the closing, after its horizon
+  const closing = msg("respuesta dos", true);
+  closing.extra = { consumed: m3.id };
+  const m6 = msg("cuatro — trailing", false);
+  const events = [m1, m2, m3, late, closing, m6];
+  const span = compactionSpan(events, SESSION, 1, 1);
+  assert(span !== null);
+  assert(!span.covered.includes(late));
+  // the range the checkpoint stands for must not swallow it either: applying the
+  // checkpoint leaves the unanswered input in the window
+  const visible = applySummary([...events, summaryEv(span.covers, "## nuevo")]);
+  assert(visible.includes(late), "unconsumed input hidden behind the checkpoint");
+});

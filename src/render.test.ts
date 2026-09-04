@@ -1709,3 +1709,25 @@ Deno.test("a checkpoint body is world text — forged marks inside it are inert"
   assertStringIncludes(first, "&lt;principal");
   assertStringIncludes(first, "<checkpoint>");
 });
+
+Deno.test("horizon split: a lagged message with an OLDER ts is still unconsumed input", () => {
+  const closing = mindMsg("e04", "2026-07-20T10:06:00Z", "respuesta a uno", true, "T1");
+  closing.extra = { consumed: "e01" };
+  const events: Event[] = [
+    mindMsg("e01", "2026-07-20T10:05:00Z", "uno", false),
+    // appended after e01 (a lagged webhook) but stamped earlier — never consumed
+    mindMsg("e03", "2026-07-20T10:00:00Z", "cero", false),
+    closing,
+  ];
+  const { messages } = render({
+    events,
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: "2026-07-20T10:07:00Z",
+  });
+  const last = messages.at(-1)!;
+  assertEquals(last.role, "user");
+  assertStringIncludes(JSON.stringify(last.content), "cero");
+  assertEquals(JSON.stringify(messages.slice(0, -1)).includes("cero"), false);
+});

@@ -66,6 +66,10 @@ export interface AliasRow {
   connection: string; // the binding row's own address (grant / paired number)
   conversation: string; // the self-conversation on the wire
   agentId: string;
+  /** The grant still stands (no `deleted_at`): the surface is one somebody holds, so a
+   *  mind copy sent there reaches them. A revoked binding is listed too — it keeps
+   *  recognizing the history it ingested — but nothing is sent to it. */
+  live: boolean;
 }
 
 /** Does this envelope land in an alias conversation? Events may anchor to a sibling of the
@@ -100,8 +104,9 @@ export interface Connections {
    *  Deletion does not hide the row here; only the gate checks `deleted_at`. */
   connection(service: string, address: string): ConnectionRow | null;
   /** The mind-alias bindings (§4): every owned connection's self-conversation, derived
-   *  or recorded. Soft-deleted rows KEEP answering — a revocation closes
-   *  the gate, never the hiding: the mind copies are that surface's record. */
+   *  or recorded. Soft-deleted rows KEEP answering, with `live: false` — a revocation
+   *  closes the gate, never the hiding: the mind copies already there are that surface's
+   *  record, and the binding still names whose they are. */
   aliases(): AliasRow[];
   /** Enroll agents in conversations. Upsert only — a re-enroll REVIVES a left row. */
   upsertMemberships(rows: MembershipRow[]): void;
@@ -171,7 +176,7 @@ export function createConnections(db: DatabaseSync): Connections {
   // connection's self-chat IS its own address, nothing stored — and RECORDED where it
   // can't be (Slack's self-DM id is opaque: resolved once at connect, `extra.self_conversation`)
   const getAliases = db.prepare(
-    `SELECT service, address, agent_id,
+    `SELECT service, address, agent_id, deleted_at IS NULL AS live,
             coalesce(json_extract(extra, '$.self_conversation'),
                      CASE service WHEN 'whatsapp' THEN address END) AS conversation
      FROM connections
@@ -249,12 +254,14 @@ export function createConnections(db: DatabaseSync): Connections {
         address: string;
         agent_id: string;
         conversation: string;
+        live: number;
       }[];
       return rows.map((r) => ({
         service: r.service,
         connection: r.address,
         conversation: r.conversation,
         agentId: r.agent_id,
+        live: r.live === 1,
       }));
     },
 

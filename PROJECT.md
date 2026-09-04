@@ -1751,3 +1751,44 @@ processors.
 Not done, on purpose: an AbortSignal into `messages.stream` — nothing publishes a
 `control` event yet, so nothing could fire it. The principal instructions doc and bash's
 sticky-cwd `.out/` placement are parked for a separate look.
+
+## Silent loss and wrong dispatch, audited (2026-09-04) — LANDED
+
+Every fix below has a test that failed first. Full suite green; nothing here changes the
+schema.
+
+**The window and the horizon.** The unconsumed set is taken over the LOG order before
+event time reorders the world's runs, so a lagged webhook with an older `ts` renders as
+input, not history. Compaction keeps its cut below the first unconsumed message: `covers`
+is an id range, and a range reaching past one hid it from both the transcript and the
+window. The anchored floor is a position (the first row stamped inside the bucket, and
+everything after it), so an offline-synced message with an old platform time stays in the
+window. `ReadQuery.externalId` is an exact match on the wire id — how a dispatcher finds
+the row a `re` points at.
+
+**Slack.** The paste bot door registers the same two rows the hosted door does — the bare
+workspace stub and `<team>:<bot user>` carrying the credential — so bot-witnessed
+deliveries pass the gate. A threaded reply carries `action: reply` and a `ref_external_id`
+naming the thread root; dispatch resolves a `re` at a reply to that root (`rootOf`) before
+posting, since Slack threads on the root's `ts` alone. `toSlack` escapes `&`, `<`, `>`
+everywhere (code included) before the mrkdwn transforms, and `fromSlack` unescapes them
+last. The bot leg holds `files:read`; a `text/html` answer to a non-HTML `url_private` is
+Slack's sign-in page and lands nowhere (`looksLikeSignIn`). Without a `track` dep the
+webhook handler answers only once the publish landed (500 on failure), and the Socket Mode
+carrier acks an envelope only on a 2xx, so a refused delivery is redelivered and the upsert
+dedupes; the carrier's `open` is injectable. A `message_changed` is an edit only when the
+inner message carries `edited` or its text differs from `previous_message` — a link unfurl
+is neither.
+
+**GitHub.** The author's own grant is chosen when the row holds a static `token` or a
+device-flow `access_token` (`grantKeyFor`); dispatch has an amend leg (`GhAmend`) so an
+edit PATCHes and a delete DELETEs the referent comment (`gh:<id>`) instead of posting anew;
+a reference naming no comment fails with 400.
+
+**The mirror.** Alias rows carry `live` (no `deleted_at`). A revoked binding keeps
+recognizing its history, but fan-out sends only to live surfaces: the batched CC publish
+was refused whole at the gate for the dead one, so the live surfaces lost their copies too.
+
+Items of the audit's section that the earlier pass had already closed: the `max_tokens`
+cut inside a `tool_use`, the alarm double-fire (atomic claim), `credentials.put` merging in
+SQL, the unscoped door verdict, and the GitHub failure stamp (the shared dispatcher).

@@ -214,10 +214,12 @@ export interface SlackBotDeps {
   now?: () => string;
 }
 
-/** Finish a pasted bot-token grant: verify with Slack, write the ORG-credentialed anchor
- *  (`credential_key` on the workspace row, no owner ⇒ the org's shared inbox, §6), vault
- *  the blob at `slack:<team>:org`. The identity and nothing else: the socket carrier is
- *  its own door (`mu connect slack socket`), app-scoped where this is workspace-scoped.
+/** Finish a pasted bot-token grant: verify with Slack, write the same two rows the hosted
+ *  door writes — the bare workspace stub (membership-only; the anchor of personal-witnessed
+ *  deliveries) and the bot's own grant row `<team>:<bot user>` carrying `credential_key`
+ *  (no owner ⇒ the org's shared inbox, §6; bot-witnessed deliveries anchor here) — and
+ *  vault the blob at `slack:<team>:org`. The identity and nothing else: the socket carrier
+ *  is its own door (`mu connect slack socket`), app-scoped where this is workspace-scoped.
  *  Throws (writing nothing) on a rejected token. */
 export async function connectSlackBot(
   token: string,
@@ -242,9 +244,14 @@ export async function connectSlackBot(
   const missing = missingScopes(deps.asked ?? [], who.scopes);
 
   const credentialKey = `slack:${team}:org`;
-  // ONE row: the workspace anchor, org-credentialed — that account itself reads as the
-  // org (§6), so no ownership edge and no membership; the bot's identity is vault sidecar
-  deps.store.upsertConnections([{ service: "slack", address: team, credentialKey }]);
+  // the workspace stub opens the log for personal-witnessed deliveries; the bot's own
+  // row is where bot-witnessed ones anchor (`<team>:<bot user>`, the ingest's anchor) and
+  // the one that carries the credential — that account itself reads as the org (§6), so
+  // no ownership edge and no membership on either
+  deps.store.upsertConnections([
+    { service: "slack", address: team },
+    { service: "slack", address: `${team}:${botUser}`, credentialKey },
+  ]);
   await deps.creds.put({
     key: credentialKey,
     value: { token },

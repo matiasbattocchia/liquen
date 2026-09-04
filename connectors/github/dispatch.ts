@@ -32,7 +32,7 @@ import type {
   MessageEvent,
   Subscriber,
 } from "../../src/connector.ts";
-import { createDispatcher, findRoot } from "../../src/connector.ts";
+import { createDispatcher, DispatchError, findRoot } from "../../src/connector.ts";
 
 /** How long one post to GitHub may take, spawn to exit. */
 const API_TIMEOUT_MS = 30_000;
@@ -51,9 +51,20 @@ export type GhPost = (
   author?: string,
 ) => Promise<string | undefined>;
 
+/** Replace or take back a comment we posted — `PATCH`/`DELETE` on the comment by its id.
+ *  Neither mints a new id: the edit IS the original comment, so nothing backfills. */
+export type GhAmend = (
+  target: GhTarget,
+  amend: { id: string; action: "edit" | "delete"; text: string },
+  author?: string,
+) => Promise<void>;
+
 export interface GithubDispatchDeps {
   subscribe: Subscriber["subscribe"];
   post: GhPost;
+  /** Absent = this deployment cannot edit or delete: the send stamps `failed`, so the
+   *  agent learns its correction never landed. */
+  amend?: GhAmend;
   /** Delivery bookkeeping — bind the log's `setDelivery`. Backfills `external_id` (the echo
    *  key, prefixed like the ingest stamps it) + `status.dispatched_at` after a post. */
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
@@ -63,7 +74,8 @@ export interface GithubDispatchDeps {
 }
 
 /** Wire dispatch to the log — the shared loop (`dispatcher.ts` via the connector seam)
- *  over one leg: a comment posts, its id backfills `external_id`. Returns stop. */
+ *  over two legs: a comment posts and its id backfills `external_id`; an edit/delete
+ *  amends the comment it refers to. Returns stop. */
 export function createGithubDispatch(deps: GithubDispatchDeps): () => Promise<void> {
   return createDispatcher<Outbound>({
     subscribe: deps.subscribe,
@@ -73,7 +85,15 @@ export function createGithubDispatch(deps: GithubDispatchDeps): () => Promise<vo
     setDelivery: deps.setDelivery,
     onError: deps.onError,
     onSent: deps.onSent,
-    post: async ({ target, text }, event) => {
+    post: async ({ target, text, re }, event) => {
+      const action = event.payload?.action;
+      if (action === "edit" || action === "delete") {
+        if (!re) throw new DispatchError(`a ${action} needs the comment it acts on`, 400);
+        if (!deps.amend) throw new DispatchError("this connection cannot edit", 400);
+        await deps.amend(target, { id: re, action, text }, event.agent?.id);
+        // the edit keeps the original comment id: there is no new artifact to converge on
+        return {};
+      }
       const externalId = await deps.post(target, text, event.agent?.id);
       return {
         id: externalId,
@@ -86,15 +106,29 @@ export function createGithubDispatch(deps: GithubDispatchDeps): () => Promise<vo
 interface Outbound {
   target: GhTarget;
   text: string;
+  /** The referent's comment id — what an edit or delete acts on. */
+  re?: string;
 }
 
-/** Parse `owner/repo#N` + gather the text; null if unaddressable or empty. */
+/** Parse `owner/repo#N` + gather the text; null if unaddressable, or empty on anything
+ *  but a delete (which carries no text by construction). */
 function outbound(e: MessageEvent): Outbound | null {
   const m = e.envelope.conversation.address.match(/^([^/]+)\/([^#]+)#(\d+)$/);
   if (!m) return null;
+  const target = { owner: m[1], repo: m[2], number: Number(m[3]) };
+  const re = commentIdOf(e.payload?.ref_external_id);
   const text = textOf(e);
+  if (e.payload?.action === "delete") return { target, text: "", re };
   if (!text) return null;
-  return { target: { owner: m[1], repo: m[2], number: Number(m[3]) }, text };
+  return { target, text, re };
+}
+
+/** `gh:<comment id>` → the id the API takes. A reference minted anywhere else (another
+ *  service, a delivery guid, a local row) names no comment here. */
+function commentIdOf(externalId?: string): string | undefined {
+  if (!externalId?.startsWith("gh:")) return undefined;
+  const id = externalId.slice("gh:".length);
+  return id.length > 0 ? id : undefined;
 }
 
 function textOf(e: Event): string {
@@ -108,6 +142,19 @@ function textOf(e: Event): string {
 }
 
 /* ── local entry: `post` shells `gh`, the resolved token issued into its spawn env ─────── */
+
+/** The vault key that posts for `author` (§4): the author's own grant when `row` holds a
+ *  credential in either shape — a static PAT rides `token`, a device-flow grant rides
+ *  `access_token` (the broker refreshes it) — else the org's. */
+export function grantKeyFor(
+  author: string | undefined,
+  row:
+    | { value: { token?: string; access_token?: string; [slot: string]: string | undefined } }
+    | null,
+): string {
+  const own = author !== undefined && !!(row?.value.token || row?.value.access_token);
+  return own ? `github:${author}` : "github:org";
+}
 
 /** Wire the outbound half over the org's log — resident once it returns (subscribed).
  *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
@@ -124,35 +171,56 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   // App's hourly installation token when that is what `github:org` records
   const tokenFor = async (author?: string): Promise<string> => {
     const user = author ? await creds.get(`github:${author}`) : null;
-    const key = user?.value.token ? `github:${author}` : "github:org";
+    const key = grantKeyFor(author, user);
     const token = await broker.accessTokenFor(broker.issue(key, user?.agentId));
     if (!token) throw new Error(`no github credential for ${key} — \`mu connect github\``);
     return token;
   };
 
-  const ghPost: GhPost = async ({ owner, repo, number }, text, author) => {
+  // one `gh api` call; returns its stdout (the JSON body, empty on a 204)
+  const ghApi = async (args: string[], author?: string): Promise<string> => {
     const out = await new Deno.Command("gh", {
-      args: [
-        "api",
-        "--method",
-        "POST",
-        `repos/${owner}/${repo}/issues/${number}/comments`,
-        "-f",
-        `body=${text}`,
-      ],
+      args: ["api", ...args],
       env: { GH_TOKEN: await tokenFor(author) }, // gh's env, this spawn only — never exported
       stdout: "piped",
       stderr: "piped",
       signal: AbortSignal.timeout(API_TIMEOUT_MS), // a stalled gh fails like a refused post
     }).output();
     if (!out.success) throw new Error(new TextDecoder().decode(out.stderr).trim());
-    const created = JSON.parse(new TextDecoder().decode(out.stdout)) as { id?: number };
+    return new TextDecoder().decode(out.stdout);
+  };
+
+  const ghPost: GhPost = async ({ owner, repo, number }, text, author) => {
+    const body = await ghApi(
+      [
+        "--method",
+        "POST",
+        `repos/${owner}/${repo}/issues/${number}/comments`,
+        "-f",
+        `body=${text}`,
+      ],
+      author,
+    );
+    const created = JSON.parse(body) as { id?: number };
     return created.id !== undefined ? String(created.id) : undefined;
+  };
+
+  // the amend leg addresses ISSUE comments — a PR is an issue, so the comments the post
+  // leg creates on either thread live under this one endpoint
+  const ghAmend: GhAmend = async ({ owner, repo }, { id, action, text }, author) => {
+    const path = `repos/${owner}/${repo}/issues/comments/${id}`;
+    await ghApi(
+      action === "edit"
+        ? ["--method", "PATCH", path, "-f", `body=${text}`]
+        : ["--method", "DELETE", path],
+      author,
+    );
   };
 
   const stop = createGithubDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     post: ghPost,
+    amend: ghAmend,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onSent: (e, id) =>
       console.error(`[dispatch] sent → ${e.envelope.conversation.address} (comment ${id})`),

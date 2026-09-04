@@ -6,10 +6,10 @@
  * edge-deployable piece (a request URL on the app, the same function behind it).
  *
  * **Socket Mode is a carrier, not an architecture**: locally, a thin runner opens the
- * `xapp` WebSocket, acks envelopes, and feeds each payload to the SAME handler as a
- * synthetic POST — the way `gh webhook forward` carries GitHub webhooks to our HTTP
- * ingest. One pipeline, two transports; the edge tier drops the carrier and keeps the
- * function (§9 deployment tiers).
+ * `xapp` WebSocket, feeds each payload to the SAME handler as a synthetic POST, and acks
+ * the envelope on the handler's 2xx — the way `gh webhook forward` carries GitHub webhooks
+ * to our HTTP ingest. One pipeline, two transports; the edge tier drops the carrier and
+ * keeps the function (§9 deployment tiers).
  *
  * Mapping (§3, §4): a message in channel C of team T → a mu `message` in conversation
  * `C`, `external_id = slack:T:C:<ts>` — Slack's ts is the per-channel message id, so
@@ -52,6 +52,17 @@ export interface SlackFileRef {
   mimetype?: string;
   url_private?: string;
   size?: number;
+}
+
+/** Slack answers a `url_private` fetch the token may not read with its sign-in page —
+ *  HTTP 200, `text/html` — so an HTML body for a file that is not HTML is a refusal, not
+ *  the file. No content-type header ⇒ no verdict. */
+export function looksLikeSignIn(
+  claimedMime: string | undefined,
+  responseContentType: string | null,
+): boolean {
+  if (!responseContentType?.toLowerCase().startsWith("text/html")) return false;
+  return !claimedMime?.toLowerCase().startsWith("text/html");
 }
 
 /** The media seam (§9): download BROKER-side with the connection's credential and land
@@ -133,9 +144,12 @@ export interface SlackWebhookDeps {
   /** App signing secret. If set, `X-Slack-Signature` is REQUIRED and verified; absent ⇒
    *  unsigned accepted (dev / the Socket Mode carrier, already authed by `xapp`). */
   signingSecret?: string;
-  /** Each acked delivery's processing, as it starts. The response goes out first (Slack
-   *  re-delivers anything unanswered within its window, and a retry is a duplicate to
-   *  dedupe); the entry awaits these on stop so nothing in flight is cut off. */
+  /** The response's timing. PRESENT (HTTP mode): the 200 goes out first and each
+   *  delivery's processing is handed here as it starts — Slack re-delivers anything
+   *  unanswered within its window, so the wire is answered before the log is, and the
+   *  entry awaits these on stop so nothing in flight is cut off. ABSENT (a carrier that
+   *  acks for itself): the handler answers only once the processing settled — 200 when the
+   *  publish landed, 500 when it did not — so the carrier's ack means the row exists. */
   track?: (work: Promise<void>) => void;
   now?: () => string;
 }
@@ -174,16 +188,26 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     }
     if (payload.type !== "event_callback") return text(202, `ignored: ${payload.type}`);
 
-    // verified and parsed: ack now, process behind the response. A failure here has no
-    // wire to answer on — stderr is where it lands
-    const work = handle(payload).catch((err) => {
-      console.error(
-        `[ingest] ${payload.event?.type ?? "event"} in ${payload.team_id ?? "?"} failed:`,
-        err instanceof Error ? err.message : err,
+    // verified and parsed. With `track`: ack now, process behind the response — a failure
+    // there has no wire to answer on, so stderr is where it lands. Without it: the answer
+    // IS the outcome, and the caller (a carrier) acks or refuses on it
+    if (deps.track) {
+      deps.track(
+        handle(payload).catch((err) => {
+          console.error(
+            `[ingest] ${payload.event?.type ?? "event"} in ${payload.team_id ?? "?"} failed:`,
+            err instanceof Error ? err.message : err,
+          );
+        }),
       );
-    });
-    deps.track?.(work);
-    return text(200, "accepted");
+      return text(200, "accepted");
+    }
+    try {
+      await handle(payload);
+      return text(200, "accepted");
+    } catch (err) {
+      return text(500, err instanceof Error ? err.message : String(err));
+    }
   };
 
   async function handle(payload: EventsEnvelope): Promise<void> {
@@ -344,6 +368,15 @@ async function mapMessage(
   // original row untouched), or a file share (file_share is a plain message carrying
   // `files` — same row semantics)
   const edit = e.subtype === "message_changed";
+  // a message_changed is an EDIT only when the inner message says so (`edited`) or its
+  // text differs from `previous_message`'s: Slack also re-delivers a message under this
+  // subtype when its attachments change (a link unfurling), the text untouched, and that
+  // delivery states nothing the row does not already hold
+  if (edit) {
+    const changed = e.message as { edited?: unknown; text?: string };
+    const previous = e.previous_message as { text?: string } | undefined;
+    if (changed.edited === undefined && changed.text === previous?.text) return [];
+  }
   const inner = edit ? e.message : e;
   const m = inner.subtype === undefined || inner.subtype === "file_share" ? inner : null;
   const files = (m as { files?: SlackFileRef[] } | null)?.files;
@@ -385,10 +418,16 @@ async function mapMessage(
 
   const kind = KIND[e.channel_type];
   // an edit is its own event (§3): action + the original's id; the delivery's event_ts
-  // is its identity, so retries dedupe and the original's row never re-opens
+  // is its identity, so retries dedupe and the original's row never re-opens. A plain
+  // message inside a thread is a REPLY to the thread's root: Slack threads are one level
+  // deep, so `thread_ts` always names the root, and a root carries its own ts there
+  const threadTs = (m as { thread_ts?: string }).thread_ts;
+  const reply = !edit && threadTs !== undefined && threadTs !== m.ts;
   const payload = {
     ...(edit
       ? { action: "edit" as const, ref_external_id: `slack:${team}:${e.channel}:${m.ts}` }
+      : reply
+      ? { action: "reply" as const, ref_external_id: `slack:${team}:${e.channel}:${threadTs}` }
       : {}),
     ...(mentions.length ? { mentions } : {}),
   };
@@ -560,46 +599,87 @@ function text(status: number, message: string): Response {
 
 /* ── the Socket Mode carrier (local transport for the same handler) ─────── */
 
-/** Open the `xapp` socket and feed every events_api envelope to `handler` as a synthetic
- *  POST, acking each envelope. Reconnects on disconnect/close. Returns stop: close the
- *  socket, settle the deliveries already being handled. */
-export function slackSocket(appToken: string, handler: WebhookHandler): () => Promise<void> {
+/** apps.connections.open — the socket URL an app-level token is entitled to. */
+async function openSocketUrl(appToken: string): Promise<string> {
+  const res = await timedFetch("https://slack.com/api/apps.connections.open", {
+    method: "POST",
+    headers: { authorization: `Bearer ${appToken}` },
+  });
+  const open = await res.json() as { ok: boolean; url?: string; error?: string };
+  if (!open.ok || !open.url) throw new Error(`connections.open: ${open.error}`);
+  return open.url;
+}
+
+export interface SlackSocketCarrierDeps {
+  /** The WebSocket URL for an app-level token; default = apps.connections.open. */
+  open?: (appToken: string) => Promise<string>;
+}
+
+/** Open the `xapp` socket and feed every events_api envelope to `handler` (built WITHOUT
+ *  `track`, so its answer is the outcome) as a synthetic POST. An envelope is acked only
+ *  on a 2xx: a refusal or a throw leaves it unacked, logged to stderr, and Slack redelivers
+ *  it — the store's external_id upsert makes the redelivery converge. Envelopes that carry
+ *  no event (`disconnect`) ack on arrival. Reconnects on disconnect/close. Returns stop:
+ *  close the socket, settle the deliveries already being handled. */
+export function slackSocket(
+  appToken: string,
+  handler: WebhookHandler,
+  deps: SlackSocketCarrierDeps = {},
+): () => Promise<void> {
   let ws: WebSocket | undefined;
   let closed = false;
   const inFlight = new Set<Promise<unknown>>();
+  const open = deps.open ?? openSocketUrl;
+
+  const deliver = async (socket: WebSocket, envelopeId: string | undefined, payload: unknown) => {
+    const res = await handler(
+      new Request("http://socket-mode.local/", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    if (res.ok) {
+      await res.body?.cancel();
+      if (envelopeId && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ envelope_id: envelopeId }));
+      }
+      return;
+    }
+    console.error(
+      `[ingest] envelope ${envelopeId ?? "?"} not acked: HTTP ${res.status} ${await res.text()}`,
+    );
+  };
 
   const connect = async () => {
     if (closed) return;
     try {
-      const res = await timedFetch("https://slack.com/api/apps.connections.open", {
-        method: "POST",
-        headers: { authorization: `Bearer ${appToken}` },
-      });
-      const open = await res.json() as { ok: boolean; url?: string; error?: string };
-      if (!open.ok || !open.url) throw new Error(`connections.open: ${open.error}`);
-      ws = new WebSocket(open.url);
-      ws.onmessage = async (evt) => {
-        const env = JSON.parse(String(evt.data)) as {
-          type?: string;
-          envelope_id?: string;
-          payload?: unknown;
-        };
-        if (env.envelope_id) ws?.send(JSON.stringify({ envelope_id: env.envelope_id })); // ack fast
-        if (env.type === "events_api" && env.payload) {
-          const delivery = handler(
-            new Request("http://socket-mode.local/", {
-              method: "POST",
-              body: JSON.stringify(env.payload),
-              headers: { "content-type": "application/json" },
-            }),
+      const socket = new WebSocket(await open(appToken));
+      ws = socket;
+      socket.onmessage = async (evt) => {
+        try {
+          const env = JSON.parse(String(evt.data)) as {
+            type?: string;
+            envelope_id?: string;
+            payload?: unknown;
+          };
+          if (env.type === "events_api" && env.payload) {
+            const delivery = deliver(socket, env.envelope_id, env.payload);
+            inFlight.add(delivery);
+            delivery.finally(() => inFlight.delete(delivery));
+            await delivery;
+            return;
+          }
+          if (env.envelope_id) socket.send(JSON.stringify({ envelope_id: env.envelope_id }));
+          if (env.type === "disconnect") socket.close();
+        } catch (err) {
+          console.error(
+            "[ingest] socket delivery failed:",
+            err instanceof Error ? err.message : err,
           );
-          inFlight.add(delivery);
-          delivery.finally(() => inFlight.delete(delivery));
-          await delivery;
         }
-        if (env.type === "disconnect") ws?.close();
       };
-      ws.onclose = () => {
+      socket.onclose = () => {
         if (!closed) setTimeout(connect, RECONNECT_MS);
       };
     } catch (err) {
@@ -664,7 +744,15 @@ export async function runIngest(): Promise<() => Promise<void>> {
       const res = await timedFetch(f.url_private, {
         headers: { authorization: `Bearer ${token}` },
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        await res.body?.cancel();
+        return null;
+      }
+      if (looksLikeSignIn(f.mimetype, res.headers.get("content-type"))) {
+        await res.body?.cancel();
+        console.error(`[ingest] media ${f.id ?? f.name ?? "?"}: the token cannot read it`);
+        return null;
+      }
       const bytes = new Uint8Array(await res.arrayBuffer());
       const file = await saveMedia(dir, ctx.conversation, bytes, {
         mime_type: f.mimetype,
@@ -681,37 +769,42 @@ export async function runIngest(): Promise<() => Promise<void>> {
   // any authorized grant → env) — a display name is a workspace fact any grant can read
   const names = slackNames(tokenFor);
 
-  // HTTP mode verifies with the app's signing secret (the app door stores it); socket
-  // mode needs none (the xapp IS the authentication)
-  const { pickSlackApp } = await import("./connect.ts");
-  const app = carriers.length > 0 ? null : await pickSlackApp(creds).catch(() => null);
-  // deliveries are acked before they are processed: what is still processing at stop
-  // finishes before the handles close
-  const inFlight = new Set<Promise<void>>();
-  const handler = createSlackWebhook({
+  const base: SlackWebhookDeps = {
     publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
     store: log, // identities + memberships live on the Log (§4) — the wire fills the map
     media,
     names,
-    signingSecret: app?.value.signing_secret || undefined,
-    track: (work) => {
-      inFlight.add(work);
-      work.finally(() => inFlight.delete(work));
-    },
-  });
+  };
   const release = async () => {
-    await Promise.allSettled([...inFlight]);
     await creds.close();
     await log.close();
   };
   if (carriers.length > 0) {
+    // socket mode: no signing secret (the xapp IS the authentication) and no `track` —
+    // the carrier acks on the handler's answer, and each carrier's stop settles the
+    // deliveries it still has in hand
     console.error(`[ingest] socket mode, ${carriers.length} carrier(s) → ${dir}/log`);
+    const handler = createSlackWebhook(base);
     const stops = carriers.map((t) => slackSocket(t, handler));
     return async () => {
       await Promise.allSettled(stops.map((stop) => stop()));
       await release();
     };
   }
+  // HTTP mode verifies with the app's signing secret (the app door stores it); deliveries
+  // are acked before they are processed, so what is still processing at stop finishes
+  // before the handles close
+  const { pickSlackApp } = await import("./connect.ts");
+  const app = await pickSlackApp(creds).catch(() => null);
+  const inFlight = new Set<Promise<void>>();
+  const handler = createSlackWebhook({
+    ...base,
+    signingSecret: app?.value.signing_secret || undefined,
+    track: (work) => {
+      inFlight.add(work);
+      work.finally(() => inFlight.delete(work));
+    },
+  });
   const { slackConfig } = await import("./config.ts");
   const { serveIngest } = await import("../serve.ts");
   const port = (await slackConfig(root)).ingestPort;
@@ -723,6 +816,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   );
   return async () => {
     await server.shutdown(); // stop accepting, finish the requests already in
+    await Promise.allSettled([...inFlight]);
     await release();
   };
 }

@@ -139,17 +139,21 @@ export function compactionSpan(
   }
   // where the cut may fall: in the closed region, after any event no step straddles; in
   // the open chain beyond it, only after a tool outcome — a world message there is INPUT
-  // the agent has not answered, and a checkpoint is a record, not an answer
+  // the agent has not answered, and a checkpoint is a record, not an answer. Input the
+  // closing never consumed sits BEFORE the boundary and is input all the same: `covers` is
+  // an id range, so the cut stays below the first such message, or the range would hide it
   const safe = cutPoints(events);
+  const firstDeferred = events.findIndex((e) => deferred.has(e));
+  const ceiling = firstDeferred === -1 ? kept : Math.min(kept, firstDeferred);
   let cut = -1;
-  for (let c = kept - 1; c >= 0; c--) {
+  for (let c = ceiling - 1; c >= 0; c--) {
     if (safe.has(c) && (c <= boundary || events[c].type === "tool_result")) {
       cut = c;
       break;
     }
   }
   if (cut < 0) return null; // everything is recent, or one step — nothing coverable yet
-  const covered = events.slice(0, cut + 1).filter((e) => !deferred.has(e));
+  const covered = events.slice(0, cut + 1);
   const chain = covered.find((e): e is SummaryEvent => e.type === "summary");
   const content = covered.filter((e) => e.type !== "summary");
   if (content.length === 0) return null; // the previous checkpoint alone — nothing new

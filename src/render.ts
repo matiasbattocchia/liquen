@@ -444,11 +444,12 @@ function renderMessages(
 ): MessageParam[] {
   const me = session; // whose voice — the (agent, session) pair
   const here = session.conversation; // the session's own room — everything else is world
-  const { events, elisions } = byEventTime(
-    applySummary(window.filter((e) => !silenced(e))),
-    me,
-    here,
-  );
+  const visible = applySummary(window.filter((e) => !silenced(e)));
+  // the horizon is a LOG position (§5): what the boundary step consumed is what its read
+  // returned, in append order — so the unconsumed set is taken here, before event time
+  // reorders the runs, and travels by identity
+  const deferred = deferredInput(visible, me, closingBoundary(visible, session));
+  const { events, elisions } = byEventTime(visible, me, here);
   const out: MessageParam[] = [];
 
   // ref resolution (§5): the WHOLE window, silenced rows included — a delete or a reply often
@@ -584,7 +585,6 @@ function renderMessages(
   // Everything the boundary step CONSUMED is CLOSED (collapsed); after it — including
   // horizon-deferred messages the step never saw — the TRAILING chain, welded API-faithfully.
   const boundary = closingBoundary(events, session);
-  const deferred = deferredInput(events, me, boundary);
 
   // Trailing weld sets — pairing is per *use* (a result's `ref_id` = its tool_use id), so
   // parallel tools weld order-independently and a half-filled barrier never leaves an

@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
   type AgentConfig,
   anchored,
@@ -690,4 +690,13 @@ Deno.test("specsOf: `tools` names what the model sees — unset offers everythin
     "bash",
   ]);
   assertEquals(names([]), []); // an empty list is a model with no tools at all
+});
+
+Deno.test("anchored: a late-stamped row inside the window is kept — position sets the floor", () => {
+  const rows = trickle(12);
+  // appended last, stamped before the floor's bucket: an offline-synced message
+  const late = { ...rows[0], id: "w999", ts: new Date(T0 - 60_000).toISOString() } as Event;
+  const kept = anchored([...rows, late], 4);
+  assert(kept.includes(late));
+  assertEquals(kept[0].id, "w006"); // the floor still snaps to the bucket
 });

@@ -264,8 +264,10 @@ async function fanOut(
   now: () => string,
 ): Promise<void> {
   const via = viaOf(e);
+  // a copy goes to every surface the principal HOLDS: a revoked binding still names its
+  // history, but the gate is closed there and nobody is reading
   const targets = deps.aliases().filter((a) =>
-    a.agentId === agentId &&
+    a.live && a.agentId === agentId &&
     !(via && via.service === a.service && via.conversation === a.conversation)
   );
   if (targets.length === 0) return;

@@ -46,8 +46,8 @@ Deno.test("aliases: owned rows with a self_conversation, matched on the workspac
       { service: "email", address: "ana@org", agentId: "ana" }, // owned, no binding
     ]);
     assertEquals(log.aliases(), [
-      { service: "slack", connection: "T1:U1", conversation: "D1", agentId: "ana" },
-      { service: "whatsapp", connection: "549", conversation: "549", agentId: "ana" },
+      { service: "slack", connection: "T1:U1", conversation: "D1", agentId: "ana", live: true },
+      { service: "whatsapp", connection: "549", conversation: "549", agentId: "ana", live: true },
     ]);
 
     const rows = log.aliases();
@@ -60,9 +60,14 @@ Deno.test("aliases: owned rows with a self_conversation, matched on the workspac
     assertEquals(aliasOf(rows, "whatsapp", "550", "549"), undefined);
     assertEquals(aliasOf(rows, "slack", "T1", "C7"), undefined);
 
-    // a revocation closes the gate, never the hiding: the binding keeps answering
+    // a revocation closes the gate, never the hiding: the binding keeps answering — but
+    // the surface is no longer one somebody holds
     log.deleteConnections([{ service: "slack", address: "T1:U1" }]);
-    assertEquals(log.aliases().length, 2);
+    assertEquals(aliasOf(log.aliases(), "slack", "T1", "D1")?.agentId, "ana");
+    assertEquals(log.aliases().map((a) => a.live), [false, true]);
+    // a re-grant revives it
+    log.upsertConnections([{ service: "slack", address: "T1:U1", agentId: "ana" }]);
+    assertEquals(log.aliases().map((a) => a.live), [true, true]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

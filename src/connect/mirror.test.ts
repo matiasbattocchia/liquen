@@ -3,6 +3,7 @@ import { createMirror } from "./mirror.ts";
 import { SILENCE } from "../render.ts";
 import { openLog } from "../store/log.ts";
 import type { Draft, Event, MessageEvent, ToolUseEvent } from "../types.ts";
+import type { Connections } from "../store/connections.ts";
 
 /** A live org with two alias surfaces bound to `ana`: the Slack self-DM `D1` (grant
  *  `T1:U1`) and the WA self-chat `549` (paired own number). The mirror under test rides a
@@ -13,6 +14,7 @@ async function withMirror(
     inConv: (conversation: string) => Promise<MessageEvent[]>;
     setDelivery: (id: string, patch: { external_id: string }) => Promise<void>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
+    log: Pick<Connections, "deleteConnections">;
   }) => Promise<void>,
   settleMs = 30, // the waited constant, shrunk (§9) — one test widens it to race the backfill
 ): Promise<void> {
@@ -46,6 +48,7 @@ async function withMirror(
         (await log.read({ conversation, types: ["message"] })) as MessageEvent[],
       setDelivery: (id, patch) => log.setDelivery(id, patch),
       waitFor,
+      log,
     });
   } finally {
     stop();
@@ -152,6 +155,18 @@ Deno.test("mirror fan-out: the agent's voice CCs tagged to every alias, and CCs 
     assertEquals((await inConv("mind@ana")).length, 1);
     assertEquals((await inConv("D1")).length, 1);
     assertEquals((await inConv("549")).length, 1);
+  });
+});
+
+Deno.test("mirror fan-out: a logged-out surface gets no copy — the live bindings still do", async () => {
+  await withMirror(async ({ publish, inConv, waitFor, log }) => {
+    log.deleteConnections([{ service: "slack", address: "T1:U1" }]);
+    await publish(
+      mindMsg("done!", { agent: { id: "ana", session_id: "mind" }, payload: { turn_id: "t9" } }),
+    );
+    await waitFor(async () => (await inConv("549")).length === 1);
+    await new Promise((r) => setTimeout(r, 200));
+    assertEquals((await inConv("D1")).length, 0);
   });
 });
 

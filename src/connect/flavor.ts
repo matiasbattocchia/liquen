@@ -12,8 +12,16 @@
  * `[text](url)` shows raw. Slack parses mrkdwn, its own documented dialect: `*bold*`,
  * `~strike~`, `<url|text>`, no headings.
  *
- * Every transform skips code — a marker inside backticks or a fence is content, not
- * formatting, on every dialect involved.
+ * Slack's wire reserves `&`, `<` and `>` — the angle pair delimits its link, mention and
+ * control forms, and the ampersand its entities — so every one of the three in prose
+ * travels as `&amp;`, `&lt;`, `&gt;`, inside code spans as much as outside them. Outbound,
+ * the escape runs FIRST, so the forms the transforms then emit are the only angle brackets
+ * on the wire (an `&` inside a URL rides as `&amp;` between them, the wire's own spelling).
+ * Inbound, the unescape runs LAST, after the wire forms are consumed, so an escaped
+ * `&lt;foo&gt;` is the text `<foo>` and never reads as a form.
+ *
+ * Every markdown transform skips code — a marker inside backticks or a fence is content,
+ * not formatting, on every dialect involved.
  */
 
 const CODE = /(```[\s\S]*?```|`[^`\n]*`)/;
@@ -30,10 +38,12 @@ export function toWhatsApp(text: string): string {
   return outsideCode(text, (s) => s.replace(LINK, "$1 ($2)"));
 }
 
-/** Common markdown → Slack mrkdwn: `**b**` → `*b*`, `~~s~~` → `~s~`, `[t](u)` → `<u|t>`,
- *  a heading line → a bold line (mrkdwn has no headings). */
+/** Common markdown → Slack mrkdwn: the three wire characters escape over the whole text,
+ *  then `**b**` → `*b*`, `~~s~~` → `~s~`, `[t](u)` → `<u|t>`, a heading line → a bold line
+ *  (mrkdwn has no headings). */
 export function toSlack(text: string): string {
-  return outsideCode(text, (s) =>
+  const escaped = text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return outsideCode(escaped, (s) =>
     s
       .replace(LINK, "<$2|$1>")
       .replace(/\*\*([^*\n]+)\*\*/g, "*$1*")
@@ -42,13 +52,15 @@ export function toSlack(text: string): string {
 }
 
 /** Slack mrkdwn → common markdown, the inbound leg: `<url|t>` → `[t](url)`, bare `<url>`
- *  unwrapped, `*b*` → `**b**`, `~s~` → `~~s~~`. Meaning-preserving: a Slack single star
- *  IS bold, so it must not survive as common-markdown italic. */
+ *  unwrapped, `*b*` → `**b**`, `~s~` → `~~s~~`, and the three entities unescaped last, over
+ *  the whole text. Meaning-preserving: a Slack single star IS bold, so it must not survive
+ *  as common-markdown italic. */
 export function fromSlack(text: string): string {
   return outsideCode(text, (s) =>
     s
       .replace(/<(https?:\/\/[^|>\s]+)\|([^>]+)>/g, "[$2]($1)")
       .replace(/<(https?:\/\/[^>\s]+)>/g, "$1")
       .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1**$2**")
-      .replace(/(^|[^~])~([^~\n]+)~(?!~)/g, "$1~~$2~~"));
+      .replace(/(^|[^~])~([^~\n]+)~(?!~)/g, "$1~~$2~~"))
+    .replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 }
