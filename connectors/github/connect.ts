@@ -367,9 +367,13 @@ export async function connectGithubUser(
 
 /* ── the default API edges ───────────────────────────────────────────────────────────── */
 
+/** How long one GitHub API request may take — a stalled call fails like a refused one. */
+const API_TIMEOUT_MS = 30_000;
+
 async function defaultListInstallations(jwt: string): Promise<Installation[]> {
   const res = await fetch("https://api.github.com/app/installations", {
     headers: { authorization: `Bearer ${jwt}`, accept: "application/vnd.github+json" },
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
   const out = await res.json() as Installation[] | { message?: string };
   if (!Array.isArray(out)) {
@@ -385,6 +389,7 @@ async function defaultRequestCode(clientId: string): Promise<DeviceCode> {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
     body: new URLSearchParams({ client_id: clientId }),
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
   return await res.json() as DeviceCode;
 }
@@ -394,6 +399,7 @@ async function defaultPoll(body: URLSearchParams): Promise<UserTokens> {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
     body,
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
   return await res.json() as UserTokens;
 }
@@ -401,6 +407,7 @@ async function defaultPoll(body: URLSearchParams): Promise<UserTokens> {
 async function defaultWhoami(token: string): Promise<{ login?: string; message?: string }> {
   const res = await fetch("https://api.github.com/user", {
     headers: { authorization: `token ${token}`, accept: "application/vnd.github+json" },
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
   return await res.json() as { login?: string; message?: string };
 }

@@ -37,6 +37,7 @@ import type { Connections } from "../../store/connections.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { findRoot } from "../../config.ts";
+import { timedFetch } from "../http.ts";
 import { declared } from "../declare.ts";
 import { missingScopes } from "./config.ts";
 
@@ -320,7 +321,7 @@ export async function connectSlackSocket(
 }
 
 async function defaultSocketProbe(appToken: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch("https://slack.com/api/apps.connections.open", {
+  const res = await timedFetch("https://slack.com/api/apps.connections.open", {
     method: "POST",
     headers: { authorization: `Bearer ${appToken}` },
   });
@@ -428,7 +429,7 @@ export function manifestUrl(manifest: unknown): string {
  *  pagination), and it re-opens a closed one. Any refusal ⇒ undefined: the binding is
  *  optional, the grant is not. */
 async function defaultOpenSelfIm(token: string, user: string): Promise<string | undefined> {
-  const res = await fetch("https://slack.com/api/conversations.open", {
+  const res = await timedFetch("https://slack.com/api/conversations.open", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ users: user }),
@@ -438,7 +439,7 @@ async function defaultOpenSelfIm(token: string, user: string): Promise<string | 
 }
 
 async function defaultAuthTest(token: string): Promise<AuthTest> {
-  const res = await fetch("https://slack.com/api/auth.test", {
+  const res = await timedFetch("https://slack.com/api/auth.test", {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
   });
@@ -496,11 +497,34 @@ if (import.meta.main) {
   if (verb === "app") {
     const creds = await openCredentials(dir);
     try {
-      const clientId = ask("Client ID:");
-      const clientSecret = ask("Client secret:");
+      // the app itself comes FIRST and comes from the manifest: Slack builds it in two
+      // clicks from this link, and everything else — the carrier, the bot, a member's
+      // leg — is a token that app issues. The OAuth client below is the hosted door's
+      // alone, so it is optional here.
+      const { botScopes, userScopes } = await slackConfig(root);
+      const url = manifestUrl(withScopes(
+        JSON.parse(
+          await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
+        ),
+        { bot: botScopes, user: userScopes },
+      ));
+      console.error(`Create the app (Slack builds it from the manifest):\n  ${url}\n`);
+      console.error("Then: Install to Workspace (xoxb) · Basic Information → App-Level");
+      console.error("Tokens (xapp). `mu connect slack socket` and `bot` take those.\n");
+      try { // best effort — the link above is the real door
+        new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {
+          args: [url],
+          stdout: "null",
+          stderr: "null",
+        }).spawn().unref();
+      } catch { /* headless is fine */ }
+
+      const clientId = ask("Client ID (only the hosted oauth door needs it; empty to skip):");
+      const clientSecret = clientId ? ask("Client secret:") : undefined;
       if (!clientId || !clientSecret) {
-        console.error("nothing pasted — nothing written");
-        Deno.exit(2);
+        console.error(clientId ? "no secret pasted — nothing written" : "\nno client stored");
+        await owed(creds);
+        Deno.exit(clientId ? 2 : 0);
       }
       const signingSecret = ask("Signing secret (verifies HTTP ingest; empty to skip):");
       const redirectUri = ask("Hosted redirect URI (empty to skip):");

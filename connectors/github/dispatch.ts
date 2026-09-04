@@ -32,7 +32,10 @@ import type {
   MessageEvent,
   Subscriber,
 } from "../../src/connector.ts";
-import { findRoot } from "../../src/connector.ts";
+import { createDispatcher, findRoot } from "../../src/connector.ts";
+
+/** How long one post to GitHub may take, spawn to exit. */
+const API_TIMEOUT_MS = 30_000;
 
 export interface GhTarget {
   owner: string;
@@ -59,64 +62,39 @@ export interface GithubDispatchDeps {
   onSent?: (event: MessageEvent, externalId: string | undefined) => void;
 }
 
-/** Wire dispatch to the log. Posts are serialized to preserve order. Returns stop: take
- *  no more work, settle the posts already in flight. */
+/** Wire dispatch to the log — the shared loop (`dispatcher.ts` via the connector seam)
+ *  over one leg: a comment posts, its id backfills `external_id`. Returns stop. */
 export function createGithubDispatch(deps: GithubDispatchDeps): () => Promise<void> {
-  let chain: Promise<void> = Promise.resolve();
-  const unsub = deps.subscribe(
-    (e) => {
-      const out = outbound(e);
-      if (!out) return;
-      const { target, text, event } = out;
-      chain = chain.then(async () => {
-        try {
-          const externalId = await deps.post(target, text, event.agent?.id);
-          await deps.setDelivery?.(event.id, {
-            ...(externalId !== undefined ? { external_id: `gh:${externalId}` } : {}),
-            status: { dispatched_at: new Date().toISOString() },
-          });
-          deps.onSent?.(event, externalId);
-        } catch (err) {
-          deps.onError?.(event, err);
-        }
-      });
+  return createDispatcher<Outbound>({
+    subscribe: deps.subscribe,
+    service: "github",
+    select: outbound,
+    from: deps.from,
+    setDelivery: deps.setDelivery,
+    onError: deps.onError,
+    onSent: deps.onSent,
+    post: async ({ target, text }, event) => {
+      const externalId = await deps.post(target, text, event.agent?.id);
+      return {
+        id: externalId,
+        ...(externalId !== undefined ? { external_id: `gh:${externalId}` } : {}),
+      };
     },
-    { from: deps.from, filter: isOutboundGh },
-  );
-  return async () => {
-    unsub();
-    await chain;
-  };
-}
-
-/** OURS and not yet on the wire (§3, §4): `agent` present AND no `external_id` at insert —
- *  classifier-stamped principal rows always carry a platform id, so they never re-dispatch.
- *  Routing reads `envelope.service` (§3). */
-function isOutboundGh(e: Event): boolean {
-  return e.type === "message" &&
-    e.agent !== undefined &&
-    e.envelope.external_id === undefined &&
-    e.envelope.service === "github";
+  });
 }
 
 interface Outbound {
   target: GhTarget;
   text: string;
-  event: MessageEvent;
 }
 
 /** Parse `owner/repo#N` + gather the text; null if unaddressable or empty. */
-function outbound(e: Event): Outbound | null {
-  if (!isOutboundGh(e)) return null;
+function outbound(e: MessageEvent): Outbound | null {
   const m = e.envelope.conversation.address.match(/^([^/]+)\/([^#]+)#(\d+)$/);
   if (!m) return null;
   const text = textOf(e);
   if (!text) return null;
-  return {
-    target: { owner: m[1], repo: m[2], number: Number(m[3]) },
-    text,
-    event: e as MessageEvent,
-  };
+  return { target: { owner: m[1], repo: m[2], number: Number(m[3]) }, text };
 }
 
 function textOf(e: Event): string {
@@ -165,6 +143,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
       env: { GH_TOKEN: await tokenFor(author) }, // gh's env, this spawn only — never exported
       stdout: "piped",
       stderr: "piped",
+      signal: AbortSignal.timeout(API_TIMEOUT_MS), // a stalled gh fails like a refused post
     }).output();
     if (!out.success) throw new Error(new TextDecoder().decode(out.stderr).trim());
     const created = JSON.parse(new TextDecoder().decode(out.stdout)) as { id?: number };

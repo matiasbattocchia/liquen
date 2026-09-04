@@ -25,6 +25,19 @@ export interface Limits {
 
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
+/** `s.slice(0, n)` that never ends between the two halves of a surrogate pair. */
+export function clipEnd(s: string, n: number): string {
+  if (n >= s.length) return s;
+  const c = s.charCodeAt(n - 1);
+  return s.slice(0, c >= 0xD800 && c <= 0xDBFF ? n - 1 : n);
+}
+
+/** `s.slice(i)` that never starts between the two halves of a surrogate pair. */
+export function clipStart(s: string, i: number): string {
+  const c = s.charCodeAt(i);
+  return s.slice(c >= 0xDC00 && c <= 0xDFFF ? i + 1 : i);
+}
+
 /** Split for counting: a trailing newline does not create an extra empty line. */
 function splitLines(content: string): string[] {
   if (content.length === 0) return [];
@@ -87,7 +100,7 @@ export function truncateTail(content: string, limits: Limits = {}): Truncation {
       if (out.length === 0) {
         // even the last line alone exceeds the limit — keep its tail (char-safe)
         let tail = lines[i];
-        while (bytes(tail) > maxBytes) tail = tail.slice(Math.ceil(tail.length / 8));
+        while (bytes(tail) > maxBytes) tail = clipStart(tail, Math.ceil(tail.length / 8));
         out.unshift(tail);
       }
       break;

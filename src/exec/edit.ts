@@ -11,8 +11,9 @@
  *
  * Every block is matched against the ORIGINAL file — not incrementally — and must be
  * unique and non-overlapping. Matching is exact first, then trailing-whitespace-
- * insensitive (the fallback rewrites the file in normalized space, as pi does). BOM and
- * CRLF are stripped for matching and restored on write.
+ * insensitive: the fallback matches in normalized space but splices the ORIGINAL, so only
+ * the matched spans change and every other byte of the file stays as it was. BOM and
+ * CRLF are stripped for matching and restored on write; a spec may carry CRLF too.
  */
 
 export interface Edit {
@@ -22,7 +23,7 @@ export interface Edit {
 
 /** Parse a conflict-marker spec. Throws on malformed input. */
 export function parseEdits(spec: string): Edit[] {
-  const lines = spec.split("\n");
+  const lines = spec.replaceAll("\r\n", "\n").split("\n");
   const edits: Edit[] = [];
   let mode: "outside" | "old" | "new" = "outside";
   let oldLines: string[] = [];
@@ -53,6 +54,29 @@ export function parseEdits(spec: string): Edit[] {
 
 const stripTrailing = (s: string) => s.split("\n").map((l) => l.replace(/[ \t]+$/, "")).join("\n");
 
+/** The content with trailing whitespace stripped per line, plus the map from each
+ *  normalized offset back to the original one (`at[text.length]` = the original's end), so
+ *  a span found in normalized space can be spliced out of the original. */
+function normalized(content: string): { text: string; at: number[] } {
+  const lines = content.split("\n");
+  const at: number[] = [];
+  let text = "";
+  let orig = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const kept = lines[i].replace(/[ \t]+$/, "");
+    for (let c = 0; c < kept.length; c++) at.push(orig + c);
+    text += kept;
+    orig += lines[i].length;
+    if (i < lines.length - 1) {
+      at.push(orig); // the newline itself
+      text += "\n";
+      orig += 1;
+    }
+  }
+  at.push(orig);
+  return { text, at };
+}
+
 function indexOfUnique(haystack: string, needle: string, label: string): number {
   if (needle.length === 0) throw new Error(`edit ${label}: old text is empty`);
   const first = haystack.indexOf(needle);
@@ -66,11 +90,13 @@ function indexOfUnique(haystack: string, needle: string, label: string): number 
 /** Apply edits to content (LF-normalized, BOM-free). Returns the new content. */
 function applyToNormalized(content: string, edits: Edit[]): string {
   // exact match first; if ANY edit misses, retry every edit in trailing-ws-normalized space
+  // — matched there, spliced HERE: the spans map back to the original's offsets
   let base = content;
+  let at: number[] | undefined;
   let use = edits;
   const misses = edits.filter((e) => base.indexOf(e.old) === -1);
   if (misses.length > 0) {
-    base = stripTrailing(content);
+    ({ text: base, at } = normalized(content));
     use = edits.map((e) => ({ old: stripTrailing(e.old), new: e.new }));
   }
   // locate all (unique) matches against the ORIGINAL, validate non-overlap
@@ -83,7 +109,8 @@ function applyToNormalized(content: string, edits: Edit[]): string {
         }`,
       );
     }
-    return { start, end: start + e.old.length, text: e.new };
+    const end = start + e.old.length;
+    return at ? { start: at[start], end: at[end], text: e.new } : { start, end, text: e.new };
   }).sort((a, b) => a.start - b.start);
   for (let i = 1; i < spans.length; i++) {
     if (spans[i].start < spans[i - 1].end) {
@@ -91,7 +118,7 @@ function applyToNormalized(content: string, edits: Edit[]): string {
     }
   }
   // splice back-to-front so earlier spans keep their offsets
-  let out = base;
+  let out = content;
   for (const s of [...spans].reverse()) {
     out = out.slice(0, s.start) + s.text + out.slice(s.end);
   }

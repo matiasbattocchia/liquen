@@ -26,20 +26,15 @@
  */
 
 import { isExternal } from "../../store/media.ts";
-import { DispatchError, failedStatus } from "../errors.ts";
+import { DispatchError } from "../errors.ts";
+import { createDispatcher } from "../dispatcher.ts";
 import type { DeliveryPatch, Subscriber } from "../../store/log.ts";
-import type {
-  Event,
-  EventId,
-  FilePart,
-  MessageEvent,
-  ReactionPart,
-  TextPart,
-} from "../../types.ts";
+import type { EventId, FilePart, MessageEvent, ReactionPart, TextPart } from "../../types.ts";
 import { externalId, SERVICE, type WAContent } from "./ingest.ts";
 import { type Directory, whatsappMentions } from "../mentions.ts";
 import { toWhatsApp } from "../flavor.ts";
 import { findRoot } from "../../config.ts";
+import { timedFetch } from "../http.ts";
 
 /** The bridge's dispatch request (server.go `dispatchRequest`) — record verbatim. */
 export interface WADispatchRecord {
@@ -76,76 +71,50 @@ export interface WhatsAppDispatchDeps {
   onSent?: (event: MessageEvent, wmwId: string | undefined) => void;
 }
 
-/** Wire dispatch to the log. Posts serialized to preserve order. Returns stop: take no
- *  more work, settle the posts already in flight. */
+/** Wire dispatch to the log — the shared loop (`dispatcher.ts`) over the bridge's
+ *  one-content-per-call shape. Returns stop. */
 export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => Promise<void> {
-  let chain: Promise<void> = Promise.resolve();
-  const unsub = deps.subscribe(
-    (e) => {
-      const out = outbound(e);
-      if (!out) return;
-      chain = chain.then(async () => {
-        const { event, contents } = out;
-        try {
-          // the agent mentions as a human (`@Name`) — the directory claims the tokens,
-          // the BRIDGE encodes (its `encodeMentions`: text messages and captions alike).
-          // Unclaimed tokens stay literal text — the honest nothing.
-          if (deps.directory) {
-            const dir = await deps.directory(SERVICE, event.envelope.conversation.address);
-            for (const c of contents) {
-              if (c.content.kind === "reaction" || !c.content.text) continue;
-              const claimed = whatsappMentions(c.content.text, dir);
-              if (claimed.length) c.content.mentions = claimed;
-            }
-          }
-          let first: string | undefined;
-          for (const c of contents) {
-            const mediaUrl = await urlFor(c.content, deps.mediaUrl);
-            const wmwId = await deps.send(recordOf(event, c.content), mediaUrl);
-            first ??= wmwId;
-          }
-          // the wire names its own side IN THE SEND RESPONSE (§4): the returned id is
-          // `wmw.<own>.<chat>.<sender>.<id>` — lift <own> into sender alongside
-          // dispatched_at, so sender-presence means "on the wire" without waiting for the
-          // echo (which still fill-merges what only it knows: the pushname)
-          const own = first?.split(".")[1];
-          await deps.setDelivery?.(event.id, {
-            ...(first !== undefined ? { external_id: externalId(first) } : {}),
-            ...(own ? { sender: { address: own } } : {}),
-            status: { dispatched_at: new Date().toISOString() },
-          });
-          deps.onSent?.(event, first);
-        } catch (err) {
-          // no retry here (the scheduler's job, PROJECT #10) — the stamp tags the class:
-          // `error_code` = the bridge's HTTP status (4xx permanent / 5xx transient;
-          // absent = the request never reached the bridge)
-          try {
-            await deps.setDelivery?.(event.id, { status: failedStatus(err) });
-          } catch { /* the stamp failed too — onError still reports */ }
-          deps.onError?.(event, err);
+  return createDispatcher<Outbound>({
+    subscribe: deps.subscribe,
+    service: SERVICE,
+    select: outbound,
+    from: deps.from,
+    setDelivery: deps.setDelivery,
+    onError: deps.onError,
+    onSent: deps.onSent,
+    post: async ({ contents }, event) => {
+      // the agent mentions as a human (`@Name`) — the directory claims the tokens,
+      // the BRIDGE encodes (its `encodeMentions`: text messages and captions alike).
+      // Unclaimed tokens stay literal text — the honest nothing.
+      if (deps.directory) {
+        const dir = await deps.directory(SERVICE, event.envelope.conversation.address);
+        for (const c of contents) {
+          if (c.content.kind === "reaction" || !c.content.text) continue;
+          const claimed = whatsappMentions(c.content.text, dir);
+          if (claimed.length) c.content.mentions = claimed;
         }
-      });
+      }
+      let first: string | undefined;
+      for (const c of contents) {
+        const mediaUrl = await urlFor(c.content, deps.mediaUrl);
+        const wmwId = await deps.send(recordOf(event, c.content), mediaUrl);
+        first ??= wmwId;
+      }
+      // the wire names its own side IN THE SEND RESPONSE (§4): the returned id is
+      // `wmw.<own>.<chat>.<sender>.<id>` — lift <own> into sender alongside
+      // dispatched_at, so sender-presence means "on the wire" without waiting for the
+      // echo (which still fill-merges what only it knows: the pushname)
+      const own = first?.split(".")[1];
+      return {
+        id: first,
+        ...(first !== undefined ? { external_id: externalId(first) } : {}),
+        ...(own ? { sender: { address: own } } : {}),
+      };
     },
-    { from: deps.from, filter: isOutboundWhatsApp },
-  );
-  return async () => {
-    unsub();
-    await chain;
-  };
-}
-
-/** OURS and not yet on the wire (§3, §4): `agent` present (our side authored it) AND no
- *  `external_id` at insert (a platform id means it already crossed — the classifier stamps
- *  `agent.id` on the principal's inbound rows too, and those must never re-dispatch). */
-function isOutboundWhatsApp(e: Event): boolean {
-  return e.type === "message" &&
-    e.agent !== undefined &&
-    e.envelope.external_id === undefined &&
-    e.envelope.service === SERVICE;
+  });
 }
 
 interface Outbound {
-  event: MessageEvent;
   contents: { content: WAContent }[];
 }
 
@@ -153,9 +122,7 @@ interface Outbound {
  *  is its own content (kind + re_message_id); the first file carries the text as its
  *  caption, later files go bare. `re` travels in `extra.whatsapp.re` (the ingest's
  *  convention) with the `whatsapp:` prefix stripped back to the raw wmw id. */
-function outbound(e: Event): Outbound | null {
-  if (!isOutboundWhatsApp(e)) return null;
-  const event = e as MessageEvent;
+function outbound(event: MessageEvent): Outbound | null {
   if (!event.envelope.connection_address || !event.envelope.conversation.address) return null;
 
   const re = reOf(event);
@@ -179,7 +146,6 @@ function outbound(e: Event): Outbound | null {
   // reference it can't resolve, which stamps the send failed instead of letting it vanish.
   if (action === "edit" || action === "delete") {
     return {
-      event,
       contents: [{
         content: {
           version: "1",
@@ -235,7 +201,7 @@ function outbound(e: Event): Outbound | null {
       },
     });
   }
-  return contents.length ? { event, contents } : null;
+  return contents.length ? { contents } : null;
 }
 
 /** The `whatsapp:`-prefixed external ref from `payload` (§3) → the bridge's raw wmw id. */
@@ -265,6 +231,33 @@ function urlFor(c: WAContent, mediaUrl?: WAMediaUrl): Promise<string | undefined
   return mediaUrl({ type: "file", kind: "document", file: c.file });
 }
 
+/** `POST <base>/dispatch` with the bridge's bearer — each call bounded by `API_TIMEOUT_MS`
+ *  unless a fetch is injected. The bridge's error contract: 4xx = permanent, 5xx =
+ *  transient; the status rides the `DispatchError`. */
+export function bridgeSend(
+  base: string,
+  token: string,
+  fetchApi: typeof fetch = timedFetch,
+): WASend {
+  return async (record, mediaUrl) => {
+    const res = await fetchApi(`${base}/dispatch`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "message",
+        record,
+        ...(mediaUrl ? { media_url: mediaUrl } : {}),
+      }),
+    });
+    if (!res.ok) {
+      const reason = (await res.text()).slice(0, 256).trim();
+      throw new DispatchError(`bridge /dispatch HTTP ${res.status}: ${reason}`, res.status);
+    }
+    const out = await res.json() as { external_id?: string };
+    return out.external_id;
+  };
+}
+
 /* ── local entry: `send` = POST <bridgeUrl>/dispatch ──────────────────────────
  *
  *   deno task run:whatsapp
@@ -290,23 +283,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   // file never rides the log or the agent's context (§9), and a retry re-fetches.
   const mediaUrl: WAMediaUrl = async (f) => signMediaPath(f.file.uri, await mediaSecret(creds));
 
-  const send: WASend = async (record, mediaUrl) => {
-    const res = await fetch(`${base}/dispatch`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        type: "message",
-        record,
-        ...(mediaUrl ? { media_url: mediaUrl } : {}),
-      }),
-    });
-    if (!res.ok) {
-      const reason = (await res.text()).slice(0, 256).trim();
-      throw new DispatchError(`bridge /dispatch HTTP ${res.status}: ${reason}`, res.status);
-    }
-    const out = await res.json() as { external_id?: string };
-    return out.external_id;
-  };
+  const send = bridgeSend(base, token);
 
   const { logDirectory } = await import("../mentions.ts");
   const stop = createWhatsAppDispatch({

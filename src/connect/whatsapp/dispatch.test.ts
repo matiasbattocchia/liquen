@@ -1,9 +1,11 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
+  bridgeSend,
   createWhatsAppDispatch,
   type WADispatchRecord,
   type WhatsAppDispatchDeps,
 } from "./dispatch.ts";
+import { withTimeout } from "../http.ts";
 import { externalId } from "./ingest.ts";
 import { DispatchError } from "../errors.ts";
 import type { DeliveryPatch, Subscriber } from "../../store/log.ts";
@@ -298,4 +300,29 @@ Deno.test("the caption seat claims mentions too — the bridge encodes captions 
   assertEquals(records[0].content.type, "file");
   assertEquals(records[0].content.text, "@Euge mirá la foto");
   assertEquals(records[0].content.mentions, [{ address: "5492604560911", name: "Euge" }]);
+});
+
+/** A fetch that never answers on its own — only its signal ends it, as a stalled socket
+ *  behaves under a real `fetch`. */
+const hang =
+  ((_input: RequestInfo | URL, init?: RequestInit) =>
+    new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+    })) as typeof fetch;
+
+Deno.test("bridge send: a hung /dispatch call fails inside the fetch's bound", async () => {
+  const send = bridgeSend("http://bridge.local", "tok", withTimeout(hang, 20));
+  const t0 = Date.now();
+  const err = await assertRejects(() =>
+    send({
+      id: "e1",
+      external_id: "",
+      organization_address: "5491100000000",
+      conversation_address: "5491199999999",
+      content: { version: "1", type: "text", kind: "text", text: "hola" },
+      status: {},
+    })
+  );
+  assert(err instanceof DOMException && err.name === "TimeoutError", String(err));
+  assert(Date.now() - t0 < 1_000, "ended inside the bound");
 });

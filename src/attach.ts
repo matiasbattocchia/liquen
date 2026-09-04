@@ -126,6 +126,11 @@ export function wire(conn: Deno.UnixConn, on: {
       else if (msg.ok !== undefined) awaiting.shift()?.(msg);
       else if (msg.status !== undefined) on.status?.(msg as Status);
     }
-  })().catch(() => {/* the socket died under the pump — the same hang-up */});
+  })().catch(() => {/* the socket died under the pump — the same hang-up */})
+    .finally(() => {
+      // whatever was still waiting for a reply gets the hang-up as its answer — a request
+      // the daemon never answered must not wait forever for it
+      for (const settle of awaiting.splice(0)) settle({ ok: false, error: "the daemon hung up" });
+    });
   return { request, hangup };
 }

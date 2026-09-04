@@ -21,9 +21,11 @@ import { DEFAULT_MAX_TOKENS } from "./config.ts";
 export type { Effort };
 
 /** What the model produced this step, pre-log. nu stamps id/ts/envelope/agent/turnId.
- *  `assistant` is the model's text (the assistant channel, §5); `thinking` is private; `tool_use` acts. */
+ *  `assistant` is the model's text (the assistant channel, §5); `thinking` is private
+ *  (`redacted_thinking` when the API withheld it — opaque, replayed as is); `tool_use` acts. */
 export type Emission =
   | { kind: "thinking"; thinking: string; signature: string }
+  | { kind: "redacted_thinking"; data: string }
   | { kind: "assistant"; text: string }
   | { kind: "tool_use"; name: string; input: Json };
 
@@ -36,10 +38,11 @@ export interface StepInput extends RenderedRequest {
 }
 
 /** `stop` routes the loop in nu: `tool_use` → continue · `end_turn` → idle ·
- *  `pause_turn` → continue (server turn paused) · `refusal`/`max_tokens` → handle. */
+ *  `pause_turn` → continue (server turn paused) · `refusal`/`max_tokens` → handle.
+ *  A failure carries the HTTP `status` when there was one — nu retries only weather. */
 export type StepResult =
   | { ok: true; emissions: Emission[]; usage: Usage; stop: Anthropic.StopReason }
-  | { ok: false; error: string };
+  | { ok: false; error: string; status?: number };
 
 /**
  * The impure edge: run the request, stream deltas via `emit`, return the final message.
@@ -78,7 +81,13 @@ export async function mu(
   try {
     message = await transport(params, emit, { turn_id: input.turnId });
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    // the HTTP status rides along when the failure has one: nu's retry classifies on it
+    const status = (err as { status?: unknown } | null)?.status;
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      ...(typeof status === "number" ? { status } : {}),
+    };
   }
 
   return {
@@ -89,14 +98,17 @@ export async function mu(
   };
 }
 
-/** Content blocks → the three emissions. Server-tool blocks are skipped (none in v0's tool
- *  set). `redacted_thinking` is not handled — a Claude 3.7 behavior, removed in Claude 4+. */
+/** Content blocks → emissions. Server-tool blocks are skipped (none in v0's tool set).
+ *  A `redacted_thinking` block is reasoning the API withheld: its opaque `data` is kept
+ *  whole, because the tool cycle it belongs to has to replay it verbatim (§5). */
 function parse(content: Anthropic.ContentBlock[]): Emission[] {
   const out: Emission[] = [];
   for (const b of content) {
     if (b.type === "text") out.push({ kind: "assistant", text: b.text });
     else if (b.type === "thinking") {
       out.push({ kind: "thinking", thinking: b.thinking, signature: b.signature });
+    } else if (b.type === "redacted_thinking") {
+      out.push({ kind: "redacted_thinking", data: b.data });
     } else if (b.type === "tool_use") {
       out.push({ kind: "tool_use", name: b.name, input: b.input as Json });
     }

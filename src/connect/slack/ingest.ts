@@ -43,6 +43,7 @@ import type { Connections } from "../../store/connections.ts";
 import type { Conversation, Draft, FilePart, MessageEvent, Part } from "../../types.ts";
 import { fromSlack } from "../flavor.ts";
 import { findRoot } from "../../config.ts";
+import { timedFetch } from "../http.ts";
 
 /** The wire's file attachment — only the fields the media seam reads. */
 export interface SlackFileRef {
@@ -95,7 +96,7 @@ export function slackNames(
       try {
         const token = await tokenFor(team, [user, ...via]);
         if (!token) return null;
-        const res = await fetch(`https://slack.com/api/users.info?user=${user}`, {
+        const res = await timedFetch(`https://slack.com/api/users.info?user=${user}`, {
           headers: { authorization: `Bearer ${token}` },
         });
         const body = await res.json() as {
@@ -132,6 +133,10 @@ export interface SlackWebhookDeps {
   /** App signing secret. If set, `X-Slack-Signature` is REQUIRED and verified; absent ⇒
    *  unsigned accepted (dev / the Socket Mode carrier, already authed by `xapp`). */
   signingSecret?: string;
+  /** Each acked delivery's processing, as it starts. The response goes out first (Slack
+   *  re-delivers anything unanswered within its window, and a retry is a duplicate to
+   *  dedupe); the entry awaits these on stop so nothing in flight is cut off. */
+  track?: (work: Promise<void>) => void;
   now?: () => string;
 }
 
@@ -169,9 +174,22 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     }
     if (payload.type !== "event_callback") return text(202, `ignored: ${payload.type}`);
 
+    // verified and parsed: ack now, process behind the response. A failure here has no
+    // wire to answer on — stderr is where it lands
+    const work = handle(payload).catch((err) => {
+      console.error(
+        `[ingest] ${payload.event?.type ?? "event"} in ${payload.team_id ?? "?"} failed:`,
+        err instanceof Error ? err.message : err,
+      );
+    });
+    deps.track?.(work);
+    return text(200, "accepted");
+  };
+
+  async function handle(payload: EventsEnvelope): Promise<void> {
     const team = payload.team_id;
     const e = payload.event;
-    if (!team || !e) return text(202, "ignored");
+    if (!team || !e) return;
 
     // the name directory's push leg: profile changes arrive as events — the fresh fact
     // lands in the cache, nothing published
@@ -185,49 +203,45 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       }).user;
       const name = u?.profile?.display_name || u?.profile?.real_name || u?.name;
       if (u?.id && name) deps.names?.learn(team, u.id, name);
-      return text(202, "user");
+      return;
     }
     // the membership mirror, active leg (§4): joins/leaves move rows, nothing published
     if (e.type === "member_joined_channel" || e.type === "member_left_channel") {
       mirrorMember(e, team, deps.store);
-      return text(202, "membership");
+      return;
     }
     // a reaction is an ACTION event (§3): add/remove + the reacted message's id in
     // ref_external_id, the ReactionPart carrying what changed; identity is the
     // delivery's event_ts, so retries dedupe
     if (e.type === "reaction_added" || e.type === "reaction_removed") {
       const item = e.item;
-      if (item?.type !== "message" || !item.channel || !item.ts) return text(202, "ignored");
+      if (item?.type !== "message" || !item.channel || !item.ts) return;
       const anchor = anchorOf(team, payload.authorizations);
       const who = e.user
         ? await deps.names?.nameOf(team, e.user, boundUsers(payload.authorizations))
         : undefined;
       // same classifier stamp as messages (§3): the reactor's grant row names the mind
       const owner = e.user && deps.store ? ownerOf(deps.store, team, e.user) : null;
-      try {
-        await deps.publish({
-          ts: now(),
-          type: "message",
-          ...(owner ? { agent: { id: owner } } : {}),
-          payload: {
-            action: e.type === "reaction_added" ? "add" : "remove",
-            ref_external_id: `slack:${team}:${item.channel}:${item.ts}`,
-          },
-          envelope: {
-            service: "slack",
-            connection_address: anchor,
-            conversation: { address: item.channel },
-            ...(e.user ? { sender: { address: e.user, ...(who ? { name: who } : {}) } } : {}),
-            external_id: `slack:${team}:${item.channel}:${e.event_ts}`,
-          },
-          parts: [{ type: "data", kind: "reaction", data: { name: e.reaction } }],
-        });
-      } catch {
-        return text(500, "publish failed");
-      }
-      return text(202, "accepted");
+      await deps.publish({
+        ts: now(),
+        type: "message",
+        ...(owner ? { agent: { id: owner } } : {}),
+        payload: {
+          action: e.type === "reaction_added" ? "add" : "remove",
+          ref_external_id: `slack:${team}:${item.channel}:${item.ts}`,
+        },
+        envelope: {
+          service: "slack",
+          connection_address: anchor,
+          conversation: { address: item.channel },
+          ...(e.user ? { sender: { address: e.user, ...(who ? { name: who } : {}) } } : {}),
+          external_id: `slack:${team}:${item.channel}:${e.event_ts}`,
+        },
+        parts: [{ type: "data", kind: "reaction", data: { name: e.reaction } }],
+      });
+      return;
     }
-    if (e.type !== "message") return text(202, `ignored: ${e.type}`);
+    if (e.type !== "message") return;
 
     const anchor = anchorOf(team, payload.authorizations);
     const msgs = await mapMessage(
@@ -240,14 +254,9 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       deps.names,
       { now },
     );
-    if (msgs.length === 0) return text(202, "ignored");
-    try {
-      await deps.publish(msgs);
-    } catch {
-      return text(500, "publish failed");
-    }
-    return text(202, "accepted");
-  };
+    if (msgs.length === 0) return;
+    await deps.publish(msgs);
+  }
 }
 
 /* ── mapping: Slack event → a mu message (channel address + workspace anchor) ── */
@@ -562,7 +571,7 @@ export function slackSocket(appToken: string, handler: WebhookHandler): () => Pr
   const connect = async () => {
     if (closed) return;
     try {
-      const res = await fetch("https://slack.com/api/apps.connections.open", {
+      const res = await timedFetch("https://slack.com/api/apps.connections.open", {
         method: "POST",
         headers: { authorization: `Bearer ${appToken}` },
       });
@@ -652,7 +661,9 @@ export async function runIngest(): Promise<() => Promise<void>> {
     const token = await tokenFor(ctx.team, ctx.users);
     if (!token) return null;
     try {
-      const res = await fetch(f.url_private, { headers: { authorization: `Bearer ${token}` } });
+      const res = await timedFetch(f.url_private, {
+        headers: { authorization: `Bearer ${token}` },
+      });
       if (!res.ok) return null;
       const bytes = new Uint8Array(await res.arrayBuffer());
       const file = await saveMedia(dir, ctx.conversation, bytes, {
@@ -674,14 +685,22 @@ export async function runIngest(): Promise<() => Promise<void>> {
   // mode needs none (the xapp IS the authentication)
   const { pickSlackApp } = await import("./connect.ts");
   const app = carriers.length > 0 ? null : await pickSlackApp(creds).catch(() => null);
+  // deliveries are acked before they are processed: what is still processing at stop
+  // finishes before the handles close
+  const inFlight = new Set<Promise<void>>();
   const handler = createSlackWebhook({
     publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
     store: log, // identities + memberships live on the Log (§4) — the wire fills the map
     media,
     names,
     signingSecret: app?.value.signing_secret || undefined,
+    track: (work) => {
+      inFlight.add(work);
+      work.finally(() => inFlight.delete(work));
+    },
   });
   const release = async () => {
+    await Promise.allSettled([...inFlight]);
     await creds.close();
     await log.close();
   };

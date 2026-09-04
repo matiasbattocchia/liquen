@@ -64,7 +64,7 @@ import type { Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
-import { filePartOf, loadMediaBlock } from "./store/media.ts";
+import { filePartOf, loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import { hhmm, ownComplex, ownVoice, parseVerdict, shortId, silenced, textOf } from "./render.ts"; // shared predicates: silenced never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
@@ -856,6 +856,10 @@ export async function xi(
 
 /* ── think: one locked turn ───────────────────────────────────────────── */
 
+/** One loader for the process: a tool loop re-renders the same attachments step after
+ *  step, and the bytes under a uri never change (content-named, §8). */
+const loadMedia = memoizedLoader(loadMediaBlock);
+
 async function think(
   events: Event[],
   config: AgentConfig,
@@ -884,7 +888,7 @@ async function think(
       config,
       ambient,
       // trailing-region media → real image/document blocks (§5); the store loads, render picks
-      loadMedia: loadMediaBlock,
+      loadMedia,
       // the checkpoint instruction is a DOC (§5/§8) — editable like any instruction
       compactPrompt: () =>
         ports.docs.read({ agent: config.agentId, conversation: home }, {

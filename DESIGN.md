@@ -1332,8 +1332,15 @@ compaction proper is only pi's **checkpoint layer**:
   quiescence; a `meta` marker can distinguish the two if it ever matters). Measuring the
   VISIBLE window matters: the raw window stays heavy after a checkpoint (the read is
   windowLimit-capped), so a raw estimate would re-fire on the next invocation — a
-  compact-forever livelock. Only CLOSED events are ever covered — the derived boundary
-  gives us pi's never-cut-a-tool-result rule structurally.
+  compact-forever livelock. The cut falls where no tool step straddles it: anywhere in the
+  closed region, and — when the weight is a long open tool loop — between two of its
+  steps, after a tool outcome, never after unanswered input. That is pi's
+  never-cut-a-tool-result rule, structurally: a step (the events sharing a call's
+  `turn_id`) replays as one API turn, and stays whole on either side of the cut. The
+  transcript the checkpoint works from carries the tool calls and their outcomes for the
+  same reason — inside a loop they ARE the content. A checkpoint the model wrote badly
+  (cut at the output ceiling, or empty) is an error event, not a record: the turn ends on
+  it and the next input retries; only a failed call falls through to a normal think.
 - **The prompt is a DOC** — `system/instructions/compaction.md` (seeded, lazy): readable and
   editable like any instruction, never hidden in code (the embedded constant is only the
   fallback for unseeded stores). One unified instruction covers first-checkpoint and fold
@@ -1343,9 +1350,11 @@ compaction proper is only pi's **checkpoint layer**:
   critical context (exact names/ids/figures preserved). **Iterative merge**: a later
   compaction folds the previous summary in (`<previous-summary>` + new span → merged);
   `covers` chains from the previous summary's start, so survivors get re-covered (pi's
-  rule).
-- **Render**: drop everything with `id ≤ covers[1]` of the latest summary (superseded
-  summaries fall in that range too); the summary body renders as the leading text block.
+  rule); `covers[1]` is the newest event folded in, so the range is always ordered.
+- **Render**: drop everything with `id ≤ covers[1]` of the latest summary and every earlier
+  summary (each is folded into the next); the summary body renders as the leading
+  `<checkpoint>` block, escaped like any world body — its text is a transcript's worth of
+  peers' words, and a mark typed by one of them stays text.
 - **Later**: xi's window read starts at the latest summary instead of `windowLimit` (the
   cap becomes a fallback); the API's server-side compaction block (beta) could ride
   inside a summary event if we ever want it — noted, not planned.

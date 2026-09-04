@@ -41,6 +41,14 @@ export type { ModelTransport };
  *  covers. */
 export const RETRY_DELAYS_MS = [5_000, 20_000];
 
+/** Which failures the slow retries cover: weather — a rate limit, a server-side error, a
+ *  timeout, a conflict, or a dropped connection (no status at all). A 4xx is the request's
+ *  own fault, and the same request fails the same way however often it is sent. */
+export function retryable(status: number | undefined): boolean {
+  return status === undefined || status === 408 || status === 409 || status === 429 ||
+    status >= 500;
+}
+
 export interface TurnConfig {
   agentId: AgentId;
   sessionId: SessionId; // the pair IS the anchor: the session's conversation derives from it (§4)
@@ -114,8 +122,10 @@ export async function nu(
   // so it's the one that knows what the turn will actually weigh. When the VISIBLE window
   // outgrows the budget, THIS turn is the checkpoint: one model call either way (the
   // one-call-per-invocation invariant), and the summary's own insert wakes the think it
-  // displaced — the log is the continuation engine, applied to maintenance (§5). Failure is
-  // silent: null falls through to a normal turn; the next think retries the checkpoint.
+  // displaced — the log is the continuation engine, applied to maintenance (§5). Weather
+  // (the call failed) is silent: null falls through to a normal turn, and the next think
+  // retries the checkpoint. A checkpoint the model wrote badly — cut off, or empty — comes
+  // back as an error event: unstamped, so the turn ends there, and the next input retries.
   const summary = await buildSummary({
     events: input.events,
     session,
@@ -154,14 +164,48 @@ export async function nu(
       transport,
       emit,
     );
-    if (res.ok) break;
+    if (res.ok || !retryable(res.status)) break;
   }
   if (!res.ok) return [errorEvent(res.error)]; // unstamped ⇒ terminal (decide idles)
 
+  // The model's words in the session's own room. consumed: the coalescing horizon — what
+  // this step actually read; xi's `unanswered` measures against it (§2). silence: the
+  // model closed the turn without speaking (§5 SILENCE) — the event still exists, still
+  // closes, still carries the horizon; only its body goes nowhere. Both ride `extra`
+  // (harness sidecar), not payload: nothing about the MESSAGE depends on either.
+  const spoken = (text: string): Draft<MessageEvent> => {
+    const extra: Extra = {};
+    const read = input.events.at(-1);
+    if (read) extra.consumed = read.id;
+    // ANYWHERE in the reply, not just alone: the sentinel is a directive, not content,
+    // and a model that reasons its way to silence tends to explain itself first — the
+    // live one wrote a paragraph about why nothing was owed and then said the word. That
+    // paragraph is addressed to nobody, so the word governs and it goes nowhere with the
+    // rest. It stays in the log verbatim; only delivery and render are silenced. A reply
+    // that is only whitespace said nothing the same way: the API refuses an empty block.
+    if (text.includes(SILENCE) || text.trim().length === 0) extra.silence = true;
+    return {
+      ts: ts(),
+      type: "message",
+      agent: self,
+      envelope: here,
+      payload: { turn_id: turnId }, // render's boundary rule (§5)
+      ...(Object.keys(extra).length > 0 ? { extra } : {}),
+      parts: [{ type: "text", kind: "text", text }],
+    };
+  };
+
+  // A cut at the output ceiling can land INSIDE a tool_use: the SDK hands back whatever of
+  // its JSON arrived, and a half-written command is not the call the model was making.
+  // Every block before the last one closed before the cut, so only the trailing call is
+  // in doubt — dropped, and the continuation re-issues it whole.
+  const emissions = [...res.emissions];
+  if (res.stop === "max_tokens" && emissions.at(-1)?.kind === "tool_use") emissions.pop();
+
   // stamp emissions → events (mint ids; envelope by channel; one turnId per step, §5)
   const events: Draft<Event>[] = [];
-  for (const em of res.emissions) {
-    if (em.kind === "thinking") {
+  for (const em of emissions) {
+    if (em.kind === "thinking" || em.kind === "redacted_thinking") {
       const e: Draft<ThinkingEvent> = {
         ts: ts(),
         type: "thinking",
@@ -171,35 +215,14 @@ export async function nu(
         parts: [{
           type: "data",
           kind: "thinking",
-          data: { thinking: em.thinking, signature: em.signature },
+          data: em.kind === "thinking"
+            ? { thinking: em.thinking, signature: em.signature }
+            : { data: em.data },
         }],
       };
       events.push(e);
     } else if (em.kind === "assistant") {
-      // consumed: the coalescing horizon — what this step actually read; xi's `unanswered`
-      // measures against it (§2). silence: the model closed the turn without speaking (§5
-      // SILENCE) — the event still exists, still closes, still carries the horizon; only
-      // its body goes nowhere. Both ride `extra` (harness sidecar), not payload: nothing
-      // about the MESSAGE depends on either.
-      const extra: Extra = {};
-      const read = input.events.at(-1);
-      if (read) extra.consumed = read.id;
-      // ANYWHERE in the reply, not just alone: the sentinel is a directive, not content,
-      // and a model that reasons its way to silence tends to explain itself first — the
-      // live one wrote a paragraph about why nothing was owed and then said the word. That
-      // paragraph is addressed to nobody, so the word governs and it goes nowhere with the
-      // rest. It stays in the log verbatim; only delivery and render are silenced.
-      if (em.text.includes(SILENCE)) extra.silence = true;
-      const e: Draft<MessageEvent> = {
-        ts: ts(),
-        type: "message",
-        agent: self,
-        envelope: here,
-        payload: { turn_id: turnId }, // render's boundary rule (§5)
-        ...(Object.keys(extra).length > 0 ? { extra } : {}),
-        parts: [{ type: "text", kind: "text", text: em.text }],
-      };
-      events.push(e);
+      events.push(spoken(em.text));
     } else {
       const e: Draft<ToolUseEvent> = {
         ts: ts(),
@@ -211,6 +234,15 @@ export async function nu(
       };
       events.push(e);
     }
+  }
+
+  // A step that produced nothing to log — no words, no call — still ended, and the ending
+  // is what a turn is made of: the closing message carries the horizon and ends the chain
+  // (§2). Without one the window never closes, and every tick re-thinks the same input.
+  if (
+    res.stop !== "refusal" && !events.some((e) => e.type === "message" || e.type === "tool_use")
+  ) {
+    events.push(spoken(""));
   }
 
   // refusal is terminal — surface it and stop. max_tokens is NOT terminal: the turn was

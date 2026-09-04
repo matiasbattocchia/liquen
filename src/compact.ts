@@ -11,14 +11,25 @@
  * next think retries; nothing depends on a checkpoint existing.
  */
 
-import type { Draft, Event, Session, SummaryEvent } from "./types.ts";
-import { applySummary, closingBoundary, deferredInput, ownVoice } from "./render.ts";
+import type { Draft, ErrorEvent, Event, Session, SummaryEvent } from "./types.ts";
+import { applySummary, closingBoundary, deferredInput, outcomeLine, ownVoice } from "./render.ts";
 import { type ModelTransport, mu, type StepInput } from "./mu.ts";
+import { describeCall } from "./describe.ts";
 
 import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT } from "./config.ts";
 
-/** chars/4 — crude but monotone; both thresholds are order-of-magnitude knobs. */
-export const estTokens = (events: Event[]): number => Math.ceil(JSON.stringify(events).length / 4);
+/** chars/4 over what renders — crude but monotone; both thresholds are order-of-magnitude
+ *  knobs. The wire sidecar (`extra`, where a connector keeps the raw delivery) never reaches
+ *  the prompt, so it never weighs. */
+export const estTokens = (events: Event[]): number =>
+  Math.ceil(JSON.stringify(events, (k, v) => k === "extra" ? undefined : v).length / 4);
+
+/** The output ceiling of a checkpoint call. A structured summary of a whole window has to
+ *  fit under it whole: a cut summary is not a record, it is a failure (see `buildSummary`). */
+export const SUMMARY_MAX_TOKENS = 16_384;
+
+/** How much of one tool outcome the checkpoint transcript carries. */
+const RESULT_CHARS = 500;
 
 /** The checkpoint instruction (task + format + the fold-a-previous-summary rule in one — the
  *  prompt itself branches on <previous-summary>, so the code doesn't). The LIVE copy is a doc
@@ -64,7 +75,42 @@ export interface CompactInput {
   turnId?: string;
 }
 
-/** Decide the covered span: closed events beyond the keep-recent budget. Null ⇒ nothing to do. */
+/** Where a cut may fall: after index `i` when no STEP straddles it. A step — the events
+ *  sharing the `turn_id` of a tool call: its thinking, its calls, their results, its words
+ *  — replays as one API turn, so a cut inside one leaves an orphan the API rejects. A call
+ *  still waiting for its result holds its step open to the end. A turn that called nothing
+ *  is words alone, and words cut anywhere. */
+function cutPoints(events: Event[]): Set<number> {
+  const first = new Map<string, number>();
+  const last = new Map<string, number>();
+  const steps = new Set(
+    events.filter((e) => e.type === "tool_use").map((e) => e.payload.turn_id),
+  );
+  const answered = new Set(
+    events.filter((e) => e.type === "tool_result").map((e) => e.payload.ref_id),
+  );
+  events.forEach((e, i) => {
+    const turn = e.payload?.turn_id;
+    if (typeof turn !== "string" || !steps.has(turn)) return;
+    if (!first.has(turn)) first.set(turn, i);
+    last.set(turn, e.type === "tool_use" && !answered.has(e.id) ? Infinity : i);
+  });
+  const out = new Set<number>();
+  for (let i = 0; i < events.length; i++) {
+    let straddled = false;
+    for (const [turn, from] of first) {
+      if (from <= i && last.get(turn)! > i) {
+        straddled = true;
+        break;
+      }
+    }
+    if (!straddled) out.add(i);
+  }
+  return out;
+}
+
+/** Decide the covered span: everything up to the last safe cut before the keep-recent
+ *  tail. Null ⇒ nothing to do. */
 export function compactionSpan(
   events: Event[],
   session: Session,
@@ -79,23 +125,44 @@ export function compactionSpan(
   events = applySummary(events);
   if (estTokens(events) <= compactAt) return null;
   const boundary = closingBoundary(events, session);
-  if (boundary < 0) return null; // no closed region yet — nothing safely coverable
   const deferred = deferredInput(events, session, boundary);
-  const closed = events.slice(0, boundary + 1).filter((e) => !deferred.has(e));
-  // walk back from the boundary keeping ~keepRecent est. tokens uncovered
+  // walk back from the end keeping ~keepRecent est. tokens uncovered: `kept` = the first
+  // kept index. The tail may be a long open tool loop — that is exactly when the closed
+  // region is not where the weight is, and a cut between two of its steps is what shrinks
+  // the window (the checkpoint then leads a trailing chain that starts on a whole step).
   let keep = 0;
-  let cut = closed.length; // first KEPT index
-  for (let i = closed.length - 1; i >= 0; i--) {
-    keep += Math.ceil(JSON.stringify(closed[i]).length / 4);
+  let kept = events.length;
+  for (let i = events.length - 1; i >= 0; i--) {
+    keep += estTokens([events[i]]);
     if (keep > keepRecent) break;
-    cut = i;
+    kept = i;
   }
-  const covered = closed.slice(0, cut);
-  if (covered.length === 0) return null; // everything closed is recent — skip
-  return { covered, covers: [covered[0].id, covered[cut - 1].id] };
+  // where the cut may fall: in the closed region, after any event no step straddles; in
+  // the open chain beyond it, only after a tool outcome — a world message there is INPUT
+  // the agent has not answered, and a checkpoint is a record, not an answer
+  const safe = cutPoints(events);
+  let cut = -1;
+  for (let c = kept - 1; c >= 0; c--) {
+    if (safe.has(c) && (c <= boundary || events[c].type === "tool_result")) {
+      cut = c;
+      break;
+    }
+  }
+  if (cut < 0) return null; // everything is recent, or one step — nothing coverable yet
+  const covered = events.slice(0, cut + 1).filter((e) => !deferred.has(e));
+  const chain = covered.find((e): e is SummaryEvent => e.type === "summary");
+  const content = covered.filter((e) => e.type !== "summary");
+  if (content.length === 0) return null; // the previous checkpoint alone — nothing new
+  // the range the checkpoint stands for: from the previous checkpoint's own start (its
+  // survivors are re-covered here, so the chain never breaks) to the newest event folded in
+  const from = chain ? chain.payload.covers[0] : content[0].id;
+  const to = content.reduce((m, e) => e.id > m ? e.id : m, content[0].id);
+  return { covered, covers: [from, to] };
 }
 
-/** The covered span as a plain transcript + the previous checkpoint (if one is inside). */
+/** The covered span as a plain transcript + the previous checkpoint (if one is inside).
+ *  Tool traffic is in it: inside an open loop the calls and their outcomes ARE the
+ *  content, and a checkpoint that leads a trailing chain has to say what the work found. */
 function transcript(covered: Event[], session: Session): { text: string; previous?: string } {
   let previous: string | undefined;
   const lines: string[] = [];
@@ -109,17 +176,26 @@ function transcript(covered: Event[], session: Session): { text: string; previou
       const text = e.parts.filter((p) => p.type === "text")
         .map((p) => (p as { text: string }).text).join(" ");
       lines.push(`[${who} @ ${e.envelope.conversation.address}] ${text}`);
+    } else if (e.type === "tool_use") {
+      const { name, input } = e.parts[0].data;
+      lines.push(`[me → ${describeCall({ name, input }, { full: true })}]`);
+    } else if (e.type === "tool_result") {
+      lines.push(`[tool] ${outcomeLine(e, RESULT_CHARS)}`);
     }
-    // tool traffic / thinking: already pruned semantics — the checkpoint works from messages
+    // thinking: private — never part of the record
   }
   return { text: lines.join("\n"), previous };
 }
 
-/** Run the checkpoint step and mint the summary event. Null ⇒ under threshold or mu failed. */
+/** Run the checkpoint step and mint the summary event. Null ⇒ under threshold, or the
+ *  call itself failed (weather — the next think retries). An error draft ⇒ the model
+ *  answered but wrote no usable checkpoint — cut at the ceiling, or empty: a partial
+ *  record would stand for the whole window, and an empty one would run again on every
+ *  wake, so the turn ends on the error instead and the next input retries. */
 export async function buildSummary(
   input: CompactInput,
   transport: ModelTransport,
-): Promise<Draft<SummaryEvent> | null> {
+): Promise<Draft<SummaryEvent> | Draft<ErrorEvent> | null> {
   const span = compactionSpan(
     input.events,
     input.session,
@@ -140,14 +216,25 @@ export async function buildSummary(
     messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
     model: input.model,
     effort: input.effort,
-    maxTokens: 4096,
+    maxTokens: SUMMARY_MAX_TOKENS,
     tools: [],
     turnId: input.turnId,
   }, transport);
   if (!res.ok) return null; // silent — the next think retries
+  const failed = (why: string): Draft<ErrorEvent> => ({
+    ts: new Date().toISOString(),
+    type: "error",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: input.session.conversation },
+    }, // harness-authored: no `agent` (§3)
+    parts: [{ type: "data", kind: "error", data: { error: `checkpoint failed: ${why}` } }],
+  });
+  if (res.stop === "max_tokens") return failed("cut off at the output ceiling");
   const summary = res.emissions.filter((e) => e.kind === "assistant")
     .map((e) => e.text).join("\n").trim();
-  if (summary.length === 0) return null;
+  if (summary.length === 0) return failed("the model wrote nothing");
 
   return {
     ts: new Date().toISOString(),

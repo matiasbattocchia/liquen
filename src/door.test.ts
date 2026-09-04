@@ -10,7 +10,7 @@
  */
 
 import { assert, assertEquals, assertMatch, assertRejects } from "@std/assert";
-import { installDoors, type Status } from "./door.ts";
+import { installDoors, MAX_PENDING_LINES, type Status } from "./door.ts";
 import { bind, type Mu } from "./script.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { openFileDocs } from "./store/docs.ts";
@@ -236,6 +236,121 @@ Deno.test({
       client.conn.close();
     } finally {
       await down();
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a verdict is checked on the wire — the vocabulary, and a scope every time",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { dir, log, down } = await up();
+    try {
+      const client = await rawClient(dir);
+      const answer = (verdict: unknown) =>
+        client.request({ op: "permission_response", ref_id: "01USE", verdict });
+      for (
+        const bad of [
+          { behavior: "maybe", scope: "once" },
+          { behavior: "allow" }, // no scope: an unscoped verdict would write a standing rule
+          { behavior: "allow", scope: "all" }, // `all` is the other axis (`every`), not a scope
+          { behavior: "deny", scope: "once", reason: 7 },
+          { behavior: "allow", scope: "once", every: "yes" },
+          "allow",
+          ["allow", "once"],
+        ]
+      ) {
+        const r = await answer(bad);
+        assertEquals(r.ok, false, `refused: ${JSON.stringify(bad)}`);
+        assertMatch(String(r.error), /verdict/);
+      }
+      assertEquals(await log.read({ types: ["permission_response"] }), []); // nothing landed
+      // the full shape lands as the verdict it is — and only the verdict's own fields
+      const ok = await answer({
+        behavior: "deny",
+        scope: "connection",
+        reason: "not from here",
+        every: true,
+        stray: "dropped",
+      });
+      assertEquals(ok.ok, true);
+      const [resp] = await log.read({
+        types: ["permission_response"],
+      }) as PermissionResponseEvent[];
+      assertEquals(resp.parts[0].data, {
+        behavior: "deny",
+        scope: "connection",
+        reason: "not from here",
+        every: true,
+      });
+      client.conn.close();
+    } finally {
+      await down();
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a call's input is a JSON object, or the call is refused before it lands",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { dir, log, down } = await up();
+    try {
+      const client = await rawClient(dir);
+      for (const input of [null, [], "text", 3, true]) {
+        const r = await client.request({ op: "call", tool: "search", input });
+        assertEquals(r.ok, false, `refused: ${JSON.stringify(input)}`);
+        assertMatch(String(r.error), /input/);
+      }
+      assertEquals(await log.read({ types: ["tool_use"] }), []);
+      // absent is the empty object — a tool with no arguments needs none
+      const bare = await client.request({ op: "call", tool: "search" });
+      assertEquals(bare.ok, true);
+      const [use] = await log.read({ types: ["tool_use"] }) as ToolUseEvent[];
+      assertEquals(use.parts[0].data, { name: "search", input: {} });
+      client.conn.close();
+    } finally {
+      await down();
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a tailer that never reads is dropped at the write cap, not buffered forever",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
+    const log = await openLog(`${dir}/log`);
+    const doors = await installDoors(dir, [{ ...AGENT, port: () => log }]);
+    const wait = async (cond: () => boolean, ms = 10_000) => {
+      const t0 = Date.now();
+      while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 25));
+    };
+    try {
+      // a client that asks for the stream and then reads nothing — a wedged interface
+      const conn = await Deno.connect({ transport: "unix", path: `${dir}/agents/ana/door.sock` });
+      await conn.write(new TextEncoder().encode(JSON.stringify({ op: "tail" }) + "\n"));
+      await wait(() => doors.attachments() === 1);
+      await new Promise((r) => setTimeout(r, 100)); // the tail is registered
+      // past what the socket absorbs, each push is a pending write; past the cap, the
+      // connection is the daemon's to drop
+      const text = "x".repeat(8_192);
+      for (let i = 0; i < MAX_PENDING_LINES + 64; i++) {
+        doors.emit("ana", "mind", { kind: "text", text });
+      }
+      await wait(() => doors.attachments() === 0);
+      assertEquals(doors.attachments(), 0);
+      doors.emit("ana", "mind", { kind: "text", text: "nobody left" }); // the tailer is gone
+      try {
+        conn.close();
+      } catch { /* closed by the door */ }
+    } finally {
+      await doors.close();
+      await log.close();
+      await Deno.remove(dir, { recursive: true });
     }
   },
 });

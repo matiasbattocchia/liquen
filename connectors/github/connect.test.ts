@@ -322,3 +322,28 @@ Deno.test("user door: a user token from an app that doesn't expire them is stati
     assertEquals(row.extra!.app_id, undefined, "nothing to refresh by, nothing to point at");
   });
 });
+
+Deno.test("device flow: the default code and token calls each carry a timeout signal", async () => {
+  const seen: RequestInit[] = [];
+  const answers: unknown[] = [
+    { device_code: "dev", user_code: "WXYZ-1234", interval: 1, expires_in: 60 },
+    { access_token: "ghu_abc" },
+  ];
+  const real = globalThis.fetch;
+  globalThis.fetch = ((_i: RequestInfo | URL, init?: RequestInit) => {
+    seen.push(init ?? {});
+    return Promise.resolve(Response.json(answers.shift()));
+  }) as typeof fetch;
+  try {
+    const tok = await githubDeviceFlow({
+      clientId: "Iv1.abc",
+      show: () => {},
+      sleep: () => Promise.resolve(),
+    });
+    assertEquals(tok.access_token, "ghu_abc");
+  } finally {
+    globalThis.fetch = real;
+  }
+  assertEquals(seen.length, 2);
+  assert(seen.every((i) => i.signal instanceof AbortSignal), "both calls are bounded");
+});

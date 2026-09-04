@@ -49,8 +49,11 @@ import type {
   Delta,
   Draft,
   Event,
+  Json,
   MessageEvent,
+  PermissionBehavior,
   PermissionResponseEvent,
+  PermissionScope,
   PermissionVerdict,
   ToolUseEvent,
 } from "./types.ts";
@@ -86,6 +89,12 @@ export interface Doors {
   attachments(): number;
   close(): Promise<void>;
 }
+
+/** Lines a connection may have waiting on its socket. A tailer that stops reading stops
+ *  the writes behind it, and the queue is bounded by dropping the connection rather than
+ *  by growing: the log keeps the history, and a client that comes back re-tails from its
+ *  cursor. */
+export const MAX_PENDING_LINES = 1_000;
 
 type Push = (line: Record<string, unknown>) => void;
 /** One tailing connection: where to push, and which session it tails. */
@@ -166,11 +175,19 @@ async function serve(conn: Deno.Conn, agent: DoorAgent, cast: Set<Tailer>) {
   const decoder = new TextDecoder();
   let buffered = "";
   let chain: Promise<void> = Promise.resolve();
-  const write = (res: Record<string, unknown>): Promise<void> =>
-    chain = chain.then(async () => {
+  let pending = 0; // lines queued behind a socket the peer is not draining
+  const write = (res: Record<string, unknown>): Promise<void> => {
+    if (++pending > MAX_PENDING_LINES) {
+      try {
+        conn.close(); // the read loop ends on it, and the queue drains into the closed socket
+      } catch { /* already closed */ }
+    }
+    return chain = chain.then(async () => {
       const bytes = new TextEncoder().encode(JSON.stringify(res) + "\n");
       for (let at = 0; at < bytes.length;) at += await conn.write(bytes.subarray(at));
-    }).catch(() => {/* the peer hung up — the read loop is what ends the connection */});
+    }).catch(() => {/* the peer hung up — the read loop is what ends the connection */})
+      .finally(() => pending--);
+  };
   const push: Push = (line) => void write(line);
 
   let untail: (() => void) | undefined;
@@ -237,6 +254,8 @@ async function handle(
   if (req.op === "call") {
     const tool = req.tool;
     if (typeof tool !== "string" || tool === "") throw new Error("call needs a tool name");
+    const input = req.input === undefined ? {} : req.input; // absent: a call with no arguments
+    if (!isObject(input)) throw new Error("call input must be a JSON object");
     const use = await port.publish(
       {
         ts: new Date().toISOString(),
@@ -247,10 +266,7 @@ async function handle(
         parts: [{
           type: "data",
           kind: "tool_use",
-          data: {
-            name: tool,
-            input: (req.input ?? {}) as ToolUseEvent["parts"][0]["data"]["input"],
-          },
+          data: { name: tool, input: input as Json },
         }],
       } satisfies Draft<ToolUseEvent>,
     );
@@ -283,21 +299,14 @@ async function handle(
   if (req.op === "permission_response") {
     const ref = req.ref_id;
     if (typeof ref !== "string" || ref === "") throw new Error("permission_response needs ref_id");
-    const verdict = req.verdict;
-    if (verdict === null || typeof verdict !== "object") {
-      throw new Error("permission_response needs a verdict");
-    }
+    const verdict = verdictOf(req.verdict);
     const res = await port.publish(
       {
         ts: new Date().toISOString(),
         type: "permission_response",
         payload: { ref_id: ref },
         envelope,
-        parts: [{
-          type: "data",
-          kind: "permission_response",
-          data: verdict as PermissionVerdict,
-        }],
+        parts: [{ type: "data", kind: "permission_response", data: verdict }],
       } satisfies Draft<PermissionResponseEvent>,
     );
     return { ok: true, id: res!.id };
@@ -309,4 +318,36 @@ async function handle(
   throw new Error(
     `unknown op "${String(req.op)}" — the door speaks call, message, permission_response, tail`,
   );
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+const BEHAVIORS: readonly PermissionBehavior[] = ["allow", "deny"];
+const SCOPES: readonly PermissionScope[] = ["once", "conversation", "connection", "always"];
+
+/** The verdict as the log stores it — its four fields, each in the vocabulary `parseVerdict`
+ *  speaks (§9), nothing else carried along. The scope is never defaulted: a verdict that
+ *  names none is refused, because a standing verdict writes a rule wherever its scope says. */
+function verdictOf(v: unknown): PermissionVerdict {
+  if (!isObject(v)) throw new Error("permission_response needs a verdict object");
+  const { behavior, scope, reason, every } = v;
+  if (!BEHAVIORS.includes(behavior as PermissionBehavior)) {
+    throw new Error(`verdict behavior must be one of ${BEHAVIORS.join(", ")}`);
+  }
+  if (!SCOPES.includes(scope as PermissionScope)) {
+    throw new Error(`verdict scope must be one of ${SCOPES.join(", ")}`);
+  }
+  if (reason !== undefined && typeof reason !== "string") {
+    throw new Error("verdict reason must be a string");
+  }
+  if (every !== undefined && typeof every !== "boolean") {
+    throw new Error("verdict every must be a boolean");
+  }
+  return {
+    behavior: behavior as PermissionBehavior,
+    scope: scope as PermissionScope,
+    ...(reason !== undefined ? { reason } : {}),
+    ...(every !== undefined ? { every } : {}),
+  };
 }

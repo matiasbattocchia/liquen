@@ -1,7 +1,7 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { createGithubDispatch, type GhTarget } from "./dispatch.ts";
 import type { MessageEvent } from "../../src/connector.ts";
-import { openLog } from "../../src/connector.ts";
+import { DispatchError, openLog } from "../../src/connector.ts";
 
 /** An agent-authored (outbound) message to `conversation`. */
 function agentMsg(id: string, conversation: string, text: string): MessageEvent {
@@ -42,6 +42,7 @@ async function withDispatch(
     read: () => Promise<MessageEvent[]>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
   }) => Promise<void>,
+  opts: { failWith?: Error } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -51,6 +52,7 @@ async function withDispatch(
     subscribe: (l, o) => log.subscribe(l, o),
     post: (target, text) => {
       posts.push({ target, text });
+      if (opts.failWith) return Promise.reject(opts.failWith);
       return Promise.resolve("c-100");
     },
     setDelivery: (id, patch) => log.setDelivery(id, patch),
@@ -103,4 +105,16 @@ Deno.test("dispatch: agent messages to non-gh conversations are ignored", async 
     await new Promise((r) => setTimeout(r, 400));
     assertEquals(posts.length, 0);
   });
+});
+
+Deno.test("dispatch: a failed post stamps the row failed with its class — the agent sees it (§5)", async () => {
+  await withDispatch(async ({ publish, posts, read, waitFor }) => {
+    await publish(agentMsg("01", "ana/widgets#42", "on it"));
+    await waitFor(() => posts.length === 1);
+    await waitFor(async () => (await read())[0]?.status?.state === "failed");
+    const status = (await read())[0].status as Record<string, unknown>;
+    assertEquals(status.error_code, 502);
+    assertStringIncludes(String(status.error), "bad gateway");
+    assertEquals(typeof status.failed_at, "string");
+  }, { failWith: new DispatchError("gh api: bad gateway", 502) });
 });

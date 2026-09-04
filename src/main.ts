@@ -198,10 +198,14 @@ export async function start(
   // the folder that already holds its docs and memories, and its background jobs are reaped
   // with it. The binaries on PATH stay org-wide; what is private is the cwd and the job set.
   const planes = new Map<string, ExecPlane>();
+  // the org's language reaches user space as MU_LOCALE — the same name the processors get
+  // (§9), so a script the agent runs by hand speaks the org's language too
+  const locale = catalog?.org.locale;
+  const userEnv = locale ? () => ({ ...proxy.env(), MU_LOCALE: locale }) : proxy.env;
   for (const p of principals) {
     planes.set(
       p.agentId,
-      await installExecPlane(dir, p.agentId, proxy.env, catalog?.system.bashTimeoutMs),
+      await installExecPlane(dir, p.agentId, userEnv, catalog?.system.bashTimeoutMs),
     );
   }
 
@@ -420,34 +424,41 @@ export async function start(
   // speaks in, and says where it came from: `ref_id` the `schedule` call, `extra.timer` the
   // row — a note read cold leads back to the moment it was written, and a repeating one
   // says so. Firing consumes the row in the same pass (`settle`).
-  const fireDue = async () => {
-    const now = new Date().toISOString();
-    for (const t of log.due(now)) {
-      await log.publish(
-        {
-          ts: now,
-          type: "alarm", // harness-authored: no `agent`, so the relational rule wakes on it (§2)
-          payload: { ...(t.refId ? { ref_id: t.refId } : {}) },
-          envelope: {
-            service: "local",
-            connection_address: "agent",
-            conversation: { address: t.conversation },
-          },
-          extra: {
-            timer: {
-              id: t.id,
-              session_id: t.sessionId,
-              ...(t.cron ? { cron: t.cron } : {}),
-              ...(t.armedAt ? { armed_at: t.armedAt } : {}),
+  // One sweep at a time: a tick that lands while a pass is still publishing joins that
+  // pass instead of opening a second. Across processes the same guarantee is `claim`'s —
+  // the scan lists, the claim wins, and only what this sweep won gets an alarm.
+  let sweep: Promise<void> | undefined;
+  const fireDue = (): Promise<void> =>
+    sweep ??= (async () => {
+      const now = new Date().toISOString();
+      for (const due of log.due(now)) {
+        const t = log.claim(due.id, now);
+        if (!t) continue; // another sweep fired it
+        await log.publish(
+          {
+            ts: now,
+            type: "alarm", // harness-authored: no `agent`, so the relational rule wakes on it (§2)
+            payload: { ...(t.refId ? { ref_id: t.refId } : {}) },
+            envelope: {
+              service: "local",
+              connection_address: "agent",
+              conversation: { address: t.conversation },
             },
-          },
-          parts: [{ type: "text", kind: "alarm", text: t.note }],
-        } satisfies Draft<AlarmEvent>,
-      );
-      // a cron advances on the clock it was armed against — the agent's zone, not UTC
-      log.settle(t.id, now, agents.find((a) => a.config.agentId === t.agentId)?.config.timezone);
-    }
-  };
+            extra: {
+              timer: {
+                id: t.id,
+                session_id: t.sessionId,
+                ...(t.cron ? { cron: t.cron } : {}),
+                ...(t.armedAt ? { armed_at: t.armedAt } : {}),
+              },
+            },
+            parts: [{ type: "text", kind: "alarm", text: t.note }],
+          } satisfies Draft<AlarmEvent>,
+        );
+        // a cron advances on the clock it was armed against — the agent's zone, not UTC
+        log.settle(t.id, now, agents.find((a) => a.config.agentId === t.agentId)?.config.timezone);
+      }
+    })().finally(() => sweep = undefined);
 
   // the clock poke (§2 attention): deferred ambient news needs someone to re-ask once the
   // digest comes due, and the log cannot wake on time passing — so the clock is a poke

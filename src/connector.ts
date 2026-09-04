@@ -22,6 +22,8 @@ export { checkPort, checkStrings, connectorConfig, findRoot } from "./config.ts"
 export type { ConnectorSpec } from "./config.ts";
 export { declared } from "./connect/declare.ts";
 export { DispatchError, failedStatus } from "./connect/errors.ts";
+export { createDispatcher, isOutbound } from "./connect/dispatcher.ts";
+export type { DispatcherDeps, Posted } from "./connect/dispatcher.ts";
 export { serveIngest } from "./connect/serve.ts";
 export { exitOnStop } from "./connect/stop.ts";
 export type {

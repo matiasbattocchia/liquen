@@ -123,7 +123,9 @@ export async function saveMedia(
   // params stripped: the wire says `audio/ogg; codecs=opus`, the maps key on the bare type
   const mime = meta.mime_type?.split(";")[0].trim() ?? (meta.name ? mimeOf(meta.name) : null) ??
     "application/octet-stream";
-  const fromName = meta.name?.includes(".") ? meta.name.slice(meta.name.lastIndexOf(".") + 1) : "";
+  // the name's extension only when it IS one — a wire name is free text (a path, a title)
+  const base = meta.name?.split("/").at(-1) ?? "";
+  const fromName = /^[^.]+\.([A-Za-z0-9]{1,8})$/.exec(base)?.[1] ?? "";
   const ext = (fromName || EXT[mime] || "bin").toLowerCase();
   const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")
@@ -290,12 +292,43 @@ function headSync(path: string, n = 16): Uint8Array {
   }
 }
 
-/** Raw-byte cap for inlining into a request (base64 ≈ ×4/3; the API caps ~5MB/image). */
-const INLINE_CAP = 3 * 1024 * 1024;
+/** Raw-byte cap for inlining into a request (base64 ≈ ×4/3; the API caps ~5MB/image).
+ *  Render budgets on it too: a file above it never loads, so it never spends. */
+export const INLINE_CAP = 3 * 1024 * 1024;
 
-/** What the model can SEE inline: images and PDFs (§5 — the trailing-region blocks). */
-const inlineable = (mime: string): boolean =>
+/** What the model can SEE inline: images (not svg) and PDFs (§5 — the trailing-region
+ *  blocks). One rule, applied by the loader to the bytes and by render to the known mime. */
+export const inlineable = (mime: string): boolean =>
   mime.startsWith("image/") && mime !== "image/svg+xml" || mime === "application/pdf";
+
+/** A loader remembered across calls: a stored file is content-named, so what a uri holds
+ *  never changes, and a tool loop renders the same trailing attachments on every step.
+ *  Bounded by the raw bytes held — the oldest entry goes first. A miss is not remembered:
+ *  the file may still be on its way. */
+export function memoizedLoader(
+  load: (uri: string) => { media_type: string; data: string } | null,
+  capBytes = MEDIA_MEMO_BYTES,
+): (uri: string) => { media_type: string; data: string } | null {
+  const held = new Map<string, { media_type: string; data: string }>();
+  let size = 0;
+  return (uri) => {
+    const hit = held.get(uri);
+    if (hit) return hit;
+    const b = load(uri);
+    if (!b) return null;
+    held.set(uri, b);
+    size += b.data.length;
+    for (const [k, v] of held) {
+      if (size <= capBytes) break;
+      held.delete(k);
+      size -= v.data.length;
+    }
+    return b;
+  };
+}
+
+/** Base64 held by `memoizedLoader` at most, across every agent this process renders. */
+const MEDIA_MEMO_BYTES = 64 * 1024 * 1024;
 
 /** A stored file → the base64 payload for a Messages-API image/document block, or null
  *  (not inlineable, over the cap, missing). Sync — render stays free of async plumbing;

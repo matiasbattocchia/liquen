@@ -39,6 +39,7 @@ import type { Connections } from "../../store/connections.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { findRoot } from "../../config.ts";
+import { timedFetch } from "../http.ts";
 
 export interface GoogleOAuthConfig {
   clientId: string;
@@ -236,7 +237,7 @@ export function claimsOf(idToken?: string): { email?: string; sub?: string } | n
 }
 
 async function defaultExchange(code: string, c: GoogleOAuthConfig): Promise<GoogleTokens> {
-  const res = await fetch("https://oauth2.googleapis.com/token", {
+  const res = await timedFetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({

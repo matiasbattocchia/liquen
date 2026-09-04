@@ -41,6 +41,7 @@ async function withOAuth(
     callback: (code: string, state: string) => Promise<Response>;
   }) => Promise<void>,
   access: SlackAccess = ACCESS,
+  opts: { defaultExchange?: boolean } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const creds = await openCredentials(dir);
@@ -64,10 +65,12 @@ async function withOAuth(
       return Promise.resolve(stored);
     }) as Appender["publish"],
     bindPrincipal: ({ team, user }) => Promise.resolve(`p:${team}:${user}`),
-    exchange: (code) => {
-      exchanged.push(code);
-      return Promise.resolve(access);
-    },
+    ...(opts.defaultExchange ? {} : {
+      exchange: (code) => {
+        exchanged.push(code);
+        return Promise.resolve(access);
+      },
+    }),
   });
   try {
     await fn({
@@ -215,4 +218,28 @@ Deno.test("callback: an install that granted less than the ask says which scopes
     scope: "channels:history",
     authed_user: { ...ACCESS.authed_user!, scope: "chat:write" },
   });
+});
+
+Deno.test("callback: the default exchange's oauth.v2.access call carries a timeout signal", async () => {
+  const seen: RequestInit[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = ((_i: RequestInfo | URL, init?: RequestInit) => {
+    seen.push(init ?? {});
+    return Promise.resolve(Response.json(ACCESS));
+  }) as typeof fetch;
+  try {
+    await withOAuth(
+      async (t) => {
+        const res = await t.callback("c1", stateOf(await t.start()));
+        assertEquals(res.status, 200);
+        assertEquals(t.connections.length > 0, true);
+      },
+      ACCESS,
+      { defaultExchange: true },
+    );
+  } finally {
+    globalThis.fetch = real;
+  }
+  assertEquals(seen.length, 1);
+  assert(seen[0].signal instanceof AbortSignal, "the exchange is bounded");
 });

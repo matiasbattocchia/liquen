@@ -1,5 +1,10 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import { createSlackWebhook, type SlackWebhookDeps, type WebhookHandler } from "./ingest.ts";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import {
+  createSlackWebhook,
+  slackNames,
+  type SlackWebhookDeps,
+  type WebhookHandler,
+} from "./ingest.ts";
 import type { Draft, Event, MessageEvent } from "../../types.ts";
 import { newId } from "../../store/id.ts";
 import type { Appender } from "../../store/log.ts";
@@ -53,22 +58,32 @@ function harness(
   store?: SlackWebhookDeps["store"],
   media?: SlackWebhookDeps["media"],
   names?: SlackWebhookDeps["names"],
+  publish?: Appender["publish"],
 ) {
   const published: Event[] = [];
-  const handler: WebhookHandler = createSlackWebhook({
+  const work: Promise<void>[] = [];
+  const raw: WebhookHandler = createSlackWebhook({
     // the store's `publish` in miniature: it mints ids (§3), both overloads
-    publish: ((one: Draft | Draft[]) => {
+    publish: publish ?? (((one: Draft | Draft[]) => {
       const drafts = Array.isArray(one) ? one : [one];
       const stored = drafts.map((e) => ({ ...e, id: e.id ?? newId() } as Event));
       published.push(...stored);
       return Promise.resolve(Array.isArray(one) ? stored : stored[0]);
-    }) as Appender["publish"],
+    }) as Appender["publish"]),
     store,
     media,
     names,
     signingSecret: secret,
+    track: (w) => work.push(w),
   });
-  return { handler, published };
+  // the acked delivery keeps processing behind the response — `handler` settles it too,
+  // so a test reads the log after the whole delivery; `raw` is the wire's view
+  const handler: WebhookHandler = async (req) => {
+    const res = await raw(req);
+    await Promise.all(work);
+    return res;
+  };
+  return { handler, raw, published };
 }
 
 async function signedReq(payload: unknown): Promise<Request> {
@@ -110,7 +125,7 @@ Deno.test("slack: url_verification echoes the challenge, never touches the log",
 Deno.test("slack: a signed message maps to a bare channel address with the ts merge key", async () => {
   const { handler, published } = harness(SECRET);
   const res = await handler(await signedReq(messageEvent()));
-  assertEquals(res.status, 202);
+  assertEquals(res.status, 200);
   assertEquals(published.length, 1);
   const m = published[0] as MessageEvent;
   assertEquals(m.envelope.service, "slack");
@@ -185,7 +200,7 @@ Deno.test("slack: membership events move the map store-side, never the log", asy
       event: { type: "member_joined_channel", channel: "C1", user: "U9", team: "T1" },
     })),
   );
-  assertEquals(res.status, 202);
+  assertEquals(res.status, 200);
   assertEquals(published.length, 0);
 });
 
@@ -378,7 +393,7 @@ Deno.test("slack: unsigned accepted when no secret (the Socket Mode carrier path
   const res = await handler(
     new Request("http://localhost/", { method: "POST", body: JSON.stringify(messageEvent()) }),
   );
-  assertEquals(res.status, 202);
+  assertEquals(res.status, 200);
   assertEquals(published.length, 1);
 });
 
@@ -407,7 +422,7 @@ Deno.test("slack: file attachments land through the media seam — file-only mes
       },
     })),
   );
-  assertEquals(res.status, 202);
+  assertEquals(res.status, 200);
   const m = published[0] as MessageEvent;
   assertEquals(m.parts.length, 1); // no empty text part
   assertEquals(m.parts[0].type, "file");
@@ -560,4 +575,70 @@ Deno.test("slack: no directory ⇒ bare ids — sender unnamed, mentions decode 
   assertEquals(m.envelope.sender, { address: "U7" });
   assertEquals((m.parts[0] as { text: string }).text, "ping @U9");
   assertEquals(m.payload?.mentions, [{ address: "U9" }]);
+});
+
+/** The global fetch swapped for one that records each call's init and answers `body`. */
+function stubFetch(body: () => unknown) {
+  const seen: RequestInit[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = ((_i: RequestInfo | URL, init?: RequestInit) => {
+    seen.push(init ?? {});
+    return Promise.resolve(Response.json(body()));
+  }) as typeof fetch;
+  return { seen, restore: () => (globalThis.fetch = real) };
+}
+
+Deno.test("slack: the name directory's users.info call carries a timeout signal", async () => {
+  const stub = stubFetch(() => ({ ok: true, user: { profile: { display_name: "Ana" } } }));
+  try {
+    const names = slackNames(() => Promise.resolve("xoxb-t"));
+    assertEquals(await names.nameOf("T1", "U1"), "Ana");
+  } finally {
+    stub.restore();
+  }
+  assertEquals(stub.seen.length, 1);
+  assert(stub.seen[0].signal instanceof AbortSignal, "the call is bounded");
+});
+
+Deno.test("slack: an event POST is acked 200 before its processing settles", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const stored: Event[] = [];
+  const publish = ((one: Draft | Draft[]) => {
+    const drafts = Array.isArray(one) ? one : [one];
+    const rows = drafts.map((e) => ({ ...e, id: e.id ?? newId() } as Event));
+    // the store is slow: nothing lands until the gate opens
+    return gate.then(() => {
+      stored.push(...rows);
+      return Array.isArray(one) ? rows : rows[0];
+    });
+  }) as Appender["publish"];
+  const { raw, handler } = harness(SECRET, undefined, undefined, undefined, publish);
+  const res = raw(await signedReq(messageEvent()));
+  let timer!: number;
+  const waited = new Promise<string>((r) => (timer = setTimeout(() => r("waited"), 300)));
+  const first = await Promise.race([res.then(() => "acked"), waited]);
+  clearTimeout(timer);
+  assertEquals(first, "acked");
+  assertEquals((await res).status, 200);
+  assertEquals(stored.length, 0); // the ack came first
+  release();
+  await handler(await signedReq(messageEvent({ event: { ...messageEvent().event, ts: "2.2" } })));
+  assertEquals(stored.length, 2); // the processing behind the ack still landed
+});
+
+Deno.test("slack: a delivery whose processing fails is still acked 200, and the failure is logged", async () => {
+  const publish = (() => Promise.reject(new Error("disk full"))) as unknown as Appender["publish"];
+  const { handler } = harness(SECRET, undefined, undefined, undefined, publish);
+  const logged: string[] = [];
+  const real = console.error;
+  console.error = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+  try {
+    const res = await handler(await signedReq(messageEvent()));
+    assertEquals(res.status, 200);
+  } finally {
+    console.error = real;
+  }
+  assertEquals(logged.length, 1);
+  assertStringIncludes(logged[0], "disk full");
 });

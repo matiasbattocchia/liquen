@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { backoffMs, roster } from "./start.ts";
+import { backoffMs, pause, roster } from "./start.ts";
 
 Deno.test("roster: main first, bundled connections resolve, org-local ones probe connectors/", () => {
   const tmp = Deno.makeTempDirSync();
@@ -29,4 +29,17 @@ Deno.test("backoffMs doubles from 1s and caps at 60s", () => {
   assertEquals(backoffMs(2), 2_000);
   assertEquals(backoffMs(4), 8_000);
   assertEquals(backoffMs(20), 60_000);
+});
+
+Deno.test("pause: a stop cuts the restart backoff short", async () => {
+  const halt = new AbortController();
+  const t0 = Date.now();
+  const p = pause(60_000, halt.signal);
+  halt.abort();
+  await p;
+  assert(Date.now() - t0 < 1_000);
+  // an already-stopped supervisor never waits at all
+  const t1 = Date.now();
+  await pause(60_000, halt.signal);
+  assert(Date.now() - t1 < 1_000);
 });

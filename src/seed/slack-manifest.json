@@ -1,19 +1,14 @@
 {
   "display_information": {
     "name": "mu",
-    "description": "Your org's delegate harness"
+    "description": "Your org's delegate harness",
+    "background_color": "#1a1d21"
   },
   "features": {
     "bot_user": {
       "display_name": "mu",
       "always_online": true
     }
-  },
-  "oauth_config": {
-    "redirect_urls": [
-      "https://YOUR-PUBLIC-HOST/oauth/slack/callback"
-    ],
-    "pkce_enabled": false
   },
   "settings": {
     "event_subscriptions": {

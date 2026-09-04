@@ -17,6 +17,15 @@
  * to its next fire AFTER now — an org that was down for a week fires each cron once, not
  * once per missed occurrence, because the note said "check the appointments", not "check
  * them 168 times".
+ *
+ * Firing is a CLAIM, then a settle. More than one clock can be sweeping the same table —
+ * an ephemeral main raised beside a backing-off `mu start`, a tick that overlaps the last —
+ * and `due` is a read, so every sweeper lists the same rows; `claim` is the single
+ * conditional UPDATE that decides who fires each one, and exactly one caller wins. The
+ * claim is a lease written into `fire_at` itself: the row is parked `CLAIM_LEASE_MS` past
+ * now, so no other sweep sees it due while the winner publishes, and a winner that dies
+ * before settling leaves a row that simply comes due again at the horizon. One column,
+ * one meaning: `fire_at` is the next moment anyone may fire it.
  */
 
 import type { DatabaseSync } from "node:sqlite";
@@ -43,11 +52,20 @@ export interface TimerRow {
   armedAt?: string;
 }
 
+/** How long a claimed row stays parked before it is due again — the window a winner has
+ *  to publish and settle, and the delay a dead winner's row is refired after. */
+export const CLAIM_LEASE_MS = 5 * 60_000;
+
 export interface Timers {
   /** Arm a wake. The id and `armedAt` are minted here; the id is what `cancel` takes. */
   arm(row: Omit<TimerRow, "id" | "armedAt">): TimerRow;
-  /** Everything due at `nowIso`, oldest first — the clock's scan. */
+  /** Everything due at `nowIso`, oldest first — the clock's scan. A read: listing is not
+   *  winning. */
   due(nowIso: string): TimerRow[];
+  /** Win a due row: the one atomic statement that decides who fires it. The row comes
+   *  back for the winner to publish (its `fireAt` now the lease horizon); `null` means
+   *  another sweep won it, or it is no longer due. */
+  claim(id: string, nowIso: string): TimerRow | null;
   /** Consume a fired timer: one-shot ⇒ gone; cron ⇒ advanced past `nowIso` — in `tz`, the
    *  same clock the cron was armed against (§10): "0 9" means 9 on the org's wall, every
    *  fire, not just the first. */
@@ -94,6 +112,10 @@ export function createTimers(db: DatabaseSync): Timers {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const ripe = db.prepare("SELECT * FROM timers WHERE fire_at <= ? ORDER BY fire_at, id");
+  // the predicate is the whole claim: the winner's write makes it false for everyone else
+  const take = db.prepare(
+    "UPDATE timers SET fire_at = ? WHERE id = ? AND fire_at <= ? RETURNING *",
+  );
   const byId = db.prepare("SELECT * FROM timers WHERE id = ?");
   const mine = db.prepare(
     "SELECT * FROM timers WHERE agent_id = ? AND session_id = ? ORDER BY fire_at, id",
@@ -123,6 +145,12 @@ export function createTimers(db: DatabaseSync): Timers {
 
     due(nowIso: string): TimerRow[] {
       return (ripe.all(nowIso) as Raw[]).map(rowOf);
+    },
+
+    claim(id: string, nowIso: string): TimerRow | null {
+      const horizon = new Date(Date.parse(nowIso) + CLAIM_LEASE_MS).toISOString();
+      const raw = take.get(horizon, id, nowIso) as Raw | undefined;
+      return raw ? rowOf(raw) : null;
     },
 
     settle(id: string, nowIso: string, tz?: string): void {

@@ -161,6 +161,12 @@ export type Log =
 
 const DB_FILE = "log.db";
 const POLL_MS = 300; // backstop period — fs-watch can drop events under load
+/** How many BUSY write-lock waits a commit sits out beyond the engine's own (`busy_timeout`),
+ *  and the pause between them. See `commit`. */
+const BUSY_RETRIES = 1;
+const BUSY_RETRY_MS = 250;
+const isBusy = (err: unknown): boolean =>
+  err instanceof Error && /database is locked|SQLITE_BUSY/.test(err.message);
 
 /** Open (or create) a SQLite-backed, multi-process Log rooted at `dir`. `now` is the
  *  clock the lease reads (§9): a test moves it to age a lease instead of waiting one out. */
@@ -203,6 +209,7 @@ export async function openLog(
      CREATE UNIQUE INDEX IF NOT EXISTS events_external
        ON events(external_id) WHERE external_id IS NOT NULL;
      CREATE INDEX IF NOT EXISTS events_conv ON events(conversation_address);
+     CREATE INDEX IF NOT EXISTS events_timestamp ON events(timestamp);
      CREATE INDEX IF NOT EXISTS events_session ON events(session_id);
      CREATE INDEX IF NOT EXISTS events_agent ON events(agent_id);
      CREATE TABLE IF NOT EXISTS usage (   -- telemetry, NOT events (§2): append-only spend
@@ -361,7 +368,7 @@ export async function openLog(
   /** Both writers, in one transaction: the batch (all or none) and, optionally, the lease
    *  release that ends a turn. Singles in ⇒ single (or null) out; a batch in ⇒ a batch
    *  out with unstored merge-only drafts omitted. */
-  const commit = (
+  const commit = async (
     one: Draft | Draft[],
     lease?: Lease,
   ): Promise<Event | Event[] | null> => {
@@ -373,7 +380,24 @@ export async function openLog(
       }
     }
     const now = new Date().toISOString();
-    db.exec("BEGIN IMMEDIATE");
+    // The transaction is one SYNCHRONOUS block — nothing yields between BEGIN and COMMIT,
+    // so two publishes in this process can never interleave inside it. Only the wait for
+    // the write lock can be sat out: `busy_timeout` waits out an ordinary contender inside
+    // the engine, and a writer holding the lock longer than that (another process
+    // mid-import) surfaces as BUSY from BEGIN itself, before anything was written. A
+    // turn's finished work must not be dropped for it — one more wait, with the event
+    // loop free in between so the lease heartbeat keeps the turn alive. Bounded, because
+    // the loop blocks for the whole wait each time: two waits stay inside the lease TTL,
+    // a third would not.
+    for (let attempt = 0;; attempt++) {
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        break;
+      } catch (err) {
+        if (attempt >= BUSY_RETRIES || !isBusy(err)) throw err;
+        await new Promise((r) => setTimeout(r, BUSY_RETRY_MS));
+      }
+    }
     try {
       // a turn ending under a lease proves it still holds it, INSIDE the write transaction
       // so no steal can land between the check and the inserts. A holder declared dead has
@@ -384,7 +408,7 @@ export async function openLog(
       const stored = drafts.map((e) => write(e, now)).filter((e): e is Event => e !== null);
       if (lease !== undefined) unlock.run(lease.name, lease.born);
       db.exec("COMMIT");
-      return Promise.resolve(Array.isArray(one) ? stored : stored[0] ?? null);
+      return Array.isArray(one) ? stored : stored[0] ?? null;
     } catch (err) {
       db.exec("ROLLBACK");
       throw err;
@@ -428,17 +452,17 @@ export async function openLog(
 
     read(query: ReadQuery = {}): Promise<Event[]> {
       const { sql, params } = build(query);
-      const rows = db.prepare(sql).all(...params) as unknown as Row[];
       if (query.filter === undefined) {
+        const rows = db.prepare(sql).all(...params) as unknown as Row[];
         if (query.limit !== undefined) rows.reverse(); // built as DESC LIMIT — restore order
         return Promise.resolve(rows.map(eventOf));
       }
       // the predicate applies BEFORE the limit (RLS `USING` runs before `LIMIT`): walk the
       // newest rows backward, fill the window with VISIBLE events, then restore append
-      // order. Parsing stops as soon as the window is full; Postgres does all of this
-      // inside the engine.
+      // order. The walk is a cursor, not a materialized result: it stops — and the engine
+      // stops — as soon as the window is full. Postgres does all of this inside the engine.
       const out: Event[] = [];
-      for (const r of rows) {
+      for (const r of db.prepare(sql).iterate(...params) as Iterable<Row>) {
         const e = eventOf(r);
         if (!query.filter(e)) continue;
         out.push(e);

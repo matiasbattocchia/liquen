@@ -405,8 +405,13 @@ export interface ToolResultEvent extends EventBase {
 export interface ThinkingEvent extends EventBase {
   type: "thinking";
   payload: Payload & { turn_id: string };
-  parts: [DataPart<"thinking", { thinking: string; signature: string }>];
+  parts: [DataPart<"thinking", ThinkingBlock>];
 }
+
+/** What a thinking event holds: the model's reasoning with its signature, or — when the
+ *  API withheld the reasoning — the opaque `data` of a redacted block. Both replay verbatim
+ *  inside the tool cycle they belong to; only the wire's shape differs. */
+export type ThinkingBlock = { thinking: string; signature: string } | { data: string };
 
 /** The harness asks an approver, from INSIDE the gated call (§2, §9) — `ref_id` = the
  *  tool_use, which is answered in the same breath with `pending_approval`, so asking never

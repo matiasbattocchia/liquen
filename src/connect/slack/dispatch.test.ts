@@ -1,11 +1,13 @@
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
   createSlackDispatch,
   type SlackDispatchDeps,
   slackEmojiName,
   slackErrorCode,
   type SlackTarget,
+  slackWire,
 } from "./dispatch.ts";
+import { withTimeout } from "../http.ts";
 import { DispatchError } from "../errors.ts";
 import { type DeliveryPatch, openLog } from "../../store/log.ts";
 import type { FilePart, MessageEvent } from "../../types.ts";
@@ -366,4 +368,27 @@ Deno.test("slack dispatch: an edit updates the message, a delete takes it back",
     assertEquals(patches[0].external_id, undefined);
     assertEquals(typeof patches[0].status?.dispatched_at, "string");
   });
+});
+
+/** A fetch that never answers on its own — only its signal ends it, as a stalled socket
+ *  behaves under a real `fetch`. */
+const hang =
+  ((_input: RequestInfo | URL, init?: RequestInit) =>
+    new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+    })) as typeof fetch;
+
+Deno.test("slack wire: a hung API call fails inside the fetch's bound — the drain never stalls", async () => {
+  const wire = slackWire({
+    tokenFor: () => Promise.resolve("xoxb-t"),
+    fetch: withTimeout(hang, 20),
+  });
+  const t0 = Date.now();
+  const err = await assertRejects(() => wire.post({ connection: "T1", channel: "C1" }, "hola"));
+  assert(err instanceof DOMException && err.name === "TimeoutError", String(err));
+  const err2 = await assertRejects(() =>
+    wire.react({ connection: "T1", channel: "C1" }, { ts: "1.2", glyph: "👍", remove: false })
+  );
+  assert(err2 instanceof DOMException && err2.name === "TimeoutError", String(err2));
+  assert(Date.now() - t0 < 2_000, "both calls ended inside the bound");
 });

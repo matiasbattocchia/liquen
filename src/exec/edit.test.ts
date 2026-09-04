@@ -66,3 +66,14 @@ Deno.test("apply: BOM preserved", () => {
   const out = applyEdits("﻿hello", [{ old: "hello", new: "hola" }]);
   assertEquals(out, "﻿hola");
 });
+
+Deno.test("apply: the whitespace-insensitive fallback rewrites only the matched span", () => {
+  const content = "a  \nb\nc  \n";
+  const out = applyEdits(content, [{ old: "a\nb", new: "A\nB" }]);
+  assertEquals(out, "A\nB\nc  \n"); // c's trailing spaces are not the edit's to take
+});
+
+Deno.test("parse: a CRLF spec parses like an LF one", () => {
+  const edits = parseEdits("<<<<<<<\r\nold\r\n=======\r\nnew\r\n>>>>>>>\r\n");
+  assertEquals(edits, [{ old: "old", new: "new" }]);
+});

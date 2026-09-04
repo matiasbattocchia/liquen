@@ -240,3 +240,31 @@ Deno.test("findRoot: the nearest config.jsonc up from cwd names the org", async 
     assertThrows(() => findRoot("/usr/lib"), Error, "not inside a mu project");
   });
 });
+
+Deno.test("the reader tells an absent file from an unreadable one — only absence is the defaults", async () => {
+  await withDir(async (root) => {
+    await Deno.mkdir(`${root}/config.jsonc`); // a directory where the file should be
+    await assertRejects(() => readConfig(root));
+  });
+});
+
+Deno.test("an agent's model, maxTokens and provider are type-checked", async () => {
+  for (
+    const bad of [
+      { model: 42 },
+      { model: "" },
+      { maxTokens: "lots" },
+      { maxTokens: 0 },
+      { maxTokens: 1.5 },
+      { provider: 1 },
+    ]
+  ) {
+    await withDir(async (root) => {
+      await Deno.writeTextFile(
+        `${root}/config.jsonc`,
+        JSON.stringify({ agents: { ana: bad } }),
+      );
+      await assertRejects(() => readConfig(root), Error, "ana", JSON.stringify(bad));
+    });
+  }
+});

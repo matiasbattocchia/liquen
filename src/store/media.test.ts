@@ -10,6 +10,7 @@ import {
   kindOf,
   loadMediaBlock,
   mediaSecret,
+  memoizedLoader,
   mimeOf,
   saveMedia,
   serveMedia,
@@ -206,4 +207,40 @@ Deno.test("the signing key lives in the vault, so two processes agree on it", as
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("saveMedia: the extension comes from the name only when the name carries one", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const bytes = new TextEncoder().encode("bytes");
+    const a = await saveMedia(root, "C1", bytes, {
+      mime_type: "image/png",
+      name: "weird.name/with slash",
+    });
+    assert(a.uri.endsWith(".png"), a.uri);
+    const b = await saveMedia(root, "C1", bytes, { name: "no.such ext" });
+    assert(b.uri.endsWith(".bin"), b.uri);
+    assertEquals(await Deno.readTextFile(new URL(b.uri)), "bytes");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("memoizedLoader: a uri loads once, and the memo is bounded by bytes held", () => {
+  let loads = 0;
+  const load = (uri: string) => {
+    loads++;
+    return uri === "/gone" ? null : { media_type: "image/png", data: "x".repeat(100) };
+  };
+  const memo = memoizedLoader(load, 250);
+  assertEquals(memo("/a")?.data.length, 100);
+  assertEquals(memo("/a")?.data.length, 100);
+  assertEquals(loads, 1);
+  assertEquals(memo("/gone"), null);
+  assertEquals(memo("/gone"), null); // a miss is not remembered — the file may appear
+  assertEquals(loads, 3);
+  memo("/b");
+  memo("/c"); // over the cap: /a is the oldest and goes
+  memo("/a");
+  assertEquals(loads, 6);
 });

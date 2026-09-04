@@ -71,6 +71,9 @@ export interface Claim extends NameEntry {
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // a token ends where a name/address character can't continue it
 const boundary = /[\p{L}\p{N}_.-]/u;
+// a sigil is a mention only at a word start: inside a word (`foo@here.com`) it is
+// spelling, not addressing
+const word = /[\p{L}\p{N}_]/u;
 
 /** Find the tokens the directory can claim: `@Name`/`#name` (case-insensitive) and
  *  the always-precise sigiled address. Longest key first, so "@Ana María" is never
@@ -90,6 +93,7 @@ export function claimMentions(text: string, dir: NameEntry[]): Claim[] {
     const re = new RegExp(esc(key), "gi");
     for (const m of text.matchAll(re)) {
       const start = m.index, end = start + m[0].length;
+      if (start > 0 && word.test(text[start - 1])) continue; // the sigil is inside a word
       if (text[end] !== undefined && boundary.test(text[end])) continue; // mid-word
       if (taken.some(([s, e2]) => start < e2 && end > s)) continue;
       taken.push([start, end]);
@@ -99,12 +103,16 @@ export function claimMentions(text: string, dir: NameEntry[]): Claim[] {
   return claims.sort((a, b) => a.index - b.index);
 }
 
-/** Slack's special mentions — the tokens a human types → the wire's control words. */
-const SPECIAL = /@(here|channel|everyone)\b/g;
+/** Slack's special mentions — the tokens a human types → the wire's control words. Only
+ *  at a word start: `foo@here.com` is an address, not a summons. */
+const SPECIAL = /(?<![\p{L}\p{N}_])@(here|channel|everyone)\b/gu;
 /** A bare Slack user/channel id typed directly — always resolvable, directory or not.
- *  The lookbehind skips ids the claim pass already wrapped (`<@U…>`, `<#C…>`). */
-const BARE_ID = /(?<!<)@([UW][A-Z0-9]{8,})\b/g;
-const BARE_CHANNEL = /(?<!<)#(C[A-Z0-9]{8,})\b/g;
+ *  Slack mints every object id as a type letter followed by a DIGIT (`U0…`, `W1…`, `C0…`),
+ *  which is what tells an id from an uppercase word (`@UPDATES123` is a name; the
+ *  directory claims it when it knows the address). The lookbehind skips ids the claim
+ *  pass already wrapped (`<@U…>`, `<#C…>`) and sigils inside a word. */
+const BARE_ID = /(?<![<\p{L}\p{N}_])@([UW][0-9][A-Z0-9]{7,})\b/gu;
+const BARE_CHANNEL = /(?<![<\p{L}\p{N}_])#(C[0-9][A-Z0-9]{7,})\b/gu;
 
 /** Encode outbound Slack text: claimed names → `<@U…>`/`<#C…>`, bare ids likewise,
  *  specials → `<!here>` etc. Everything unclaimed stays as written. */

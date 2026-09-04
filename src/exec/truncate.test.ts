@@ -44,3 +44,15 @@ Deno.test("trailing newline does not count as an extra line", () => {
   const t = truncateHead("a\nb\n", { maxLines: 10, maxBytes: 1000 });
   assertEquals(t.totalLines, 2);
 });
+
+Deno.test("tail: an oversized line of astral characters is cut between them, never inside one", () => {
+  for (let n = 10; n <= 120; n += 7) {
+    for (let m = 17; m <= 90; m += 9) {
+      if (n * 4 <= m) continue; // fits whole
+      const t = truncateTail("😀".repeat(n), { maxLines: 10, maxBytes: m });
+      assert(t.truncated);
+      assert(t.text.length > 0);
+      assert(t.text.isWellFormed(), `${n} emoji under ${m} bytes: ${JSON.stringify(t.text)}`);
+    }
+  }
+});

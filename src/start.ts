@@ -30,6 +30,21 @@ export function backoffMs(failures: number): number {
   return Math.min(RESTART_BASE_MS * 2 ** Math.max(0, failures - 1), RESTART_CAP_MS);
 }
 
+/** The restart wait — cut short the moment the supervisor is told to stop, so a SIGTERM
+ *  that lands mid-backoff ends the process now and not a minute later. */
+export function pause(ms: number, halt: AbortSignal): Promise<void> {
+  if (halt.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      halt.removeEventListener("abort", done);
+      resolve();
+    }
+    halt.addEventListener("abort", done, { once: true });
+  });
+}
+
 const enc = new TextEncoder();
 const clock = () => new Date().toLocaleTimeString("en-GB");
 
@@ -77,11 +92,12 @@ if (import.meta.main) {
   const catalog = await readConfig(root);
   const procs = roster(root, catalog.connections);
   const live = new Map<string, Deno.ChildProcess>();
-  let stopping = false;
+  const halt = new AbortController();
+  const stopping = () => halt.signal.aborted;
 
   const keepAlive = async ([name, module]: [string, string]) => {
     let failures = 0;
-    while (!stopping) {
+    while (!stopping()) {
       const started = Date.now();
       const child = new Deno.Command(Deno.execPath(), {
         args: ["run", "-A", module],
@@ -94,7 +110,7 @@ if (import.meta.main) {
       const status = await child.status;
       await Promise.all(pumps); // the streams end at exit; drain the tail before reporting
       live.delete(name);
-      if (stopping) return;
+      if (stopping()) return;
       const uptime = Date.now() - started;
       failures = uptime >= HEALTHY_MS ? 1 : failures + 1;
       const wait = backoffMs(failures);
@@ -105,13 +121,13 @@ if (import.meta.main) {
         `${name} exited (${status.signal ?? `code ${status.code}`}) after ` +
           `${Math.round(uptime / 1000)}s — restarting in ${wait / 1000}s`,
       );
-      await new Promise((r) => setTimeout(r, wait));
+      await pause(wait, halt.signal);
     }
   };
 
   const stop = () => {
-    if (stopping) return;
-    stopping = true;
+    if (stopping()) return;
+    halt.abort();
     stamp("mu", `stopping ${live.size} process(es)`);
     for (const c of live.values()) {
       try {

@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { APP_PREFIX, connectGoogleApp, pickGoogleApp } from "./connect.ts";
+import { APP_PREFIX, connectGoogleApp, oneShot, pickGoogleApp } from "./connect.ts";
 import { openCredentials } from "../../store/credentials.ts";
 
 async function withVault(
@@ -54,4 +54,24 @@ Deno.test("pick: the only app is the choice; several demand a name; none is an e
     assertEquals((await pickGoogleApp(creds, "cid2")).value.client_id, "cid2");
     await assertRejects(() => pickGoogleApp(creds, "nope"), Error, "no app nope");
   });
+});
+
+Deno.test("oneShot: the first callback settles the door whichever way it went — a failure does not hang it", async () => {
+  const { handler, outcome } = oneShot((req) =>
+    Promise.resolve(
+      new URL(req.url).pathname.endsWith("/callback")
+        ? new Response("state mismatch", { status: 400 })
+        : new Response(null, { status: 302 }),
+    )
+  );
+  await handler(new Request("http://localhost/oauth/google/start"));
+  const res = await handler(new Request("http://localhost/oauth/google/callback?state=x"));
+  assertEquals(res.status, 400);
+  let timer: number | undefined;
+  const settled = await Promise.race([
+    outcome.then((r) => r.status),
+    new Promise<string>((r) => (timer = setTimeout(() => r("hung"), 500))),
+  ]);
+  clearTimeout(timer);
+  assertEquals(settled, 400);
 });

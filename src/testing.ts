@@ -29,6 +29,8 @@ export function canned(
     content: emissions.map((em) =>
       em.kind === "thinking"
         ? { type: "thinking", thinking: em.thinking, signature: em.signature }
+        : em.kind === "redacted_thinking"
+        ? { type: "redacted_thinking", data: em.data }
         : em.kind === "assistant"
         ? { type: "text", text: em.text, citations: null }
         : { type: "tool_use", id: `toolu_${++n}`, name: em.name, input: em.input }

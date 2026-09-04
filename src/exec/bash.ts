@@ -98,6 +98,9 @@ const CWD_MARK = "__MU_CWD__";
 // PATH is built, TERM is fixed to `dumb` (no TTY to paint). Anything else gets added
 // here by name, with a reason — this list is what user space is allowed to know.
 const ENV_ALLOWLIST = ["HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "LOGNAME", "SHELL"];
+/** How long the readers are given once bash itself has exited. A backgrounded child holds
+ *  the pipe open, so the race has to be cut for the call to return at all. */
+const GRACE_MS = 150;
 
 function userSpaceEnv(binPath?: string): Record<string, string> {
   const env: Record<string, string> = { TERM: "dumb" };
@@ -222,9 +225,9 @@ export function bashTool(opts: BashOptions): ExecTool {
       try {
         const status = await child.status; // bash itself exited (or was killed)
         // normal command: the pumps are already done (pipe closed) and this wins instantly;
-        // backgrounded: they're hanging, so the 150ms grace flushes buffered output then cuts
+        // backgrounded: they're hanging, so the grace flushes buffered output then cuts
         let graceTimer: number | undefined;
-        const grace = new Promise<void>((r) => (graceTimer = setTimeout(r, 150)));
+        const grace = new Promise<void>((r) => (graceTimer = setTimeout(r, GRACE_MS)));
         await Promise.race([pumps, grace]);
         clearTimeout(graceTimer);
         await r1.cancel().catch(() => {});

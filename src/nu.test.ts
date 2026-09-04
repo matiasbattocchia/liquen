@@ -118,3 +118,155 @@ Deno.test("nu: the sentinel is SILENCE wherever it lands — the word governs th
   ) as [MessageEvent];
   assertEquals(spoken.extra?.silence, undefined);
 });
+
+/* ── failure classes, silence, cuts, checkpoints ─────────────────────────── */
+
+const WORLD: Event = {
+  id: "01000000-0000-7000-8000-00000000000b" as Event["id"],
+  ts: "2026-01-01T10:00:00.000Z",
+  type: "message",
+  envelope: { service: "local", connection_address: "c", conversation: { address: "g" } },
+  parts: [{ type: "text", kind: "text", text: "algo" }],
+};
+
+const failing = (status?: number) => {
+  let calls = 0;
+  return {
+    transport: () => {
+      calls++;
+      return Promise.reject(Object.assign(new Error("model said no"), status ? { status } : {}));
+    },
+    calls: () => calls,
+  };
+};
+
+Deno.test("nu: a deterministic failure is not retried — one call, one error", async () => {
+  for (const status of [400, 401, 403, 404]) {
+    const f = failing(status);
+    const out = await nu({ events: [], docs: [], tools: [], config: CONFIG }, f.transport);
+    assertEquals(f.calls(), 1, `status ${status}`);
+    assertEquals(out.length, 1);
+    assert(out[0].type === "error");
+  }
+});
+
+Deno.test("nu: weather is retried — 429, 5xx and a connection failure get the slow retries", async () => {
+  for (const status of [408, 429, 500, 529, undefined]) {
+    const f = failing(status);
+    await nu({ events: [], docs: [], tools: [], config: CONFIG }, f.transport);
+    assertEquals(f.calls(), 3, `status ${status}`);
+  }
+});
+
+Deno.test("nu: a whitespace-only reply says nothing — silence, and it still closes", async () => {
+  const [quiet] = await nu(
+    { events: [WORLD], docs: [], tools: [], config: CONFIG },
+    once([{ kind: "assistant", text: "  \n\n\t" }]),
+  ) as [MessageEvent];
+  assertEquals(quiet.type, "message");
+  assertEquals(quiet.extra?.silence, true);
+  assertEquals(quiet.extra?.consumed, WORLD.id);
+});
+
+Deno.test("nu: a step with no content still closes the turn — a silent message carries the horizon", async () => {
+  const out = await nu({ events: [WORLD], docs: [], tools: [], config: CONFIG }, once([]));
+  assertEquals(out.length, 1);
+  const [quiet] = out as [MessageEvent];
+  assertEquals(quiet.type, "message");
+  assertEquals(quiet.extra?.silence, true);
+  assertEquals(quiet.extra?.consumed, WORLD.id);
+  assertEquals(quiet.payload?.stop_reason, "end_turn");
+});
+
+Deno.test("nu: a max_tokens cut inside a tool_use drops the half-written call — the continuation re-issues it", async () => {
+  const out = await nu(
+    { events: [], docs: [], tools: [], config: CONFIG },
+    once([
+      { kind: "assistant", text: "voy a limpiar" },
+      { kind: "tool_use", name: "bash", input: { command: "rm -rf /tm" } },
+    ], "max_tokens"),
+  );
+  assertEquals(out.some((e) => e.type === "tool_use"), false);
+  assertEquals(out.at(-1)?.type, "error"); // the advisory
+  assertEquals(out.at(-1)?.payload?.stop_reason, "max_tokens"); // and the continuation
+
+  // a tool_use that closed BEFORE the cut is whole, and stays
+  const whole = await nu(
+    { events: [], docs: [], tools: [], config: CONFIG },
+    once([
+      { kind: "tool_use", name: "bash", input: { command: "ls" } },
+      { kind: "assistant", text: "y después" },
+    ], "max_tokens"),
+  );
+  assertEquals(whole.filter((e) => e.type === "tool_use").length, 1);
+});
+
+Deno.test("nu stamps a redacted thinking block as a thinking event — replayed as it came", async () => {
+  const out = await nu(
+    { events: [], docs: [], tools: [], config: CONFIG },
+    once([{ kind: "redacted_thinking", data: "EmUCAQ" }, { kind: "assistant", text: "ok" }]),
+  );
+  const [th] = out as [ThinkingEvent];
+  assertEquals(th.type, "thinking");
+  assertEquals(th.parts[0].data, { data: "EmUCAQ" });
+});
+
+/** A closed exchange in the mind's own room — the shape a checkpoint covers. */
+function exchange(i: number): Event[] {
+  const here = {
+    service: "local" as const,
+    connection_address: "agent",
+    conversation: { address: "mind@a1" },
+  };
+  return [
+    {
+      id: `01000000-0000-7000-8000-${String(i * 2).padStart(12, "0")}`,
+      ts: "2026-01-01T10:00:00.000Z",
+      type: "message",
+      envelope: { ...here, sender: { address: "ana", name: "Ana" } },
+      parts: [{ type: "text", kind: "text", text: `pregunta ${i}` }],
+    },
+    {
+      id: `01000000-0000-7000-8000-${String(i * 2 + 1).padStart(12, "0")}`,
+      ts: "2026-01-01T10:00:01.000Z",
+      type: "message",
+      agent: { id: "a1", session_id: "mind" },
+      payload: { turn_id: `T${i}` },
+      envelope: here,
+      parts: [{ type: "text", kind: "text", text: `respuesta ${i}` }],
+    },
+  ];
+}
+
+Deno.test("nu: a checkpoint cut at max_tokens is an error, not a record — and no second call", async () => {
+  const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
+  let calls = 0;
+  const out = await nu(
+    { events, docs: [], tools: [], config: { ...CONFIG, compactAt: 1, keepRecent: 0 } },
+    () => {
+      calls++;
+      return Promise.resolve(
+        canned([{ kind: "assistant", text: "## Ongoing threads\n- cut" }], "max_tokens"),
+      );
+    },
+  );
+  assertEquals(calls, 1); // the checkpoint WAS the turn — its failure is not followed by a think
+  assertEquals(out.length, 1);
+  assert(out[0].type === "error");
+  assertEquals(out[0].agent, undefined); // harness-authored, unstamped ⇒ terminal
+});
+
+Deno.test("nu: an empty checkpoint is an error too — not a full re-run on every wake", async () => {
+  const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
+  let calls = 0;
+  const out = await nu(
+    { events, docs: [], tools: [], config: { ...CONFIG, compactAt: 1, keepRecent: 0 } },
+    () => {
+      calls++;
+      return Promise.resolve(canned([{ kind: "assistant", text: "  \n" }]));
+    },
+  );
+  assertEquals(calls, 1);
+  assertEquals(out.length, 1);
+  assert(out[0].type === "error");
+});

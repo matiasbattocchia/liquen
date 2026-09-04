@@ -38,6 +38,7 @@ async function withOAuth(
     callback: (code: string, state: string) => Promise<Response>;
   }) => Promise<void>,
   tokens: GoogleTokens = TOKENS,
+  opts: { defaultExchange?: boolean } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const creds = await openCredentials(dir);
@@ -62,10 +63,12 @@ async function withOAuth(
       published.push(stored);
       return Promise.resolve(stored);
     }) as Appender["publish"],
-    exchange: (code) => {
-      exchanged.push(code);
-      return Promise.resolve(tokens);
-    },
+    ...(opts.defaultExchange ? {} : {
+      exchange: (code) => {
+        exchanged.push(code);
+        return Promise.resolve(tokens);
+      },
+    }),
   });
   try {
     await fn({
@@ -224,4 +227,28 @@ Deno.test("callback: a grant that dropped a scope says so — page, event, hook"
     assertStringIncludes(t.published[0].parts[0].text!, "NOT granted: ");
     assert((await t.creds.get("google:ana@example.com")) !== undefined);
   }, { ...TOKENS, scope: "openid email" }); // the member left calendar unticked
+});
+
+Deno.test("callback: the default exchange's token call carries a timeout signal", async () => {
+  const seen: RequestInit[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = ((_i: RequestInfo | URL, init?: RequestInit) => {
+    seen.push(init ?? {});
+    return Promise.resolve(Response.json(TOKENS));
+  }) as typeof fetch;
+  try {
+    await withOAuth(
+      async (t) => {
+        const res = await t.callback("c1", stateOf(await t.start()));
+        assertEquals(res.status, 200);
+        assertEquals(t.connections.length > 0, true);
+      },
+      TOKENS,
+      { defaultExchange: true },
+    );
+  } finally {
+    globalThis.fetch = real;
+  }
+  assertEquals(seen.length, 1);
+  assert(seen[0].signal instanceof AbortSignal, "the exchange is bounded");
 });

@@ -21,6 +21,7 @@
 
 import type { Json, ToolCall } from "./types.ts";
 import type { Reader } from "./store/log.ts";
+import { clipEnd } from "./exec/truncate.ts";
 
 /** A wire address → the name a human knows it by. Resolution needs a directory (the log,
  *  the window), so it is supplied by the caller; unresolved ⇒ the address stands. */
@@ -51,7 +52,7 @@ const VALUE = 60; // one argument inside it
 export function describeCall(call: ToolCall, opts: DescribeOpts = {}): string {
   const own = opts.tools?.[call.name] ?? BUILTIN[call.name];
   const line = `${call.name}(${(own ?? generic)(call.input, opts)})`;
-  return opts.full || line.length <= LINE ? line : `${line.slice(0, LINE - 1)}…`;
+  return opts.full || line.length <= LINE ? line : `${clipEnd(line, LINE - 1)}…`;
 }
 
 /** The harness's own tools. `search`, like most, is served by the default. */
@@ -126,5 +127,5 @@ function carries(v: Json): boolean {
 function value(v: Json, opts: DescribeOpts): string {
   const raw = typeof v === "string" ? v : JSON.stringify(v) ?? "";
   const flat = raw.replace(/\s+/g, " ").trim();
-  return opts.full || flat.length <= VALUE ? flat : `${flat.slice(0, VALUE - 1)}…`;
+  return opts.full || flat.length <= VALUE ? flat : `${clipEnd(flat, VALUE - 1)}…`;
 }

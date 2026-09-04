@@ -32,6 +32,7 @@ import type { Connections } from "../../store/connections.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { findRoot } from "../../config.ts";
+import { timedFetch } from "../http.ts";
 
 export interface SlackOAuthConfig {
   clientId: string;
@@ -181,7 +182,7 @@ export function createSlackOAuth(deps: SlackOAuthDeps): OAuthHandler {
 }
 
 async function defaultExchange(code: string, c: SlackOAuthConfig): Promise<SlackAccess> {
-  const res = await fetch("https://slack.com/api/oauth.v2.access", {
+  const res = await timedFetch("https://slack.com/api/oauth.v2.access", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({

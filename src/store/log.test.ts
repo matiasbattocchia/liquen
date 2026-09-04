@@ -576,3 +576,70 @@ Deno.test("migrate v6: a pre-sessions log settles on the pair vocabulary (§4, �
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/* ── the read path's cost ───────────────────────────────────────────────── */
+
+Deno.test("read: a filter with a limit stops at the limit — the table is not walked", async () => {
+  await withLog(async (log) => {
+    for (let i = 1; i <= 40; i++) {
+      await log.publish(msg(String(i).padStart(2, "0"), "c1", `m${i}`));
+    }
+    let seen = 0;
+    const out = await log.read({
+      limit: 5,
+      filter: () => {
+        seen++;
+        return true;
+      },
+    });
+    assertEquals(out.length, 5);
+    assertEquals(seen, 5);
+    // and the window is the most recent five, in append order
+    assertEquals(out.map((e) => e.parts[0].type === "text" && e.parts[0].text), [
+      "m36",
+      "m37",
+      "m38",
+      "m39",
+      "m40",
+    ]);
+  });
+});
+
+Deno.test("events are indexed by timestamp — a time-bounded read does not scan", async () => {
+  await withLog(async (_log, dir) => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(`${dir}/log.db`, { readOnly: true });
+    const names = (db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'events'",
+    ).all() as { name: string }[]).map((r) => r.name);
+    db.close();
+    assertEquals(names.includes("events_timestamp"), true);
+  });
+});
+
+Deno.test("publish outlasts a writer holding the lock past the busy timeout (slow)", async () => {
+  await withLog(async (log, dir) => {
+    // another PROCESS holds the write lock for longer than busy_timeout
+    const holder = new Deno.Command(Deno.execPath(), {
+      args: [
+        "eval",
+        `import { DatabaseSync } from "node:sqlite";
+         const db = new DatabaseSync("${dir}/log.db");
+         db.exec("BEGIN IMMEDIATE");
+         console.log("held");
+         await new Promise((r) => setTimeout(r, 5_600));
+         db.exec("COMMIT");
+         db.close();`,
+      ],
+      stdout: "piped",
+      stderr: "inherit",
+    }).spawn();
+    const reader = holder.stdout.getReader();
+    await reader.read(); // "held"
+    reader.releaseLock();
+    await holder.stdout.cancel();
+    const e = (await log.publish(msg("01", "c1", "hola")))!;
+    assertEquals(e.type, "message");
+    await holder.status;
+  });
+});

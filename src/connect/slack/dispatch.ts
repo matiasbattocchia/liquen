@@ -20,12 +20,14 @@
 
 import type { ChatPostMessageResponse } from "@slack/web-api";
 import { isExternal, pathOf } from "../../store/media.ts";
-import { DispatchError, failedStatus } from "../errors.ts";
+import { DispatchError } from "../errors.ts";
+import { createDispatcher } from "../dispatcher.ts";
 import type { DeliveryPatch, Subscriber } from "../../store/log.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../../types.ts";
 import { type Directory, encodeSlackText } from "../mentions.ts";
 import { toSlack } from "../flavor.ts";
 import { findRoot } from "../../config.ts";
+import { timedFetch } from "../http.ts";
 
 export interface SlackTarget {
   connection: string; // the workspace the conversation anchors to (§4)
@@ -145,96 +147,58 @@ export interface SlackDispatchDeps {
   onSent?: (event: MessageEvent, ts: string | undefined) => void;
 }
 
-/** Wire dispatch to the log. Posts serialized to preserve order. Returns stop: take no
- *  more work, settle the posts already in flight. */
+/** Wire dispatch to the log — the shared loop (`dispatcher.ts`) over Slack's three legs:
+ *  a message posts (and its `ts` backfills `external_id`), a reaction lands on its
+ *  referent, an edit/delete amends it. Returns stop. */
 export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void> {
-  let chain: Promise<void> = Promise.resolve();
-  const unsub = deps.subscribe(
-    (e) => {
-      const out = outbound(e);
-      if (!out) return;
-      const { target, text, files, event, re, glyph } = out;
+  return createDispatcher<Outbound>({
+    subscribe: deps.subscribe,
+    service: "slack",
+    select: outbound,
+    from: deps.from,
+    setDelivery: deps.setDelivery,
+    onError: deps.onError,
+    onSent: deps.onSent,
+    post: async ({ target, text, files, re, glyph }, event) => {
       const action = event.payload?.action;
-      chain = chain.then(async () => {
-        try {
-          if (action === "edit" || action === "delete") {
-            if (!re) throw new DispatchError(`a ${action} needs the message it acts on`, 400);
-            if (!deps.amend) throw new DispatchError("this connection cannot edit", 400);
-            await deps.amend(target, { ts: re, action, text }, event.agent?.id);
-            // chat.update keeps the original `ts`: there is no new artifact to converge on
-            await deps.setDelivery?.(event.id, {
-              status: { dispatched_at: new Date().toISOString() },
-            });
-            deps.onSent?.(event, undefined);
-            return;
-          }
-          if (glyph !== undefined) {
-            if (!re) throw new DispatchError("a reaction needs the message it lands on", 400);
-            if (!deps.react) throw new DispatchError("this connection cannot react", 400);
-            await deps.react(target, {
-              ts: re,
-              glyph,
-              remove: event.payload?.action === "remove",
-            }, event.agent?.id);
-            // no `ts` of its own to backfill: the reaction is on the wire, and that is all
-            // the log can ever learn about it
-            await deps.setDelivery?.(event.id, {
-              status: { dispatched_at: new Date().toISOString() },
-            });
-            deps.onSent?.(event, undefined);
-            return;
-          }
-          // the agent mentions as a human (`@Name`, `#chan`, `@here`) — encode to the
-          // wire's forms here at the frontier; unclaimed names stay literal text
-          const dir = /[@#]/.test(text) ? await deps.directory?.("slack", target.channel) : null;
-          const encoded = text ? encodeSlackText(text, dir ?? []) : text;
-          const { ts, user } = await deps.post(target, encoded, event.agent?.id, files, re);
-          // sender stamps WITH dispatched_at when the response names the posting identity
-          // (§4): the wire states its own side twice, and we take the first statement —
-          // the echo's merge still fills what only it knows (the display name)
-          await deps.setDelivery?.(event.id, {
-            ...(ts !== undefined
-              ? { external_id: `slack:${teamOf(target.connection)}:${target.channel}:${ts}` }
-              : {}),
-            ...(user ? { sender: { address: user } } : {}),
-            status: { dispatched_at: new Date().toISOString() },
-          });
-          deps.onSent?.(event, ts);
-        } catch (err) {
-          // no retry here (the scheduler's job, PROJECT #10) — the stamp tags the class
-          // via `error_code`, and renders the message with its delivery dead: the agent's
-          // only way to know a queued send never arrived (§5)
-          try {
-            await deps.setDelivery?.(event.id, { status: failedStatus(err) });
-          } catch { /* the stamp failed too — onError still reports */ }
-          deps.onError?.(event, err);
-        }
-      });
+      if (action === "edit" || action === "delete") {
+        if (!re) throw new DispatchError(`a ${action} needs the message it acts on`, 400);
+        if (!deps.amend) throw new DispatchError("this connection cannot edit", 400);
+        await deps.amend(target, { ts: re, action, text }, event.agent?.id);
+        // chat.update keeps the original `ts`: there is no new artifact to converge on
+        return {};
+      }
+      if (glyph !== undefined) {
+        if (!re) throw new DispatchError("a reaction needs the message it lands on", 400);
+        if (!deps.react) throw new DispatchError("this connection cannot react", 400);
+        await deps.react(target, { ts: re, glyph, remove: action === "remove" }, event.agent?.id);
+        // no `ts` of its own to backfill: the reaction is on the wire, and that is all
+        // the log can ever learn about it
+        return {};
+      }
+      // the agent mentions as a human (`@Name`, `#chan`, `@here`) — encode to the
+      // wire's forms here at the frontier; unclaimed names stay literal text
+      const dir = /[@#]/.test(text) ? await deps.directory?.("slack", target.channel) : null;
+      const encoded = text ? encodeSlackText(text, dir ?? []) : text;
+      const { ts, user } = await deps.post(target, encoded, event.agent?.id, files, re);
+      // sender stamps WITH dispatched_at when the response names the posting identity
+      // (§4): the wire states its own side twice, and we take the first statement —
+      // the echo's merge still fills what only it knows (the display name)
+      return {
+        id: ts,
+        ...(ts !== undefined
+          ? { external_id: `slack:${teamOf(target.connection)}:${target.channel}:${ts}` }
+          : {}),
+        ...(user ? { sender: { address: user } } : {}),
+      };
     },
-    { from: deps.from, filter: isOutboundSlack },
-  );
-  return async () => {
-    unsub();
-    await chain;
-  };
-}
-
-/** OURS and not yet on the wire (§3, §4): `agent` present AND no `external_id` at insert —
- *  the classifier stamps `agent.id` on the principal's inbound rows too, and those always
- *  arrive carrying a platform id, so they never re-dispatch. Routing reads
- *  `envelope.service` (§3). */
-function isOutboundSlack(e: Event): boolean {
-  return e.type === "message" &&
-    e.agent !== undefined &&
-    e.envelope.external_id === undefined &&
-    e.envelope.service === "slack";
+  });
 }
 
 interface Outbound {
   target: SlackTarget;
   text: string;
   files: FilePart[];
-  event: MessageEvent;
   /** The referent's `ts` — a thread to post into, or the message a glyph lands on. */
   re?: string;
   /** Present ⇒ this send is a reaction, not a message (empty on a remove). */
@@ -242,12 +206,11 @@ interface Outbound {
 }
 
 /** Target = the envelope's coordinates: the workspace is the connection, channel the address. */
-function outbound(e: Event): Outbound | null {
-  if (!isOutboundSlack(e)) return null;
-  const connection = e.envelope.connection_address;
-  const channel = e.envelope.conversation.address;
+function outbound(event: MessageEvent): Outbound | null {
+  const connection = event.envelope.connection_address;
+  const channel = event.envelope.conversation.address;
   if (!connection || !channel) return null;
-  const event = e as MessageEvent;
+  const e: Event = event;
   // common markdown → mrkdwn, here at the frontier (flavor.ts)
   const text = toSlack(textOf(e));
   const files = filesOf(e);
@@ -257,14 +220,14 @@ function outbound(e: Event): Outbound | null {
   } | undefined;
   if (reaction) {
     const glyph = reaction.data?.unicode ?? reaction.data?.name ?? "";
-    return { target: { connection, channel }, text: "", files: [], event, re, glyph };
+    return { target: { connection, channel }, text: "", files: [], re, glyph };
   }
   const action = event.payload?.action;
   if (action === "delete") {
-    return { target: { connection, channel }, text: "", files: [], event, re };
+    return { target: { connection, channel }, text: "", files: [], re };
   }
   if (!text && files.length === 0) return null;
-  return { target: { connection, channel }, text, files, event, re };
+  return { target: { connection, channel }, text, files, re };
 }
 
 /** `slack:<team>:<channel>:<ts>` → the `ts` the API takes. A reference minted anywhere else
@@ -290,27 +253,30 @@ function textOf(e: Event): string {
     .join("\n");
 }
 
-/* ── local entry: `post` = chat.postMessage with the workspace bot token ──────────────── */
+/* ── the wire: chat.postMessage, files.upload, reactions.*, chat.update/delete ──────── */
 
-/** Wire the outbound half over the org's log — resident once it returns (subscribed).
- *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
-export async function runDispatch(): Promise<() => Promise<void>> {
-  const { openLog } = await import("../../store/log.ts");
-  const { openCredentials } = await import("../../store/credentials.ts");
-  const root = findRoot();
-  const dir = `${root}/data`;
-  const log = await openLog(`${dir}/log`);
-  const creds = await openCredentials(dir);
+export interface SlackWireDeps {
+  /** The token resolver (§4, dispatcher-internal): which grant posts for `author`. */
+  tokenFor: (connection: string, author?: string) => Promise<string>;
+  /** Every API call goes through this — bounded by `API_TIMEOUT_MS` unless injected. */
+  fetch?: typeof fetch;
+}
 
-  // one form-encoded Web-API call (the upload endpoints don't take JSON); a non-2xx
-  // transport answer (429, 5xx) keeps its real status, a named `ok: false` gets its
-  // class assigned (`slackErrorCode`)
+/** The three Web-API legs over one token resolver. A non-2xx transport answer (429, 5xx)
+ *  keeps its real status; a named `ok: false` gets its class assigned (`slackErrorCode`). */
+export function slackWire(
+  deps: SlackWireDeps,
+): { post: SlackPost; react: SlackReact; amend: SlackAmend } {
+  const fetchApi = deps.fetch ?? timedFetch;
+  const { tokenFor } = deps;
+
+  // one form-encoded Web-API call (the upload endpoints don't take JSON)
   const api = async <T extends { ok?: boolean; error?: string }>(
     method: string,
     token: string,
     params: Record<string, string>,
   ): Promise<T> => {
-    const res = await fetch(`https://slack.com/api/${method}`, {
+    const res = await fetchApi(`https://slack.com/api/${method}`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
       body: new URLSearchParams(params),
@@ -322,17 +288,6 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     const out = await res.json() as T;
     if (!out.ok) throw new DispatchError(`${method}: ${out.error}`, slackErrorCode(out.error));
     return out;
-  };
-
-  // the token resolver (§4, dispatcher-internal): the author's own grant (alter-ego)
-  // → the workspace bot — vault keys follow the connector's convention (§4)
-  const tokenFor = async (connection: string, author?: string): Promise<string> => {
-    const team = teamOf(connection);
-    const user = author ? await creds.get(`slack:${team}:${author}`) : null;
-    const bot = user?.value.token ? null : await creds.get(`slack:${team}:org`);
-    const token = user?.value.token ?? bot?.value.token;
-    if (!token) throw new Error(`no token for connection ${connection}`);
-    return token;
   };
 
   const post: SlackPost = async ({ connection, channel }, text, author, files, threadTs) => {
@@ -357,7 +312,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
           token,
           { filename: name, length: String(bytes.length) },
         );
-        const putRes = await fetch(up.upload_url, { method: "POST", body: bytes });
+        const putRes = await fetchApi(up.upload_url, { method: "POST", body: bytes });
         if (!putRes.ok) {
           throw new DispatchError(`upload ${name}: HTTP ${putRes.status}`, putRes.status);
         }
@@ -383,7 +338,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
       return { ts: (shares?.public?.[channel] ?? shares?.private?.[channel])?.[0]?.ts };
     }
 
-    const res = await fetch("https://slack.com/api/chat.postMessage", {
+    const res = await fetchApi("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ channel, text: body, ...(threadTs ? { thread_ts: threadTs } : {}) }),
@@ -426,6 +381,33 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     });
     if (!out.ok) throw new DispatchError(`${method}: ${out.error}`, slackErrorCode(out.error));
   };
+
+  return { post, react, amend };
+}
+
+/* ── local entry: the wire over the vault's tokens ──────────────────────────────────── */
+
+/** Wire the outbound half over the org's log — resident once it returns (subscribed).
+ *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
+export async function runDispatch(): Promise<() => Promise<void>> {
+  const { openLog } = await import("../../store/log.ts");
+  const { openCredentials } = await import("../../store/credentials.ts");
+  const root = findRoot();
+  const dir = `${root}/data`;
+  const log = await openLog(`${dir}/log`);
+  const creds = await openCredentials(dir);
+
+  // the token resolver (§4, dispatcher-internal): the author's own grant (alter-ego)
+  // → the workspace bot — vault keys follow the connector's convention (§4)
+  const tokenFor = async (connection: string, author?: string): Promise<string> => {
+    const team = teamOf(connection);
+    const user = author ? await creds.get(`slack:${team}:${author}`) : null;
+    const bot = user?.value.token ? null : await creds.get(`slack:${team}:org`);
+    const token = user?.value.token ?? bot?.value.token;
+    if (!token) throw new Error(`no token for connection ${connection}`);
+    return token;
+  };
+  const { post, react, amend } = slackWire({ tokenFor });
 
   const { logDirectory } = await import("../mentions.ts");
   const stop = createSlackDispatch({

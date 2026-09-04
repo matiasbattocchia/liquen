@@ -10,7 +10,7 @@
  */
 
 import { userInfo } from "node:os";
-import { materialize, starterConfig } from "./config.ts";
+import { AGENT_NAME, materialize, starterConfig } from "./config.ts";
 
 /** template name in `scaffold/` → name in the project (dotfiles ship undotted so the
  *  scaffold itself never acts as one) */
@@ -24,6 +24,16 @@ const SCAFFOLD: [string, string][] = [
 ];
 
 export async function init(path: string, agents: string[]): Promise<void> {
+  // the roster's grammar, checked before the project exists: a bad name would otherwise
+  // fail at the first `mu start`, with a folder already made in its name
+  for (const name of agents) {
+    if (!AGENT_NAME.test(name)) {
+      throw new Error(
+        `agents.${name} — a name is a folder and a unix user: ` +
+          `lowercase letters, digits and dashes, starting with a letter`,
+      );
+    }
+  }
   const exists = await Deno.stat(`${path}/config.jsonc`).then(() => true, () => false);
   if (exists) throw new Error(`${path} is already a mu project (config.jsonc exists)`);
   const name = (await Deno.realPath(path).catch(() => path)).replace(/\/+$/, "")

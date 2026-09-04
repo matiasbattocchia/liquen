@@ -113,3 +113,27 @@ Deno.test("emit is threaded through to the transport (deltas are the transport's
   await mu(baseInput, transport, (d) => seen.push(d.text ?? ""));
   assertEquals(seen, ["streaming…"]);
 });
+
+Deno.test("a failed call carries the HTTP status when the error has one — nu classifies on it", async () => {
+  const res = await mu(
+    baseInput,
+    () => Promise.reject(Object.assign(new Error("invalid request"), { status: 400 })),
+  );
+  assertEquals(res, { ok: false, error: "invalid request", status: 400 });
+  // a connection failure has no status — nu treats that as weather
+  const net = await mu(baseInput, () => Promise.reject(new Error("ECONNRESET")));
+  assertEquals(net, { ok: false, error: "ECONNRESET" });
+});
+
+Deno.test("redacted_thinking is an emission of its own — replayed verbatim, never dropped", async () => {
+  const { transport } = fakeTransport(message([
+    { type: "redacted_thinking", data: "EmUCAQ" },
+    { type: "tool_use", id: "toolu_x", name: "send", input: {} },
+  ], "tool_use"));
+  const res = await mu(baseInput, transport);
+  assert(res.ok);
+  assertEquals(res.emissions, [
+    { kind: "redacted_thinking", data: "EmUCAQ" },
+    { kind: "tool_use", name: "send", input: {} },
+  ]);
+});

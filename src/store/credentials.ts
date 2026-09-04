@@ -10,10 +10,14 @@
  *     `{api_key}`); `agent_id` is the owner, absent = the org's — the same convention as
  *     connections, whose `credential_key` column points here. `put` MERGES `value`/
  *     `extra` fields: each door writes the field it holds (a pasted xoxp, a socket xapp)
- *     and never clobbers a sibling's; removal is a deliberate SQL act.
+ *     and never clobbers a sibling's; removal is a deliberate SQL act. The merge is
+ *     FIELD-WISE and the database's own (under the write lock), so a nested map lands
+ *     whole and two processes writing different fields of one row at once — the broker
+ *     refreshing a token beside a connector's door — both land.
  *   • oauth_states — one-time CSRF nonces for authorize flows: minted at `/start`,
  *     consumed exactly once at the callback, expired after a TTL (`born`, epoch ms —
- *     the lease-arithmetic exception, like `locks.born`).
+ *     the lease-arithmetic exception, like `locks.born`). Rows past the TTL are swept
+ *     at open and at every mint: the table holds only states a door could still answer.
  *
  * Broker-side by construction: connectors read rows; agents never can (the exec plane
  * has no port here). On Postgres the same table wears RLS deny-all (§9).
@@ -72,12 +76,21 @@ export async function openCredentials(
        used    INTEGER NOT NULL DEFAULT 0
      );`,
   );
+  // field-wise merge, in SQL: every top-level field of `b` lands WHOLE over `a`'s. The
+  // inner patch first removes each field `b` names (json_patch alone would merge nested
+  // objects), so a map a door rewrites is replaced, not merged; a field set to null is
+  // removed (RFC 7396).
+  const merge = (a: string, b: string) =>
+    `json_patch(json_patch(${a}, (SELECT json_group_object(key, NULL) FROM json_each(${b}))), ${b})`;
   const putC = db.prepare(
     `INSERT INTO credentials (key, value, agent_id, extra, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET
-       value = excluded.value, agent_id = COALESCE(excluded.agent_id, agent_id),
-       extra = excluded.extra, updated_at = excluded.updated_at`,
+       value = ${merge("value", "excluded.value")},
+       agent_id = COALESCE(excluded.agent_id, agent_id),
+       extra = CASE WHEN excluded.extra IS NULL THEN extra
+                    ELSE ${merge("coalesce(extra, '{}')", "excluded.extra")} END,
+       updated_at = excluded.updated_at`,
   );
   const getC = db.prepare("SELECT * FROM credentials WHERE key = ?");
   const listC = db.prepare(
@@ -91,6 +104,9 @@ export async function openCredentials(
      WHERE state = ? AND service = ? AND used = 0 AND born > ?
      RETURNING extra`,
   );
+  const sweepS = db.prepare("DELETE FROM oauth_states WHERE born <= ?");
+  const prune = () => sweepS.run(now() - STATE_TTL_MS);
+  prune();
 
   type RawRow = { key: string; value: string; agent_id: string | null; extra: string | null };
   const rowOf = (r: RawRow): CredentialRow => ({
@@ -106,16 +122,14 @@ export async function openCredentials(
 
   return {
     put(row: CredentialRow): Promise<void> {
-      const prior = read(row.key);
-      const value = { ...prior?.value, ...row.value };
-      const extra = prior?.extra || row.extra ? { ...prior?.extra, ...row.extra } : undefined;
+      const at = new Date().toISOString();
       putC.run(
         row.key,
-        JSON.stringify(value),
+        JSON.stringify(row.value),
         row.agentId ?? null,
-        extra ? JSON.stringify(extra) : null,
-        new Date().toISOString(),
-        new Date().toISOString(),
+        row.extra ? JSON.stringify(row.extra) : null,
+        at,
+        at,
       );
       return Promise.resolve();
     },
@@ -130,6 +144,7 @@ export async function openCredentials(
     },
 
     mintState(service, extra): Promise<string> {
+      prune();
       const state = crypto.randomUUID();
       putS.run(state, service, extra ? JSON.stringify(extra) : null, now());
       return Promise.resolve(state);

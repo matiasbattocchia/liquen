@@ -1,0 +1,145 @@
+import { assertEquals, assertStringIncludes } from "@std/assert";
+import { createDispatcher, isOutbound } from "./dispatcher.ts";
+import { DispatchError } from "./errors.ts";
+import type { DeliveryPatch, Subscriber } from "../store/log.ts";
+import type { Draft, Event, EventId, MessageEvent } from "../types.ts";
+import { newId } from "../store/id.ts";
+
+/** A hand-cranked subscription: capture the listener, push events by hand. */
+function fakeLog() {
+  let deliver: ((e: Event) => void) | undefined;
+  const subscribe: Subscriber["subscribe"] = (listener, opts) => {
+    deliver = (e) => {
+      if (!opts?.filter || opts.filter(e)) listener(e);
+    };
+    return () => {};
+  };
+  const patches: { id: EventId; patch: DeliveryPatch }[] = [];
+  return {
+    subscribe,
+    push: (e: Draft) => deliver?.({ ...e, id: e.id ?? newId() } as Event),
+    patches,
+    setDelivery: (id: EventId, patch: DeliveryPatch) => {
+      patches.push({ id, patch });
+      return Promise.resolve();
+    },
+  };
+}
+
+const outbound = (over: Partial<MessageEvent> = {}): Draft<MessageEvent> => ({
+  ts: "2026-09-04T12:00:00Z",
+  type: "message",
+  agent: { id: "a1", session_id: "s1" },
+  envelope: {
+    service: "github",
+    connection_address: "conn",
+    conversation: { address: "room" },
+  },
+  parts: [{ type: "text", kind: "text", text: "hola" }],
+  ...over,
+});
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+Deno.test("dispatcher: only the service's outbound rows select — the world's and other services' never", () => {
+  const ours = { ...outbound(), id: "1" } as Event;
+  assertEquals(isOutbound(ours, "github"), true);
+  assertEquals(isOutbound(ours, "slack"), false);
+  const world = { ...outbound({ agent: undefined }), id: "2" } as Event;
+  assertEquals(isOutbound(world, "github"), false);
+  const echoed = {
+    ...outbound({ envelope: { ...outbound().envelope, external_id: "svc:9" } }),
+    id: "3",
+  } as Event;
+  assertEquals(isOutbound(echoed, "github"), false); // already on the wire
+});
+
+Deno.test("dispatcher: a post's answer backfills external_id + sender beside dispatched_at; onSent gets the wire id", async () => {
+  const log = fakeLog();
+  const sent: [string, string | undefined][] = [];
+  createDispatcher<string>({
+    subscribe: log.subscribe,
+    service: "github",
+    select: (e) => (e.parts[0] as { text: string }).text,
+    post: (text) =>
+      Promise.resolve({ id: `w-${text}`, external_id: `svc:w-${text}`, sender: { address: "me" } }),
+    setDelivery: log.setDelivery,
+    onSent: (e, id) => sent.push([e.id, id]),
+  });
+  log.push(outbound({ id: "e1" }));
+  await settle();
+  assertEquals(log.patches.length, 1);
+  assertEquals(log.patches[0].id, "e1");
+  assertEquals(log.patches[0].patch.external_id, "svc:w-hola");
+  assertEquals(log.patches[0].patch.sender, { address: "me" });
+  assertEquals(typeof log.patches[0].patch.status?.dispatched_at, "string");
+  assertEquals(sent, [["e1", "w-hola"]]);
+});
+
+Deno.test("dispatcher: a select of null is nothing to send — no post, no stamp", async () => {
+  const log = fakeLog();
+  let posts = 0;
+  createDispatcher<string>({
+    subscribe: log.subscribe,
+    service: "github",
+    select: () => null,
+    post: () => {
+      posts++;
+      return Promise.resolve({});
+    },
+    setDelivery: log.setDelivery,
+  });
+  log.push(outbound());
+  await settle();
+  assertEquals(posts, 0);
+  assertEquals(log.patches.length, 0);
+});
+
+Deno.test("dispatcher: a throwing post ALWAYS stamps failed (error_code when it has a class) and reports", async () => {
+  const log = fakeLog();
+  const failed: unknown[] = [];
+  const answers = [
+    () => Promise.reject(new DispatchError("HTTP 503", 503)),
+    () => Promise.reject(new TypeError("connection refused")),
+    () => Promise.resolve({ id: "ok" }),
+  ];
+  createDispatcher<string>({
+    subscribe: log.subscribe,
+    service: "github",
+    select: () => "x",
+    post: () => answers.shift()!(),
+    setDelivery: log.setDelivery,
+    onError: (_e, err) => failed.push(err),
+  });
+  log.push(outbound({ id: "e1" }));
+  log.push(outbound({ id: "e2" }));
+  log.push(outbound({ id: "e3" }));
+  await settle();
+  assertEquals(failed.length, 2);
+  // serialized: the stamps land in publish order, and a failure never blocks the next send
+  assertEquals(log.patches.map((p) => p.id), ["e1", "e2", "e3"]);
+  const [a, b, c] = log.patches.map((p) => p.patch.status!);
+  assertEquals(a.state, "failed");
+  assertEquals(a.error_code, 503);
+  assertStringIncludes(String(a.error), "HTTP 503");
+  assertEquals(b.state, "failed");
+  assertEquals("error_code" in b, false);
+  assertEquals(typeof c.dispatched_at, "string");
+});
+
+Deno.test("dispatcher: a stamp that itself fails still reaches onError", async () => {
+  const log = fakeLog();
+  const failed: unknown[] = [];
+  createDispatcher<string>({
+    subscribe: log.subscribe,
+    service: "github",
+    select: () => "x",
+    post: () => Promise.reject(new Error("boom")),
+    setDelivery: () => Promise.reject(new Error("db closed")),
+    onError: (_e, err) => failed.push(err),
+  });
+  log.push(outbound());
+  await settle();
+  assertEquals(failed.length, 1);
+  assertEquals((failed[0] as Error).message, "boom");
+});

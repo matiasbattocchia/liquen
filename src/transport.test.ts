@@ -77,6 +77,7 @@ Deno.test({
         if (e.kind === "thinking") {
           return [{ type: "thinking", thinking: e.thinking, signature: e.signature }];
         }
+        if (e.kind === "redacted_thinking") return [{ type: "redacted_thinking", data: e.data }];
         if (e.kind === "assistant") return [{ type: "text", text: e.text }];
         return [{ type: "tool_use", id: OUR_ID, name: e.name, input: e.input }];
       },

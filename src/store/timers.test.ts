@@ -5,8 +5,16 @@
  */
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
+import { DatabaseSync } from "node:sqlite";
 import { openLog } from "./log.ts";
-import { nextFire, type TimerRow, zonedTime } from "./timers.ts";
+import {
+  CLAIM_LEASE_MS,
+  createTimers,
+  nextFire,
+  type TimerRow,
+  TIMERS_DDL,
+  zonedTime,
+} from "./timers.ts";
 
 const wake = (over: Partial<TimerRow> = {}): Omit<TimerRow, "id" | "armedAt"> => ({
   agentId: "ana",
@@ -66,6 +74,76 @@ Deno.test("timers: a cron advances on the clock it was armed against, not UTC", 
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Two clocks on one table — two processes' view of the same file, each on its own
+ *  connection, so the claim is decided by SQLite and not by JS ordering. */
+async function twoClocks() {
+  const dir = await Deno.makeTempDir();
+  const open = () => {
+    const db = new DatabaseSync(`${dir}/timers.db`);
+    db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; ${TIMERS_DDL}`);
+    return { db, timers: createTimers(db) };
+  };
+  const a = open(), b = open();
+  const down = async () => {
+    a.db.close();
+    b.db.close();
+    await Deno.remove(dir, { recursive: true });
+  };
+  return { a: a.timers, b: b.timers, down };
+}
+
+Deno.test("timers: a due row is claimed by exactly one of two clocks", async () => {
+  const { a, b, down } = await twoClocks();
+  try {
+    const now = "2026-09-01T17:00:00.000Z";
+    const t = a.arm(wake());
+    // both scans see it due — the scan is a read, never a claim
+    assertEquals(a.due(now).map((r) => r.id), [t.id]);
+    assertEquals(b.due(now).map((r) => r.id), [t.id]);
+    const won = a.claim(t.id, now);
+    assertEquals(won?.id, t.id);
+    assertEquals(won?.note, "call the clinic"); // the winner gets the row to fire
+    assertEquals(b.claim(t.id, now), null); // the loser gets nothing to publish
+    assertEquals(b.due(now), []); // and a re-scan no longer lists it
+    a.settle(t.id, now);
+    assertEquals(a.timers("ana", "mind"), []); // one-shot: consumed once, by the winner
+  } finally {
+    await down();
+  }
+});
+
+Deno.test("timers: a cron claimed by one clock advances once, not once per clock", async () => {
+  const { a, b, down } = await twoClocks();
+  try {
+    const now = "2026-09-08T11:30:00.000Z";
+    const t = a.arm(wake({ cron: "0 9 * * *", fireAt: "2026-09-08T09:00:00.000Z" }));
+    assert(a.claim(t.id, now));
+    assertEquals(b.claim(t.id, now), null);
+    a.settle(t.id, now);
+    const [after] = b.timers("ana", "mind");
+    assertEquals(after.fireAt, "2026-09-09T09:00:00.000Z"); // the next 09:00 after now
+    assertEquals(after.cron, "0 9 * * *");
+    assertEquals(b.claim(t.id, now), null); // settled past now — nothing to win
+  } finally {
+    await down();
+  }
+});
+
+Deno.test("timers: a claim never settled comes due again at the lease horizon", async () => {
+  const { a, down } = await twoClocks();
+  try {
+    const now = "2026-09-01T17:00:00.000Z";
+    const t = a.arm(wake());
+    assert(a.claim(t.id, now)); // the claimer dies before it publishes
+    const at = (ms: number) => new Date(Date.parse(now) + ms).toISOString();
+    assertEquals(a.due(at(CLAIM_LEASE_MS - 1)), []); // parked for the lease
+    assertEquals(a.due(at(CLAIM_LEASE_MS)).map((r) => r.id), [t.id]); // then due again
+    assert(a.claim(t.id, at(CLAIM_LEASE_MS))); // and claimable by whoever is alive
+  } finally {
+    await down();
   }
 });
 

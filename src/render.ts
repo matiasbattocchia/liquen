@@ -15,7 +15,7 @@
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
-import { isExternal, pathOf } from "./store/media.ts"; // pure uri helpers — no I/O
+import { INLINE_CAP, inlineable, isExternal, pathOf } from "./store/media.ts"; // pure helpers — no I/O
 import { MIND, routedSession } from "./session.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
@@ -32,6 +32,7 @@ import type {
   ReactionPart,
   Session,
   SessionRef,
+  SummaryEvent,
   TextPart,
   ThinkingEvent,
   ToolResultEvent,
@@ -113,11 +114,6 @@ function renderIndex(pointers: DocEntry[]): string {
  *  well above this) — the newest-first budget in `renderMessages`. */
 const MEDIA_BUDGET = 12 * 1024 * 1024;
 
-/** What the model can SEE inline (§5): images (not svg) and PDFs — same rule the loader
- *  enforces on bytes; render applies it to the KNOWN mime to budget without reading. */
-const inlineable = (mime: string): boolean =>
-  mime.startsWith("image/") && mime !== "image/svg+xml" || mime === "application/pdf";
-
 export interface RenderInput {
   events: Event[]; // the log window — render derives what's closed vs trailing itself
   docs: DocEntry[];
@@ -186,16 +182,17 @@ export function deferredInput(
   return out;
 }
 
-/** Apply the latest `summary`: drop everything it covers (id ≤ covers[1] — superseded
- *  summaries fall in that range too) and MOVE the summary to the front — it stands for the
- *  oldest content; its log position is merely its publication time (§5). Exported for
- *  compaction: the weight that decides "checkpoint now?" must be the VISIBLE window's, or a
- *  raw window that stays heavy after a checkpoint would re-compact forever. */
+/** Apply the latest `summary`: drop everything it covers (id ≤ covers[1]) and every earlier
+ *  summary (each one is folded into the next, so only the latest stands), and MOVE the
+ *  summary to the front — it stands for the oldest content; its log position is merely its
+ *  publication time (§5). Exported for compaction: the weight that decides "checkpoint
+ *  now?" must be the VISIBLE window's, or a raw window that stays heavy after a checkpoint
+ *  would re-compact forever. */
 export function applySummary(events: Event[]): Event[] {
   const latest = [...events].reverse().find((e) => e.type === "summary");
   if (!latest || latest.type !== "summary") return events;
   const toId = latest.payload.covers[1];
-  return [latest, ...events.filter((e) => e !== latest && e.id > toId)];
+  return [latest, ...events.filter((e) => e.type !== "summary" && e.id > toId)];
 }
 
 /** Re-sort inbound messages by `ts` — REAL-WORLD event time, which is what a conversation
@@ -533,6 +530,11 @@ function renderMessages(
     closeCluster();
     emit(role, ...blocks);
   };
+  /** The agent's own words, bare. A body that is only whitespace draws nothing: the API
+   *  refuses an empty text block, and the message still closes what it closes. */
+  const placeOwn = (body: string) => {
+    if (body.trim().length > 0) place("assistant", { type: "text", text: body });
+  };
 
   /** Set a cache breakpoint on a block. It is metadata, not content: the cached prefix is
    *  the blocks themselves, so moving the mark forward never invalidates what it covered. */
@@ -617,7 +619,9 @@ function renderMessages(
       for (const p of filesOf(e)) {
         // local bytes only — external links inline as url-source blocks, budget-free
         if (isExternal(p.file.uri) || p.file.size === undefined) continue;
-        if (!inlineable(p.file.mime_type) || p.file.size > budget) continue;
+        // what the loader would refuse spends nothing: an oversize file keeps its marker
+        if (!inlineable(p.file.mime_type) || p.file.size > INLINE_CAP) continue;
+        if (p.file.size > budget) continue;
         budget -= p.file.size;
         inlineBudget.add(p.file.uri);
       }
@@ -630,10 +634,7 @@ function renderMessages(
   for (const e of events.slice(0, boundary + 1)) {
     if (deferred.has(e)) continue; // unconsumed input — renders in the trailing region
     if (e.type === "summary") {
-      place("user", {
-        type: "text",
-        text: `[checkpoint — earlier messages summarized]\n${textOf(e)}`,
-      });
+      place("user", { type: "text", text: checkpointEl(e) });
       continue;
     }
     if (e.type === "error") {
@@ -648,7 +649,7 @@ function renderMessages(
     if (silent(e)) continue; // said nothing — it closed the turn, it draws no block
     if (e.envelope.conversation.address === here) {
       if (isSelf(e, me)) {
-        place("assistant", { type: "text", text: bodyOf(e) }); // bare: the agent's own voice
+        placeOwn(bodyOf(e)); // bare: the agent's own voice
       } else if (parseVerdict(textOf(e)) === undefined) {
         place("user", { type: "text", text: principalEl(e, zone) }); // a verdict line is
         // steering, not conversation — the gate consumed it, so it draws no block
@@ -676,10 +677,7 @@ function renderMessages(
   // message (openbsp's sortToolMessages rule); the emit builder handles role alternation.
   for (const e of weldOrder(trailing, weldedTurns)) {
     if (e.type === "summary") { // boundary may be -1 — the leading summary lands here
-      place("user", {
-        type: "text",
-        text: `[checkpoint — earlier messages summarized]\n${textOf(e)}`,
-      });
+      place("user", { type: "text", text: checkpointEl(e) });
     } else if (e.type === "error") {
       place("user", { type: "text", text: `[system] error: ${errorTextOf(e)}` });
     } else if (e.type === "alarm") {
@@ -699,7 +697,7 @@ function renderMessages(
       if (e.payload?.ref_id && welded.has(e.payload.ref_id)) continue;
       if (silent(e)) continue; // said nothing — here too, so the last block stays the world's
       if (isSelf(e, me) && e.envelope.conversation.address === here) {
-        place("assistant", { type: "text", text: bodyOf(e) }); // mid-chain assistant text
+        placeOwn(bodyOf(e)); // mid-chain assistant text
       } else if (e.envelope.conversation.address === here) {
         if (parseVerdict(textOf(e)) === undefined) {
           place("user", { type: "text", text: principalEl(e, zone) });
@@ -1039,9 +1037,20 @@ function sys(text: string): Anthropic.MidConversationSystemBlockParam {
   return { type: "mid_conv_system", content: [{ type: "text", text }] };
 }
 
-function thinkingBlock(e: ThinkingEvent): Anthropic.ThinkingBlockParam {
-  const { thinking, signature } = e.parts[0].data;
-  return { type: "thinking", thinking, signature };
+function thinkingBlock(
+  e: ThinkingEvent,
+): Anthropic.ThinkingBlockParam | Anthropic.RedactedThinkingBlockParam {
+  const d = e.parts[0].data;
+  return "data" in d
+    ? { type: "redacted_thinking", data: d.data }
+    : { type: "thinking", thinking: d.thinking, signature: d.signature };
+}
+
+/** The checkpoint as the model reads it: its body is a transcript's worth of WORLD text —
+ *  escaped like any world body, so a mark typed by a peer and carried into the summary
+ *  stays text, and the element is render's own. */
+function checkpointEl(e: SummaryEvent): string {
+  return `<checkpoint>\n${escText(textOf(e))}\n</checkpoint>`;
 }
 
 function toolUseBlock(e: ToolUseEvent): Anthropic.ToolUseBlockParam {

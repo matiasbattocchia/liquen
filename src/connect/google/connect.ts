@@ -75,6 +75,23 @@ export async function pickGoogleApp(
  *                                    [--scopes "a b c"]   # default: connections.google.scopes
  *
  * The account door serves its callback on connections.google.oauthPort. */
+/** A handler wrapped for a one-shot door: the first callback — whichever way it went —
+ *  settles `outcome`, so the command reports and exits instead of waiting on a page that
+ *  already told the member it failed. */
+export function oneShot(
+  handler: (req: Request) => Promise<Response>,
+): { handler: (req: Request) => Promise<Response>; outcome: Promise<Response> } {
+  const done = Promise.withResolvers<Response>();
+  return {
+    outcome: done.promise,
+    handler: async (req) => {
+      const res = await handler(req);
+      if (new URL(req.url).pathname.endsWith("/callback")) done.resolve(res.clone());
+      return res;
+    },
+  };
+}
+
 if (import.meta.main) {
   const { openCredentials } = await import("../../store/credentials.ts");
   const root = findRoot();
@@ -128,9 +145,8 @@ if (import.meta.main) {
       const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? scopes;
       const callback = `http://localhost:${port}/oauth/google/callback`;
       const log = await openLog(`${dir}/log`);
-      const done = Promise.withResolvers<void>();
       let shortfall: string[] = [];
-      const handler = createGoogleOAuth({
+      const { handler, outcome } = oneShot(createGoogleOAuth({
         config: {
           clientId: app.value.client_id,
           clientSecret: app.value.client_secret,
@@ -141,12 +157,8 @@ if (import.meta.main) {
         publish: log.publish,
         store: log,
         onGrant: (g) => (shortfall = g.missing),
-      });
-      const server = Deno.serve({ port, onListen: () => {} }, async (req) => {
-        const res = await handler(req);
-        if (new URL(req.url).pathname.endsWith("/callback") && res.status === 200) done.resolve();
-        return res;
-      });
+      }));
+      const server = Deno.serve({ port, onListen: () => {} }, handler);
       const start = new URL(`http://localhost:${port}/oauth/google/start`);
       if (agent) start.searchParams.set("agent", agent);
       const hosted = app.extra?.redirect_uri as string | undefined;
@@ -167,9 +179,13 @@ if (import.meta.main) {
           stderr: "null",
         }).spawn().unref();
       } catch { /* headless is fine */ }
-      await done.promise;
+      const res = await outcome;
       await server.shutdown();
       await log.close();
+      if (res.status !== 200) {
+        console.error(`✗ not connected: ${(await res.text()).trim()}`);
+        Deno.exit(1);
+      }
       console.error(
         shortfall.length
           ? `\n⚠ connected, WITHOUT:\n  ${shortfall.join("\n  ")}\n` +

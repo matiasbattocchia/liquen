@@ -77,3 +77,28 @@ Deno.test("mentions: #channel claims and bare channel ids encode; WhatsApp skips
     { address: "5492604560911", name: "Euge" },
   ]);
 });
+
+Deno.test("mentions: a sigil inside a word is not a mention — emails keep their @", () => {
+  assertEquals(
+    encodeSlackText("write to foo@here.com or bob@channel.io", DIR),
+    "write to foo@here.com or bob@channel.io",
+  );
+  assertEquals(encodeSlackText("cc ana@U0AAAAAAAA9 please", []), "cc ana@U0AAAAAAAA9 please");
+  assertEquals(claimMentions("mail euge@Euge now", DIR), []);
+  assertEquals(claimMentions("che @Euge", DIR).length, 1); // the same key at a word start still claims
+});
+
+Deno.test("mentions: an uppercase word is a name, not an id — unless the directory knows the address", () => {
+  assertEquals(
+    encodeSlackText("see @UPDATES123 and #CHANGELOG2024", []),
+    "see @UPDATES123 and #CHANGELOG2024",
+  );
+  assertEquals(
+    encodeSlackText("ping @U0AAAAAAAA9 in #C0AAAAAAAA1", []),
+    "ping <@U0AAAAAAAA9> in <#C0AAAAAAAA1>",
+  );
+  assertEquals(
+    encodeSlackText("see @UPDATES123", [{ address: "UPDATES123", name: "updates bot" }]),
+    "see <@UPDATES123>",
+  );
+});

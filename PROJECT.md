@@ -1616,3 +1616,138 @@ either a capability (bash, compaction), a connection (Slack/WA), or a substrate 
 (Postgres) behind ports that already exist. The riskiest unknown left is not code but
 behavior: how the model actually drives the three channels (think/assistant/send) once
 real traffic hits it — which is exactly what 2b + the live smoke will show.
+
+### Four seams closed against the second process (2026-09-04) — LANDED
+
+Every one of these was a race or a hole that only shows once something runs beside main:
+an ephemeral main raised by attach while `mu start` backs off, the calendar process beside
+the broker, an interface that wedges. Each landed test-first.
+
+**The alarm claim is one SQL statement.** `due` is a scan and only a scan; `claim` is
+`UPDATE timers SET fire_at = <now + CLAIM_LEASE_MS> WHERE id = ? AND fire_at <= ?
+RETURNING *`, so two sweeps that list the same row get exactly one winner, and only the
+winner publishes the alarm before `settle` consumes the row as before (one-shot gone, cron
+advanced past now in the agent's zone). The lease is written into `fire_at` itself — no
+claimed column, no third row state: a winner that dies between claim and settle leaves a
+row that comes due again five minutes later, and `timers()` keeps reading one meaning
+from one column. Main's `fireDue` is also non-reentrant in-process: a tick that lands
+mid-sweep joins the running sweep instead of opening a second.
+
+**Credential merges are the database's.** `put` is one upsert whose `DO UPDATE` merges
+`value` and `extra` in SQL, under the write lock, so the broker refreshing a token beside
+a connector door recording a sibling field both land — proven by two Workers hammering
+different fields of one row, which lost updates every run under a JS read-merge-write.
+The merge stays FIELD-WISE, which is the contract the calendar's cursor map relies on (it
+drops a cursor by rewriting the map without it): `json_patch` alone would merge nested
+objects, so the expression first removes every field the new blob names, then patches —
+`json_patch(json_patch(old, {each new key: null}), new)`. A field set to null is removed.
+`oauth_states` is swept of rows past the ten-minute TTL at open and at every mint,
+consumed ones included.
+
+**The door checks what it stores.** A `permission_response` verdict must carry a
+`behavior` in {allow, deny} and a `scope` in {once, conversation, connection, always};
+`reason` a string and `every` a boolean when present; anything else is `{ok: false}` and
+nothing is published. The scope is never defaulted — an unscoped verdict would be a
+connection-wide standing rule the moment xi read it. A `call`'s `input` must be a JSON
+object (absent means `{}`; null, arrays and primitives are refused). And a connection's
+write chain is bounded at `MAX_PENDING_LINES` (1000): a tailer that stops reading has its
+socket closed by the daemon rather than an unbounded promise chain built behind it — the
+log keeps the history, a client that comes back re-tails from its cursor.
+
+**`mu init` refuses a bad agent name before it writes.** The same grammar `readConfig`
+enforces on the roster (`^[a-z][a-z0-9-]{0,30}$`), checked first, so a typo fails with the
+catalog's own message and no folder appears. config.ts exports `AGENT_NAME`, and init.ts
+imports it — one grammar, one place.
+
+### Connectors: bounded API calls, ack-first Slack events, one dispatch loop (2026-09-04) — LANDED
+
+Every connector call to a third-party API carries a timeout. `src/connect/http.ts` holds
+the bound (`API_TIMEOUT_MS`) and `timedFetch`, the global fetch under it; `withTimeout`
+wraps any injected fetch the same way, which is how a test drives a wire against a hung
+request and sees it fail inside the bound. The Slack wire (`slackWire`: post, react,
+amend over one token resolver) and the WhatsApp bridge sender (`bridgeSend`) take the
+fetch as a dep; the Slack ingest's `users.info`, `apps.connections.open` handshake and
+`url_private` downloads, both OAuth exchanges, the Slack doors' probes and the WhatsApp
+bridge's session calls go through `timedFetch`. The GitHub connector reaches mu only
+through `src/connector.ts`, so it carries its own constant on its four default edges and
+on the `gh` spawn. The Socket Mode WebSocket is a carrier, not a request, and takes no
+bound. A timed-out send stamps `failed` without an `error_code` — it never reached the
+service.
+
+Slack's HTTP events mode answers 200 as soon as a delivery is verified and parsed, and
+processes behind the response: Slack re-delivers anything unanswered within its window,
+and each re-delivery is a duplicate the store's upsert has to absorb. Signature
+verification and the `url_verification` challenge stay ahead of the ack. A processing
+failure lands on stderr — the wire has already been answered, so stderr is the only place
+it can go. `SlackWebhookDeps.track` hands each acked delivery's processing to the entry,
+which awaits the in-flight set before closing its handles.
+
+Outbound mention boundaries: a sigil inside a word is spelling, not addressing
+(`foo@here.com` keeps its `@here`; `euge@Euge` claims nothing), and a bare Slack id is a
+type letter followed by a DIGIT — every id Slack mints has that shape — so `@UPDATES123`
+is a name (the directory claims it when it knows the address) and `@U0AAAAAAAA9` still
+encodes bare.
+
+`src/connect/dispatcher.ts` is the dispatch loop every shipped connector runs: filter the
+service's outbound rows, serialize, `select` the send shape, `post`, stamp `external_id`
++ `sender` + `dispatched_at` from what the post answered — and stamp `failed` when the
+post throws, uniformly. Slack, WhatsApp and GitHub dispatch are `select`/`post` over it —
+GitHub through `src/connector.ts`, which re-exports the skeleton.
+
+Left untouched, known: the Slack paste door registers the bare team while the ingest
+anchors `team:bot`; GitHub device-flow token selection; Slack `thread_ts`; Slack entity
+escaping; Socket Mode acks before it handles; the bot's `files:read` scope.
+
+### The model loop and the tools, audited (2026-09-04) — LANDED
+
+**Retries cover weather only.** mu's failure carries the HTTP status when the error has
+one; nu's slow retries run for 408 · 409 · 429 · 5xx and connection failures (no status),
+and a 4xx ends the turn on the first answer — the same request fails the same way however
+often it is sent, and each retry held the lease and re-streamed the deltas.
+
+**A cut inside a tool_use is dropped.** The SDK hands back whatever of a truncated
+`tool_use`'s JSON arrived; nu drops the trailing call when the stop is `max_tokens` and
+keeps the continuation, so the model re-issues it whole instead of the harness running
+half a command. Every block before the last one closed before the cut and stays.
+
+**Every step closes.** A reply that is only whitespace is `silence` (the API refuses an
+empty text block, and render draws nothing for it); a step with no words and no call still
+mints the silent closing message that carries the horizon — without it the window never
+closed and every tick re-thought the same input. `redacted_thinking` is kept as its own
+emission and replayed verbatim (`ThinkingBlock` is now `{thinking, signature} | {data}`).
+
+**Checkpoints.** `covers` is an ordered range — from the previous checkpoint's own start to
+the newest event folded in — and `applySummary` drops every earlier summary, so a
+checkpoint whose range ends below the previous summary's id no longer leaves it visible
+twice. The cut falls where no tool step straddles it, and inside a long open loop it falls
+between steps after a tool outcome, so a window whose weight is the loop itself compacts
+too; the transcript carries the calls and their outcomes (`describeCall`, `outcomeLine`),
+because inside a loop they are the content. A checkpoint cut at the ceiling
+(`SUMMARY_MAX_TOKENS`, 16K) or written empty is an error event, not a record and not a
+silent retry on every wake. `estTokens` skips `extra` — the raw delivery never renders.
+The checkpoint renders as `<checkpoint>` with its body escaped like any world body.
+
+**Media.** A file over `INLINE_CAP` spends nothing of the request budget (it would never
+load), so a smaller image behind it still inlines; the loader is memoized across steps
+(`memoizedLoader`, bounded by bytes held, misses not remembered).
+
+**The store.** `events(timestamp)` is indexed; a filtered read with a limit walks a cursor
+and stops when the window is full instead of materializing the table. A commit whose
+`BEGIN IMMEDIATE` comes back BUSY after the engine's own wait sits out one more wait with
+the loop free (the heartbeat keeps the lease) — one, because each wait blocks the loop and
+two stay inside the TTL. The transaction itself is one synchronous block.
+
+**Tools and process.** `aedit`'s whitespace-insensitive fallback matches in normalized
+space and splices the original, so only the matched spans change; a CRLF spec parses. Tail
+truncation and `describeCall`'s cuts never split a surrogate pair (`clipStart`/`clipEnd`).
+A wire filename yields an extension only when it carries one. `readConfig` treats only
+NotFound as "no file" — an unreadable file is a boot error, not an empty org; `model`,
+`maxTokens` and `provider` are type-checked per agent. `mu start`'s restart backoff is cut
+short by SIGTERM (`pause`). An attach request in flight when the daemon hangs up is
+answered `{ok: false}`. The Google account door settles on the first callback whichever
+way it went and exits non-zero on a failure. `MU_LOCALE` reaches bash spawns as it reaches
+processors.
+
+Not done, on purpose: an AbortSignal into `messages.stream` — nothing publishes a
+`control` event yet, so nothing could fire it. The principal instructions doc and bash's
+sticky-cwd `.out/` placement are parked for a separate look.

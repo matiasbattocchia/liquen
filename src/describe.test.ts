@@ -76,3 +76,12 @@ Deno.test("describeCall: a tool may bring its own rendering (ExecTool.describe, 
     "deploy(→ prod)",
   );
 });
+
+Deno.test("describeCall: the line cut never splits a character", () => {
+  const line = describeCall({
+    name: "bash",
+    input: { command: "é".repeat(10) + "😀".repeat(80) },
+  });
+  assertEquals(line.endsWith("…)"), true);
+  assertEquals(line.isWellFormed(), true);
+});

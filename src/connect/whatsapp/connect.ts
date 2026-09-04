@@ -27,6 +27,7 @@ import type { Connections } from "../../store/connections.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { SERVICE } from "./ingest.ts";
 import { findRoot } from "../../config.ts";
+import { timedFetch } from "../http.ts";
 import { declared } from "../declare.ts";
 
 /** The tenant sessions are filed under on the bridge (its open-BSP `organization_id`).
@@ -188,7 +189,7 @@ if (import.meta.main) {
   }
 
   const call = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
-    const res = await fetch(`${base}${path}`, {
+    const res = await timedFetch(`${base}${path}`, {
       method,
       headers: {
         authorization: `Bearer ${token}`,

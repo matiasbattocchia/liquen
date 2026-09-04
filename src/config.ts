@@ -299,7 +299,7 @@ const SECTION_DOCS: Record<string, string> = {
 
 /** An agent's name is also its folder and its Linux user in the container — the charset is
  *  the intersection of what all three accept. */
-const AGENT_NAME = /^[a-z][a-z0-9-]{0,30}$/;
+export const AGENT_NAME = /^[a-z][a-z0-9-]{0,30}$/;
 
 function fromEntries(entries: Entry[]): Record<string, unknown> {
   return Object.fromEntries(entries.map((e) => [e.key, e.value]));
@@ -366,8 +366,9 @@ export async function readConfig(root: string): Promise<OrgConfig> {
   let raw: string;
   try {
     raw = await Deno.readTextFile(path);
-  } catch {
-    return defaults();
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return defaults();
+    throw err; // a file that exists and cannot be read is a boot error, not an empty org
   }
   const found = parseStrict(raw, path) as Record<string, unknown>;
   for (const section of Object.keys(found)) {
@@ -414,7 +415,7 @@ export async function readConfig(root: string): Promise<OrgConfig> {
         throw new Error(`${path}: unknown key "agents.${name}.identity.${key}"`);
       }
     }
-    validateAgent(over as Partial<AgentDefaults>, path);
+    validateAgent(over as Partial<AgentDefaults>, `${path}: agents.${name}`);
     cfg.agents[name] = entry;
   }
   for (const [name, body] of Object.entries(asObject(found.connections, "connections"))) {
@@ -598,6 +599,15 @@ function validateOrg(cfg: OrgConfig, path: string): void {
 /** The checks that would otherwise surface as a RangeError inside a turn's render or as an
  *  API rejection mid-conversation — discovered at boot instead. */
 function validateAgent(a: Partial<AgentDefaults>, path: string): void {
+  if (a.model != null && (typeof a.model !== "string" || a.model === "")) {
+    throw new Error(`${path}: model must be a model name`);
+  }
+  if (a.provider != null && (typeof a.provider !== "string" || a.provider === "")) {
+    throw new Error(`${path}: provider must be a name`);
+  }
+  if (a.maxTokens != null && !(Number.isInteger(a.maxTokens) && a.maxTokens > 0)) {
+    throw new Error(`${path}: maxTokens must be a positive integer (got ${a.maxTokens})`);
+  }
   if (a.effort != null && !(EFFORTS as readonly string[]).includes(a.effort)) {
     throw new Error(`${path}: unknown effort "${a.effort}" (one of ${EFFORTS.join(", ")})`);
   }
