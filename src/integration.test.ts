@@ -64,9 +64,15 @@ async function waitFor(cond: () => Promise<boolean> | boolean, ms = 4000): Promi
   throw new Error("waitFor timeout");
 }
 
-/** main's shape, miniature: one tail, one invocation per change, a boot invoke. No filter and
- *  no queue — the turn lock is the concurrency control (§2); `outstanding` is only so stop()
- *  can await what's in flight. */
+/** The liveness floor at test scale (§10): main's tick, minus the minute. A wake that bounces
+ *  off the lease while its holder ends in `ignore` has nothing to re-fire it — the holder
+ *  published nothing, and the tail's cursor is already past the event. Production recovers
+ *  that with the periodic poke; a harness without one strands the turn forever. */
+const FLOOR_MS = 250;
+
+/** main's shape, miniature: one tail, one invocation per change, a boot invoke, the floor.
+ *  No filter and no queue — the turn lock is the concurrency control (§2); `outstanding` is
+ *  only so stop() can await what's in flight. */
 function fanOut(config: AgentConfig, log: Log, ports: XiPorts): { stop(): Promise<void> } {
   let stopped = false;
   const outstanding = new Set<Promise<unknown>>();
@@ -77,9 +83,11 @@ function fanOut(config: AgentConfig, log: Log, ports: XiPorts): { stop(): Promis
   };
   const unsubscribe = log.subscribe(invoke); // the event goes straight through to xi
   invoke(); // boot: no trigger ⇒ look at whatever the log already owes
+  const floor = setInterval(() => invoke(), FLOOR_MS);
   return {
     async stop() {
       stopped = true;
+      clearInterval(floor);
       unsubscribe();
       await Promise.all([...outstanding]);
     },
