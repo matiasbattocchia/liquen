@@ -33,8 +33,8 @@ export function metered(
   meter: (row: UsageRow) => void,
   agentId?: string,
 ): ModelTransport {
-  return async (params, emit, meta) => {
-    const message = await transport(params, emit, meta); // a failed call spends nothing meterable
+  return async (params, emit, meta, signal) => {
+    const message = await transport(params, emit, meta, signal); // a failed call spends nothing meterable
     try {
       meter({
         created_at: new Date().toISOString(),
@@ -53,8 +53,9 @@ export function metered(
 
 /** Wrap an Anthropic client as a `ModelTransport`. */
 export function anthropicTransport(client: Anthropic): ModelTransport {
-  return (params, emit) => {
-    const stream = client.messages.stream(params);
+  return (params, emit, _meta, signal) => {
+    // the turn's interrupt reaches the request: an abort closes the stream mid-flight
+    const stream = client.messages.stream(params, signal ? { signal } : undefined);
     // Always attach listeners: they no-op when `emit` is absent, and an attached `error`
     // listener keeps a stream error from surfacing as an unhandled event (it still rejects
     // `finalMessage()`, which is the path mu catches).

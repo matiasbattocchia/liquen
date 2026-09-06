@@ -71,7 +71,8 @@ ffmpeg -i some-note.ogg -f ogg - | processors/qwen-asr/transcribe.sh
   (25 s of sys time for 1.7 s of work, observed).
 - `-t 4` — worker threads. More threads drag P-core work onto E-cores; on big machines,
   raise it.
-- `--language <name>` — from the org's `locale`, which rides in as `MU_LOCALE`. Left
+- `--language <name>` — from the language half of the org's `locale`, which rides in as
+  `LANG`. Left
   unpinned, Qwen sometimes translates a note into English instead of transcribing it —
   silently and fluently, so nothing downstream can tell. Naming the language forecloses
   that, and on this model costs nothing in punctuation, casing, or words.

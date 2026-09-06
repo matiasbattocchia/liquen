@@ -10,7 +10,7 @@
  * pays one delta of latency, and a turn that says nothing prints nothing.
  */
 
-import { outcomeLine, ownVoice, SILENCE, silent } from "./render.ts";
+import { isCancelled, outcomeLine, ownVoice, SILENCE, silent, textOf } from "./render.ts";
 import { describeCall } from "./describe.ts";
 import type { Delta, Event, SessionRef } from "./types.ts";
 
@@ -118,6 +118,14 @@ export function painter(s: Surface): Painter {
       }
       case "error": {
         s.error(JSON.stringify(e.parts[0]?.data ?? {}));
+        return;
+      }
+      case "control": {
+        // the harness closing the turn the principal cut; their own word is already on screen
+        if (!isCancelled(e)) return;
+        held = "";
+        s.write(`\n${DIM}${textOf(e)}${RESET}`);
+        s.prompt();
         return;
       }
       default:

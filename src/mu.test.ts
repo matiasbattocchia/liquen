@@ -137,3 +137,14 @@ Deno.test("redacted_thinking is an emission of its own — replayed verbatim, ne
     { kind: "tool_use", name: "send", input: {} },
   ]);
 });
+
+Deno.test("mu hands the step's signal to the transport — the one thing that can cut a call", async () => {
+  let seen: AbortSignal | undefined;
+  const transport: ModelTransport = (_params, _emit, _meta, signal) => {
+    seen = signal;
+    return Promise.resolve(message([{ type: "text", text: "ok", citations: null }], "end_turn"));
+  };
+  const ctl = new AbortController();
+  await mu({ ...baseInput, signal: ctl.signal }, transport);
+  assertEquals(seen, ctl.signal);
+});

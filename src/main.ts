@@ -33,7 +33,7 @@
  */
 
 import { type AgentConfig, type Decision, relevant, xi, type XiPorts } from "./xi.ts";
-import { ownComplex } from "./render.ts";
+import { isCancelled, ownComplex } from "./render.ts";
 import { MIND, parseSession, sessionAddress } from "./session.ts";
 import { type Policy, policyFor, scoped } from "./policy.ts";
 import { type Log, openLog } from "./store/log.ts";
@@ -41,7 +41,7 @@ import type { ConnectionRow } from "./store/connections.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { seedDocs } from "./store/seed.ts";
 import { anthropicClient, anthropicTransport, metered, type ModelTransport } from "./transport.ts";
-import { type ExecPlane, installExecPlane } from "./exec/bash.ts";
+import { type ExecGround, type ExecPlane, installExecGround } from "./exec/bash.ts";
 import { openCredentials } from "./store/credentials.ts";
 import { createGrantBroker, frontedFor } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
@@ -191,18 +191,30 @@ export async function start(
   // the egress proxy (§9): front every credential row that declares an env var — user space
   // gets the placeholder + proxy env, never a real credential (see installProxy).
   const proxy = await installProxy(dir);
-  // ONE PLANE PER AGENT: the shell is the agent's, not the org's — its cwd IS `agents/<id>`,
-  // the folder that already holds its docs and memories, and its background jobs are reaped
-  // with it. The binaries on PATH stay org-wide; what is private is the cwd and the job set.
-  const planes = new Map<string, ExecPlane>();
-  // the org's language reaches user space as MU_LOCALE — the same name the processors get
-  // (§9), so a script the agent runs by hand speaks the org's language too
+  // ONE GROUND PER AGENT, ONE SHELL PER SESSION (§9): the ground is the agent's folder —
+  // `agents/<id>`, where its docs and memories already are — with the org's binaries on
+  // PATH; the shell on it is the session's, so where one session stands and what it left
+  // running is never another's. Shells open on first contact and are reaped at teardown.
+  const grounds = new Map<string, ExecGround>();
+  const shells = new Map<string, ExecPlane>();
+  const shellOf = (agentId: string, sessionId: string): ExecPlane => {
+    const key = sessionAddress(agentId, sessionId);
+    let shell = shells.get(key);
+    if (!shell) {
+      shell = grounds.get(agentId)!.shell();
+      shells.set(key, shell);
+    }
+    return shell;
+  };
+  // the org's locale reaches user space under the names every program reads (§9): the
+  // shell speaks the org's language, and a script the agent runs by hand does too
   const locale = catalog?.org.locale;
+  const localeEnv: Record<string, string> = locale ? { LANG: locale } : {};
   for (const p of principals) {
-    const userEnv = () => ({ ...proxy.env(p.agentId), ...(locale ? { MU_LOCALE: locale } : {}) });
-    planes.set(
+    const userEnv = () => ({ ...proxy.env(p.agentId), ...localeEnv });
+    grounds.set(
       p.agentId,
-      await installExecPlane(dir, p.agentId, userEnv, catalog?.system.bashTimeoutMs),
+      await installExecGround(dir, p.agentId, userEnv, catalog?.system.bashTimeoutMs),
     );
   }
   // what an agent may ATTACH (§9 data classification): its own folder, the shared floor,
@@ -237,6 +249,19 @@ export async function start(
     reported.set(who, key);
     castStatus(agentId, sessionId, line);
   };
+  // the turns' interrupts (§2): a session's running turn arms one here, and a `control`
+  // row landing in that session's room fires it — the log is the signal's carrier, so a
+  // cancel from any surface reaches the turn by the path everything else does
+  const turns = new Map<string, AbortController>();
+  const interruptOf = (agentId: string, sessionId: string) => {
+    const key = sessionAddress(agentId, sessionId);
+    return (ctl: AbortController) => {
+      turns.set(key, ctl);
+      return () => {
+        if (turns.get(key) === ctl) turns.delete(key);
+      };
+    };
+  };
   const agents = principals.map(({ readable, writable, ...agent }) => {
     // the agent's VIEW of the log (§6): reads, writes, and the tail below all go through it.
     // Folder-declared agents get the connections-map policy (live read-through lookups);
@@ -254,11 +279,12 @@ export async function start(
         // metered per agent: every model call this agent makes lands in the usage table
         // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in
         transport: metered(transport, (row) => log.meter(row), agent.agentId),
-        exec: planes.get(agent.agentId)!.exec,
+        exec: shellOf(agent.agentId, agent.sessionId).exec,
         files: filesOf(agent.agentId),
         onDelta: (d) => cast(agent.agentId, agent.sessionId, d),
         onDecision: (v, cursor) => disclose(agent.agentId, agent.sessionId, v, cursor),
-        ambient: planes.get(agent.agentId)!.ambient,
+        ambient: shellOf(agent.agentId, agent.sessionId).ambient,
+        interrupt: interruptOf(agent.agentId, agent.sessionId),
       } satisfies XiPorts,
     };
   });
@@ -333,8 +359,10 @@ export async function start(
       { service: "local", connection: "agent", conversation: key, agentId, sessionId },
     ]);
     const slog = scoped(log, policyFor({ agentId, id: sessionId }, log));
-    // the identity is shared (§4): one exec plane, one metered transport, one home —
-    // only the log view, the lease, and the stream are the session's
+    // the identity is shared (§4): one ground, one metered transport, one home — the log
+    // view, the lease, the stream and the shell (where it stands, what it runs) are the
+    // session's
+    const shell = shellOf(agentId, sessionId);
     const r = {
       config: { ...base.config, sessionId },
       log: slog,
@@ -342,12 +370,13 @@ export async function start(
         log: slog,
         docs,
         transport: base.ports.transport,
-        exec: base.ports.exec,
+        exec: shell.exec,
         files: base.ports.files,
         onDelta: (d: Delta) => cast(agentId, sessionId, d),
         onDecision: (v: Decision, cursor: string | undefined) =>
           disclose(agentId, sessionId, v, cursor),
-        ambient: base.ports.ambient,
+        ambient: shell.ambient,
+        interrupt: interruptOf(agentId, sessionId),
       } satisfies XiPorts,
     };
     named.set(key, r);
@@ -366,6 +395,8 @@ export async function start(
       sessionId: a.config.sessionId,
       port: (sessionId: string) =>
         sessionId === a.config.sessionId ? a.log : runnerOf(a.config.agentId, sessionId)!.log,
+      // where the principal stands is where the session's shell starts (§9)
+      stand: (session, path) => shellOf(a.config.agentId, session).stand(path),
     })),
   );
   cast = (agentId, sessionId, delta) => doors.emit(agentId, sessionId, delta);
@@ -382,6 +413,16 @@ export async function start(
       .filter((p) => p.sessionId !== MIND); // the minds tail their own scoped views
   };
   unsubs.push(log.subscribe((e) => {
+    if (e.type === "control") {
+      if (isCancelled(e)) return; // the turn's own closing row: nothing left to cut
+      const key = e.envelope.conversation.address;
+      const turn = turns.get(key);
+      if (turn) {
+        console.error(`[main] ${key}: ${e.payload.control} — the running turn is cut`);
+        turn.abort();
+      }
+      return; // it never starts work (§2)
+    }
     for (const p of namedIn(e)) {
       const r = runnerOf(p.agentId, p.sessionId);
       if (r) invoke(r)(e);
@@ -495,8 +536,8 @@ export async function start(
         Promise.all([...outstanding]),
         config.stopTimeoutMs ?? STOP_TIMEOUT_MS,
       );
-      // each agent's own jobs, reaped with its own plane (§9)
-      for (const plane of planes.values()) await plane.reap();
+      // each session's own jobs, reaped with its own shell (§9)
+      for (const shell of shells.values()) await shell.reap();
       await proxy?.close(); // stop the egress proxy and close its vault handle
       await log.close();
     },

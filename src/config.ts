@@ -142,7 +142,7 @@ export interface OrgConfig {
   };
   org: {
     timezone: string; // the ORG's clock — every stamp, cron and sleep span reads it (§5)
-    locale: string | null; // parked until the i18n seam
+    locale: string | null; // LANG in every agent shell and media processor
     backlogHours: number;
     agent: AgentDefaults;
   };
@@ -224,7 +224,12 @@ const ORG: Entry[] = [
     value: DEFAULT_TIMEZONE,
     doc: "the org's clock (IANA) — every rendered stamp, cron and sleep span reads it",
   },
-  { key: "locale", value: null, doc: "parked until the i18n seam — render is English for now" },
+  {
+    key: "locale",
+    value: null,
+    doc: "the org's locale (es_AR.UTF-8) — LANG in every agent shell and media processor, " +
+      "so tools and transcribers speak the org's language; unset, they inherit the harness's",
+  },
   {
     key: "backlogHours",
     value: DEFAULT_BACKLOG_HOURS,

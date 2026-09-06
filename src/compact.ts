@@ -61,6 +61,8 @@ Use this EXACT format:
 Keep each section concise. Preserve exact names, paths and figures.`;
 
 export interface CompactInput {
+  /** The turn's interrupt (§2) — a cut checkpoint call is the cut turn's. */
+  signal?: AbortSignal;
   events: Event[]; // the window, log order
   session: Session; // whose window it is, and where it speaks (§4)
   model: string;
@@ -223,6 +225,7 @@ export async function buildSummary(
     maxTokens: SUMMARY_MAX_TOKENS,
     tools: [],
     turnId: input.turnId,
+    signal: input.signal,
   }, transport);
   if (!res.ok) return null; // silent — the next think retries
   const failed = (why: string): Draft<ErrorEvent> => ({

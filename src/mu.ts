@@ -35,6 +35,8 @@ export interface StepInput extends RenderedRequest {
   maxTokens?: number; // API-required output cap; default: the catalog's (§9)
   effort?: Effort; // adaptive thinking depth; omit ⇒ the model's default
   turnId?: string; // the turn this call IS — rides past the params, to the meter (§2)
+  /** The turn's interrupt (§2): the principal's cancel cuts the request itself. */
+  signal?: AbortSignal;
 }
 
 /** `stop` routes the loop in nu: `tool_use` → continue · `end_turn` → idle ·
@@ -53,6 +55,7 @@ export type ModelTransport = (
   params: Anthropic.MessageCreateParamsNonStreaming,
   emit?: Emit,
   meta?: CallMeta,
+  signal?: AbortSignal,
 ) => Promise<Anthropic.Message>;
 
 /** What the call is FOR, for whoever wraps the transport. Not part of the request — the
@@ -79,7 +82,7 @@ export async function mu(
 
   let message: Anthropic.Message;
   try {
-    message = await transport(params, emit, { turn_id: input.turnId });
+    message = await transport(params, emit, { turn_id: input.turnId }, input.signal);
   } catch (err) {
     // the HTTP status rides along when the failure has one: nu's retry classifies on it
     const status = (err as { status?: unknown } | null)?.status;

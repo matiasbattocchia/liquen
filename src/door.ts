@@ -27,7 +27,11 @@
  *   message              {op, text, sender?, session?}   → the principal's half of the
  *                                                          complex (no turn_id, §3) → {ok, id}
  *   permission_response  {op, ref_id, verdict, session?} → answers a gate → {ok, id}
- *   tail                 {op, from?, session?}           → {ok} — then the connection also
+ *   control              {op, kind, session?}            → the principal's reserved word,
+ *                                                          already classified: `cancel`
+ *                                                          cuts the session's running turn
+ *                                                          (§2) → {ok, id}
+ *   tail                 {op, from?, session?, cwd?}     → {ok} — then the connection also
  *                                                  PUSHES: {event} per row of that
  *                                                  session's scoped view (from the
  *                                                  cursor), {delta} per model delta,
@@ -47,6 +51,8 @@
 
 import { agentUser, own } from "./exec/user.ts";
 import type {
+  ControlEvent,
+  ControlKind,
   Delta,
   Draft,
   Event,
@@ -69,6 +75,10 @@ export interface DoorAgent {
   /** A SESSION's scoped port (§6): the door reads and writes as the session the request
    *  named, never wider. Asking for a session is what births it (main's runner). */
   port(sessionId: string): Pick<Log, "publish" | "subscribe">;
+  /** Where a SESSION's shell starts (§9): the tail's `cwd` while its connection lives,
+   *  the workspace (`undefined`) once it hangs up. Rejects a place the agent cannot stand
+   *  in, and the tail is refused with it. */
+  stand?(sessionId: string, path: string | undefined): Promise<void>;
 }
 
 /** A turn's edges, volunteered on the tail (§2): the verdict `decide` reached under the
@@ -197,6 +207,11 @@ async function serve(conn: Deno.Conn, agent: DoorAgent, cast: Set<Tailer>) {
 
   let untail: (() => void) | undefined;
   let tailer: Tailer | undefined;
+  const stood = new Set<string>(); // the sessions this client placed: the hang-up takes them home
+  const stand = async (session: string, path: string) => {
+    await agent.stand?.(session, path);
+    stood.add(session);
+  };
   const tail = (session: string, from?: string) => {
     if (untail) throw new Error("already tailing");
     untail = agent.port(session).subscribe(
@@ -226,7 +241,7 @@ async function serve(conn: Deno.Conn, agent: DoorAgent, cast: Set<Tailer>) {
       buffered = buffered.slice(nl + 1);
       if (!line.trim()) continue;
       try {
-        await write(await handle(JSON.parse(line), agent, turnId, tail));
+        await write(await handle(JSON.parse(line), agent, turnId, tail, stand));
       } catch (err) {
         await write({ ok: false, error: err instanceof Error ? err.message : String(err) });
       }
@@ -234,6 +249,7 @@ async function serve(conn: Deno.Conn, agent: DoorAgent, cast: Set<Tailer>) {
   } finally {
     untail?.();
     if (tailer) cast.delete(tailer);
+    for (const session of stood) await agent.stand?.(session, undefined);
   }
 }
 
@@ -242,6 +258,7 @@ async function handle(
   agent: DoorAgent,
   turnId: string,
   tail: (session: string, from?: string) => void,
+  stand: (session: string, path: string) => Promise<void>,
 ): Promise<Record<string, unknown>> {
   // every verb the door speaks lands in a session's own room (§4): the socket decided
   // WHOSE, the request's `session` decides which — absent, the mind. A malformed name
@@ -316,14 +333,43 @@ async function handle(
     );
     return { ok: true, id: res!.id };
   }
+  if (req.op === "control") {
+    if (!CONTROLS.includes(req.kind as ControlKind)) {
+      throw new Error(`control kind must be one of ${CONTROLS.join(", ")}`);
+    }
+    // the principal's half, like a message (§3): stamped for the mind, no turn_id. The
+    // word rides as text so the row reads on any surface; the classification is payload.
+    const row = await port.publish(
+      {
+        ts: new Date().toISOString(),
+        type: "control",
+        payload: { control: req.kind as ControlKind },
+        agent: { id: agent.agentId, session_id: session },
+        envelope,
+        parts: [{ type: "text", kind: "text", text: `/${req.kind}` }],
+      } satisfies Draft<ControlEvent>,
+    );
+    return { ok: true, id: row!.id };
+  }
   if (req.op === "tail") {
+    // where the client stands is where the session's shell starts (§9) — tried before the
+    // tail opens, so a refused place leaves nothing attached and the client can say so
+    if (req.cwd !== undefined) {
+      if (typeof req.cwd !== "string" || !req.cwd.startsWith("/")) {
+        throw new Error("tail cwd must be an absolute path");
+      }
+      await stand(session, req.cwd);
+    }
     tail(session, typeof req.from === "string" ? req.from : undefined);
     return { ok: true, status: "tailing" };
   }
   throw new Error(
-    `unknown op "${String(req.op)}" — the door speaks call, message, permission_response, tail`,
+    `unknown op "${String(req.op)}" — the door speaks call, message, control, ` +
+      "permission_response, tail",
   );
 }
+
+const CONTROLS: readonly ControlKind[] = ["stop", "cancel"];
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);

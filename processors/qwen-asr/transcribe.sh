@@ -11,9 +11,10 @@ export LD_LIBRARY_PATH="$here/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # 25 s of sys time on 1.7 s of work before this was pinned
 export OPENBLAS_NUM_THREADS=1
 
-# The org's language (MU_LOCALE, from config `locale`) in qwen-asr's own vocabulary: the
-# flag takes a language NAME, not a tag. An unmapped locale transcribes unpinned.
-case "${MU_LOCALE%%[-_]*}" in
+# The org's language in qwen-asr's own vocabulary: the flag takes a language NAME, and the
+# language half of LANG (config `locale`) is the tag. An unmapped or absent locale
+# transcribes unpinned.
+case "${LANG%%[-_.]*}" in
   es) lang=Spanish ;;
   pt) lang=Portuguese ;;
   fr) lang=French ;;

@@ -270,3 +270,22 @@ Deno.test("nu: an empty checkpoint is an error too — not a full re-run on ever
   assertEquals(out.length, 1);
   assert(out[0].type === "error");
 });
+
+Deno.test("an aborted step is the principal's cancel: one closing row, no retry", async () => {
+  let calls = 0;
+  const ctl = new AbortController();
+  const out = await nu(
+    { events: [], docs: [], tools: [], config: CONFIG, signal: ctl.signal },
+    () => {
+      calls++;
+      ctl.abort();
+      return Promise.reject(new Error("Request was aborted."));
+    },
+  );
+  assertEquals(calls, 1);
+  assertEquals(out.length, 1);
+  assertEquals(out[0].type, "control");
+  assertEquals(out[0].payload?.control, "cancelled");
+  assertEquals(out[0].agent, undefined); // the harness's word — nothing failed, it was stopped
+  assertEquals(out[0].payload?.turn_id, undefined); // unstamped: the turn ends here
+});

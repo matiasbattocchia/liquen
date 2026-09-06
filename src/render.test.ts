@@ -1,6 +1,14 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
-import { capRun, render, renderSystem, SILENCE, WUM_PER_CONVERSATION } from "./render.ts";
+import {
+  CANCELLED,
+  cancelled,
+  capRun,
+  render,
+  renderSystem,
+  SILENCE,
+  WUM_PER_CONVERSATION,
+} from "./render.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
   Event,
@@ -1730,4 +1738,50 @@ Deno.test("horizon split: a lagged message with an OLDER ts is still unconsumed 
   assertEquals(last.role, "user");
   assertStringIncludes(JSON.stringify(last.content), "cero");
   assertEquals(JSON.stringify(messages.slice(0, -1)).includes("cero"), false);
+});
+
+Deno.test("the harness's cancelled row reads as a [system] line, and not as an error", () => {
+  const t1 = "2026-07-16T14:01:00Z";
+  const t2 = "2026-07-16T14:02:00Z";
+  const closing = {
+    id: "c02",
+    ...cancelled({
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "mind@a1" },
+    }),
+    ts: t2,
+  } as Event;
+  const events: Event[] = [mindMsg("e01", t1, "pensá mucho", false), closing];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t2 });
+  const text = JSON.stringify(messages);
+  assertStringIncludes(text, `[system] ${CANCELLED}`);
+  assert(!text.includes("error"));
+});
+
+Deno.test("a control row is transparent: the principal's cancel draws nothing, and a run flows across it", () => {
+  const t1 = "2026-07-16T14:01:00Z";
+  const t2 = "2026-07-16T14:02:00Z";
+  const cancel: Event = {
+    id: "c01",
+    ts: t1,
+    type: "control",
+    payload: { control: "cancel" },
+    agent: SELF,
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "mind@a1" },
+    },
+    parts: [{ type: "text", kind: "text", text: "/cancel" }],
+  } as Event;
+  const events: Event[] = [
+    mindMsg("e01", t1, "pará", false),
+    cancel,
+    waMsg("e02", t2, "¿sigue en pie lo de mañana?", false),
+  ];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t2 });
+  const text = JSON.stringify(messages);
+  assert(!text.includes("/cancel")); // the word is the principal's, never the model's input
+  assertEquals(messages.length, 1); // one world-user-message: the run was not cut in two
 });

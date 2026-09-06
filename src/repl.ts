@@ -15,6 +15,8 @@
  *   a gate fires        → an approval card; answer `/{y,n} [once|conv|conn|always|all]
  *                         [reason]` — a scope word makes the verdict STANDING (remembered
  *                         policy, §9); `all` answers every card waiting at once
+ *   /cancel             → cut the running turn: a thinking model is hung up on, a running
+ *                         tool is killed, and the agent idles until you speak again (§2)
  *   /quit (or Ctrl-D)   → hang up — the daemon's life is its attachments, not ours
  */
 
@@ -71,10 +73,18 @@ w.hangup.then(() => {
   }
 });
 
-await w.request({ op: "tail", session }); // live: the screen is the present, the log holds the past
+// live: the screen is the present, the log holds the past. The agent's shell stands where
+// its principal does — a place it cannot stand in ends the REPL before a word is typed.
+const t = await w.request({ op: "tail", session, cwd: Deno.cwd() });
+if (!t.ok) {
+  write(`${RED}${t.error}${RESET}\n`);
+  leaving = true;
+  conn.close();
+  Deno.exit(1);
+}
 
 write(
-  `${DIM}mu — ${home} · ${a.model} · log: ${a.dir} · /y[once|conv|conn|always|all] /n /quit${RESET}\n> `,
+  `${DIM}mu — ${home} · ${a.model} · log: ${a.dir} · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n> `,
 );
 
 const lines = Deno.stdin.readable
@@ -88,6 +98,11 @@ for await (const line of lines) {
     continue;
   }
   if (text === "/quit" || text === "/q") break;
+  if (text === "/cancel") {
+    const r = await w.request({ op: "control", kind: "cancel", session });
+    write(r.ok ? `${DIM}cancel sent${RESET}\n> ` : `\n${RED}! ${r.error}${RESET}\n> `);
+    continue;
+  }
   const verdict = text.startsWith("/y") || text.startsWith("/n") ? parseVerdict(text) : undefined;
   if (verdict) {
     if (pending.length === 0) {

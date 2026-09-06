@@ -67,7 +67,17 @@ import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
 import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import type { FilePart } from "./types.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
-import { hhmm, ownComplex, ownVoice, parseVerdict, shortId, silenced, textOf } from "./render.ts"; // shared predicates: silenced never wakes;
+import {
+  cancelled,
+  hhmm,
+  isCancelled,
+  ownComplex,
+  ownVoice,
+  parseVerdict,
+  shortId,
+  silenced,
+  textOf,
+} from "./render.ts"; // shared predicates: silenced never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { type ModelTransport, nu, type TurnConfig } from "./nu.ts";
@@ -150,6 +160,7 @@ export function decide(
   if (owedOf(events, session).length > 0) return "act";
   if (cutOff(events)) return "think"; // a paced/truncated turn CONTINUES
   if (justFailed(events)) return "ignore"; // idle-after-error
+  if (justCancelled(events)) return "ignore"; // the principal cut it: idle until they speak
   if (unclosedChain(events, session)) return "think";
   return attention(events, session, wake, now);
 }
@@ -375,6 +386,14 @@ function justFailed(events: Event[]): boolean {
   return events.at(-1)?.type === "error" && !cutOff(events);
 }
 
+/** The harness's `cancelled` is the LAST thing in the window ⇒ nothing owed (§2). The
+ *  work it cut is still unanswered, and answering it now would be narrating what the
+ *  principal just told us to drop — the next thing they say is what wakes us. */
+function justCancelled(events: Event[]): boolean {
+  const last = events.at(-1);
+  return last !== undefined && isCancelled(last);
+}
+
 /**
  * The cheap gate, over the ONE event that triggered this invocation: could it change what the
  * log owes *this* agent? Pure — no log, no lease — so a spectator costs nothing at all. Same
@@ -405,7 +424,8 @@ export function relevant(config: AgentConfig, event: Event): boolean {
     // `error` is a PERMANENT failure until something new arrives — retrying transient ones
     // already happened inside nu, so a logged error means we stopped. `decide` says the same
     // from the window side (a trailing error ⇒ ignore); waking here would hot-loop.
-    // `control` acts on a RUNNING turn (§10), it never starts one.
+    // `control` acts on a RUNNING turn — main fires its interrupt (§2) — never starts one;
+    // the harness's `cancelled` closes one, and `decide` idles on it from the window side.
     //  turn (§5), so its insert must carry the think it displaced forward
     default:
       return false; // thinking · error · permission_request · control · unknown
@@ -732,6 +752,11 @@ export interface XiPorts {
    *  client cannot compute for itself. `cursor` is the last event the deciding read saw. */
   onDecision?: (verdict: Decision, cursor: string | undefined) => void;
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
+  /** The turn's interrupt (§2): xi arms a controller as it takes the lease and hands it
+   *  here; main fires it when a `control` row lands in the session's room while it is
+   *  armed — log-derived, because an out-of-process invocation can't be signalled — and
+   *  the returned disarm runs as the turn ends. Absent: nothing can cut a turn short. */
+  interrupt?: (ctl: AbortController) => () => void;
 }
 
 /** How coarse the window's floor is: the grid the oldest kept event snaps DOWN to. */
@@ -782,6 +807,10 @@ export async function xi(
   const lock = ports.log.lock(name);
   const got = await lock.acquire();
   if (got === "held") return "held"; // no retry: someone is on it, and their turn's end will poke
+  // the interrupt, armed BEFORE the read: a cancel that lands while the window is being
+  // read cuts this turn, never the next one
+  const ctl = new AbortController();
+  const disarm = ports.interrupt?.(ctl) ?? (() => {});
 
   const session: Session = {
     id: config.sessionId,
@@ -827,6 +856,7 @@ export async function xi(
   const v = decide(events, session, config);
   ports.onDecision?.(v, events.at(-1)?.id);
   if (v === "ignore") {
+    disarm();
     await lock.release();
     return v;
   }
@@ -836,13 +866,17 @@ export async function xi(
   //    after is the stalled-cycle bug: that wake bounces, and nothing wakes again (§2).
   let last: Draft<Event>[];
   try {
-    last = v === "act"
-      ? await act(events, got === "stolen", session, config, gate, ports)
-      : await think(events, config, ports);
+    last = ctl.signal.aborted
+      ? [cancelled(hereEnv)] // cut before it began: the cancel still closes it
+      : v === "act"
+      ? await act(events, got === "stolen", session, config, gate, ports, ctl.signal)
+      : await think(events, config, ports, ctl.signal);
   } catch (err) {
+    disarm();
     await lock.release(); // nothing to pair the release with
     throw err;
   }
+  disarm();
   try {
     await ports.log.publishAndRelease(last, lock.lease());
   } catch (err) {
@@ -873,6 +907,7 @@ async function think(
   events: Event[],
   config: AgentConfig,
   ports: XiPorts,
+  signal: AbortSignal,
 ): Promise<Draft<Event>[]> {
   const home = sessionAddress(config.agentId, config.sessionId); // where this turn speaks (§4)
   const docs = await ports.docs.list({ agent: config.agentId, conversation: home });
@@ -905,6 +940,7 @@ async function think(
           kind: "instruction",
           name: "instructions/compaction",
         }),
+      signal,
     },
     ports.transport,
     ports.onDelta,
@@ -967,6 +1003,7 @@ async function act(
   config: AgentConfig,
   gate: Gate,
   ports: XiPorts,
+  signal: AbortSignal,
 ): Promise<Draft<Event>[]> {
   const self = { id: config.agentId, session_id: config.sessionId };
   // one session, one place (§4): the harness's own rows land where the session speaks
@@ -1151,28 +1188,28 @@ async function act(
     }
   }
 
-  // the batch runs in parallel — the lock serializes the mind, not the tools (§2). Nothing
-  // fires this controller yet: cancelling a running turn is a `control` event xi will check
-  // for at tool boundaries (§10) — log-derived, because an out-of-process invocation can't
-  // be signalled. The `cancelled` flag it sets is already the steal-sweep's flag.
-  const ctl = new AbortController();
+  // the batch runs in parallel — the lock serializes the mind, not the tools (§2). The
+  // turn's interrupt is the principal's cancel (§2): a tool it cuts reports `cancelled`,
+  // the same flag the steal-sweep sets, and the turn closes on the harness's word so the
+  // agent idles instead of narrating what it was told to drop.
   out.push(
     ...await Promise.all(runnable.map(async ({ use, call }) => {
       try {
         return resultOf(
           use,
-          await execute(use, events, ctl.signal, self, config, ports),
+          await execute(use, events, signal, self, config, ports),
           undefined,
           call,
         );
       } catch (err) {
         return resultOf(use, err instanceof Error ? err.message : String(err), {
           is_error: true,
-          ...(ctl.signal.aborted ? { cancelled: true } : {}),
+          ...(signal.aborted ? { cancelled: true } : {}),
         }, call);
       }
     })),
   );
+  if (signal.aborted) out.push(cancelled(here));
   return out;
 }
 

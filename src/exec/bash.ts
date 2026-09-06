@@ -38,10 +38,10 @@ export interface BashOptions {
   workspace: string; // the agent's cwd; created on install
   binPath?: string; // prepended to PATH — one or more dirs, `:`-joined (shipped, then org)
   defaultTimeoutMs?: number; // default 120s
-  /** Per-AGENT background-job registry (§9): each command runs in its own process group; a
-   *  group that still has members after the call (a `cmd &` job) is recorded here so the
-   *  plane can reap it on shutdown AND report it in the ambient block. Jobs outlive the
-   *  CALL, never the harness. Keyed per agent → ownership. */
+  /** Per-SESSION background-job registry (§9): each command runs in its own process group;
+   *  a group that still has members after the call (a `cmd &` job) is recorded here so the
+   *  shell can reap it on shutdown AND report it in the ambient block. Jobs outlive the
+   *  CALL, never the harness. One set per shell → ownership. */
   jobs?: Set<Job>;
   state?: BashState; // sticky cwd, published for the plane's ambient snapshot
   /** Extra env ISSUED into every spawn (evaluated per call — placeholders can rotate).
@@ -164,16 +164,30 @@ export function bashTool(opts: BashOptions): ExecTool {
       // isolate the command in its own process group (setsid) so a runaway foreground tree
       // OR a leftover background job can be reaped by the group — see killGroup / opts.jobs
       const isolated = hasSetsid();
-      const child = new Deno.Command(isolated ? "setsid" : "bash", {
-        args: isolated ? ["bash", "-c", wrapped] : ["-c", wrapped],
-        cwd: state.cwd,
-        clearEnv: true,
-        env,
-        ...(opts.user ? { uid: opts.user.uid, gid: opts.user.gid } : {}),
-        stdin: "null",
-        stdout: "piped",
-        stderr: "piped",
-      }).spawn();
+      let child: Deno.ChildProcess;
+      try {
+        child = new Deno.Command(isolated ? "setsid" : "bash", {
+          args: isolated ? ["bash", "-c", wrapped] : ["-c", wrapped],
+          cwd: state.cwd,
+          clearEnv: true,
+          env,
+          ...(opts.user ? { uid: opts.user.uid, gid: opts.user.gid } : {}),
+          stdin: "null",
+          stdout: "piped",
+          stderr: "piped",
+        }).spawn();
+      } catch (err) {
+        // the shell could not stand where it was: the directory is gone, or this uid may
+        // not enter it. Said once, and the next call starts from the workspace — a place
+        // the shell can always stand — instead of every call failing before `cd` can run.
+        if (state.cwd === opts.workspace) throw err;
+        const lost = state.cwd;
+        state.cwd = opts.workspace;
+        throw new Error(
+          `${lost}: cannot stand there (${err instanceof Error ? err.message : String(err)})` +
+            ` — the next call starts in ${opts.workspace}`,
+        );
+      }
       const pgid = isolated ? child.pid : undefined; // setsid exec's bash → pid == group id
       const killGroup = () => {
         try {
@@ -252,11 +266,12 @@ export function bashTool(opts: BashOptions): ExecTool {
         const t = truncateTail(output.trimEnd(), { maxLines: max_lines, maxBytes: max_bytes });
         let text = t.text || "(no output)";
         if (t.truncated) {
-          const path = `${state.cwd}/.out/bash-${newId()}.log`;
-          await Deno.mkdir(`${state.cwd}/.out`, { recursive: true });
+          // the spill sits in the agent's own folder wherever the shell stands — never in a
+          // repo it walked into; written by the harness, the agent's to keep
+          const path = `${opts.workspace}/.out/bash-${newId()}.log`;
+          await Deno.mkdir(`${opts.workspace}/.out`, { recursive: true });
           await Deno.writeTextFile(path, output);
-          // the spill sits in the agent's cwd: written by the harness, the agent's to keep
-          await own(`${state.cwd}/.out`, opts.user);
+          await own(`${opts.workspace}/.out`, opts.user);
           await own(path, opts.user);
           text +=
             `\n\n[showing lines ${t.startLine}-${t.totalLines} of ${t.totalLines} — full output: ${path}]`;
@@ -294,14 +309,29 @@ export function bashTool(opts: BashOptions): ExecTool {
   };
 }
 
+/** One SESSION's shell on its agent's ground (§9): its own sticky cwd and its own job set.
+ *  Two sessions of one agent stand in one folder but never in one place — a client placing
+ *  one session's shell, or a `cd` in it, moves nothing for its siblings. */
 export interface ExecPlane {
   exec: Record<string, ExecTool>;
   /** Live environment lines for the ambient block (§5): cwd · git (if a repo) · background
    *  jobs (dead ones pruned here — the reliable, every-think place, not at registration). */
   ambient(): Promise<string[]>;
-  /** Kill every background job the agent left running (§9): called on harness shutdown so
+  /** Kill every background job this shell left running (§9): called on harness shutdown so
    *  nothing outlives the process that spawned it. */
   reap(): Promise<void>;
+  /** Where the next call starts: the principal's own directory while an interface attached
+   *  from one is connected (the door passes it along), the workspace when none is given.
+   *  The place is tried first, by the same spawn a call makes and as the same uid, so a
+   *  directory the agent cannot stand in is refused here — at the attach — and the shell
+   *  never moves. The shell's own `cd`s stick from there as ever. */
+  stand(path?: string): Promise<void>;
+}
+
+/** One AGENT's ground (§9): the workspace, the PATH cascade, the uid — prepared once.
+ *  `shell()` opens a session's shell on it. */
+export interface ExecGround {
+  shell(): ExecPlane;
 }
 
 /** Is a process group still alive? (harmless probe.) */
@@ -342,8 +372,8 @@ const ageOf = (since: number): string => {
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
 };
 
-/** The exec plane's ambient lines (§5): cwd · git (if a repo) · background jobs. Prunes dead
- *  groups from `jobs` here — the reliable, every-think place. Shared by the plane and task mode. */
+/** A shell's ambient lines (§5): cwd · git (if a repo) · background jobs. Prunes dead
+ *  groups from `jobs` here — the reliable, every-think place. Shared by the shell and task mode. */
 export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<string[]> {
   const lines = [`cwd: ${state.cwd}`];
   const git = await gitLine(state.cwd);
@@ -364,7 +394,7 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
   return lines;
 }
 
-/** Prepare ONE agent's exec plane: its workspace, PATH shims, job group. The workspace IS
+/** Prepare ONE agent's ground: its workspace, PATH shims, uid. The workspace IS
  *  the agent's own folder — `agents/<id>`, the same tree its docs and memories live in —
  *  because a shell is not org furniture: two agents sharing a cwd share half-written files,
  *  clobber each other's scratch, and read each other's notes with no policy in the way (§6
@@ -381,47 +411,77 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
  *    `<dir>/agents/<id>/bin`  what THIS agent installed for itself — its own folder, so a
  *                             binary it fetched is as private as its notes.
  *    the process's own PATH   inherited verbatim: the system underneath.
- *  `env` (optional) is issued into every spawn — the egress proxy's handoff vars (§9). */
-export async function installExecPlane(
+ *  `env` (optional) is issued into every spawn — the egress proxy's handoff vars (§9).
+ *  What is per SESSION — the sticky cwd, the job set — is the shell's, opened per session
+ *  on this ground. */
+export async function installExecGround(
   dir: string,
   agentId: string,
   env?: () => Record<string, string>,
   defaultTimeoutMs?: number, // the system.bashTimeoutMs knob, funneled by main
-): Promise<ExecPlane> {
+): Promise<ExecGround> {
   const workspace = `${dir}/agents/${agentId}`;
   const shipped = new URL("../bin", import.meta.url).pathname;
   const binPath = `${shipped}:${dir}/org/bin:${workspace}/bin`;
   await Deno.mkdir(workspace, { recursive: true });
   await Deno.mkdir(`${dir}/org/bin`, { recursive: true });
   await Deno.mkdir(`${workspace}/bin`, { recursive: true });
-  const jobs = new Set<Job>();
-  const state: BashState = { cwd: workspace };
   const user = agentUser(agentId);
   // the folder is the agent's: the seeded docs and `bin/` were laid by the harness, and
   // the uid that works here must be able to edit them
   await ownTree(workspace, user);
   if (user) console.error(`[exec] ${agentId}: spawns run as uid ${user.uid}`);
   return {
-    exec: {
-      bash: bashTool({
-        workspace,
-        binPath,
-        defaultTimeoutMs,
-        jobs,
-        state,
-        ...(env ? { env } : {}),
-        ...(user ? { user } : {}),
-      }),
-    },
-    ambient: () => bashAmbient(state, jobs),
-    reap() {
-      for (const { pgid } of jobs) {
-        try {
-          Deno.kill(-pgid, "SIGKILL");
-        } catch { /* already gone */ }
-      }
-      jobs.clear();
-      return Promise.resolve();
+    shell(): ExecPlane {
+      const jobs = new Set<Job>();
+      const state: BashState = { cwd: workspace };
+      return {
+        exec: {
+          bash: bashTool({
+            workspace,
+            binPath,
+            defaultTimeoutMs,
+            jobs,
+            state,
+            ...(env ? { env } : {}),
+            ...(user ? { user } : {}),
+          }),
+        },
+        ambient: () => bashAmbient(state, jobs),
+        async stand(path?: string) {
+          if (path === undefined) {
+            state.cwd = workspace;
+            return;
+          }
+          try {
+            await new Deno.Command("bash", {
+              args: ["-c", ":"],
+              cwd: path,
+              clearEnv: true,
+              ...(user ? { uid: user.uid, gid: user.gid } : {}),
+              stdin: "null",
+              stdout: "null",
+              stderr: "null",
+            }).spawn().status;
+          } catch (err) {
+            throw new Error(
+              `${path}: the agent cannot stand there (${
+                err instanceof Error ? err.message : String(err)
+              })`,
+            );
+          }
+          state.cwd = path;
+        },
+        reap() {
+          for (const { pgid } of jobs) {
+            try {
+              Deno.kill(-pgid, "SIGKILL");
+            } catch { /* already gone */ }
+          }
+          jobs.clear();
+          return Promise.resolve();
+        },
+      };
     },
   };
 }

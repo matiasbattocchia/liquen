@@ -18,6 +18,7 @@ import { scoped } from "./policy.ts";
 import { type AgentConfig, xi } from "./xi.ts";
 import { scripted } from "./testing.ts";
 import type {
+  ControlEvent,
   Draft,
   Event,
   MessageEvent,
@@ -478,6 +479,93 @@ Deno.test({
     try {
       const mode = (await Deno.stat(`${dir}/agents/ana/door.sock`)).mode! & 0o777;
       assertEquals(mode, 0o600);
+    } finally {
+      await down();
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a message says where it was typed, and the hang-up takes the shell home",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
+    const log = await openLog(`${dir}/log`);
+    const seen: [string, string | undefined][] = [];
+    const doors = await installDoors(dir, [{
+      ...AGENT,
+      port: () => log,
+      stand: (session, p) => {
+        if (p === "/nowhere") {
+          return Promise.reject(new Error(`${p}: the agent cannot stand there`));
+        }
+        seen.push([session, p]);
+        return Promise.resolve();
+      },
+    }]);
+    try {
+      const client = await rawClient(dir);
+      // where the principal stands is where the agent's shell starts — from the attach on
+      const r = await client.request({ op: "tail", cwd: "/tmp" });
+      assertEquals(r.ok, true);
+      assertEquals(seen, [["mind", "/tmp"]]);
+      // a message moves nothing: the place is the attachment's
+      await client.request({ op: "message", text: "hola" });
+      assertEquals(seen, [["mind", "/tmp"]]);
+      // a place the agent cannot stand in refuses the attach itself, and nothing is tailing
+      const other = await rawClient(dir);
+      const bad = await other.request({ op: "tail", cwd: "rel/ative" });
+      assertEquals(bad.ok, false);
+      assertMatch(String(bad.error), /absolute/);
+      const refused = await other.request({ op: "tail", session: "build", cwd: "/nowhere" });
+      assertEquals(refused.ok, false);
+      assertMatch(String(refused.error), /cannot stand there/);
+      assertEquals(seen, [["mind", "/tmp"]]);
+      // the place is the SESSION's: another session's shell stands where its own client is
+      const ok = await other.request({ op: "tail", session: "build", cwd: "/opt" });
+      assertEquals(ok.ok, true);
+      assertEquals(seen, [["mind", "/tmp"], ["build", "/opt"]]);
+      // a client leaves: the shell it placed goes back to the workspace, the other's stays
+      client.conn.close();
+      await client.settle(() => seen.length === 3);
+      assertEquals(seen[2], ["mind", undefined]);
+      other.conn.close();
+      await other.settle(() => seen.length === 4);
+      assertEquals(seen[3], ["build", undefined]);
+    } finally {
+      await doors.close();
+      await log.close();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a control verb is the principal's word in the session's room, classified",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { dir, log, down } = await up();
+    try {
+      const client = await rawClient(dir);
+      const r = await client.request({ op: "control", kind: "cancel" });
+      assertEquals(r.ok, true);
+      const [row] = await log.read({ types: ["control"] }) as ControlEvent[];
+      assertEquals(row.id, r.id);
+      assertEquals(row.payload.control, "cancel");
+      assertEquals(row.agent, { id: "ana", session_id: "mind" }); // the principal's half
+      assertEquals(row.payload.turn_id, undefined);
+      assertEquals(row.envelope.conversation.address, "mind@ana");
+      // the vocabulary is closed: a word the classifier does not know is refused
+      const bad = await client.request({ op: "control", kind: "faster" });
+      assertEquals(bad.ok, false);
+      assertMatch(String(bad.error), /stop, cancel/);
+      // …and a named session's room is where its own cancel lands
+      const named = await client.request({ op: "control", kind: "cancel", session: "build" });
+      assertEquals(named.ok, true);
+      const rows = await log.read({ types: ["control"] });
+      assertEquals(rows.at(-1)!.envelope.conversation.address, "build@ana");
     } finally {
       await down();
     }

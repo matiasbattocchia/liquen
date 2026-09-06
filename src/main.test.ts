@@ -9,7 +9,8 @@ import { start } from "./main.ts";
 import { openLog } from "./store/log.ts";
 import type { AgentConfig } from "./xi.ts";
 import type { Policy } from "./policy.ts";
-import type { Draft, Event, MessageEvent } from "./types.ts";
+import type { ControlEvent, Draft, Event, MessageEvent, ToolResultEvent } from "./types.ts";
+import { isCancelled } from "./render.ts";
 import type { ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
 import { type OrgConfig, readConfig } from "./config.ts";
@@ -564,4 +565,79 @@ Deno.test({
       await Deno.remove(dir, { recursive: true });
     }
   },
+});
+
+/** The principal's cancel, as the door lands it: a control row in the session's room. */
+function cancel(mind: string): Draft<Event> {
+  return {
+    ts: new Date().toISOString(),
+    type: "control",
+    payload: { control: "cancel" },
+    agent: { id: mind.split("@")[1], session_id: mind.split("@")[0] },
+    envelope: { service: "local", connection_address: "agent", conversation: { address: mind } },
+    parts: [{ type: "text", kind: "text", text: "/cancel" }],
+  } as Draft<Event>;
+}
+
+Deno.test("a cancel mid-act kills the running tool: its result says so and the turn stops", async () => {
+  const dir = await Deno.makeTempDir();
+  const { transport, calls } = scripted([
+    canned(
+      [{ kind: "tool_use", name: "bash", input: { command: "echo started; sleep 10" } }],
+      "tool_use",
+    ),
+    reply("never"),
+  ]);
+  const main = await start({ dir, debounceMs: 0, principals: [agent("1")] }, { transport });
+  try {
+    await main.log.publish(principalMsg("mind@a1", "hacé algo largo"));
+    await waitFor(async () => (await main.log.read({ types: ["tool_use"] })).length === 1);
+    await new Promise((r) => setTimeout(r, 200)); // the shell is in its sleep
+    await main.log.publish(cancel("mind@a1"));
+    const closing = async () => (await main.log.read({ types: ["control"] })).filter(isCancelled);
+    await waitFor(async () => (await closing()).length === 1);
+    const [result] = await main.log.read({ types: ["tool_result"] }) as ToolResultEvent[];
+    assertEquals(result.parts[0].data.cancelled, true);
+    assertEquals(result.parts[0].data.is_error, true);
+    assert(String(result.parts[0].data.output).includes("started")); // what ran, kept
+    const [stop] = await closing() as ControlEvent[];
+    assertEquals(stop.agent, undefined); // the harness's word, not the principal's
+    assertEquals(stop.payload.turn_id, undefined); // unstamped: the turn ends here
+    assertEquals(await main.log.read({ types: ["error"] }), []); // nothing failed
+    await new Promise((r) => setTimeout(r, 300)); // the agent idles on it: no further step
+    assertEquals(calls(), 1);
+  } finally {
+    await main.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a cancel mid-think aborts the model call: no reply, the turn closes on the cancel", async () => {
+  const dir = await Deno.makeTempDir();
+  let entered!: () => void;
+  const calling = new Promise<void>((r) => (entered = r));
+  let calls = 0;
+  // a model call that runs until its signal says otherwise — the SDK's own abort shape
+  const transport: ModelTransport = (_params, _emit, _meta, signal) => {
+    calls++;
+    entered();
+    return new Promise((_, reject) =>
+      signal!.addEventListener("abort", () => reject(new Error("Request was aborted.")))
+    );
+  };
+  const main = await start({ dir, debounceMs: 0, principals: [agent("1")] }, { transport });
+  try {
+    await main.log.publish(principalMsg("mind@a1", "pensá mucho"));
+    await calling;
+    await main.log.publish(cancel("mind@a1"));
+    const closing = async () => (await main.log.read({ types: ["control"] })).filter(isCancelled);
+    await waitFor(async () => (await closing()).length === 1);
+    assertEquals(await main.log.read({ types: ["error"] }), []); // nothing failed
+    assertEquals((await main.log.read({ types: ["message"] })).filter((e) => e.agent).length, 0);
+    await new Promise((r) => setTimeout(r, 300));
+    assertEquals(calls, 1); // no retry: the principal spoke, not the weather
+  } finally {
+    await main.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
 });

@@ -1828,3 +1828,53 @@ proxy's egress allowlist and Authorization normalization, which DESIGN lists as 
 the proxy does not yet have. Also seen in passing: `conversations/` is created by the
 connectors with the process umask, so on the container every agent uid can read every
 conversation's media shelf — the log hides the rows, the disk does not hide the bytes.
+
+## The shell stands with its principal, the org speaks in LANG, and `/cancel` cuts a turn (2026-09-05) — LANDED
+
+Three parked items from the audit, closed together.
+
+### Locale
+
+`org.locale` is live: it reaches every agent shell and every media processor as `LANG`,
+over the harness's own inherited value (`main.ts` issues it into the ground's env;
+`processors.ts` sets it on the spawn). Linux draws no line between a locale and a
+language, and neither does the catalog: the shipped transcriber takes the language half of
+`LANG` for qwen-asr's language name. No `MU_`-prefixed variable is issued anywhere: the
+environment carries only secrets, pointers, and facts under the names programs already
+read. `config.jsonc` here now says `es_AR.UTF-8` — the bare `es_AR` is not an installed
+locale name, and glibc falls back to C silently.
+
+### cwd
+
+The exec plane is split: one GROUND per agent (`installExecGround` — the workspace, the
+PATH cascade, the uid, prepared once) and one SHELL per session on it (`ExecGround.shell()`
+— its own sticky cwd and job set). Main opens a session's shell on first contact and reaps
+every shell at teardown. The truncation spill lives at `{workspace}/.out/` whatever
+directory the shell stands in. A door client's `tail` carries the directory it attached
+from (`mu repl` and `mu cli` send `Deno.cwd()`); the door hands it to THAT session's shell
+(`DoorAgent.stand(session, path)`) before the tail opens, and the hang-up returns every
+shell the client placed to the workspace. `stand` tries the place first — a bash spawn
+there, as the agent's uid — so a directory the agent cannot enter refuses the attach:
+`mu repl` and `mu cli` exit with the place named and nothing is written. A cwd lost AFTER
+the placement — removed under the shell — fails the spawn once with the place named, and
+the next call starts from the workspace, so the shell never wedges on a directory `cd`
+cannot leave because bash never starts.
+
+### Cancel
+
+The REPL's `/cancel` is the door's `control` verb: a `control` row in the session's room,
+the principal's half like a message (stamped, no `turn_id`), kind in the payload, the word
+as text. It is transparent in render (a run flows across it, nothing draws) and never
+wakes. xi arms an `AbortController` as it takes the lease and hands it to main through the
+new `interrupt` port; main's raw tail fires it when a `control` row lands in that session's
+room. A think passes the signal down `nu → mu → transport` (a fourth transport parameter,
+metered forwarded; the Anthropic stream takes it as its request `signal`), the request is
+aborted and the step is not retried. An act passes it to every tool in the batch — bash
+already killed its process group on it — and the cut results carry `cancelled: true`. Both
+close the turn on the harness's own `control` row (`cancelled` in `render.ts`: unstamped,
+`payload.control: "cancelled"`, text "cancelled by your principal — the turn stopped here"),
+so `decide` idles until the next input. It is not an error row because nothing failed: the
+REPL paints it dim, the CLI does not count it as failure, and the model reads it as a
+`[system]` line without the `error:` prefix. A cancel that
+lands while the window is being read still closes that turn. Ingest reclassification of a
+principal's "stop"/"cancel" on a chat surface stays open: the door is the only producer.

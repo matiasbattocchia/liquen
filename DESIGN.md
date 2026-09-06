@@ -243,7 +243,7 @@ arrives through the agent's scoped subscription, already readable (§6).
 | `tool_use` · `tool_result` | ours **yes** · another session's **no** (never react to others' tools) |
 | `permission_response` | **yes** (the human moved — the settlement is now derivable) |
 | `alarm` | **yes** — a scheduled wake arriving with its note (§10) |
-| `control` | **no** — it never *starts* work. Cancelling a running turn is a `control` event xi checks for at tool boundaries (§10), log-derived because an out-of-process invocation can't be signalled |
+| `control` | **no** — it never *starts* work; it ENDS it. A running turn arms an interrupt as it takes the lease (xi's `interrupt` port); main's tail fires it when a `control` row lands in that session's room — log-derived, because an out-of-process invocation can't be signalled |
 | `summary` | **yes** — a checkpoint DISPLACES a turn (§5): its insert carries the displaced think forward |
 | `permission_request` · `thinking` · *(unknown)* | **no** (spectators) |
 | `error` | **no** — and this one is policy, not economy: a logged error is a PERMANENT failure until something new arrives (transient ones were already retried inside nu before one was written). `decide` says the same from the window side, via the trailing-error rule. Waking here would hot-loop a failing think with no backoff |
@@ -468,13 +468,24 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     emitting and (if needed) kills a background process via the background-suite kill.
     (`cancel_pending` is **not** a dedicated tool — it decomposes into "stop emitting" +
     the existing kill.)
-  - *Hard (nu-mediated, guaranteed)*: whole-message reserved word (ingest → `control`) or
-    UI button → nu kills in-flight acts, writes **cancelled tool_results** (count toward
-    barriers), voids pending gates. **Undirected — affects all the agent's in-flight work.**
-- **`control` is ingest-classified** (a principal reserved-word in self-talk), routed to
-  nu's stop-handler (`act`). Not "pre-xi" — it's classified at ingest, xi routes the type.
+  - *Hard (harness-mediated, guaranteed)*: a `control` row in the session's room — the
+    door's `control` verb (the REPL's `/cancel`), or a whole-message reserved word ingest
+    reclassifies — fires the running turn's interrupt. What it cuts depends on where the
+    turn is: a **think** has its model request aborted and answers nothing; an **act** has
+    its running tools killed (bash: the whole process group) and writes **cancelled
+    tool_results** (count toward barriers, `cancelled: true`). Either way the turn closes on
+    the harness's own `control` row — unstamped, `payload.control: "cancelled"`, the text
+    "cancelled by your principal — the turn stopped here" — so the agent idles instead of
+    narrating what it was told to drop, until something new arrives. Nothing failed, so
+    it is not an `error`: the surfaces show it dim, the CLI does not count it, and the
+    model reads it as a `[system]` line. **Undirected — affects all the session's
+    in-flight work.** The principal's row itself is transparent (§5): their word draws
+    nothing; its consequence is what the model reads.
+- **`control` is classified at its source** — the door emits it typed (a button, a slash
+  word), ingest reclassifies a principal's reserved word in self-talk — and xi routes the
+  type: it starts nothing (the wake table), main's tail fires the interrupt.
 
-In v0's single session, `stop` = cancel the agent's current work → idle. *(Per-conversation
+In v0's single session, `stop` = cancel the session's current work → idle. *(Per-conversation
 **takeover/hold** and — in the deferred tree — `cause`-scoped stop are deferred, §10.)*
 
 ### The clock
@@ -672,7 +683,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | type | producer *(model→role)* | consumer *(→ LLM role)* | xi | type-specific fields |
 |---|---|---|---|---|
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
-| `control` | ingest (reclassified) | **user** (context; nu acts) | **act** (hard-stop) | parts(raw) · payload{control} |
+| `control` | the door (typed: `/cancel`) · ingest (reclassified) · xi/nu (the `cancelled` closing) | the principal's: transparent — its consequence renders; the harness's: `[system] cancelled by your principal…` | the principal's **interrupts** the running turn (§2), never a wake; the harness's closes it — `decide` idles on a trailing one | parts(text: the word) · payload{control: stop · cancel · cancelled} |
 | `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
 | `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `[system]` text | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
@@ -1450,7 +1461,7 @@ Returns **raw events, type-filtered** (messages; never tool/permission noise).
 
 - **An agent runs MANY sessions**, each a long-running conversation of its own —
   `mind@<agent>` the default, `build@<agent>` a sibling — over ONE identity: one home,
-  one docs cascade, one memory, one exec plane, one permission table, one registry row.
+  one docs cascade, one memory, one exec ground, one permission table, one registry row.
   A session's runtime identity is the `(agent_id, session_id)` pair (`session_id` holds
   the bare name; bare names collide across agents, so every authorship comparison takes
   the pair); its address is the pair's spelling.
@@ -1807,13 +1818,18 @@ The `bash` tool and the binaries take their semantics from the two references �
 truncation discipline and edit engine, Claude Code's timeout and workspace discipline:
 
 - **`bash(command, timeout?)`** — starts in the agent's **workspace**, which IS its own
-  scope folder (`{dir}/agents/<id>`): one plane per agent, so the cwd, the `.out` spool and
-  the background job set are private to it, and the docs a shell writes land where the doc
+  scope folder (`{dir}/agents/<id>`): one GROUND per agent — the folder, the PATH cascade,
+  the uid — and one SHELL per session on it, so where a session stands and what it left
+  running is never another's, while the docs a shell writes land where the doc
   cascade already reads (`awrite memories/x.md` from where it stands). Binaries stay
   org-wide. **cwd persists between calls like a terminal** (a pwd sentinel appended to each
-  command reports the shell's final dir + real exit code; env/venv state does NOT persist)
-  — the tbench audit showed the model re-`cd`ing on nearly every call under the old
-  fresh-cwd contract. PATH is prefixed with the scope cascade in binary form — `src/bin` · `{dir}/org/bin` ·
+  command reports the shell's final dir + real exit code; env/venv state does NOT persist).
+  An interface's `message` carries the directory it was typed from, and the session's
+  shell starts THERE while that connection lives — the principal's shell and the agent's
+  stand in the same place — returning to the workspace when it hangs up. A place the
+  shell cannot stand in (gone, or closed to its uid) is said once and the next call starts
+  from the workspace. The `.out` spool stays in the workspace wherever the shell stands, so
+  a spill never lands in a repo the agent walked into. PATH is prefixed with the scope cascade in binary form — `src/bin` · `{dir}/org/bin` ·
   `{dir}/agents/<id>/bin` — ahead of the process's inherited PATH. stdout+stderr
   merged in arrival order. **Default timeout 120s** (a hung command otherwise holds the turn lock until
   the TTL steal); long work uses the background pattern (`cmd > log 2>&1 &` + `tail`).
@@ -1903,10 +1919,13 @@ Under Postgres the door gives way to RLS — the script client is unchanged.
 
 **The door is also the attach seam.** An interface — the REPL, a one-turn CLI, whatever
 else — never holds a log handle: it speaks to its agent through the same socket, which
-serves four ops: `call` (above), `message` (the principal's half of the complex, no
-`turn_id`), `permission_response` (a gate answered), and `tail` (the agent's scoped view
-pushed from a cursor, model deltas riding the same wire — `onDelta` is a fan-out over the
-tailers). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
+serves five ops: `call` (above), `message` (the principal's half of the complex, no
+`turn_id`), `control` (the principal's reserved word, typed — `cancel` cuts the session's
+running turn, §2), `permission_response` (a gate answered), and `tail` (the agent's scoped
+view pushed from a cursor, model deltas riding the same wire — `onDelta` is a fan-out over
+the tailers; its `cwd` is where the client stands, and the session's shell starts there for
+as long as the connection lives — tried as the agent's uid before the tail opens, so a place
+the agent cannot stand in refuses the attach itself). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
 begins, `{status: "idle", after}` when `decide` answers `ignore` — the one fact an attach
 client cannot compute, since only the deciding read runs under the lease. `after` is the
 last event that read saw, so a client that wrote id M knows its line was weighed once

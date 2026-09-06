@@ -272,8 +272,9 @@ export interface Payload {
    *  wears: `@` a person (the default when absent), `#` a conversation. Unordered —
    *  pair by name, not position. */
   mentions?: { address: string; name?: string; type?: "@" | "#" }[];
-  /** Ingest-classified reserved word from the agent's principal (§3 classifier). */
-  control?: ControlKind;
+  /** A `control` row's kind: the principal's reserved word (§3 classifier), or the
+   *  harness's `cancelled` acknowledging that it carried one out (§2). */
+  control?: ControlKind | "cancelled";
 }
 
 /** The event's SIDECAR (§3): auditable, droppable, `json_patch`-merged on echo-merge —
@@ -370,11 +371,14 @@ export interface MessageEvent extends EventBase {
   parts: Part[];
 }
 
-/** A principal reserved word reclassified at ingest → nu hard-stop (§2, §3). */
+/** The hard stop (§2), both halves. The principal's word — the door's verb, or a reserved
+ *  word reclassified at ingest — is stamped like a message and fires the running turn's
+ *  interrupt. The harness's `cancelled` is unstamped and closes the turn it cut: its text
+ *  is what the model reads, and it is the last row until the principal speaks again. */
 export interface ControlEvent extends EventBase {
   type: "control";
   parts: Part[];
-  payload: Payload & { control: ControlKind };
+  payload: Payload & { control: ControlKind | "cancelled" };
 }
 
 /** mu's tool request. `turn_id` groups a parallel batch for the barrier (§2). */

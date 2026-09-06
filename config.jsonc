@@ -19,8 +19,8 @@
   "org": {
     // the org's clock (IANA) — every rendered stamp, cron and sleep span reads it
     "timezone": "America/Argentina/Buenos_Aires",
-    // parked until the i18n seam — render is English for now
-    "locale": "es_AR",
+    // the org's locale (es_AR.UTF-8) — LANG in every agent shell and media processor, so tools and transcribers speak the org's language; unset, they inherit the harness's
+    "locale": "es_AR.UTF-8",
     // backlog an agent inherits at boot; lower it to come up quietly
     "backlogHours": 24,
     // every agent's defaults — an agents.<name> entry re-declares these, key by key

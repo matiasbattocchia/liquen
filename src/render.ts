@@ -20,8 +20,11 @@ import { MIND, routedSession } from "./session.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
   AlarmEvent,
+  ControlEvent,
   Conversation,
   DataPart,
+  Draft,
+  Envelope,
   ErrorEvent as HarnessErrorEvent, // aliased: `ErrorEvent` is a DOM global in Deno's lib
   Event,
   EventId,
@@ -203,7 +206,7 @@ export function applySummary(events: Event[]): Event[] {
  *  every voice but the model's own, in every conversation but the session's — the
  *  principal's phone-sent lines are lines of their rooms, part of the run like any peer's.
  *  Rows that render nowhere no matter the region (gate cards, their verdicts, the `/y`
- *  line itself) are TRANSPARENT: the run flows across them. What ends a run is a rendered
+ *  line itself, a `/cancel`) are TRANSPARENT: the run flows across them. What ends a run is a rendered
  *  block of the machine's own chain — the agent's voice, a tool cycle, a turn boundary —
  *  so the order the API constrains and the weld depends on is never touched. Nor is
  *  history rewritten: a straggler that arrives after the agent already answered stays
@@ -218,6 +221,7 @@ function byEventTime(
   const member = (e: Event) => e.type === "message" && !ownVoice(e, session);
   const transparent = (e: Event) =>
     e.type === "permission_request" || e.type === "permission_response" ||
+    (e.type === "control" && !isCancelled(e)) ||
     (e.type === "message" && !ownVoice(e, session) &&
       e.envelope.conversation.address === here && parseVerdict(textOf(e)) !== undefined);
   for (let i = 0; i < out.length; i++) {
@@ -641,6 +645,10 @@ function renderMessages(
       place("user", { type: "text", text: `[system] error: ${errorTextOf(e)}` });
       continue;
     }
+    if (isCancelled(e)) {
+      place("user", { type: "text", text: `[system] ${textOf(e)}` });
+      continue;
+    }
     if (e.type === "alarm") {
       place("user", { type: "text", text: alarmLine(e) });
       continue;
@@ -680,6 +688,8 @@ function renderMessages(
       place("user", { type: "text", text: checkpointEl(e) });
     } else if (e.type === "error") {
       place("user", { type: "text", text: `[system] error: ${errorTextOf(e)}` });
+    } else if (isCancelled(e)) {
+      place("user", { type: "text", text: `[system] ${textOf(e)}` }); // nothing failed: it was stopped
     } else if (e.type === "alarm") {
       place("user", { type: "text", text: alarmLine(e) });
     } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
@@ -1143,6 +1153,25 @@ export function textOf(e: Event): string {
     .map((p) => (p as { text?: unknown }).text)
     .filter((t): t is string => typeof t === "string" && t.length > 0)
     .join(" ");
+}
+
+/** The harness's word for a turn the principal cut short (§2). The row is unstamped and
+ *  closes the turn: `decide` idles on it until something new arrives, and the model reads
+ *  it as a `[system]` line — not an error, nothing failed. */
+export const CANCELLED = "cancelled by your principal — the turn stopped here";
+
+export function cancelled(envelope: Envelope): Draft<ControlEvent> {
+  return {
+    ts: new Date().toISOString(),
+    type: "control",
+    envelope,
+    payload: { control: "cancelled" },
+    parts: [{ type: "text", kind: "text", text: CANCELLED }],
+  };
+}
+
+export function isCancelled(e: Event): boolean {
+  return e.type === "control" && e.payload.control === "cancelled";
 }
 
 function filesOf(e: Event): FilePart[] {

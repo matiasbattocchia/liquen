@@ -13,7 +13,7 @@ async function withTranscriber(
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
     media: string; // a real .ogg on disk for FileParts to point at
   }) => Promise<void>,
-  locale?: string,
+  org: { locale?: string } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
@@ -25,7 +25,7 @@ async function withTranscriber(
     subscribe: (l, o) => log.subscribe(l, o),
     publish: log.publish,
     command,
-    locale,
+    ...org,
     onError: (_e, err) => errors.push(err),
   });
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {
@@ -104,15 +104,36 @@ Deno.test("a voice note gets a transcript add-event; the sidecar caches the word
   });
 });
 
-Deno.test("the org's locale reaches the processor as MU_LOCALE — its own business there", async () => {
-  // stdin is the audio and stdout is the words, so the language rides the environment. The
-  // harness knows no ASR vocabulary: it hands over the locale and the processor decides.
-  await withTranscriber('cat > /dev/null; printf "locale=%s" "$MU_LOCALE"', async (t) => {
-    await t.publish(voiceNote(t.media));
-    await t.waitFor(async () => (await t.transcripts()).length === 1);
-    const [tr] = await t.transcripts();
-    assertEquals(tr.parts[0], { type: "text", kind: "transcript", text: "locale=es_AR" });
-  }, "es_AR");
+Deno.test("the org's locale reaches the processor as LANG — its own business there", async () => {
+  // stdin is the audio and stdout is the words, so the org's locale rides the environment
+  // under the name every program reads. The harness knows no ASR vocabulary: the processor
+  // maps the language to its own.
+  await withTranscriber(
+    'cat > /dev/null; printf "%s" "$LANG"',
+    async (t) => {
+      await t.publish(voiceNote(t.media));
+      await t.waitFor(async () => (await t.transcripts()).length === 1);
+      const [tr] = await t.transcripts();
+      assertEquals(tr.parts[0], { type: "text", kind: "transcript", text: "es_AR.UTF-8" });
+    },
+    { locale: "es_AR.UTF-8" },
+  );
+});
+
+Deno.test("an org without a locale leaves the processor the harness's own", async () => {
+  await withTranscriber(
+    'cat > /dev/null; printf "%s" "${LANG-unset}"',
+    async (t) => {
+      await t.publish(voiceNote(t.media));
+      await t.waitFor(async () => (await t.transcripts()).length === 1);
+      const [tr] = await t.transcripts();
+      assertEquals(tr.parts[0], {
+        type: "text",
+        kind: "transcript",
+        text: Deno.env.get("LANG") ?? "unset",
+      });
+    },
+  );
 });
 
 Deno.test("a failing or silent processor publishes nothing", async () => {

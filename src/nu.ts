@@ -28,7 +28,7 @@ import type { DocEntry } from "./store/docs.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
-import { render, SILENCE } from "./render.ts";
+import { cancelled, render, SILENCE } from "./render.ts";
 import { type Effort, type ModelTransport, mu, type StepResult } from "./mu.ts";
 
 /** Re-exported so the layer above talks to nu, not past it (main → xi → nu → mu). */
@@ -79,6 +79,9 @@ export interface TurnInput {
   /** Media resolver for the trailing-region blocks (§5) — xi injects
    *  `store/media.loadMediaBlock`; render decides which uris to resolve. */
   loadMedia?: (uri: string) => { media_type: string; data: string } | null;
+  /** The turn's interrupt (§2): fired by the principal's cancel while the call is in
+   *  flight — the request is cut, and the turn closes on the `cancelled` row, unretried. */
+  signal?: AbortSignal;
 }
 
 /** nu's output IS events (the symmetry: events in → events out). The turn's outcome is not a
@@ -135,6 +138,7 @@ export async function nu(
     keepRecent: config.keepRecent,
     prompt: input.compactPrompt,
     turnId,
+    signal: input.signal,
   }, transport);
   if (summary) return [summary];
 
@@ -160,10 +164,13 @@ export async function nu(
         effort: config.effort,
         tools: input.tools,
         turnId,
+        signal: input.signal,
       },
       transport,
       emit,
     );
+    // the principal spoke, not the weather: a cut call is not retried
+    if (input.signal?.aborted) return [cancelled(here)];
     if (res.ok || !retryable(res.status)) break;
   }
   if (!res.ok) return [errorEvent(res.error)]; // unstamped ⇒ terminal (decide idles)

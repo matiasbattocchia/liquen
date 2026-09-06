@@ -83,7 +83,15 @@ w.hangup.then(() => {
   }
 });
 
-await w.request({ op: "tail", session }); // live: the transcript starts at our instruction
+// live: the transcript starts at our instruction. The agent's shell stands where its
+// principal does — a place it cannot stand in is the failure, before anything is sent.
+const t = await w.request({ op: "tail", session, cwd: Deno.cwd() });
+if (!t.ok) {
+  console.error(String(t.error));
+  leaving = true;
+  conn.close();
+  Deno.exit(1);
+}
 const r = await w.request({
   op: "message",
   text: instruction,

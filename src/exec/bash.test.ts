@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { bashTool, installExecPlane, type Job } from "./bash.ts";
+import { bashTool, installExecGround, type Job } from "./bash.ts";
 
 const live = () => new AbortController().signal;
 
@@ -13,7 +13,7 @@ async function withPlane(
   }) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
-  const { exec, reap } = await installExecPlane(dir, "a1");
+  const { exec, reap } = (await installExecGround(dir, "a1")).shell();
   try {
     const run = async (command: string, timeout?: number) =>
       String(await exec.bash.execute({ command, ...(timeout ? { timeout } : {}) }, live()));
@@ -133,6 +133,115 @@ Deno.test("bash: tail-truncation persists the full output and points at it", asy
     assertStringIncludes(full, "\n500\n"); // nothing silently lost
     assert(m![1].startsWith(`${wsOf(dir)}/.out/`));
   });
+});
+
+Deno.test("bash: the spill lands under the workspace wherever the shell stands", async () => {
+  await withPlane(async ({ run, dir }) => {
+    await Deno.mkdir(`${dir}/elsewhere`);
+    await run(`cd ${dir}/elsewhere`);
+    const out = await run("seq 1 3000");
+    const m = out.match(/full output: (\S+)]/);
+    assert(m, "footer names the persisted file");
+    assert(m![1].startsWith(`${wsOf(dir)}/.out/`), m![1]);
+  });
+});
+
+Deno.test("exec plane: stand() refuses a place the shell cannot stand in, and moves nothing", async () => {
+  const dir = await Deno.makeTempDir();
+  const plane = (await installExecGround(dir, "a1")).shell();
+  try {
+    const run = async (command: string) =>
+      String(await plane.exec.bash.execute({ command }, live()));
+    const gone = await assertRejects(() => plane.stand(`${dir}/nowhere`), Error);
+    assertStringIncludes(gone.message, `${dir}/nowhere`);
+    assertStringIncludes(gone.message, "cannot stand there");
+    if (Deno.uid() !== 0) { // root enters anything: the closed door is only a door to others
+      await Deno.mkdir(`${dir}/closed`);
+      await Deno.chmod(`${dir}/closed`, 0o000);
+      const closed = await assertRejects(() => plane.stand(`${dir}/closed`), Error);
+      assertStringIncludes(closed.message, `${dir}/closed`);
+      await Deno.chmod(`${dir}/closed`, 0o700);
+    }
+    assertEquals(await run("pwd"), await Deno.realPath(wsOf(dir))); // still home
+  } finally {
+    await plane.reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("exec plane: stand() moves where the next call starts; bare, it is the workspace", async () => {
+  const dir = await Deno.makeTempDir();
+  const plane = (await installExecGround(dir, "a1")).shell();
+  try {
+    const run = async (command: string) =>
+      String(await plane.exec.bash.execute({ command }, live()));
+    await Deno.mkdir(`${dir}/proj`);
+    await plane.stand(`${dir}/proj`);
+    assertEquals(await run("pwd"), await Deno.realPath(`${dir}/proj`));
+    await run("cd .."); // the shell's own moves still stick
+    assertEquals(await run("pwd"), await Deno.realPath(dir));
+    await plane.stand();
+    assertEquals(await run("pwd"), await Deno.realPath(wsOf(dir)));
+  } finally {
+    await plane.reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("exec ground: two sessions' shells share the folder, never the place or the jobs", async () => {
+  const dir = await Deno.makeTempDir();
+  const ground = await installExecGround(dir, "a1");
+  const mind = ground.shell();
+  const build = ground.shell();
+  try {
+    const run = (shell: typeof mind) => async (command: string) =>
+      String(await shell.exec.bash.execute({ command }, live()));
+    await Deno.mkdir(`${dir}/proj`);
+    await run(build)(`cd ${dir}/proj`);
+    assertEquals(await run(build)("pwd"), await Deno.realPath(`${dir}/proj`));
+    assertEquals(await run(mind)("pwd"), await Deno.realPath(wsOf(dir))); // unmoved
+    await run(build)("sleep 30 &");
+    assert((await build.ambient()).some((l) => l.startsWith("background jobs (1)")));
+    assert(!(await mind.ambient()).some((l) => l.startsWith("background jobs")));
+  } finally {
+    await mind.reap();
+    await build.reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("bash: a cwd the shell cannot stand in is said once, and the next call is home", async () => {
+  const dir = await Deno.makeTempDir();
+  const shell = (await installExecGround(dir, "a1")).shell();
+  try {
+    const run = async (command: string) =>
+      String(await shell.exec.bash.execute({ command }, live()));
+    await Deno.mkdir(`${dir}/gone`);
+    await shell.stand(`${dir}/gone`);
+    await Deno.remove(`${dir}/gone`);
+    const err = await assertRejects(() => run("pwd"), Error);
+    assertStringIncludes(err.message, `${dir}/gone`);
+    assertStringIncludes(err.message, wsOf(dir));
+    assertEquals(await run("pwd"), await Deno.realPath(wsOf(dir)));
+  } finally {
+    await shell.reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("bash: an issued LANG stands over the inherited one", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${dir}/workspace`, { recursive: true });
+    const bash = bashTool({
+      workspace: `${dir}/workspace`,
+      env: () => ({ LANG: "es_AR.UTF-8" }),
+    });
+    const out = String(await bash.execute({ command: 'echo "$LANG"' }, live()));
+    assertEquals(out, "es_AR.UTF-8");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("bash: the model can override the truncation limits", async () => {
@@ -265,7 +374,7 @@ Deno.test("bash: a backgrounded job returns immediately (pipe not held open)", a
 
 Deno.test("exec plane: reap() kills background jobs the agent left running (no orphans)", async () => {
   const dir = await Deno.makeTempDir();
-  const { exec, reap } = await installExecPlane(dir, "a1");
+  const { exec, reap } = (await installExecGround(dir, "a1")).shell();
   const marker = `mu_reap_${crypto.randomUUID().slice(0, 8)}`;
   try {
     // a detached background job that outlives the call — argv carries the marker (exec -a)
@@ -283,7 +392,7 @@ Deno.test("exec plane: reap() kills background jobs the agent left running (no o
 
 Deno.test("exec plane: ambient() reports cwd, git, and live background jobs", async () => {
   const dir = await Deno.makeTempDir();
-  const { exec, ambient, reap } = await installExecPlane(dir, "a1");
+  const { exec, ambient, reap } = (await installExecGround(dir, "a1")).shell();
   const marker = `mu_amb_${crypto.randomUUID().slice(0, 8)}`;
   try {
     // cwd only, no repo, no jobs
@@ -318,7 +427,7 @@ Deno.test("exec plane: ambient() reports cwd, git, and live background jobs", as
 
 Deno.test("exec plane: aread on a bytes file returns an ExecOutcome — path peeled, no mojibake", async () => {
   const dir = await Deno.makeTempDir();
-  const { exec, reap } = await installExecPlane(dir, "a1");
+  const { exec, reap } = (await installExecGround(dir, "a1")).shell();
   try {
     const png = `${wsOf(dir)}/dot.png`;
     await Deno.writeFile(png, new Uint8Array([137, 80, 78, 71]));
@@ -338,7 +447,7 @@ Deno.test("exec plane: aread on a bytes file returns an ExecOutcome — path pee
 
 Deno.test("exec plane: aread classifies by bytes when the extension says nothing", async () => {
   const dir = await Deno.makeTempDir();
-  const { exec, reap } = await installExecPlane(dir, "a1");
+  const { exec, reap } = (await installExecGround(dir, "a1")).shell();
   try {
     // an extension-less PNG: sniffed → media mark → attachment
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

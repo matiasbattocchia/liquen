@@ -46,12 +46,17 @@ Deno.test("a sparse file: a set key wins, a left-out key defaults", async () => 
     await Deno.writeTextFile(
       `${root}/config.jsonc`,
       JSON.stringify({
-        org: { timezone: "Europe/Madrid", agent: { effort: "low" } },
+        org: {
+          timezone: "Europe/Madrid",
+          locale: "es_ES.UTF-8",
+          agent: { effort: "low" },
+        },
         system: { debounceMs: 0 },
       }),
     );
     const cfg = await readConfig(root);
     assertEquals(cfg.org.timezone, "Europe/Madrid");
+    assertEquals(cfg.org.locale, "es_ES.UTF-8");
     assertEquals(cfg.org.agent.effort, "low");
     assertEquals(cfg.org.agent.model, "claude-sonnet-5"); // the default filled in
     assertEquals(cfg.system.debounceMs, 0);
