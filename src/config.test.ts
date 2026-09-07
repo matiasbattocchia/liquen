@@ -90,14 +90,17 @@ Deno.test("the roster: agents.<name> — sparse overrides, identity handles, che
       `${root}/config.jsonc`,
       JSON.stringify({
         agents: {
-          ana: { effort: "low", identity: { phone: "+549..." } },
+          ana: { effort: "low", identity: { name: "Ana", phone: "+549...", email: null } },
           bo: {},
         },
       }),
     );
     const cfg = await readConfig(root);
     assertEquals(Object.keys(cfg.agents), ["ana", "bo"]);
-    assertEquals(cfg.agents.ana, { effort: "low", identity: { phone: "+549..." } });
+    assertEquals(cfg.agents.ana, {
+      effort: "low",
+      identity: { name: "Ana", phone: "+549...", email: null },
+    });
   });
   await withDir(async (root) => {
     await Deno.writeTextFile(

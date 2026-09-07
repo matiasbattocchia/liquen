@@ -125,12 +125,22 @@ export interface AgentDefaults {
   sleepHours: string | null; // org-clock span "23-8"; null ⇒ never sleeps
 }
 
-/** One roster entry: overrides of `org.agent`, key by key, plus the handles a human knows
- *  the agent by (ingest's sender → principal classification). Everything else about the
- *  agent is discovered (connect flows) or derived (the home folder). */
+/** One roster entry: overrides of `org.agent`, key by key, plus the principal's identity —
+ *  the name the agent goes by (the principal's own, when the agent is their own) and the
+ *  handles a human is known by, which a `send` refuses to target (an agent never messages
+ *  its principal). Everything else about the agent is discovered (connect flows) or derived
+ *  (the home folder). Null is "not declared", the shape `mu init` writes. */
 export interface AgentEntry extends Partial<AgentDefaults> {
-  identity?: { email?: string; phone?: string };
+  identity?: Identity;
 }
+export interface Identity {
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+}
+const IDENTITY_KEYS = ["name", "email", "phone"] as const;
+const IDENTITY_DOC = "<name>: any org.agent key re-declared, plus identity — the principal's " +
+  "name (the agent goes by it) and the handles they are known by; null ⇒ not declared";
 
 export interface OrgConfig {
   system: {
@@ -298,7 +308,7 @@ const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
   org: "this deployment's identity — the clock, the backlog, and every agent's defaults",
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
-  agents: "the roster: every key is an agent — overrides of org.agent, plus declared handles",
+  agents: "the roster: every key is an agent, its folder and its unix user",
   connections: "the connectors' knobs — a subsection per connector, validated by its owner",
 };
 
@@ -415,9 +425,12 @@ export async function readConfig(root: string): Promise<OrgConfig> {
     const entry = asObject(body, `agents.${name}`);
     const { identity, ...over } = entry;
     mergeSection(over, AGENT, path, `agents.${name}`); // unknown keys error; values stay sparse
-    for (const key of Object.keys(asObject(identity, `agents.${name}.identity`))) {
-      if (key !== "email" && key !== "phone") {
+    for (const [key, v] of Object.entries(asObject(identity, `agents.${name}.identity`))) {
+      if (!(IDENTITY_KEYS as readonly string[]).includes(key)) {
         throw new Error(`${path}: unknown key "agents.${name}.identity.${key}"`);
+      }
+      if (v !== null && typeof v !== "string") {
+        throw new Error(`${path}: agents.${name}.identity.${key} must be a string or null`);
       }
     }
     validateAgent(over as Partial<AgentDefaults>, `${path}: agents.${name}`);
@@ -497,10 +510,11 @@ export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string
   lines.push(`  // ${SECTION_DOCS.processors}`, `  "processors": {`);
   emit("    ", PROCESSORS, cfg.processors as unknown as Record<string, unknown>);
   lines.push("  },");
-  lines.push(`  // ${SECTION_DOCS.agents}`, `  "agents": {`);
+  lines.push(`  // ${SECTION_DOCS.agents}`, `  "agents": {`, `    // ${IDENTITY_DOC}`);
   const agents = Object.entries(cfg.agents);
   agents.forEach(([name, entry], i) => {
-    lines.push(`    "${name}": ${JSON.stringify(entry)}${i < agents.length - 1 ? "," : ""}`);
+    const body = JSON.stringify(entry, null, 2).replaceAll("\n", "\n    ");
+    lines.push(`    "${name}": ${body}${i < agents.length - 1 ? "," : ""}`);
   });
   lines.push("  },");
   lines.push(`  // ${SECTION_DOCS.connections}`, `  "connections": {`);
@@ -527,7 +541,9 @@ export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string
 export function starterConfig(agents: string[]): OrgConfig {
   const cfg = defaults();
   cfg.org.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? DEFAULT_TIMEZONE;
-  for (const name of agents) cfg.agents[name] = {};
+  for (const name of agents) {
+    cfg.agents[name] = { identity: { name: null, email: null, phone: null } };
+  }
   return cfg;
 }
 
