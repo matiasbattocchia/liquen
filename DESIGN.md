@@ -478,7 +478,7 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     "cancelled by your principal — the turn stopped here" — so the agent idles instead of
     narrating what it was told to drop, until something new arrives. Nothing failed, so
     it is not an `error`: the surfaces show it dim, the CLI does not count it, and the
-    model reads it as a `[system]` line. **Undirected — affects all the session's
+    model reads it as a `<system>` line. **Undirected — affects all the session's
     in-flight work.** The principal's row itself is transparent (§5): their word draws
     nothing; its consequence is what the model reads.
 - **`control` is classified at its source** — the door emits it typed (a button, a slash
@@ -683,14 +683,14 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | type | producer *(model→role)* | consumer *(→ LLM role)* | xi | type-specific fields |
 |---|---|---|---|---|
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
-| `control` | the door (typed: `/cancel`) · ingest (reclassified) · xi/nu (the `cancelled` closing) | the principal's: transparent — its consequence renders; the harness's: `[system] cancelled by your principal…` | the principal's **interrupts** the running turn (§2), never a wake; the harness's closes it — `decide` idles on a trailing one | parts(text: the word) · payload{control: stop · cancel · cancelled} |
+| `control` | the door (typed: `/cancel`) · ingest (reclassified) · xi/nu (the `cancelled` closing) | the principal's: transparent — its consequence renders; the harness's: `<system kind="cancelled">` | the principal's **interrupts** the running turn (§2), never a wake; the harness's closes it — `decide` idles on a trailing one | parts(text: the word) · payload{control: stop · cancel · cancelled} |
 | `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
-| `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `[system]` text | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
+| `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `<system kind="outcome">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · xi (the principal's `/y`·`/n`, any surface) · the REPL | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?}) · payload{ref_id→tool_use} |
 | `summary` | nu (the checkpoint IS the turn, §5) | leading text block (§5) | **think** (it displaced one) | parts(text) · payload{covers} |
-| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `[system] scheduled wake: <note>` | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
+| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `<system kind="wake">` carrying the note | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
 | `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
 
 - **mu emits 3**: `message` (say) + `tool_use` + `thinking`. Everything else is world + runtime.
@@ -742,8 +742,9 @@ Every inbound passes through ingest, which does identity resolution **and** may 
   - **The verdict is a second, later call.** When it lands, xi runs the tool on the model's
     behalf. That outcome cannot be a `tool_result` block — its pair is spent — so it is a
     `tool_result` EVENT marked `payload.deferred`, which render narrates in the harness's
-    voice (`[system] send(to: Vivian) → sent`) and the mirror carries to the principal
-    who approved it. It collapses with the rest of the tool traffic at the boundary (§5).
+    voice (`<system kind="outcome">send(to: Vivian) → sent</system>`) and the mirror carries
+    to the principal who approved it. It collapses with the rest of the tool traffic at the
+    boundary (§5).
   - **What is still waiting lives in the ANCHOR, not the transcript** (§5): a pending gate
     is state, not history — the transcript already closed those calls. The anchor is
     rewritten every turn, so an ask that gets answered simply stops being listed, and the
@@ -1297,8 +1298,12 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
 - **time** — every `<msg>` line carries its own absolute stamp (`at="12 Aug 9:50"`), so
   there are NO separator blocks: separators were cross-message state measured in render
   order (not a timeline after the per-conversation partition) and they broke `<conv>`
-  clustering. One fact per line. **`[system] error:` markers** are plain text likewise:
-  they precede what they mark, so they can't be (trailing-only) system blocks.
+  clustering. One fact per line. **`<system kind="…">` elements** are plain text likewise:
+  they precede what they mark, so they can't be (trailing-only) system blocks. The kind is
+  which word the harness is saying — `error`, `cancelled`, `wake`, `outcome`. Every voice
+  in the user role wears a tag render writes and escapes — `<conv>`, `<principal>`,
+  `<system>`, `<checkpoint>` — so a peer who types one into a message gets it back as
+  text, and the harness's word cannot be forged from the world.
 - **summaries** — `summary` events aging out distant messages; rendered as the window's
   LEADING plain-text block (the trailing-only rule bars a leading system block). See
   "Compaction" below.

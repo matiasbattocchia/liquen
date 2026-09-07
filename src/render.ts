@@ -682,11 +682,11 @@ function renderMessages(
       continue;
     }
     if (e.type === "error") {
-      place("user", { type: "text", text: `[system] error: ${errorTextOf(e)}` });
+      place("user", { type: "text", text: systemEl("error", errorTextOf(e)) });
       continue;
     }
     if (isCancelled(e)) {
-      place("user", { type: "text", text: `[system] ${textOf(e)}` });
+      place("user", { type: "text", text: systemEl("cancelled", textOf(e)) });
       continue;
     }
     if (e.type === "alarm") {
@@ -727,9 +727,9 @@ function renderMessages(
     if (e.type === "summary") { // boundary may be -1 — the leading summary lands here
       place("user", { type: "text", text: checkpointEl(e) });
     } else if (e.type === "error") {
-      place("user", { type: "text", text: `[system] error: ${errorTextOf(e)}` });
+      place("user", { type: "text", text: systemEl("error", errorTextOf(e)) });
     } else if (isCancelled(e)) {
-      place("user", { type: "text", text: `[system] ${textOf(e)}` }); // nothing failed: it was stopped
+      place("user", { type: "text", text: systemEl("cancelled", textOf(e)) }); // nothing failed: it was stopped
     } else if (e.type === "alarm") {
       place("user", { type: "text", text: alarmLine(e) });
     } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
@@ -739,7 +739,7 @@ function renderMessages(
       // the second half of a non-blocking gate (§9): the principal ruled, the harness ran
       // the call for us, and this is it reporting back — in its own voice, because the
       // tool_use it answers is spent. Narration, so it can stand alone in any position.
-      place("user", { type: "text", text: `[system] ${outcomeLine(e)}` });
+      place("user", { type: "text", text: systemEl("outcome", outcomeLine(e)) });
     } else if (e.type === "tool_result" && welded.has(e.payload.ref_id)) {
       place("user", toolResultBlock(e, mediaBlocks(e)));
     } else if (e.type === "message") {
@@ -1103,6 +1103,14 @@ function checkpointEl(e: SummaryEvent): string {
   return `<checkpoint>\n${escText(textOf(e))}\n</checkpoint>`;
 }
 
+/** The harness's own word to the model — an element, and its body escaped, so the tag is
+ *  render's to write and nobody else's: a peer who types one into a message renders it as
+ *  text, since every world body is escaped on the way in. `kind` says which word it is,
+ *  so the four read apart without the sentence having to announce itself. */
+function systemEl(kind: "error" | "cancelled" | "wake" | "outcome", text: string): string {
+  return `<system kind="${kind}">${escText(text)}</system>`;
+}
+
 function toolUseBlock(e: ToolUseEvent): Anthropic.ToolUseBlockParam {
   const { name, input } = e.parts[0].data;
   return { type: "tool_use", id: e.id, name, input };
@@ -1140,19 +1148,19 @@ export function outcomeLine(e: ToolResultEvent, max = 0): string {
   return `${e.parts[0].text ?? "the approved call"} ${is_error ? "—" : "→"} ${bounded}`;
 }
 
-/** An `error` event's message — rendered as a plain `[system] error:` text block: it
- *  PRECEDES what it marks, and the API takes `mid_conv_system` only in trailing position
- *  (§5, live-smoke finding). */
+/** An `error` event's message — rendered as a `<system>` text block rather than a real
+ *  `mid_conv_system` one: it PRECEDES what it marks, and the API takes `mid_conv_system`
+ *  only in trailing position (§5, live-smoke finding). */
 function errorTextOf(e: HarnessErrorEvent): string {
   return e.parts[0]?.data?.error ?? "unknown error";
 }
 
 /** A fired wake (§10), as the agent reads it: its own note handed back at the moment it
- *  asked for. `[system]` because the harness is the one speaking — the note is quoted, not
+ *  asked for. `<system>` because the harness is the one speaking — the note is quoted, not
  *  ventriloquized as the principal. No room to name: an alarm fires in the session that
  *  armed it, which is the session reading it. */
 function alarmLine(e: AlarmEvent): string {
-  return `[system] scheduled wake: ${e.parts[0]?.text ?? ""}`;
+  return systemEl("wake", e.parts[0]?.text ?? "");
 }
 
 /** OUR SIDE produced this row (§3 authorship — presence, not equality): the model's turn
@@ -1197,7 +1205,7 @@ export function textOf(e: Event): string {
 
 /** The harness's word for a turn the principal cut short (§2). The row is unstamped and
  *  closes the turn: `decide` idles on it until something new arrives, and the model reads
- *  it as a `[system]` line — not an error, nothing failed. */
+ *  it as a `<system>` line — not an error, nothing failed. */
 export const CANCELLED = "cancelled by your principal — the turn stopped here";
 
 export function cancelled(envelope: Envelope): Draft<ControlEvent> {
@@ -1241,10 +1249,10 @@ function mediaMarker(p: FilePart, head = ""): string {
 }
 
 /** The principal's own line in the session's room (§5): a `<principal>` element, never
- *  bare text. Bare text in the user role is the narrator's — anchors, `[system]` lines —
- *  and the one voice that outranks everything else must be the marked one, so the model
- *  reads "answer in your own text" off the element's shape, not off an absence. Composed
- *  like a world line (escaped text, then markers), stamped with the org clock. */
+ *  bare text. Every voice in the user role wears a tag render writes and escapes — the
+ *  world, the harness, the summary, the principal — so the model reads who is speaking off
+ *  the element's shape, and bare text is the model's own voice alone. Composed like a
+ *  world line (escaped text, then markers), stamped with the org clock. */
 function principalEl(e: MessageEvent, zone?: string): string {
   const body = [
     escText(textOf(e)),

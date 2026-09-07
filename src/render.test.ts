@@ -419,7 +419,7 @@ Deno.test("the ts sort never crosses the machine: an agent turn pins what follow
   assertEquals(last.includes("straggler"), true);
 });
 
-Deno.test("error events render as [system] text — the model stays aware (§2)", () => {
+Deno.test("error events render as a <system> element — the model stays aware (§2)", () => {
   const t = "2026-07-19T12:00:00Z";
   const events: Event[] = [
     mindMsg("h", t, "todo bien?", false),
@@ -443,7 +443,10 @@ Deno.test("error events render as [system] text — the model stays aware (§2)"
     now: t,
   });
   const dump = JSON.stringify(messages);
-  assertEquals(dump.includes("[system] error: model overloaded, gave up"), true);
+  assertEquals(
+    dump.includes('<system kind=\\"error\\">model overloaded, gave up</system>'),
+    true,
+  );
 });
 
 Deno.test("a deferred outcome is narrated, never welded — its tool_use is spent (§9)", () => {
@@ -470,7 +473,9 @@ Deno.test("a deferred outcome is narrated, never welded — its tool_use is spen
   const dump = JSON.stringify(messages);
   // the harness's own sentence, in the harness's own voice
   assertEquals(
-    dump.includes('[system] send(to: Mariana, text: hola) → {\\"sent\\":true}'),
+    dump.includes(
+      '<system kind=\\"outcome\\">send(to: Mariana, text: hola) → {\\"sent\\":true}</system>',
+    ),
     true,
   );
   // and exactly ONE tool_result block against that id — a second one is not a thing the
@@ -1532,7 +1537,7 @@ Deno.test("a fired wake renders as the harness handing back the agent's own note
   const texts = blocksOf(messages).map(txt);
   const line = texts.find((s) => s.includes("llamar a la clínica"));
   assert(line, "the note reaches the prompt — it is the whole point of the wake");
-  assertStringIncludes(line!, "[system] scheduled wake");
+  assertStringIncludes(line!, '<system kind="wake">');
   // it is not the principal talking: the harness says it, in the user turn like every
   // other system line (§5 — the API takes mid-conversation system only trailing)
   assert(
@@ -1773,7 +1778,7 @@ Deno.test("horizon split: a lagged message with an OLDER ts is still unconsumed 
   assertEquals(JSON.stringify(messages.slice(0, -1)).includes("cero"), false);
 });
 
-Deno.test("the harness's cancelled row reads as a [system] line, and not as an error", () => {
+Deno.test("the harness's cancelled row reads as a <system> element, and not as an error", () => {
   const t1 = "2026-07-16T14:01:00Z";
   const t2 = "2026-07-16T14:02:00Z";
   const closing = {
@@ -1788,7 +1793,7 @@ Deno.test("the harness's cancelled row reads as a [system] line, and not as an e
   const events: Event[] = [mindMsg("e01", t1, "pensá mucho", false), closing];
   const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t2 });
   const text = JSON.stringify(messages);
-  assertStringIncludes(text, `[system] ${CANCELLED}`);
+  assertStringIncludes(text, `<system kind=\\"cancelled\\">${CANCELLED}</system>`);
   assert(!text.includes("error"));
 });
 
