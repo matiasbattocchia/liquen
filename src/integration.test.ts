@@ -458,14 +458,12 @@ Deno.test("the anchor states the approval state either way — silence is not a 
   const anchor = () => JSON.stringify(last?.messages.at(-1)?.content);
   try {
     await log.publish(principalMsg("mandale"));
-    await xi(config, ports); // nothing has been asked yet — and the anchor SAYS so, which is
-    assertStringIncludes(anchor(), "nothing is waiting on your principal"); // what a model
-    // claiming "queued for your ok" has to contradict. An absent section contradicts nothing.
+    await xi(config, ports); // nothing has been asked yet: no section
+    assertEquals(anchor().includes("waiting on your principal"), false);
 
     await xi(config, ports); // act: the card goes up
     await xi(config, ports);
     assertStringIncludes(anchor(), "waiting on your principal — 1 approval");
-    assertEquals(anchor().includes("nothing is waiting"), false); // one state, never both
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -906,6 +904,41 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
       old("te debo la respuesta"),
       old("dale, mañana", { address: "15613518605", name: "Gianvito" }),
     ],
+  );
+});
+
+Deno.test("search bounds read the org's clock: a bare stamp means the wall the model saw", async () => {
+  // two rows straddle 17:00 Buenos Aires (20:00Z). A `before` of "…T17:00" with no offset
+  // has to cut between them — not where the harness's own zone would put 17:00.
+  const at = (iso: string, text: string): Draft<MessageEvent> => ({
+    ts: iso,
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "15613518605", kind: "direct", name: "Gianvito" },
+      sender: { address: "15613518605", name: "Gianvito" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  await scenario(
+    [
+      ok([{
+        kind: "tool_use",
+        name: "search",
+        input: { in: "gianvito", before: "2026-09-01T17:00" },
+      }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("qué dijo antes de las cinco"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+      const [found] = await read("tool_result");
+      const rows = (found as ToolResultEvent).parts[0].data.output as { text: string }[];
+      assertEquals(rows.map((r) => r.text), ["antes"]);
+    },
+    { timezone: "America/Argentina/Buenos_Aires" },
+    [at("2026-09-01T19:59:00Z", "antes"), at("2026-09-01T20:01:00Z", "después")],
   );
 });
 
@@ -1368,6 +1401,72 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
   }
 });
 
+Deno.test("schedule: a bare `at` reads the org's clock — 17:00 Buenos Aires is 20:00Z", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  // tomorrow's date in UTC: inside the horizon on any run day, and no DST in this zone
+  const day = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+  const transport = scripted([
+    ok([{ kind: "tool_use", name: "schedule", input: { at: `${day}T17:00`, note: "merienda" } }]),
+  ]).transport;
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("a las cinco"));
+    await xi({ ...CONFIG, timezone: "America/Argentina/Buenos_Aires" }, ports);
+    await xi({ ...CONFIG, timezone: "America/Argentina/Buenos_Aires" }, ports);
+    const [t] = log.timers("a1", "mind");
+    assertEquals(t.fireAt, `${day}T20:00:00.000Z`);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the surfaces: the prefix names them, the anchor lists the ones that are down", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
+  const transport: ModelTransport = (params) => {
+    last = params;
+    return Promise.resolve(ok([{ kind: "assistant", text: "ok" }], "end_turn"));
+  };
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const config = { ...CONFIG, timezone: "UTC" };
+  try {
+    log.upsertConnections([
+      // owned by a1 and down: the bridge said so, stamped
+      {
+        service: "whatsapp",
+        address: "549",
+        agentId: "a1",
+        extra: { state: "logged_out", logged_out_at: "2026-09-07T14:02:00Z" },
+      },
+      // the org's, up — and named by its url, not its opaque id
+      {
+        service: "slack",
+        address: "T1:U9",
+        credentialKey: "slack:T1:org",
+        extra: { url: "acme.slack.com" },
+      },
+      { service: "slack", address: "T1" }, // the stub: gates ingest, nobody's voice
+      { service: "google", address: "other@x.io", agentId: "a2" }, // another agent's
+    ]);
+    await log.publish(principalMsg("hola"));
+    await xi(config, ports);
+    const prefix = (last!.system as { text: string }[])[0].text;
+    assertStringIncludes(prefix, "connections: slack acme.slack.com (org) · whatsapp 549 (yours)");
+    assert(!prefix.includes("T1 ("), "the stub is not a surface");
+    assert(!prefix.includes("other@x.io"), "another agent's grant is not this agent's surface");
+    const anchor = JSON.stringify(last?.messages.at(-1)?.content);
+    assertStringIncludes(anchor, "down — 1 connection:");
+    assertStringIncludes(anchor, "· whatsapp 549 (yours) — logged out since 7 Sep 14:02");
+    assert(!anchor.includes("slack"), "an up surface is not listed — silence means up");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("schedule: the horizon — no wake in the past, none beyond a year, no half-read stamp", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -1445,7 +1544,6 @@ Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the ope
     assertStringIncludes(anchor, "mandar los recordatorios");
     assertStringIncludes(anchor, shortId(armed.id)); // the handle `cancel` takes
     assertStringIncludes(anchor, "cwd: /work"); // the other state facts still stand
-    assertStringIncludes(anchor, "nothing is waiting on your principal");
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

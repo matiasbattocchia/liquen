@@ -201,8 +201,8 @@ Deno.test("exec ground: two sessions' shells share the folder, never the place o
     assertEquals(await run(build)("pwd"), await Deno.realPath(`${dir}/proj`));
     assertEquals(await run(mind)("pwd"), await Deno.realPath(wsOf(dir))); // unmoved
     await run(build)("sleep 30 &");
-    assert((await build.ambient()).some((l) => l.startsWith("background jobs (1)")));
-    assert(!(await mind.ambient()).some((l) => l.startsWith("background jobs")));
+    assert((await build.ambient()).some((l) => l.startsWith("background — 1 job")));
+    assert(!(await mind.ambient()).some((l) => l.startsWith("background —")));
   } finally {
     await mind.reap();
     await build.reap();
@@ -413,9 +413,10 @@ Deno.test("exec plane: ambient() reports cwd, git, and live background jobs", as
     await exec.bash.execute({ command: `exec -a ${marker} sleep 300 &` }, live());
     await new Promise((r) => setTimeout(r, 200));
     lines = await ambient();
-    const jobLine = lines.find((l) => l.startsWith("background jobs (1)"));
+    assert(lines.some((l) => l.startsWith("background — 1 job")), lines.join(" | "));
+    const jobLine = lines.find((l) => l.startsWith("· "));
     assert(jobLine, lines.join(" | "));
-    assert(/\(pid \d+, /.test(jobLine!), `job line must carry a kill handle: ${jobLine}`);
+    assert(/ · pid \d+$/.test(jobLine!), `job line must carry a kill handle: ${jobLine}`);
     await reap();
     lines = await ambient();
     assert(lines.every((l) => !l.startsWith("background")), "reaped job gone from ambient");

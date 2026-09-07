@@ -538,9 +538,9 @@ export interface SendResult {
 export interface SearchArgs {
   in?: string; // one conversation: its address, or a name (group's, or a DM's person)
   from?: string; // one sender: their address, or any part of their name
-  before?: Timestamp;
+  before?: Timestamp; // a bare stamp reads on the org's clock; an offset makes it absolute
   after?: Timestamp;
-  text?: string; // words said in the message itself
+  text?: string; // one contiguous phrase, case-insensitive substring — no fuzz, no wildcards
 }
 /** One hit: the row's coordinates plus its text. `address` is what `in` and `send(to:)`
  *  both take back. A type alias, not an interface — a hit must stay assignable to `Json`

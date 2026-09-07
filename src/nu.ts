@@ -58,8 +58,19 @@ export interface TurnConfig {
   /** IANA timezone every rendered stamp formats through (org config; §5). Unset ⇒ the
    *  deployment's own zone. Stored `ts` stays UTC — that one is a sort key (§3). */
   timezone?: string;
-  /** Parked until the i18n seam — org config carries it; render is English for now (§5). */
+  /** The org's locale — stated to the model in the prefix's env line (§5); render itself
+   *  is English. */
   locale?: string;
+  /** The name the agent goes by — the principal's own, declared in `agents.<id>.identity`.
+   *  Stated in the env line beside the id. */
+  name?: string;
+  /** The principal's handles, from the same declaration — a message from one is the
+   *  principal's word, and a `send` at one is refused. */
+  email?: string;
+  phone?: string;
+  /** The agent's own folder, absolute — the shell's starting cwd, the root a relative
+   *  attachment resolves from, the tree its docs live in (§9). Stated in the env line. */
+  home?: string;
   /** Slow OUTER retries for mu failures — `RETRY_DELAYS_MS` unless a caller says otherwise
    *  (a test runs them at zero). */
   retryDelaysMs?: number[];
@@ -72,6 +83,9 @@ export interface TurnInput {
   docs: DocEntry[]; // the cascade xi listed
   tools: Anthropic.Tool[]; // the registry's specs
   config: TurnConfig;
+  /** The surfaces the agent speaks through, named — the prefix's `connections:` line (§5).
+   *  Stable between grants, so it sits with the cached prefix; xi reads the map. */
+  surfaces?: string[];
   ambient?: string[]; // volatile env lines for the anchor block (§5) — xi composes them
   /** Lazy source for the checkpoint instruction (the `harness/instruction/compaction` doc) —
    *  xi resolves the I/O, nu only calls it when a checkpoint actually runs (§5). */
@@ -148,6 +162,16 @@ export async function nu(
     session,
     now: ts(),
     zone: config.timezone,
+    env: {
+      agent: config.agentId,
+      name: config.name,
+      email: config.email,
+      phone: config.phone,
+      home: config.home,
+      timezone: config.timezone,
+      locale: config.locale,
+      connections: input.surfaces,
+    },
     ambient: input.ambient,
     loadMedia: input.loadMedia,
   });

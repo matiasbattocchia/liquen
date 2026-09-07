@@ -60,7 +60,7 @@ import { type Describe, describeCall, nameResolver } from "./describe.ts";
 import type { Appender, Reader } from "./store/log.ts";
 import type { Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
-import type { Connections } from "./store/connections.ts";
+import type { ConnectionRow, Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
@@ -735,7 +735,7 @@ export interface XiPorts {
     & Locker
     & Pick<Registry, "agents">
     & Pick<Standing, "remember" | "remembered">
-    & Pick<Connections, "upsertMemberships" | "aliases">
+    & Pick<Connections, "upsertMemberships" | "aliases" | "connections">
     & Pick<Timers, "arm" | "timers" | "disarm">;
   docs: Docs;
   /** The model edge. main picks it (Anthropic today) and it travels down the chain unchanged
@@ -915,9 +915,10 @@ async function think(
   // is STATE, not history — the transcript already closed those calls with
   // `pending_approval`, so the only place they belong is the block that is rewritten every
   // turn. It also self-corrects: an ask that gets answered simply stops being listed.
-  // `waitingOn` always has a line, so the anchor always carries the approval state.
+  const surfaces = surfacesOf(config, ports);
   const ambient = [
     ...(ports.ambient ? await ports.ambient() : []),
+    ...downOn(surfaces, config),
     ...armedOn(config, ports),
     ...waitingOn(events, config),
   ];
@@ -930,6 +931,7 @@ async function think(
       docs,
       tools: specsOf(ports, config),
       config,
+      surfaces: surfaces.map(surfaceLine),
       ambient,
       // trailing-region media → real image/document blocks (§5); the store loads, render picks
       loadMedia,
@@ -947,42 +949,71 @@ async function think(
   );
 }
 
-/** The anchor's pending-approval lines (§5, §9): one per ask nobody has answered, named the
- *  way the card named it and stamped with when it went out. The id is the handle `cancel`
- *  takes — `shortId`, the same vocabulary as `re`.
+/** The anchor's standing lists (§5): what of this session's is still in the air — background
+ *  jobs, scheduled wakes, open approvals — three sections in one grammar, so the model reads
+ *  them as one kind of fact. A section is present only while it has items:
  *
- *  The empty case still speaks. Everywhere else the anchor states only what IS, and silence
- *  means nothing is there — but this is the one anchor fact the model SAYS to its principal
- *  in prose, who has no way to check it. A block that can only ever add a claim can never
- *  contradict one, so an invented "waiting for your ok" passes untouched. Present in one of
- *  two forms every turn, it is a ground truth the model reads instead of an absence it has
- *  to notice. */
-/** The anchor's scheduled-wake lines (§5, §10): what is armed, when it fires, and the note
- *  it will arrive with — beside the background jobs and the open approvals, because they are
- *  the same kind of fact (something of yours is still standing). The id is `cancel`'s handle.
+ *    <section> — <n> <things>:
+ *    · <what> — <when> · <handle>
  *
- *  This session's wakes only (§4): the anchor is what THIS session is holding, and an id
- *  it can read is an id it can cancel.
- *
- *  Silence means nothing is armed: unlike an approval, a wake the model invents costs the
- *  principal nothing and reveals itself when it doesn't fire. */
+ *  `what` is the item in the model's own words (the command, the note, the call); `when` is
+ *  a verb and a stamp on the org's clock (`fires`, `asked`) or a duration (`running`, for a
+ *  job); `handle` is what acts on it — `id` for `cancel`, `pid` for `kill`. */
+
+/** The surfaces this agent speaks through (§4, §6): the connections it OWNS — it speaks as
+ *  its principal there — and the org's credentialed ones, where it speaks as the org. A
+ *  stub row (no owner, no credential) only gates ingest and is nobody's voice. */
+function surfacesOf(config: AgentConfig, ports: XiPorts): ConnectionRow[] {
+  return ports.log.connections().filter((c) =>
+    c.agentId === config.agentId || (!c.agentId && !!c.credentialKey)
+  );
+}
+
+/** A surface, named for the model: the service and the address it was shown — or the
+ *  account's URL where the address is an opaque id (Slack) — and whose voice it carries. */
+function surfaceLine(c: ConnectionRow): string {
+  const shown = typeof c.extra?.url === "string" ? c.extra.url : c.address;
+  return `${c.service} ${shown} (${c.agentId ? "yours" : "org"})`;
+}
+
+/** Surfaces that are down: a connector recorded a state other than `connected` on the
+ *  row (`extra.state`, stamped `<state>_at`). Silence means every surface is up. No handle
+ *  — nothing in the model's hands acts on it; the principal re-pairs or re-grants. */
+function downOn(surfaces: ConnectionRow[], config: AgentConfig): string[] {
+  const down = surfaces.filter((c) =>
+    typeof c.extra?.state === "string" && c.extra.state !== "connected"
+  );
+  if (down.length === 0) return [];
+  return [
+    `down — ${down.length} connection${down.length === 1 ? "" : "s"}:`,
+    ...down.map((c) => {
+      const state = c.extra!.state as string;
+      const since = c.extra![`${state}_at`];
+      const when = typeof since === "string" ? ` since ${hhmm(since, config.timezone)}` : "";
+      return `· ${surfaceLine(c)} — ${state.replaceAll("_", " ")}${when}`;
+    }),
+  ];
+}
+
+/** Scheduled wakes: this session's only (§4) — an id the anchor shows is one it can cancel.
+ *  A cron carries its expression so the model knows the wake comes back. */
 function armedOn(config: AgentConfig, ports: XiPorts): string[] {
   const rows = ports.log.timers(config.agentId, config.sessionId);
   if (rows.length === 0) return [];
   return [
     `scheduled — ${rows.length} wake${rows.length === 1 ? "" : "s"}:`,
     ...rows.map((t) =>
-      `· ${hhmm(t.fireAt, config.timezone)}${
-        t.cron ? ` (repeats \`${t.cron}\`)` : ""
-      } — ${t.note}` +
-      ` · id ${shortId(t.id)}`
+      `· ${t.note} — fires ${hhmm(t.fireAt, config.timezone)}${
+        t.cron ? `, repeats \`${t.cron}\`` : ""
+      } · id ${shortId(t.id)}`
     ),
   ];
 }
 
+/** Open approvals (§9): one per ask nobody has answered, named the way the card named it. */
 function waitingOn(events: Event[], config: AgentConfig): string[] {
   const cards = openCards(events);
-  if (cards.length === 0) return ["nothing is waiting on your principal — no approval is open"];
+  if (cards.length === 0) return [];
   return [
     `waiting on your principal — ${cards.length} approval${cards.length === 1 ? "" : "s"}:`,
     ...cards.map((c) => {
@@ -1581,7 +1612,17 @@ async function execute(
     const sent = await ports.log.publish(msg);
     return { sent: true, event_id: sent!.id }; // a full draft (parts present) always stores
   }
-  if (name === "search") return await search(ports.log, args as SearchArgs);
+  if (name === "search") {
+    // the bounds are read the way `schedule.at` is (§10): a bare stamp means the org's wall
+    // clock, the one every rendered line showed the model
+    const zone = config.timezone ?? DEFAULT_TIMEZONE;
+    const bound = (v: Json | undefined) => v === undefined ? undefined : momentOf(String(v), zone);
+    return await search(ports.log, {
+      ...(args as SearchArgs),
+      before: bound(args.before),
+      after: bound(args.after),
+    });
+  }
   const tool = ports.exec?.[name];
   if (!tool) throw new Error(`unknown tool: ${name}`);
   return await tool.execute(input, signal);
@@ -1737,7 +1778,9 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
             type: "array",
             items: { type: "string" },
             description:
-              "file paths to attach — from your folder (relative paths are from there), the org's, or the media store",
+              "file paths to attach. A relative path resolves from your home — never from your " +
+              "shell's cwd, which may have moved. Your home's files, the org's, and the media " +
+              "store are attachable; nothing else",
           },
         },
         required: ["to"],
@@ -1746,8 +1789,9 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
     {
       name: "search",
       description:
-        "Search the message log — including everything older than your window. Results carry " +
-        "the conversation's `address`, which `in` and `send(to:)` both take back.",
+        "Search the message log — including everything older than your window. Every filter " +
+        "narrows; the 50 most recent matches come back, newest last. Results carry the " +
+        "conversation's `address`, which `in` and `send(to:)` both take back.",
       input_schema: {
         type: "object",
         properties: {
@@ -1761,9 +1805,22 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
             type: "string",
             description: "one sender: their address, or any part of the name they go by",
           },
-          before: { type: "string" },
-          after: { type: "string" },
-          text: { type: "string", description: "words said in the message itself" },
+          before: {
+            type: "string",
+            description: "only messages sent before this moment: ISO-8601, e.g. `2026-09-01` or " +
+              "`2026-09-01T17:00` (your org's clock unless it carries an offset)",
+          },
+          after: {
+            type: "string",
+            description: "only messages sent after this moment, same form as `before`",
+          },
+          text: {
+            type: "string",
+            description:
+              "a phrase the message contains, matched literally as one contiguous string, " +
+              "case-insensitive — no word splitting, no fuzziness, no wildcards. Keep it short " +
+              "and distinctive: one word or a fragment you are sure of beats a whole sentence",
+          },
         },
       },
     },

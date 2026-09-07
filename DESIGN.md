@@ -748,9 +748,6 @@ Every inbound passes through ingest, which does identity resolution **and** may 
     is state, not history — the transcript already closed those calls. The anchor is
     rewritten every turn, so an ask that gets answered simply stops being listed, and the
     model reads its own open business without anything having to be edited out of history.
-    The empty case is stated, not left silent: this is the one anchor fact the model says to
-    its principal in prose, and a block that only ever adds a claim can never contradict an
-    invented one.
 - **Policy is a table, not a branch** (§9): `Rule[] = [{tool, ask}]`, first match wins, `*`
   the catch-all. There are no special tools — `bash` runs unasked because the default table
   says so, not because bash is bash. The ask being *inside* execution is what lets a rule be
@@ -1150,8 +1147,8 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   traffic and replies: the model learns addresses from `address=` attributes, and `search`
   recovers off-window ones. What no surface provides is an address the log has never
   seen — initiating (DM a colleague first, post to a channel the agent was never in) has
-  no directory: connections/memberships are not rendered, no list tool exists, and the
-  model cannot mint platform addresses. Outgoing matters as much as incoming; what the
+  no directory: the prefix names the surfaces (§5) but not who is on them — memberships
+  are not rendered, no list tool exists, and the model cannot mint platform addresses. Outgoing matters as much as incoming; what the
   directory surface is — a rendered index, a tool over the map tables, a connector
   lookup — is the open.
 
@@ -1274,7 +1271,13 @@ group last**
 
 ### The system prompt (cacheable prefix)
 
-Built by render from `docs.list()` (§8): **instructions** = the bodies of `load:always` docs
+Built by render from `docs.list()` (§8), led by the **env block** — one line of the facts
+config owns about who and where the agent is, `agent · name · email · phone · home ·
+timezone · locale`, and one `connections:` line naming the surfaces it speaks through (the
+connections it owns, where it speaks as its principal, and the org's credentialed ones,
+where it speaks as the org — a stub row is nobody's voice) — harness-authored, so no doc
+edit can lose them, and stable between grants, so the prefix stays cached. Then
+**instructions** = the bodies of `load:always` docs
 (system → org → agent), inlined; **skill / memory index** = pointers (name + description) for
 the rest, which the agent pulls via `aread` on demand; **cron / projections** = always-on.
 Ordered most-stable → most-volatile, with a cache breakpoint at the end — the first of the
@@ -1300,12 +1303,20 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   LEADING plain-text block (the trailing-only rule bars a leading system block). See
   "Compaction" below.
 - **`now:` anchor + ambient env + open state** — the trailing system block before the model
-  answers. Carries `now: <ts>`, whatever is **still open** (`waiting on your principal — 2
-  approvals:` and one line per ask, §9 — pending state, not history: the transcript already
-  closed those calls, so the only honest place for them is the block that is rewritten every
-  turn), plus **live environment lines** the exec plane composes (`cwd: …` ·
-  `git: <branch> · N uncommitted` when the cwd is a repo · `background jobs (N): <cmd>
-  (pid P, age)` each). Better than Claude Code's session-start env snapshot: we re-render
+  answers. Carries `now: <ts>`, **live environment lines** the exec plane composes (`cwd: …` ·
+  `git: <branch> · N uncommitted` when the cwd is a repo), and the **standing lists** — what
+  of this session's is still in the air: surfaces that are down, background jobs, scheduled
+  wakes, open approvals (§9 — pending state, not history: the transcript already closed
+  those calls, so the only honest place for them is the block that is rewritten every
+  turn). Every list speaks one grammar, `<section> — N <things>:` and one
+  `· <what> — <when> · <handle>` line per item — the item in the agent's own words, a verb
+  with a stamp on the org's clock (or a duration, for a job), and the handle that acts on it
+  (`id` for `cancel`, `pid` for `kill`; a down surface has none — the principal re-pairs or
+  re-grants). A list is present only while it has items. A surface is down when its
+  connector wrote a state other than `connected` on the row (`extra.state`, stamped
+  `<state>_at`): the WhatsApp bridge posts `disconnected`/`logged_out`, the Google poll
+  writes `failing` on the sweep that cannot read a grant and `connected` on the one that
+  reads again — transitions only, never a heartbeat. Better than Claude Code's session-start env snapshot: we re-render
   every step, so it's *fresh*, not stale — and cache-free, since this block is already the
   only volatile one. Self-scoping: git appears only in a repo, jobs only when some run — so
   a conversational delegate sees a clean `cwd`+`now`, a coding/task agent sees the full set.

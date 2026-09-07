@@ -108,8 +108,8 @@ export function bashTool(opts: BashOptions): ExecTool {
   return {
     spec: {
       name: "bash",
-      description: `Run a bash command. Starts in your workspace (${opts.workspace}); the ` +
-        "working directory PERSISTS between calls like a terminal (cd once, it sticks) — but " +
+      description: "Run a bash command. The working directory PERSISTS between calls like a " +
+        "terminal (cd once, it sticks) — but " +
         "shell/env state (exported vars, activated venvs) does not, so re-export or chain those. " +
         `stdout+stderr merged; output truncated to the last ${MAX_LINES} lines / ${
           MAX_BYTES / 1024
@@ -128,7 +128,10 @@ export function bashTool(opts: BashOptions): ExecTool {
         type: "object",
         properties: {
           command: { type: "string", description: "bash command to execute" },
-          timeout: { type: "number", description: "seconds (optional; default 120)" },
+          timeout: {
+            type: "number",
+            description: `seconds (optional; default ${timeoutMsDefault / 1000})`,
+          },
           max_lines: {
             type: "number",
             description:
@@ -380,16 +383,17 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
   if (git) lines.push(git);
   for (const j of jobs) if (!groupAlive(j.pgid)) jobs.delete(j);
   if (jobs.size > 0) {
+    // one section in the anchor's grammar (xi's standing lists): `· what — when · handle`.
     // pid is the kill handle: `kill <pid>` stops the leader, `kill -<pid>` the whole tree.
     // command is collapsed to one line and clipped — the full text lives on the Job.
     const brief = (c: string) => {
       const one = c.replace(/\s+/g, " ").trim();
       return one.length > 60 ? `${one.slice(0, 59)}…` : one;
     };
-    const list = [...jobs]
-      .map((j) => `${brief(j.command)} (pid ${j.pgid}, ${ageOf(j.since)})`)
-      .join(" · ");
-    lines.push(`background jobs (${jobs.size}): ${list}`);
+    lines.push(`background — ${jobs.size} job${jobs.size === 1 ? "" : "s"}:`);
+    for (const j of jobs) {
+      lines.push(`· ${brief(j.command)} — running ${ageOf(j.since)} · pid ${j.pgid}`);
+    }
   }
   return lines;
 }

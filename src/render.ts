@@ -57,9 +57,48 @@ const SCOPE_ORDER: DocScope[] = ["system", "org", "agent", "conversation"];
  * was loaded (`load: always`) are **inlined**; the rest become an **index** the agent pulls
  * from with `aread`. One cache breakpoint at the end — the whole prefix is the stable region.
  */
-export function renderSystem(docs: DocEntry[]): TextBlockParam[] {
+/** The facts the harness owns about who and where the agent is (§5): its id — the roster
+ *  entry, the unix user, the folder — the name it goes by and the handles its principal is
+ *  known by, its home, the org's clock and locale (all from `config.jsonc`), and the
+ *  surfaces it speaks through (from the connections map). Harness-authored — not a doc, so
+ *  no edit can lose them. Every stamp the model sees is already on this clock; naming the
+ *  zone is what lets it convert a contact's "5pm my time". */
+export interface Env {
+  agent?: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  home?: string;
+  timezone?: string;
+  locale?: string;
+  /** Each surface named — `whatsapp 549… (yours)`, `slack acme.slack.com (org)`. */
+  connections?: string[];
+}
+
+function envLine(env: Env): string | undefined {
+  const facts = [
+    env.agent && `agent: ${env.agent}`,
+    env.name && `name: ${env.name}`,
+    env.email && `email: ${env.email}`,
+    env.phone && `phone: ${env.phone}`,
+    env.home && `home: ${env.home}`,
+    env.timezone && `timezone: ${env.timezone}`,
+    env.locale && `locale: ${env.locale}`,
+  ].filter((f): f is string => !!f);
+  const lines = [
+    facts.length ? facts.join(" · ") : undefined,
+    env.connections?.length ? `connections: ${env.connections.join(" · ")}` : undefined,
+  ].filter((l): l is string => !!l);
+  return lines.length ? lines.join("\n") : undefined;
+}
+
+export function renderSystem(docs: DocEntry[], env: Env = {}): TextBlockParam[] {
   const ordered = [...docs].sort(byCascade);
   const blocks: TextBlockParam[] = [];
+
+  // the env line leads: the most stable fact of all, set once per deployment
+  const line = envLine(env);
+  if (line) blocks.push({ type: "text", text: line });
 
   const bodies = ordered.filter((d) => d.body !== undefined);
   if (bodies.length > 0) {
@@ -88,7 +127,7 @@ function byCascade(a: DocEntry, b: DocEntry): number {
 }
 
 /** A doc's rendered handle: scope + name. The name already carries its folder
- *  (`instructions/identity`, `skills/workflows`), so the kind would say it twice. */
+ *  (`instructions/agent`, `skills/workflows`), so the kind would say it twice. */
 function ref(d: DocEntry): string {
   return `${d.header.scope}/${d.header.name}`;
 }
@@ -121,6 +160,7 @@ export interface RenderInput {
   events: Event[]; // the log window — render derives what's closed vs trailing itself
   docs: DocEntry[];
   session: Session; // whose output is whose, and which conversation is the session's own
+  env?: Env; // the prefix's leading line — agent · name · email · phone · home · timezone · locale
   now: string; // ISO — the `now:` anchor
   /** IANA timezone for every rendered stamp (`at=`, `now:`) — org config's `timezone`.
    *  Unset ⇒ the deployment's own zone. Stored `ts` is UTC either way (§3). */
@@ -145,7 +185,7 @@ export interface RenderedRequest {
 
 /** DESIGN §5: a log window → the request `mu` sees. Pure — nu resolves the inputs. */
 export function render(input: RenderInput): RenderedRequest {
-  return { system: renderSystem(input.docs), messages: renderMessages(input) };
+  return { system: renderSystem(input.docs, input.env), messages: renderMessages(input) };
 }
 
 /** The last closing assistant message in the session's own conversation — a step that

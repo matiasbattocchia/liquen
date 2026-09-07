@@ -546,7 +546,7 @@ export async function start(
 
 /** What runs plus what the registry mirrors: the runtime config, the policy seam, and the
  *  declared facts (`provider` for the transport seam, `email`/`phone` for the classifier). */
-type Principal = AgentConfig & Policy & { provider?: string; email?: string; phone?: string };
+type Principal = AgentConfig & Policy & { provider?: string };
 
 /** The framework way (§9): the catalog's `agents` roster declares the org — each entry
  *  becomes a registry row and a home folder, config → tables → folders. agentId = the
@@ -586,6 +586,7 @@ async function compileRoster(
       since,
       timezone: catalog.org.timezone || undefined,
       locale: catalog.org.locale ?? undefined,
+      home: `${dir}/agents/${name}`,
       // attention (§2): the wake policy is the agent's — hot, summoned, or on the digest
       engagedMinutes: cfg.engagedMinutes ?? org.engagedMinutes,
       digestAfterMessages: cfg.digestAfterMessages ?? org.digestAfterMessages,
@@ -597,8 +598,9 @@ async function compileRoster(
       compactAt: catalog.system.compactAt,
       keepRecent: catalog.system.keepRecent,
       provider: cfg.provider ?? org.provider ?? undefined,
-      email: identity.email,
-      phone: identity.phone,
+      name: identity.name ?? undefined,
+      email: identity.email ?? undefined,
+      phone: identity.phone ?? undefined,
     });
   }
   return found.sort((a, b) => a.agentId < b.agentId ? -1 : 1);

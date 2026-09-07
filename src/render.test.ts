@@ -98,6 +98,34 @@ Deno.test("empty docs ⇒ empty system", () => {
   assertEquals(renderSystem([]), []);
 });
 
+Deno.test("the env line leads the prefix: home · timezone · locale, only the facts that are set", () => {
+  const [lead] = renderSystem([doc("org", "instruction", "x", {}, "body")], {
+    agent: "a1",
+    name: "Ana",
+    email: "ana@x.io",
+    phone: "+549",
+    home: "/data/agents/a1",
+    timezone: "America/Argentina/Buenos_Aires",
+    locale: "es_AR.UTF-8",
+  });
+  assertEquals(
+    lead.text,
+    "agent: a1 · name: Ana · email: ana@x.io · phone: +549 · home: /data/agents/a1 · timezone: America/Argentina/Buenos_Aires · locale: es_AR.UTF-8",
+  );
+  const [partial] = renderSystem([], { timezone: "UTC" });
+  assertEquals(partial.text, "timezone: UTC");
+  // the surfaces are their own line under the facts; none ⇒ no line
+  const [withSurfaces] = renderSystem([], {
+    agent: "a1",
+    connections: ["whatsapp 549 (yours)", "slack acme.slack.com (org)"],
+  });
+  assertEquals(
+    withSurfaces.text,
+    "agent: a1\nconnections: whatsapp 549 (yours) · slack acme.slack.com (org)",
+  );
+  assertEquals(partial.cache_control, { type: "ephemeral", ttl: "1h" }); // still the prefix
+});
+
 /* ── renderMessages: the clinic scenario is the artifact's right column ── */
 
 const SELF = { id: "a1", session_id: "s1" };
@@ -803,14 +831,19 @@ Deno.test("ambient env lines join the trailing anchor block after now:", () => {
     session: SESSION,
     zone: "UTC",
     now: t,
-    ambient: ["cwd: /app", "git: main · 3 uncommitted", "background jobs (1): server (2m)"],
+    ambient: [
+      "cwd: /app",
+      "git: main · 3 uncommitted",
+      "background — 1 job:",
+      "· server — running 2m · pid 41",
+    ],
   });
   const content = messages.at(-1)!.content as Anthropic.ContentBlockParam[];
   const text = sysText(content.at(-1)!);
   assertEquals(text.startsWith("now: Tuesday 21 July, 2026 - 10:00"), true);
   assertStringIncludes(text, "cwd: /app");
   assertStringIncludes(text, "git: main · 3 uncommitted");
-  assertStringIncludes(text, "background jobs (1): server (2m)");
+  assertStringIncludes(text, "background — 1 job:\n· server — running 2m · pid 41");
 });
 
 /* ── media (§5): markers everywhere, real blocks in the TRAILING region only ── */
