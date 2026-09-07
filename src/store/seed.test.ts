@@ -18,7 +18,7 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
       "system/skill/skills/workflows",
     ]);
     const byName = new Map(docs.map((d) => [d.header.name, d]));
-    assertStringIncludes(byName.get("instructions/system")!.body!, "your principal"); // always
+    assert(byName.get("instructions/system")!.body); // always ⇒ inlined, whatever it says
     assertEquals(byName.get("memories/example")!.body, undefined); // lazy → pointer
     assertEquals(byName.get("instructions/compaction")!.body, undefined); // lazy → pointer
     // the agent doc is the role alone: who and where is the env line (§5)
