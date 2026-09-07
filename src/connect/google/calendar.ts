@@ -54,6 +54,7 @@
 import { DEFAULT_CALENDARS } from "./config.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
+import type { Connections } from "../../store/connections.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
 import type { CalendarData, CalendarPart, Conversation, Draft, MessageEvent } from "../../types.ts";
 import { findRoot } from "../../config.ts";
@@ -95,6 +96,10 @@ export interface GoogleWebhookDeps {
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
   broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
+  /** The connections map (§4): a grant's state is written on the transition — `failing`
+   *  when a sweep cannot read it (a refresh refused, the API unreachable), `connected`
+   *  when it reads again — so the anchor can say a surface is down (§5). */
+  store?: Pick<Connections, "upsertConnections">;
   /** Which calendars to watch on each grant. Default `DEFAULT_CALENDARS`. */
   calendars?: string[];
   /** Injectable for tests; defaults to global `fetch` against the Calendar API. */
@@ -112,18 +117,35 @@ export interface GoogleWebhookDeps {
  *  and race the write-back, and a stalled poll must not pile intervals behind it. */
 export function createGoogleWebhook(deps: GoogleWebhookDeps): { tick(): Promise<void> } {
   const calendars = deps.calendars?.length ? deps.calendars : DEFAULT_CALENDARS;
+  const now = deps.now ?? (() => new Date().toISOString());
+  // one state per grant, written only when it changes: a sweep that reads is `connected`,
+  // one that cannot is `failing` — the row carries the reason
+  const known = new Map<string, string>();
+  const mark = (key: string, state: string, error?: string) => {
+    if (!deps.store || known.get(key) === state) return;
+    known.set(key, state);
+    deps.store.upsertConnections([{
+      service: "google",
+      address: key.slice(GRANT_PREFIX.length),
+      extra: { state, [`${state}_at`]: now(), ...(error !== undefined ? { error } : {}) },
+    }]);
+  };
   const sweep = async (): Promise<void> => {
     const grants = (await deps.creds.list(GRANT_PREFIX))
       .filter((r) => !r.key.startsWith(APP_PREFIX));
     for (const grant of grants) {
+      let failure: string | undefined;
       for (const calendarId of calendars) {
         try {
           const n = await pollCalendar(deps, grant.key, grant.agentId, calendarId);
           deps.onPolled?.(grant.key, calendarId, n);
         } catch (err) {
+          failure ??= err instanceof Error ? err.message : String(err);
           deps.onError?.(grant.key, err);
         }
       }
+      if (failure === undefined) mark(grant.key, "connected");
+      else mark(grant.key, "failing", failure);
     }
   };
   let inflight: Promise<void> | null = null;
@@ -443,6 +465,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
     publish: log.publish,
     creds,
     broker,
+    store: log,
     calendars,
     onError: (key, err) => console.error(`[ingest] poll FAILED on ${key}:`, err),
     onPolled: (key, cal, n) => n && console.error(`[ingest] ${key} ${cal}: +${n} changes`),

@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   bridgeTokenOf,
   createWhatsAppWebhook,
@@ -506,6 +506,27 @@ Deno.test("sessions/events: connected upserts the connection row (the gate)", as
   assertEquals(upserts[0].address, "5491100000000");
   assertEquals(upserts[0].agentId, "matias"); // personal session ⇒ the grant binds
   assertEquals(upserts[0].extra?.state, "connected");
+});
+
+Deno.test("sessions/events: a drop and a logout record state, stamped — what the anchor reads", async () => {
+  const { store, upserts } = fakeStore();
+  const { handler } = harness({ store });
+  for (const event of ["disconnected", "logged_out"]) {
+    const res = await handler(
+      post("/whatsapp-web-management/sessions/events", {
+        event,
+        organization_id: "org-1",
+        address: "5491100000000",
+      }),
+    );
+    assertEquals(res.status, 200);
+  }
+  assertEquals(upserts.length, 2);
+  assertEquals(upserts[0].extra?.state, "disconnected");
+  assert(typeof upserts[0].extra?.disconnected_at === "string");
+  assertEquals(upserts[0].agentId, undefined); // the owner is already on the row; unchanged
+  assertEquals(upserts[1].extra?.state, "logged_out");
+  assert(typeof upserts[1].extra?.logged_out_at === "string");
 });
 
 Deno.test("media route stores bytes and answers the uri", async () => {

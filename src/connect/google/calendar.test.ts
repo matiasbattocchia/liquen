@@ -3,6 +3,7 @@ import { createGoogleWebhook } from "./calendar.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
 import type { Appender } from "../../store/log.ts";
+import type { ConnectionRow, Connections } from "../../store/connections.ts";
 import type { CalendarPart, Draft, Event, MessageEvent } from "../../types.ts";
 
 const KEY = "google:ana@example.com";
@@ -46,11 +47,13 @@ function poller(
   fetchApi: typeof fetch,
   publish: Appender["publish"] = captor().publish,
   calendars?: string[],
+  store?: Pick<Connections, "upsertConnections">,
 ): { tick(): Promise<void> } {
   return createGoogleWebhook({
     publish,
     creds,
     broker: createGrantBroker({ creds }),
+    store,
     calendars,
     fetchApi,
     now: () => "2026-08-24T00:00:00.000Z",
@@ -66,6 +69,40 @@ function syncOf(creds: Awaited<ReturnType<typeof openCredentials>>): Promise<
 > {
   return creds.get(KEY).then((r) => r!.extra?.calendar_sync as Record<string, string> | undefined);
 }
+
+Deno.test("a grant's state is written on the transition: failing when a sweep cannot read, connected when it reads again", async () => {
+  await withVault(async (creds) => {
+    const upserts: ConnectionRow[] = [];
+    const store = { upsertConnections: (rows: ConnectionRow[]) => upserts.push(...rows) };
+    let ok = false;
+    const p = poller(
+      creds,
+      (() =>
+        Promise.resolve(
+          ok ? jsonResponse({ items: [], nextSyncToken: "t" }) : jsonResponse({}, 503),
+        )) as typeof fetch,
+      undefined,
+      undefined,
+      store,
+    );
+    await p.tick();
+    await p.tick(); // still failing: no second row — the state is written once per change
+    assertEquals(upserts.length, 1);
+    assertEquals(upserts[0].service, "google");
+    assertEquals(upserts[0].address, "ana@example.com"); // the grant's row, by its address
+    assertEquals(upserts[0].extra?.state, "failing");
+    assertEquals(upserts[0].extra?.failing_at, "2026-08-24T00:00:00.000Z");
+    assert(typeof upserts[0].extra?.error === "string");
+
+    ok = true;
+    await p.tick();
+    assertEquals(upserts.length, 2);
+    assertEquals(upserts[1].extra, {
+      state: "connected",
+      connected_at: "2026-08-24T00:00:00.000Z",
+    });
+  });
+});
 
 Deno.test("first run bootstraps from now forward: seeds a cursor, publishes nothing", async () => {
   await withVault(async (creds) => {

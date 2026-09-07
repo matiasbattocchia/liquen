@@ -11,8 +11,9 @@
  *   POST …/whatsapp-web-webhook/media      — multipart bytes → media store → `{uri}`; the
  *                                            bridge then references that uri in a FilePart
  *                                            (media crosses BEFORE its message)
- *   POST …/whatsapp-web-management/sessions/events — connected | logged_out → the
- *                                            connections map (the frontier event, §4)
+ *   POST …/whatsapp-web-management/sessions/events — connected | disconnected | logged_out
+ *                                            → the connections map (the frontier event,
+ *                                            §4; the state the anchor reports, §5)
  *
  * The entry adds a fourth route the bridge dials at the same address — `GET /m/<signed>`,
  * the outbound bytes the dispatch process minted a path for (`store/media.ts`). Inbound
@@ -131,7 +132,10 @@ export interface WABatch {
 }
 
 export interface WASessionEvent {
-  event: "connected" | "logged_out";
+  /** `connected` on every (re)connect of a paired number, `disconnected` when its socket
+   *  drops (whatsmeow reconnects by itself; the pair brackets the outage), `logged_out`
+   *  when the phone unpairs it. */
+  event: "connected" | "disconnected" | "logged_out";
   organization_id: string;
   address: string;
   /** Set for a personal session: the member the pairing bound (bridge SessionMapping). */
@@ -532,9 +536,10 @@ function session(
   return req.json().then((e: WASessionEvent) => {
     if (!e.address || !e.event) return text(400, "missing address or event");
     // `connected` is the moment the paired number becomes KNOWN — the row it writes is
-    // the frontier gate the very next publish checks (§4). `logged_out` only records
-    // state: the gate stays open (nothing more will arrive; history stays readable), and
-    // re-pairing revives by upsert.
+    // the frontier gate the very next publish checks (§4). The other events only record
+    // state, stamped `<state>_at` — what the anchor reads to say a surface is down (§5):
+    // the gate stays open (history stays readable), and a reconnect or re-pairing
+    // revives by upsert.
     deps.store?.upsertConnections([{
       service: SERVICE,
       address: e.address,

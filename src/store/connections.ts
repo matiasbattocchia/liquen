@@ -103,6 +103,9 @@ export interface Connections {
   /** Point lookup for policy and the ingest classifier (live — the RLS-join emulation).
    *  Deletion does not hide the row here; only the gate checks `deleted_at`. */
   connection(service: string, address: string): ConnectionRow | null;
+  /** The map as it stands — live rows only: a soft-deleted grant is not a surface anyone
+   *  has. What the anchor reads to say which surfaces exist and which are down (§5). */
+  connections(): ConnectionRow[];
   /** The mind-alias bindings (§4): every owned connection's self-conversation, derived
    *  or recorded. Soft-deleted rows KEEP answering, with `live: false` — a revocation
    *  closes the gate, never the hiding: the mind copies already there are that surface's
@@ -172,6 +175,23 @@ export function createConnections(db: DatabaseSync): Connections {
     `SELECT service, address, agent_id, credential_key, extra FROM connections
      WHERE service = ? AND address = ?`,
   );
+  const listC = db.prepare(
+    `SELECT service, address, agent_id, credential_key, extra FROM connections
+     WHERE deleted_at IS NULL ORDER BY service, address`,
+  );
+  const rowOf = (r: {
+    service: string;
+    address: string;
+    agent_id: string | null;
+    credential_key: string | null;
+    extra: string | null;
+  }): ConnectionRow => ({
+    service: r.service,
+    address: r.address,
+    ...(r.agent_id ? { agentId: r.agent_id } : {}),
+    ...(r.credential_key ? { credentialKey: r.credential_key } : {}),
+    ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
+  });
   // a binding is DERIVED where platform structure gives it away — an owned WhatsApp
   // connection's self-chat IS its own address, nothing stored — and RECORDED where it
   // can't be (Slack's self-DM id is opaque: resolved once at connect, `extra.self_conversation`)
@@ -229,23 +249,12 @@ export function createConnections(db: DatabaseSync): Connections {
     },
 
     connection(service: string, address: string): ConnectionRow | null {
-      const r = getC.get(service, address) as
-        | {
-          service: string;
-          address: string;
-          agent_id: string | null;
-          credential_key: string | null;
-          extra: string | null;
-        }
-        | undefined;
-      if (!r) return null;
-      return {
-        service: r.service,
-        address: r.address,
-        ...(r.agent_id ? { agentId: r.agent_id } : {}),
-        ...(r.credential_key ? { credentialKey: r.credential_key } : {}),
-        ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
-      };
+      const r = getC.get(service, address) as Parameters<typeof rowOf>[0] | undefined;
+      return r ? rowOf(r) : null;
+    },
+
+    connections(): ConnectionRow[] {
+      return (listC.all() as unknown as Parameters<typeof rowOf>[0][]).map(rowOf);
     },
 
     aliases(): AliasRow[] {

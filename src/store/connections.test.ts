@@ -8,6 +8,27 @@ import { assertEquals } from "@std/assert";
 import { openLog } from "./log.ts";
 import { aliasOf } from "./connections.ts";
 
+Deno.test("connections(): the live map, extra and all — a soft-deleted grant is not listed", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  try {
+    log.upsertConnections([
+      { service: "whatsapp", address: "549", agentId: "ana", extra: { state: "connected" } },
+      { service: "slack", address: "T1", credentialKey: "slack:T1:org" },
+      { service: "google", address: "gone@x.io", agentId: "ana" },
+    ]);
+    log.deleteConnections([{ service: "google", address: "gone@x.io" }]);
+    assertEquals(log.connections(), [
+      { service: "slack", address: "T1", credentialKey: "slack:T1:org" },
+      { service: "whatsapp", address: "549", agentId: "ana", extra: { state: "connected" } },
+    ]);
+    assertEquals(log.connection("google", "gone@x.io")?.agentId, "ana"); // identity persists
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("memberships: a lifetime — leave keeps seen history, refuses the future, rejoin revives", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
