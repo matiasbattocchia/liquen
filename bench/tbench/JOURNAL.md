@@ -133,3 +133,33 @@ tasks × 5 trials, mean reward 12.5%, 37 errored trials, $9.6k. Pass rate over 5
 Our four: vpp 0.2 and sound-change 0.2 there, mvcc 0 and vigenere 0 — our 0/4 sits inside
 that row's noise. Tasks to run first for a signal on Sonnet 5 are the 0.6–0.8 ones;
 tasks at 0.0 there cannot distinguish a harness from another.
+
+## Reference — Claude Code + Opus 5 on 4.0, per task (maintainers' job, 2026-09-03)
+
+Hub job `a1ac63a1-8a9b-4bc7-9906-2b63657ee1c2`: effort max, mean reward 51.8%, $6.0k, 6.5B
+tokens — cheaper than the Sonnet row and four times the score. 47 tasks with a pass, 20 at
+5/5. Pass rate over 5 trials:
+
+- 1.0: cad-model · coq-block-bound · cumulative-layout-shift · embedding-drift-monitor ·
+  fp8-rmsnorm-gemm · freecad-platform-drawing · freecad-spring-clip ·
+  hof-topology-interpenetration · interleaved-vigenere · layout-config-recreation2 ·
+  mp-checkpoint-consolidation · payments-pipeline-fix · retro-console-soc ·
+  risk-scorer-replay · satb-audio-transcription · shadow-relay · sound-change-cascade ·
+  telecom-entity-resolution · vpp-loss-divergence · wdm-design
+- 0.8: distributed-dedup · fin-saccr-rwa · gsea-proteomics · html-js-filter ·
+  kv-live-surgery · legacy-utility-triage · pretrain-shard-corruption · rs-archive-clone ·
+  uefi-bootkit · vf2-speedup-networkx
+- 0.6: ks-solver-cpp · math-eval-grader · mvcc-lsm-compaction · production-planning ·
+  vba-userform-port
+- 0.0 (19): bun-sourcemap-leak · cargo-flight-dispatch · data-anonymization ·
+  foodstuff-beta-activity · freecad-impeller · freight-dispatch-shift ·
+  glycan-ms2-elucidation · layout-config-recreation · medical-claims-processing ·
+  music-harmony · nextjs-performance · ontology-kg-querying · photonic-waveguide-routing ·
+  protein-autointerp-disulfide · session-window-debug · sglang-qwen-burst ·
+  takens-embedding-lean · vllm-deepseek-streaming · wal-recovery-ordering
+
+Today's four are 1.0 · 1.0 · 1.0 · 0.6 here — including vigenere, which Opus is not
+refused on. Next run: the same four on `anthropic/claude-opus-5` with `MU_EFFORT=max`;
+a pass rate near this row's is the harness holding, a miss on a 1.0 task is a harness
+question. The 1.0 tasks that read an image (cad-model, the layout ones, freecad) stay
+out until mu has an image path.
