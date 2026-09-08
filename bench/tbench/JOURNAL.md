@@ -114,3 +114,22 @@ Numbers come from Harbor's `result.json` and the trial's `trajectory.json`.
   partition; (5) both losses are model-side: a fix scoped to the reported case, and a
   near-miss on an exact-match task. Neither is a harness bug. Cost is the number to
   watch: a 66-minute trial read 26M prompt tokens, nearly all cached.
+
+## Reference — Claude Code + Sonnet 5 on 4.0, per task (maintainers' job, 2026-09-03)
+
+Hub job `a5758f1a-9ef2-4100-9893-34a99c99bd9c`: Claude Code 2.1.231, effort max, 66
+tasks × 5 trials, mean reward 12.5%, 37 errored trials, $9.6k. Pass rate over 5 trials:
+
+- 0.8: telecom-entity-resolution · sglang-qwen-burst · layout-config-recreation2
+- 0.6: payments-pipeline-fix · coq-block-bound
+- 0.4: wdm-design · uefi-bootkit · fin-saccr-rwa · distributed-dedup · batched-eval-parity
+- 0.2: wal-recovery-ordering · vpp-loss-divergence · vba-userform-port ·
+  sound-change-cascade · risk-scorer-replay · retro-console-soc · react-lead-form ·
+  mp-checkpoint-consolidation · live-database-cutover · intrastat-meldung ·
+  gsea-proteomics · cumulative-layout-shift · atrx-vep-crispr
+- 0.0: the other 43, mvcc-lsm-compaction and interleaved-vigenere among them
+  (vigenere: five refusals, the same classifier stop we saw).
+
+Our four: vpp 0.2 and sound-change 0.2 there, mvcc 0 and vigenere 0 — our 0/4 sits inside
+that row's noise. Tasks to run first for a signal on Sonnet 5 are the 0.6–0.8 ones;
+tasks at 0.0 there cannot distinguish a harness from another.
