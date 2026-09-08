@@ -1579,6 +1579,31 @@ Deno.test("xi returns what it decided, and discloses it the moment it decides", 
   }
 });
 
+Deno.test("a turn that ends in a terminal error discloses the idle it leaves", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  // a 401 is not weather: nu writes it as the turn's terminal row without a retry
+  const { transport } = scripted([Object.assign(new Error("401 invalid key"), { status: 401 })]);
+  const seen: [string, string | undefined][] = [];
+  const ports: XiPorts = {
+    log,
+    docs: openFileDocs(`${dir}/docs`),
+    transport,
+    onDecision: (v, cursor) => seen.push([v, cursor]),
+  };
+  try {
+    const m = (await log.publish(principalMsg("hola")))!;
+    assertEquals(await xi(CONFIG, ports), "think");
+    const err = (await log.read()).at(-1)!;
+    assertEquals(err.type, "error");
+    // the error row wakes no invocation, so the turn's end is the one place this is said
+    assertEquals(seen, [["think", m.id], ["ignore", err.id]]);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a tool's attachment outside the agent's ground is refused, and the result says so", async () => {
   const ground = await Deno.realPath(await Deno.makeTempDir());
   const home = `${ground}/agents/a1`;

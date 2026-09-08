@@ -1,0 +1,4 @@
+.venv/
+.scratch/
+*.egg-info/
+__pycache__/

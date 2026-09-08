@@ -878,7 +878,11 @@ export async function xi(
   }
   disarm();
   try {
-    await ports.log.publishAndRelease(last, lock.lease());
+    const landed = await ports.log.publishAndRelease(last, lock.lease());
+    // the verdict the turn's own end implies, disclosed here: a closing message pokes the
+    // next invocation, which discloses again, but a terminal error or a cancel wakes
+    // nothing on purpose (`relevant`), and the idle they leave would otherwise go unsaid
+    ports.onDecision?.(decide([...events, ...landed], session, config), landed.at(-1)?.id);
   } catch (err) {
     // declared dead mid-turn: a successor took the lease and is redoing this window from
     // the same events. Dropping the work is the point — landing it would publish the turn

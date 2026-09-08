@@ -249,6 +249,20 @@ Deno.test("findRoot: the nearest config.jsonc up from cwd names the org", async 
   });
 });
 
+Deno.test("findRoot: MU_DIR names the org wherever mu runs", async () => {
+  await withDir(async (root) => {
+    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    Deno.env.set("MU_DIR", root);
+    try {
+      assertEquals(findRoot("/usr/lib"), await Deno.realPath(root));
+      Deno.env.set("MU_DIR", `${root}/nowhere`);
+      assertThrows(() => findRoot(root), Error, "is not a mu project");
+    } finally {
+      Deno.env.delete("MU_DIR");
+    }
+  });
+});
+
 Deno.test("the reader tells an absent file from an unreadable one — only absence is the defaults", async () => {
   await withDir(async (root) => {
     await Deno.mkdir(`${root}/config.jsonc`); // a directory where the file should be

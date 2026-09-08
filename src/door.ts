@@ -109,7 +109,23 @@ export const MAX_PENDING_LINES = 1_000;
 
 type Push = (line: Record<string, unknown>) => void;
 /** One tailing connection: where to push, and which session it tails. */
-type Tailer = { push: Push; session: string };
+/** One tail. A status line that names an event (`after`) is pushed only once that event has
+ *  been: the subscription delivers by watch and poll, the edge is volunteered the moment it
+ *  is decided, and a client that exits on `idle` must have painted the row the idle covers.
+ *  `seen` starts at an id minted when the tail opens — an event the tail will never deliver
+ *  cannot hold a status back — and a busy edge drops a held idle: the state moved on. */
+type Tailer = { push: Push; session: string; seen: string; held?: Status };
+
+function pushStatus(t: Tailer, line: Status): void {
+  if (line.status === "busy") {
+    t.held = undefined;
+    t.push({ ...line });
+  } else if (line.after !== undefined && line.after > t.seen) {
+    t.held = line;
+  } else {
+    t.push({ ...line });
+  }
+}
 
 /** Serve one door per agent under `dir` — one unix socket in each agent's own folder. */
 export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Doors> {
@@ -158,7 +174,7 @@ export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Do
     },
     status(agentId: string, sessionId: string, line: Status) {
       for (const t of casts.get(agentId) ?? []) {
-        if (t.session === sessionId) t.push({ ...line });
+        if (t.session === sessionId) pushStatus(t, line);
       }
     },
     attachments: () => conns.size,
@@ -214,11 +230,20 @@ async function serve(conn: Deno.Conn, agent: DoorAgent, cast: Set<Tailer>) {
   };
   const tail = (session: string, from?: string) => {
     if (untail) throw new Error("already tailing");
+    const t: Tailer = { push, session, seen: newId() };
     untail = agent.port(session).subscribe(
-      (e: Event) => push({ event: e }),
+      (e: Event) => {
+        push({ event: e });
+        if (e.id > t.seen) t.seen = e.id;
+        if (t.held && t.held.after! <= t.seen) {
+          const line = t.held;
+          t.held = undefined;
+          push({ ...line });
+        }
+      },
       from !== undefined ? { from } : {},
     );
-    tailer = { push, session };
+    tailer = t;
     cast.add(tailer);
   };
 

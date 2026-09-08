@@ -1878,3 +1878,54 @@ REPL paints it dim, the CLI does not count it as failure, and the model reads it
 `[system]` line without the `error:` prefix. A cancel that
 lands while the window is being read still closes that turn. Ingest reclassification of a
 principal's "stop"/"cancel" on a chat surface stays open: the door is the only producer.
+
+### The bench runs `mu cli` (2026-09-08) — LANDED
+
+`bench/tbench`'s Harbor adapter runs the harness a resident org runs. It uploads the
+host's `deno` and this checkout's `src/`, scaffolds the org with `mu init` under
+`/installed-agent/org` (the container's user is the one agent; `-m` sets the catalog's
+model, `MU_EFFORT` its effort, `maxTokens` 32k so a maxed turn fits Harbor's 900s wall),
+and a trial is one `mu cli --session task --timeout 840` in the task's working directory.
+stdout, stderr and the org's `data/log` are copied beside the trial for audits. Harbor is
+0.22 (`--agent <module:Class>` replaced `--agent-import-path`); the dataset id is
+`terminal-bench/terminal-bench-2-1`.
+
+**`MU_DIR` names the org.** `findRoot` honors it before walking up from cwd: the agent
+stands where the client attached from (a task's workdir, a repo) while the org lives
+elsewhere. It is the environment's one pointer — a knob still lives in the catalog.
+
+Verified live from a directory outside the org: real key → the agent ran `pwd` in the
+attach directory, the closing on stdout, exit 0. Open: the egress proxy is the org's only
+egress (`HTTPS_PROXY` + `SSL_CERT_FILE` trusting the mu CA alone), and a task's tool that
+honors neither — pip, python `requests`, node without `NODE_EXTRA_CA_CERTS` — fails TLS
+verification inside the trial; the first batch measures how often that costs a task.
+
+### The dispatch sweeper — a failed send is offered again as a state move (2026-09-08) — LANDED
+
+The harness-led half of retry (item 10's remainder). A dispatcher still posts what it is
+offered and stamps what the wire answered; the retry is `store/sweep.ts`, one UPDATE on
+main's tick: a `failed` row of the dispatcher's own (`message`, ours, no `external_id`)
+with a transient class (`error_code` absent · 429 · 5xx) whose `failed_at` has waited its
+rung out goes back to `queued` — `queued_at` now, `attempts` + 1 — and the log's update
+stream hands it to the dispatcher as one more offer. The ladder is a constant beside nu's
+(`RETRY_BACKOFF_MS`: 1m · 5m · 15m · 1h · 4h · 24h) and its length is the ceiling: a row
+that spent every rung stays `failed`, and the `status="failed"` mark on the window is the
+agent's. A `queued` row nobody took within `QUEUED_STALE_MS` (15m) is touched again, so a
+connector that comes up after the re-offer still receives it.
+
+What had to move for that: the tail grew a second, opt-in cursor (`subscribe({updates})`,
+`(updated_at, id)` over rows with `updated_at > created_at`), so an UPDATE can reach the
+one consumer that wants it while a mind's subscription stays appends-only; the lifecycle
+vocabulary became one name per timestamp (`queued` · `dispatched` · `failed` · `delivered`
+· `read` · `deleted`, each with its `_at`), and the dispatcher now writes `dispatched`
+where before only failure had a state — which is also what `isOutbound` reads, so a
+re-delivered row on the wire (a reaction, no artifact of its own) never re-posts. A
+classless failure writes `error_code: null` so the json_patch removes the class the last
+failure carried. Each dispatcher process posts an offer (row + `queued_at`) once, however
+often the stream repeats it.
+
+Verified with the store's own clock in the tests (`store/sweep.test.ts`): the rungs, the
+ceiling, the class filter, the external-id exclusion, the stale touch reaching a live
+update stream, and a mind's subscription seeing none of it. Open: the agent-led half — a
+final `failed` stamp reaching the mind as a wake — stays deferred; the stream it needs now
+exists.

@@ -352,8 +352,21 @@ function mergeSection(
 
 /** The org is WHERE YOU RUN mu: walk up from `from` to the nearest `config.jsonc` — the
  *  project marker, the way git finds `.git`. Everything is addressed from the root it
- *  names: the catalog at `<root>/config.jsonc`, the substrate at `<root>/data`. */
+ *  names: the catalog at `<root>/config.jsonc`, the substrate at `<root>/data`.
+ *
+ *  `MU_DIR` is the one pointer the environment may carry: an org named there is the org,
+ *  wherever mu runs — an agent stands in a directory the project does not contain (a
+ *  repo, a task's workdir) while its org lives elsewhere. */
 export function findRoot(from: string = Deno.cwd()): string {
+  const pointed = Deno.env.get("MU_DIR");
+  if (pointed) {
+    try {
+      Deno.statSync(`${pointed}/config.jsonc`);
+    } catch {
+      throw new Error(`MU_DIR=${pointed} is not a mu project: no config.jsonc there`);
+    }
+    return Deno.realPathSync(pointed);
+  }
   let dir = Deno.realPathSync(from);
   for (;;) {
     try {

@@ -429,6 +429,14 @@ Deno.test({
       assertEquals(tailing.statuses, [{ status: "idle", after: "01X" }]);
       assertEquals(passive.statuses, []);
 
+      // an idle that names an event not yet delivered waits for it: the row lands on the
+      // tail first, the edge that covers it after — a client exiting on idle has it all
+      const row = (await log.publish(msg("mind@ana", "hola")))!;
+      doors.status("ana", "mind", { status: "idle", after: row.id });
+      await tailing.settle(() => tailing.statuses.length >= 2);
+      assertEquals(tailing.events.at(-1)?.id, row.id);
+      assertEquals(tailing.statuses.at(-1), { status: "idle", after: row.id });
+
       // a hang-up — clean or killed, the same event — leaves the count honest
       tailing.conn.close();
       passive.conn.close();

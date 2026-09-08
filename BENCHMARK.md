@@ -1,28 +1,36 @@
 # Terminal-Bench — progress
 
-mu's headless task mode ([`src/task.ts`](src/task.ts)) run against
-[Terminal-Bench](https://www.tbench.ai) via a Harbor adapter. Terminal-Bench's methodology
-— instruction + fresh sandboxed environment + a programmatic checker over resulting state
-(files/output, never transcript prose), binary pass/fail — is used both here (real tasks in
-containers) and in our own lightweight [`bench/run.ts`](bench/run.ts) (org-mode behavior).
+`mu cli` ([`src/cli.ts`](src/cli.ts)) run against [Terminal-Bench](https://www.tbench.ai)
+via a Harbor adapter. Terminal-Bench's methodology — instruction + fresh sandboxed
+environment + a programmatic checker over resulting state (files/output, never transcript
+prose), binary pass/fail — is used both here (real tasks in containers) and in our own
+lightweight [`bench/run.ts`](bench/run.ts) (org-mode behavior).
 
 **Purpose is diagnostic, not a leaderboard chase.** Every batch is mined for harness bugs;
-the score is a by-product. mu is a *delegate* harness (conversational, multi-channel), so
-task mode is a deliberately de-tuned mode: no persona seeds, gates off, a task-instruction
-doc, longer timeouts.
+the score is a by-product. mu is a *delegate* harness (conversational, multi-channel); a
+trial runs the same harness a resident org runs — one org, one agent, a fresh session per
+trial, the default rules (everything but `send` allowed), a per-call output cap that fits
+the wall.
 
 ## How to run
 
 ```sh
-deno task compile:task          # → dist/mu-task (one binary: harness + transport + afs)
-cd bench/tbench                 # Harbor adapter (python; harbor installed in a venv)
-harbor run -d terminal-bench@2.0 \
-  --agent-import-path mu_terminal_bench:MuAgent \
+cd bench/tbench                 # Harbor adapter (python; harbor installed in .venv)
+harbor run -d terminal-bench/terminal-bench-2-1 \
+  --agent mu_terminal_bench.mu_agent:MuAgent \
   -m anthropic/claude-sonnet-5 -i <task-name> -n <concurrency> -o <out-dir>
 ```
 
-Per trial, the adapter captures `agent/mu-out.txt` (closing message) and `agent/mu-trace.log`
-(full `[mu-trace]` trajectory — every event + turn/tool totals) for pass- and fail-side audits.
+The adapter ([`bench/tbench/mu_terminal_bench/mu_agent.py`](bench/tbench/mu_terminal_bench/mu_agent.py))
+needs no build step: it uploads the host's `deno` binary and this checkout's `src/`, and
+scaffolds the org with `mu init` under `/installed-agent/org` in the container. The
+container's user is the agent; `-m` sets the catalog's model; `MU_EFFORT` in the
+environment sets its effort. A trial is one `mu cli --session task` in the task's working
+directory with `MU_DIR` pointing at the org.
+
+Per trial, the adapter captures `agent/mu-out.txt` (the transcript as the REPL paints it),
+`agent/mu-err.txt` (error rows and the CLI's own failures) and `agent/mu-log/` (the org's
+log database — every event) for pass- and fail-side audits.
 
 ## Score to date (Sonnet 5, effort default)
 
@@ -113,8 +121,11 @@ avoids, both since addressed:
 
 ## Notes / caveats
 
-- **Dataset**: `terminal-bench@2.0` (89 tasks). `@2.1` exists but wasn't resolvable via the
-  registry client at time of writing.
+- **Dataset**: the scores above are over `terminal-bench@2.0` (89 tasks). The run command
+  now names `terminal-bench/terminal-bench-2-1` on the Harbor Hub — the same 89 tasks with
+  26 of them repaired (timeouts, resources, reward-hacking robustness), so the next batch
+  is not directly comparable to the table. Terminal-Bench 3.0 (74 tasks, 7 domains) is a
+  separate, harder set; there is no 4.0.
 - **Scores are single-run** — treat as directional. Confirmed flips were re-run; the
   headline % is a projection over the sampled 32, not the full 89.
 - **Deliberately excluded**: crypto-cracking tasks (safety-refusal noise) and monster builds

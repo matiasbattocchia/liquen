@@ -583,9 +583,14 @@ one peripheral for both.
   }
   extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, <service> provenance, raw
   status?: {        // delivery lifecycle — ONE mutable json_patch-merged column, never events
-    state?          // furthest stage (envelope.status is its shorthand view)
+    state?          // the stage whose stamp landed last (envelope.status is its shorthand view):
+                    // queued · dispatched · failed · delivered · read · deleted
+    queued_at? · dispatched_at? · failed_at?   // one stamp per state, named after it — the
+                    // stamps stay as the row's history; a fresh outbound row has none (its
+                    // queue time is created_at), `queued` marks the sweeper's re-offer
     delivered_at? · read_at?   // scalars in a DM; {participant: ts} maps in groups
     deleted_at?     // a revoke stamps, never removes — content stays auditable
+    attempts? · error? · error_code?   // the re-offer count; the last failure's text and class
   }
 }
 ```
@@ -670,11 +675,12 @@ Decisions:
 - **`system` unfolded** into `alarm`/`error`/`summary` as top-level types
   (dropped the umbrella per "each type = a distinct handling contract").
 - **`status` is a mutable field**, not events; delivery bookkeeping; render marks only
-  `(failed!)` — a pending mark buys nothing (v0.2, with real channels). Transient failures retried silently. For v0 a **final actionable
-  failure surfaces via the `(failed!)` mark** on the message; a distinct **`escalation`**
-  event (agent- or operator-actionable → think) is **deferred** (§10) — `local` never fails
-  to deliver, so it only earns its keep at v0.2 (WhatsApp windows, blocked numbers, expired
-  creds), likely folded into a general **background-completion** signal.
+  `failed` — a pending mark buys nothing. Transient failures are retried by the sweeper
+  (§5) without a word to the agent; a **final failure surfaces via the `failed` mark** on
+  the message. A distinct **`escalation`** event (agent- or operator-actionable → think) is
+  **deferred** (§10) — `local` never fails to deliver, so it only earns its keep on the
+  wires (WhatsApp windows, blocked numbers, expired creds), likely folded into a general
+  **background-completion** signal.
 
 ### Event-type table
 
@@ -1179,11 +1185,16 @@ constraint, and render derives it **from the window's shape**:
 - **Closed events collapse** — a `send` → its `from="self"` world line; tool pairs
   **dropped** uniformly (a failed tool renders as any failed tool — errored result while
   trailing, gone when closed); `thinking` **dropped**. The trace that *persists* is the
-  message's own **delivery status**: a permanent dispatch failure (the platform refused, or
-  the post threw — nothing retries) stamps `envelope.status = failed` via `setDelivery`,
-  and the line renders `status="failed"` in both regions — the agent's only way to know a
-  queued send never arrived. The log stays lossless for the rest (`search` re-fetches
-  denied/errored exchanges).
+  message's own **delivery status**: a dispatch failure stamps `envelope.status = failed`
+  via `setDelivery`, and the line renders `status="failed"` in both regions — the agent's
+  only way to know a queued send never arrived. A transient one (the post never reached the
+  wire, a 5xx, a 429) is the **sweeper's** to retry: on the clock's tick it moves the row
+  back to `queued` — one UPDATE, a backoff ladder as the WHERE clause, its length the
+  ceiling — and the log's update stream hands the row to the dispatcher as one more offer,
+  the same offer in whatever process the connector lives. Nothing posts but the dispatcher,
+  and it never learns a row is a retry. A row that has spent every rung stays `failed`,
+  which is when the mark means what the agent reads. The log stays lossless for the rest
+  (`search` re-fetches denied/errored exchanges).
 - The log stays **lossless**; `search` re-fetches what render drops. Crashproof for free:
   recovery re-renders the same window and gets the same request.
 - Three regions: **trailing** (faithful) · **recent** (collapsed) · **distant** (`summary`
@@ -1993,8 +2004,10 @@ upsert/merge key, mutable) · `type` · `service` · `connection_address` ·
 time) · `created_at`/`updated_at` · `text` (derived from parts — the search column) ·
 `parts` (the event body, JSON array; absent = a merge-only draft) · `payload` (what the
 event MEANS: action · refs · turn keys, §3) · `extra` (the sidecar) · `status` (the
-delivery-lifecycle JSON: `{state, delivered_at?, read_at?, deleted_at?}` — scalars in a DM,
-per-participant maps in groups, json_patch-merged on update). Wire ids are `*_address` columns; `id` stays internal.
+delivery-lifecycle JSON: `{state, <state>_at…, attempts?, error?, error_code?}` — receipt
+stamps scalars in a DM, per-participant maps in groups, json_patch-merged on update; the
+sweeper selects on `state` and an expression index over it). Wire ids are `*_address`
+columns; `id` stays internal.
 
 **The store owns `id`.** The column is `id uuid DEFAULT uuidv7()` on Postgres, and the SQLite
 adapter is the *same DDL* (it binds a `uuidv7()` function, so the default is real there too).
@@ -2016,9 +2029,10 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
 | Log · publish | **UPSERT on `external_id`**, id from `DEFAULT (uuidv7())`, `RETURNING id`: new ⇒ INSERT (wakes) · known ⇒ MERGE `payload`/`status` via `json_patch` — no new row, no wake | `INSERT … ON CONFLICT DO UPDATE` + jsonb merge (the open-bsp before-update trigger) |
 | Log · read | indexed `SELECT … WHERE`, `ORDER BY id` | `SELECT … WHERE` (RLS) |
 | Log · growth | native indexes — no scan, no segment rotation | table partitioning |
-| Log · subscribe (the trigger) | dir-watch (WAL commits) + poll backstop, cursored on `id` — seeded **synchronously at subscribe time**, so everything appended after `subscribe()` returns is delivered | LISTEN/NOTIFY · Realtime |
+| Log · subscribe (the trigger) | dir-watch (WAL commits) + poll backstop, cursored on `id` — seeded **synchronously at subscribe time**, so everything appended after `subscribe()` returns is delivered. A subscriber that asks (`updates`) gets a second cursor, `(updated_at, id)` over rows whose lifecycle moved after they landed — the dispatcher's, never a mind's | LISTEN/NOTIFY · Realtime (INSERT for minds, INSERT+UPDATE for dispatchers) |
 | retry / echo / edits (ONE mechanism) | the `external_id` upsert-merge above: a retried delivery, an edit, and our own dispatched artifact looping back all MERGE into the row | same, engine-native |
-| delivery bookkeeping | `setDelivery(id, {external_id?, status})` — an UPDATE; backfills the echo key after dispatch; never wakes | same + `AFTER INSERT`-only trigger |
+| delivery bookkeeping | `setDelivery(id, {external_id?, status})` — an UPDATE; backfills the echo key after dispatch; reaches the update stream, wakes no mind | same + `AFTER INSERT`-only trigger for minds |
+| the dispatch sweeper (§5) | one UPDATE on the tick (`store/sweep.ts`): transiently `failed` → `queued`, the backoff ladder in the WHERE, an expression index on `state` | the same statement under pg_cron |
 | privacy (`scoped(log, policy)`, §6) | the policy bakes into the port: reads filter BEFORE the window limit, writes are checked before landing (`WITH CHECK`), each agent's subscription delivers only its view | RLS (`USING`/`WITH CHECK`) + the agent's own credential — the wrapper vanishes |
 | Stream | in-process EventEmitter → SSE | Supabase Realtime |
 | the turn lease (§2) | a `locks` row **in the same DB** — `INSERT … ON CONFLICT DO NOTHING` to take, one atomic `UPDATE … WHERE born <= cutoff` to steal a dead holder's, `DELETE` to release | advisory lock, or the same row |
@@ -2310,7 +2324,9 @@ harness knob, its default, one file exposing them all. `config.jsonc` sits at th
 PROJECT ROOT — git-tracked, deployed with the image, and the project marker itself:
 `findRoot` walks up from cwd to the nearest one, the way git finds `.git`, and everything
 else (`data/`, the connectors, the processors) is addressed from the root it names — the
-org lives where you run mu, cwd selects it, no variable does. The file is a DECLARATION,
+org lives where you run mu and cwd selects it; `MU_DIR` is the one pointer the environment
+may carry, for an agent that stands in a directory its org does not contain (a repo, a
+task's workdir — `mu cli` hands the door the cwd it attached from). The file is a DECLARATION,
 written only by the setup doors: `mu init` materializes the whole catalog with its
 comments, and `mu connect` adds the one line a grant earns — `connections.<name>`, the
 subsection that makes `mu start` spawn that connector — since the map alone never starts
