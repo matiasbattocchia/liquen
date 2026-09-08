@@ -67,6 +67,18 @@ def checkout_version() -> str:
     return out.stdout.strip() or "unknown"
 
 
+# A trial's catalog. The offer is bash alone: search, schedule and cancel address a chat
+# org's log and clock, and a model handed `search` reaches for it as a code search. The
+# window is sized for tool output — a coding trial's results run to tens of thousands of
+# characters, and a chat org's window checkpoints every few of them.
+TRIAL_KNOBS = {
+    '"tools"': '"tools": ["bash"]',
+    '"compactAt"': '"compactAt": 200000',
+    '"keepRecent"': '"keepRecent": 60000',
+    '"windowLimit"': '"windowLimit": 2000',
+}
+
+
 def scaffold_org(into: Path, agent: str, model: str, effort: str | None) -> Path:
     """`mu init` on the host, then the trial's knobs set in the catalog it wrote."""
     org = into / "org"
@@ -82,6 +94,10 @@ def scaffold_org(into: Path, agent: str, model: str, effort: str | None) -> Path
     text = re.sub(r'"model": "[^"]*"', f'"model": "{model}"', text, count=1)
     if effort:
         text = re.sub(r'"effort": null', f'"effort": "{effort}"', text, count=1)
+    for key, line in TRIAL_KNOBS.items():
+        text, n = re.subn(rf'{key}: [^\n]*?(,?)$', rf'{line}\1', text, count=1, flags=re.M)
+        if n != 1:
+            raise RuntimeError(f"catalog has no {key} line to set")
     path.write_text(text)
     return org
 
@@ -178,10 +194,15 @@ def read_trajectory(db: Path, model: str, version: str) -> Trajectory:
     spend. `immutable` reads a closed database without touching it."""
     conn = sqlite3.connect(f"file:{db}?immutable=1", uri=True)
     conn.row_factory = sqlite3.Row
+    # the session's room: what the agent and its principal wrote there carries the session
+    # id; the harness's own rows (an error, a cancel) carry only the room's address
+    room = conn.execute(
+        "SELECT conversation_address FROM events WHERE session_id = ? LIMIT 1", (SESSION,)
+    ).fetchone()
     rows = conn.execute(
         "SELECT id, type, timestamp, agent_id, text, parts, payload FROM events "
-        "WHERE session_id = ? ORDER BY id",
-        (SESSION,),
+        "WHERE session_id = ? OR conversation_address = ? ORDER BY id",
+        (SESSION, room[0] if room else ""),
     ).fetchall()
     usage = {
         r["turn_id"]: r
