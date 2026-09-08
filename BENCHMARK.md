@@ -22,7 +22,7 @@ harbor run -d terminal-bench/terminal-bench-2-1 \
 
 The adapter ([`bench/tbench/mu_terminal_bench/mu_agent.py`](bench/tbench/mu_terminal_bench/mu_agent.py))
 needs no build step: it uploads the host's `deno` binary and this checkout's `src/`, and
-scaffolds the org with `mu init` inside the trial's mounted logs directory, so the org's
+scaffolds the org with `mu init` and `mu agent` inside the trial's mounted logs directory, so the org's
 log is on the host from its first row whatever ends the trial. The container's user is
 the agent; `-m` sets the catalog's model; `MU_EFFORT` in the environment sets its effort.
 A trial is one `mu cli --dir <org> --session task` in the task's working directory; the

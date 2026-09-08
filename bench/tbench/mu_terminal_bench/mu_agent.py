@@ -80,15 +80,15 @@ TRIAL_KNOBS = {
 
 
 def scaffold_org(into: Path, agent: str, model: str, effort: str | None) -> Path:
-    """`mu init` on the host, then the trial's knobs set in the catalog it wrote."""
+    """`mu init` then `mu agent` on the host, then the trial's knobs set in the catalog."""
     org = into / "org"
-    out = subprocess.run(
-        ["deno", "run", "-A", str(REPO / "src" / "init.ts"), str(org), agent],
-        capture_output=True,
-        text=True,
-    )
-    if out.returncode != 0:
-        raise RuntimeError(f"mu init failed: {out.stderr}")
+    for step, args in (
+        ("init", [str(REPO / "src" / "init.ts"), str(org)]),
+        ("agent", [str(REPO / "src" / "agent.ts"), "--dir", str(org), agent]),
+    ):
+        out = subprocess.run(["deno", "run", "-A", *args], capture_output=True, text=True)
+        if out.returncode != 0:
+            raise RuntimeError(f"mu {step} failed: {out.stderr}")
     path = org / "config.jsonc"
     text = path.read_text()
     text = re.sub(r'"model": "[^"]*"', f'"model": "{model}"', text, count=1)

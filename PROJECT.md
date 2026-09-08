@@ -1992,3 +1992,15 @@ that no filter is required: `in` with a time bound reads a stretch of a conversa
 The store stays readable from the exec user's shell in a local deployment — accepted there;
 a container is the boundary, and the shelf plus the workspace are what it mounts, not
 `data/` whole.
+
+### `mu init` scaffolds, `mu agent` declares (2026-09-08) — LANDED
+
+Init writes the org and nothing about who works in it: the catalog with an empty roster,
+the scaffold, the machine's clock. Each agent is its own declaration — `mu agent <name>
+[--name] [--email] [--phone]` (`src/agent.ts`, `declareAgent`) puts `agents.<name>` at the
+head of the roster block with every identity handle in view, the flags' values where they
+were given and null elsewhere, refusing a name the roster already holds and one the grammar
+would refuse, before it writes. The two doors that add to the file share one surgical edit
+(`declareIn`): the member's own lines inside the existing block, a comma only when a member
+already follows, the result parsed before it lands. The bench adapter runs both steps;
+`attach` points a missing agent at the command.

@@ -2,6 +2,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   connectorConfig,
   type ConnectorSpec,
+  declareAgent,
   declareConnection,
   findRoot,
   materialize,
@@ -205,7 +206,8 @@ Deno.test("a subsection no connector claims passes through opaque", async () => 
 
 Deno.test("materialize: the whole catalog, commented, and it reads back verbatim", async () => {
   await withDir(async (root) => {
-    const cfg = starterConfig(["ana"]);
+    const cfg = starterConfig();
+    cfg.agents.ana = { identity: { name: "Ana", email: null, phone: null } };
     cfg.connections.acme = { port: 4321, things: ["x"] };
     const raw = materialize(cfg, [SPEC]);
     for (
@@ -224,7 +226,7 @@ Deno.test("materialize: the whole catalog, commented, and it reads back verbatim
 
 Deno.test("declareConnection: the grant's own line, every other byte as it was", async () => {
   await withDir(async (root) => {
-    const raw = materialize(starterConfig(["ana"]), [SPEC]);
+    const raw = materialize(starterConfig(), [SPEC]);
     await Deno.writeTextFile(`${root}/config.jsonc`, raw);
 
     assertEquals(await declareConnection(root, "slack"), true);
@@ -238,6 +240,50 @@ Deno.test("declareConnection: the grant's own line, every other byte as it was",
     assertEquals(await declareConnection(root, "slack"), false);
     assertEquals(await declareConnection(root, "acme"), false);
     assertEquals((await readConfig(root)).connections, { slack: {}, acme: {} });
+  });
+});
+
+Deno.test("declareAgent: the roster entry with every handle in view, every other byte as it was", async () => {
+  await withDir(async (root) => {
+    const raw = materialize(starterConfig(), [SPEC]);
+    await Deno.writeTextFile(`${root}/config.jsonc`, raw);
+
+    await declareAgent(root, "ana", { name: "Ana Pérez", phone: "+34600" });
+    assertEquals((await readConfig(root)).agents, {
+      ana: { identity: { name: "Ana Pérez", email: null, phone: "+34600" } },
+    });
+    const after = await Deno.readTextFile(`${root}/config.jsonc`);
+    assert(after.includes("// the model an agent runs on"), "the comments survive");
+    // the entry is the only change, under the roster's comment: strip its lines and the
+    // file is what init wrote
+    const entry = [
+      '\n    "ana": {',
+      '      "identity": {',
+      '        "name": "Ana Pérez",',
+      '        "email": null,',
+      '        "phone": "+34600"',
+      "      }",
+      "    }",
+    ].join("\n");
+    assert(after.indexOf("// <name>: any org.agent key re-declared") < after.indexOf('"ana"'));
+    assertEquals(after.replace(entry, ""), raw);
+
+    // a second agent follows the first; the same name twice is refused, the file untouched
+    await declareAgent(root, "bo", {});
+    assertEquals(Object.keys((await readConfig(root)).agents), ["ana", "bo"]);
+    const twice = await Deno.readTextFile(`${root}/config.jsonc`);
+    await assertRejects(() => declareAgent(root, "ana", {}), Error, "already in the roster");
+    assertEquals(await Deno.readTextFile(`${root}/config.jsonc`), twice);
+
+    // the roster's grammar, refused before anything is written
+    for (const bad of ["Ana", "no way", "-ana", "ana.b", "a".repeat(32), ""]) {
+      await assertRejects(
+        () => declareAgent(root, bad, {}),
+        Error,
+        "a name is a folder and a unix user",
+      );
+    }
+    assertEquals(await Deno.readTextFile(`${root}/config.jsonc`), twice);
   });
 });
 

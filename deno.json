@@ -7,7 +7,8 @@
     "./cli": "./src/cli.ts",
     "./repl": "./src/repl.ts",
     "./start": "./src/start.ts",
-    "./init": "./src/init.ts"
+    "./init": "./src/init.ts",
+    "./agent": "./src/agent.ts"
   },
   "publish": {
     "exclude": [
@@ -39,6 +40,7 @@
     "repl": "deno run -A --env-file=.env src/repl.ts",
     "start": "deno run -A --env-file=.env src/start.ts",
     "init": "deno run -A src/init.ts",
+    "agent": "deno run -A src/agent.ts",
     "bench": "deno run -A --env-file=.env bench/run.ts",
     "connect": "deno run -A --env-file=.env src/connect/connect.ts",
     "status": "deno run -A --env-file=.env src/connect/status.ts",

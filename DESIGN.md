@@ -2346,9 +2346,11 @@ org lives where you run mu and cwd selects it; `--dir <path>` is the one flag ev
 point accepts, for an agent that stands in a directory its org does not contain (a repo, a
 task's workdir — `mu cli` hands the door the cwd it attached from). The file is a DECLARATION,
 written only by the setup doors: `mu init` materializes the whole catalog with its
-comments, and `mu connect` adds the one line a grant earns — `connections.<name>`, the
+comments and an empty roster, `mu agent <name>` adds one roster entry — `agents.<name>`
+with the identity handles its flags declared (`--name`, `--email`, `--phone`) and null
+for the rest — and `mu connect` adds the one line a grant earns — `connections.<name>`, the
 subsection that makes `mu start` spawn that connector — since the map alone never starts
-a process. Git is its history, a human is watching for both, and boot COMPILES it — the
+a process. Git is its history, a human is watching for all three, and boot COMPILES it — the
 roster into registry rows and
 homes, everything else funneled to the deepest function that needs it (main → xi → nu →
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in

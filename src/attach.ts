@@ -44,7 +44,7 @@ export async function resolveAgent(explicit?: string, dir?: string): Promise<Att
   const target = explicit ?? username;
   if (!(target in catalog.agents)) {
     throw new Error(
-      `no agent "${target}" in ${root}/config.jsonc — declare it: "agents": { "${target}": {} }`,
+      `no agent "${target}" in ${root}/config.jsonc — \`mu agent ${target}\` adds one`,
     );
   }
   const model = catalog.agents[target].model ?? catalog.org.agent.model;
