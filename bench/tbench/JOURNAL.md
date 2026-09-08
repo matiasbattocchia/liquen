@@ -73,3 +73,21 @@ Numbers come from Harbor's `result.json` and the trial's `trajectory.json`.
   `search` offered where it means nothing; (3) local Docker's disk is too small for 4.0's
   verifier images — the root filesystem holds Docker's data and 4 GB remained after the
   run. Both adapter knobs are set for the next run; the disk is the machine's.
+
+## 2026-09-08 — 4.0, two lighter tasks, bash alone and the wide window
+
+- commit `fe5f9b7` · `terminal-bench/terminal-bench@4.0.0` · `-k 1` · docker, local
+  (data root moved to the home partition, 267 GB free) · `-n 2`
+- tasks: sound-change-cascade (Science, 2 cpu · 4 GB, recover an ordered rule set from
+  780 proto/reflex pairs) · mvcc-lsm-compaction (Software, 2 cpu · 4 GB, a reduced C++
+  storage-engine model with a crash report and a test suite).
+- the catalog now offers bash alone and carries `compactAt` 200k · `keepRecent` 60k ·
+  `windowLimit` 2000 — the first run with the knobs from the previous entry.
+- mvcc-lsm-compaction, mid-run: found and verified the fix in a handful of calls (tests
+  and the repro pass with it, the repro fails without it), then called `aedit` to add the
+  regression test and the shim failed: `exec: deno: not found`. The shims exec `deno` by
+  name, and in the container deno lives only at `/installed-agent/deno`. Harness fix: the
+  shell's PATH carries the directory of the deno that runs the harness, ahead of the
+  box's; the adapter also links it into `/usr/local/bin`. The agent fell back to bash for
+  the edit, so the trial goes on.
+- result: pending

@@ -95,7 +95,11 @@ function userSpaceEnv(binPath?: string): Record<string, string> {
     const v = Deno.env.get(name);
     if (v !== undefined) env[name] = v;
   }
-  env.PATH = binPath ? `${binPath}:${Deno.env.get("PATH") ?? ""}` : Deno.env.get("PATH") ?? "";
+  // the shims exec `deno` by name: the one that runs the harness is on the path, wherever
+  // it was installed, ahead of whatever the box has
+  const runtime = Deno.execPath().replace(/\/[^/]+$/, "");
+  const inherited = Deno.env.get("PATH") ?? "";
+  env.PATH = [binPath, runtime, inherited].filter(Boolean).join(":");
   return env;
 }
 

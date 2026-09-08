@@ -130,12 +130,13 @@ class MuAgent(BaseInstalledAgent):
         with tempfile.TemporaryDirectory(prefix="mu-org-") as tmp:
             org = scaffold_org(Path(tmp), agent, self.model(), self._get_env("MU_EFFORT"))
             await environment.upload_dir(org, ORG)
-        # the egress proxy mints its CA with openssl; the org's shells and the model call
-        # need nothing else from the image
+        # deno on PATH: the exec plane's shims (aread, awrite, aedit) exec it by name from
+        # the agent's shell. The egress proxy mints its CA with openssl; the org's shells
+        # and the model call need nothing else from the image
         await self.exec_as_root(
             environment,
             command=(
-                f"chmod 755 {DENO} && mkdir -p {DENO_DIR} && "
+                f"chmod 755 {DENO} && ln -sf {DENO} /usr/local/bin/deno && mkdir -p {DENO_DIR} && "
                 f"(command -v openssl >/dev/null || "
                 f"(apt-get update -qq && apt-get install -y -qq openssl) || "
                 f"apk add --no-cache openssl) && "
