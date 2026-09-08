@@ -697,7 +697,7 @@ function renderMessages(
     if (silent(e)) continue; // said nothing — it closed the turn, it draws no block
     if (e.envelope.conversation.address === here) {
       if (isSelf(e, me)) {
-        placeOwn(bodyOf(e)); // bare: the agent's own voice
+        placeOwn(bodyOf(e, zone)); // bare: the agent's own voice
       } else if (parseVerdict(textOf(e)) === undefined) {
         place("user", { type: "text", text: principalEl(e, zone) }); // a verdict line is
         // steering, not conversation — the gate consumed it, so it draws no block
@@ -747,7 +747,7 @@ function renderMessages(
       if (e.payload?.ref_id && welded.has(e.payload.ref_id)) continue;
       if (silent(e)) continue; // said nothing — here too, so the last block stays the world's
       if (isSelf(e, me) && e.envelope.conversation.address === here) {
-        placeOwn(bodyOf(e)); // mid-chain assistant text
+        placeOwn(bodyOf(e, zone)); // mid-chain assistant text
       } else if (e.envelope.conversation.address === here) {
         if (parseVerdict(textOf(e)) === undefined) {
           place("user", { type: "text", text: principalEl(e, zone) });
@@ -1267,15 +1267,17 @@ function principalEl(e: MessageEvent, zone?: string): string {
   return `<principal${name} at="${hhmm(e.ts, zone)}">${body}</principal>`;
 }
 
-/** A message's body for HOME rendering (plain text turns): text, then one marker per
- *  attachment, then one element per data part. World lines compose the same pieces inside
- *  `msgLine` (escaped there). Every part shape yields a piece, so a location- or contacts-
- *  only message never renders as an empty text block — the API rejects those (400). */
-function bodyOf(e: Event): string {
+/** A message's body as plain text: its words, then one marker per attachment, then one
+ *  element per data part. HOME turns place it bare, and a `search` hit carries it — the same
+ *  line in the result as in the window, markers included, so a path read in one place
+ *  works in the other. World lines compose the same pieces inside `msgLine` (escaped
+ *  there). Every part shape yields a piece, so a location- or contacts-only message never
+ *  renders as an empty text block — the API rejects those (400). */
+export function bodyOf(e: Event, zone?: string): string {
   return [
     textOf(e),
     ...filesOf(e).map((p) => mediaMarker(p)),
-    ...datasOf(e).map((p) => dataEl(p, "")),
+    ...datasOf(e).map((p) => dataEl(p, "", zone)),
   ]
     .filter((s) => s.length > 0).join("\n");
 }

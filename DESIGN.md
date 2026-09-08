@@ -1429,7 +1429,14 @@ content-block / system-block types, so it feeds `mu` untranslated.
 
 `send` writes to `(service, connection, conversation)`; **`search` reads by the same
 coordinates + text + time + sender** (Slack search: `in:`/`from:`/`before:` + FTS).
-Returns **raw events, type-filtered** (messages; never tool/permission noise).
+Returns **messages only** (never tool/permission noise), each hit carrying the line render
+would show for it — `bodyOf`: the words, a marker per attachment with its `path`, an element
+per data part — so a photo found by its caption or filename comes back as the same `<image>`
+the window prints, and a path read in a result works in bash. A page is the most recent
+`limit` matches (xi's `SEARCH_LIMIT` when unset, the same default-with-override shape bash's
+output caps have); when older matches were cut, `more.before` hands back the oldest hit's
+moment, which the next call passes as `before`. No filter is required: `in` with a time
+bound and no `text` reads a stretch of a conversation as it happened.
 
 - **Push-default / pull-escape**: nu pushes the agent its recent window at buildContext;
   `search` is the escape hatch to reach beyond — older history, other *public*
@@ -1824,7 +1831,7 @@ its SQL side (5 tools: `executeSql`/`getDbSchema`/`sampleTableRows`/`selectAsCsv
 | tool | plane | signature → returns |
 |---|---|---|
 | `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{sent, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — it quotes on the wire; `react` lands a glyph on it; `action` (`edit`/`delete`/`remove`) acts on the referent instead of adding to it, and the two mutating ones reach only the account's own messages. **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
-| `search` | control (dedicated) | `search({in?, from?, before?, after?, text?})` → events, RLS-scoped. Clean sugar over the control-plane log read (SELECT / ripgrep). |
+| `search` | control (dedicated) | `search({in?, from?, before?, after?, text?, limit?})` → `{hits, more?}`, RLS-scoped; a hit's text is the rendered line. Clean sugar over the control-plane log read (SELECT / ripgrep). |
 | `bash` | exec + durable-on-files | `bash(cmd)` → `{stdout, stderr, exit}`. The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
 | `sql` | durable-on-db | `sql(query)` → rows, RLS-scoped. The **database** substrate's one primitive; present only on the db backend (the sandbox can't touch the DB, §9 invariant). Capability via **functions** — the "DB OS": `db_schema` · `docs_write` · `docs_edit` · plus `grep`/`glob`/`ls` counterparts (FTS/`LIKE` · pattern-list · introspection). |
 

@@ -13,7 +13,15 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
 import { shortId } from "./render.ts";
-import type { Draft, Event, Json, MessageEvent, ToolResultEvent, ToolUseEvent } from "./types.ts";
+import type {
+  Draft,
+  Event,
+  Json,
+  MessageEvent,
+  SearchResult,
+  ToolResultEvent,
+  ToolUseEvent,
+} from "./types.ts";
 
 const CONFIG: AgentConfig = {
   agentId: "a1",
@@ -885,11 +893,9 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
       const [found, missed] = await read("tool_result");
 
       // matched case-insensitively, and the row hands back the address to point at
-      const rows = (found as ToolResultEvent).parts[0].data.output as {
-        address: string;
-        conversation: string;
-        sender: string;
-      }[];
+      const { hits: rows } = (found as ToolResultEvent).parts[0].data.output as {
+        hits: { address: string; conversation: string; sender: string }[];
+      };
       assertEquals(rows.length, 2);
       assertEquals(rows[0].address, "15613518605");
       assertEquals(rows[0].conversation, "Gianvito"); // named, not numbered
@@ -934,11 +940,68 @@ Deno.test("search bounds read the org's clock: a bare stamp means the wall the m
       await publish(principalMsg("qué dijo antes de las cinco"));
       await waitFor(async () => (await read("tool_result")).length === 1);
       const [found] = await read("tool_result");
-      const rows = (found as ToolResultEvent).parts[0].data.output as { text: string }[];
-      assertEquals(rows.map((r) => r.text), ["antes"]);
+      const { hits } = (found as ToolResultEvent).parts[0].data.output as {
+        hits: { text: string }[];
+      };
+      assertEquals(hits.map((r) => r.text), ["antes"]);
     },
     { timezone: "America/Argentina/Buenos_Aires" },
     [at("2026-09-01T19:59:00Z", "antes"), at("2026-09-01T20:01:00Z", "después")],
+  );
+});
+
+Deno.test("search hands back the line the window shows, and pages on the oldest hit", async () => {
+  // a receipt lands as a bare photo, another under a caption: the hit carries the marker
+  // with the path bash takes, so what is found reads as what is seen. `limit` cuts the page
+  // and `more.before` is the moment the next page opens on; a filename is searchable text.
+  const row = (iso: string, parts: MessageEvent["parts"]): Draft<MessageEvent> => ({
+    ts: iso,
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "gira", kind: "group", name: "Gira Norte" },
+      sender: { address: "german", name: "Germán" },
+    },
+    parts,
+  });
+  const photo = (name: string, caption?: string) => ({
+    type: "file" as const,
+    kind: "image" as const,
+    file: { mime_type: "image/jpeg", uri: `file:///media/${name}`, name },
+    ...(caption ? { text: caption } : {}),
+  });
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "search", input: { in: "gira", limit: 2 } }], "tool_use"),
+      ok([{
+        kind: "tool_use",
+        name: "search",
+        input: { in: "gira", before: "2026-09-04T12:01:00Z" },
+      }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { text: "a.jpg" } }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("qué gastamos"));
+      await waitFor(async () => (await read("tool_result")).length === 3);
+      const [page, rest, named] = (await read("tool_result"))
+        .map((e) => (e as ToolResultEvent).parts[0].data.output as SearchResult);
+      assertEquals(page.hits.map((h) => h.text), [
+        '<image name="a.jpg" path="/media/a.jpg"/>',
+        'nafta\n<image name="b.jpg" path="/media/b.jpg"/>',
+      ]);
+      assertEquals(page.more, { before: page.hits[0].ts });
+      assertEquals(rest.hits.map((h) => h.text), ["310.000"]);
+      assertEquals(rest.more, undefined);
+      assertEquals(named.hits.map((h) => h.text), ['<image name="a.jpg" path="/media/a.jpg"/>']);
+    },
+    {},
+    [
+      row("2026-09-04T12:00:00Z", [{ type: "text", kind: "text", text: "310.000" }]),
+      row("2026-09-04T12:01:00Z", [photo("a.jpg")]),
+      row("2026-09-04T12:02:00Z", [photo("b.jpg", "nafta")]),
+    ],
   );
 });
 

@@ -23,7 +23,7 @@ import type {
   Event,
   MessageEvent,
   PermissionResponseEvent,
-  SearchHit,
+  SearchResult,
   ToolResultEvent,
   ToolUseEvent,
 } from "./types.ts";
@@ -120,7 +120,7 @@ Deno.test({
       await act(dir, log);
       const [res] = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
       assertEquals(res.payload.ref_id, q.id);
-      const hits = res.parts[0].data.output as SearchHit[];
+      const { hits } = res.parts[0].data.output as SearchResult;
       assertEquals(hits.map((h) => [h.address, h.sender, h.text]), [
         ["wa:+34600", "Juan", "la cita es mañana"],
       ]);
@@ -152,7 +152,10 @@ Deno.test({
       await act(blind.dir, blind.slog);
       const [res] = await blind.log.read({ types: ["tool_result"] }) as ToolResultEvent[];
       assertEquals(res.payload.ref_id, q.id);
-      assertEquals((res.parts[0].data.output as SearchHit[]).map((h) => h.text), ["visible"]);
+      assertEquals(
+        (res.parts[0].data.output as SearchResult).hits.map((h) => h.text),
+        ["visible"],
+      );
     } finally {
       await blind.down();
     }
@@ -470,7 +473,7 @@ Deno.test({
       const results = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
       const found = results.find((r) => r.payload.ref_id === qs.id)!;
       assertEquals(
-        (found.parts[0].data.output as SearchHit[]).map((h) => h.text),
+        (found.parts[0].data.output as SearchResult).hits.map((h) => h.text),
         ["mañana a las 10"],
       );
     } finally {

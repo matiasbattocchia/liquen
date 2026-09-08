@@ -68,6 +68,7 @@ import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./st
 import type { FilePart } from "./types.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import {
+  bodyOf,
   cancelled,
   hhmm,
   isCancelled,
@@ -1625,7 +1626,7 @@ async function execute(
       ...(args as SearchArgs),
       before: bound(args.before),
       after: bound(args.after),
-    });
+    }, zone);
   }
   const tool = ports.exec?.[name];
   if (!tool) throw new Error(`unknown tool: ${name}`);
@@ -1664,17 +1665,33 @@ async function referent(ports: XiPorts, conversation: string, re: string): Promi
   return target;
 }
 
+/** How many matches a search page holds when the model names no `limit` — the same
+ *  default-with-override shape bash's output caps have. */
+const SEARCH_LIMIT = 50;
+
 /**
  * `search` (§6) — the tool's implementation, reached only through act: a script's door
  * search is a tool_use like any other (§9), so this runs for both under the same gate.
- * Visibility is the log handle's — the caller's scoped port answers, RLS-style.
+ * Visibility is the log handle's — the caller's scoped port answers, RLS-style. A hit's
+ * `text` is render's `bodyOf` — the line the window would show, attachments as markers —
+ * so what is found reads the same as what is seen, and a caption's photo comes with it.
  */
-async function search(log: Pick<Reader, "read">, args: SearchArgs): Promise<SearchResult> {
+async function search(
+  log: Pick<Reader, "read">,
+  args: SearchArgs,
+  zone?: string,
+): Promise<SearchResult> {
+  const limit = args.limit ?? SEARCH_LIMIT;
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error(`limit must be a positive integer, got ${JSON.stringify(args.limit)}`);
+  }
   // the filters narrow by ADDRESS; a name is only ever a way to find one (§6)
   const [conversations, senders] = await Promise.all([
     rooms(log, args.in === undefined ? undefined : String(args.in)),
     people(log, args.from === undefined ? undefined : String(args.from)),
   ]);
+  // one row past the page: whether older matches exist is read off the rows, never
+  // inferred from a page that happens to be full
   const rows = await log.read({
     ...(conversations ? { conversations } : {}),
     ...(senders ? { senders } : {}),
@@ -1682,20 +1699,19 @@ async function search(log: Pick<Reader, "read">, args: SearchArgs): Promise<Sear
     after: args.after,
     text: args.text,
     types: ["message"],
-    limit: 50,
+    limit: limit + 1,
   });
-  return rows.map((e) => ({
+  const more = rows.length > limit;
+  const page = more ? rows.slice(1) : rows;
+  const hits = page.map((e) => ({
     id: e.id,
     ts: e.ts,
     conversation: e.envelope.conversation.name ?? e.envelope.conversation.address,
     address: e.envelope.conversation.address, // what `in`/`send(to:)` take back
     sender: e.envelope.sender?.name ?? e.envelope.sender?.address ?? "self",
-    // `?? []` because a row's payload may legitimately carry no parts — a merge-only
-    // draft that found no target inserts one (§3). Render already defends here; search
-    // threw, which took the whole query down over a single malformed row.
-    text: ((e as MessageEvent).parts ?? []).filter((p) => p.type === "text")
-      .map((p) => (p as { text: string }).text).join(" "),
+    text: bodyOf(e, zone),
   }));
+  return { hits, ...(more ? { more: { before: page[0].ts } } : {}) };
 }
 
 /** How deep a name lookup reads before giving up — the most recent rows that carry it. */
@@ -1794,8 +1810,12 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
       name: "search",
       description:
         "Search the message log — including everything older than your window. Every filter " +
-        "narrows; the 50 most recent matches come back, newest last. Results carry the " +
-        "conversation's `address`, which `in` and `send(to:)` both take back.",
+        "narrows, and none is required: `in` with `after`/`before` and no `text` reads a " +
+        `stretch of a conversation as it happened. The most recent matches come back (${SEARCH_LIMIT} ` +
+        "unless you set `limit`), newest last, each as your window shows it: the words, then " +
+        "one marker per attachment with its `path`, then any data part. When older matches " +
+        "were cut, `more.before` is the moment to pass as `before` for the next page. Hits " +
+        "carry the conversation's `address`, which `in` and `send(to:)` both take back.",
       input_schema: {
         type: "object",
         properties: {
@@ -1821,9 +1841,15 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
           text: {
             type: "string",
             description:
-              "a phrase the message contains, matched literally as one contiguous string, " +
-              "case-insensitive — no word splitting, no fuzziness, no wildcards. Keep it short " +
-              "and distinctive: one word or a fragment you are sure of beats a whole sentence",
+              "a phrase the message contains — in its words, an attachment's caption or its " +
+              "filename — matched literally as one contiguous string, case-insensitive: no word " +
+              "splitting, no fuzziness, no wildcards. Keep it short and distinctive: one word " +
+              "or a fragment you are sure of beats a whole sentence",
+          },
+          limit: {
+            type: "integer",
+            description:
+              `how many of the most recent matches to return (optional; default ${SEARCH_LIMIT})`,
           },
         },
       },

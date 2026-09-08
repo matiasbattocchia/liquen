@@ -1974,3 +1974,21 @@ trust file the system's roots followed by the mu CA, written at boot to
 declares no hosts still binds every authority and every tunnel terminates, as before.
 What changed hands: a tool that ignores `HTTPS_PROXY` now reaches the world unaudited,
 where before it could not complete a handshake; it never held a credential either way.
+
+### A search hit is the rendered line, and the page says when it was cut (2026-09-08) — LANDED
+
+An agent asked to settle a trip's expenses found the group's receipts in the window as
+`<image>` markers and, in a `search` result, as empty strings: a hit carried its text parts
+only, so a bare photo had nothing to show and a caption came back without its picture. The
+agent guessed money words for two turns, then opened the store with `sqlite3` to find the
+files. Now a hit's `text` is render's `bodyOf` — the words, one marker per attachment with
+the `path` bash takes, one element per data part — so a message reads the same in a result
+as in the window, and a search on a caption or a filename (both already in the text column)
+lands on the file. The page grew a `limit` (default `SEARCH_LIMIT`, 50, the bash-caps
+shape: a default the model overrides) and reads one row past it, so `more.before` — the
+oldest hit's moment, what the next call passes as `before` — stands only when older
+matches were cut; a full page is never mistaken for the whole. The tool's description says
+that no filter is required: `in` with a time bound reads a stretch of a conversation.
+The store stays readable from the exec user's shell in a local deployment — accepted there;
+a container is the boundary, and the shelf plus the workspace are what it mounts, not
+`data/` whole.
