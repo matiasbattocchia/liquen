@@ -30,6 +30,7 @@ import type {
   Event,
   EventId,
   MessageEvent,
+  Reader,
   Subscriber,
 } from "../../src/connector.ts";
 import { createDispatcher, DispatchError, findRoot, orgFlag } from "../../src/connector.ts";
@@ -68,7 +69,7 @@ export interface GithubDispatchDeps {
   /** Delivery bookkeeping — bind the log's `setDelivery`. Backfills `external_id` (the echo
    *  key, prefixed like the ingest stamps it) + `status.dispatched_at` after a post. */
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
-  from?: EventId; // catch up after this id; omit ⇒ live only
+  read: Reader["read"];
   onError?: (event: MessageEvent, err: unknown) => void;
   onSent?: (event: MessageEvent, externalId: string | undefined) => void;
 }
@@ -81,7 +82,7 @@ export function createGithubDispatch(deps: GithubDispatchDeps): () => Promise<vo
     subscribe: deps.subscribe,
     service: "github",
     select: outbound,
-    from: deps.from,
+    read: deps.read,
     setDelivery: deps.setDelivery,
     onError: deps.onError,
     onSent: deps.onSent,
@@ -219,6 +220,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
 
   const stop = createGithubDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
+    read: (q) => log.read(q),
     post: ghPost,
     amend: ghAmend,
     setDelivery: (id, patch) => log.setDelivery(id, patch),

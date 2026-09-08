@@ -63,6 +63,7 @@ async function withDispatch(
   const amends: Amend[] = [];
   const stop = createGithubDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
+    read: (q) => log.read(q),
     post: (target, text) => {
       posts.push({ target, text });
       if (opts.failWith) return Promise.reject(opts.failWith);

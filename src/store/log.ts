@@ -4,7 +4,8 @@
  * Three operations over one append-only log:
  *   • publish   — write an event (the trigger; no separate publish/notify step)
  *   • read      — a point-in-time, filtered, bounded slice
- *   • subscribe — tail the log, receiving events as they're appended
+ *   • subscribe — tail the log, receiving events as they're appended — and, for a
+ *                 subscriber that asks, as their lifecycle moves
  *
  * SQLite adapter (`node:sqlite` — in the runtime, survives `deno compile`). **Flattened
  * schema** (open-bsp lineage): every queried scalar is a column; the type-shaped remainder
@@ -15,10 +16,13 @@
  *                 INSERTs (and wakes the tail); a KNOWN one MERGES payload/status via
  *                 `json_patch` (open-bsp's before-update merge trigger, verbatim SQLite).
  *                 One mechanism = retry-dedup + echo-reconciliation + edits (§3, §4):
- *                 updates mint no new row, so they never wake — wake-on-insert only.
+ *                 updates mint no new row, so they never wake a mind — wake-on-insert only.
  *   • read      — an indexed SELECT; filters (and the readable scope, §6) are WHERE clauses,
  *                 so private rows never leave the store.
- *   • subscribe — dir-watch (WAL commits) + a poll backstop, cursored on `id`.
+ *   • subscribe — dir-watch (WAL commits) + a poll backstop. Two cursors: appends on `id`,
+ *                 and — only for a subscriber that asked (`updates`) — lifecycle moves on
+ *                 `(updated_at, id)`, which is how a dispatcher receives the sweeper's
+ *                 re-offer of a failed send.
  *
  * **The store owns the id** (§3): `id uuid DEFAULT uuidv7()` is the Postgres shape, and this
  * adapter is the same shape — SQLite gets a bound `uuidv7()` function, the column defaults to
@@ -34,7 +38,7 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import type { Conversation, Draft, Envelope, Event, EventId } from "../types.ts";
+import type { Conversation, DeliveryStatus, Draft, Envelope, Event, EventId } from "../types.ts";
 import { newId } from "./id.ts";
 import {
   createLocker,
@@ -49,6 +53,7 @@ import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
 import { type Connections, CONNECTIONS_DDL, createConnections } from "./connections.ts";
 import { createTimers, type Timers, TIMERS_DDL } from "./timers.ts";
+import { createSweeper, type Sweeper } from "./sweep.ts";
 
 /** A bounded, filtered read over the log. Fields AND-combine (the `search` half, §6). */
 export interface ReadQuery {
@@ -68,6 +73,9 @@ export interface ReadQuery {
   before?: string; // events before this TIMESTAMP
   text?: string; // case-insensitive substring over text parts
   types?: Event["type"][]; // restrict to these event types
+  /** Rows whose lifecycle stands at this stage (`status.state`, indexed). A dispatcher
+   *  opens on `queued`: every offer made before it existed, read off the rows. */
+  state?: DeliveryStatus;
   /** `false` ⇒ drop silenced rows (`extra.backfill` · `muted` · `archived` — imported
    *  history and muted/archived-chat traffic, §5). The TURN WINDOW passes it: those rows
    *  reach no prompt (render drops them), so reading them would spend the window's N
@@ -88,16 +96,22 @@ export type Listener = (event: Event) => void;
 export type Filter = (event: Event) => boolean;
 
 export interface SubscribeOptions {
-  /** Deliver everything after the event with this id (at-least-once catch-up). Omit ⇒ live. */
+  /** Deliver everything after the event with this id (at-least-once catch-up). Omit ⇒ live.
+   *  Positions the append stream only: updates always start live. */
   from?: EventId;
   /** Narrow the stream (e.g. a Slack connection ignores email). */
   filter?: Filter;
+  /** Also deliver a row each time its lifecycle moves (an UPDATE), as it then stands. The
+   *  dispatcher rides this: a re-offer is a `queued` stamp on a row that exists. Off, the
+   *  stream is appends only — a stamp or a receipt never wakes a mind. */
+  updates?: boolean;
 }
 
-/** The mutable delivery lifecycle (open-bsp): timestamps per stage, merged on update (§3). */
+/** The mutable delivery lifecycle (open-bsp): timestamps per stage, merged on update (§3).
+ *  A `null` value removes the key (json_patch's law). */
 export interface DeliveryPatch {
   external_id?: string; // backfilled by the dispatcher (echo-reconciliation key, §4)
-  status?: Record<string, string | number>; // e.g. { dispatched_at: iso, error_code: 503 } — json-merged into `status`
+  status?: Record<string, string | number | null>; // e.g. { state: "dispatched", dispatched_at: iso } — json-merged into `status`
   /** The wire naming its own side in the SEND RESPONSE (§4) — stamped with `dispatched_at`,
    *  so sender-presence means "on the wire", not "echo arrived". Fill-only: the echo's
    *  later merge still contributes what only it knows (the pushname). */
@@ -153,11 +167,13 @@ export type Log =
   & Standing
   & Connections
   & Timers
+  & Sweeper
   & {
     /** Record one model call's spend. Fire-and-forget telemetry — never read on the hot path. */
     meter(row: UsageRow): void;
     /** Delivery bookkeeping on an already-published event: backfill `external_id`, merge
-     *  `status` stages. An UPDATE — no new row, so it never wakes the tail (§3, §4). */
+     *  `status` stages. An UPDATE — no new row: the append stream never sees it, only a
+     *  subscriber that asked for `updates` does (§3, §4). */
     setDelivery(id: EventId, patch: DeliveryPatch): Promise<void>;
     close(): Promise<void>;
   };
@@ -215,6 +231,11 @@ export async function openLog(
      CREATE INDEX IF NOT EXISTS events_timestamp ON events(timestamp);
      CREATE INDEX IF NOT EXISTS events_session ON events(session_id);
      CREATE INDEX IF NOT EXISTS events_agent ON events(agent_id);
+     -- the update stream's cursor: rows whose lifecycle moved after they landed
+     CREATE INDEX IF NOT EXISTS events_updated ON events(updated_at, id)
+       WHERE updated_at > created_at;
+     -- the sweeper's scan: the state is the one lifecycle key it selects on
+     CREATE INDEX IF NOT EXISTS events_state ON events(json_extract(status, '$.state'));
      CREATE TABLE IF NOT EXISTS usage (   -- telemetry, NOT events (§2): append-only spend
        created_at         TEXT NOT NULL,
        agent_id           TEXT,
@@ -335,6 +356,15 @@ export async function openLog(
    *  read. */
   const write = (event: Draft, now: string): Event | null => {
     const r = rowOf(event);
+    // An agent's message bound for a wire is born an OFFER: `queued`, stamped now. The
+    // dispatcher that serves the connection takes it off the stream, or off the rows if it
+    // opens later — so no send waits on a process being there to see it land. `local`
+    // rows are the mind's own traffic and go on no wire.
+    const born = r.status === null && r.type === "message" && r.agent_id !== null &&
+        r.external_id === null && r.service !== "local"
+      ? { state: "queued" as const, queued_at: now }
+      : undefined;
+    if (born) r.status = JSON.stringify(born);
     if (r.parts === null && r.external_id !== null) {
       const hit = patch.get(r.payload, r.extra, r.status, now, r.external_id) as
         | { id: string }
@@ -365,7 +395,12 @@ export async function openLog(
       r.extra,
       r.status,
     ) as { id: string };
-    return { ...event, id: stored.id } as Event;
+    // the caller's copy carries what the row does: the offer it was born as
+    return {
+      ...event,
+      id: stored.id,
+      ...(born ? { status: born, envelope: { ...event.envelope, status: born.state } } : {}),
+    } as Event;
   };
 
   /** Both writers, in one transaction: the batch (all or none) and, optionally, the lease
@@ -441,6 +476,7 @@ export async function openLog(
     //                    a turn's last writes and its release (`publishAndRelease`, §2)
     ...createRegistry(db), // the agent registry (§9): folders declare, this table mirrors
     ...createTimers(db), // armed wakes (§10): the one non-log fact about the future
+    ...createSweeper(db), // the harness-led retry (§5): a failed send re-offered as a state move
     ...createStanding(db), // remembered policies (§9): standing verdicts land here
     ...connections, // connections + memberships (§4, §6): what policy reads, live
 
@@ -535,6 +571,7 @@ interface Row {
   sender_name: string | null;
   agent_id: string | null;
   timestamp: string;
+  updated_at: string;
   text: string | null;
   parts: string | null;
   payload: string;
@@ -885,20 +922,46 @@ function tail(
 
   const maxId = db.prepare("SELECT MAX(id) AS m FROM events");
   const after = db.prepare("SELECT * FROM events WHERE id > ? ORDER BY id ASC");
+  // the update stream (`opts.updates`): rows whose lifecycle moved after they landed, in
+  // the order they moved. `updated_at > created_at` keeps a fresh insert off it — that row
+  // is the append stream's — and `id` breaks the tie a batch stamp leaves, one
+  // `updated_at` across every row it touched.
+  const lastMoved = db.prepare(
+    `SELECT updated_at, id FROM events WHERE updated_at > created_at
+     ORDER BY updated_at DESC, id DESC LIMIT 1`,
+  );
+  const movedAfter = db.prepare(
+    `SELECT * FROM events WHERE updated_at > created_at
+       AND (updated_at > ?1 OR (updated_at = ?1 AND id > ?2))
+     ORDER BY updated_at ASC, id ASC`,
+  );
 
   // Seed SYNCHRONOUSLY, here — not in the first pump. `subscribe()` returning is the
   // subscriber's guarantee: everything appended after it is delivered. A lazy seed would
   // read MAX(id) after the first publishes had landed and skip them as backlog.
   // live: skip what's already there · from: resume just after that id ("" ⇒ replay all).
   let cursor = opts.from ?? ((maxId.get() as { m: string | null }).m ?? "");
+  // updates start live whatever `from` says: an offer made before this subscriber existed
+  // stands in the row's state, and the subscriber reads it there (`read({state})`)
+  const seed = opts.updates
+    ? lastMoved.get() as { updated_at: string; id: string } | undefined
+    : undefined;
+  let moved: [string, string] = seed ? [seed.updated_at, seed.id] : ["", ""];
 
+  const deliver = (r: Row) => {
+    const e = eventOf(r);
+    if (!opts.filter || opts.filter(e)) listener(e);
+  };
   const pump = (): Promise<void> => (chain = chain.then(() => {
     if (closed) return;
-    const rows = after.all(cursor) as unknown as Row[];
-    for (const r of rows) {
+    for (const r of after.all(cursor) as unknown as Row[]) {
       cursor = r.id;
-      const e = eventOf(r);
-      if (!opts.filter || opts.filter(e)) listener(e);
+      deliver(r);
+    }
+    if (!opts.updates) return;
+    for (const r of movedAfter.all(moved[0], moved[1]) as unknown as Row[]) {
+      moved = [r.updated_at, r.id];
+      deliver(r);
     }
   }));
 
@@ -974,6 +1037,7 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
     where.push(`type IN (${q.types.map(() => "?").join(",")})`);
     params.push(...q.types);
   }
+  eq("json_extract(status, '$.state')", q.state);
   if (q.text !== undefined) {
     where.push("text IS NOT NULL AND lower(text) LIKE '%' || lower(?) || '%'");
     params.push(q.text);

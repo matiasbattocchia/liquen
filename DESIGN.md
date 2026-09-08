@@ -586,8 +586,9 @@ one peripheral for both.
     state?          // the stage whose stamp landed last (envelope.status is its shorthand view):
                     // queued · dispatched · failed · delivered · read · deleted
     queued_at? · dispatched_at? · failed_at?   // one stamp per state, named after it — the
-                    // stamps stay as the row's history; a fresh outbound row has none (its
-                    // queue time is created_at), `queued` marks the sweeper's re-offer
+                    // stamps stay as the row's history; an agent's message bound for a wire
+                    // is born `queued` (the store stamps it), and `queued` again is the
+                    // sweeper's re-offer
     delivered_at? · read_at?   // scalars in a DM; {participant: ts} maps in groups
     deleted_at?     // a revoke stamps, never removes — content stays auditable
     attempts? · error? · error_code?   // the re-offer count; the last failure's text and class
@@ -1191,8 +1192,11 @@ constraint, and render derives it **from the window's shape**:
   wire, a 5xx, a 429) is the **sweeper's** to retry: on the clock's tick it moves the row
   back to `queued` — one UPDATE, a backoff ladder as the WHERE clause, its length the
   ceiling — and the log's update stream hands the row to the dispatcher as one more offer,
-  the same offer in whatever process the connector lives. Nothing posts but the dispatcher,
-  and it never learns a row is a retry. A row that has spent every rung stays `failed`,
+  the same offer in whatever process the connector lives. An offer is a `queued` row, and
+  a dispatcher opens by reading its service's `queued` rows before it listens: what was
+  offered while no process was there to take it — a send made during a restart, a
+  re-offer during an outage — waits in the row, not on a stream. Nothing posts but the
+  dispatcher, and it never learns a row is a retry. A row that has spent every rung stays `failed`,
   which is when the mark means what the agent reads. The log stays lossless for the rest
   (`search` re-fetches denied/errored exchanges).
 - The log stays **lossless**; `search` re-fetches what render drops. Crashproof for free:

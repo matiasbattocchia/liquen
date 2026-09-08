@@ -100,6 +100,7 @@ async function withDispatch(
   const patches: DeliveryPatch[] = [];
   const stop = createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
+    read: (q) => log.read(q),
     post: (target, text, author, files, threadTs) => {
       posts.push({ target, text, author, files, threadTs });
       if (opts.failWith) return Promise.reject(opts.failWith);

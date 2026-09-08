@@ -104,22 +104,23 @@ Deno.test("a text message maps: envelope, kind, prefixed external_id, parts", as
   assertEquals(e.parts, [{ type: "text", kind: "text", text: "hola" }]);
 });
 
-Deno.test("an echo (no sender, explicit status) keeps envelope.status, no sender", async () => {
+Deno.test("an echo (no sender, explicit status) keeps envelope.status, no sender — the bridge's `sent` moves nothing", async () => {
   const { handler, published } = harness();
   await handler(
     post(
       "/whatsapp-web-webhook",
       batch({
-        messages: [textMessage({
-          sender_address: "",
-          status: { sent: "2026-08-11T12:00:00Z" },
-        })],
+        messages: [
+          textMessage({ sender_address: "", status: { delivered: "2026-08-11T12:00:00Z" } }),
+          textMessage({ sender_address: "", status: { sent: "2026-08-11T12:00:00Z" } }),
+        ],
       }),
     ),
   );
-  const e = published[0] as MessageEvent;
-  assertEquals(e.envelope.sender, undefined);
-  assertEquals(e.envelope.status, "sent");
+  const [delivered, sent] = published as MessageEvent[];
+  assertEquals(delivered.envelope.sender, undefined);
+  assertEquals(delivered.envelope.status, "delivered");
+  assertEquals(sent.envelope.status, undefined); // dispatched already says it
 });
 
 Deno.test("the classifier stamps the principal (§3): a granted sender gets agent.id alone", async () => {

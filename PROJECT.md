@@ -1911,8 +1911,16 @@ rung out goes back to `queued` — `queued_at` now, `attempts` + 1 — and the l
 stream hands it to the dispatcher as one more offer. The ladder is a constant beside nu's
 (`RETRY_BACKOFF_MS`: 1m · 5m · 15m · 1h · 4h · 24h) and its length is the ceiling: a row
 that spent every rung stays `failed`, and the `status="failed"` mark on the window is the
-agent's. A `queued` row nobody took within `QUEUED_STALE_MS` (15m) is touched again, so a
-connector that comes up after the re-offer still receives it.
+agent's.
+
+An offer is a `queued` row, and the row is where an offer waits: the store stamps an
+agent's message bound for a wire `queued` at insert, and a dispatcher opens by reading its
+service's `queued` rows (`read({state})`, the expression index on `state`) before it
+listens. A send made while the connector was mid-restart, or a re-offer made during an
+outage, is taken when the process next opens — the dispatcher holds no cursor and the
+sweeper repeats nothing. The same lifecycle serves as the position the harness itself
+derives from rows (the lease, the consumed horizon): one write, the `dispatched` stamp,
+and nothing beside the row to fall out of step with it.
 
 What had to move for that: the tail grew a second, opt-in cursor (`subscribe({updates})`,
 `(updated_at, id)` over rows with `updated_at > created_at`), so an UPDATE can reach the
@@ -1923,13 +1931,13 @@ where before only failure had a state — which is also what `isOutbound` reads,
 re-delivered row on the wire (a reaction, no artifact of its own) never re-posts. A
 classless failure writes `error_code: null` so the json_patch removes the class the last
 failure carried. Each dispatcher process posts an offer (row + `queued_at`) once, however
-often the stream repeats it.
+often it sees it — the stream and the opening read can hand over the same row.
 
 Verified with the store's own clock in the tests (`store/sweep.test.ts`): the rungs, the
-ceiling, the class filter, the external-id exclusion, the stale touch reaching a live
-update stream, and a mind's subscription seeing none of it. Open: the agent-led half — a
-final `failed` stamp reaching the mind as a wake — stays deferred; the stream it needs now
-exists.
+ceiling, the class filter, the external-id exclusion, an offer standing in the row for a
+dispatcher that opens after it, and a mind's subscription seeing none of it. Open: the
+agent-led half — a final `failed` stamp reaching the mind as a wake — stays deferred; the
+stream it needs now exists.
 
 ### The trial's record is the org's log, and the log speaks ATIF (2026-09-08) — LANDED
 

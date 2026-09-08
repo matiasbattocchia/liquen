@@ -669,3 +669,97 @@ Deno.test("read: externalId is an exact match on the wire id", async () => {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/* ── the update stream ──────────────────────────────────────────────── */
+
+Deno.test("subscribe({updates}) delivers a row as its lifecycle moves; the plain stream never sees a move", async () => {
+  await withLog(async (log) => {
+    await log.publish(msg("01", "mind@m", "on it"));
+    const moves: Event[] = [];
+    const appends: Event[] = [];
+    const offMoves = log.subscribe((e) => moves.push(e), { updates: true });
+    const offAppends = log.subscribe((e) => appends.push(e));
+    await new Promise((r) => setTimeout(r, 50));
+    await log.setDelivery("01", {
+      status: { state: "dispatched", dispatched_at: "2026-07-24T00:00:00Z" },
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    offMoves();
+    offAppends();
+    assertEquals(moves.map((e) => [e.id, e.envelope.status]), [["01", "dispatched"]]);
+    assertEquals(moves[0].status?.dispatched_at, "2026-07-24T00:00:00Z");
+    assertEquals(appends.length, 0);
+  });
+});
+
+Deno.test("an append reaches an updates subscriber ONCE — a fresh row is the append stream's alone", async () => {
+  await withLog(async (log) => {
+    const got: Event[] = [];
+    const off = log.subscribe((e) => got.push(e), { updates: true });
+    await log.publish(msg("01", "mind@m", "hola"));
+    await new Promise((r) => setTimeout(r, 400));
+    off();
+    assertEquals(got.map((e) => e.id), ["01"]);
+  });
+});
+
+Deno.test("the update stream starts live whatever `from` says: a move before subscribing is not replayed", async () => {
+  await withLog(async (log) => {
+    await log.publish(msg("01", "mind@m", "hola"));
+    await log.setDelivery("01", { status: { state: "dispatched", dispatched_at: "x" } });
+    const got: Event[] = [];
+    const off = log.subscribe((e) => got.push(e), { updates: true, from: "" });
+    await new Promise((r) => setTimeout(r, 400));
+    off();
+    assertEquals(got.map((e) => e.id), ["01"]); // the backlog replay — the move itself, not again
+  });
+});
+
+Deno.test("the filter sees the row as it stands after the move", async () => {
+  await withLog(async (log) => {
+    await log.publish(msg("01", "mind@m", "hola"));
+    const got: Event[] = [];
+    const off = log.subscribe((e) => got.push(e), {
+      updates: true,
+      filter: (e) => e.envelope.status === "queued",
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    await log.setDelivery("01", { status: { state: "dispatched", dispatched_at: "x" } });
+    await new Promise((r) => setTimeout(r, 10)); // two moves, two moments
+    await log.setDelivery("01", { status: { state: "queued", queued_at: "y" } });
+    await new Promise((r) => setTimeout(r, 400));
+    off();
+    assertEquals(got.map((e) => e.envelope.status), ["queued"]);
+  });
+});
+
+Deno.test("an agent's message bound for a wire is born queued; the mind's local traffic and the world's rows are not", async () => {
+  await withLog(async (log) => {
+    log.upsertConnections([{ service: "slack", address: "T1", agentId: "ana" }]);
+    const wire = (over: Partial<MessageEvent>): Draft<MessageEvent> => ({
+      ts: "2026-07-16T00:00:00Z",
+      type: "message",
+      envelope: { service: "slack", connection_address: "T1", conversation: { address: "C1" } },
+      parts: [{ type: "text", kind: "text", text: "hola" }],
+      ...over,
+    });
+    const ours = (await log.publish(wire({ agent: { id: "ana", session_id: "mind" } })))!;
+    assertEquals(ours.envelope.status, "queued"); // the caller's copy says so too
+    assertEquals(typeof ours.status?.queued_at, "string");
+    const theirs = (await log.publish(
+      wire({ envelope: { ...wire({}).envelope, external_id: "slack:T1:C1:1.0" } }),
+    ))!;
+    const local = (await log.publish({
+      ...msg("07", "conv", "thinking aloud"),
+      agent: { id: "ana", session_id: "mind" },
+    }))!;
+    const rows = await log.read();
+    const state = (id: string) => rows.find((e) => e.id === id)!.envelope.status;
+    assertEquals(state(ours.id), "queued");
+    assertEquals(state(theirs.id), undefined);
+    assertEquals(state(local.id), undefined);
+    // the opening read a dispatcher makes: its service's standing offers, nothing else
+    const standing = await log.read({ service: "slack", types: ["message"], state: "queued" });
+    assertEquals(standing.map((e) => e.id), [ours.id]);
+  });
+});

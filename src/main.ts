@@ -512,9 +512,9 @@ export async function start(
   // One sweep at a time: a tick that lands while a pass is still publishing joins that
   // pass instead of opening a second. Across processes the same guarantee is `claim`'s —
   // the scan lists, the claim wins, and only what this sweep won gets an alarm.
-  let sweep: Promise<void> | undefined;
+  let firing: Promise<void> | undefined;
   const fireDue = (): Promise<void> =>
-    sweep ??= (async () => {
+    firing ??= (async () => {
       const now = new Date().toISOString();
       for (const due of log.due(now)) {
         const t = log.claim(due.id, now);
@@ -543,15 +543,24 @@ export async function start(
         // a cron advances on the clock it was armed against — the agent's zone, not UTC
         log.settle(t.id, now, agents.find((a) => a.config.agentId === t.agentId)?.config.timezone);
       }
-    })().finally(() => sweep = undefined);
+    })().finally(() => firing = undefined);
 
   // the clock poke (§2 attention): deferred ambient news needs someone to re-ask once the
   // digest comes due, and the log cannot wake on time passing — so the clock is a poke
   // source like the log, a trigger-less invoke on a metronome. Cheap: decide() re-reads
   // one window and mostly answers `ignore`. A constant, not a knob: it is the resolution
   // of the attention intervals, not one of them.
+  // The same metronome carries the harness-led retry (§5): one pass of the sweeper, which
+  // re-offers a transiently failed send by moving it back to `queued` — a state move on the
+  // row, delivered to the dispatcher by the log's update stream. Nothing here posts; where
+  // the log is a database with its own clock, this pass is that clock's statement.
   const ticker = setInterval(() => {
     fireDue().catch((err) => console.error("firing scheduled wakes failed:", err));
+    try {
+      log.sweep(new Date().toISOString());
+    } catch (err) {
+      console.error("the dispatch sweep failed:", err);
+    }
     agents.forEach((a) => invoke(a)());
   }, TICK_MS);
 

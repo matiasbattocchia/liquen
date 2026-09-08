@@ -24,6 +24,7 @@ function fakeLog() {
   const patches: { id: EventId; patch: DeliveryPatch }[] = [];
   return {
     subscribe,
+    read: () => Promise.resolve([] as Event[]),
     push: (e: Draft) => deliver?.({ ...e, id: e.id ?? newId() } as Event),
     patches,
     setDelivery: (id: EventId, patch: DeliveryPatch) => {
@@ -33,6 +34,7 @@ function fakeLog() {
   };
 }
 
+/** An agent's message as the store hands it to the stream: born `queued` (§3). */
 const outboundMessage = (over: Partial<MessageEvent> = {}): Draft<MessageEvent> => ({
   ts: "2026-08-11T12:00:00Z",
   type: "message",
@@ -40,7 +42,9 @@ const outboundMessage = (over: Partial<MessageEvent> = {}): Draft<MessageEvent> 
     service: "whatsapp",
     connection_address: "5491100000000",
     conversation: { address: "5491199999999", kind: "direct" },
+    status: "queued",
   },
+  status: { state: "queued", queued_at: "2026-08-11T12:00:00Z" },
   agent: { id: "matias", session_id: "s1" },
   parts: [{ type: "text", kind: "text", text: "dale, nos vemos" }],
   ...over,
@@ -52,6 +56,7 @@ function harness(send: WhatsAppDispatchDeps["send"], over: Partial<WhatsAppDispa
   const failed: { event: MessageEvent; err: unknown }[] = [];
   createWhatsAppDispatch({
     subscribe: log.subscribe,
+    read: log.read,
     send,
     setDelivery: log.setDelivery,
     onSent: (e) => sent.push(e),
@@ -245,13 +250,13 @@ Deno.test("a bridge refusal stamps failed with the HTTP status as error_code", a
   assertEquals(status.error_code, 422);
 });
 
-Deno.test("an error without an HTTP class stamps failed with NO error_code", async () => {
+Deno.test("an error without an HTTP class stamps failed with a null error_code — the class is removed", async () => {
   const { log } = harness(() => Promise.reject(new TypeError("connection refused")));
   log.push(outboundMessage());
   await settle();
   const status = log.patches[0].patch.status!;
   assertEquals(status.state, "failed");
-  assertEquals("error_code" in status, false); // never reached the bridge — no class
+  assertEquals(status.error_code, null); // never reached the bridge — no class, and none kept
 });
 
 Deno.test("the directory claims @Name tokens — content.mentions for the bridge encoder", async () => {

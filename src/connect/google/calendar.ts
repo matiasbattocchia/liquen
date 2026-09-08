@@ -290,7 +290,7 @@ function rowsFor(
         ts,
         type: "message",
         envelope: { ...base, external_id: ref },
-        status: { deleted_at: ts },
+        status: { state: "deleted", deleted_at: ts },
       } as unknown as Draft<MessageEvent>,
     ];
   }

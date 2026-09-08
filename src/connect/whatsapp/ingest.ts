@@ -331,9 +331,11 @@ function nameMentionTokens(
   return out;
 }
 
-/** The delivery state a bridge status map amounts to: the FURTHEST stage present. */
+/** The delivery state a bridge status map amounts to: the FURTHEST stage present. The
+ *  bridge's `sent` names what the dispatch stamp already said (`dispatched`) and moves
+ *  nothing. */
 function stateOf(status: Record<string, unknown>): DeliveryStatus | undefined {
-  for (const key of ["failed", "read", "delivered", "sent"] as const) {
+  for (const key of ["failed", "read", "delivered"] as const) {
     if (status[key] !== undefined) return key;
   }
   return undefined;
@@ -477,14 +479,15 @@ function mapRevoke(
       parts: [],
     },
     mergeOnly(connection, r.original_message_id, ts, {
-      status: { deleted_at: ts },
+      status: { state: "deleted", deleted_at: ts },
     }),
   ];
 }
 
 /** Delivery/read receipts → the row's `status` lifecycle (§3): `state` takes the furthest
- *  stage; the stamps land on delivered_at/read_at — scalars in a direct chat, and in
- *  groups per-participant maps that `json_patch` accumulates reader by reader. */
+ *  stage, and every stage present lands on its own stamp (`delivered_at`, `read_at`,
+ *  `failed_at`) — scalars in a direct chat, and in groups per-participant maps that
+ *  `json_patch` accumulates reader by reader. */
 function mapStatus(
   s: NonNullable<WABatch["statuses"]>[number],
   connection: string,
@@ -494,6 +497,7 @@ function mapStatus(
   const st: Lifecycle = {};
   const state = stateOf(s.status);
   if (state) st.state = state;
+  if (s.status.failed !== undefined) st.failed_at = String(s.status.failed);
   if (s.status.delivered !== undefined) {
     st.delivered_at = s.status.delivered as Lifecycle["delivered_at"];
   }

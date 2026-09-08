@@ -363,7 +363,7 @@ async function mapMessage(
         conversation: { address: e.channel },
         external_id: originalId,
       },
-      status: { deleted_at: e.event_ts ?? ts },
+      status: { state: "deleted", deleted_at: e.event_ts ?? ts },
     } as unknown as Draft<MessageEvent>]; // the stamp is partless by design
   }
 

@@ -167,18 +167,28 @@ export type Service =
   | "github"
   | "google";
 
-/** Delivery bookkeeping — a mutable field, not events (§3). Render marks pending/failed only. */
-export type DeliveryStatus = "pending" | "sent" | "delivered" | "read" | "failed";
+/** Delivery bookkeeping — a mutable field, not events (§3). Render marks `failed` only. */
+export type DeliveryStatus = "queued" | "dispatched" | "failed" | "delivered" | "read" | "deleted";
 
 /** The delivery LIFECYCLE (§3): one mutable, `json_patch`-merged column beside the event —
- *  receipts and revocations move it, never new events. `state` is the furthest stage
- *  (`envelope.status` is its shorthand view); the stamps are scalars in a direct chat and
- *  per-participant maps in groups (`{reader: ts}` accumulates reader by reader). */
+ *  stamps and receipts move it, never new events. Every state has the timestamp of its
+ *  name: `state` is the stage whose `<state>_at` landed last (`envelope.status` is its
+ *  shorthand view), and the stamps stay as the row's history. A fresh outbound row carries
+ *  no lifecycle: its queue time is `created_at`, and `queued`/`queued_at` mark a re-offer
+ *  by the sweeper (`store/sweep.ts`), `attempts` counting the posts it has had. Receipt
+ *  stamps are scalars in a direct chat and per-participant maps in groups (`{reader: ts}`
+ *  accumulates reader by reader). */
 export interface Lifecycle {
   state?: DeliveryStatus;
+  queued_at?: string;
+  dispatched_at?: string;
+  failed_at?: string;
   delivered_at?: string | Record<string, string>;
   read_at?: string | Record<string, string>;
   deleted_at?: string;
+  attempts?: number;
+  error?: string;
+  error_code?: number;
 }
 
 // Naming rule (§3): `address` = a WIRE address (what the platform calls the thing);

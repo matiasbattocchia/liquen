@@ -20,15 +20,15 @@
  * file carries the text as caption; the FIRST response's id backfills `external_id` —
  * later parts' echoes land as their own rows (they ARE their own WhatsApp messages).
  *
- * The bridge's error contract: 4xx = permanent, 5xx = transient. mu has no dispatch
- * retry loop yet (that's the scheduler, PROJECT #10) — a failure stamps `failed` with
- * `error_code` = the HTTP status, so a retrier can read the class off the log.
+ * The bridge's error contract: 4xx = permanent, 5xx = transient. A failure stamps `failed`
+ * with `error_code` = the HTTP status; the sweeper (`store/sweep.ts`) reads the class off
+ * the log and re-offers the transient ones.
  */
 
 import { isExternal } from "../../store/media.ts";
 import { DispatchError } from "../errors.ts";
 import { createDispatcher } from "../dispatcher.ts";
-import type { DeliveryPatch, Subscriber } from "../../store/log.ts";
+import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
 import type { EventId, FilePart, MessageEvent, ReactionPart, TextPart } from "../../types.ts";
 import { externalId, SERVICE, type WAContent } from "./ingest.ts";
 import { type Directory, whatsappMentions } from "../mentions.ts";
@@ -66,7 +66,7 @@ export interface WhatsAppDispatchDeps {
    *  Absent ⇒ mentions ship as literal text. */
   directory?: Directory;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
-  from?: EventId;
+  read: Reader["read"];
   onError?: (event: MessageEvent, err: unknown) => void;
   onSent?: (event: MessageEvent, wmwId: string | undefined) => void;
 }
@@ -78,7 +78,7 @@ export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => Promis
     subscribe: deps.subscribe,
     service: SERVICE,
     select: outbound,
-    from: deps.from,
+    read: deps.read,
     setDelivery: deps.setDelivery,
     onError: deps.onError,
     onSent: deps.onSent,
@@ -288,6 +288,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   const { logDirectory } = await import("../mentions.ts");
   const stop = createWhatsAppDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
+    read: (q) => log.read(q),
     send,
     mediaUrl,
     directory: logDirectory((q) => log.read(q)),

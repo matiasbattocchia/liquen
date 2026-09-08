@@ -14,15 +14,15 @@
  * A failed post stamps `state = "failed"`, `failed_at`, `error`, `error_code` (§5): the
  * real HTTP status when the transport surfaces one (a 429, a 5xx on the upload URL), else
  * assigned from Slack's error NAME (`slackErrorCode` — the API answers HTTP 200 `ok: false`).
- * No retry loop here (the scheduler's job, PROJECT #10); the code is the class a retrier
- * reads off the log: 4xx permanent, 5xx/429 transient, absent = never reached Slack.
+ * The code is the class the sweeper (`store/sweep.ts`) reads off the log: 4xx permanent,
+ * 5xx/429 transient, absent = never reached Slack.
  */
 
 import type { ChatPostMessageResponse } from "@slack/web-api";
 import { isExternal, pathOf } from "../../store/media.ts";
 import { DispatchError } from "../errors.ts";
 import { createDispatcher } from "../dispatcher.ts";
-import type { DeliveryPatch, Subscriber } from "../../store/log.ts";
+import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../../types.ts";
 import { type Directory, encodeSlackText } from "../mentions.ts";
 import { toSlack } from "../flavor.ts";
@@ -148,7 +148,7 @@ export interface SlackDispatchDeps {
    *  thread — right for a root, and the only answer a deployment without the log has. */
   rootOf?: (externalId: string) => Promise<string | undefined>;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
-  from?: EventId;
+  read: Reader["read"];
   onError?: (event: MessageEvent, err: unknown) => void;
   onSent?: (event: MessageEvent, ts: string | undefined) => void;
 }
@@ -161,7 +161,7 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void
     subscribe: deps.subscribe,
     service: "slack",
     select: outbound,
-    from: deps.from,
+    read: deps.read,
     setDelivery: deps.setDelivery,
     onError: deps.onError,
     onSent: deps.onSent,
@@ -429,6 +429,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   };
   const stop = createSlackDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
+    read: (q) => log.read(q),
     post,
     react,
     amend,
