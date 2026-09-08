@@ -1929,3 +1929,24 @@ ceiling, the class filter, the external-id exclusion, the stale touch reaching a
 update stream, and a mind's subscription seeing none of it. Open: the agent-led half — a
 final `failed` stamp reaching the mind as a wake — stays deferred; the stream it needs now
 exists.
+
+### The trial's record is the org's log, and the log speaks ATIF (2026-09-08) — LANDED
+
+The adapter scaffolds the org inside the trial's mounted logs directory, so the log is on
+the host from its first row and a Harbor kill loses nothing; `mu cli` runs with no
+timeout — the task's agent timeout is the wall — and the catalog's output cap stands. The
+run waits out the raised daemon's linger so the database is checkpointed before the host
+reads it. After the run the adapter reads the log and writes `trajectory.json` beside it
+in ATIF (one user step, one agent step per turn with its text, thinking, tool calls,
+results and spend from the usage table, a system step per error row), built with Harbor's
+own models so it validates as written; Harbor's token totals come from the same numbers.
+Verified live on regex-log (terminal-bench 2.1): reward 1.0, seven steps, totals in
+`result.json`, an empty error file.
+
+The leaderboard target is `terminal-bench/terminal-bench@4.0.0`: 66 tasks, an 8-hour
+agent timeout each, three needing an H100, `-k 5` minimum, `--upload --public`, then the
+maintainers attach the job to the board. Open: every agent shell is issued `HTTPS_PROXY`
+and `SSL_CERT_FILE` trusting the mu CA alone, and the proxy terminates every tunnel's
+TLS, so a client that verifies against its own bundle (pip, python `requests`, npm) fails
+inside a trial; the sound shape is to terminate only the hosts a grant fronts, tunnel the
+rest blind, and hand shells the system bundle plus the mu CA.

@@ -9,8 +9,7 @@ lightweight [`bench/run.ts`](bench/run.ts) (org-mode behavior).
 **Purpose is diagnostic, not a leaderboard chase.** Every batch is mined for harness bugs;
 the score is a by-product. mu is a *delegate* harness (conversational, multi-channel); a
 trial runs the same harness a resident org runs — one org, one agent, a fresh session per
-trial, the default rules (everything but `send` allowed), a per-call output cap that fits
-the wall.
+trial, the catalog's defaults, the default rules (everything but `send` allowed).
 
 ## How to run
 
@@ -23,14 +22,21 @@ harbor run -d terminal-bench/terminal-bench-2-1 \
 
 The adapter ([`bench/tbench/mu_terminal_bench/mu_agent.py`](bench/tbench/mu_terminal_bench/mu_agent.py))
 needs no build step: it uploads the host's `deno` binary and this checkout's `src/`, and
-scaffolds the org with `mu init` under `/installed-agent/org` in the container. The
-container's user is the agent; `-m` sets the catalog's model; `MU_EFFORT` in the
-environment sets its effort. A trial is one `mu cli --session task` in the task's working
-directory with `MU_DIR` pointing at the org.
+scaffolds the org with `mu init` inside the trial's mounted logs directory, so the org's
+log is on the host from its first row whatever ends the trial. The container's user is
+the agent; `-m` sets the catalog's model; `MU_EFFORT` in the environment sets its effort.
+A trial is one `mu cli --session task` in the task's working directory with `MU_DIR`
+pointing at the org; the wall is the task's own agent timeout, the CLI sets none.
 
-Per trial, the adapter captures `agent/mu-out.txt` (the transcript as the REPL paints it),
-`agent/mu-err.txt` (error rows and the CLI's own failures) and `agent/mu-log/` (the org's
-log database — every event) for pass- and fail-side audits.
+Per trial: `agent/mu-out.txt` (the transcript as the REPL paints it), `agent/mu-err.txt`
+(error rows and the CLI's own failures), `agent/org/data/log/log.db` (every event), and
+`agent/trajectory.json` — the log as an ATIF trajectory, one agent step per turn with its
+tool calls, results and spend, which the leaderboard's judge reads and Harbor's token
+totals come from.
+
+For the leaderboard: `terminal-bench/terminal-bench@4.0.0` on a GPU-capable sandbox
+(`-e modal`), `-k 5`, `--upload --public`, then ask the maintainers to attach the job to
+the board.
 
 ## Score to date (Sonnet 5, effort default)
 
