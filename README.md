@@ -33,8 +33,8 @@ workspace, and its docs (identity, org, memories — edit them, boot never overw
 ## Knobs
 
 Every knob lives in `config.jsonc` at the project root (the catalog — `mu init`
-materializes it, the system never writes it; comments document each key). Env is for secrets only. Task mode is the one
-exception left: `MU_MODEL` · `MU_EFFORT` (env, pending the same treatment).
+materializes it, the system never writes it; comments document each key). Env is for
+secrets only. The org is where you run mu; `--dir <path>` names it from anywhere else.
 
 ## Connections
 

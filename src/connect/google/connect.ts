@@ -20,7 +20,7 @@
  */
 
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
-import { findRoot } from "../../config.ts";
+import { findRoot, orgFlag } from "../../config.ts";
 import { declared } from "../declare.ts";
 
 export const APP_PREFIX = "google:app:";
@@ -94,9 +94,10 @@ export function oneShot(
 
 if (import.meta.main) {
   const { openCredentials } = await import("../../store/credentials.ts");
-  const root = findRoot();
+  const org = orgFlag();
+  const root = findRoot(org);
   const dir = `${root}/data`;
-  const [verb, ...rest] = Deno.args;
+  const [verb, ...rest] = org.args;
 
   const flags = new Map<string, string>();
   const positional: string[] = [];

@@ -33,7 +33,7 @@ import type { EventId, FilePart, MessageEvent, ReactionPart, TextPart } from "..
 import { externalId, SERVICE, type WAContent } from "./ingest.ts";
 import { type Directory, whatsappMentions } from "../mentions.ts";
 import { toWhatsApp } from "../flavor.ts";
-import { findRoot } from "../../config.ts";
+import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 
 /** The bridge's dispatch request (server.go `dispatchRequest`) — record verbatim. */
@@ -270,7 +270,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   const { openCredentials } = await import("../../store/credentials.ts");
   const { mediaSecret, signMediaPath } = await import("../../store/media.ts");
   const { whatsappConfig } = await import("./config.ts");
-  const root = findRoot();
+  const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);

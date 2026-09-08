@@ -26,7 +26,7 @@ import type { DeliveryPatch, Subscriber } from "../../store/log.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../../types.ts";
 import { type Directory, encodeSlackText } from "../mentions.ts";
 import { toSlack } from "../flavor.ts";
-import { findRoot } from "../../config.ts";
+import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 
 export interface SlackTarget {
@@ -404,7 +404,7 @@ export function slackWire(
 export async function runDispatch(): Promise<() => Promise<void>> {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
-  const root = findRoot();
+  const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);

@@ -31,7 +31,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
-import { findRoot } from "../../config.ts";
+import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 
 export interface SlackOAuthConfig {
@@ -212,12 +212,13 @@ if (import.meta.main) {
   const { openCredentials } = await import("../../store/credentials.ts");
   const { pickSlackApp } = await import("./connect.ts");
   const { slackConfig } = await import("./config.ts");
-  const root = findRoot();
+  const org = orgFlag();
+  const root = findRoot(org);
   const dir = `${root}/data`;
   const { oauthPort: port, botScopes, userScopes } = await slackConfig(root);
   const creds = await openCredentials(dir);
-  const appFlag = Deno.args.indexOf("--app");
-  const app = await pickSlackApp(creds, appFlag >= 0 ? Deno.args[appFlag + 1] : undefined)
+  const appFlag = org.args.indexOf("--app");
+  const app = await pickSlackApp(creds, appFlag >= 0 ? org.args[appFlag + 1] : undefined)
     .catch((e) => {
       console.error(`[oauth] ${e.message}`);
       Deno.exit(2);

@@ -13,6 +13,8 @@
  * through untouched. Unknown names fail listing every door that exists.
  */
 
+import { orgFlag } from "../config.ts";
+
 const SHIPPED = ["slack", "google", "whatsapp"];
 
 const ROOT = new URL("../../", import.meta.url); // src/connect/ → the repo root
@@ -54,7 +56,9 @@ export function available(root: URL = ROOT): string[] {
 }
 
 if (import.meta.main) {
-  const [name, ...rest] = Deno.args;
+  // the flag rides through to the connector: the org is its to find, not this launcher's
+  const { dir, args: [name, ...words] } = orgFlag();
+  const rest = dir ? ["--dir", dir, ...words] : words;
   let target: string;
   try {
     target = name ? resolveConnect(name) : new URL("./status.ts", import.meta.url).pathname; // bare `mu connect` = the map

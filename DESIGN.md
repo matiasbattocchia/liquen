@@ -2324,8 +2324,8 @@ harness knob, its default, one file exposing them all. `config.jsonc` sits at th
 PROJECT ROOT — git-tracked, deployed with the image, and the project marker itself:
 `findRoot` walks up from cwd to the nearest one, the way git finds `.git`, and everything
 else (`data/`, the connectors, the processors) is addressed from the root it names — the
-org lives where you run mu and cwd selects it; `MU_DIR` is the one pointer the environment
-may carry, for an agent that stands in a directory its org does not contain (a repo, a
+org lives where you run mu and cwd selects it; `--dir <path>` is the one flag every entry
+point accepts, for an agent that stands in a directory its org does not contain (a repo, a
 task's workdir — `mu cli` hands the door the cwd it attached from). The file is a DECLARATION,
 written only by the setup doors: `mu init` materializes the whole catalog with its
 comments, and `mu connect` adds the one line a grant earns — `connections.<name>`, the

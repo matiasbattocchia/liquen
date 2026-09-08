@@ -880,7 +880,7 @@ function tail(
 ): () => void {
   let closed = false;
   let watcher: Deno.FsWatcher | undefined;
-  let poll: number | undefined;
+  let poll: ReturnType<typeof setTimeout> | undefined;
   let chain: Promise<void> = Promise.resolve();
 
   const maxId = db.prepare("SELECT MAX(id) AS m FROM events");

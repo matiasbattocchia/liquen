@@ -661,7 +661,7 @@ Deno.test("slack: an event POST is acked 200 before its processing settles", asy
   }) as Appender["publish"];
   const { raw, handler } = harness(SECRET, undefined, undefined, undefined, publish);
   const res = raw(await signedReq(messageEvent()));
-  let timer!: number;
+  let timer!: ReturnType<typeof setTimeout>;
   const waited = new Promise<string>((r) => (timer = setTimeout(() => r("waited"), 300)));
   const first = await Promise.race([res.then(() => "acked"), waited]);
   clearTimeout(timer);
@@ -801,7 +801,7 @@ Deno.test("slack: without `track` the handler answers only once the publish land
 function fakeSocketMode(envelope: { envelope_id: string; payload: unknown }, RESEND_MS: number) {
   const acks: string[] = [];
   const order: string[] = [];
-  const timers = new Set<number>();
+  const timers = new Set<ReturnType<typeof setTimeout>>();
   const server = Deno.serve({ port: 0, onListen: () => {} }, (req) => {
     const { socket, response } = Deno.upgradeWebSocket(req);
     const deliver = () => {

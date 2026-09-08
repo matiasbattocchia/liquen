@@ -230,7 +230,7 @@ export function bashTool(opts: BashOptions): ExecTool {
         const status = await child.status; // bash itself exited (or was killed)
         // normal command: the pumps are already done (pipe closed) and this wins instantly;
         // backgrounded: they're hanging, so the grace flushes buffered output then cuts
-        let graceTimer: number | undefined;
+        let graceTimer: ReturnType<typeof setTimeout> | undefined;
         const grace = new Promise<void>((r) => (graceTimer = setTimeout(r, GRACE_MS)));
         await Promise.race([pumps, grace]);
         clearTimeout(graceTimer);

@@ -32,7 +32,7 @@ import type {
   MessageEvent,
   Subscriber,
 } from "../../src/connector.ts";
-import { createDispatcher, DispatchError, findRoot } from "../../src/connector.ts";
+import { createDispatcher, DispatchError, findRoot, orgFlag } from "../../src/connector.ts";
 
 /** How long one post to GitHub may take, spawn to exit. */
 const API_TIMEOUT_MS = 30_000;
@@ -160,7 +160,7 @@ export function grantKeyFor(
  *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
 export async function runDispatch(): Promise<() => Promise<void>> {
   const { openLog, openCredentials, createGrantBroker } = await import("../../src/connector.ts");
-  const root = findRoot();
+  const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);

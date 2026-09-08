@@ -19,7 +19,7 @@
  */
 
 import { TextLineStream } from "@std/streams";
-import { findRoot, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
+import { findRoot, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
 
 const RESTART_BASE_MS = 1_000;
 const RESTART_CAP_MS = 60_000;
@@ -88,7 +88,7 @@ export function roster(root: string, connections: Record<string, unknown>): [str
 }
 
 if (import.meta.main) {
-  const root = findRoot();
+  const root = findRoot(orgFlag());
   const catalog = await readConfig(root);
   const procs = roster(root, catalog.connections);
   const live = new Map<string, Deno.ChildProcess>();

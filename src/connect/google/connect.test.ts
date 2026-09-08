@@ -67,7 +67,7 @@ Deno.test("oneShot: the first callback settles the door whichever way it went â€
   await handler(new Request("http://localhost/oauth/google/start"));
   const res = await handler(new Request("http://localhost/oauth/google/callback?state=x"));
   assertEquals(res.status, 400);
-  let timer: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const settled = await Promise.race([
     outcome.then((r) => r.status),
     new Promise<string>((r) => (timer = setTimeout(() => r("hung"), 500))),

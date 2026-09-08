@@ -31,8 +31,8 @@ export interface Attached {
  *  config does not declare cannot run. When the agent folder shares the OS username, no
  *  identity map exists at all (principal name = agent name); an explicit argument talks
  *  to another agent — a session choice, so an argument, not config. */
-export async function resolveAgent(explicit?: string): Promise<Attached> {
-  const root = findRoot();
+export async function resolveAgent(explicit?: string, dir?: string): Promise<Attached> {
+  const root = findRoot({ dir });
   const catalog = await readConfig(root);
   const username = (() => {
     try {

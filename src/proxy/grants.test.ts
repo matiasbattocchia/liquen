@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
-import { createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
+import { type createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
 import { appJwt, createGrantBroker, frontedFor, type TokenResponse } from "./grants.ts";
 import { openCredentials } from "../store/credentials.ts";
 

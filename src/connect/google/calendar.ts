@@ -57,7 +57,7 @@ import type { Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
 import type { CalendarData, CalendarPart, Conversation, Draft, MessageEvent } from "../../types.ts";
-import { findRoot } from "../../config.ts";
+import { findRoot, orgFlag } from "../../config.ts";
 
 const SERVICE = "google" as const;
 const GRANT_PREFIX = "google:";
@@ -454,7 +454,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const { openCredentials } = await import("../../store/credentials.ts");
   const { createGrantBroker } = await import("../../proxy/grants.ts");
   const { googleConfig } = await import("./config.ts");
-  const root = findRoot();
+  const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const { calendars } = await googleConfig(root);
 

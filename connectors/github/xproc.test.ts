@@ -69,7 +69,7 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
     }
   })();
 
-  let timer: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const port = await Promise.race([
       announced,

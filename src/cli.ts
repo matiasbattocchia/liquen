@@ -10,7 +10,7 @@
  * seen through". Whether the work SUCCEEDED is stdout's reader's call — an error row is
  * a failed command, and the fix is running it again.
  *
- *   usage: mu cli [--agent <name>] [--timeout <seconds>] <instruction…>
+ *   usage: mu cli [--dir <org>] [--agent <name>] [--timeout <seconds>] <instruction…>
  *
  * stdout is the transcript, as the REPL shows it (text streams live; tool calls as
  * described lines; thinking stays silent). stderr is failure: the log's error rows and
@@ -21,25 +21,27 @@
 import { attach, resolveAgent, wire } from "./attach.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { painter } from "./paint.ts";
+import { orgFlag } from "./config.ts";
 
+const org = orgFlag();
 const flags: { agent?: string; session?: string; timeout?: number } = {};
 const words: string[] = [];
-for (let i = 0; i < Deno.args.length; i++) {
-  const arg = Deno.args[i];
-  if (arg === "--agent") flags.agent = Deno.args[++i];
-  else if (arg === "--session") flags.session = Deno.args[++i];
-  else if (arg === "--timeout") flags.timeout = Number(Deno.args[++i]);
+for (let i = 0; i < org.args.length; i++) {
+  const arg = org.args[i];
+  if (arg === "--agent") flags.agent = org.args[++i];
+  else if (arg === "--session") flags.session = org.args[++i];
+  else if (arg === "--timeout") flags.timeout = Number(org.args[++i]);
   else words.push(arg);
 }
 const instruction = words.join(" ").trim();
 if (!instruction || (flags.timeout !== undefined && !(flags.timeout > 0))) {
   console.error(
-    "usage: mu cli [--agent <name>] [--session <name>] [--timeout <seconds>] <instruction…>",
+    "usage: mu cli [--dir <org>] [--agent <name>] [--session <name>] [--timeout <seconds>] <instruction…>",
   );
   Deno.exit(2);
 }
 
-const a = await resolveAgent(flags.agent);
+const a = await resolveAgent(flags.agent, org.dir);
 const session = flags.session ?? MIND;
 sessionAddress(a.target, session); // refuses a malformed session name before attaching
 const conn = await attach(a);

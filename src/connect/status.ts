@@ -11,10 +11,10 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { openLog } from "../store/log.ts";
-import { findRoot } from "../config.ts";
+import { findRoot, orgFlag } from "../config.ts";
 
 if (import.meta.main) {
-  const root = findRoot();
+  const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const db = new DatabaseSync(`${dir}/log/log.db`);

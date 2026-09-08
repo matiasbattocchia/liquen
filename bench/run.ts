@@ -3,8 +3,8 @@
  * each task = an instruction + a fresh org + a PROGRAMMATIC check over resulting state
  * (log, workspace, docs — never transcript prose). Binary pass/fail + machine invariants.
  *
- *   deno task bench            # all tasks (needs credentials; uses MU_BENCH_MODEL,
- *   deno task bench greet mem  # subset by name prefix        default claude-sonnet-5)
+ *   deno task bench            # all tasks (needs credentials; the model is MODEL below)
+ *   deno task bench greet mem  # subset by name prefix
  *
  * The scripted-step integration tests are the oracle layer (machine correctness, free);
  * this suite is the behavior layer (does the real model drive the machine well) — kept

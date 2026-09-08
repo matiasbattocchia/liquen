@@ -5,6 +5,7 @@ import {
   declareConnection,
   findRoot,
   materialize,
+  orgFlag,
   readConfig,
   starterConfig,
 } from "./config.ts";
@@ -244,23 +245,23 @@ Deno.test("findRoot: the nearest config.jsonc up from cwd names the org", async 
   await withDir(async (root) => {
     await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
     await Deno.mkdir(`${root}/data/agents/ana`, { recursive: true });
-    assertEquals(findRoot(`${root}/data/agents/ana`), await Deno.realPath(root));
-    assertThrows(() => findRoot("/usr/lib"), Error, "not inside a mu project");
+    assertEquals(findRoot({ from: `${root}/data/agents/ana` }), await Deno.realPath(root));
+    assertThrows(() => findRoot({ from: "/usr/lib" }), Error, "not inside a mu project");
   });
 });
 
-Deno.test("findRoot: MU_DIR names the org wherever mu runs", async () => {
+Deno.test("findRoot: --dir names the org wherever mu runs, and must be one itself", async () => {
   await withDir(async (root) => {
     await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
-    Deno.env.set("MU_DIR", root);
-    try {
-      assertEquals(findRoot("/usr/lib"), await Deno.realPath(root));
-      Deno.env.set("MU_DIR", `${root}/nowhere`);
-      assertThrows(() => findRoot(root), Error, "is not a mu project");
-    } finally {
-      Deno.env.delete("MU_DIR");
-    }
+    assertEquals(findRoot({ dir: root, from: "/usr/lib" }), await Deno.realPath(root));
+    assertThrows(() => findRoot({ dir: `${root}/nowhere` }), Error, "is not a mu project");
   });
+});
+
+Deno.test("orgFlag: strips --dir in both spellings and leaves the rest in order", () => {
+  assertEquals(orgFlag(["a", "--dir", "/x", "b"]), { dir: "/x", args: ["a", "b"] });
+  assertEquals(orgFlag(["--dir=/y", "--agent", "ana"]), { dir: "/y", args: ["--agent", "ana"] });
+  assertEquals(orgFlag(["hello"]), { dir: undefined, args: ["hello"] });
 });
 
 Deno.test("the reader tells an absent file from an unreadable one — only absence is the defaults", async () => {

@@ -58,9 +58,9 @@ overwrites. Ask the developer, then edit:
 - Optionally `harness/instruction/principal.md` — the machine contract; edit only if the
   org wants different channel/memory/conduct rules.
 
-Config knobs (in `src/cli.ts` today, `MainConfig` when embedding): model (`MU_MODEL`,
-default `claude-opus-4-8`), data dir (`MU_DIR`, default `./data`), per-agent
-`compactAt`/`keepRecent`, and the gate policy (default: only `send` is gated).
+Every knob lives in `config.jsonc` at the project root: the model, effort, per-agent
+`compactAt`/`keepRecent`, and the gate policy (default: only `send` is gated). The org is
+where you run mu; `--dir <path>` names it from anywhere else.
 
 ## 6. Hand off
 

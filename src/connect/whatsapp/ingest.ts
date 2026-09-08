@@ -56,7 +56,7 @@ import type {
   Part,
   Payload,
 } from "../../types.ts";
-import { findRoot } from "../../config.ts";
+import { findRoot, orgFlag } from "../../config.ts";
 
 /* ── the bridge's wire shapes (openbsp.go is the source of truth — the bridge's own
  *    contract, not a platform API, so hand-rolled here is honest) ─────────────────── */
@@ -588,7 +588,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { mediaSecret, saveMedia, serveMedia } = await import("../../store/media.ts");
-  const root = findRoot();
+  const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);

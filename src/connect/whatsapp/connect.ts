@@ -26,7 +26,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { SERVICE } from "./ingest.ts";
-import { findRoot } from "../../config.ts";
+import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { declared } from "../declare.ts";
 
@@ -164,13 +164,14 @@ if (import.meta.main) {
   const { userInfo } = await import("node:os");
   const qrcode = (await import("qrcode-terminal")).default;
 
-  const root = findRoot();
+  const org = orgFlag();
+  const root = findRoot(org);
   const dir = `${root}/data`;
   const flags = new Map<string, string>();
   const positional: string[] = [];
-  for (let i = 0; i < Deno.args.length; i++) {
-    if (Deno.args[i].startsWith("--")) flags.set(Deno.args[i].slice(2), Deno.args[++i] ?? "");
-    else positional.push(Deno.args[i]);
+  for (let i = 0; i < org.args.length; i++) {
+    if (org.args[i].startsWith("--")) flags.set(org.args[i].slice(2), org.args[++i] ?? "");
+    else positional.push(org.args[i]);
   }
   const principal = positional[0] ?? (() => {
     try {

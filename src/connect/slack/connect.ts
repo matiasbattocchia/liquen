@@ -36,7 +36,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
-import { findRoot } from "../../config.ts";
+import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { declared } from "../declare.ts";
 import { missingScopes } from "./config.ts";
@@ -470,9 +470,10 @@ if (import.meta.main) {
   const { userInfo } = await import("node:os");
   const { slackConfig } = await import("./config.ts");
 
-  const root = findRoot();
+  const org = orgFlag();
+  const root = findRoot(org);
   const dir = `${root}/data`;
-  const [first, ...rest] = Deno.args;
+  const [first, ...rest] = org.args;
   const verb = first === "app" || first === "bot" || first === "socket" || first === "user"
     ? first
     : "user";

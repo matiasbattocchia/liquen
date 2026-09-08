@@ -22,6 +22,7 @@
 
 import { TextLineStream } from "@std/streams";
 import { attach, resolveAgent, wire } from "./attach.ts";
+import { orgFlag } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { DIM, painter, RED, RESET } from "./paint.ts";
 import { parseVerdict } from "./xi.ts";
@@ -29,10 +30,11 @@ import { parseVerdict } from "./xi.ts";
 // `mu repl [agent] [--session name]` — both are session choices, so arguments, not
 // config: the agent picks the door, the session picks the room behind it (default: the
 // mind). Naming a session is what births it (§4).
-const args = [...Deno.args];
+const org = orgFlag();
+const args = org.args;
 const si = args.indexOf("--session");
 const session = si >= 0 ? args.splice(si, 2)[1] ?? "" : MIND;
-const a = await resolveAgent(args[0]);
+const a = await resolveAgent(args[0], org.dir);
 const home = sessionAddress(a.target, session); // refuses a malformed session name
 
 const conn = await attach(a);

@@ -42,7 +42,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Conversation, Draft, FilePart, MessageEvent, Part } from "../../types.ts";
 import { fromSlack } from "../flavor.ts";
-import { findRoot } from "../../config.ts";
+import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 
 /** The wire's file attachment — only the fields the media seam reads. */
@@ -728,7 +728,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const { openCredentials } = await import("../../store/credentials.ts");
   const { SOCKET_PREFIX } = await import("./connect.ts");
   const { kindOf, saveMedia } = await import("../../store/media.ts");
-  const root = findRoot();
+  const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);

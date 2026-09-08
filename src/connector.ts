@@ -18,7 +18,7 @@ export { appJwt, createGrantBroker } from "./proxy/grants.ts";
 export type { GrantBroker } from "./proxy/grants.ts";
 export type { Connections } from "./store/connections.ts";
 export { newId } from "./store/id.ts";
-export { checkPort, checkStrings, connectorConfig, findRoot } from "./config.ts";
+export { checkPort, checkStrings, connectorConfig, findRoot, orgFlag } from "./config.ts";
 export type { ConnectorSpec } from "./config.ts";
 export { declared } from "./connect/declare.ts";
 export { DispatchError, failedStatus } from "./connect/errors.ts";

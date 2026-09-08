@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
+import { type createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
 import {
   APP_PREFIX,
   connectGithubApp,

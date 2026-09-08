@@ -25,8 +25,8 @@ needs no build step: it uploads the host's `deno` binary and this checkout's `sr
 scaffolds the org with `mu init` inside the trial's mounted logs directory, so the org's
 log is on the host from its first row whatever ends the trial. The container's user is
 the agent; `-m` sets the catalog's model; `MU_EFFORT` in the environment sets its effort.
-A trial is one `mu cli --session task` in the task's working directory with `MU_DIR`
-pointing at the org; the wall is the task's own agent timeout, the CLI sets none.
+A trial is one `mu cli --dir <org> --session task` in the task's working directory; the
+wall is the task's own agent timeout, the CLI sets none.
 
 Per trial: `agent/mu-out.txt` (the transcript as the REPL paints it), `agent/mu-err.txt`
 (error rows and the CLI's own failures), `agent/org/data/log/log.db` (every event), and
@@ -109,7 +109,7 @@ real-model latency + real tasks):
    stalled. Two fixes: (a) `max_tokens` now **continues** like `pause_turn` — the partial
    turn is committed and xi re-enters (bounded to 3 consecutive overflows), with an advisory
    riding along ("you hit the limit; write large output to files incrementally"); refusal
-   stays terminal. (b) task-mode `maxTokens` lowered 64k→32k (`MU_MAX_TOKENS`) so a maxed
+   stays terminal. (b) task-mode `maxTokens` lowered 64k→32k so a maxed
    turn (~6-9 min) fits under the 840s wall and is interruptible between iterations. A 64k
    turn can *never* finish inside the wall — the cap has to leave headroom for continuation.
 

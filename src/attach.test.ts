@@ -13,7 +13,7 @@ Deno.test("wire: a request in flight when the daemon hangs up is answered, not l
   const conn = await Deno.connect({ transport: "unix", path });
   try {
     const w = wire(conn, { event: () => {}, delta: () => {} });
-    let timer: number | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const reply = await Promise.race([
       w.request({ op: "tail" }),
       new Promise<string>((r) => (timer = setTimeout(() => r("hung"), 1_000))),

@@ -8,7 +8,7 @@ Deno.test("init scaffolds a project the reader accepts, and refuses to do it twi
   try {
     await init(path, ["ana", "bo"]);
     // the catalog is the project marker — findRoot lands on it from anywhere inside
-    assertEquals(findRoot(`${path}/data`), await Deno.realPath(path));
+    assertEquals(findRoot({ from: `${path}/data` }), await Deno.realPath(path));
     const cfg = await readConfig(path);
     assertEquals(Object.keys(cfg.agents), ["ana", "bo"]);
     assert(cfg.org.timezone.length > 0); // the machine's clock, interviewed for the human

@@ -119,7 +119,7 @@ export function createLocker(
   const beat = db.prepare("UPDATE locks SET seen = ?3 WHERE name = ?1 AND born = ?2");
   const free = db.prepare(RELEASE_SQL);
   const live = db.prepare("SELECT 1 AS x FROM locks WHERE name = ? AND seen > ?");
-  const hearts = new Set<number>();
+  const hearts = new Set<ReturnType<typeof setInterval>>();
 
   return {
     stop() {
@@ -128,7 +128,7 @@ export function createLocker(
     },
     lock(name: string, ttlMs: number = LOCK_TTL_MS): TurnLock {
       let born = 0; // no acquire yet — a stamp that matches no row
-      let heart: number | undefined;
+      let heart: ReturnType<typeof setInterval> | undefined;
       const stop = () => {
         if (heart !== undefined) {
           clearInterval(heart);

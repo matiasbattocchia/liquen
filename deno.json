@@ -1,4 +1,31 @@
 {
+  "name": "@liquen/liquen",
+  "version": "0.1.0",
+  "license": "Unlicense",
+  "exports": {
+    ".": "./src/mod.ts",
+    "./cli": "./src/cli.ts",
+    "./repl": "./src/repl.ts",
+    "./start": "./src/start.ts",
+    "./init": "./src/init.ts"
+  },
+  "publish": {
+    "exclude": [
+      ".claude",
+      ".github",
+      "config.jsonc",
+      "data",
+      "ref",
+      "bench",
+      "dist",
+      "connectors",
+      "processors",
+      "**/*.test.ts",
+      "*.bak",
+      "*.tmp.ts",
+      "!src/seed/*.md"
+    ]
+  },
   "exclude": [
     "ref",
     "**/*.md"

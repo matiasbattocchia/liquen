@@ -4,7 +4,7 @@ The container gets a Deno binary and this checkout's source, and an org scaffold
 `mu init` inside the trial's mounted logs directory — the org's log IS the trial's record,
 on the host from the first row, whatever ends the trial. The agent is the container's
 user; the catalog carries the model and effort Harbor asks for. A trial is one `mu cli`
-run in its own session: it stands in the task's working directory and MU_DIR names the
+run in its own session: it stands in the task's working directory and `--dir` names the
 org. The wall is the task's own (Harbor's agent timeout); the CLI sets none.
 
 After the run the log is read on the host and written beside it as an ATIF trajectory:
@@ -50,7 +50,7 @@ LINGER_WAIT_S = 90
 
 # What the harness process is handed. Agent shells never inherit it: bash issues user
 # space an empty pocket plus the names it allows, so the key stays with the daemon.
-HARNESS_ENV = {"DENO_DIR": DENO_DIR, "DENO_NO_UPDATE_CHECK": "1", "MU_DIR": ORG}
+HARNESS_ENV = {"DENO_DIR": DENO_DIR, "DENO_NO_UPDATE_CHECK": "1"}
 
 
 def host_deno() -> Path:
@@ -141,7 +141,7 @@ class MuAgent(BaseInstalledAgent):
 
         out = EnvironmentPaths.agent_dir
         cli = (
-            f"{DENO} run -A {MU}/src/cli.ts --agent {shlex.quote(agent)} "
+            f"{DENO} run -A {MU}/src/cli.ts --dir {ORG} --agent {shlex.quote(agent)} "
             f"--session {SESSION} {shlex.quote(instruction)}"
         )
         wal = f"{ORG}/data/log/log.db-wal"

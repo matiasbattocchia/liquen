@@ -54,6 +54,7 @@ import {
   DEFAULT_DEBOUNCE_MS,
   findRoot,
   type OrgConfig,
+  orgFlag,
   readConfig,
   STOP_TIMEOUT_MS,
   TICK_MS,
@@ -322,7 +323,7 @@ export async function start(
   // and the agent's own writes are how a turn CHAINS to the next one — delaying those would
   // put the debounce between every step of a single piece of work.
   const debounceMs = config.debounceMs ?? catalog?.system.debounceMs ?? DEFAULT_DEBOUNCE_MS;
-  const settling = new Map<string, number>();
+  const settling = new Map<string, ReturnType<typeof setTimeout>>();
   const wake = (a: (typeof agents)[number]) => {
     const fire = invoke(a);
     return (trigger?: Event) => {
@@ -630,7 +631,8 @@ const REAP_POLL_MS = 1_000;
 // and a clean quit are the same hang-up, and zero held for the linger means nobody is
 // coming back — stop and exit. A bare daemon never reads the count.
 if (import.meta.main) {
-  const root = findRoot();
+  const org = orgFlag();
+  const root = findRoot(org);
   const dir = `${root}/data`;
   const catalog = await readConfig(root);
   const main = await start({ dir, catalog });
@@ -640,7 +642,7 @@ if (import.meta.main) {
       main.stop().finally(() => Deno.exit(0));
     });
   }
-  if (Deno.args.includes("--ephemeral")) {
+  if (org.args.includes("--ephemeral")) {
     let occupied = Date.now(); // boot counts as occupied: the raiser gets the linger to arrive
     const reaper = setInterval(() => {
       if (main.attachments() > 0) occupied = Date.now();

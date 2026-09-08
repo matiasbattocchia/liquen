@@ -39,6 +39,7 @@ import {
   type Draft,
   findRoot,
   type MessageEvent,
+  orgFlag,
 } from "../../src/connector.ts";
 
 export const APP_PREFIX = "github:app:";
@@ -427,10 +428,11 @@ if (import.meta.main) {
   const { openLog, openCredentials } = await import("../../src/connector.ts");
   const { userInfo } = await import("node:os");
 
-  const root = findRoot();
+  const org = orgFlag();
+  const root = findRoot(org);
   const dir = `${root}/data`;
-  const flags = new Set(Deno.args.filter((a) => a.startsWith("--")));
-  const [first, ...rest] = Deno.args.filter((a) => !a.startsWith("--"));
+  const flags = new Set(org.args.filter((a) => a.startsWith("--")));
+  const [first, ...rest] = org.args.filter((a) => !a.startsWith("--"));
   const verb = first === "app" || first === "bot" || first === "user" ? first : "user";
 
   /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */

@@ -350,36 +350,49 @@ function mergeSection(
 
 /* ── the root ────────────────────────────────────────────────────────────── */
 
-/** The org is WHERE YOU RUN mu: walk up from `from` to the nearest `config.jsonc` — the
- *  project marker, the way git finds `.git`. Everything is addressed from the root it
- *  names: the catalog at `<root>/config.jsonc`, the substrate at `<root>/data`.
- *
- *  `MU_DIR` is the one pointer the environment may carry: an org named there is the org,
- *  wherever mu runs — an agent stands in a directory the project does not contain (a
- *  repo, a task's workdir) while its org lives elsewhere. */
-export function findRoot(from: string = Deno.cwd()): string {
-  const pointed = Deno.env.get("MU_DIR");
-  if (pointed) {
-    try {
-      Deno.statSync(`${pointed}/config.jsonc`);
-    } catch {
-      throw new Error(`MU_DIR=${pointed} is not a mu project: no config.jsonc there`);
-    }
-    return Deno.realPathSync(pointed);
+/** `--dir <path>` (or `--dir=<path>`): the one flag every entry point accepts — the org,
+ *  wherever the process runs, for an agent that stands in a directory its org does not
+ *  contain (a repo, a task's workdir). Returns the argv WITHOUT it, so an entry point's
+ *  own parsing sees only its own words. */
+export function orgFlag(argv: string[] = Deno.args): { dir?: string; args: string[] } {
+  let dir: string | undefined;
+  const args: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--dir") dir = argv[++i];
+    else if (arg.startsWith("--dir=")) dir = arg.slice("--dir=".length);
+    else args.push(arg);
   }
-  let dir = Deno.realPathSync(from);
-  for (;;) {
+  return { dir, args };
+}
+
+/** The org is WHERE YOU RUN mu: walk up from `from` (default cwd) to the nearest
+ *  `config.jsonc` — the project marker, the way git finds `.git`. Everything is addressed
+ *  from the root it names: the catalog at `<root>/config.jsonc`, the substrate at
+ *  `<root>/data`. An explicit `dir` (the `--dir` flag) IS the org: it must hold the
+ *  marker itself, and nothing is walked. */
+export function findRoot({ dir, from = Deno.cwd() }: { dir?: string; from?: string } = {}): string {
+  if (dir) {
     try {
       Deno.statSync(`${dir}/config.jsonc`);
-      return dir;
+    } catch {
+      throw new Error(`--dir ${dir} is not a mu project: no config.jsonc there`);
+    }
+    return Deno.realPathSync(dir);
+  }
+  let here = Deno.realPathSync(from);
+  for (;;) {
+    try {
+      Deno.statSync(`${here}/config.jsonc`);
+      return here;
     } catch { /* keep climbing */ }
-    const parent = dir.replace(/\/[^/]+$/, "") || "/";
-    if (parent === dir) {
+    const parent = here.replace(/\/[^/]+$/, "") || "/";
+    if (parent === here) {
       throw new Error(
         `not inside a mu project: no config.jsonc from ${from} up — \`mu init\` creates one`,
       );
     }
-    dir = parent;
+    here = parent;
   }
 }
 

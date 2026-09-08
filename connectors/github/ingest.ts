@@ -20,7 +20,7 @@
 
 import { DEFAULT_EVENTS } from "./config.ts";
 import type { Appender, Draft, MessageEvent, Part } from "../../src/connector.ts";
-import { findRoot } from "../../src/connector.ts";
+import { findRoot, orgFlag } from "../../src/connector.ts";
 
 export interface GithubWebhookDeps {
   /** → the EventLog (the connection's only write). Bind mu's `log.publish`. */
@@ -291,7 +291,7 @@ function text(status: number, message: string): Response {
 export async function runIngest(): Promise<() => Promise<void>> {
   const { openLog, openCredentials } = await import("../../src/connector.ts");
   const { githubConfig } = await import("./config.ts");
-  const root = findRoot();
+  const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const { ingestPort: port, events } = await githubConfig(root);
   const creds = await openCredentials(dir);
