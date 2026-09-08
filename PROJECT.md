@@ -1890,9 +1890,10 @@ stdout, stderr and the org's `data/log` are copied beside the trial for audits. 
 0.22 (`--agent <module:Class>` replaced `--agent-import-path`); the dataset id is
 `terminal-bench/terminal-bench-2-1`.
 
-**`MU_DIR` names the org.** `findRoot` honors it before walking up from cwd: the agent
-stands where the client attached from (a task's workdir, a repo) while the org lives
-elsewhere. It is the environment's one pointer — a knob still lives in the catalog.
+**`--dir <org>` names the org.** Every entry point that locates the org accepts it, from
+anywhere on disk; without it `findRoot` walks up from cwd. The agent stands where the
+client attached from (a task's workdir, a repo) while the org lives elsewhere — a
+per-invocation choice, so a flag, never a variable.
 
 Verified live from a directory outside the org: real key → the agent ran `pwd` in the
 attach directory, the closing on stdout, exit 0. Open: the egress proxy is the org's only
@@ -1950,3 +1951,18 @@ and `SSL_CERT_FILE` trusting the mu CA alone, and the proxy terminates every tun
 TLS, so a client that verifies against its own bundle (pip, python `requests`, npm) fails
 inside a trial; the sound shape is to terminate only the hosts a grant fronts, tunnel the
 rest blind, and hand shells the system bundle plus the mu CA.
+
+### The proxy terminates what a grant fronts, and tunnels the rest (2026-09-08) — LANDED
+
+The bench surfaced the cost of terminating every tunnel: a client that verifies against
+its own roots — pip, python `requests`, npm — was handed the mu leaf for every host and
+refused it, so a task's first `pip install` failed before the model had acted. Now the
+proxy terminates only the authorities a fronted grant binds (`ProxyDeps.terminates`, main
+derives it from the vault's `extra.env` rows and their `extra.hosts`) and bridges every
+other tunnel blind to the origin, audited as the CONNECT it is. User space is handed a
+trust file the system's roots followed by the mu CA, written at boot to
+`data/system/ca-bundle.pem`, under `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` and `PIP_CERT`
+(`NODE_EXTRA_CA_CERTS` gets the CA alone, node adding to its own roots). A grant that
+declares no hosts still binds every authority and every tunnel terminates, as before.
+What changed hands: a tool that ignores `HTTPS_PROXY` now reaches the world unaudited,
+where before it could not complete a handshake; it never held a credential either way.

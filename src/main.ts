@@ -43,7 +43,7 @@ import { seedDocs } from "./store/seed.ts";
 import { anthropicClient, anthropicTransport, metered, type ModelTransport } from "./transport.ts";
 import { type ExecGround, type ExecPlane, installExecGround } from "./exec/bash.ts";
 import { openCredentials } from "./store/credentials.ts";
-import { createGrantBroker, frontedFor } from "./proxy/grants.ts";
+import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
 import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
@@ -60,29 +60,66 @@ import {
   TICK_MS,
 } from "./config.ts";
 
-/** Start the egress proxy — the org's MANDATORY single egress point — and return the env
- *  provider bash issues into every spawn (§9), PER AGENT. HTTPS_PROXY/SSL_CERT_FILE always
- *  ride; the proxy rewrites requests carrying a placeholder and passes everything else
- *  through untouched. Which placeholders ride is the VAULT's say, not this file's: a
- *  credential row that declares `extra.env` (the connect doors write it) is fronted under
- *  that var, and which row fronts which agent is `frontedFor` — the org's, or the agent's
- *  own, never a peer's. So the handle in an agent's pocket names a grant that agent holds,
- *  and the audit line's agent is the caller. */
+/** Start the egress proxy — the org's single credential-bearing egress — and return the
+ *  env provider bash issues into every spawn (§9), PER AGENT. HTTPS_PROXY always rides;
+ *  the proxy terminates only the authorities a fronted grant binds (where a placeholder
+ *  can ride and the swap has to see plaintext) and bridges every other tunnel blind, so
+ *  the world answers with its own certificates. The trust file user space is handed is
+ *  the system bundle plus the mu CA, under every name the common clients read it by:
+ *  a tool verifying against its own roots still reaches the world, and one honoring the
+ *  file reaches the fronted hosts too. Which placeholders ride is the VAULT's say, not
+ *  this file's: a credential row that declares `extra.env` (the connect doors write it)
+ *  is fronted under that var, and which row fronts which agent is `frontedFor` — the
+ *  org's, or the agent's own, never a peer's. So the handle in an agent's pocket names
+ *  a grant that agent holds, and the audit line's agent is the caller. */
 interface ProxyHandle {
   env: (agentId: string) => Record<string, string>;
   close(): Promise<void>;
+}
+
+// where a Linux system keeps its CA bundle, by distribution; the first that exists is it
+const SYSTEM_CA_BUNDLES = [
+  "/etc/ssl/certs/ca-certificates.crt",
+  "/etc/pki/tls/certs/ca-bundle.crt",
+  "/etc/ssl/ca-bundle.pem",
+  "/etc/ssl/cert.pem",
+];
+
+/** The trust file user space is handed: the system's roots followed by the mu CA, written
+ *  under the org at boot. Without a system bundle the mu CA stands alone. */
+async function writeTrustBundle(dir: string, caPath: string): Promise<string> {
+  let system = "";
+  for (const path of SYSTEM_CA_BUNDLES) {
+    try {
+      system = await Deno.readTextFile(path);
+      break;
+    } catch { /* not this distribution */ }
+  }
+  const out = `${dir}/system/ca-bundle.pem`;
+  await Deno.mkdir(`${dir}/system`, { recursive: true });
+  await Deno.writeTextFile(out, `${system.trimEnd()}\n${await Deno.readTextFile(caPath)}`);
+  return out;
 }
 
 async function installProxy(dir: string): Promise<ProxyHandle> {
   const creds = await openCredentials(dir);
   const broker = createGrantBroker({ creds });
   const ca = await openCA();
-  const proxy = startProxy({ ca, broker });
+  const rows = await creds.list("");
+  const fronted = rows.filter((r) => typeof r.extra?.env === "string");
+  const proxy = startProxy({
+    ca,
+    broker,
+    terminates: (authority) => fronted.some((r) => hostAllowed(r.extra?.hosts, authority)),
+  });
+  const bundle = await writeTrustBundle(dir, proxy.caPath);
   const base: Record<string, string> = {
     HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
-    SSL_CERT_FILE: proxy.caPath,
+    SSL_CERT_FILE: bundle, // OpenSSL-based tools: curl, git, wget, Go
+    REQUESTS_CA_BUNDLE: bundle, // python requests, and pip through it
+    PIP_CERT: bundle,
+    NODE_EXTRA_CA_CERTS: proxy.caPath, // node adds to its own roots — the CA alone suffices
   };
-  const rows = await creds.list("");
   const pockets = new Map<string, Record<string, string>>();
   console.error(`egress proxy on :${proxy.port}`);
   return {

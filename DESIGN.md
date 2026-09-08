@@ -2167,16 +2167,23 @@ true for exec (kernel handles it), false for control (only harness/human authori
      org/principal tokens readable by conduit uids, never agent uids — the matrix as
      literal file ownership (same move as docs-scopes → groups).
   3. *Egress proxy with header injection (MITM CA)* — **the one rung, for everything,
-     live** (`src/proxy/`, mandatory at start): user space is issued `HTTPS_PROXY` +
-     `SSL_CERT_FILE` — the mu CA ships with the source (`src/proxy/ca.pem` + `ca.key`):
-     nothing trusts it but the children we hand it to, so it is plumbing that makes a tool
-     dial our proxy, not a credential. It *replaces* the trust store — inside user space it is the
-     only issuer, so TLS physically cannot bypass the proxy) + a `mu-grant-…` placeholder
-     standing for the vault grant. The proxy terminates the tunnel with a per-host leaf
-     (`ca.ts`), swaps the placeholder for a live token — refreshed broker-side against the
-     vault, the refresh_token never leaving it (`grants.ts`) — re-originates over real
-     TLS, and audits every request (method · host · path · status · agent, never the
-     token). The sandbox never holds token material, binary-agnostic (git included): the
+     live** (`src/proxy/`, mandatory at start): user space is issued `HTTPS_PROXY` plus a
+     trust file — the system's roots followed by the mu CA, which ships with the source
+     (`src/proxy/ca.pem` + `ca.key`): nothing trusts it but the children we hand it to, so
+     it is plumbing that makes a tool accept our proxy, not a credential. The file is
+     handed under every name the common clients read a bundle by (`SSL_CERT_FILE`,
+     `REQUESTS_CA_BUNDLE`, `PIP_CERT`; `NODE_EXTRA_CA_CERTS` gets the CA alone) + a
+     `mu-grant-…` placeholder standing for the vault grant. The proxy terminates ONLY
+     the authorities a fronted grant binds — where a placeholder can ride and the swap
+     has to see plaintext — with a per-host leaf (`ca.ts`), swaps the placeholder for a
+     live token — refreshed broker-side against the vault, the refresh_token never
+     leaving it (`grants.ts`) — re-originates over real TLS, and audits every request
+     (method · host · path · status · agent, never the token). Every other tunnel is
+     bridged blind to the origin and audited as the CONNECT it is: the world answers
+     with its own certificates, so a tool verifying against its own roots (pip, python
+     `requests`, npm) reaches it untouched, and one honoring the trust file reaches the
+     fronted hosts too. A grant declaring no hosts binds every authority, and then every
+     tunnel terminates. The sandbox never holds token material, binary-agnostic (git included): the
      swap is a substitution over header values (the handle is the marker, not any
      particular header), so a new tool costs no proxy change — its connect door declares
      the placeholder's env var and the grant's hosts on the vault row (`extra.env`,

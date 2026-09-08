@@ -248,3 +248,42 @@ Deno.test("startProxy: a tunnel that can't be stood up answers 502 — it never 
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("startProxy: an authority no grant fronts is tunneled blind — the origin's own bytes", async () => {
+  const ca = await openCA();
+  // the origin: a plain listener that echoes — blind means it never sees a mu leaf
+  const origin = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const echoing = (async () => {
+    for await (const c of origin) {
+      c.readable.pipeTo(c.writable).catch(() => {});
+    }
+  })();
+  const originPort = (origin.addr as Deno.NetAddr).port;
+  const seen: EgressAudit[] = [];
+  const proxy = startProxy({
+    ca,
+    broker: fakeBroker(),
+    audit: (a) => seen.push(a),
+    terminates: (authority) => authority === "www.googleapis.com",
+  });
+  try {
+    const conn = await Deno.connect({ hostname: "127.0.0.1", port: proxy.port });
+    await conn.write(
+      new TextEncoder().encode(`CONNECT 127.0.0.1:${originPort} HTTP/1.1\r\n\r\n`),
+    );
+    const buf = new Uint8Array(256);
+    let n = await conn.read(buf);
+    assert(new TextDecoder().decode(buf.subarray(0, n ?? 0)).startsWith("HTTP/1.1 200"));
+    await conn.write(new TextEncoder().encode("hello origin"));
+    n = await conn.read(buf);
+    assertEquals(new TextDecoder().decode(buf.subarray(0, n ?? 0)), "hello origin");
+    conn.close();
+    assertEquals(seen.map((a) => [a.method, a.host, a.swapped]), [
+      ["CONNECT", `127.0.0.1:${originPort}`, false],
+    ]);
+  } finally {
+    await proxy.shutdown();
+    origin.close();
+    await echoing.catch(() => {});
+  }
+});

@@ -59,6 +59,12 @@ export interface ProxyDeps {
   /** An audit sink for every egress request; default logs a line to stderr. NEVER the
    *  token, headers, or body — method · host · path · status · the grant's agent. */
   audit?: (line: EgressAudit) => void;
+  /** Which dialed authorities the proxy TERMINATES: the hosts a fronted grant binds, where
+   *  a placeholder can ride and the swap has to see plaintext. Every other tunnel is
+   *  bridged blind to the origin — the client sees the origin's own certificate, so a tool
+   *  verifying against its own bundle (pip, requests, npm) reaches the world untouched.
+   *  Absent ⇒ every authority terminates. */
+  terminates?: (authority: string) => boolean;
 }
 
 export interface EgressAudit {
@@ -188,13 +194,24 @@ export function startProxy(
     const head = await readConnect(conn);
     // not a CONNECT: this proxy only tunnels HTTPS
     if (!head) return deny(conn, "405 Method Not Allowed");
+    const terminated = deps.terminates?.(head.authority) ?? true;
     let up: Deno.Conn;
     try {
-      const backendPort = await backendFor(head.authority);
-      up = await Deno.connect({ hostname, port: backendPort });
+      up = terminated
+        ? await Deno.connect({ hostname, port: await backendFor(head.authority) })
+        : await Deno.connect(originOf(head.authority));
     } catch {
-      // a refused host, a failed mint — the tunnel can't be stood up
+      // a refused host, a failed mint, an origin that won't answer — no tunnel
       return deny(conn, "502 Bad Gateway");
+    }
+    if (!terminated) {
+      (deps.audit ?? defaultAudit)({
+        method: "CONNECT",
+        host: head.authority,
+        path: "",
+        status: 200,
+        swapped: false,
+      });
     }
     await conn.write(new TextEncoder().encode("HTTP/1.1 200 Connection Established\r\n\r\n"))
       .catch(() => {});
@@ -221,6 +238,12 @@ export function startProxy(
       await Promise.all(servers.map((s) => s.shutdown().catch(() => {})));
     },
   };
+}
+
+/** The origin a dialed authority names: `host`, or `host:port` off 443. */
+function originOf(authority: string): { hostname: string; port: number } {
+  const m = authority.match(/^(.*?)(?::(\d+))?$/)!;
+  return { hostname: m[1], port: m[2] ? Number(m[2]) : 443 };
 }
 
 /** Read the whole CONNECT head off a fresh tunnel conn (it may arrive in pieces): the
