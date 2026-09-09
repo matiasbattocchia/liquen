@@ -19,6 +19,7 @@
  * Removal is not a door yet: deleting an app or a grant is a deliberate SQL act (§9).
  */
 
+import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { declared } from "../declare.ts";
@@ -92,10 +93,20 @@ export function oneShot(
   };
 }
 
+const USAGE = `usage: liquen connect google app
+       liquen connect google account [principal] [--org] [--app <client_id>] [--scopes "…"]
+
+  app       paste the OAuth client id and secret into the vault
+  account   sign a Google account in — [principal]'s (default: your OS username) or,
+            with --org, the org's own; --app picks the client when the vault holds
+            several; --scopes overrides the catalog's (space- or comma-separated)
+  --dir <org>   the org, when run from elsewhere`;
+
 if (import.meta.main) {
   try {
     const { openCredentials } = await import("../../store/credentials.ts");
     const org = orgFlag();
+    helpFlag(org.args, USAGE);
     const root = findRoot(org);
     const dir = `${root}/data`;
     const [verb, ...rest] = org.args;
@@ -198,9 +209,7 @@ if (import.meta.main) {
         );
         await declared(root, "google");
       } else {
-        console.error(
-          'usage: connect:google app | account [principal] [--org] [--app <client_id>] [--scopes "…"]',
-        );
+        console.error(USAGE);
         Deno.exit(2);
       }
     } finally {

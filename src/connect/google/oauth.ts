@@ -33,6 +33,7 @@
  * them through a real proxy (cloudflared in dev, an edge function in prod).
  */
 
+import { helpFlag } from "../help.ts";
 import { DEFAULT_SCOPES, GRANT_ENV, GRANT_HOSTS } from "./config.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
@@ -264,6 +265,13 @@ function text(status: number, message: string): Response {
  * written by `liquen connect google app` — and the vault is the ONLY source: `--app` picks
  * among several. The redirect URI is the app row's `redirect_uri` sidecar (the hosted
  * callback), localhost when absent. The port is connections.google.oauthPort. */
+const USAGE = `usage: liquen oauth:google [--app <client_id>]
+
+  Serve the OAuth redirect for the Google app in the vault (\`liquen connect google app\`),
+  on connections.google.oauthPort — put a synchronous tunnel (cloudflared) in front.
+  --app <client_id>   which app, when the vault holds several
+  --dir <org>         the org, when run from elsewhere`;
+
 if (import.meta.main) {
   try {
     const { openLog } = await import("../../store/log.ts");
@@ -271,6 +279,7 @@ if (import.meta.main) {
     const { pickGoogleApp } = await import("./connect.ts");
     const { googleConfig } = await import("./config.ts");
     const org = orgFlag();
+    helpFlag(org.args, USAGE);
     const root = findRoot(org);
     const dir = `${root}/data`;
     const { oauthPort: port, scopes } = await googleConfig(root);

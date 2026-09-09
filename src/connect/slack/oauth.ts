@@ -25,6 +25,7 @@
  * relay (Hookdeck) cannot carry the 302.
  */
 
+import { helpFlag } from "../help.ts";
 import type { OauthV2AccessResponse } from "@slack/web-api";
 import { DEFAULT_BOT_SCOPES, missingScopes } from "./config.ts";
 import type { Appender } from "../../store/log.ts";
@@ -207,6 +208,13 @@ function text(status: number, message: string): Response {
  * picks among several); the knobs are connections.slack. The shareable door is
  * <public>/oauth/slack/start — the admin distributes it; auto-registration binds
  * principals as `slack:<team>:<user>` until the identities map (v0.1) refines it. */
+const USAGE = `usage: liquen oauth:slack [--app <client_id>]
+
+  Serve the OAuth redirect for the Slack app in the vault (\`liquen connect slack app\`),
+  on connections.slack.oauthPort — put a synchronous tunnel (cloudflared) in front.
+  --app <client_id>   which app, when the vault holds several
+  --dir <org>         the org, when run from elsewhere`;
+
 if (import.meta.main) {
   try {
     const { openLog } = await import("../../store/log.ts");
@@ -214,6 +222,7 @@ if (import.meta.main) {
     const { pickSlackApp } = await import("./connect.ts");
     const { slackConfig } = await import("./config.ts");
     const org = orgFlag();
+    helpFlag(org.args, USAGE);
     const root = findRoot(org);
     const dir = `${root}/data`;
     const { oauthPort: port, botScopes, userScopes } = await slackConfig(root);

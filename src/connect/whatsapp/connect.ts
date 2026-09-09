@@ -22,6 +22,7 @@
  * even when the ingest webhook isn't up yet.
  */
 
+import { helpFlag } from "../help.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
@@ -146,10 +147,6 @@ export async function connectWhatsApp(
 
 /* ── local entry: drive the pairing against the bridge, QR in the terminal ──────────
  *
- *   deno task connect:whatsapp [principal]                  # QR flow: scan with the phone
- *   deno task connect:whatsapp [principal] --phone <digits> # pairing-code flow
- *   deno task connect:whatsapp --org [--phone <digits>]     # the org's own number (§4)
- *
  * The positional is the principal (default: the OS username — a session choice, so an
  * argument); `--org` pairs a number nobody owns, the one an org agent speaks through;
  * the number is a flag, international digits, no `+`. The flow is chosen by
@@ -161,6 +158,17 @@ export async function connectWhatsApp(
  * Expired ⇒ run the door again for a fresh one.
  *
  * Env: WA_BRIDGE_TOKEN (the secret); the knobs are connections.whatsapp. */
+const USAGE = `usage: liquen connect whatsapp [principal] [--phone <digits>]
+       liquen connect whatsapp --org [--phone <digits>]
+
+  Pair a WhatsApp number with the org through the whatsmeow bridge (connections.whatsapp).
+
+  [principal]       the member whose phone this is (default: your OS username)
+  --org             the org's own number — owned by nobody, spoken through by its agents
+  --phone <digits>  the pairing-code flow for that number (international digits, no +);
+                    without it, a QR code to scan from the phone
+  --dir <org>       the org, when run from elsewhere`;
+
 if (import.meta.main) {
   try {
     const { openLog } = await import("../../store/log.ts");
@@ -169,6 +177,7 @@ if (import.meta.main) {
     const qrcode = (await import("qrcode-terminal")).default;
 
     const org = orgFlag();
+    helpFlag(org.args, USAGE);
     const root = findRoot(org);
     const dir = `${root}/data`;
     const flags = new Map<string, string>();

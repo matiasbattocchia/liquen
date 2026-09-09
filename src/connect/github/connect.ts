@@ -29,6 +29,7 @@
  * Arg (user door): the principal (default: the OS username). Env: none.
  */
 
+import { helpFlag } from "../help.ts";
 import {
   type Appender,
   appJwt,
@@ -424,12 +425,27 @@ async function defaultWhoami(token: string): Promise<{ login?: string; message?:
  * the device flow off the vaulted app's client_id, and falls back to the paste when there
  * is no app to run it with (or when `--token` says so outright). Piped stdin is the paste
  * too: a device flow wants a human at a browser, and a secret manager isn't one. */
+const USAGE = `usage: liquen connect github app
+       liquen connect github bot [account]
+       liquen connect github user [principal] [--token]
+
+  Three doors, each prompting for what to paste (or reading it line by line from a
+  piped stdin):
+
+  app     the GitHub App: its ID, private key (.pem path), webhook secret, client id
+          and secret — into the vault
+  bot     bind the App's installation on [account] to the org
+  user    sign [principal] in (default: your OS username) by the device flow — the
+          default door; --token pastes a personal access token instead
+  --dir <org>   the org, when run from elsewhere`;
+
 if (import.meta.main) {
   try {
     const { openLog, openCredentials } = await import("../../connector.ts");
     const { userInfo } = await import("node:os");
 
     const org = orgFlag();
+    helpFlag(org.args, USAGE);
     const root = findRoot(org);
     const dir = `${root}/data`;
     const flags = new Set(org.args.filter((a) => a.startsWith("--")));

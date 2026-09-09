@@ -1,10 +1,6 @@
 /**
  * connect/connect.ts — `liquen connect`: the one front door to every connect flow (§4).
  *
- *   deno task connect                        # no service: the map (status)
- *   deno task connect <service> [args...]    # the service's connect door
- *   deno task connect ./path/connect.ts      # a module path (anything with a slash)
- *
  * Resolution is two-step: the shipped services (`src/connect/<service>/connect.ts`,
  * beside this module) first, then the org's own (`<org>/connectors/<name>/connect.ts`,
  * CONNECTORS.md). Every door is an `import.meta.main` entry, so the front door runs the
@@ -55,11 +51,22 @@ export function available(org: string): string[] {
   return [...SHIPPED, ...custom.sort()];
 }
 
+const USAGE = `usage: liquen connect                              the map: what is connected
+       liquen connect <service> [args…]             a service's door (--help on any)
+       liquen connect ./path/to/connect.ts [args…]  a door by module path
+
+  doors: ${SHIPPED.join(" · ")}, and each <org>/connectors/<name>/connect.ts
+  --dir <org>   the org, when run from elsewhere`;
+
 if (import.meta.main) {
   // the flag rides through to the door: the org is where its custom doors live, and its
   // to find again as a child
   const org = orgFlag();
   const [name, ...words] = org.args;
+  if (name === "--help" || name === "-h") {
+    console.log(USAGE);
+    Deno.exit(0);
+  }
   const rest = org.dir ? ["--dir", org.dir, ...words] : words;
   let target: string;
   try {

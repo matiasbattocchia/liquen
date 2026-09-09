@@ -31,6 +31,7 @@
  * (`withScopes`), so what the app may do is a knob and lives in one place.
  */
 
+import { helpFlag } from "../help.ts";
 import type { AuthTestResponse } from "@slack/web-api";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
@@ -474,6 +475,22 @@ async function defaultAuthTest(token: string): Promise<AuthTest> {
  *   deno task connect:slack app                # paste client id + secret → the vault
  *
  * A bare invocation (or a bare principal name) is the user door — the common case. */
+const USAGE = `usage: liquen connect slack app
+       liquen connect slack bot [--agent <name>]
+       liquen connect slack socket
+       liquen connect slack user [principal]
+
+  Four doors into the vault, each prompting for what to paste (or reading it line by
+  line from a piped stdin):
+
+  app      the OAuth client — id and secret — that every other door names
+  bot      the bot token (xoxb): the org's shared identity; --agent names the roster
+           agent that speaks through it
+  socket   the app-level token (xapp): the carrier ingest reads events over
+  user     a user token (xoxp): one person's leg — the default door, and [principal]
+           defaults to your OS username
+  --dir <org>   the org, when run from elsewhere`;
+
 if (import.meta.main) {
   try {
     const { openLog } = await import("../../store/log.ts");
@@ -482,6 +499,7 @@ if (import.meta.main) {
     const { slackConfig } = await import("./config.ts");
 
     const org = orgFlag();
+    helpFlag(org.args, USAGE);
     const root = findRoot(org);
     const dir = `${root}/data`;
     const [first, ...rest] = org.args;
