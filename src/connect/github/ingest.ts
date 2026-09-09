@@ -1,5 +1,5 @@
 /**
- * connectors/github/ingest.ts — the GitHub ingest as a portable webhook FUNCTION (open-bsp shape).
+ * src/connect/github/ingest.ts — the GitHub ingest as a portable webhook FUNCTION (open-bsp shape).
  *
  * ONE handler, `(Request) => Response`, built from Web-standard APIs only
  * (`Request`/`Response`/`crypto.subtle`). Everything it needs is INJECTED — the log `publish`,
@@ -19,8 +19,8 @@
  */
 
 import { DEFAULT_EVENTS } from "./config.ts";
-import type { Appender, Draft, MessageEvent, Part } from "../../src/connector.ts";
-import { findRoot, orgFlag } from "../../src/connector.ts";
+import type { Appender, Draft, MessageEvent, Part } from "../../connector.ts";
+import { findRoot, orgFlag } from "../../connector.ts";
 
 export interface GithubWebhookDeps {
   /** → the EventLog (the connection's only write). Bind mu's `log.publish`. */
@@ -289,7 +289,7 @@ function text(status: number, message: string): Response {
 /** Wire the inbound half over the org's log — resident once it returns (serving).
  *  Returns stop: refuse new deliveries, finish the ones in flight, release the handles. */
 export async function runIngest(): Promise<() => Promise<void>> {
-  const { openLog, openCredentials } = await import("../../src/connector.ts");
+  const { openLog, openCredentials } = await import("../../connector.ts");
   const { githubConfig } = await import("./config.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
@@ -306,7 +306,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
         "accepting UNSIGNED deliveries (dev only)",
     );
   }
-  const { serveIngest } = await import("../../src/connector.ts");
+  const { serveIngest } = await import("../../connector.ts");
   // `log.publish` passed straight through — a wrapper lambda would flatten its overloads
   const server = serveIngest(
     "connections.github.ingestPort",

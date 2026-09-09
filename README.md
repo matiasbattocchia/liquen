@@ -4,35 +4,35 @@ Each org member (a **principal**) gets an AI **agent** that acts for them over a
 event log — CLI today; Slack/WhatsApp next. Design: [DESIGN.md](./DESIGN.md) · roadmap:
 [PROJECT.md](./PROJECT.md) · agent-driven install: [SKILL.md](./SKILL.md).
 
-## Run the REPL
+## Run an org
 
-Requires [Deno](https://deno.com) ≥ 2.
+Requires [Deno](https://deno.com) ≥ 2. An org is a folder: `config.jsonc` declares it,
+`data/` is its living state, `.env` its secrets, and `deno.jsonc` names the package
+(`@liquen/liquen`) every task runs.
 
 ```sh
-# 1. credentials — one of:
+# 1. the org, and your agent on its roster
+deno run -A jsr:@liquen/liquen/init myorg && cd myorg
+deno task agent <you>
+
+# 2. credentials — one of:
 echo 'ANTHROPIC_API_KEY=sk-ant-…' > .env   # a Console API key
 ant auth login                             # or platform OAuth (then NO key line in .env, not even empty)
 
-# 2. verify the machine (no key needed)
-deno task check && deno task test
-
-# 3. live transport smoke (optional)
-deno task smoke
-
-# 4. talk to your agent
-deno task cli
+# 3. talk to your agent
+deno task repl
 ```
 
 In the REPL: type to your agent · `/y [note]` / `/n [reason]` answer approval cards ·
 `/quit` exits.
 
-First run seeds `./data/` from the `src/seed/` templates: the log, the agent's
+First run seeds `./data/` from the package's `src/seed/` templates: the log, the agent's
 workspace, and its docs (identity, org, memories — edit them, boot never overwrites).
-`data/` is living state and stays out of git; `src/seed/` is the versioned org definition.
+`data/` is living state and stays out of git; `src/seed/` is the org definition at birth.
 
 ## Knobs
 
-Every knob lives in `config.jsonc` at the project root (the catalog — `mu init`
+Every knob lives in `config.jsonc` at the project root (the catalog — init
 materializes it, the system never writes it; comments document each key). Env is for
 secrets only. The org is where you run mu; `--dir <path>` names it from anywhere else.
 
@@ -42,7 +42,7 @@ secrets only. The org is where you run mu; `--dir <path>` names it from anywhere
 
 ```sh
 deno task connect github     # app / bot / user doors → the vault (secrets live there)
-deno task run:github         # the connection: webhook receiver → the log, replies → gh api
+deno task start              # every declared connection: webhook receiver → the log, replies → gh api
 gh webhook forward --repo=you/repo \
   --events=issue_comment,pull_request,pull_request_review_comment \
   --url=http://localhost:8788/
@@ -56,7 +56,8 @@ gh webhook forward --repo=you/repo \
 
    ```sh
    deno eval "console.log('https://api.slack.com/apps?new_app=1&manifest_json=' +
-     encodeURIComponent(await Deno.readTextFile('src/seed/slack-manifest.json')))"
+     encodeURIComponent(await (await fetch(
+       'https://raw.githubusercontent.com/matiasbattocchia/liquen/main/src/seed/slack-manifest.json')).text()))"
    ```
 
 2. **Install it** (admin, once): *Install to Workspace* on the app page → the workspace
@@ -79,7 +80,7 @@ gh webhook forward --repo=you/repo \
 5. **Run the connection** (both halves, over the shared `./data` root):
 
    ```sh
-   deno task run:slack         # both halves in one process: Socket Mode (or HTTP) in,
+   deno task start             # both halves in one process: Socket Mode (or HTTP) in,
                                # chat.postMessage out (tokens from the vault)
    ```
 
@@ -88,8 +89,12 @@ gh webhook forward --repo=you/repo \
 
 ## Development
 
+This repo is the package. An org runs a checkout instead of the registry by naming it in
+its `deno.jsonc` — `"links": ["../liquen"]` — and every task follows.
+
 ```sh
 deno task check   # fmt + lint + typecheck
 deno task test    # all tests
 deno task fix     # format + lint
+deno task smoke   # live transport round-trip (credentials in .env)
 ```

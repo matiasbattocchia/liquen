@@ -5,14 +5,3 @@
 
 # local Claude Code overrides
 .claude/settings.local.json
-
-# store scratch (files backend)
-/data/
-dist/
-
-# reference clones (their own repos, read for ideas, never imported from)
-/ref/
-
-# python build noise (bench)
-__pycache__/
-*.egg-info/

@@ -2062,3 +2062,25 @@ is recorded on the bot's row at first sight (`extra.dms`), and the bot paste tak
 `--agent <name>` to say which agent speaks through it (`extra.agent`), the one account
 with no handle a human could declare. The hosted OAuth install writes no `extra.agent`:
 an org agent on Slack is declared at the paste door.
+
+### The package and the org part ways (2026-09-09) — LANDED
+
+`@liquen/liquen` is the repo (`matiasbattocchia/liquen`): `src/`, the docs, the scaffold.
+An org is a folder the package's `init` makes — `config.jsonc`, `data/`, `.env`, its own
+`connectors/` and `processors/`, and a `deno.jsonc` that names the package and whose
+tasks run it (`deno task start`, `cli`, `repl`, `agent`, `connect`, `status`, the OAuth
+doors); the Dockerfile caches the package with `deno install` and the entrypoint execs
+`deno task start`. The org's own connectors import `@liquen/liquen/connector`; the front
+door and the roster find them under the org root. A checkout stands in for the registry
+through Deno's `links` (`"links": ["../liquen"]`): the package's own import map resolves
+its bare imports wherever the org runs it from, and a child spawned by file path into
+the checkout resolves the same way, so `start`, `connect` and the REPL's raised daemon
+need no knowledge of which side they run from. The github connector ships with the
+package (`src/connect/github/`). The behavior bench and the Terminal-Bench adapter live
+in the org that runs them (`bench/`), importing the package; the adapter uploads the
+linked checkout and stamps its commit. What is published is `src/` less tests, plus the
+seed docs and the README.
+
+Still open: vibes runs on Bun, which resolves neither `@std/*` nor `node:sqlite`, so its
+`@mu/*` path mapping onto the checkout serves the type checker; `attach.ts` and
+`describe.ts` cannot load there at runtime.

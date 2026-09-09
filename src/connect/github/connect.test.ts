@@ -13,8 +13,8 @@ import {
   ORG_KEY,
   type UserTokens,
 } from "./connect.ts";
-import { openCredentials } from "../../src/connector.ts";
-import type { Appender, Draft, Event, MessageEvent } from "../../src/connector.ts";
+import { openCredentials } from "../../connector.ts";
+import type { Appender, Draft, Event, MessageEvent } from "../../connector.ts";
 
 async function withVault(
   fn: (creds: Awaited<ReturnType<typeof openCredentials>>) => Promise<void>,

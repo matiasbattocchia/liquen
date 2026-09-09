@@ -4,35 +4,31 @@
   "license": "Unlicense",
   "exports": {
     ".": "./src/mod.ts",
+    "./connector": "./src/connector.ts",
+    "./start": "./src/start.ts",
     "./cli": "./src/cli.ts",
     "./repl": "./src/repl.ts",
-    "./start": "./src/start.ts",
     "./init": "./src/init.ts",
-    "./agent": "./src/agent.ts"
+    "./agent": "./src/agent.ts",
+    "./connect": "./src/connect/connect.ts",
+    "./status": "./src/connect/status.ts",
+    "./oauth/slack": "./src/connect/slack/oauth.ts",
+    "./oauth/google": "./src/connect/google/oauth.ts"
   },
   "publish": {
     "exclude": [
       ".claude",
       ".github",
-      "config.jsonc",
-      "data",
-      "ref",
-      "bench",
-      "dist",
-      "connectors",
-      "processors",
       "**/*.test.ts",
-      "*.bak",
-      "*.tmp.ts",
+      "!README.md",
       "!src/seed/*.md"
     ]
   },
   "exclude": [
-    "ref",
     "**/*.md"
   ],
   "tasks": {
-    "check": "deno fmt --check && deno lint && deno check src bench connectors",
+    "check": "deno fmt --check && deno lint && deno check src",
     "fix": "deno fmt && deno lint",
     "test": "deno test -A",
     "smoke": "deno test -A --env-file=.env src/transport.test.ts",
@@ -41,7 +37,6 @@
     "start": "deno run -A --env-file=.env src/start.ts",
     "init": "deno run -A src/init.ts",
     "agent": "deno run -A src/agent.ts",
-    "bench": "deno run -A --env-file=.env bench/run.ts",
     "connect": "deno run -A --env-file=.env src/connect/connect.ts",
     "status": "deno run -A --env-file=.env src/connect/status.ts",
     "proxy": "deno run -A --env-file=.env src/proxy/proxy.ts",
@@ -53,8 +48,8 @@
     "connect:google": "deno run -A --env-file=.env src/connect/google/connect.ts",
     "run:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp/run.ts",
     "connect:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp/connect.ts",
-    "run:github": "deno run -A --env-file=.env connectors/github/run.ts",
-    "connect:github": "deno run -A --env-file=.env connectors/github/connect.ts"
+    "run:github": "deno run -A --env-file=.env src/connect/github/run.ts",
+    "connect:github": "deno run -A --env-file=.env src/connect/github/connect.ts"
   },
   "fmt": {
     "lineWidth": 100

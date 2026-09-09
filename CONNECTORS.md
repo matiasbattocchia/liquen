@@ -91,22 +91,23 @@ who minted a path, never that the path is innocent.
 Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispatch.ts` ·
 `oauth.ts` · `connect.ts`):
 
-- **Shipped** — `src/connect/<service>/` (slack, google, whatsapp). Cross-service helpers
-  (`flavor.ts`, `mentions.ts`, `mirror.ts`, `errors.ts`, `status.ts`) live at
+- **Shipped** — `src/connect/<service>/` (slack, google, whatsapp, github). Cross-service
+  helpers (`flavor.ts`, `mentions.ts`, `mirror.ts`, `errors.ts`, `status.ts`) live at
   `src/connect/` root.
-- **Custom** — `connectors/<name>/` at the repo root, beside `src/`. Connectors are code
-  and ship with the image (`data/` is the volume — state only); an org's deployment is
-  the framework + `connectors/` + config, and a framework upgrade is a rebase that never
-  touches them. The **github** connector lives there as the living proof: it moved from
-  `src/connect/` by swapping places, imports nothing but the seam, and everything works —
-  the bar every custom connector inherits. Its config lands under `connections.<name>`
-  in the org catalog; its secrets in env/vault as ever.
+- **Custom** — `<org>/connectors/<name>/`, beside the org's `config.jsonc`. Connectors are
+  code and ship with the org's image (`data/` is the volume — state only); an org's
+  deployment is the package + `connectors/` + config, and a package upgrade is a version
+  bump that never touches them. A custom connector imports the seam as
+  `@liquen/liquen/connector` and nothing else — the bar the shipped ones meet too, by
+  path. Its config lands under `connections.<name>` in the org catalog; its secrets in
+  env/vault as ever.
 
-Tasks point at files (`deno task run:github` → `connectors/github/run.ts`). The
-front door is **`mu connect`** (`deno task connect`, `src/connect/connect.ts`): bare, it
-prints the map (status); `mu connect <name> [args...]` resolves the shipped services
-first, then `connectors/<name>/connect.ts`, and runs the door as a child process with the
-remaining args — a name with a slash is taken as a module path.
+The front door is **`mu connect`** (`deno task connect`, `src/connect/connect.ts`): bare,
+it prints the map (status); `mu connect <name> [args...]` resolves the shipped services
+first, then `<org>/connectors/<name>/connect.ts`, and runs the door as a child process
+with the remaining args — a name with a slash is taken as a module path. `deno task start`
+runs every declared connection the same way: `src/connect/<name>/run.ts` if it ships,
+else `<org>/connectors/<name>/run.ts`.
 
 ## 2. The split that decides everything: pushed content vs. bare change signal
 

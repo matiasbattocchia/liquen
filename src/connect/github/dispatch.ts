@@ -1,5 +1,5 @@
 /**
- * connectors/github/dispatch.ts — the DISPATCH half of the GitHub connection (open-bsp).
+ * src/connect/github/dispatch.ts — the DISPATCH half of the GitHub connection (open-bsp).
  *
  * The mirror of the ingest (github.ts): where ingest is world → log, dispatch is log → world.
  * It subscribes to the log, picks the agent's OUTBOUND sends on the github service
@@ -32,8 +32,8 @@ import type {
   MessageEvent,
   Reader,
   Subscriber,
-} from "../../src/connector.ts";
-import { createDispatcher, DispatchError, findRoot, orgFlag } from "../../src/connector.ts";
+} from "../../connector.ts";
+import { createDispatcher, DispatchError, findRoot, orgFlag } from "../../connector.ts";
 
 /** How long one post to GitHub may take, spawn to exit. */
 const API_TIMEOUT_MS = 30_000;
@@ -160,7 +160,7 @@ export function grantKeyFor(
 /** Wire the outbound half over the org's log — resident once it returns (subscribed).
  *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
 export async function runDispatch(): Promise<() => Promise<void>> {
-  const { openLog, openCredentials, createGrantBroker } = await import("../../src/connector.ts");
+  const { openLog, openCredentials, createGrantBroker } = await import("../../connector.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const log = await openLog(`${dir}/log`);

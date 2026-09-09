@@ -8,6 +8,6 @@
 
 import { runIngest } from "./ingest.ts";
 import { runDispatch } from "./dispatch.ts";
-import { exitOnStop } from "../../src/connector.ts";
+import { exitOnStop } from "../../connector.ts";
 
 exitOnStop([await runIngest(), await runDispatch()]);

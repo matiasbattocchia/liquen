@@ -1,5 +1,5 @@
 /**
- * connectors/github/connect.ts — `mu connect github`: the three doors (slack's twins, §4).
+ * src/connect/github/connect.ts — `mu connect github`: the three doors (slack's twins, §4).
  *
  *   app    the GitHub App's credentials, pasted once: App ID + private key (.pem) +
  *          webhook secret → vault `github:app:<app_id>` — what the broker signs
@@ -40,7 +40,7 @@ import {
   findRoot,
   type MessageEvent,
   orgFlag,
-} from "../../src/connector.ts";
+} from "../../connector.ts";
 
 export const APP_PREFIX = "github:app:";
 export const ORG_KEY = "github:org";
@@ -425,7 +425,7 @@ async function defaultWhoami(token: string): Promise<{ login?: string; message?:
  * is no app to run it with (or when `--token` says so outright). Piped stdin is the paste
  * too: a device flow wants a human at a browser, and a secret manager isn't one. */
 if (import.meta.main) {
-  const { openLog, openCredentials } = await import("../../src/connector.ts");
+  const { openLog, openCredentials } = await import("../../connector.ts");
   const { userInfo } = await import("node:os");
 
   const org = orgFlag();

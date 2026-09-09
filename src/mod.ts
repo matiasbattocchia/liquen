@@ -21,5 +21,7 @@ export type {
 } from "./xi.ts";
 export { start } from "./main.ts";
 export type { Main, MainConfig } from "./main.ts";
+export type { Log } from "./store/log.ts";
+export { newId } from "./store/id.ts";
 export { anthropicClient, anthropicTransport, metered } from "./transport.ts";
 export { init } from "./init.ts";

@@ -1,62 +1,58 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { available, resolveConnect } from "./connect.ts";
 
-/** A fake repo root: shipped doors + a custom connector with/without a connect door. */
-async function withRoot(fn: (root: URL) => void): Promise<void> {
-  const dir = await Deno.makeTempDir();
+/** A fake org: a custom connector with a connect door, and one without. */
+async function withOrg(fn: (org: string) => void): Promise<void> {
+  const org = await Deno.makeTempDir();
   const put = async (rel: string) => {
-    const p = `${dir}/${rel}`;
+    const p = `${org}/${rel}`;
     await Deno.mkdir(p.slice(0, p.lastIndexOf("/")), { recursive: true });
     await Deno.writeTextFile(p, "// door");
   };
   try {
-    await put("src/connect/slack/connect.ts");
     await put("connectors/acme/connect.ts");
-    await put("connectors/github/ingest.ts"); // a connector WITHOUT a connect door
-    fn(new URL(`file://${dir}/`));
+    await put("connectors/hooks/ingest.ts"); // a connector WITHOUT a connect door
+    fn(org);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(org, { recursive: true });
   }
 }
 
-Deno.test("a shipped service resolves under src/connect — no filesystem probe", async () => {
-  await withRoot((root) => {
+Deno.test("a shipped service resolves beside the front door — no filesystem probe", async () => {
+  await withOrg((org) => {
     assertEquals(
-      resolveConnect("slack", root),
-      new URL("src/connect/slack/connect.ts", root).pathname,
+      resolveConnect("slack", org),
+      new URL("./slack/connect.ts", import.meta.url).pathname,
     );
-    // shipped names resolve by the map, not by stat: google has no file in the fake root
+    // shipped names resolve by the map, not by stat: the fake org holds none of them
     assertEquals(
-      resolveConnect("google", root),
-      new URL("src/connect/google/connect.ts", root).pathname,
+      resolveConnect("github", org),
+      new URL("./github/connect.ts", import.meta.url).pathname,
     );
   });
 });
 
-Deno.test("a custom connector resolves at connectors/<name>/connect.ts", async () => {
-  await withRoot((root) => {
-    assertEquals(
-      resolveConnect("acme", root),
-      new URL("connectors/acme/connect.ts", root).pathname,
-    );
+Deno.test("a custom connector resolves at <org>/connectors/<name>/connect.ts", async () => {
+  await withOrg((org) => {
+    assertEquals(resolveConnect("acme", org), `${org}/connectors/acme/connect.ts`);
   });
 });
 
 Deno.test("a path with a slash passes through as given", () => {
-  assertEquals(resolveConnect("./anywhere/connect.ts"), "./anywhere/connect.ts");
+  assertEquals(resolveConnect("./anywhere/connect.ts", "/nowhere"), "./anywhere/connect.ts");
 });
 
 Deno.test("an unknown name fails listing every door that exists", async () => {
-  await withRoot((root) => {
-    const err = assertThrows(() => resolveConnect("nope", root), Error);
+  await withOrg((org) => {
+    const err = assertThrows(() => resolveConnect("nope", org), Error);
     assert(err.message.includes("acme"), "custom doors are advertised");
     assert(err.message.includes("slack"), "shipped doors are advertised");
-    assert(!err.message.includes("github"), "a connector without a connect door is not");
+    assert(!err.message.includes("hooks"), "a connector without a connect door is not");
   });
 });
 
 Deno.test("available = shipped + custom doors, doorless connectors excluded", async () => {
-  await withRoot((root) => {
-    assertEquals(available(root), ["slack", "google", "whatsapp", "acme"]);
+  await withOrg((org) => {
+    assertEquals(available(org), ["slack", "google", "whatsapp", "github", "acme"]);
   });
 });

@@ -42,4 +42,4 @@ chmod -R 2775 /data/org
 setfacl -R -d -m g:agents:rwX /data/org
 chmod -R a-w,a+rX /data/system
 
-exec mu start
+exec deno task start

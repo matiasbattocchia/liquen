@@ -5,45 +5,41 @@
  *   deno task connect <service> [args...]    # the service's connect door
  *   deno task connect ./path/connect.ts      # a module path (anything with a slash)
  *
- * Resolution is two-step: the shipped services (`src/connect/<service>/connect.ts`)
- * first, then the org's own (`connectors/<name>/connect.ts` at the repo root,
+ * Resolution is two-step: the shipped services (`src/connect/<service>/connect.ts`,
+ * beside this module) first, then the org's own (`<org>/connectors/<name>/connect.ts`,
  * CONNECTORS.md). Every door is an `import.meta.main` entry, so the front door runs the
  * resolved file as a CHILD process with the remaining args — the same contract whether
  * the door is shipped, custom, or a pasted path; env (PORT, secrets) rides
  * through untouched. Unknown names fail listing every door that exists.
  */
 
-import { orgFlag } from "../config.ts";
+import { findRoot, orgFlag } from "../config.ts";
 
-const SHIPPED = ["slack", "google", "whatsapp"];
-
-const ROOT = new URL("../../", import.meta.url); // src/connect/ → the repo root
+const SHIPPED = ["slack", "google", "whatsapp", "github"];
 
 /** The connect door for `name`, as an absolute file path. Throws when there is none. */
-export function resolveConnect(name: string, root: URL = ROOT): string {
+export function resolveConnect(name: string, org: string): string {
   if (name.includes("/")) return name; // a module path — the dev knows best
-  if (SHIPPED.includes(name)) {
-    return new URL(`src/connect/${name}/connect.ts`, root).pathname;
-  }
-  const custom = new URL(`connectors/${name}/connect.ts`, root).pathname;
+  if (SHIPPED.includes(name)) return new URL(`./${name}/connect.ts`, import.meta.url).pathname;
+  const custom = `${org}/connectors/${name}/connect.ts`;
   try {
     Deno.statSync(custom);
     return custom;
   } catch {
     throw new Error(
-      `no connect door for "${name}" — available: ${available(root).join(" · ")}`,
+      `no connect door for "${name}" — available: ${available(org).join(" · ")}`,
     );
   }
 }
 
-/** Every name that resolves: the shipped services + each connectors/<name>/connect.ts. */
-export function available(root: URL = ROOT): string[] {
+/** Every name that resolves: the shipped services + each `<org>/connectors/<name>/connect.ts`. */
+export function available(org: string): string[] {
   const custom: string[] = [];
   try {
-    for (const e of Deno.readDirSync(new URL("connectors/", root))) {
+    for (const e of Deno.readDirSync(`${org}/connectors`)) {
       if (!e.isDirectory) continue;
       try {
-        Deno.statSync(new URL(`connectors/${e.name}/connect.ts`, root));
+        Deno.statSync(`${org}/connectors/${e.name}/connect.ts`);
         custom.push(e.name);
       } catch {
         // a connector without a connect door (ingest-only) — nothing to list
@@ -56,12 +52,16 @@ export function available(root: URL = ROOT): string[] {
 }
 
 if (import.meta.main) {
-  // the flag rides through to the connector: the org is its to find, not this launcher's
-  const { dir, args: [name, ...words] } = orgFlag();
-  const rest = dir ? ["--dir", dir, ...words] : words;
+  // the flag rides through to the door: the org is where its custom doors live, and its
+  // to find again as a child
+  const org = orgFlag();
+  const [name, ...words] = org.args;
+  const rest = org.dir ? ["--dir", org.dir, ...words] : words;
   let target: string;
   try {
-    target = name ? resolveConnect(name) : new URL("./status.ts", import.meta.url).pathname; // bare `mu connect` = the map
+    target = name
+      ? resolveConnect(name, findRoot(org))
+      : new URL("./status.ts", import.meta.url).pathname; // bare `mu connect` = the map
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     Deno.exit(2);

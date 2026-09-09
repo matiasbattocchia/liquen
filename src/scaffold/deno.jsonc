@@ -1,3 +1,19 @@
-// deno.jsonc — the project's own module config. The project ships no runnable code (the
-// `mu` CLI comes with core); this file serves the org's own connectors/ and processors/.
-{}
+// deno.jsonc — the project's own module config. The project ships no runnable code: the
+// CLI is the package, every task runs it, and the org's own connectors/ and processors/
+// import the same package (`@liquen/liquen/connector`). A checkout stands in for the
+// registry with `"links": ["../liquen"]`.
+{
+  "imports": {
+    "@liquen/liquen": "jsr:@liquen/liquen@^0.1.0"
+  },
+  "tasks": {
+    "start": "deno run -A --env-file=.env @liquen/liquen/start",
+    "cli": "deno run -A --env-file=.env @liquen/liquen/cli",
+    "repl": "deno run -A --env-file=.env @liquen/liquen/repl",
+    "agent": "deno run -A @liquen/liquen/agent",
+    "connect": "deno run -A --env-file=.env @liquen/liquen/connect",
+    "status": "deno run -A --env-file=.env @liquen/liquen/status",
+    "oauth:slack": "deno run -A --env-file=.env @liquen/liquen/oauth/slack",
+    "oauth:google": "deno run -A --env-file=.env @liquen/liquen/oauth/google"
+  }
+}

@@ -1745,15 +1745,15 @@ docs {
   an init command copies what an org owns — `src/seed/**` templates, config, `main.ts`
   wiring, Dockerfile — while the harness core stays a JSR dependency (the `store/`/exec
   ports are the package boundary). Surface files are exactly what updates never touch;
-  core updates are a version bump. The init is npx-shaped (`deno run -A jsr:@mu/init .`;
+  core updates are a version bump. The init is npx-shaped (`deno run -A jsr:@liquen/liquen/init .`;
   no folder → a short interview), additive and never-overwriting — re-run = update for
-  added surface files. The template ships its own `AGENTS.md` so a coding agent (Claude
-  Code, or mu itself) can run the customization interview — init stays dumb (copy +
-  interpolate); the intelligence is a doc. The **front door is agent-first**: a repo-root
+  added surface files. Init stays dumb (copy the scaffold, materialize the catalog); the
+  intelligence is a doc. The **front door is agent-first**: a repo-root
   `SKILL.md` at a stable URL ("read this and follow it") — the developer's own agent is
   the installer, wrapping the deterministic steps and carrying the interview; plainly
   readable (it is also the trust artifact), every step idempotent. `mu init` is the
-  deterministic core the skill invokes once it exists. Near-term (v0.x, API churning): clone-the-repo, kept
+  deterministic core the skill invokes. The core is the package `@liquen/liquen`, named in the org's
+  `deno.jsonc` (a checkout stands in through Deno's `links`), kept
   **template-ready** — seeds live as real files under `src/seed/` (flat, `<scope>-<name>.md`), copied write-if-absent
   into `{dir}/docs` at boot (interpolating `{{DOCS_ROOT}}`/`{{AGENT_ID}}`), never
   overwriting edits. **Seed vs data is template vs LIVING state**: agents co-author
@@ -1767,8 +1767,8 @@ docs {
   N unrelated orgs, co-runnable on one machine; never write global state. **Deno-less
   envs**: `deno compile` (cross-target) ships self-contained binaries — operator-mode
   without Deno; hacking wiring/core needs it. **Version clamping, one per layer**: git
-  tag (clone/SKILL.md) · `jsr:@mu/core@x.y.z` + committed `deno.lock` (surface project)
-  · `jsr:@mu/init@x.y.z` · binary release tag · Docker image tag.
+  tag (clone/SKILL.md) · `jsr:@liquen/liquen@x.y.z` + committed `deno.lock` (surface project)
+  · binary release tag · Docker image tag.
 - **Docker per org**: several processes in one container, coordinating through the shared
   log (`store/`). The **harness** process runs the agents (each a supervised async worker on
   an in-process scheduler, not process-per-conversation); **each channel connection is its
@@ -1865,7 +1865,7 @@ docs {
     container⟺edge goal. JSONL over a stream beats REST here (native bidirectional
     streaming for events) and beats library-embedding (no runtime coupling). The granular
     embed API (`ModelRuntime` / `SessionManager.inMemory()` / `createAgentSession`) is the
-    in-process counterpart, worth revisiting when `@mu/core` splits out (C2).
+    in-process counterpart, worth revisiting for `@liquen/liquen` as a dependency (C2).
   - **The typed verbs ARE the control-client's ingest.** A channel classifies raw text
     (is "stop" a command?); a control client emits already-classified events via UI (a
     Stop button → `control`, an Approve button → `permission_response`). Same job,

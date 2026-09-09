@@ -1,9 +1,0 @@
-[project]
-name = "mu-terminal-bench"
-version = "0.1.0"
-description = "Harbor agent adapter: run mu's headless task mode on Terminal-Bench"
-requires-python = ">=3.11"
-dependencies = ["harbor"]
-
-[tool.setuptools]
-packages = ["mu_terminal_bench"]

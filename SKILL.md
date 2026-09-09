@@ -9,24 +9,19 @@ You are a coding agent installing mu for a developer. Every step is idempotent a
 non-destructive — re-running this skill is safe. Mechanical steps are exact commands;
 judgment steps are marked **interview** — ask the developer, don't guess.
 
-## 1. Get the code
-
-```sh
-git clone <REPO_URL> mu && cd mu        # placeholder until the repo is published
-```
+## 1. Create the org
 
 Requires Deno ≥ 2 (`deno --version`; install via https://deno.com if missing).
 
-## 2. Verify the machine
-
 ```sh
-deno task check && deno task test
+deno run -A jsr:@liquen/liquen/init <org> && cd <org>   # the folder's name is the org's
+deno task agent <username>                              # the developer's agent, on the roster
 ```
 
-All tests must pass before continuing. (Two "smoke" tests report *ignored* without an
-API key — that's expected.)
+The org is a folder: `config.jsonc` declares it, `data/` fills at first boot, `.env`
+carries secrets, and `deno.jsonc` names the package every task runs.
 
-## 3. Credentials
+## 2. Credentials
 
 One of, in the developer's preference order:
 
@@ -36,21 +31,19 @@ One of, in the developer's preference order:
 
 Claude-Code/claude.ai subscription logins do NOT work for the API — only the two above.
 
-## 4. First run
+## 3. First run
 
 ```sh
-deno task smoke     # live transport round-trip (needs credentials)
-deno task cli       # talk to the agent; /quit to exit
+deno task repl      # talk to the agent; /quit to exit
 ```
 
-The first run seeds `./data/docs/` from the `src/seed/` templates and creates the
-agent's workspace under `./data/workspace/`.
+The first run seeds `./data/` from the package's templates: the log, the agent's home
+and its docs.
 
-## 5. Customization — **interview**
+## 4. Customization — **interview**
 
-The templates under `src/seed/` are the org's defaults; the live copies under
-`./data/docs/` are this deployment's. Both are meant to be edited; boot never
-overwrites. Ask the developer, then edit:
+The templates ship with the package; the live copies under `./data/` are this
+deployment's. Edit the live copies; boot never overwrites. Ask the developer, then edit:
 
 - **`org/instruction/org.md`** — org name, what it does, tone on its behalf, boundaries.
 - **`agent/<id>/instruction/identity.md`** — who the principal is, how they write, what
@@ -62,8 +55,8 @@ Every knob lives in `config.jsonc` at the project root: the model, effort, per-a
 `compactAt`/`keepRecent`, and the gate policy (default: only `send` is gated). The org is
 where you run mu; `--dir <path>` names it from anywhere else.
 
-## 6. Hand off
+## 5. Hand off
 
-Show the developer: how to talk to their agent (`deno task cli`), where its memories
-land (`./data/docs/agent/<id>/memory/`), and that `DESIGN.md` + `PROJECT.md` are the
-architecture and roadmap if they want to go deeper.
+Show the developer: how to talk to their agent (`deno task repl`), where its memories
+land (`./data/docs/agent/<id>/memory/`), and that the package's `DESIGN.md` +
+`PROJECT.md` are the architecture and roadmap if they want to go deeper.

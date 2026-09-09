@@ -9,8 +9,8 @@
 
 import { assertEquals } from "@std/assert";
 import { TextLineStream } from "@std/streams";
-import type { Event, MessageEvent } from "../../src/connector.ts";
-import { openLog } from "../../src/connector.ts";
+import type { Event, MessageEvent } from "../../connector.ts";
+import { openLog } from "../../connector.ts";
 
 /** Poll the ingest's ping until it answers (the process is up and serving). */
 async function waitReady(port: number, ms = 10_000): Promise<void> {

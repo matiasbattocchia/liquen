@@ -5,9 +5,10 @@
  * A connector is a standalone process over the org's substrate (the `./data` root): ingest
  * publishes world events into the log, dispatch tails the log and delivers, connect
  * is the setup door writing the connection map and the vault. The shipped ones under
- * `src/connect/<service>/` and the org's own under `connectors/<name>/` (repo root,
- * ships with the image) import exactly this — a deep import from a custom connector
- * is a contract violation, not a convenience. The contract itself: CONNECTORS.md.
+ * `src/connect/<service>/` import this module by path; the org's own under
+ * `<org>/connectors/<name>/` (the org's code, shipped with its image) import it as
+ * `@liquen/liquen/connector` — a deep import from a custom connector is a contract
+ * violation, not a convenience. The contract itself: CONNECTORS.md.
  */
 
 export { openLog } from "./store/log.ts";

@@ -15,7 +15,6 @@ Deno.test("init scaffolds a project the reader accepts, roster empty, and refuse
     assert(cfg.org.timezone.length > 0); // the machine's clock, interviewed for the human
     for (
       const f of [
-        "AGENTS.md",
         "Dockerfile",
         "entrypoint.sh",
         ".dockerignore",
@@ -29,8 +28,6 @@ Deno.test("init scaffolds a project the reader accepts, roster empty, and refuse
     ) await Deno.stat(`${path}/${f}`);
     const mode = (await Deno.stat(`${path}/entrypoint.sh`)).mode! & 0o777;
     assertEquals(mode, 0o755);
-    // the name is the folder's
-    assert((await Deno.readTextFile(`${path}/AGENTS.md`)).startsWith("# acme"));
     await assertRejects(() => init(path), Error, "already a mu project");
   } finally {
     await Deno.remove(tmp, { recursive: true });

@@ -11,11 +11,11 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git curl jq acl && \
     rm -rf /var/lib/apt/lists/*
 
-# the mu CLI ships with core — the project carries no runnable code
-RUN deno install -gArf jsr:@mu/core/mu
-
 WORKDIR /app
 COPY . .
+
+# the CLI is the package deno.jsonc names — cached into the image, so boot needs no network
+RUN deno install
 
 VOLUME /data
 ENTRYPOINT ["./entrypoint.sh"]
