@@ -29,8 +29,11 @@ export async function init(path: string): Promise<void> {
     await Deno.mkdir(`${path}${sub}`, { recursive: true });
   }
   await Deno.writeTextFile(`${path}/config.jsonc`, materialize(starterConfig()));
+  // the scaffold travels with the module, whose URL is the registry's when init is run
+  // straight off it — fetch reads both that and a checkout's file:
   for (const [from, to] of SCAFFOLD) {
-    await Deno.copyFile(new URL(`./scaffold/${from}`, import.meta.url), `${path}/${to}`);
+    const res = await fetch(new URL(`./scaffold/${from}`, import.meta.url));
+    await Deno.writeFile(`${path}/${to}`, new Uint8Array(await res.arrayBuffer()));
   }
   await Deno.chmod(`${path}/entrypoint.sh`, 0o755);
 }
