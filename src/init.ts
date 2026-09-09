@@ -4,9 +4,9 @@
  * Dumb on purpose: materialize the catalog, copy the scaffold. The project it leaves
  * behind carries no runnable code — the CLI is the package its `deno.jsonc` names — and
  * `data/` fills at first boot: the catalog's roster becomes folders and rows then, not
- * here. What init decides is only what a human would otherwise type: the org's clock
- * (the machine's). The roster starts empty; `liquen agent` adds each agent as its own
- * declaration.
+ * here. What init decides is only what a human would otherwise type: the org's clock and
+ * locale (the machine's). The roster starts empty; `liquen agent` adds each agent as its
+ * own declaration.
  */
 
 import { materialize, starterConfig } from "./config.ts";

@@ -204,6 +204,27 @@ Deno.test("a subsection no connector claims passes through opaque", async () => 
   });
 });
 
+Deno.test("starterConfig: the machine's locale, LC_ALL over LANG, and C is none", () => {
+  const was = { LC_ALL: Deno.env.get("LC_ALL"), LANG: Deno.env.get("LANG") };
+  const setEnv = (k: string, v: string | undefined) =>
+    v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+  try {
+    setEnv("LC_ALL", undefined);
+    setEnv("LANG", "es_AR.UTF-8");
+    assertEquals(starterConfig().org.locale, "es_AR.UTF-8");
+    setEnv("LC_ALL", "en_US.UTF-8");
+    assertEquals(starterConfig().org.locale, "en_US.UTF-8");
+    setEnv("LC_ALL", undefined);
+    setEnv("LANG", "C.UTF-8");
+    assertEquals(starterConfig().org.locale, null);
+    setEnv("LANG", undefined);
+    assertEquals(starterConfig().org.locale, null);
+  } finally {
+    setEnv("LC_ALL", was.LC_ALL);
+    setEnv("LANG", was.LANG);
+  }
+});
+
 Deno.test("materialize: the whole catalog, commented, and it reads back verbatim", async () => {
   await withDir(async (root) => {
     const cfg = starterConfig();

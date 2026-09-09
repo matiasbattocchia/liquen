@@ -591,12 +591,21 @@ export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string
   return lines.join("\n");
 }
 
-/** The starter every project begins from: the defaults, the machine's clock, an empty
- *  roster and no connections — `liquen agent` and `liquen connect` fill those in, one line each. */
+/** The starter every project begins from: the defaults, the machine's clock and locale, an
+ *  empty roster and no connections — `liquen agent` and `liquen connect` fill those in, one
+ *  line each. */
 export function starterConfig(): OrgConfig {
   const cfg = defaults();
   cfg.org.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? DEFAULT_TIMEZONE;
+  cfg.org.locale = machineLocale();
   return cfg;
+}
+
+/** The locale the machine's shell speaks, as libc reads it (LC_ALL over LANG); the
+ *  languageless C/POSIX locales are no locale at all. */
+function machineLocale(): string | null {
+  const l = Deno.env.get("LC_ALL") || Deno.env.get("LANG") || "";
+  return l && !/^(C|POSIX)(\..*)?$/.test(l) ? l : null;
 }
 
 /** Declare `agents.<name>` in the file — the roster entry boot compiles into a registry
