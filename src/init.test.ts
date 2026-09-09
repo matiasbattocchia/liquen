@@ -28,7 +28,7 @@ Deno.test("init scaffolds a project the reader accepts, roster empty, and refuse
     ) await Deno.stat(`${path}/${f}`);
     const mode = (await Deno.stat(`${path}/entrypoint.sh`)).mode! & 0o777;
     assertEquals(mode, 0o755);
-    await assertRejects(() => init(path), Error, "already a liquen project");
+    await assertRejects(() => init(path), Error, "already a liquen org");
   } finally {
     await Deno.remove(tmp, { recursive: true });
   }

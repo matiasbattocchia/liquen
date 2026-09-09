@@ -24,7 +24,11 @@ const SCAFFOLD: [string, string][] = [
 
 export async function init(path: string): Promise<void> {
   const exists = await Deno.stat(`${path}/config.jsonc`).then(() => true, () => false);
-  if (exists) throw new Error(`${path} is already a liquen project (config.jsonc exists)`);
+  if (exists) {
+    throw new Error(
+      `${path} is already a liquen org — \`liquen agent <name>\` adds an agent to it`,
+    );
+  }
   for (const sub of ["", "/connectors", "/processors", "/data"]) {
     await Deno.mkdir(`${path}${sub}`, { recursive: true });
   }
@@ -44,7 +48,12 @@ if (import.meta.main) {
     console.error("usage: liquen init <path>");
     Deno.exit(1);
   }
-  await init(path);
+  try {
+    await init(path);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    Deno.exit(1);
+  }
   console.log(
     `${path}: a liquen org. \`liquen agent <name>\` adds an agent; \`liquen start\` runs it.`,
   );
