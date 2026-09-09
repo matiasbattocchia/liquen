@@ -1055,9 +1055,10 @@ The 3×2 grid, each cell real and distinct:
   dev self-serves tokens with zero public surface — the CLI prints the manifest prefill
   link (app creation and app-level tokens have no public API; the link is the automation
   ceiling), the dev pastes the token, and `auth.test` resolves the workspace (a token
-  string never identifies one) before the SAME map writes as the hosted door — bound to
-  the real registry name. The `app` paste vaults the OAuth client (`slack:app:<id>`, what the hosted door serves from), the `bot` paste vaults the org identity (`slack:<team>:org`, xoxb + the xapp socket carrier the ingest picks up). Pastes = local/dev tier, hosted oauth = org
-  tier (a shared link, N principals) — mirroring ingest's socket-vs-HTTP split. Facts
+  string never identifies one) before the SAME map writes as the OAuth handler — bound to
+  the real registry name. The `app` paste vaults the OAuth client (`slack:app:<id>`, what the handler signs a member in with), the `bot` paste vaults the org identity (`slack:<team>:org`, xoxb + the xapp socket carrier the ingest picks up). A paste serves whoever
+  is at the terminal; the OAuth handler, served by a door for one sign-in, serves a member
+  who is not. Facts
   that shaped it: one app × workspace = ONE bot (reinstall rotates the token, never a
   second bot; more bots ⇒ more apps — per-agent apps named after the agent), multiple
   apps coexist under ONE anchor row (per-bot identity lives in the vault, and the

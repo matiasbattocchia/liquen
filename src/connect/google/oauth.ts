@@ -6,11 +6,9 @@
  *
  *   GET /start     mint a one-time `state` → 302 to Google's consent screen. Unlike the
  *                  Slack door (a shared admin link; Slack verifies who clicked), this
- *                  link is minted PER MEMBER: `?agent=<principal>` rides into the state,
- *                  and the callback binds the grant to that principal. The agent is the
- *                  doorman — it composes the link for ITS principal and delivers it over
- *                  the channel it already holds (§4: the log is the frontier). No
- *                  `agent` ⇒ an ownerless grant: the org's shared account (§6).
+ *                  link is minted PER MEMBER: `?agent=<name>` rides into the state, and
+ *                  the callback binds the grant to that member. No `agent` ⇒ an
+ *                  ownerless grant: the org's shared account (§6).
  *                  `?scopes=` (space-separated) overrides the default ask — consent is
  *                  INCREMENTAL (`include_granted_scopes`): a later ask for Drive merges
  *                  into the same grant, so the first ask stays as small as calendar.
@@ -29,17 +27,16 @@
  * doesn't carry. The refresh token never leaves the vault: consumers ask the broker for
  * short-lived access tokens (the credential stays broker-side, §9).
  *
- * Serving note: both routes are SYNCHRONOUS request/response (a 302, a page) — serve
- * them through a real proxy (cloudflared in dev, an edge function in prod).
+ * Nothing serves these routes standing: a door serves them for the length of one sign-in
+ * (`liquen connect google account`, on localhost). Both are SYNCHRONOUS request/response
+ * (a 302, a page), so whatever fronts them must carry a redirect.
  */
 
-import { helpFlag } from "../help.ts";
 import { DEFAULT_SCOPES, GRANT_ENV, GRANT_HOSTS } from "./config.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
-import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 
 export interface GoogleOAuthConfig {
@@ -254,68 +251,4 @@ async function defaultExchange(code: string, c: GoogleOAuthConfig): Promise<Goog
 
 function text(status: number, message: string): Response {
   return new Response(message, { status, headers: { "content-type": "text/plain" } });
-}
-
-/* ── local entry: serve /oauth/google/start + /callback over the org stores ────────────
- *
- *   deno task oauth:google [--app <client_id>]   # :8791 — put a SYNCHRONOUS proxy in
- *                                                  front (cloudflared)
- *
- * The app credential (client id/secret) lives in the vault — `google:app:<client_id>`,
- * written by `liquen connect google app` — and the vault is the ONLY source: `--app` picks
- * among several. The redirect URI is the app row's `redirect_uri` sidecar (the hosted
- * callback), localhost when absent. The port is connections.google.oauthPort. */
-const USAGE = `usage: liquen oauth:google [--app <client_id>]
-
-  Serve the hosted Google sign-in (/start, /callback) for members who are not at this
-  terminal: a link per member (\`/start?agent=<name>\`; none ⇒ the org's own account);
-  the app is the vault's (\`liquen connect google app\`); knobs: connections.google
-  (oauthPort). Put a synchronous tunnel (cloudflared) in front.
-
-  --app <client_id>   which app, when the vault holds several
-  --dir <org>         the org, when run from elsewhere`;
-
-if (import.meta.main) {
-  try {
-    const { openLog } = await import("../../store/log.ts");
-    const { openCredentials } = await import("../../store/credentials.ts");
-    const { pickGoogleApp } = await import("./connect.ts");
-    const { googleConfig } = await import("./config.ts");
-    const org = orgFlag();
-    helpFlag(org.args, USAGE);
-    const root = findRoot(org);
-    const dir = `${root}/data`;
-    const { oauthPort: port, scopes } = await googleConfig(root);
-    const creds = await openCredentials(dir);
-    const appFlag = org.args.indexOf("--app");
-    const appId = appFlag >= 0 ? org.args[appFlag + 1] : undefined;
-    const app = await pickGoogleApp(creds, appId).catch((e) => {
-      console.error(`[oauth] ${e.message}`);
-      Deno.exit(2);
-    });
-    const config: GoogleOAuthConfig = {
-      clientId: app.value.client_id,
-      clientSecret: app.value.client_secret,
-      redirectUri: (app.extra?.redirect_uri as string | undefined) ??
-        `http://localhost:${port}/oauth/google/callback`,
-      scopes,
-    };
-    const log = await openLog(`${dir}/log`);
-    const handler = createGoogleOAuth({
-      config,
-      creds,
-      publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
-      store: log, // connections live on the Log (§4) — the grant writes the map
-      onGrant: (g) =>
-        console.error(
-          `[oauth] granted ${g.email}${g.agent ? ` → ${g.agent}` : " (org)"}` +
-            (g.missing.length ? ` — WITHOUT ${g.missing.join(" ")}` : ""),
-        ),
-    });
-    console.error(`[oauth] on :${port} — agents mint <public>/oauth/google/start?agent=…`);
-    Deno.serve({ port }, handler);
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    Deno.exit(1);
-  }
 }

@@ -57,7 +57,7 @@ export interface GithubApp {
   appId: string;
   privateKey: string; // the .pem GitHub downloads (PKCS#1 — node:crypto reads it)
   webhookSecret?: string; // verifies deliveries at the ingest; absent ⇒ unsigned dev mode
-  clientId?: string; // the user-to-server OAuth pair — unused until a hosted door needs it
+  clientId?: string; // the user-to-server OAuth pair — the device flow signs people in with it
   clientSecret?: string;
 }
 

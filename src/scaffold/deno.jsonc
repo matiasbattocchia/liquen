@@ -12,8 +12,6 @@
     "repl": "deno run -A --env-file=.env @liquen/liquen/repl",
     "agent": "deno run -A @liquen/liquen/agent",
     "connect": "deno run -A --env-file=.env @liquen/liquen/connect",
-    "status": "deno run -A --env-file=.env @liquen/liquen/status",
-    "oauth:slack": "deno run -A --env-file=.env @liquen/liquen/oauth/slack",
-    "oauth:google": "deno run -A --env-file=.env @liquen/liquen/oauth/google"
+    "status": "deno run -A --env-file=.env @liquen/liquen/status"
   }
 }

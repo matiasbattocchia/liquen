@@ -5,7 +5,7 @@
  * redirect — so a dev can self-serve a user token (xoxp) with zero public surface: the
  * CLI prints the app-manifest prefill link, the dev creates + installs the app and pastes
  * the token back. The paste is the grant, and THE GRANT WRITES THE MAP — the same two
- * writes as the hosted oauth door (connect/slack/oauth.ts), from a different door:
+ * writes as the OAuth handler (connect/slack/oauth.ts), from a different door:
  *
  *   auth.test(xoxp) → team + user (the paste never identifies the workspace; Slack does)
  *     → connections: the GRANT, OWNED — address `<team>:<user>` (a user grant is its own
@@ -22,7 +22,7 @@
  *           names no identity and grants no reach, it says HOW events arrive. App-scoped
  *           where a grant is workspace-scoped, so it keys by the app id the token carries
  *   app     the OAuth client (id + secret) → vault `slack:app:<client_id>` — what the
- *           hosted oauth door serves from
+ *           OAuth handler signs a member in with
  *
  * Arg (user door): the principal (default: the OS username). Env: none.
  *
@@ -159,7 +159,6 @@ export interface SlackApp {
   clientId: string;
   clientSecret: string;
   signingSecret?: string; // verifies HTTP-mode deliveries; socket mode needs none
-  redirectUri?: string; // the HOSTED door's callback; absent ⇒ oauth serves localhost
 }
 
 /** Store an OAuth client under its own id (the google app door's twin). The vault's
@@ -177,12 +176,11 @@ export async function connectSlackApp(
       client_secret: app.clientSecret,
       ...(app.signingSecret ? { signing_secret: app.signingSecret } : {}),
     },
-    ...(app.redirectUri ? { extra: { redirect_uri: app.redirectUri } } : {}),
   });
   return key;
 }
 
-/** The hosted door's app choice: the only one, or the one `clientId` names. */
+/** The OAuth handler's app: the only one, or the one `clientId` names. */
 export async function pickSlackApp(
   creds: Pick<Credentials, "get" | "list">,
   clientId?: string,
@@ -215,8 +213,8 @@ export interface SlackBotDeps {
   now?: () => string;
 }
 
-/** Finish a pasted bot-token grant: verify with Slack, write the same two rows the hosted
- *  door writes — the bare workspace stub (membership-only; the anchor of personal-witnessed
+/** Finish a pasted bot-token grant: verify with Slack, write the same two rows the OAuth
+ *  handler writes — the bare workspace stub (membership-only; the anchor of personal-witnessed
  *  deliveries) and the bot's own grant row `<team>:<bot user>` carrying `credential_key`
  *  (no owner ⇒ the org's shared inbox, §6; bot-witnessed deliveries anchor here) — and
  *  vault the blob at `slack:<team>:org`. The identity and nothing else: the socket carrier
@@ -350,7 +348,7 @@ async function defaultSocketProbe(appToken: string): Promise<{ ok: boolean; erro
 
 /** The four things a working Slack connection is made of. */
 export interface SlackHave {
-  app: boolean; // the OAuth client — `slack:app:<client_id>`, the hosted door's key
+  app: boolean; // the OAuth client — `slack:app:<client_id>`
   bot: boolean; // the org's identity — `slack:<team>:org`
   appToken: boolean; // the socket carrier, stored beside the bot token
   user: boolean; // at least one principal's own leg — `slack:<team>:<principal>`
@@ -408,7 +406,7 @@ export function slackNext(have: SlackHave): string[] {
 
 /** Fill the manifest's consent lists from the catalog — the seed carries the app's shape
  *  (name, events, redirect, socket mode), the config carries what it may do, so the app a
- *  door creates asks for exactly what the oauth door later requests. */
+ *  door creates asks for exactly what the OAuth handler later requests. */
 export function withScopes(
   manifest: Record<string, unknown>,
   scopes: { bot: string[]; user: string[] },
@@ -536,8 +534,8 @@ if (import.meta.main) {
       try {
         // the app itself comes FIRST and comes from the manifest: Slack builds it in two
         // clicks from this link, and everything else — the carrier, the bot, a member's
-        // leg — is a token that app issues. The OAuth client below is the hosted door's
-        // alone, so it is optional here.
+        // leg — is a token that app issues. The OAuth client below is what the OAuth
+        // handler signs a member in with, so it is optional here.
         const { botScopes, userScopes } = await slackConfig(root);
         const url = manifestUrl(withScopes(
           JSON.parse(
@@ -556,7 +554,7 @@ if (import.meta.main) {
           }).spawn().unref();
         } catch { /* headless is fine */ }
 
-        const clientId = ask("Client ID (only the hosted oauth door needs it; empty to skip):");
+        const clientId = ask("Client ID (the OAuth client; empty to skip):");
         const clientSecret = clientId ? ask("Client secret:") : undefined;
         if (!clientId || !clientSecret) {
           console.error(clientId ? "no secret pasted — nothing written" : "\nno client stored");
@@ -564,14 +562,8 @@ if (import.meta.main) {
           Deno.exit(clientId ? 2 : 0);
         }
         const signingSecret = ask("Signing secret (verifies HTTP ingest; empty to skip):");
-        const redirectUri = ask("Hosted redirect URI (empty to skip):");
-        const key = await connectSlackApp(
-          { clientId, clientSecret, signingSecret, redirectUri },
-          creds,
-        );
-        console.error(
-          `✓ app stored: ${key}` + (redirectUri ? ` (hosted callback: ${redirectUri})` : ""),
-        );
+        const key = await connectSlackApp({ clientId, clientSecret, signingSecret }, creds);
+        console.error(`✓ app stored: ${key}`);
         await owed(creds);
       } finally {
         await creds.close();

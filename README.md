@@ -72,20 +72,17 @@ gh webhook forward --repo=you/repo \
    leg. Then paste the pieces into the vault:
 
    ```sh
-   deno task connect slack app    # client id + secret (what the OAuth door serves from)
-   deno task connect slack bot    # bot token (xoxb) + app-level token (xapp) for Socket Mode
+   deno task connect slack bot      # bot token (xoxb) — the org's shared identity
+   deno task connect slack socket   # app-level token (xapp) — the Socket Mode carrier
    ```
-3. **Serve the OAuth door** and put a synchronous proxy in front (cloudflared in dev —
-   an async webhook relay can't carry the 302):
+3. **Connect your own leg**: installing granted the workspace only; each member's user
+   token (xoxp, *OAuth & Permissions → User OAuth Token*) is pasted through their door:
 
    ```sh
-   deno task oauth:slack        # /oauth/slack/start + /callback on :8790
+   deno task connect slack user [agent]
    ```
 
-4. **Share the door**: give members `https://<public>/oauth/slack/start` however you like
-   (paste it in a channel). Everyone — the admin included — connects their personal leg
-   through it; installing was the workspace leg only.
-5. **Run the connection** (both halves, over the shared `./data` root):
+4. **Run the connection** (both halves, over the shared `./data` root):
 
    ```sh
    deno task start             # both halves in one process: Socket Mode (or HTTP) in,

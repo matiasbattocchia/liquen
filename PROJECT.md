@@ -2092,6 +2092,17 @@ cache is not root's, so its first `aread` would fetch `afs.ts` — through the e
 which does not front the registry. The image owes user space a readable, pre-warmed
 `DENO_DIR`.
 
+### An OAuth server is a door's, not the operator's (2026-09-09) — LANDED
+
+The OAuth handlers (`connect/slack/oauth.ts`, `connect/google/oauth.ts`) are served by a
+door for the length of one sign-in — `liquen connect google account` on localhost — and
+by nothing standing: no `oauth:*` task, no export, no port to front with a tunnel, no
+redirect-URI sidecar on the app rows. Open: a member who is not at the terminal still has
+no way in. The shape is a connect tool a connector exposes, which spins the handler up,
+hands the member a link over the channel the agent already holds, and stops after the
+callback — the account door's one-shot, addressed from the org's side. Slack's twin of the
+account door does not exist yet; the paste door serves the developer's own leg.
+
 Still open: vibes runs on Bun, which resolves neither `@std/*` nor `node:sqlite`, so its
 `@mu/*` path mapping onto the checkout serves the type checker; `attach.ts` and
 `describe.ts` cannot load there at runtime.

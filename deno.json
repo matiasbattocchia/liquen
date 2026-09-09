@@ -1,6 +1,6 @@
 {
   "name": "@liquen/liquen",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "license": "Unlicense",
   "exports": {
     ".": "./src/mod.ts",
@@ -12,9 +12,7 @@
     "./liquen": "./src/liquen.ts",
     "./agent": "./src/agent.ts",
     "./connect": "./src/connect/connect.ts",
-    "./status": "./src/connect/status.ts",
-    "./oauth/slack": "./src/connect/slack/oauth.ts",
-    "./oauth/google": "./src/connect/google/oauth.ts"
+    "./status": "./src/connect/status.ts"
   },
   "publish": {
     "exclude": [
@@ -42,10 +40,8 @@
     "status": "deno run -A --env-file=.env src/connect/status.ts",
     "proxy": "deno run -A --env-file=.env src/proxy/proxy.ts",
     "run:slack": "deno run -A --env-file=.env src/connect/slack/run.ts",
-    "oauth:slack": "deno run -A --env-file=.env src/connect/slack/oauth.ts",
     "connect:slack": "deno run -A --env-file=.env src/connect/slack/connect.ts",
     "run:google": "deno run -A --env-file=.env src/connect/google/run.ts",
-    "oauth:google": "deno run -A --env-file=.env src/connect/google/oauth.ts",
     "connect:google": "deno run -A --env-file=.env src/connect/google/connect.ts",
     "run:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp/run.ts",
     "connect:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp/connect.ts",

@@ -20,9 +20,9 @@ exactly one of them:
    feeding the SAME handler; the edge tier drops the carrier and serves the function.
 2. **Dispatch** — a log subscriber picking the agent's outbound `send`s for its service →
    post → `setDelivery` backfills the platform id (§4 echo-dedup: the echo MERGES).
-3. **A connect door** — paste (local/dev) or hosted OAuth (org), writing the same three
-   places: `connections` (the account anchor), `identities` (handle → registry name), and
-   the vault (`credentials`).
+3. **A connect door** — a paste, or an OAuth handler the door serves for the length of one
+   sign-in — writing the same three places: `connections` (the account anchor),
+   `identities` (handle → registry name), and the vault (`credentials`).
 4. **A stable `external_id`** so retries, edits, and our own loopback upsert instead of
    insert. This is the one mechanism (§4); there is no author-based skip anywhere.
 5. **Classifier duties at ingest** (§3) — `conversation.kind` from platform facts (never

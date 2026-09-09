@@ -4,10 +4,9 @@
  * Two routes, one portable handler (`(Request) => Response`, deps injected — the same
  * open-bsp function shape as the github connector's ingest.ts):
  *
- *   GET /start     mint a one-time `state` → 302 to Slack's consent screen. This is what
- *                  makes the SHARED link work: the admin distributes a stable URL; each
- *                  click gets its own CSRF state. Promotion is the admin's (human) job —
- *                  the connector only serves the door (§4: the log is the frontier).
+ *   GET /start     mint a one-time `state` → 302 to Slack's consent screen. The link is
+ *                  stable and shareable: each click gets its own CSRF state, and Slack
+ *                  verifies who clicked (§4: the log is the frontier).
  *   GET /callback  verify state (one-time, TTL) → exchange the code (oauth.v2.access) →
  *                  write the granted connections + vault rows: xoxb → the bot pipe (the
  *                  bare `<team>`, ownerless ⇒ the org's shared inbox, §6), xoxp → the
@@ -20,19 +19,17 @@
  * Everyone connects through the same flow — installing the app granted the workspace leg
  * only; the admin's personal xoxp comes from this door like every other member's.
  *
- * Serving note: both routes are SYNCHRONOUS request/response (a 302, a page) — serve them
- * through a real proxy (cloudflared in dev, an edge function in prod). An async webhook
- * relay (Hookdeck) cannot carry the 302.
+ * Nothing serves these routes standing: a door serves them for the length of one sign-in.
+ * Both are SYNCHRONOUS request/response (a 302, a page), so whatever fronts them must
+ * carry a redirect — an async webhook relay (Hookdeck) cannot.
  */
 
-import { helpFlag } from "../help.ts";
 import type { OauthV2AccessResponse } from "@slack/web-api";
 import { DEFAULT_BOT_SCOPES, missingScopes } from "./config.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
-import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 
 export interface SlackOAuthConfig {
@@ -198,65 +195,4 @@ async function defaultExchange(code: string, c: SlackOAuthConfig): Promise<Slack
 
 function text(status: number, message: string): Response {
   return new Response(message, { status, headers: { "content-type": "text/plain" } });
-}
-
-/* ── local entry: serve /oauth/slack/start + /callback over the org stores ─────────────
- *
- *   deno task oauth:slack        # :8790 — put a SYNCHRONOUS proxy in front (cloudflared)
- *
- * Env: none — the app comes from the vault (`liquen connect slack app`, `--app <client_id>`
- * picks among several); the knobs are connections.slack. The shareable door is
- * <public>/oauth/slack/start — the admin distributes it; auto-registration binds
- * principals as `slack:<team>:<user>` until the identities map (v0.1) refines it. */
-const USAGE = `usage: liquen oauth:slack [--app <client_id>]
-
-  Serve the hosted Slack sign-in (/start, /callback) for members who are not at this
-  terminal: one shared link, each click its own grant; the app is the vault's
-  (\`liquen connect slack app\`); knobs: connections.slack (oauthPort). Put a synchronous
-  tunnel (cloudflared) in front.
-
-  --app <client_id>   which app, when the vault holds several
-  --dir <org>         the org, when run from elsewhere`;
-
-if (import.meta.main) {
-  try {
-    const { openLog } = await import("../../store/log.ts");
-    const { openCredentials } = await import("../../store/credentials.ts");
-    const { pickSlackApp } = await import("./connect.ts");
-    const { slackConfig } = await import("./config.ts");
-    const org = orgFlag();
-    helpFlag(org.args, USAGE);
-    const root = findRoot(org);
-    const dir = `${root}/data`;
-    const { oauthPort: port, botScopes, userScopes } = await slackConfig(root);
-    const creds = await openCredentials(dir);
-    const appFlag = org.args.indexOf("--app");
-    const app = await pickSlackApp(creds, appFlag >= 0 ? org.args[appFlag + 1] : undefined)
-      .catch((e) => {
-        console.error(`[oauth] ${e.message}`);
-        Deno.exit(2);
-      });
-    const config: SlackOAuthConfig = {
-      clientId: app.value.client_id,
-      clientSecret: app.value.client_secret,
-      redirectUri: (app.extra?.redirect_uri as string | undefined) ??
-        `http://localhost:${port}/oauth/slack/callback`,
-      scopes: botScopes,
-      userScopes, // without it Slack returns an authed_user with no token — no principal grant
-    };
-    const log = await openLog(`${dir}/log`);
-    const handler = createSlackOAuth({
-      config,
-      creds,
-      publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
-      store: log, // connections live on the Log (§4) — the grant writes the map
-      // v0 auto-registration: the Slack-verified identity IS the principal handle for now
-      bindPrincipal: ({ team, user }) => Promise.resolve(`slack:${team}:${user}`),
-    });
-    console.error(`[oauth] on :${port} — share <public>/oauth/slack/start`);
-    Deno.serve({ port }, handler);
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    Deno.exit(1);
-  }
 }
