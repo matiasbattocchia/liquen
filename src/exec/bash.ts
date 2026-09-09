@@ -402,6 +402,25 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
   return lines;
 }
 
+/** The harness's own tools, on disk where a shell can exec them: `aread`/`awrite`/`aedit`
+ *  under `<dir>/system/bin`, each a shim running `bin/afs.ts` by the URL this package
+ *  resolves it at. Laid on every boot — the shims are the package's, not the org's, and a
+ *  package upgrade must reach them. Returns the directory. */
+async function layShims(dir: string): Promise<string> {
+  const bin = `${dir}/system/bin`;
+  await Deno.mkdir(bin, { recursive: true });
+  const afs = import.meta.resolve("../bin/afs.ts");
+  for (const [name, verb] of [["aread", "read"], ["awrite", "write"], ["aedit", "edit"]]) {
+    const path = `${bin}/${name}`;
+    await Deno.writeTextFile(
+      path,
+      `#!/bin/sh\nexec deno run --allow-read --allow-write '${afs}' ${verb} "$@"\n`,
+    );
+    await Deno.chmod(path, 0o755);
+  }
+  return bin;
+}
+
 /** Prepare ONE agent's ground: its workspace, PATH shims, uid. The workspace IS
  *  the agent's own folder — `agents/<id>`, the same tree its docs and memories live in —
  *  because a shell is not org furniture: two agents sharing a cwd share half-written files,
@@ -411,10 +430,10 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
  *  already stands, so writing one is `awrite memories/x.md`, not a path it must be told.
  *  PATH is the doc cascade in binary form — the same widening scopes, narrowest FIRST so
  *  nothing below can shadow a contract the layer above must keep:
- *    `src/bin`                SHIPPED — `aread`/`awrite`/`aedit`, committed shims that
- *                             locate `afs.ts` beside themselves, so the harness's own tools
- *                             are code, versioned with what answers for them, never written
- *                             out by a boot.
+ *    `<dir>/system/bin`       the harness's own — `aread`/`awrite`/`aedit`, shims every
+ *                             boot lays, each running the package's `bin/afs.ts` where the
+ *                             package is (a checkout's file, the registry's URL), so the
+ *                             tool answers for the version that booted.
  *    `<dir>/org/bin`          what the org installs for all its agents (`gws`).
  *    `<dir>/agents/<id>/bin`  what THIS agent installed for itself — its own folder, so a
  *                             binary it fetched is as private as its notes.
@@ -429,7 +448,7 @@ export async function installExecGround(
   defaultTimeoutMs?: number, // the system.bashTimeoutMs knob, funneled by main
 ): Promise<ExecGround> {
   const workspace = `${dir}/agents/${agentId}`;
-  const shipped = new URL("../bin", import.meta.url).pathname;
+  const shipped = await layShims(dir);
   const binPath = `${shipped}:${dir}/org/bin:${workspace}/bin`;
   await Deno.mkdir(workspace, { recursive: true });
   await Deno.mkdir(`${dir}/org/bin`, { recursive: true });

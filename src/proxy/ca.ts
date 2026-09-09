@@ -2,8 +2,9 @@
  * proxy/ca.ts — the egress proxy's certificate authority (DESIGN §9).
  *
  * The proxy terminates TLS on behalf of every host a tool dials, so it needs a leaf cert
- * for each host, signed by a root the tool trusts. That root is the liquen CA: shipped beside
- * this module, and handed to the child ONLY as `SSL_CERT_FILE` — which REPLACES the
+ * for each host, signed by a root the tool trusts. That root is the liquen CA: shipped with
+ * the package, laid under the data root at boot, and handed to the child ONLY as
+ * `SSL_CERT_FILE` — which REPLACES the
  * system trust store (verified: gws then rejects Google's real cert as UnknownIssuer). So
  * the CA is not "one more issuer the tool trusts"; inside user space it is the ONLY one, and
  * a tool physically cannot reach any host the proxy doesn't front. The CA private key never
@@ -34,33 +35,23 @@ async function sh(args: string[]): Promise<void> {
   }
 }
 
-/** Open the CA — SHIPPED beside this module (`src/proxy/ca.pem` + `ca.key`), not minted per
- *  install. It is plumbing, not a credential: nothing trusts it except the children we hand
- *  `SSL_CERT_FILE`, so its whole job is making a tool dial our proxy instead of the host.
- *  (Regenerated here if absent, so a checkout that lost it still boots.) */
-export async function openCA(): Promise<CA> {
-  const here = new URL(".", import.meta.url).pathname; // src/proxy/
-  const caPath = `${here}ca.pem`;
-  const caKey = `${here}ca.key`;
-
-  const exists = await Deno.stat(caPath).then(() => true).catch(() => false);
-  if (!exists) {
-    await sh([
-      "req",
-      "-x509",
-      "-newkey",
-      "rsa:2048",
-      "-nodes",
-      "-keyout",
-      caKey,
-      "-out",
-      caPath,
-      "-days",
-      "3650",
-      "-subj",
-      "/CN=liquen proxy CA",
-    ]);
-    await Deno.chmod(caKey, 0o600);
+/** Open the CA — SHIPPED with the package (`src/proxy/ca.pem` + `ca.key`), not minted per
+ *  install, and laid under the data root's `system/` at boot, write-if-absent: openssl
+ *  signs against files and `SSL_CERT_FILE` names one, wherever the package itself is (a
+ *  checkout's files, the registry's URLs). It is plumbing, not a credential: nothing
+ *  trusts it except the children we hand `SSL_CERT_FILE`, so its whole job is making a
+ *  tool dial our proxy instead of the host. */
+export async function openCA(dir: string): Promise<CA> {
+  const caPath = `${dir}/system/ca.pem`;
+  const caKey = `${dir}/system/ca.key`;
+  await Deno.mkdir(`${dir}/system`, { recursive: true });
+  for (
+    const [path, shipped, mode] of [[caPath, "ca.pem", 0o644], [caKey, "ca.key", 0o600]] as const
+  ) {
+    const exists = await Deno.stat(path).then(() => true).catch(() => false);
+    if (exists) continue;
+    const res = await fetch(new URL(`./${shipped}`, import.meta.url));
+    await Deno.writeTextFile(path, await res.text(), { mode });
   }
 
   const cache = new Map<string, Promise<Leaf>>();

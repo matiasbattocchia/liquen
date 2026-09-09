@@ -43,7 +43,7 @@ Deno.test("bash: PATH widens by scope — the agent's own bin cannot shadow the 
     assertEquals(await run("whose"), `${dir}/org/bin`);
     assertEquals(
       await run("command -v aread"),
-      `${new URL("../bin", import.meta.url).pathname}/aread`,
+      `${dir}/system/bin/aread`,
     );
     const path = (await run("echo $PATH")).split(":");
     assert(

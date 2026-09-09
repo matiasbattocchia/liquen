@@ -15,12 +15,16 @@
 
 import { findRoot, orgFlag } from "../config.ts";
 
-const SHIPPED = ["slack", "google", "whatsapp", "github"];
+/** The services that ship with the package — each `src/connect/<name>/` a connect door and
+ *  a run.ts. A name, not a stat: where the package is may be a URL. */
+export const SHIPPED = ["slack", "google", "whatsapp", "github"];
 
-/** The connect door for `name`, as an absolute file path. Throws when there is none. */
+/** The connect door for `name`, as something `deno run` takes: a shipped door by its URL
+ *  beside this module (a checkout's `file:`, the registry's `https:`), the org's own by
+ *  path. Throws when there is none. */
 export function resolveConnect(name: string, org: string): string {
   if (name.includes("/")) return name; // a module path — the dev knows best
-  if (SHIPPED.includes(name)) return new URL(`./${name}/connect.ts`, import.meta.url).pathname;
+  if (SHIPPED.includes(name)) return new URL(`./${name}/connect.ts`, import.meta.url).href;
   const custom = `${org}/connectors/${name}/connect.ts`;
   try {
     Deno.statSync(custom);
@@ -61,7 +65,7 @@ if (import.meta.main) {
   try {
     target = name
       ? resolveConnect(name, findRoot(org))
-      : new URL("./status.ts", import.meta.url).pathname; // bare `liquen connect` = the map
+      : new URL("./status.ts", import.meta.url).href; // bare `liquen connect` = the map
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     Deno.exit(2);

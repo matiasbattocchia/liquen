@@ -180,7 +180,7 @@ Deno.test("proxyRequest: a request with no placeholder passes through untouched"
 Deno.test("startProxy: a real TLS tunnel terminates and the swap reaches the origin", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const ca = await openCA();
+    const ca = await openCA(dir);
     let originAuth: string | null = null;
     const originUrls: string[] = [];
     const proxy = startProxy({
@@ -228,7 +228,7 @@ Deno.test("startProxy: a real TLS tunnel terminates and the swap reaches the ori
 Deno.test("startProxy: a tunnel that can't be stood up answers 502 — it never hangs", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const ca = await openCA();
+    const ca = await openCA(dir);
     const proxy = startProxy({ ca, broker: fakeBroker(), audit: () => {} });
     try {
       // `bad_host` fails the CA's host check, so no leaf can be minted for the tunnel
@@ -250,7 +250,8 @@ Deno.test("startProxy: a tunnel that can't be stood up answers 502 — it never 
 });
 
 Deno.test("startProxy: an authority no grant fronts is tunneled blind — the origin's own bytes", async () => {
-  const ca = await openCA();
+  const dir = await Deno.makeTempDir();
+  const ca = await openCA(dir);
   // the origin: a plain listener that echoes — blind means it never sees a liquen leaf
   const origin = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const echoing = (async () => {
@@ -285,5 +286,6 @@ Deno.test("startProxy: an authority no grant fronts is tunneled blind — the or
     await proxy.shutdown();
     origin.close();
     await echoing.catch(() => {});
+    await Deno.remove(dir, { recursive: true });
   }
 });

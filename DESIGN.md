@@ -1930,7 +1930,7 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   stand in the same place — returning to the workspace when it hangs up. A place the
   shell cannot stand in (gone, or closed to its uid) is said once and the next call starts
   from the workspace. The `.out` spool stays in the workspace wherever the shell stands, so
-  a spill never lands in a repo the agent walked into. PATH is prefixed with the scope cascade in binary form — `src/bin` · `{dir}/org/bin` ·
+  a spill never lands in a repo the agent walked into. PATH is prefixed with the scope cascade in binary form — `{dir}/system/bin` · `{dir}/org/bin` ·
   `{dir}/agents/<id>/bin` — ahead of the process's inherited PATH. stdout+stderr
   merged in arrival order. **Default timeout 120s** (a hung command otherwise holds the turn lock until
   the TTL steal); long work uses the background pattern (`cmd > log 2>&1 &` + `tail`).
@@ -1971,9 +1971,9 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   Gates are for outward effects (`send`, §9 gating); the workspace is the agent's own.
   (Both references promote file-ops to dedicated tools chiefly to gate/schedule them —
   a need we've explicitly declined for the exec plane.)
-- Shims: `src/bin` ships `aread`/`awrite`/`aedit` as committed `deno run` shims that locate
-  `afs.ts` beside themselves — code, versioned with the code that answers for them, written
-  by no boot. The Docker image compiles them (`deno compile`). PATH widens by scope — `src/bin` (shipped),
+- Shims: every boot lays `aread`/`awrite`/`aedit` under `{dir}/system/bin` as `deno run`
+  shims of the package's `bin/afs.ts`, addressed where the package is — a checkout's file or
+  the registry's URL — so the tool an agent runs answers for the version that booted. PATH widens by scope — `{dir}/system/bin` (the harness's),
   `{dir}/org/bin` (the org's, `gws`), `{dir}/agents/<id>/bin` (the agent's own), then the
   system's — narrowest first, so a wider layer is reachable but cannot shadow a harness
   contract, exactly as the doc cascade resolves. The binaries'

@@ -22,12 +22,12 @@ Deno.test("a shipped service resolves beside the front door — no filesystem pr
   await withOrg((org) => {
     assertEquals(
       resolveConnect("slack", org),
-      new URL("./slack/connect.ts", import.meta.url).pathname,
+      new URL("./slack/connect.ts", import.meta.url).href,
     );
     // shipped names resolve by the map, not by stat: the fake org holds none of them
     assertEquals(
       resolveConnect("github", org),
-      new URL("./github/connect.ts", import.meta.url).pathname,
+      new URL("./github/connect.ts", import.meta.url).href,
     );
   });
 });

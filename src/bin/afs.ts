@@ -1,9 +1,10 @@
 /**
  * bin/afs.ts — the filesystem binaries (DESIGN §9): aread · awrite · aedit.
  *
- * One source, three commands, invoked from the agent's bash via PATH shims (dev) or
- * `deno compile` outputs (image). Their contracts are the spec the db substrate's helper
- * functions mirror later (§9 symmetry).
+ * One source, three commands, invoked from the agent's bash through the shims the exec
+ * ground lays on its PATH (`exec/bash.ts`), each running this module where the package
+ * is. Their contracts are the spec the db substrate's helper functions mirror later (§9
+ * symmetry).
  *
  *   afs read <path> [offset] [limit] [maxBytes]   head-truncated; continuation footer;
  *                                                 1-indexed; limit/maxBytes override the

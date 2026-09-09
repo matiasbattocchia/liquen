@@ -319,7 +319,7 @@ if (import.meta.main) {
   }
 
   const broker = createGrantBroker({ creds });
-  const ca = await openCA();
+  const ca = await openCA(dir);
   const proxy = startProxy({ ca, broker });
   const grant = await creds.get(key);
   // the row's own declaration names the var (main.ts fronts the same way): a grant that

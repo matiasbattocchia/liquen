@@ -104,7 +104,7 @@ async function writeTrustBundle(dir: string, caPath: string): Promise<string> {
 async function installProxy(dir: string): Promise<ProxyHandle> {
   const creds = await openCredentials(dir);
   const broker = createGrantBroker({ creds });
-  const ca = await openCA();
+  const ca = await openCA(dir);
   const rows = await creds.list("");
   const fronted = rows.filter((r) => typeof r.extra?.env === "string");
   const proxy = startProxy({

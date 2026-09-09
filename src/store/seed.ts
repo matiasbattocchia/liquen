@@ -17,7 +17,9 @@
 
 const TEMPLATES = new URL("../seed/", import.meta.url);
 
-const read = (rel: string) => Deno.readTextFile(new URL(rel, TEMPLATES));
+// fetched, not read: the templates are where the package is — a checkout's files or the
+// registry's URLs — and fetch answers for both
+const read = (rel: string) => fetch(new URL(rel, TEMPLATES)).then((r) => r.text());
 
 /** Install the default cascade under the data `root` for one agent. Never overwrites. */
 export async function seedDocs(root: string, agentId: string): Promise<void> {

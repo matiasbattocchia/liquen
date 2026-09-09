@@ -20,6 +20,7 @@
 
 import { TextLineStream } from "@std/streams";
 import { findRoot, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
+import { SHIPPED } from "./connect/connect.ts";
 
 const RESTART_BASE_MS = 1_000;
 const RESTART_CAP_MS = 60_000;
@@ -75,7 +76,7 @@ export function roster(root: string, connections: Record<string, unknown>): [str
   for (const name of Object.keys(connections)) {
     const bundled = new URL(`./connect/${name}/run.ts`, import.meta.url);
     const local = `${root}/connectors/${name}/run.ts`;
-    if (has(bundled)) procs.push([name, bundled.href]);
+    if (SHIPPED.includes(name)) procs.push([name, bundled.href]);
     else if (has(local)) procs.push([name, local]);
     else {
       throw new Error(

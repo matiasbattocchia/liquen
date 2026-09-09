@@ -2081,6 +2081,17 @@ in the org that runs them (`bench/`), importing the package; the adapter uploads
 linked checkout and stamps its commit. What is published is `src/` less tests, plus the
 seed docs and the README.
 
+Run off the registry, the package is URLs, not files, and everything that once located a
+sibling by path is addressed through `import.meta.url` and laid on disk only where a file
+is required: the connect doors and each shipped connection's `run.ts` run by URL (shipped
+is a name, not a stat); the seed templates and the proxy CA are fetched and written under
+`data/system/`; the `aread`/`awrite`/`aedit` shims are laid under `data/system/bin` on
+every boot, each running `bin/afs.ts` by the package's own URL, so the tool answers for
+the version that booted. Open: in the container an agent runs as its own uid, whose Deno
+cache is not root's, so its first `aread` would fetch `afs.ts` — through the egress proxy,
+which does not front the registry. The image owes user space a readable, pre-warmed
+`DENO_DIR`.
+
 Still open: vibes runs on Bun, which resolves neither `@std/*` nor `node:sqlite`, so its
 `@mu/*` path mapping onto the checkout serves the type checker; `attach.ts` and
 `describe.ts` cannot load there at runtime.
