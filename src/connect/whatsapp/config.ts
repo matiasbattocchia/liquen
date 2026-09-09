@@ -4,7 +4,7 @@
  * into `data/config.jsonc` under `connections.whatsapp` and are validated at boot.
  * The bridge TOKEN is the one thing that stays in env (a secret): WA_BRIDGE_TOKEN.
  *
- * Only what is whatsapp's lives here: the two addresses of the bridge seam. mu's own
+ * Only what is whatsapp's lives here: the two addresses of the bridge seam. liquen's own
  * address is not among them — outbound bytes ride a RELATIVE signed path the bridge
  * resolves against the ingest it already delivers to (`store/media.ts`) — and the
  * bridge's `organizationId` is a constant in `connect.ts`, since a data root is one org
@@ -26,7 +26,7 @@ const aString = (v: unknown): string | null =>
 
 export const SPEC: ConnectorSpec = {
   name: "whatsapp",
-  doc: "whatsapp — the whatsmeow bridge's mu side (ingest, dispatch, pairing)",
+  doc: "whatsapp — the whatsmeow bridge's liquen side (ingest, dispatch, pairing)",
   entries: [
     {
       key: "ingestPort",

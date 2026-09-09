@@ -3,7 +3,7 @@
  *
  * The mirror of the ingest (whatsapp.ts): log → world, through the whatsmeow BRIDGE's
  * `POST /dispatch` (server.go). Subscribes, picks the agent's outbound sends on the
- * whatsapp service, maps each mu event BACK to the bridge's record shape (an OpenBSP
+ * whatsapp service, maps each liquen event BACK to the bridge's record shape (an OpenBSP
  * MessageRow — one content part per call), posts, and backfills the returned wmw id as
  * `external_id` via `setDelivery` — so the bridge's echo MERGES into the same row (§4;
  * no author-based skip anywhere).
@@ -118,7 +118,7 @@ interface Outbound {
   contents: { content: WAContent }[];
 }
 
-/** mu parts → the bridge's one-content-per-call shape. Text joins into one; a reaction
+/** liquen parts → the bridge's one-content-per-call shape. Text joins into one; a reaction
  *  is its own content (kind + re_message_id); the first file carries the text as its
  *  caption, later files go bare. `re` travels in `extra.whatsapp.re` (the ingest's
  *  convention) with the `whatsapp:` prefix stripped back to the raw wmw id. */

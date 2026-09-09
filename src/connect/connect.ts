@@ -1,5 +1,5 @@
 /**
- * connect/connect.ts — `mu connect`: the one front door to every connect flow (§4).
+ * connect/connect.ts — `liquen connect`: the one front door to every connect flow (§4).
  *
  *   deno task connect                        # no service: the map (status)
  *   deno task connect <service> [args...]    # the service's connect door
@@ -61,7 +61,7 @@ if (import.meta.main) {
   try {
     target = name
       ? resolveConnect(name, findRoot(org))
-      : new URL("./status.ts", import.meta.url).pathname; // bare `mu connect` = the map
+      : new URL("./status.ts", import.meta.url).pathname; // bare `liquen connect` = the map
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     Deno.exit(2);

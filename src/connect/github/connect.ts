@@ -1,5 +1,5 @@
 /**
- * src/connect/github/connect.ts — `mu connect github`: the three doors (slack's twins, §4).
+ * src/connect/github/connect.ts — `liquen connect github`: the three doors (slack's twins, §4).
  *
  *   app    the GitHub App's credentials, pasted once: App ID + private key (.pem) +
  *          webhook secret → vault `github:app:<app_id>` — what the broker signs
@@ -94,7 +94,7 @@ export async function theApp(
 ): Promise<{ app: CredentialRow; appId: string }> {
   const apps = await creds.list(APP_PREFIX);
   if (apps.length === 0) {
-    throw new Error("no github app in the vault — `mu connect github app` first");
+    throw new Error("no github app in the vault — `liquen connect github app` first");
   }
   if (apps.length > 1) {
     const ids = apps.map((a) => a.key.slice(APP_PREFIX.length)).join("\n  ");
@@ -130,7 +130,7 @@ export async function connectGithubBot(
   const now = deps.now ?? (() => new Date().toISOString());
   const { app, appId } = await theApp(deps.creds);
   if (!app.value.private_key) {
-    throw new Error(`${app.key} holds no private key — re-run \`mu connect github app\``);
+    throw new Error(`${app.key} holds no private key — re-run \`liquen connect github app\``);
   }
 
   const jwt = appJwt(appId, app.value.private_key, Date.now());
@@ -450,7 +450,7 @@ if (import.meta.main) {
     console.error("  — set a webhook secret; generate a private key (downloads the .pem)");
     console.error(
       "  — tick Enable Device Flow, and LEAVE ON expire user authorization tokens\n" +
-        "    (that pair is what `mu connect github user` signs a person in with)\n",
+        "    (that pair is what `liquen connect github user` signs a person in with)\n",
     );
     const appId = ask("App ID (the number on the About page):");
     const pemPath = ask("Private key file (path to the .pem):");
@@ -469,7 +469,7 @@ if (import.meta.main) {
         creds,
       );
       console.error(
-        `✓ app stored: ${key} — next: \`mu connect github bot\` binds the installation`,
+        `✓ app stored: ${key} — next: \`liquen connect github bot\` binds the installation`,
       );
     } finally {
       await creds.close();

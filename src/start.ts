@@ -1,5 +1,5 @@
 /**
- * start.ts — `mu start`: the org as one command (DESIGN §9).
+ * start.ts — `liquen start`: the org as one command (DESIGN §9).
  *
  * A keep-alive loop and nothing more: read the catalog, spawn one child per process the
  * org declares — main (the tail + fan-out, hosting the egress proxy) and one per
@@ -9,7 +9,7 @@
  * (secrets only).
  *
  * Death is loud on stderr and nowhere else — the supervisor never opens the log; the
- * outer layer (docker restart, systemd, the terminal) supervises `mu start` itself.
+ * outer layer (docker restart, systemd, the terminal) supervises `liquen start` itself.
  * SIGTERM fans out to the children, waits `STOP_TIMEOUT_MS`, then SIGKILLs.
  *
  * Every line a child writes arrives stamped — `HH:MM:SS [name] …` — so attribution is
@@ -115,7 +115,7 @@ if (import.meta.main) {
       failures = uptime >= HEALTHY_MS ? 1 : failures + 1;
       const wait = backoffMs(failures);
       stamp(
-        "mu",
+        "liquen",
         // the signal is the whole diagnosis when a child dies quietly: a killed process
         // reports code 0, so the code alone reads like a clean exit
         `${name} exited (${status.signal ?? `code ${status.code}`}) after ` +
@@ -128,7 +128,7 @@ if (import.meta.main) {
   const stop = () => {
     if (stopping()) return;
     halt.abort();
-    stamp("mu", `stopping ${live.size} process(es)`);
+    stamp("liquen", `stopping ${live.size} process(es)`);
     for (const c of live.values()) {
       try {
         c.kill("SIGTERM");
@@ -146,6 +146,6 @@ if (import.meta.main) {
   Deno.addSignalListener("SIGTERM", stop);
   Deno.addSignalListener("SIGINT", stop);
 
-  stamp("mu", `${procs.map(([n]) => n).join(" · ")} — root ${root}`);
+  stamp("liquen", `${procs.map(([n]) => n).join(" · ")} — root ${root}`);
   await Promise.all(procs.map(keepAlive));
 }

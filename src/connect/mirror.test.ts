@@ -314,7 +314,7 @@ Deno.test("mirror fan-in: a quoted CC is TRANSLATED — the copy's ref_id names 
     } as Draft<Event>);
 
     // the mind copy of the QUOTED /y joins the card itself: xi's port never sees the alias
-    // conversation (policy §6), so the mirror is where the quote becomes a mu-side ref
+    // conversation (policy §6), so the mirror is where the quote becomes a liquen-side ref
     await waitFor(async () =>
       (await inConv("mind@ana")).some((e) => e.payload?.ref_external_id !== undefined)
     );

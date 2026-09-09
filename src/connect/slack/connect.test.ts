@@ -217,7 +217,7 @@ Deno.test("bot door: a USER token is refused by shape and points at the user doo
         authTest: () => Promise.resolve({ ok: true, team_id: "T1", user_id: "U7" }),
       }),
     Error,
-    "mu connect slack user",
+    "liquen connect slack user",
   );
   assertEquals(h.connections.length, 0);
   assertEquals(h.credentials.length, 0);
@@ -233,7 +233,7 @@ Deno.test("app door: the client lands under its own id; pick = only one, or by i
     get: (k: string) => Promise.resolve(rows.get(k) ?? null),
     list: (p: string) => Promise.resolve([...rows.values()].filter((r) => r.key.startsWith(p))),
   };
-  await assertRejects(() => pickSlackApp(creds), Error, "mu connect slack app");
+  await assertRejects(() => pickSlackApp(creds), Error, "liquen connect slack app");
   const key = await connectSlackApp(
     { clientId: "123.456", clientSecret: "sec", redirectUri: "https://org.example/cb" },
     creds,
@@ -328,10 +328,10 @@ Deno.test("slackHave: the vault's slack rows sort into app, bot, carrier, user",
 Deno.test("slackNext: a user leg alone is told what inbound still needs", () => {
   const next = slackNext({ app: false, bot: false, appToken: false, user: true });
   assertEquals(next.length, 3); // the bot, the carrier, the oauth client
-  assertStringIncludes(next[0], "mu connect slack bot");
-  assertStringIncludes(next[1], "mu connect slack socket");
+  assertStringIncludes(next[0], "liquen connect slack bot");
+  assertStringIncludes(next[1], "liquen connect slack socket");
   assertStringIncludes(next[1], "PUBLIC request URL"); // the alternative, named
-  assertStringIncludes(next[2], "mu connect slack app");
+  assertStringIncludes(next[2], "liquen connect slack app");
 });
 
 Deno.test("slackNext: a bot without its app-level token is told where to generate one", () => {
@@ -390,7 +390,7 @@ Deno.test("socket door: an identity token is refused by shape, and pointed home"
   await assertRejects(
     () => connectSlackSocket("xoxb-bot", { creds: h.deps.creds, probe: () => never() }),
     Error,
-    "mu connect slack bot",
+    "liquen connect slack bot",
   );
   assertEquals(h.credentials.length, 0);
 });

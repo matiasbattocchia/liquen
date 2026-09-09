@@ -46,7 +46,7 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
   });
 
   // the ingest runs as a SEPARATE OS process over the same org — the org lives where you
-  // run mu (a cwd, not an env var). `ingestPort: 0` = any free port, read off the
+  // run liquen (a cwd, not an env var). `ingestPort: 0` = any free port, read off the
   // announcement — no bind-and-release race for a parallel suite to steal.
   await Deno.writeTextFile(
     `${dir}/config.jsonc`,

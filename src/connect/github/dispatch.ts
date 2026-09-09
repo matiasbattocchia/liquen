@@ -174,7 +174,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     const user = author ? await creds.get(`github:${author}`) : null;
     const key = grantKeyFor(author, user);
     const token = await broker.accessTokenFor(broker.issue(key, user?.agentId));
-    if (!token) throw new Error(`no github credential for ${key} — \`mu connect github\``);
+    if (!token) throw new Error(`no github credential for ${key} — \`liquen connect github\``);
     return token;
   };
 
@@ -231,7 +231,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   });
   if (!(await creds.get("github:org"))) {
     console.error(
-      "[dispatch] WARNING: no github:org in the vault (`mu connect github bot`) — " +
+      "[dispatch] WARNING: no github:org in the vault (`liquen connect github bot`) — " +
         "posts fall back to authors' own grants",
     );
   }

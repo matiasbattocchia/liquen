@@ -65,7 +65,7 @@ import {
  *  the proxy terminates only the authorities a fronted grant binds (where a placeholder
  *  can ride and the swap has to see plaintext) and bridges every other tunnel blind, so
  *  the world answers with its own certificates. The trust file user space is handed is
- *  the system bundle plus the mu CA, under every name the common clients read it by:
+ *  the system bundle plus the liquen CA, under every name the common clients read it by:
  *  a tool verifying against its own roots still reaches the world, and one honoring the
  *  file reaches the fronted hosts too. Which placeholders ride is the VAULT's say, not
  *  this file's: a credential row that declares `extra.env` (the connect doors write it)
@@ -85,8 +85,8 @@ const SYSTEM_CA_BUNDLES = [
   "/etc/ssl/cert.pem",
 ];
 
-/** The trust file user space is handed: the system's roots followed by the mu CA, written
- *  under the org at boot. Without a system bundle the mu CA stands alone. */
+/** The trust file user space is handed: the system's roots followed by the liquen CA, written
+ *  under the org at boot. Without a system bundle the liquen CA stands alone. */
 async function writeTrustBundle(dir: string, caPath: string): Promise<string> {
   let system = "";
   for (const path of SYSTEM_CA_BUNDLES) {
@@ -162,7 +162,7 @@ export interface MainConfig {
   backlogHours?: number;
   /** Dev/test seam: connection rows UPSERTED at boot (never deleted — connections are
    *  runtime data, §4: an OAuth callback or pairing flow binds them while the org runs;
-   *  `mu connect` is the real writer). */
+   *  `liquen connect` is the real writer). */
   connections?: ConnectionRow[];
   apiKey?: string; // default: env ANTHROPIC_API_KEY
   /** Dev/test seam: the shutdown grace (`STOP_TIMEOUT_MS`) — so a test can watch a wedged
@@ -176,7 +176,7 @@ export interface MainConfig {
 export interface Main {
   log: Log; // producers (connections, the CLI) publish here
   /** Live door connections — what an attachment-derived lifetime reads (the ephemeral
-   *  entry below; `mu start`'s daemon never reads it). */
+   *  entry below; `liquen start`'s daemon never reads it). */
   attachments(): number;
   stop(): Promise<void>;
 }
@@ -681,12 +681,12 @@ function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
 }
 
 /** An interface-raised daemon reaps itself after this long with nothing attached — long
- *  enough that consecutive `mu cli` runs reuse one org instead of re-paying seeding,
+ *  enough that consecutive `liquen cli` runs reuse one org instead of re-paying seeding,
  *  the exec planes and the proxy each time. */
 const LINGER_MS = 30_000;
 const REAP_POLL_MS = 1_000;
 
-// Headless entry: the deployment's main. `mu start` spawns it bare; an attach client
+// Headless entry: the deployment's main. `liquen start` spawns it bare; an attach client
 // (the REPL) that found no daemon spawns it with `--ephemeral`, and that daemon's life
 // is its ATTACHMENTS: the count is the door's live connections, so a killed interface
 // and a clean quit are the same hang-up, and zero held for the linger means nobody is

@@ -1,11 +1,11 @@
 /**
- * init.ts — `mu init <path>`: scaffold a new org project (§9).
+ * init.ts — `liquen init <path>`: scaffold a new org project (§9).
  *
  * Dumb on purpose: materialize the catalog, copy the scaffold. The project it leaves
  * behind carries no runnable code — the CLI is the package its `deno.jsonc` names — and
  * `data/` fills at first boot: the catalog's roster becomes folders and rows then, not
  * here. What init decides is only what a human would otherwise type: the org's clock
- * (the machine's). The roster starts empty; `mu agent` adds each agent as its own
+ * (the machine's). The roster starts empty; `liquen agent` adds each agent as its own
  * declaration.
  */
 
@@ -24,7 +24,7 @@ const SCAFFOLD: [string, string][] = [
 
 export async function init(path: string): Promise<void> {
   const exists = await Deno.stat(`${path}/config.jsonc`).then(() => true, () => false);
-  if (exists) throw new Error(`${path} is already a mu project (config.jsonc exists)`);
+  if (exists) throw new Error(`${path} is already a liquen project (config.jsonc exists)`);
   for (const sub of ["", "/connectors", "/processors", "/data"]) {
     await Deno.mkdir(`${path}${sub}`, { recursive: true });
   }
@@ -38,9 +38,11 @@ export async function init(path: string): Promise<void> {
 if (import.meta.main) {
   const [path, ...rest] = Deno.args;
   if (!path || rest.length > 0) {
-    console.error("usage: mu init <path>");
+    console.error("usage: liquen init <path>");
     Deno.exit(1);
   }
   await init(path);
-  console.log(`${path}: a mu org. \`mu agent <name>\` adds an agent; \`mu start\` runs it.`);
+  console.log(
+    `${path}: a liquen org. \`liquen agent <name>\` adds an agent; \`liquen start\` runs it.`,
+  );
 }

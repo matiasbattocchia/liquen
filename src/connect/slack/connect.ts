@@ -1,5 +1,5 @@
 /**
- * connect/slack/connect.ts — `mu connect slack`: the PASTE door (DESIGN §4).
+ * connect/slack/connect.ts — `liquen connect slack`: the PASTE door (DESIGN §4).
  *
  * The dashboard's "Install to Workspace" button IS an OAuth flow with Slack hosting the
  * redirect — so a dev can self-serve a user token (xoxp) with zero public surface: the
@@ -150,7 +150,7 @@ export async function connectSlackUser(
   return { team, user, missing };
 }
 
-/* ── the app door: `mu connect slack app` — the OAuth client into the vault ──────────── */
+/* ── the app door: `liquen connect slack app` — the OAuth client into the vault ──────────── */
 
 export const APP_PREFIX = "slack:app:";
 
@@ -188,12 +188,12 @@ export async function pickSlackApp(
 ): Promise<CredentialRow> {
   if (clientId) {
     const row = await creds.get(`${APP_PREFIX}${clientId}`);
-    if (!row) throw new Error(`no app ${clientId} — \`mu connect slack app\` first`);
+    if (!row) throw new Error(`no app ${clientId} — \`liquen connect slack app\` first`);
     return row;
   }
   const apps = await creds.list(APP_PREFIX);
   if (apps.length === 0) {
-    throw new Error("no slack app in the vault — `mu connect slack app` first");
+    throw new Error("no slack app in the vault — `liquen connect slack app` first");
   }
   if (apps.length > 1) {
     const ids = apps.map((a) => a.value.client_id).join("\n  ");
@@ -202,7 +202,7 @@ export async function pickSlackApp(
   return apps[0];
 }
 
-/* ── the bot door: `mu connect slack bot` — the org's shared identity ────────────────── */
+/* ── the bot door: `liquen connect slack bot` — the org's shared identity ────────────────── */
 
 export interface SlackBotDeps {
   creds: Pick<Credentials, "put">;
@@ -219,7 +219,7 @@ export interface SlackBotDeps {
  *  deliveries) and the bot's own grant row `<team>:<bot user>` carrying `credential_key`
  *  (no owner ⇒ the org's shared inbox, §6; bot-witnessed deliveries anchor here) — and
  *  vault the blob at `slack:<team>:org`. The identity and nothing else: the socket carrier
- *  is its own door (`mu connect slack socket`), app-scoped where this is workspace-scoped.
+ *  is its own door (`liquen connect slack socket`), app-scoped where this is workspace-scoped.
  *  Throws (writing nothing) on a rejected token. */
 export async function connectSlackBot(
   token: string,
@@ -230,9 +230,9 @@ export async function connectSlackBot(
   const now = deps.now ?? (() => new Date().toISOString());
   if (!token.startsWith("xoxb-")) {
     const got = token.startsWith("xoxp-")
-      ? "the USER token (xoxp) — that one goes through `mu connect slack user`"
+      ? "the USER token (xoxp) — that one goes through `liquen connect slack user`"
       : token.startsWith("xapp-")
-      ? "an app-level token (xapp) — that's the socket carrier, `mu connect slack socket`"
+      ? "an app-level token (xapp) — that's the socket carrier, `liquen connect slack socket`"
       : "not a Slack bot token";
     throw new Error(`expected a bot token (xoxb-…), got ${got}`);
   }
@@ -289,7 +289,7 @@ export async function connectSlackBot(
   return { team, botUser, missing };
 }
 
-/* ── the socket door: `mu connect slack socket` — the app-level token ───────────────── */
+/* ── the socket door: `liquen connect slack socket` — the app-level token ───────────────── */
 
 export const SOCKET_PREFIX = "slack:socket:";
 
@@ -320,9 +320,9 @@ export async function connectSlackSocket(
 ): Promise<{ appId: string }> {
   if (!appToken.startsWith("xapp-")) {
     const got = appToken.startsWith("xoxb-")
-      ? "the BOT token (xoxb) — that one goes through `mu connect slack bot`"
+      ? "the BOT token (xoxb) — that one goes through `liquen connect slack bot`"
       : appToken.startsWith("xoxp-")
-      ? "a USER token (xoxp) — that one goes through `mu connect slack user`"
+      ? "a USER token (xoxp) — that one goes through `liquen connect slack user`"
       : "not a Slack app-level token";
     throw new Error(`expected an app-level token (xapp-…), got ${got}`);
   }
@@ -379,26 +379,26 @@ export function slackNext(have: SlackHave): string[] {
   const next: string[] = [];
   if (!have.user && !have.bot) {
     next.push(
-      "no identity yet — `mu connect slack user` (your own leg) or " +
-        "`mu connect slack bot` (the org's)",
+      "no identity yet — `liquen connect slack user` (your own leg) or " +
+        "`liquen connect slack bot` (the org's)",
     );
   }
   if (!have.bot) {
     next.push(
-      "no org identity — `mu connect slack bot` (the org's shared inbox; a bot is also " +
+      "no org identity — `liquen connect slack bot` (the org's shared inbox; a bot is also " +
         "what an app needs to be installed with bot events)",
     );
   }
   if (!have.appToken) {
     next.push(
       "no socket carrier — Basic Information → App-Level Tokens → Generate Token and " +
-        "Scopes (`connections:write`), then `mu connect slack socket` (without one, " +
+        "Scopes (`connections:write`), then `liquen connect slack socket` (without one, " +
         "ingest needs a PUBLIC request URL)",
     );
   }
   if (!have.app) {
     next.push(
-      "no OAuth client — `mu connect slack app` (only the HOSTED door needs it; the " +
+      "no OAuth client — `liquen connect slack app` (only the HOSTED door needs it; the " +
         "paste doors do not)",
     );
   }
@@ -420,7 +420,7 @@ export function withScopes(
 /** The USER door mints a USER-ONLY app: no bot user, no bot scopes, no bot events.
  *  The bot is not required for the user leg — and asking for one puts an xoxb next to
  *  the xoxp on the dashboard, the exact paste-slip the shape guard catches. The bot is
- *  its own deliberate door (`mu connect slack bot`). */
+ *  its own deliberate door (`liquen connect slack bot`). */
 export function userManifest(manifest: Record<string, unknown>): Record<string, unknown> {
   const m = structuredClone(manifest) as {
     features?: Record<string, unknown>;
@@ -528,7 +528,7 @@ if (import.meta.main) {
       ));
       console.error(`Create the app (Slack builds it from the manifest):\n  ${url}\n`);
       console.error("Then: Install to Workspace (xoxb) · Basic Information → App-Level");
-      console.error("Tokens (xapp). `mu connect slack socket` and `bot` take those.\n");
+      console.error("Tokens (xapp). `liquen connect slack socket` and `bot` take those.\n");
       try { // best effort — the link above is the real door
         new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {
           args: [url],
@@ -595,7 +595,7 @@ if (import.meta.main) {
       const entry = (await readConfig(root)).agents[agent];
       if (!entry) {
         console.error(
-          `no agent "${agent}" in ${root}/config.jsonc — \`mu agent ${agent}\` adds one`,
+          `no agent "${agent}" in ${root}/config.jsonc — \`liquen agent ${agent}\` adds one`,
         );
         Deno.exit(2);
       }

@@ -1,7 +1,7 @@
 /**
  * store/timers.ts — the scheduler's rows (§10): the one non-log fact about the FUTURE.
  *
- * Everything else in mu is derived from the log, which records what happened; a wake that
+ * Everything else in liquen is derived from the log, which records what happened; a wake that
  * has not happened yet cannot be an event, so it is a row. The row is not the wake — when
  * it comes due the clock publishes an `alarm` carrying its note, and THAT event is the
  * wake, log-shaped like everything else. Recovery needs no work: rows outlive the process,
@@ -19,7 +19,7 @@
  * them 168 times".
  *
  * Firing is a CLAIM, then a settle. More than one clock can be sweeping the same table —
- * an ephemeral main raised beside a backing-off `mu start`, a tick that overlaps the last —
+ * an ephemeral main raised beside a backing-off `liquen start`, a tick that overlaps the last —
  * and `due` is a read, so every sweeper lists the same rows; `claim` is the single
  * conditional UPDATE that decides who fires each one, and exactly one caller wins. The
  * claim is a lease written into `fire_at` itself: the row is parked `CLAIM_LEASE_MS` past

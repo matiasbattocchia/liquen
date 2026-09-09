@@ -11,7 +11,7 @@
  * to our HTTP ingest. One pipeline, two transports; the edge tier drops the carrier and
  * keeps the function (§9 deployment tiers).
  *
- * Mapping (§3, §4): a message in channel C of team T → a mu `message` in conversation
+ * Mapping (§3, §4): a message in channel C of team T → a liquen `message` in conversation
  * `C`, `external_id = slack:T:C:<ts>` — Slack's ts is the per-channel message id, so
  * retries, EDITS (`message_changed` carries the same ts), and our own dispatched
  * messages echoing back all MERGE via the store's upsert (the merge key is TEAM-scoped,
@@ -324,7 +324,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
   }
 }
 
-/* ── mapping: Slack event → a mu message (channel address + workspace anchor) ── */
+/* ── mapping: Slack event → a liquen message (channel address + workspace anchor) ── */
 
 interface MapCtx {
   now: () => string;
@@ -779,9 +779,9 @@ export function slackSocket(
  *   deno task run:slack       # xapp in the vault → socket mode; else HTTP on :8789
  *
  * Env: none — everything comes from the vault. Socket carriers are the app-level
- * tokens the socket door stored (`mu connect slack socket`), one socket per app (§4). No
+ * tokens the socket door stored (`liquen connect slack socket`), one socket per app (§4). No
  * carrier ⇒ HTTP mode on connections.slack.ingestPort, verified by the apps' signing
- * secrets (`mu connect slack app` stores them); no app, no server. */
+ * secrets (`liquen connect slack app` stores them); no app, no server. */
 /** The secrets an HTTP-mode server verifies with: every app row's `signing_secret`. None
  *  is a refusal to serve — an unverified Events URL would take any POST as the workspace's
  *  word, `authorizations` included. */
@@ -789,8 +789,8 @@ export function httpSigningSecrets(apps: { value: Record<string, string> }[]): s
   const secrets = apps.map((a) => a.value.signing_secret).filter((s) => s);
   if (secrets.length === 0) {
     throw new Error(
-      "HTTP mode needs a signing secret — `mu connect slack app` stores it, or " +
-        "`mu connect slack socket` for Socket Mode",
+      "HTTP mode needs a signing secret — `liquen connect slack app` stores it, or " +
+        "`liquen connect slack socket` for Socket Mode",
     );
   }
   return secrets;

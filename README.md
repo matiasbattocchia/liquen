@@ -1,4 +1,4 @@
-# mu — an org-level agent harness
+# liquen — an org-level agent harness
 
 Each org member (a **principal**) gets an AI **agent** that acts for them over a shared
 event log — CLI today; Slack/WhatsApp next. Design: [DESIGN.md](./DESIGN.md) · roadmap:
@@ -34,7 +34,7 @@ workspace, and its docs (identity, org, memories — edit them, boot never overw
 
 Every knob lives in `config.jsonc` at the project root (the catalog — init
 materializes it, the system never writes it; comments document each key). Env is for
-secrets only. The org is where you run mu; `--dir <path>` names it from anywhere else.
+secrets only. The org is where you run liquen; `--dir <path>` names it from anywhere else.
 
 ## Connections
 

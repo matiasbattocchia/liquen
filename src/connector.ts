@@ -1,6 +1,6 @@
 /**
  * connector.ts — the connector seam (DESIGN §4, §9): everything a connector may
- * import from mu, shipped or custom, through ONE module.
+ * import from liquen, shipped or custom, through ONE module.
  *
  * A connector is a standalone process over the org's substrate (the `./data` root): ingest
  * publishes world events into the log, dispatch tails the log and delivers, connect

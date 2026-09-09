@@ -137,8 +137,8 @@ Deno.test("signed media path: minted relative, served by any process holding the
     });
     const secret = "s3cret";
     const path = await signMediaPath(file.uri, secret);
-    // relative on purpose: the fetching service resolves it against mu's own address,
-    // which is the one it already delivers to — mu never states its host
+    // relative on purpose: the fetching service resolves it against liquen's own address,
+    // which is the one it already delivers to — liquen never states its host
     assert(path.startsWith("/m/"));
     const res = await serveMedia(req(path), root, () => secret);
     assertEquals(res?.status, 200);

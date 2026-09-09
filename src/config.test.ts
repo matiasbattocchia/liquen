@@ -292,15 +292,15 @@ Deno.test("findRoot: the nearest config.jsonc up from cwd names the org", async 
     await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
     await Deno.mkdir(`${root}/data/agents/ana`, { recursive: true });
     assertEquals(findRoot({ from: `${root}/data/agents/ana` }), await Deno.realPath(root));
-    assertThrows(() => findRoot({ from: "/usr/lib" }), Error, "not inside a mu project");
+    assertThrows(() => findRoot({ from: "/usr/lib" }), Error, "not inside a liquen project");
   });
 });
 
-Deno.test("findRoot: --dir names the org wherever mu runs, and must be one itself", async () => {
+Deno.test("findRoot: --dir names the org wherever liquen runs, and must be one itself", async () => {
   await withDir(async (root) => {
     await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
     assertEquals(findRoot({ dir: root, from: "/usr/lib" }), await Deno.realPath(root));
-    assertThrows(() => findRoot({ dir: `${root}/nowhere` }), Error, "is not a mu project");
+    assertThrows(() => findRoot({ dir: `${root}/nowhere` }), Error, "is not a liquen project");
   });
 });
 

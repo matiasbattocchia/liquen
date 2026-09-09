@@ -2,7 +2,7 @@
  * src/connect/github/config.ts — the github connector's catalog (the config rules, §4):
  * its DEFAULT_s live here and nowhere else, used as argument defaults; the values heal
  * into `data/config.jsonc` under `connections.github` and are validated at boot.
- * Secrets live in the vault, written by `mu connect github`: `github:app:<app_id>` (the
+ * Secrets live in the vault, written by `liquen connect github`: `github:app:<app_id>` (the
  * webhook secret + private key), `github:org` / `github:<principal>` (the identities).
  */
 

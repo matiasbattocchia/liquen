@@ -1,13 +1,13 @@
 /**
- * connect/whatsapp/connect.ts — `mu connect whatsapp`: the PAIRING door (§4).
+ * connect/whatsapp/connect.ts — `liquen connect whatsapp`: the PAIRING door (§4).
  *
  * The bridge (open-bsp-whatsmeow) owns the wire: `POST /sessions` starts a pairing and
  * `GET /sessions/pending/{id}` is polled while WhatsApp rotates QR codes (~20s each) —
  * or, given a phone number, answers a one-shot pairing code the person types into
- * WhatsApp (Linked devices → Link with phone number). This file is mu's CLIENT of that
+ * WhatsApp (Linked devices → Link with phone number). This file is liquen's CLIENT of that
  * contract: drive the poll, and on `paired` WRITE THE MAP — the same three writes as
- * the Slack doors, minus the vault: mu holds NO WhatsApp secret (the Signal session
- * keys live in the bridge's store; mu's only credential is the shared BRIDGE_TOKEN).
+ * the Slack doors, minus the vault: liquen holds NO WhatsApp secret (the Signal session
+ * keys live in the bridge's store; liquen's only credential is the shared BRIDGE_TOKEN).
  *
  *   paired → connections: ONE row — the session's own number is BOTH the anchor every
  *            event carries AND the principal's identity (unlike Slack's two-row
@@ -32,7 +32,7 @@ import { declared } from "../declare.ts";
 
 /** The tenant sessions are filed under on the bridge (its open-BSP `organization_id`).
  *  Not a knob: a data root is ONE org, and the bridge is that org's sidecar — the label
- *  only has to be stable, and mu is the org running mu. */
+ *  only has to be stable, and liquen is the org running liquen. */
 const BRIDGE_ORG = "mu";
 
 /** The bridge's pairing poll response (sessions.go `PairingState`) — verbatim. */

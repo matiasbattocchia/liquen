@@ -10,7 +10,7 @@ Deno.test("init scaffolds a project the reader accepts, roster empty, and refuse
     // the catalog is the project marker — findRoot lands on it from anywhere inside
     assertEquals(findRoot({ from: `${path}/data` }), await Deno.realPath(path));
     const cfg = await readConfig(path);
-    assertEquals(cfg.agents, {}); // `mu agent` declares each one
+    assertEquals(cfg.agents, {}); // `liquen agent` declares each one
     assertEquals(cfg.connections, {});
     assert(cfg.org.timezone.length > 0); // the machine's clock, interviewed for the human
     for (
@@ -28,7 +28,7 @@ Deno.test("init scaffolds a project the reader accepts, roster empty, and refuse
     ) await Deno.stat(`${path}/${f}`);
     const mode = (await Deno.stat(`${path}/entrypoint.sh`)).mode! & 0o777;
     assertEquals(mode, 0o755);
-    await assertRejects(() => init(path), Error, "already a mu project");
+    await assertRejects(() => init(path), Error, "already a liquen project");
   } finally {
     await Deno.remove(tmp, { recursive: true });
   }

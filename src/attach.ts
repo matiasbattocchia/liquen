@@ -26,7 +26,7 @@ export interface Attached {
   model: string; // resolved the roster's own way, so a banner names what will run
 }
 
-/** The org lives where you run mu: the nearest config.jsonc up from cwd is the project
+/** The org lives where you run liquen: the nearest config.jsonc up from cwd is the project
  *  marker, and the substrate sits beside it. The roster is the catalog's — an agent the
  *  config does not declare cannot run. When the agent folder shares the OS username, no
  *  identity map exists at all (principal name = agent name); an explicit argument talks
@@ -44,7 +44,7 @@ export async function resolveAgent(explicit?: string, dir?: string): Promise<Att
   const target = explicit ?? username;
   if (!(target in catalog.agents)) {
     throw new Error(
-      `no agent "${target}" in ${root}/config.jsonc — \`mu agent ${target}\` adds one`,
+      `no agent "${target}" in ${root}/config.jsonc — \`liquen agent ${target}\` adds one`,
     );
   }
   if (catalog.agents[target].mind === false) {
@@ -79,7 +79,7 @@ export async function attach(a: Attached): Promise<Deno.UnixConn> {
       return await Deno.connect({ transport: "unix", path });
     } catch {
       if (Date.now() > deadline) {
-        throw new Error(`no daemon answered on ${path} — run \`mu start\` to see it boot`);
+        throw new Error(`no daemon answered on ${path} — run \`liquen start\` to see it boot`);
       }
       await new Promise((r) => setTimeout(r, ATTACH_RETRY_MS));
     }

@@ -261,7 +261,7 @@ function text(status: number, message: string): Response {
  *                                                  front (cloudflared)
  *
  * The app credential (client id/secret) lives in the vault — `google:app:<client_id>`,
- * written by `mu connect google app` — and the vault is the ONLY source: `--app` picks
+ * written by `liquen connect google app` — and the vault is the ONLY source: `--app` picks
  * among several. The redirect URI is the app row's `redirect_uri` sidecar (the hosted
  * callback), localhost when absent. The port is connections.google.oauthPort. */
 if (import.meta.main) {

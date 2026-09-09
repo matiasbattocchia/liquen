@@ -3,7 +3,7 @@
  *
  *   deno task status             # agents · connections · memberships · vault (REDACTED)
  *
- * The setup flows (`oauth:slack`, pairing, future `mu connect <service>`) WRITE the map;
+ * The setup flows (`oauth:slack`, pairing, future `liquen connect <service>`) WRITE the map;
  * this prints it — the first thing a live smoke checks ("did the grant land?"). Secrets
  * never print: the vault lists keys, owners, and the FIELD NAMES of each value blob,
  * never values. Env: none.

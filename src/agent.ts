@@ -1,12 +1,12 @@
 /**
- * agent.ts — `mu agent <name> [--name <full name>] [--email <address>] [--phone <number>]
+ * agent.ts — `liquen agent <name> [--name <full name>] [--email <address>] [--phone <number>]
  * [--principal <member>]… [--no-mind]`: add a member to the roster (§9).
  *
  * One declaration in the catalog: `agents.<name>`, its identity holding the handles the
  * flags gave and null for the rest; `principals` when `--principal` named who steers it
  * (roster names, repeatable); `mind: false` when `--no-mind` made it a person alone. The
  * name is the member's id, its folder under `data/agents/` and its unix user in the
- * container — boot compiles the entry into those at the next `mu start`, and nothing is
+ * container — boot compiles the entry into those at the next `liquen start`, and nothing is
  * made here. Runs from anywhere inside the org, or against one named with `--dir`.
  */
 
@@ -20,7 +20,7 @@ import {
 } from "./config.ts";
 
 export const USAGE =
-  "usage: mu agent [--dir <org>] <name> [--name <full name>] [--email <address>] " +
+  "usage: liquen agent [--dir <org>] <name> [--name <full name>] [--email <address>] " +
   "[--phone <number>] [--principal <member>]... [--no-mind]";
 
 /** The command line, `--dir` already taken out: one positional, the identity flags in
@@ -72,7 +72,7 @@ if (import.meta.main) {
     const handles = declared.length > 0 ? ` (${declared.join(", ")})` : "";
     const next = rest.mind === false
       ? "they steer, and no session of theirs will run."
-      : "`mu start` gives it a home.";
+      : "`liquen start` gives it a home.";
     console.log(`${root}/config.jsonc: agents.${name}${handles}. ${next}`);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));

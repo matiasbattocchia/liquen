@@ -1,12 +1,12 @@
 {
   "display_information": {
-    "name": "mu",
+    "name": "liquen",
     "description": "Your org's delegate harness",
     "background_color": "#1a1d21"
   },
   "features": {
     "bot_user": {
-      "display_name": "mu",
+      "display_name": "liquen",
       "always_online": true
     }
   },

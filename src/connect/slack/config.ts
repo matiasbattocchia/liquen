@@ -4,7 +4,7 @@
  * into `data/config.jsonc` under `connections.slack` and are validated at boot.
  *
  * The two scope lists are the ONE source: the oauth door asks Slack for exactly these
- * (`scope` / `user_scope`) and the app manifest `mu connect slack` prints is filled from
+ * (`scope` / `user_scope`) and the app manifest `liquen connect slack` prints is filled from
  * them (`withScopes`) — so the app you create and the consent you request cannot drift.
  */
 

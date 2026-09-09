@@ -1,12 +1,12 @@
 /**
- * repl.ts — `mu repl`: the v0.0 principal interface, a line REPL attached to the daemon.
+ * repl.ts — `liquen repl`: the v0.0 principal interface, a line REPL attached to the daemon.
  *
  * The REPL is an ATTACH client (DESIGN §2, §9): it never holds a log handle and hosts
  * nothing — it speaks to its agent through the door (`agents/<name>/door.sock`),
  * publishing the principal's messages and painting what the tail pushes back. "Is a
  * daemon running?" is the connect itself: a refused socket means no, and the REPL raises
  * one — main alone (`--ephemeral`), which reaps itself once nothing has been attached for
- * a linger. `mu start` owns the standing org and its connections; the REPL only ever
+ * a linger. `liquen start` owns the standing org and its connections; the REPL only ever
  * attaches — the attach path is the only path it has.
  *
  *   you type            → {op: "message"} through the door
@@ -27,7 +27,7 @@ import { MIND, sessionAddress } from "./session.ts";
 import { DIM, painter, RED, RESET } from "./paint.ts";
 import { parseVerdict } from "./xi.ts";
 
-// `mu repl [agent] [--session name]` — both are session choices, so arguments, not
+// `liquen repl [agent] [--session name]` — both are session choices, so arguments, not
 // config: the agent picks the door, the session picks the room behind it (default: the
 // mind). Naming a session is what births it (§4).
 const org = orgFlag();
@@ -86,7 +86,7 @@ if (!t.ok) {
 }
 
 write(
-  `${DIM}mu — ${home} · ${a.model} · log: ${a.dir} · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n> `,
+  `${DIM}liquen — ${home} · ${a.model} · log: ${a.dir} · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n> `,
 );
 
 const lines = Deno.stdin.readable

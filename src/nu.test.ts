@@ -65,7 +65,7 @@ Deno.test("nu: refusal surfaces as an error event alongside the emissions", asyn
   assertEquals(out[1].type, "error");
 });
 
-Deno.test("nu renders the window it was handed (events reach mu)", async () => {
+Deno.test("nu renders the window it was handed (events reach liquen)", async () => {
   const seen: string[] = [];
   const principal: Event = {
     id: "e1",

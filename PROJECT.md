@@ -231,7 +231,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
    read-through prepared statements (no snapshot-at-boot, no restart on bind); local =
    team chat (visible iff member; `send` to an agent's name → `dm:<sorted>` + both ends
    enrolled); derived for folder agents, explicit principals stay allow-all.
-   `mu connect` LANDED for Slack 2026-08-12 (`deno task connect:slack`): the PASTE door —
+   `liquen connect` LANDED for Slack 2026-08-12 (`deno task connect:slack`): the PASTE door —
    prefill link (user-only manifest: the bot leg is not required and only breeds the
    wrong-token paste) → dashboard install → **Reinstall to Workspace** (the manifest
    declares user scopes; only re-consent GRANTS them — the one step that actually tripped
@@ -243,7 +243,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
    light up. Paste = local/dev tier; the hosted oauth door = org tier (one shared link, N
    principals). Still open: `--bot` / `--agent <name>` / `--shared` connect options (bot
    paste via `auth.test` on xoxb; per-agent apps for per-agent bots — one bot per
-   app×workspace, a reinstall only rotates); ingest carrier per vaulted app token (landed 2026-08-25 with `mu connect slack bot`);
+   app×workspace, a reinstall only rotates); ingest carrier per vaulted app token (landed 2026-08-25 with `liquen connect slack bot`);
    WhatsApp pairs by QR/code locally, by code through the mind remotely; SSH+REPL is the
    remote steering door.
 
@@ -302,7 +302,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
    DM as the principal's mind) was REJECTED on the secretary counterexample: a shared
    account has other humans behind it — the secretary holding the org WA would see the
    mind's traffic and could write into it as a third participant; those DMs are world
-   conversations the agent serves. Explicit bindings (a `mu alias` door — what Teams'
+   conversations the agent serves. Explicit bindings (a `liquen alias` door — what Teams'
    1:1 bot chat would need) deferred until wanted. Side fact for the CLASSIFIER (not
    aliases): Slack ids never need declaring — grants carry them (`auth.test`); an
    ungranted principal could resolve by declared email via `users.info` /
@@ -441,7 +441,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
      (token resolver: the author's xoxp when the vault holds one, else the org bot —
      dispatcher-internal, §4) → backfill `ts` via `setDelivery` (echo merges; no
      author-based skip).
-8. **`mu init` (DX)** — JSR-published init scaffolding the surface (seed docs, config,
+8. **`liquen init` (DX)** — JSR-published init scaffolding the surface (seed docs, config,
    `main.ts`, Dockerfile, template `AGENTS.md` for agent-driven customization); core as
    `jsr:@mu/core`. DESIGN §9 "Distribution (DX)".
 9. **Docker image per org** — main + connections, env-var config, volume for the data
@@ -465,7 +465,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
     channel's timeout), and receipts NEVER merged — self receipts (the phone reading
     the peer's messages) minted ids with our own address as author segment, 811 ghost
     stubs against 303 merges before the fix. **Mentions — LANDED 2026-08-17**: the
-    bridge owns the wire namespace both directions, so mu only ever sees canonical
+    bridge owns the wire namespace both directions, so liquen only ever sees canonical
     addresses (DESIGN §3). A lid-addressed chat (Communities, the LID rollout) names
     people by an opaque per-account id instead of their phone — inbound the bridge
     rewrites the inline `@digits` token and the mention list to canonical, outbound
@@ -473,7 +473,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
     `AddressingMode` learned free off inbound traffic (`GetGroupInfo` only for a
     never-seen group). Before this, an outbound `@Euge` in a lid group both failed to
     bind AND published a phone number into a chat whose addressing exists to hide it.
-    mu's ingest just names what arrives: `@<digits>` → `@<pushname>`. Pending: live
+    liquen's ingest just names what arrives: `@<digits>` → `@<pushname>`. Pending: live
     receipt-merge verification (needs organic traffic) and merge-only drafts still INSERT
     stubs for unknown referents (deferred).
     **References — LANDED 2026-08-17**: `ref_external_id` was ingested and never rendered,
@@ -492,7 +492,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
     read. xi refuses to edit or delete anything the account did not author (a wire would
     accept the stanza and ignore it). Slack: `chat.update`/`chat.delete`. WhatsApp: the
     bridge gained data kinds `edit` and `revoke` over `BuildEdit`/`BuildRevoke`, and the
-    reaction content moved to the DataPart shape `openbsp.go` always expected — mu had been
+    reaction content moved to the DataPart shape `openbsp.go` always expected — liquen had been
     sending `type: "text", kind: "reaction"`, which the bridge's text case posted as an
     emoji quoting the target, so outbound WhatsApp reactions were text replies until now.
     Unreportable: WhatsApp ignores an edit past its 20-minute window (the tool description
@@ -513,7 +513,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
     still reaches everything outside both.
     **Names on every message — LANDED 2026-08-18**, found by asking whether the agent could
     search the conversation with a given contact. It could not, and the query was the lesser
-    half of why: names reached mu only through the batch `contacts`/`groups` feeds, cached in
+    half of why: names reached liquen only through the batch `contacts`/`groups` feeds, cached in
     the ingest process, so a name existed only for whoever had spoken since the last restart
     — `conversation_name` was set on **0 of 364** WhatsApp DMs and 25 of 72 groups, and that
     contact's 77 messages carried no name on any row. Meanwhile the bridge's own whatsmeow
@@ -593,11 +593,11 @@ rather than left to be noticed:
   canonicalized the chat and sender of a message ROW
   (`conversationAddressFor`/`senderAddressFor`) but not the segments of the ids it built
   around one, so on a LID-addressed chat every id came out under the lid and matched
-  nothing mu had stored from the other side. Three symptoms, one cause: his 😂 arrived
+  nothing liquen had stored from the other side. Three symptoms, one cause: his 😂 arrived
   with `ref_external_id = wmw.…230480930730172.…` against our stored
   `wmw.…15613518605.…` (same stanza, unmatchable) so render showed `re="?"`; no
   delivery/read receipt ever merged onto a message we sent; and — the expensive one — a
-  quoted `/y`·`/n` from his phone pointed at a card mu could not find, so the gate dropped
+  quoted `/y`·`/n` from his phone pointed at a card liquen could not find, so the gate dropped
   his verdict without a word. `chatSegment()` now supplies the chat segment of every id the
   bridge mints or parses (message ids, quoted refs, reaction refs, protocol-message
   originals, receipts, the history import), resolving through `canonicalUser` — which
@@ -608,12 +608,12 @@ rather than left to be noticed:
   waking an agent on its own send has no use case (2026-08-18 call; the self-reaction test
   that surfaced it was a one-off). What is worth having is the receipt half above:
   delivered/read merge for phone-addressed chats today and vanish for LID ones, so
-  "left the process" is currently the strongest claim mu can make about a LID chat. Treat
+  "left the process" is currently the strongest claim liquen can make about a LID chat. Treat
   the absence as unknown, not as failure.
 - **Nothing supervises the mirror.** It died mid-session with an empty log and no exit
   trace, and the failure presents exactly like a broken agent: cards stop crossing, `/y`
   stops arriving, and both ends wait. The processes are hand-started shells today; the
-  first thing `mu init` (item 2b) owes is a supervisor with a heartbeat, because a relay
+  first thing `liquen init` (item 2b) owes is a supervisor with a heartbeat, because a relay
   that fails closed and quietly is worse than one that never existed.
 - **A card can outlive its window.** `openCards` reads the window, so a
   `permission_request` that falls out of it simply stops existing: it vanishes from the
@@ -659,7 +659,7 @@ mirror's settle/claim), and purely hardcoded. One discipline replaces all three
   standalone connector processes (their launch contract, until the supervisor owns it).
   `MU_MODEL` · `MU_EFFORT` · `MU_BACKLOG_HOURS` · `MU_AGENT` · `USER` are gone. Session
   choices became arguments (`deno task cli [agent]`, connect doors take the principal);
-  the REPL's data root is the constant `./data` — the org lives where you run mu. Task
+  the REPL's data root is the constant `./data` — the org lives where you run liquen. Task
   mode keeps its tiny env surface (`MU_MODEL`, `MU_MAX_TOKENS`, `MU_TASK_TIMEOUT_S`): it
   is the config-less entry, and env is a container's interface.
 - Defaults changed while the constants moved: model `claude-sonnet-5`, timezone `"UTC"`
@@ -709,7 +709,7 @@ whatsmeow's phone-synced chat settings (`ChatSettings{MutedUntil, Archived}`) at
 time — the same per-message denormalization as names, never retroactive, so an unmute
 wakes only what arrives after it. **Bridge side is pending**: open-bsp-whatsmeow doesn't
 send the fields yet (absent ⇒ unmarked, so nothing breaks meanwhile). **Slack has no wire
-equivalent** — mute is a private client preference the bot can't see; a mu-side mute
+equivalent** — mute is a private client preference the bot can't see; a liquen-side mute
 deferred until the conversations table exists, someday.
 
 ### Token spend: the prompt cache was dead below the system prefix (2026-08-19) — LANDED
@@ -928,12 +928,12 @@ move plus a proof:
   **github moved there by swapping places** — it imports only the seam, its cross-process
   test spawns the real entry, everything worked unchanged. That is the promise custom
   connectors inherit.
-- **`mu connect` front door** (`deno task connect`): bare = the map (status); named =
+- **`liquen connect` front door** (`deno task connect`): bare = the map (status); named =
   two-step resolution, shipped services first then `connectors/<name>/connect.ts`, spawn
   the door as a child with the remaining args (every door is an `import.meta.main`
   entry, so spawning keeps one contract for shipped, custom, and pasted-path doors).
 - **Env shrank to secrets**: `MU_DIR` removed — the data root is the constant `./data`
-  everywhere (the org lives where you run mu); `ANTHROPIC_API_KEY` is the SDK's own
+  everywhere (the org lives where you run liquen); `ANTHROPIC_API_KEY` is the SDK's own
   credential chain, not our knob.
 
 ### Config went the framework way for connectors (2026-08-25) — LANDED
@@ -981,18 +981,18 @@ the catalog (`withScopes`). And the manifest's relative path was one directory s
 the user door died on `NotFound` before printing its link; the new test reads the seed,
 which is what surfaced it.
 
-### Outbound media: one door in, and mu stopped stating its own address (2026-08-25) — LANDED
+### Outbound media: one door in, and liquen stopped stating its own address (2026-08-25) — LANDED
 
 Found by asking why a `mediaHost` knob existed at all. Inbound media is **pushed** to us
 (the bridge decrypts and POSTs multipart before the message); outbound was **pulled** from
 us (dispatch ran a second HTTP server and minted `http://<mediaHost>:<mediaPort>/m/<token>`
-against an in-memory map). So mu had to be told its own hostname — a fact the bridge
+against an in-memory map). So liquen had to be told its own hostname — a fact the bridge
 already held as `OPENBSP_URL`, duplicated with nothing keeping the two equal, and wrong by
 default the moment the bridge runs in a container.
 
-Symmetry (mu POSTs the bytes) was the wrong fix: it moves CUSTODY. The bridge answers
+Symmetry (liquen POSTs the bytes) was the wrong fix: it moves CUSTODY. The bridge answers
 `accepted` on a dispatch, so bytes it has taken but not yet uploaded would need a real
-spool with crash recovery. The pull leg is what avoids that — mu keeps the only copy in
+spool with crash recovery. The pull leg is what avoids that — liquen keeps the only copy in
 `data/media` and hands over a reference the bridge fetches when it is ready.
 
 So the leg stayed and its two defects went:
@@ -1009,13 +1009,13 @@ So the leg stayed and its two defects went:
   (`resolveMediaURL`, absolute URLs untouched so open-bsp-api's storage links still work).
 
 `system.mediaPort`/`mediaHost` are gone, the second server is gone, and the deployment
-states where mu is exactly once, on the bridge. The store's boundary is checked
+states where liquen is exactly once, on the bridge. The store's boundary is checked
 independently of the signature: a signed path outside `data/conversations` is a 404,
 because a signature proves who minted a path, never that the path is innocent.
 
 ### GitHub's user door signs people in, instead of asking for a secret (2026-08-26) — LANDED
 
-The user door's route is now the **device flow**, off the app's own client id: `mu connect
+The user door's route is now the **device flow**, off the app's own client id: `liquen connect
 github user` asks GitHub for a code, the human types it at github.com/login/device, and the
 poll returns a user-to-server token. Nobody mints a credential by hand, nobody pastes one
 into a terminal, and the grant is bounded by the app's permissions and its installations
@@ -1214,7 +1214,7 @@ throws "a reaction needs `re`"), so the don't-quote rule is about `text` alone. 
 only for now — a mechanical guard is available (an `re` naming the conversation's own last
 message is redundant by construction) and unbuilt, pending whether the wording holds.
 
-### One config to declare the org — root catalog, roster, `mu init`, the Docker shape (2026-08-29) — LANDED
+### One config to declare the org — root catalog, roster, `liquen init`, the Docker shape (2026-08-29) — LANDED
 
 The framework way completed its arc: **the org is a project, and `config.jsonc` at the
 project root is both its marker and its whole declaration**. `findRoot` walks up from cwd
@@ -1224,7 +1224,7 @@ them now derive `<root>/data`), and the file carries five sections split by audi
 one clock for the whole org, plus `org.agent` defaults), `processors`, `agents` (the
 roster: sparse overrides + `identity` handles), `connections`. Per-agent
 `data/agents/<a>/config.jsonc` died with the move, and so did every write the system made
-to config: no materialize-on-boot, no heal-appends — `mu init` writes the full commented
+to config: no materialize-on-boot, no heal-appends — `liquen init` writes the full commented
 catalog ONCE, git is its history, a key left out takes its default, an unknown key still
 fails the boot loudly. Direction of truth flipped with it: **config → tables → folders** —
 boot compiles the roster into registry rows and creates the missing homes; what the system
@@ -1233,26 +1233,26 @@ the file. main stopped reading files altogether: the entry point resolves the ca
 hands main the VALUE (`MainConfig.catalog`); `connectorConfig` replaced
 `ensureConnectorConfig` (read-only, same specs, same checks).
 
-`mu init <path> [agent…]` landed as the scaffolder (`deno task init` until `mu start`
+`liquen init <path> [agent…]` landed as the scaffolder (`deno task init` until `liquen start`
 exists): materialize the catalog, copy `src/scaffold/` (AGENTS.md · Dockerfile ·
 entrypoint.sh · deno.jsonc · .env · .gitignore), interpolate the name, mkdir
 connectors/·processors/·data/. The scaffold's Docker pieces are the settled shape written
 down: one volume (`-v ./data:/data`, `/app/data` symlinked to it), the entrypoint turns
 the roster into Linux users (uid pinned by name-hash so volume ownership survives
 rebuilds), lays `/home/<a> → /data/agents/<a>` and the permission sweep (log/ 700 root ·
-org/ 2775+ACL · system/ read-only · homes 700), then execs `mu start`. The harness's half
+org/ 2775+ACL · system/ read-only · homes 700), then execs `liquen start`. The harness's half
 is live now: when the process runs as root and `/etc/passwd` knows the agent, every bash
 spawn drops to that uid with HOME/USER/LOGNAME following (exec/bash.ts) — the kernel,
 not the prompt, enforces the classification. Local dev keeps running as one user,
 unchanged; the repo's own org migrated to the root catalog in the same landing.
 
-Still open from this arc: `mu start` itself (the supervisor — roster the connector
+Still open from this arc: `liquen start` itself (the supervisor — roster the connector
 processes from `connections.<name>`), and the JSR split that makes a scaffolded project's
 `deno.jsonc` import `@mu/core` (local dev via Deno's `links`).
 
 The seed template is now identical to what runs; it had drifted four blocks behind.
 
-### `mu start` — the org as one command (2026-08-31) — LANDED
+### `liquen start` — the org as one command (2026-08-31) — LANDED
 
 The supervisor (`src/start.ts`) is a keep-alive loop and nothing more, written from zero
 because every off-the-shelf option (process-compose, supervisord, s6) is configured by its
@@ -1263,7 +1263,7 @@ contract beyond `cwd: root`. What remains: spawn main + one child per `connectio
 (`Deno.execPath() run -A <run.ts>`, env untouched), respawn on exit with doubling backoff
 (1s → 60s, forgiven after a healthy minute), SIGTERM fan-out with `system.stopTimeoutMs`
 then SIGKILL. Death is loud on stderr and nowhere else; the outer layer (docker restart,
-`--init` for reaping, the terminal) supervises `mu start` itself.
+`--init` for reaping, the terminal) supervises `liquen start` itself.
 
 Two decisions shaped it beyond the loop:
 
@@ -1287,7 +1287,7 @@ at startup and the DDL takes the exclusive lock, but `PRAGMA busy_timeout` was s
 
 Tasks renamed with the merge: `run:<name>` replaces each `ingest:`/`dispatch:` pair;
 `deno task start` is the headless org. Still open: the JSR split (`@mu/core` + `links`)
-that makes a scaffolded project's `mu start` real outside this repo.
+that makes a scaffolded project's `liquen start` real outside this repo.
 
 Two DX follow-ups landed the same day, prompted by a test flake traced to parallel
 harnesses fighting over ports (the suite's freePort() binds :0 and RELEASES it — a
@@ -1303,7 +1303,7 @@ window another org's run can steal):
 - **The supervisor stamps every child line** — `HH:MM:SS [name] …`, stdout/stderr split
   preserved — so attribution is the harness's property: panics and stack traces land
   tagged, greppable by process, by devs and agents alike. After the boot lines, silence
-  from `mu start` means every process is up. Services stopped self-naming with it: the
+  from `liquen start` means every process is up. Services stopped self-naming with it: the
   process tag is the supervisor's (standalone, the terminal is the tag), and inside a
   connection process a line carries at most a MODULE tag — `[ingest]`, `[dispatch]`,
   `[oauth]`, `[exec]`, `[proxy]` — so a supervised line reads `[whatsapp] [dispatch] …`.
@@ -1313,25 +1313,25 @@ window another org's run can steal):
 Headless main and the container split settle what the harness is: a daemon holding the
 substrate, and interfaces that attach to it. Two axes, decided independently.
 
-The RUN mode answers "do the agents run while nobody is attached?" — `mu start` (the
+The RUN mode answers "do the agents run while nobody is attached?" — `liquen start` (the
 daemon: main plus a process per connection) against a run whose life is the command's.
-The ATTACH mode is what a human or a script drives it through: `mu repl` (the TUI),
-`mu task` (one input, streaming deltas and messages until the agent settles — a gate ends
+The ATTACH mode is what a human or a script drives it through: `liquen repl` (the TUI),
+`liquen task` (one input, streaming deltas and messages until the agent settles — a gate ends
 the turn like any other stopping point, since the interface decides what to do with a
-disclosed request), and whatever else. The illusion the user gets: `mu start` spins the
+disclosed request), and whatever else. The illusion the user gets: `liquen start` spins the
 org up; `task` and `repl` attach to it, and when nothing is running they bring a daemon up
 themselves and take it down when done. The REPL (`cli.ts`) holds no log handle and hosts
-nothing — the attach path is the only path it has; `mu task` owes the same shape when it
+nothing — the attach path is the only path it has; `liquen task` owes the same shape when it
 is reconciled (below).
 
-CONNECTIONS BELONG TO `mu start`. A daemon an interface raised is main alone: the world's
+CONNECTIONS BELONG TO `liquen start`. A daemon an interface raised is main alone: the world's
 doors are the org's standing commitment, not a side effect of someone opening a REPL.
 
 A daemon's life is its ATTACHMENTS, never an interface's exit. One raised for an
 interface (`main.ts --ephemeral`, what a REPL that found nothing listening spawns and
 unrefs) reaps itself once nothing is attached and stays that way for a linger
-(`LINGER_MS`, 30s) — long enough that consecutive `mu task` runs reuse one org instead of
-paying for seeding, exec planes and the proxy three times over; one `mu start` raised
+(`LINGER_MS`, 30s) — long enough that consecutive `liquen task` runs reuse one org instead of
+paying for seeding, exec planes and the proxy three times over; one `liquen start` raised
 never reads the count. The count (`main.attachments()`) is the door's live connections
 rather than bookkeeping, so a killed interface and a clean one are the same event — a
 hang-up — and the decision sits with the participant that is certainly still alive. "Is
@@ -1396,7 +1396,7 @@ connectors, and is the one module where env still carries knobs that are not sec
 Task mode is gone. `src/task.ts` — the second harness: `start()` in-process, a hand-rolled
 exec plane and shims, a temp org, the stall-repoke, the `MU_MODEL`/`MU_EFFORT`/
 `MU_MAX_TOKENS`/`MU_TASK_TIMEOUT_S`/`MU_TASK_TRACE` env knobs, the compiled multi-call
-binary (`compile:task`) — is deleted, and `mu cli` (`src/cli.ts`) replaces it as a pure
+binary (`compile:task`) — is deleted, and `liquen cli` (`src/cli.ts`) replaces it as a pure
 attach client: resolve the agent from the catalog like the REPL, connect (raising an
 ephemeral daemon on refusal), `tail`, publish ONE `message`, stream the transcript, exit
 when the daemon goes quiet over it. The old file's polling loop guessed at quiescence from
@@ -1425,7 +1425,7 @@ errors land, whether thinking streams, the approval pile — arrives as surface 
 `src/attach.ts` holds the shared client half: `resolveAgent` (catalog roster), `attach`
 (connect-or-raise), `wire` (requests answered in order; pushes demuxed by shape — a reply
 always carries `ok`, a push never does). `cli.ts` → `repl.ts` carries the interactive
-surface over it; `mu cli` is smaller than the REPL, as it should be. `MainConfig` lost the
+surface over it; `liquen cli` is smaller than the REPL, as it should be. `MainConfig` lost the
 seams only task mode used (`exec`, `ambient`, `seed`, `onDelta`): the proxy, the per-agent
 exec planes and the doc seeding now install unconditionally.
 
@@ -1433,7 +1433,7 @@ Verified live against a scratch org: dummy key → three retry deltas and the te
 row on stderr, empty stdout, exit 0 on the idle that followed; real key → the closing
 message alone on stdout, exit 0; the REPL attaches to the daemon the CLI raised. Still
 open: `bench/tbench`'s Harbor adapter uploads the compiled `mu-task` binary that no longer
-builds — re-point it at `mu cli` next time the bench gets attention.
+builds — re-point it at `liquen cli` next time the bench gets attention.
 
 ### A fresh org is a coding agent; a grant declares its own process (2026-08-31) — LANDED
 
@@ -1442,22 +1442,22 @@ one's own principal is the model's plain answer, never a call, so in a one-agent
 no connections `send` addressed nothing; an org adds it where its agents have peers or a
 world. The `rules` default keeps `send: ask` for when it comes back.
 
-`mu connect <service>` now writes `connections.<name>: {}` into config.jsonc itself
+`liquen connect <service>` now writes `connections.<name>: {}` into config.jsonc itself
 (`declareConnection`, reported by `connect/declare.ts`'s `declared`, called by all four
-doors when a grant lands). Until now a grant wrote the map and nothing ran: `mu start`
+doors when a grant lands). Until now a grant wrote the map and nothing ran: `liquen start`
 spawns per DECLARED connection, and the operator was never told the file needed a line.
 The edit is surgical — the `connections` block gets one line, every other byte stays as
 found (comments, layout, order), and the result is parsed before it lands, restoring the
 original if it would not read back. The catalog's rule is now "only the setup doors write
-it": `mu init` materializes it, `mu connect` declares what a grant earned, both at human
+it": `liquen init` materializes it, `liquen connect` declares what a grant earned, both at human
 time with a human watching, both leaving a diff for git. The running system still never
 writes it.
 
-Open: where a coding agent STANDS. `mu start` gives each agent `data/agents/<name>/` as
+Open: where a coding agent STANDS. `liquen start` gives each agent `data/agents/<name>/` as
 its cwd, which is right for a resident agent whose instructions live there and wrong for
-`mu cli "fix the test"` typed inside a repo — the hint the agent reads is its home, not
+`liquen cli "fix the test"` typed inside a repo — the hint the agent reads is its home, not
 the work. Two shapes were named: (A) attaching in a directory makes that directory the
-agent's working directory; (B) `mu repl` outside an org scaffolds one, harness files under
+agent's working directory; (B) `liquen repl` outside an org scaffolds one, harness files under
 `.mu/` rather than scattered at the project root. A is wanted; B is acceptable at this
 stage. Neither is built, and A's open question is whose cwd wins when several attachments
 sit in different folders.
@@ -1467,7 +1467,7 @@ sit in different folders.
 DESIGN §7 deferred subagents and settled for `session_id ≈ agent id`. This is the design
 that lifts it: an agent runs MANY sessions, each its own window, lock, compaction and
 timers, over one identity — one home, one docs cascade, one memory, one exec plane, one
-permission table. `mu repl --session build` is the entry point; the session is born when
+permission table. `liquen repl --session build` is the entry point; the session is born when
 first named.
 
 **A session is a conversation.** `mind@matias` is the default; `build@matias` is a session
@@ -1566,7 +1566,7 @@ session-anchored boundary. DESIGN §7 now describes many sessions per agent. (5)
 and speaks through THAT session's scoped port (asking is what births it — the port
 resolver is main's runner); deltas and status fan only to tailers of the same session, so
 the wire needs no tag and a CLI's idle-cursor logic works per session unchanged;
-`mu repl --session build` and `mu cli --session build` on both clients. `send` now takes
+`liquen repl --session build` and `liquen cli --session build` on both clients. `send` now takes
 session targets: a bare agent name is its mind, `mind@matias` (any roster session
 address) canonicalizes to the `dm:` pair with both ends enrolled as the sessions they
 are; `selfSend` refuses the session's OWN room (the bare agent name only from the mind),
@@ -1620,7 +1620,7 @@ real traffic hits it — which is exactly what 2b + the live smoke will show.
 ### Four seams closed against the second process (2026-09-04) — LANDED
 
 Every one of these was a race or a hole that only shows once something runs beside main:
-an ephemeral main raised by attach while `mu start` backs off, the calendar process beside
+an ephemeral main raised by attach while `liquen start` backs off, the calendar process beside
 the broker, an interface that wedges. Each landed test-first.
 
 **The alarm claim is one SQL statement.** `due` is a scan and only a scan; `claim` is
@@ -1654,7 +1654,7 @@ write chain is bounded at `MAX_PENDING_LINES` (1000): a tailer that stops readin
 socket closed by the daemon rather than an unbounded promise chain built behind it — the
 log keeps the history, a client that comes back re-tails from its cursor.
 
-**`mu init` refuses a bad agent name before it writes.** The same grammar `readConfig`
+**`liquen init` refuses a bad agent name before it writes.** The same grammar `readConfig`
 enforces on the roster (`^[a-z][a-z0-9-]{0,30}$`), checked first, so a typo fails with the
 catalog's own message and no folder appears. config.ts exports `AGENT_NAME`, and init.ts
 imports it — one grammar, one place.
@@ -1668,7 +1668,7 @@ request and sees it fail inside the bound. The Slack wire (`slackWire`: post, re
 amend over one token resolver) and the WhatsApp bridge sender (`bridgeSend`) take the
 fetch as a dep; the Slack ingest's `users.info`, `apps.connections.open` handshake and
 `url_private` downloads, both OAuth exchanges, the Slack doors' probes and the WhatsApp
-bridge's session calls go through `timedFetch`. The GitHub connector reaches mu only
+bridge's session calls go through `timedFetch`. The GitHub connector reaches liquen only
 through `src/connector.ts`, so it carries its own constant on its four default edges and
 on the `gh` spawn. The Socket Mode WebSocket is a carrier, not a request, and takes no
 bound. A timed-out send stamps `failed` without an `error_code` — it never reached the
@@ -1742,7 +1742,7 @@ space and splices the original, so only the matched spans change; a CRLF spec pa
 truncation and `describeCall`'s cuts never split a surrogate pair (`clipStart`/`clipEnd`).
 A wire filename yields an extension only when it carries one. `readConfig` treats only
 NotFound as "no file" — an unreadable file is a boot error, not an empty org; `model`,
-`maxTokens` and `provider` are type-checked per agent. `mu start`'s restart backoff is cut
+`maxTokens` and `provider` are type-checked per agent. `liquen start`'s restart backoff is cut
 short by SIGTERM (`pause`). An attach request in flight when the daemon hangs up is
 answered `{ok: false}`. The Google account door settles on the first callback whichever
 way it went and exits non-zero on a failure. `MU_LOCALE` reaches bash spawns as it reaches
@@ -1851,11 +1851,11 @@ PATH cascade, the uid, prepared once) and one SHELL per session on it (`ExecGrou
 — its own sticky cwd and job set). Main opens a session's shell on first contact and reaps
 every shell at teardown. The truncation spill lives at `{workspace}/.out/` whatever
 directory the shell stands in. A door client's `tail` carries the directory it attached
-from (`mu repl` and `mu cli` send `Deno.cwd()`); the door hands it to THAT session's shell
+from (`liquen repl` and `liquen cli` send `Deno.cwd()`); the door hands it to THAT session's shell
 (`DoorAgent.stand(session, path)`) before the tail opens, and the hang-up returns every
 shell the client placed to the workspace. `stand` tries the place first — a bash spawn
 there, as the agent's uid — so a directory the agent cannot enter refuses the attach:
-`mu repl` and `mu cli` exit with the place named and nothing is written. A cwd lost AFTER
+`liquen repl` and `liquen cli` exit with the place named and nothing is written. A cwd lost AFTER
 the placement — removed under the shell — fails the spawn once with the place named, and
 the next call starts from the workspace, so the shell never wedges on a directory `cd`
 cannot leave because bash never starts.
@@ -1879,13 +1879,13 @@ REPL paints it dim, the CLI does not count it as failure, and the model reads it
 lands while the window is being read still closes that turn. Ingest reclassification of a
 principal's "stop"/"cancel" on a chat surface stays open: the door is the only producer.
 
-### The bench runs `mu cli` (2026-09-08) — LANDED
+### The bench runs `liquen cli` (2026-09-08) — LANDED
 
 `bench/tbench`'s Harbor adapter runs the harness a resident org runs. It uploads the
-host's `deno` and this checkout's `src/`, scaffolds the org with `mu init` under
+host's `deno` and this checkout's `src/`, scaffolds the org with `liquen init` under
 `/installed-agent/org` (the container's user is the one agent; `-m` sets the catalog's
 model, `MU_EFFORT` its effort, `maxTokens` 32k so a maxed turn fits Harbor's 900s wall),
-and a trial is one `mu cli --session task --timeout 840` in the task's working directory.
+and a trial is one `liquen cli --session task --timeout 840` in the task's working directory.
 stdout, stderr and the org's `data/log` are copied beside the trial for audits. Harbor is
 0.22 (`--agent <module:Class>` replaced `--agent-import-path`); the dataset id is
 `terminal-bench/terminal-bench-2-1`.
@@ -1897,7 +1897,7 @@ per-invocation choice, so a flag, never a variable.
 
 Verified live from a directory outside the org: real key → the agent ran `pwd` in the
 attach directory, the closing on stdout, exit 0. Open: the egress proxy is the org's only
-egress (`HTTPS_PROXY` + `SSL_CERT_FILE` trusting the mu CA alone), and a task's tool that
+egress (`HTTPS_PROXY` + `SSL_CERT_FILE` trusting the liquen CA alone), and a task's tool that
 honors neither — pip, python `requests`, node without `NODE_EXTRA_CA_CERTS` — fails TLS
 verification inside the trial; the first batch measures how often that costs a task.
 
@@ -1942,7 +1942,7 @@ stream it needs now exists.
 ### The trial's record is the org's log, and the log speaks ATIF (2026-09-08) — LANDED
 
 The adapter scaffolds the org inside the trial's mounted logs directory, so the log is on
-the host from its first row and a Harbor kill loses nothing; `mu cli` runs with no
+the host from its first row and a Harbor kill loses nothing; `liquen cli` runs with no
 timeout — the task's agent timeout is the wall — and the catalog's output cap stands. The
 run waits out the raised daemon's linger so the database is checkpointed before the host
 reads it. After the run the adapter reads the log and writes `trajectory.json` beside it
@@ -1955,20 +1955,20 @@ Verified live on regex-log (terminal-bench 2.1): reward 1.0, seven steps, totals
 The leaderboard target is `terminal-bench/terminal-bench@4.0.0`: 66 tasks, an 8-hour
 agent timeout each, three needing an H100, `-k 5` minimum, `--upload --public`, then the
 maintainers attach the job to the board. Open: every agent shell is issued `HTTPS_PROXY`
-and `SSL_CERT_FILE` trusting the mu CA alone, and the proxy terminates every tunnel's
+and `SSL_CERT_FILE` trusting the liquen CA alone, and the proxy terminates every tunnel's
 TLS, so a client that verifies against its own bundle (pip, python `requests`, npm) fails
 inside a trial; the sound shape is to terminate only the hosts a grant fronts, tunnel the
-rest blind, and hand shells the system bundle plus the mu CA.
+rest blind, and hand shells the system bundle plus the liquen CA.
 
 ### The proxy terminates what a grant fronts, and tunnels the rest (2026-09-08) — LANDED
 
 The bench surfaced the cost of terminating every tunnel: a client that verifies against
-its own roots — pip, python `requests`, npm — was handed the mu leaf for every host and
+its own roots — pip, python `requests`, npm — was handed the liquen leaf for every host and
 refused it, so a task's first `pip install` failed before the model had acted. Now the
 proxy terminates only the authorities a fronted grant binds (`ProxyDeps.terminates`, main
 derives it from the vault's `extra.env` rows and their `extra.hosts`) and bridges every
 other tunnel blind to the origin, audited as the CONNECT it is. User space is handed a
-trust file the system's roots followed by the mu CA, written at boot to
+trust file the system's roots followed by the liquen CA, written at boot to
 `data/system/ca-bundle.pem`, under `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` and `PIP_CERT`
 (`NODE_EXTRA_CA_CERTS` gets the CA alone, node adding to its own roots). A grant that
 declares no hosts still binds every authority and every tunnel terminates, as before.
@@ -1993,10 +1993,10 @@ The store stays readable from the exec user's shell in a local deployment — ac
 a container is the boundary, and the shelf plus the workspace are what it mounts, not
 `data/` whole.
 
-### `mu init` scaffolds, `mu agent` declares (2026-09-08) — LANDED
+### `liquen init` scaffolds, `liquen agent` declares (2026-09-08) — LANDED
 
 Init writes the org and nothing about who works in it: the catalog with an empty roster,
-the scaffold, the machine's clock. Each agent is its own declaration — `mu agent <name>
+the scaffold, the machine's clock. Each agent is its own declaration — `liquen agent <name>
 [--name] [--email] [--phone]` (`src/agent.ts`, `declareAgent`) puts `agents.<name>` at the
 head of the roster block with every identity handle in view, the flags' values where they
 were given and null elsewhere, refusing a name the roster already holds and one the grammar
@@ -2046,7 +2046,7 @@ piece that takes it (DESIGN §4). Settled:
   `from`. The `self (you)` / `self (principal)` labels and the display-name collision
   rule go with it: a name can forge a label, never an attribute.
 
-Built: `principals` and `mind` in the catalog (`mu agent --principal … --no-mind`) and
+Built: `principals` and `mind` in the catalog (`liquen agent --principal … --no-mind`) and
 the registry (`name`, `principals`, `runs`; schema v7); `store/roster.ts` derives who
 steers and the DM aliases off the registry and the connections map, and the log serves
 both live (`principalsOf`, `aliases`); render reads `<principal name>` and the three

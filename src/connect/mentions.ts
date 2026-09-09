@@ -11,10 +11,10 @@
  * unresolved token stays literal text: the same graceful nothing a human gets typing
  * a name the autocomplete didn't take.
  *
- * Per wire: Slack's encoding is mu's job (`@Name` → `<@U…>`, `#chan` → `<#C…>`,
+ * Per wire: Slack's encoding is liquen's job (`@Name` → `<@U…>`, `#chan` → `<#C…>`,
  * specials → `<!here>`); WhatsApp's is the bridge's (`content.mentions`
  * [{address, name}] drives its `@Name` → `@digits` rewrite + ContextInfo.MentionedJID
- * on texts and captions alike) — mu only claims the tokens.
+ * on texts and captions alike) — liquen only claims the tokens.
  */
 
 import type { ReadQuery } from "../store/log.ts";

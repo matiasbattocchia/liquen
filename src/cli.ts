@@ -1,5 +1,5 @@
 /**
- * cli.ts — `mu cli`: the headless principal. One instruction in, the transcript out,
+ * cli.ts — `liquen cli`: the headless principal. One instruction in, the transcript out,
  * exit when the daemon goes quiet over it.
  *
  * An ATTACH client exactly like the REPL, minus the keyboard: it publishes ONE message
@@ -10,7 +10,7 @@
  * seen through". Whether the work SUCCEEDED is stdout's reader's call — an error row is
  * a failed command, and the fix is running it again.
  *
- *   usage: mu cli [--dir <org>] [--agent <name>] [--timeout <seconds>] <instruction…>
+ *   usage: liquen cli [--dir <org>] [--agent <name>] [--timeout <seconds>] <instruction…>
  *
  * stdout is the transcript, as the REPL shows it (text streams live; tool calls as
  * described lines; thinking stays silent). stderr is failure: the log's error rows and
@@ -36,7 +36,7 @@ for (let i = 0; i < org.args.length; i++) {
 const instruction = words.join(" ").trim();
 if (!instruction || (flags.timeout !== undefined && !(flags.timeout > 0))) {
   console.error(
-    "usage: mu cli [--dir <org>] [--agent <name>] [--session <name>] [--timeout <seconds>] <instruction…>",
+    "usage: liquen cli [--dir <org>] [--agent <name>] [--session <name>] [--timeout <seconds>] <instruction…>",
   );
   Deno.exit(2);
 }

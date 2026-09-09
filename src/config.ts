@@ -8,8 +8,8 @@
  *     with the image. The file is the project marker: `findRoot` walks up from cwd the way
  *     git finds `.git`, and everything else (`data/`, the connectors, the processors) is
  *     addressed from the root it lands on.
- *   · The file is a DECLARATION, and only the setup doors write it: `mu init` materializes
- *     it, `mu agent` declares a roster entry (`declareAgent`), `mu connect` declares the
+ *   · The file is a DECLARATION, and only the setup doors write it: `liquen init` materializes
+ *     it, `liquen agent` declares a roster entry (`declareAgent`), `liquen connect` declares the
  *     connection a grant just earned (`declareConnection`). All three are human-time acts
  *     with a human watching, and each leaves a diff for git, which is the file's only
  *     history. The RUNNING system never writes it: boot compiles it —
@@ -17,7 +17,7 @@
  *     subsections configure the connector processes, the rest funnels down the chain
  *     (main → xi → nu → mu) — and what a turn learns (grants, discovered handles,
  *     verdicts) lives in log.db tables, never here.
- *   · `mu init` materializes the whole catalog with these comments, so every knob is in
+ *   · `liquen init` materializes the whole catalog with these comments, so every knob is in
  *     view. A key left out takes the default defined HERE (the file may be sparse); an
  *     unknown key or section is a boot error — a typo must not run silently.
  *   · Placement is by audience. `system`: machinery tuning — every deployment works on the
@@ -133,7 +133,7 @@ export interface AgentDefaults {
  *  every member when the account is the org's) is not wanted — `[]` for nobody. `mind`
  *  false makes the entry a person alone: identity and handles, no session ever runs.
  *  Everything else about the agent is discovered (connect flows) or derived (the home
- *  folder). Null is "not declared", the shape `mu agent` writes for a handle it was not
+ *  folder). Null is "not declared", the shape `liquen agent` writes for a handle it was not
  *  given. */
 export interface AgentEntry extends Partial<AgentDefaults> {
   identity?: Identity;
@@ -376,7 +376,7 @@ export function orgFlag(argv: string[] = Deno.args): { dir?: string; args: strin
   return { dir, args };
 }
 
-/** The org is WHERE YOU RUN mu: walk up from `from` (default cwd) to the nearest
+/** The org is WHERE YOU RUN liquen: walk up from `from` (default cwd) to the nearest
  *  `config.jsonc` — the project marker, the way git finds `.git`. Everything is addressed
  *  from the root it names: the catalog at `<root>/config.jsonc`, the substrate at
  *  `<root>/data`. An explicit `dir` (the `--dir` flag) IS the org: it must hold the
@@ -386,7 +386,7 @@ export function findRoot({ dir, from = Deno.cwd() }: { dir?: string; from?: stri
     try {
       Deno.statSync(`${dir}/config.jsonc`);
     } catch {
-      throw new Error(`--dir ${dir} is not a mu project: no config.jsonc there`);
+      throw new Error(`--dir ${dir} is not a liquen project: no config.jsonc there`);
     }
     return Deno.realPathSync(dir);
   }
@@ -399,7 +399,7 @@ export function findRoot({ dir, from = Deno.cwd() }: { dir?: string; from?: stri
     const parent = here.replace(/\/[^/]+$/, "") || "/";
     if (parent === here) {
       throw new Error(
-        `not inside a mu project: no config.jsonc from ${from} up — \`mu init\` creates one`,
+        `not inside a liquen project: no config.jsonc from ${from} up — \`liquen init\` creates one`,
       );
     }
     here = parent;
@@ -531,14 +531,14 @@ export async function connectorConfig<T extends object>(
 
 /* ── the writers (the setup doors) ───────────────────────────────────────── */
 
-/** Render the whole catalog with its comments — what `mu init` writes, once. From then on
+/** Render the whole catalog with its comments — what `liquen init` writes, once. From then on
  *  the file is the human's and git's, edited only where a door has something to declare
  *  (`declareAgent`, `declareConnection`); boot only reads it. */
 export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string {
   const lines: string[] = [
     "// config.jsonc — the org's declaration: every harness knob (the catalog, DESIGN §9).",
-    "// Only the setup doors write it (`mu init` materializes it, `mu agent` adds a roster",
-    "// entry, `mu connect` declares the connection it just earned) — git is its history,",
+    "// Only the setup doors write it (`liquen init` materializes it, `liquen agent` adds a roster",
+    "// entry, `liquen connect` declares the connection it just earned) — git is its history,",
     "// boot compiles it into the registry. A key left out takes its default; an unknown",
     "// key is a boot error.",
     "{",
@@ -592,7 +592,7 @@ export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string
 }
 
 /** The starter every project begins from: the defaults, the machine's clock, an empty
- *  roster and no connections — `mu agent` and `mu connect` fill those in, one line each. */
+ *  roster and no connections — `liquen agent` and `liquen connect` fill those in, one line each. */
 export function starterConfig(): OrgConfig {
   const cfg = defaults();
   cfg.org.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? DEFAULT_TIMEZONE;
@@ -623,7 +623,9 @@ export async function declareAgent(
   }
   for (const p of rest.principals ?? []) {
     if (!(p in before.agents) && p !== name) {
-      throw new Error(`${path}: principal "${p}" is not in the roster — \`mu agent ${p}\` first`);
+      throw new Error(
+        `${path}: principal "${p}" is not in the roster — \`liquen agent ${p}\` first`,
+      );
     }
   }
   const entry: AgentEntry = {
@@ -635,7 +637,7 @@ export async function declareAgent(
   await declareIn(root, "agents", member);
 }
 
-/** Declare `connections.<name>` in the file — what a grant needs before `mu start` will
+/** Declare `connections.<name>` in the file — what a grant needs before `liquen start` will
  *  spawn its process. The connect doors call this the moment a grant lands: the human has
  *  already decided by connecting, and the subsection is written empty so every knob stays
  *  the connector's default until someone edits it. Returns whether it added anything. */

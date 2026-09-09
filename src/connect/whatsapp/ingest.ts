@@ -18,7 +18,7 @@
  * The entry adds a fourth route the bridge dials at the same address — `GET /m/<signed>`,
  * the outbound bytes the dispatch process minted a path for (`store/media.ts`). Inbound
  * media is PUSHED to us and outbound is PULLED from us, but both legs use this one door,
- * so the bridge is told where mu is exactly once (`OPENBSP_URL`) and mu is told nothing.
+ * so the bridge is told where liquen is exactly once (`OPENBSP_URL`) and liquen is told nothing.
  *
  * Mapping (§3, §4): `external_id = whatsapp:<wmw-id>` — the bridge's own id
  * (`wmw.<own>.<chat>.<sender>.<id>`) already encodes direction and the group participant,
@@ -32,7 +32,7 @@
  * `@broadcast` → broadcast, digits → direct); a sender resolves by point lookup of its
  * grant row on the connections map, else by the name the message carries. Names are
  * DENORMALIZED onto every row: the bridge stamps `sender_name`/`conversation_name` per
- * message (address book first — a directory mu has no table for), and the `contacts`/
+ * message (address book first — a directory liquen has no table for), and the `contacts`/
  * `groups` feeds fill in for a bridge that doesn't. Either way a rename reaches rows from
  * the next message on, never retroactively (decided 2026-08-11).
  *
@@ -248,7 +248,7 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
   };
 }
 
-/* ── mapping: bridge shapes → mu drafts ──────────────────────────────────────────── */
+/* ── mapping: bridge shapes → liquen drafts ──────────────────────────────────────────── */
 
 type Store = NonNullable<WhatsAppWebhookDeps["store"]>;
 
@@ -260,7 +260,7 @@ export function kindOf(address: string): NonNullable<Conversation["kind"]> {
   return "direct";
 }
 
-/** The bridge's file kinds are already mu's `MediaKind` vocabulary (both open-bsp's). */
+/** The bridge's file kinds are already liquen's `MediaKind` vocabulary (both open-bsp's). */
 const MEDIA = new Set<string>(["audio", "image", "video", "document", "sticker"]);
 
 function partOf(c: WAContent): Part | null {

@@ -1,11 +1,11 @@
 ---
-name: install-mu
-description: Install and configure mu — an org-level agent harness where each person (principal) gets an agent acting for them over a shared event log. Follow this when a developer asks to install, set up, or customize mu.
+name: install-liquen
+description: Install and configure liquen — an org-level agent harness where each person (principal) gets an agent acting for them over a shared event log. Follow this when a developer asks to install, set up, or customize mu.
 ---
 
-# Install mu
+# Install liquen
 
-You are a coding agent installing mu for a developer. Every step is idempotent and
+You are a coding agent installing liquen for a developer. Every step is idempotent and
 non-destructive — re-running this skill is safe. Mechanical steps are exact commands;
 judgment steps are marked **interview** — ask the developer, don't guess.
 
@@ -53,7 +53,7 @@ deployment's. Edit the live copies; boot never overwrites. Ask the developer, th
 
 Every knob lives in `config.jsonc` at the project root: the model, effort, per-agent
 `compactAt`/`keepRecent`, and the gate policy (default: only `send` is gated). The org is
-where you run mu; `--dir <path>` names it from anywhere else.
+where you run liquen; `--dir <path>` names it from anywhere else.
 
 ## 5. Hand off
 

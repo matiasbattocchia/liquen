@@ -1,6 +1,6 @@
 /**
  * run.ts — the github connection as ONE process: both halves of the wire, one restart
- * unit. `mu start` spawns this for `connections.github`; either half dying takes the
+ * unit. `liquen start` spawns this for `connections.github`; either half dying takes the
  * whole connection down and both come back together — half-alive (inbound flowing,
  * outbound silently dead) is not a representable state. SIGTERM stops both halves the
  * way main stops: no new work, drain what is in flight, exit.

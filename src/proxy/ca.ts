@@ -2,7 +2,7 @@
  * proxy/ca.ts — the egress proxy's certificate authority (DESIGN §9).
  *
  * The proxy terminates TLS on behalf of every host a tool dials, so it needs a leaf cert
- * for each host, signed by a root the tool trusts. That root is the mu CA: shipped beside
+ * for each host, signed by a root the tool trusts. That root is the liquen CA: shipped beside
  * this module, and handed to the child ONLY as `SSL_CERT_FILE` — which REPLACES the
  * system trust store (verified: gws then rejects Google's real cert as UnknownIssuer). So
  * the CA is not "one more issuer the tool trusts"; inside user space it is the ONLY one, and
@@ -58,7 +58,7 @@ export async function openCA(): Promise<CA> {
       "-days",
       "3650",
       "-subj",
-      "/CN=mu proxy CA",
+      "/CN=liquen proxy CA",
     ]);
     await Deno.chmod(caKey, 0o600);
   }
@@ -68,7 +68,7 @@ export async function openCA(): Promise<CA> {
   const mint = async (host: string): Promise<Leaf> => {
     if (!HOST.test(host)) throw new Error(`refusing to mint a leaf for ${JSON.stringify(host)}`);
     // scratch for openssl's hand-off between key, csr and cert; the leaf lives in memory
-    const tmp = await Deno.makeTempDir({ prefix: "mu-leaf-" });
+    const tmp = await Deno.makeTempDir({ prefix: "liquen-leaf-" });
     try {
       const keyPath = `${tmp}/leaf.key`;
       const csrPath = `${tmp}/leaf.csr`;

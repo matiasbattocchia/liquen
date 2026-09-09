@@ -23,7 +23,7 @@ import type { Appender, Draft, MessageEvent, Part } from "../../connector.ts";
 import { findRoot, orgFlag } from "../../connector.ts";
 
 export interface GithubWebhookDeps {
-  /** → the EventLog (the connection's only write). Bind mu's `log.publish`. */
+  /** → the EventLog (the connection's only write). Bind liquen's `log.publish`. */
   publish: Appender["publish"];
   /** HMAC secret. If set, `X-Hub-Signature-256` is REQUIRED and verified; if absent, unsigned
    *  deliveries are accepted (dev only — `gh webhook forward` without `--secret`). */
@@ -65,7 +65,7 @@ export function createGithubWebhook(deps: GithubWebhookDeps): WebhookHandler {
       return text(400, "invalid json");
     }
 
-    // 3. map → a mu `message`, stamped with `envelope.external_id` (null = a loopback or an
+    // 3. map → a liquen `message`, stamped with `envelope.external_id` (null = a loopback or an
     //    uninteresting action). Dedupe is the STORE's job: `publish` upserts on external_id,
     //    so a retried delivery, an edit, or our own dispatched comment echoing back all MERGE
     //    into the existing row — no new event, no wake (§4, §9).
@@ -80,7 +80,7 @@ export function createGithubWebhook(deps: GithubWebhookDeps): WebhookHandler {
   };
 }
 
-/* ── mapping: GitHub event → a mu message in `owner/repo#N` ────────────── */
+/* ── mapping: GitHub event → a liquen message in `owner/repo#N` ────────────── */
 
 interface MapCtx {
   connection: string;
@@ -283,7 +283,7 @@ function text(status: number, message: string): Response {
  *     --url=http://localhost:8788/        # dev: add --secret matching the app row's
  *
  * The harness (`deno task cli`) on the SAME data root turns a PR comment into a poke.
- * The secret is the app row's (`mu connect github app` → vault `github:app:<id>`); the
+ * The secret is the app row's (`liquen connect github app` → vault `github:app:<id>`); the
  * knobs are connections.github. Env: none. The store import is dynamic so importing
  * `createGithubWebhook` (e.g. from an edge function) never pulls in file I/O. */
 /** Wire the inbound half over the org's log — resident once it returns (serving).
@@ -302,7 +302,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const log = await openLog(`${dir}/log`);
   if (!secret) {
     console.error(
-      "[ingest] WARNING: no webhook secret in the vault (`mu connect github app`) — " +
+      "[ingest] WARNING: no webhook secret in the vault (`liquen connect github app`) — " +
         "accepting UNSIGNED deliveries (dev only)",
     );
   }

@@ -33,7 +33,7 @@ Nothing below needs a sixth piece. What some of them need is **new state**, whic
 
 ### Where a connector lives — and the import contract
 
-A connector is a **standalone process over the org's substrate**: it reaches mu through
+A connector is a **standalone process over the org's substrate**: it reaches liquen through
 the shared `./data` root and imports only the seam module, **`src/connector.ts`** — the log (`openLog`,
 `publish`, subscribe/`setDelivery`), the vault (`openCredentials`, the grant broker),
 `connectorConfig`, the event types, and the dispatch error contract. A deep import
@@ -60,25 +60,25 @@ A connector's subsection holds what is **that service's**: the addresses of its 
 scopes it asks for, the events it maps. A value that is merely *arbitrary and fixed* is a
 constant at the top of the file that uses it, not a knob: the whatsmeow bridge's
 `organizationId` is `"mu"` in `whatsapp/connect.ts` — a data root is one org, so nothing
-chooses it. And mu's own address is never a knob at all (below).
+chooses it. And liquen's own address is never a knob at all (below).
 
 When a connector also **prints an app definition** — slack's manifest, the prefill link
-`mu connect slack` opens — that definition is filled from the same knobs at print time
+`liquen connect slack` opens — that definition is filled from the same knobs at print time
 (`withScopes`). The seed template holds the app's shape (name, events, redirect, socket
 mode); what the app may do comes from `connections.slack`, so the consent the door asks
 Slack for and the consent the app declares are one list, not two that drift.
 
 ### Outbound media: the pull leg, signed and relative
 
-Most services take a file by **push** — Slack's `files.uploadV2`, Gmail's MIME body: mu
+Most services take a file by **push** — Slack's `files.uploadV2`, Gmail's MIME body: liquen
 reads the bytes and sends them. Some take a **link** the service fetches instead (the
 whatsmeow bridge, Twilio's `MediaUrl`, the Cloud API's `link`), and for a file in
-`data/media` that link has to point back at mu.
+`data/media` that link has to point back at liquen.
 
 It points back **relatively**. `signMediaPath` (`store/media.ts`) mints `/m/<payload>.<mac>`
 — the absolute path and an expiry, HMAC'd with a key in the vault — and the service
 resolves it against the address it already delivers to. That address is the connector's
-own ingest: the same door the service posts events at serves `/m/…`, so mu never states
+own ingest: the same door the service posts events at serves `/m/…`, so liquen never states
 its own hostname anywhere, and a containerized bridge is configured once (its
 `OPENBSP_URL`) instead of twice.
 
@@ -102,8 +102,8 @@ Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispat
   path. Its config lands under `connections.<name>` in the org catalog; its secrets in
   env/vault as ever.
 
-The front door is **`mu connect`** (`deno task connect`, `src/connect/connect.ts`): bare,
-it prints the map (status); `mu connect <name> [args...]` resolves the shipped services
+The front door is **`liquen connect`** (`deno task connect`, `src/connect/connect.ts`): bare,
+it prints the map (status); `liquen connect <name> [args...]` resolves the shipped services
 first, then `<org>/connectors/<name>/connect.ts`, and runs the door as a child process
 with the remaining args — a name with a slash is taken as a module path. `deno task start`
 runs every declared connection the same way: `src/connect/<name>/run.ts` if it ships,
@@ -167,7 +167,7 @@ than a rewrite would reach in months:
 - history sync import (chunked), group subjects → conversation names, **LID → phone
   canonicalization**
 
-Its contract is already mu-shaped:
+Its contract is already liquen-shaped:
 
 - **Inbound**: it POSTs webhook batches to an OpenBSP-side endpoint.
 - **Outbound**: `POST /dispatch` `{type, record, media_url?}` → `{external_id, status}`;
@@ -183,8 +183,8 @@ Its contract is already mu-shaped:
   on their side.
 
 **Decision: run it as a sidecar; write `connect/whatsapp/ingest.ts` to satisfy its three
-contracts.** The webhook batch → map → `publish` (the ingest half); mu's dispatch subscriber
-→ `POST /dispatch` (the dispatch half); `mu connect whatsapp` → the session endpoints (the
+contracts.** The webhook batch → map → `publish` (the ingest half); liquen's dispatch subscriber
+→ `POST /dispatch` (the dispatch half); `liquen connect whatsapp` → the session endpoints (the
 door). Ports work, not a rewrite. A Baileys/TS reimplementation trades the asset for
 cosmetic homogeneity and re-earns every edge case above.
 
@@ -218,8 +218,8 @@ Live smoke passed 2026-08-12 (paste door, alter-ego dispatch, echo merge). Remai
 - **The mind-alias at ingest** — aliasing the principal's Slack self-DM onto `mind:<agent>`
   requires knowing WHICH `im` is the self-DM. A management step, not derivable from message
   events.
-- **Connect options** — `mu connect slack bot` (xoxb → the workspace anchor) and
-  `mu connect slack socket` (xapp → `slack:socket:<app id>`) are separate doors: an
+- **Connect options** — `liquen connect slack bot` (xoxb → the workspace anchor) and
+  `liquen connect slack socket` (xapp → `slack:socket:<app id>`) are separate doors: an
   identity is workspace-scoped, a carrier is app-scoped, and the ingest opens one socket
   per vaulted app token. Still open: `--agent <name>` / `--shared` — per-agent apps for
   per-agent bots (one bot per app × workspace).

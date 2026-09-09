@@ -235,7 +235,7 @@ marked row is not news at all: it never wakes — not even into a pile, so a mut
 never comes due — never renders, never mirrors; the
 turn window's read drops it in SQL (`silenced: false`) and `search` is the door. Slack
 has no wire equivalent (mute is a private client preference the bot can't see) — a
-mu-side mute waits for the conversations table.
+liquen-side mute waits for the conversations table.
 
 `relevant` — authorship and class only, never payloads — and never visibility: the trigger
 arrives through the agent's scoped subscription, already readable (§6).
@@ -939,7 +939,7 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
   user is comes from the email on their profile (`users.info`, the `users:read.email`
   scope) scanned against the roster, never from a Slack user id — and which agent speaks
   through the bot, an account with no handle at all, is recorded at the paste
-  (`mu connect slack bot --agent`, `extra.agent`); local, native.
+  (`liquen connect slack bot --agent`, `extra.agent`); local, native.
   The agent must never treat any of its principals as a peer/customer.
 - **`send` exteriorizes the mind.** The one door from the mind to the world: `send`
   targets peer conversations only — no principal is ever a send target, on any surface,
@@ -969,7 +969,7 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
 - **WhatsApp pairing (whatsmeow, unofficial) — the connect walk-through** (2026-08-04):
   linking needs the companion device in hand — scan a QR, or type a pairing code into the
   phone. *Local*: the dev pairs (device in hand, or relaying for the principal) and
-  declares the connection the org's or owned (`mu connect whatsapp [--agent <name>]`); the
+  declares the connection the org's or owned (`liquen connect whatsapp [--agent <name>]`); the
   session keys land in the vault (`whatsapp × <number> × owner` — the blob's `session`
   field). *Docker*: credentials ride the DATA VOLUME, never the image (layers leak,
   registries cache); further pairing happens remotely through the agent itself — no
@@ -1047,10 +1047,10 @@ The 3×2 grid, each cell real and distinct:
   has **no SQL client at all** — it reaches the store only through xi's tools, and in
   Docker the files are broker-owned.
   Connecting is **interactive, dev-shaped** — `gh login` / `claude login` is the pattern
-  devs expect (Claude-Code MCP logins likewise): a `mu connect <service>` flow writes the
+  devs expect (Claude-Code MCP logins likewise): a `liquen connect <service>` flow writes the
   connection row + vault rows; the same flow is later steerable through the agent (§8
   conversational setup), since the REPL into the mind is already the operator console.
-  **The paste doors (`mu connect slack {app,bot,user}`, `connect/slack/connect.ts`)**: the dashboard's
+  **The paste doors (`liquen connect slack {app,bot,user}`, `connect/slack/connect.ts`)**: the dashboard's
   "Install to Workspace" button IS an OAuth flow with Slack hosting the redirect, so a
   dev self-serves tokens with zero public surface — the CLI prints the manifest prefill
   link (app creation and app-level tokens have no public API; the link is the automation
@@ -1409,7 +1409,7 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   (`jobs`/`fg`/`%1`) can't reach a job from a prior call. The `Job` keeps the *full* command
   (a UI/control-client shows it whole); the line clips it. This is the passive-visibility
   half; the active half — a job-exit **event** published into the log to *wake* the agent
-  on completion (Claude Code's completion callback, done the mu way: the log is the
+  on completion (Claude Code's completion callback, done the liquen way: the log is the
   continuation engine, so an exit event just pokes) — rides the §10 clock (pairs with the
   reaping registry, §9). **Deployment-specific** (the env note): composed by the
   exec plane, so on **Docker** it's the one persistent container env; on **Postgres+edge**
@@ -1751,7 +1751,7 @@ docs {
   intelligence is a doc. The **front door is agent-first**: a repo-root
   `SKILL.md` at a stable URL ("read this and follow it") — the developer's own agent is
   the installer, wrapping the deterministic steps and carrying the interview; plainly
-  readable (it is also the trust artifact), every step idempotent. `mu init` is the
+  readable (it is also the trust artifact), every step idempotent. `liquen init` is the
   deterministic core the skill invokes. The core is the package `@liquen/liquen`, named in the org's
   `deno.jsonc` (a checkout stands in through Deno's `links`), kept
   **template-ready** — seeds live as real files under `src/seed/` (flat, `<scope>-<name>.md`), copied write-if-absent
@@ -1854,7 +1854,7 @@ docs {
     invoke a procedure that runs in another process as if it were a local function; the
     transport (serialize args → send → run → return) is hidden. pi's **RPC mode** does the
     simplest possible version: **newline-delimited JSONL** over stdin/stdout — one JSON
-    object per line, requests in, events out. Worth mirroring because it fits mu exactly:
+    object per line, requests in, events out. Worth mirroring because it fits liquen exactly:
     (a) **language/runtime independence** — a web console, a Python ops script, a mobile
     app drive the harness without importing our Deno/TS core, just speaking the protocol;
     (b) **process isolation** — client and harness are separate processes (our whole
@@ -2035,7 +2035,7 @@ ephemeral like a delta: never stored, correctness never rides it. The door discl
 whole session; what to do with a gate, `<|SILENCE|>`, an error row, or an idle over an
 open approval is each interface's decision. The daemon's life derives from the same
 connections:
-`mu start`'s main runs regardless, while one an interface raised (`main.ts --ephemeral`)
+`liquen start`'s main runs regardless, while one an interface raised (`main.ts --ephemeral`)
 reaps itself after a linger with zero attachments — and "is one running?" is a
 `connect()`, never a `stat()`.
 
@@ -2242,7 +2242,7 @@ true for exec (kernel handles it), false for control (only harness/human authori
      literal file ownership (same move as docs-scopes → groups).
   3. *Egress proxy with header injection (MITM CA)* — **the one rung, for everything,
      live** (`src/proxy/`, mandatory at start): user space is issued `HTTPS_PROXY` plus a
-     trust file — the system's roots followed by the mu CA, which ships with the source
+     trust file — the system's roots followed by the liquen CA, which ships with the source
      (`src/proxy/ca.pem` + `ca.key`): nothing trusts it but the children we hand it to, so
      it is plumbing that makes a tool accept our proxy, not a credential. The file is
      handed under every name the common clients read a bundle by (`SSL_CERT_FILE`,
@@ -2313,14 +2313,14 @@ true for exec (kernel handles it), false for control (only harness/human authori
   UIDs (OpenShift-style: group-writable dirs, explicit `HOME`, `nss_wrapper`).
 - **Deno's own sandbox is for the harness, not the agent.** Deno permissions
   (`--allow-*`/`--deny-*`) bound what *Deno code* touches and **stop at the subprocess
-  boundary** — bash runs outside them. Use them to harden the **harness process** (mu runs `-A`
+  boundary** — bash runs outside them. Use them to harden the **harness process** (liquen runs `-A`
   today; `--allow-net=<apis> --deny-read=<secrets>` bounds a harness compromise) — orthogonal to
   sandboxing the agent, which is the container/UID/egress layer.
 
 ### Deployment tiers & DX (two knobs, graceful degradation)
 
 Every deployment is a point in two orthogonal knobs — **sandbox provider** (isolation) × **store
-backend** (data), the ports of this section — and the same `mu start` runs all of them; config
+backend** (data), the ports of this section — and the same `liquen start` runs all of them; config
 picks the knobs.
 
 | tier | sandbox | store | root? | Docker? |
@@ -2333,17 +2333,17 @@ picks the knobs.
 - **Isolation is a tier, not a constant.** Local dev's threat model differs — **the developer is
   the trust boundary**, acting with creds they already hold, often with untrusted channels
   unwired — so Tier 0 is **in-process, bash as you, no `uid` switch, no root, no Docker**:
-  `cd folder && mu init && mu start`. Privsep/root enter only where the threat model changes
+  `cd folder && liquen init && liquen start`. Privsep/root enter only where the threat model changes
   (multi-principal, untrusted channels, real creds), i.e. the host/container tiers where "root
   once at setup" is normal. Skipping privsep locally is a correct read, not a compromise.
 - **Parity on demand, not in the inner loop.** The dev↔prod isolation gap (HOME/env-scrub/egress/
-  uid don't manifest locally) is closed by opting in — `mu start --sandbox=container|user` — when
+  uid don't manifest locally) is closed by opting in — `liquen start --sandbox=container|user` — when
   validating, not on every run. Escape hatches for local privsep without host root: **rootless
   Podman / user namespaces**, or `setcap cap_setuid+ep` on the binary.
-- **Deploy paths** all start from the `mu init` folder (a git repo): **git push → hosting GitHub
+- **Deploy paths** all start from the `liquen init` folder (a git repo): **git push → hosting GitHub
   app** (DO/Render/Fly builds the scaffolded Dockerfile) · **image → registry → wrangler/Fly/
   Cloud Run** (wrangler nudges toward the Tier-3 edge, where there's no bash — the tool model
-  changes). `mu init` scaffolds; the knobs pick the tier; git-push or docker-push deploys.
+  changes). `liquen init` scaffolds; the knobs pick the tier; git-push or docker-push deploys.
 
 ### The two planes (broker · agent) and where things live
 
@@ -2376,7 +2376,7 @@ The Docker layout, concretely — one volume, one project, root supervising:
 
 The entrypoint materializes the roster as LINUX USERS — uid pinned by name-hash so volume
 ownership survives rebuilds and roster edits — lays the symlinks and the permission sweep,
-and execs `mu start`; bash spawns drop to the agent's own uid (exec/bash.ts), so the
+and execs `liquen start`; bash spawns drop to the agent's own uid (exec/bash.ts), so the
 kernel enforces the classification above. What the HARNESS creates inside an agent's
 folder it gives to the agent (exec/user.ts): the seeded docs and `bin/` at plane install,
 an output spill as it lands, and `door.sock` — owned by the agent, mode 0600, so the
@@ -2393,7 +2393,7 @@ principal is the **OS username**, trusted because localhost; when the roster car
 name, principal name = agent name and **no identity map is
 needed** — and when they share user/pass, user and agent are one (the vision line). The
 roster is also the org: every principal is an entry, and an entry with `mind: false` is a
-person alone — a unix user with identity and handles, no session, no process at `mu start`.
+person alone — a unix user with identity and handles, no session, no process at `liquen start`.
 **The same framework way extends to connectors**: the shipped ones live in
 `src/connect/<service>/` (role-named files: `ingest.ts` · `dispatch.ts` · `oauth.ts` ·
 `connect.ts`, each optional); an org's own live in **`connectors/<name>/`** at the
@@ -2406,14 +2406,14 @@ harness knob, its default, one file exposing them all. `config.jsonc` sits at th
 PROJECT ROOT — git-tracked, deployed with the image, and the project marker itself:
 `findRoot` walks up from cwd to the nearest one, the way git finds `.git`, and everything
 else (`data/`, the connectors, the processors) is addressed from the root it names — the
-org lives where you run mu and cwd selects it; `--dir <path>` is the one flag every entry
+org lives where you run liquen and cwd selects it; `--dir <path>` is the one flag every entry
 point accepts, for an agent that stands in a directory its org does not contain (a repo, a
-task's workdir — `mu cli` hands the door the cwd it attached from). The file is a DECLARATION,
-written only by the setup doors: `mu init` materializes the whole catalog with its
-comments and an empty roster, `mu agent <name>` adds one roster entry — `agents.<name>`
+task's workdir — `liquen cli` hands the door the cwd it attached from). The file is a DECLARATION,
+written only by the setup doors: `liquen init` materializes the whole catalog with its
+comments and an empty roster, `liquen agent <name>` adds one roster entry — `agents.<name>`
 with the identity handles its flags declared (`--name`, `--email`, `--phone`) and null
-for the rest — and `mu connect` adds the one line a grant earns — `connections.<name>`, the
-subsection that makes `mu start` spawn that connector — since the map alone never starts
+for the rest — and `liquen connect` adds the one line a grant earns — `connections.<name>`, the
+subsection that makes `liquen start` spawn that connector — since the map alone never starts
 a process. Git is its history, a human is watching for all three, and boot COMPILES it — the
 roster into registry rows and
 homes, everything else funneled to the deepest function that needs it (main → xi → nu →
@@ -2522,7 +2522,7 @@ agents over events (§6), connections over credentials, and the docs write polic
   relation is orchestration RBAC in containers and RLS in Postgres (one model, three substrates —
   as with credentials and connections).
 
-**Process supervision — `mu start` (src/start.ts).** An org runs several processes over the
+**Process supervision — `liquen start` (src/start.ts).** An org runs several processes over the
 shared log: `main` (the tail + fan-out, hosting the egress proxy) plus **one process per
 enabled connection** (§7). The supervisor is a keep-alive loop and nothing more, and the
 catalog is its manifest: `connections.<name>` declares a connection runs; the connector
@@ -2539,7 +2539,7 @@ loudly, the same law as an unknown config key.
   (cwd walks up to `config.jsonc`) and env rides through untouched (secrets only).
 - **Death is loud on stderr and nowhere else.** Exits restart with doubling backoff (1s → 60s
   cap, forgiven after a healthy minute); the supervisor never opens the log. The outer layer
-  supervises `mu start` itself: docker restart policy in the container (run with `--init` so
+  supervises `liquen start` itself: docker restart policy in the container (run with `--init` so
   reparented grandchildren are reaped), the terminal locally. SIGTERM fans out to the
   children, waits `system.stopTimeoutMs`, then SIGKILLs.
 - **Every child line arrives stamped** — `HH:MM:SS [name] …`, stdout/stderr split preserved

@@ -172,8 +172,8 @@ export async function mediaSecret(creds: Credentials): Promise<string> {
  *  `<expiry>:<path>`, HMAC'd — so verification holds no state and survives a restart
  *  (an in-memory token map does not, and a bridge retry after one would 404).
  *
- *  RELATIVE on purpose. The service already knows where mu is: mu's address is the one
- *  IT delivers to. Resolving `/m/…` against that base is the whole reason mu never has
+ *  RELATIVE on purpose. The service already knows where liquen is: liquen's address is the one
+ *  IT delivers to. Resolving `/m/…` against that base is the whole reason liquen never has
  *  to be told its own host — the inbound leg's address, reused. */
 export async function signMediaPath(
   uri: string,

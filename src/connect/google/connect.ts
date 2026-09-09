@@ -1,5 +1,5 @@
 /**
- * connect/google/connect.ts — `mu connect google`: the two dev-side Google doors (§4).
+ * connect/google/connect.ts — `liquen connect google`: the two dev-side Google doors (§4).
  *
  *   app      the door's own key: paste the OAuth client (id + secret + redirect URI)
  *            → vault `google:app:<client_id>`. Not a grant — no connection, no
@@ -54,12 +54,12 @@ export async function pickGoogleApp(
 ): Promise<CredentialRow> {
   if (clientId) {
     const row = await creds.get(`${APP_PREFIX}${clientId}`);
-    if (!row) throw new Error(`no app ${clientId} — \`mu connect google app\` first`);
+    if (!row) throw new Error(`no app ${clientId} — \`liquen connect google app\` first`);
     return row;
   }
   const apps = await creds.list(APP_PREFIX);
   if (apps.length === 0) {
-    throw new Error("no google app in the vault — `mu connect google app` first");
+    throw new Error("no google app in the vault — `liquen connect google app` first");
   }
   if (apps.length > 1) {
     const ids = apps.map((a) => a.value.client_id).join("\n  ");

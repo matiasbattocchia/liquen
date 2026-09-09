@@ -203,7 +203,7 @@ function text(status: number, message: string): Response {
  *
  *   deno task oauth:slack        # :8790 — put a SYNCHRONOUS proxy in front (cloudflared)
  *
- * Env: none — the app comes from the vault (`mu connect slack app`, `--app <client_id>`
+ * Env: none — the app comes from the vault (`liquen connect slack app`, `--app <client_id>`
  * picks among several); the knobs are connections.slack. The shareable door is
  * <public>/oauth/slack/start — the admin distributes it; auto-registration binds
  * principals as `slack:<team>:<user>` until the identities map (v0.1) refines it. */

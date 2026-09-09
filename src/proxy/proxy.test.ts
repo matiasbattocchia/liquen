@@ -195,7 +195,7 @@ Deno.test("startProxy: a real TLS tunnel terminates and the swap reaches the ori
       },
     });
     try {
-      // a client that trusts ONLY the mu CA (what SSL_CERT_FILE does for the child), dialing
+      // a client that trusts ONLY the liquen CA (what SSL_CERT_FILE does for the child), dialing
       // through the CONNECT proxy — i.e. the whole chain, minus the tool binary
       const caCert = await Deno.readTextFile(ca.caPath);
       const client = Deno.createHttpClient({
@@ -251,7 +251,7 @@ Deno.test("startProxy: a tunnel that can't be stood up answers 502 — it never 
 
 Deno.test("startProxy: an authority no grant fronts is tunneled blind — the origin's own bytes", async () => {
   const ca = await openCA();
-  // the origin: a plain listener that echoes — blind means it never sees a mu leaf
+  // the origin: a plain listener that echoes — blind means it never sees a liquen leaf
   const origin = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const echoing = (async () => {
     for await (const c of origin) {

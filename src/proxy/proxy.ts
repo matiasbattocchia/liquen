@@ -5,7 +5,7 @@
  * three env vars (issued, never inherited — bash.ts clears the pocket first):
  *
  *   HTTPS_PROXY=http://127.0.0.1:<port>   send every HTTPS request here as a CONNECT tunnel
- *   SSL_CERT_FILE=<ca.pem>                trust ONLY the mu CA (so this proxy can terminate)
+ *   SSL_CERT_FILE=<ca.pem>                trust ONLY the liquen CA (so this proxy can terminate)
  *   <extra.env>=mu-grant-…                a PLACEHOLDER — the real token never enters user
  *                                         space; the var's NAME is the credential row's own
  *                                         declaration (main.ts fronts every row that makes one)
@@ -113,7 +113,7 @@ export async function proxyRequest(host: string, req: Request, deps: ProxyDeps):
           swapped: false,
         });
         return new Response(
-          "mu proxy: no credential for this grant, or grant not valid for this host\n",
+          "liquen proxy: no credential for this grant, or grant not valid for this host\n",
           { status: 401 },
         );
       }

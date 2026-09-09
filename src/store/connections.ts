@@ -15,7 +15,7 @@
  * identity and visibility over the history the grant already ingested persist —
  * sessions are unaffected by a revocation. A re-grant upsert REVIVES it.
  *
- * A *membership* row is open-bsp's `conversations_agents`, address-keyed (mu has no
+ * A *membership* row is open-bsp's `conversations_agents`, address-keyed (liquen has no
  * conversations entity table): `(service, connection_address, conversation_address,
  * agent_id, session_id)` — the MEMBER is a session, the (agent, session) pair (§4) —
  * the membership branch of visibility (channel/DM membership), and the local team-chat
