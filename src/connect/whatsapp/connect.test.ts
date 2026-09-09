@@ -31,6 +31,7 @@ function harness(bridge: WABridgeSessions, over: Partial<WhatsAppConnectDeps> = 
   const deps: WhatsAppConnectDeps = {
     bridge,
     principal: "matias",
+    organizationId: "acme",
     store: {
       upsertConnections: (rows) => connections.push(...rows),
       upsertMemberships: (rows) => memberships.push(...rows),

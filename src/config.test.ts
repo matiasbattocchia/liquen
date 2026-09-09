@@ -235,11 +235,12 @@ Deno.test("declareConnection: the grant's own line, every other byte as it was",
     assert(after.includes("// the model an agent runs on"), "the comments survive");
     assertEquals(after.replace('\n    "slack": {}', ""), raw); // one line, nothing else
 
-    // a second service joins the same block, and declaring twice is not a second line
-    assertEquals(await declareConnection(root, "acme"), true);
+    // a second service joins the same block with what its door decided, and declaring
+    // twice is not a second line — nor a rewrite of what the operator has since edited
+    assertEquals(await declareConnection(root, "acme", { port: 1234 }), true);
     assertEquals(await declareConnection(root, "slack"), false);
-    assertEquals(await declareConnection(root, "acme"), false);
-    assertEquals((await readConfig(root)).connections, { slack: {}, acme: {} });
+    assertEquals(await declareConnection(root, "acme", { port: 5678 }), false);
+    assertEquals((await readConfig(root)).connections, { slack: {}, acme: { port: 1234 } });
   });
 });
 

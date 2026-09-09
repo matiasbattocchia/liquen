@@ -30,11 +30,6 @@ import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { declared } from "../declare.ts";
 
-/** The tenant sessions are filed under on the bridge (its open-BSP `organization_id`).
- *  Not a knob: a data root is ONE org, and the bridge is that org's sidecar — the label
- *  only has to be stable, and liquen is the org running liquen. */
-const BRIDGE_ORG = "mu";
-
 /** The bridge's pairing poll response (sessions.go `PairingState`) — verbatim. */
 export interface WAPairingState {
   session_id: string;
@@ -61,8 +56,9 @@ export interface WhatsAppConnectDeps {
   /** The member whose phone this is — the connection's owner (§4). Absent ⇒ the org's
    *  number: an agent whose declared phone it is speaks through it, steered by the roster. */
   principal?: string;
-  /** The bridge's tenant id (it stores and echoes it back on session events). */
-  organizationId?: string;
+  /** The bridge's tenant id — `connections.whatsapp.organizationId` (it stores and
+   *  echoes it back on session events). */
+  organizationId: string;
   /** Set ⇒ the pairing-code flow (typed into the phone); absent ⇒ the QR flow. */
   phoneNumber?: string;
   /** The machinery's write side (§4) — the same seam the sessions/events route uses. */
@@ -88,11 +84,10 @@ export async function connectWhatsApp(
   pollMs: number = POLL_MS,
 ): Promise<{ address: string }> {
   const now = deps.now ?? (() => new Date().toISOString());
-  const org = deps.organizationId ?? BRIDGE_ORG;
   const deadline = Date.parse(now()) + PAIRING_TTL_MS;
 
   let state = await deps.bridge.create({
-    organization_id: org,
+    organization_id: deps.organizationId,
     ...(deps.phoneNumber ? { phone_number: deps.phoneNumber } : {}),
     ...(deps.principal ? { agent_id: deps.principal } : {}),
   });
@@ -121,7 +116,7 @@ export async function connectWhatsApp(
     service: SERVICE,
     address,
     ...(deps.principal ? { agentId: deps.principal } : { credentialKey: `${SERVICE}:${address}` }),
-    extra: { state: "connected", connected_at: now(), organization_id: org },
+    extra: { state: "connected", connected_at: now(), organization_id: deps.organizationId },
   }]);
   if (deps.principal) {
     deps.store.upsertMemberships([
@@ -169,6 +164,7 @@ export async function connectWhatsApp(
 if (import.meta.main) {
   const { openLog } = await import("../../store/log.ts");
   const { userInfo } = await import("node:os");
+  const { basename } = await import("node:path");
   const qrcode = (await import("qrcode-terminal")).default;
 
   const org = orgFlag();
@@ -194,7 +190,10 @@ if (import.meta.main) {
     }
   })();
   const { whatsappConfig } = await import("./config.ts");
-  const { bridgeUrl: base } = await whatsappConfig(root);
+  const { bridgeUrl: base, organizationId } = await whatsappConfig(root);
+  // the first door names the tenant after the folder and declares it; from then on the
+  // file says, and a rename of the folder moves nothing on the bridge
+  const tenant = organizationId ?? basename(root);
   const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
   const phoneNumber = flags.get("phone") || undefined;
   if (flags.has("phone") && !phoneNumber) {
@@ -225,7 +224,7 @@ if (import.meta.main) {
   console.error(
     `Connecting WhatsApp as ${
       principal ? `principal "${principal}"` : "the org"
-    } (bridge ${base}) — ` +
+    } (bridge ${base}, tenant "${tenant}") — ` +
       `${phoneNumber ? `pairing code for ${phoneNumber}` : "QR"}.\n`,
   );
   const log = await openLog(`${dir}/log`);
@@ -233,7 +232,7 @@ if (import.meta.main) {
     const { address } = await connectWhatsApp({
       bridge,
       principal,
-      organizationId: BRIDGE_ORG,
+      organizationId: tenant,
       phoneNumber,
       store: log, // connections live on the Log (§4)
       publish: log.publish,
@@ -252,7 +251,7 @@ if (import.meta.main) {
     });
     console.error(`\n✓ paired: ${address} → ${principal ?? "the org"}`);
     console.error("  (deno task status shows the map; run:whatsapp to receive)");
-    await declared(root, "whatsapp");
+    await declared(root, "whatsapp", { organizationId: tenant });
   } finally {
     await log.close();
   }

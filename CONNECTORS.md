@@ -57,10 +57,17 @@ no proxy or main change per tool. A handle a tool base64s or signs over (Basic, 
 can't ride this path; such schemes belong broker-side.
 
 A connector's subsection holds what is **that service's**: the addresses of its wire, the
-scopes it asks for, the events it maps. A value that is merely *arbitrary and fixed* is a
-constant at the top of the file that uses it, not a knob: the whatsmeow bridge's
-`organizationId` is `"mu"` in `whatsapp/connect.ts` — a data root is one org, so nothing
-chooses it. And liquen's own address is never a knob at all (below).
+scopes it asks for, the events it maps, the tenant it files the org under. A value that is
+merely *arbitrary and fixed* is a constant at the top of the file that uses it, not a knob:
+how often the pairing door polls the bridge is `POLL_MS` in `whatsapp/connect.ts`. And
+liquen's own address is never a knob at all (below).
+
+A door may **decide** a knob's value the way `liquen init` decides the org's clock — what a
+human would otherwise type, typed once and written with the section, so the file says it
+from then on. `connections.whatsapp.organizationId` is the case: the whatsmeow bridge is
+multi-tenant, orgs sharing one sidecar each name their own, and the first
+`liquen connect whatsapp` names the tenant after the org's folder. Set it beforehand to
+choose otherwise; a declared section is the operator's and the door leaves it as found.
 
 When a connector also **prints an app definition** — slack's manifest, the prefill link
 `liquen connect slack` opens — that definition is filled from the same knobs at print time

@@ -641,10 +641,14 @@ export async function declareAgent(
  *  spawn its process. The connect doors call this the moment a grant lands: the human has
  *  already decided by connecting, and the subsection is written empty so every knob stays
  *  the connector's default until someone edits it. Returns whether it added anything. */
-export async function declareConnection(root: string, name: string): Promise<boolean> {
+export async function declareConnection(
+  root: string,
+  name: string,
+  body: Record<string, unknown> = {},
+): Promise<boolean> {
   const before = await readConfig(root); // an unparseable file fails HERE, editing nothing
   if (name in before.connections) return false;
-  await declareIn(root, "connections", `"${name}": {}`);
+  await declareIn(root, "connections", `"${name}": ${JSON.stringify(body)}`);
   return true;
 }
 

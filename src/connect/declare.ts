@@ -9,12 +9,20 @@
 
 import { declareConnection } from "../config.ts";
 
-/** Declare the service, then report what config.jsonc now holds. */
-export async function declared(root: string, name: string): Promise<void> {
-  const added = await declareConnection(root, name);
+/** Declare the service — `body` is what the door decided for it, written with the
+ *  section (a declared section is the operator's, left as found) — then report what
+ *  config.jsonc now holds. */
+export async function declared(
+  root: string,
+  name: string,
+  body: Record<string, unknown> = {},
+): Promise<void> {
+  const added = await declareConnection(root, name, body);
   console.error(
     added
-      ? `  declared "connections": { "${name}": {} } in config.jsonc — \`liquen start\` runs it`
+      ? `  declared "connections": { "${name}": ${
+        JSON.stringify(body)
+      } } in config.jsonc — \`liquen start\` runs it`
       : `  config.jsonc already declares "${name}" — \`liquen start\` runs it`,
   );
 }
