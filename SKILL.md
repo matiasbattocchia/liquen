@@ -19,7 +19,9 @@ deno task agent <username>                              # the developer's agent,
 ```
 
 The org is a folder: `config.jsonc` declares it, `data/` fills at first boot, `.env`
-carries secrets, and `deno.jsonc` names the package every task runs.
+carries secrets, and `deno.jsonc` names the package every task runs. `deno install -g -A
+-n liquen jsr:@liquen/liquen/liquen` puts `liquen` on the PATH: `liquen <task>` is
+`deno task <task>` from anywhere inside the org, and every message below names it that way.
 
 ## 2. Credentials
 

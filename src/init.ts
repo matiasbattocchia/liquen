@@ -45,7 +45,7 @@ export async function init(path: string): Promise<void> {
 if (import.meta.main) {
   const [path, ...rest] = Deno.args;
   if (!path || rest.length > 0) {
-    console.error("usage: liquen init <path>");
+    console.error("usage: deno run -A jsr:@liquen/liquen/init <path>");
     Deno.exit(1);
   }
   try {
@@ -55,6 +55,8 @@ if (import.meta.main) {
     Deno.exit(1);
   }
   console.log(
-    `${path}: a liquen org. \`liquen agent <name>\` adds an agent; \`liquen start\` runs it.`,
+    `${path}: a liquen org. \`liquen agent <name>\` adds an agent; \`liquen start\` runs it.\n` +
+      "(`liquen` is the org's `deno task` from anywhere inside it: " +
+      "`deno install -g -A -n liquen jsr:@liquen/liquen/liquen` puts it on the PATH.)",
   );
 }

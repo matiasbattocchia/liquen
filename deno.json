@@ -1,6 +1,6 @@
 {
   "name": "@liquen/liquen",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "license": "Unlicense",
   "exports": {
     ".": "./src/mod.ts",
@@ -9,6 +9,7 @@
     "./cli": "./src/cli.ts",
     "./repl": "./src/repl.ts",
     "./init": "./src/init.ts",
+    "./liquen": "./src/liquen.ts",
     "./agent": "./src/agent.ts",
     "./connect": "./src/connect/connect.ts",
     "./status": "./src/connect/status.ts",

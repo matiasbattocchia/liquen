@@ -399,7 +399,8 @@ export function findRoot({ dir, from = Deno.cwd() }: { dir?: string; from?: stri
     const parent = here.replace(/\/[^/]+$/, "") || "/";
     if (parent === here) {
       throw new Error(
-        `not inside a liquen project: no config.jsonc from ${from} up — \`liquen init\` creates one`,
+        `not inside a liquen org: no config.jsonc from ${from} up — ` +
+          "`deno run -A jsr:@liquen/liquen/init <path>` makes one",
       );
     }
     here = parent;

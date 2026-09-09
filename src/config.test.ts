@@ -314,7 +314,7 @@ Deno.test("findRoot: the nearest config.jsonc up from cwd names the org", async 
     await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
     await Deno.mkdir(`${root}/data/agents/ana`, { recursive: true });
     assertEquals(findRoot({ from: `${root}/data/agents/ana` }), await Deno.realPath(root));
-    assertThrows(() => findRoot({ from: "/usr/lib" }), Error, "not inside a liquen project");
+    assertThrows(() => findRoot({ from: "/usr/lib" }), Error, "not inside a liquen org");
   });
 });
 

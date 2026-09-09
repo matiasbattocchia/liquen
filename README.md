@@ -26,6 +26,14 @@ deno task repl
 In the REPL: type to your agent · `/y [note]` / `/n [reason]` answer approval cards ·
 `/quit` exits.
 
+`liquen <task>` is `deno task <task>` said from anywhere inside the org — `liquen start`,
+`liquen agent ana`, `liquen --dir ~/myorg status` from outside it. The command holds no
+code of its own, so the package that runs is always the one the org's `deno.jsonc` pins:
+
+```sh
+deno install -g -A -n liquen jsr:@liquen/liquen/liquen
+```
+
 First run seeds `./data/` from the package's `src/seed/` templates: the log, the agent's
 workspace, and its docs (identity, org, memories — edit them, boot never overwrites).
 `data/` is living state and stays out of git; `src/seed/` is the org definition at birth.
