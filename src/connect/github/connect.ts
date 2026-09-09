@@ -425,139 +425,144 @@ async function defaultWhoami(token: string): Promise<{ login?: string; message?:
  * is no app to run it with (or when `--token` says so outright). Piped stdin is the paste
  * too: a device flow wants a human at a browser, and a secret manager isn't one. */
 if (import.meta.main) {
-  const { openLog, openCredentials } = await import("../../connector.ts");
-  const { userInfo } = await import("node:os");
+  try {
+    const { openLog, openCredentials } = await import("../../connector.ts");
+    const { userInfo } = await import("node:os");
 
-  const org = orgFlag();
-  const root = findRoot(org);
-  const dir = `${root}/data`;
-  const flags = new Set(org.args.filter((a) => a.startsWith("--")));
-  const [first, ...rest] = org.args.filter((a) => !a.startsWith("--"));
-  const verb = first === "app" || first === "bot" || first === "user" ? first : "user";
+    const org = orgFlag();
+    const root = findRoot(org);
+    const dir = `${root}/data`;
+    const flags = new Set(org.args.filter((a) => a.startsWith("--")));
+    const [first, ...rest] = org.args.filter((a) => !a.startsWith("--"));
+    const verb = first === "app" || first === "bot" || first === "user" ? first : "user";
 
-  /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
-  const lines = Deno.stdin.isTerminal()
-    ? null
-    : (await new Response(Deno.stdin.readable).text()).split("\n").map((l) => l.trim());
-  const ask = (label: string): string | undefined =>
-    (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
+    /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
+    const lines = Deno.stdin.isTerminal()
+      ? null
+      : (await new Response(Deno.stdin.readable).text()).split("\n").map((l) => l.trim());
+    const ask = (label: string): string | undefined =>
+      (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
 
-  if (verb === "app") {
-    console.error("Register the app (once): https://github.com/settings/apps/new");
-    console.error(
-      "  — permissions: Issues + Pull requests (read & write); subscribe to their events",
-    );
-    console.error("  — set a webhook secret; generate a private key (downloads the .pem)");
-    console.error(
-      "  — tick Enable Device Flow, and LEAVE ON expire user authorization tokens\n" +
-        "    (that pair is what `liquen connect github user` signs a person in with)\n",
-    );
-    const appId = ask("App ID (the number on the About page):");
-    const pemPath = ask("Private key file (path to the .pem):");
-    if (!appId || !pemPath) {
-      console.error("nothing pasted — nothing written");
-      Deno.exit(2);
-    }
-    const privateKey = await Deno.readTextFile(pemPath);
-    const webhookSecret = ask("Webhook secret (verifies ingest; empty to skip):");
-    const clientId = ask("Client ID (the device flow signs people in with it):");
-    const clientSecret = clientId ? ask("Client secret:") : undefined;
-    const creds = await openCredentials(dir);
-    try {
-      const key = await connectGithubApp(
-        { appId, privateKey, webhookSecret, clientId, clientSecret },
-        creds,
-      );
+    if (verb === "app") {
+      console.error("Register the app (once): https://github.com/settings/apps/new");
       console.error(
-        `✓ app stored: ${key} — next: \`liquen connect github bot\` binds the installation`,
+        "  — permissions: Issues + Pull requests (read & write); subscribe to their events",
       );
-    } finally {
-      await creds.close();
+      console.error("  — set a webhook secret; generate a private key (downloads the .pem)");
+      console.error(
+        "  — tick Enable Device Flow, and LEAVE ON expire user authorization tokens\n" +
+          "    (that pair is what `liquen connect github user` signs a person in with)\n",
+      );
+      const appId = ask("App ID (the number on the About page):");
+      const pemPath = ask("Private key file (path to the .pem):");
+      if (!appId || !pemPath) {
+        console.error("nothing pasted — nothing written");
+        Deno.exit(2);
+      }
+      const privateKey = await Deno.readTextFile(pemPath);
+      const webhookSecret = ask("Webhook secret (verifies ingest; empty to skip):");
+      const clientId = ask("Client ID (the device flow signs people in with it):");
+      const clientSecret = clientId ? ask("Client secret:") : undefined;
+      const creds = await openCredentials(dir);
+      try {
+        const key = await connectGithubApp(
+          { appId, privateKey, webhookSecret, clientId, clientSecret },
+          creds,
+        );
+        console.error(
+          `✓ app stored: ${key} — next: \`liquen connect github bot\` binds the installation`,
+        );
+      } finally {
+        await creds.close();
+      }
+      Deno.exit(0);
     }
-    Deno.exit(0);
-  }
 
-  if (verb === "bot") {
+    if (verb === "bot") {
+      const log = await openLog(`${dir}/log`);
+      const creds = await openCredentials(dir);
+      try {
+        const { appId, installationId, account } = await connectGithubBot({
+          creds,
+          store: log,
+          publish: log.publish,
+        }, rest[0]);
+        console.error(
+          `\n✓ connected: app ${appId} on ${
+            account ?? "?"
+          } (installation ${installationId}) → the org`,
+        );
+        console.error("  (deno task status shows the map)");
+        await declared(root, "github");
+      } finally {
+        await creds.close();
+        await log.close();
+      }
+      Deno.exit(0);
+    }
+
+    const principal = (first === "user" ? rest[0] : first) ?? (() => {
+      try {
+        return userInfo().username;
+      } catch {
+        return "principal";
+      }
+    })();
+
+    console.error(`Connecting GitHub as principal "${principal}".\n`);
+
     const log = await openLog(`${dir}/log`);
     const creds = await openCredentials(dir);
+
+    // the device flow is the route when there is an app to run it with and a human at the
+    // terminal to type the code; `--token` and piped stdin both mean the paste instead
+    const vaulted = flags.has("--token") || lines
+      ? undefined
+      : await theApp(creds).catch(() => undefined);
+    const app = vaulted?.app.value.client_id ? vaulted : undefined;
+
+    const grant: UserGrant | undefined = app
+      ? await githubDeviceFlow({
+        clientId: app.app.value.client_id,
+        show: (code) => {
+          console.error(`  Open ${code.verification_uri} and enter:  ${code.user_code}\n`);
+          console.error("  (waiting — this window finishes on its own)");
+        },
+      }).then((tok) => ({ ...tok, appId: app.appId })).catch((e: Error) => {
+        console.error(`\n${e.message}`);
+        return undefined;
+      })
+      : (() => {
+        if (!flags.has("--token")) {
+          console.error("(no app with a client id in the vault — pasting a token instead)\n");
+        }
+        console.error("Create a fine-grained token (repo: Issues + Pull requests, read & write):");
+        console.error("  https://github.com/settings/personal-access-tokens/new\n");
+        return ask("Paste the token (github_pat_… / ghp_…):");
+      })();
+    if (!grant) {
+      await creds.close();
+      await log.close();
+      console.error("nothing to connect — nothing written");
+      Deno.exit(2);
+    }
+
     try {
-      const { appId, installationId, account } = await connectGithubBot({
+      const { login } = await connectGithubUser(grant, {
+        principal,
         creds,
-        store: log,
+        store: log, // connections live on the Log (§4)
         publish: log.publish,
-      }, rest[0]);
-      console.error(
-        `\n✓ connected: app ${appId} on ${
-          account ?? "?"
-        } (installation ${installationId}) → the org`,
-      );
+      });
+      console.error(`\n✓ connected: github user ${login} → ${principal}`);
       console.error("  (deno task status shows the map)");
       await declared(root, "github");
     } finally {
       await creds.close();
       await log.close();
     }
-    Deno.exit(0);
-  }
-
-  const principal = (first === "user" ? rest[0] : first) ?? (() => {
-    try {
-      return userInfo().username;
-    } catch {
-      return "principal";
-    }
-  })();
-
-  console.error(`Connecting GitHub as principal "${principal}".\n`);
-
-  const log = await openLog(`${dir}/log`);
-  const creds = await openCredentials(dir);
-
-  // the device flow is the route when there is an app to run it with and a human at the
-  // terminal to type the code; `--token` and piped stdin both mean the paste instead
-  const vaulted = flags.has("--token") || lines
-    ? undefined
-    : await theApp(creds).catch(() => undefined);
-  const app = vaulted?.app.value.client_id ? vaulted : undefined;
-
-  const grant: UserGrant | undefined = app
-    ? await githubDeviceFlow({
-      clientId: app.app.value.client_id,
-      show: (code) => {
-        console.error(`  Open ${code.verification_uri} and enter:  ${code.user_code}\n`);
-        console.error("  (waiting — this window finishes on its own)");
-      },
-    }).then((tok) => ({ ...tok, appId: app.appId })).catch((e: Error) => {
-      console.error(`\n${e.message}`);
-      return undefined;
-    })
-    : (() => {
-      if (!flags.has("--token")) {
-        console.error("(no app with a client id in the vault — pasting a token instead)\n");
-      }
-      console.error("Create a fine-grained token (repo: Issues + Pull requests, read & write):");
-      console.error("  https://github.com/settings/personal-access-tokens/new\n");
-      return ask("Paste the token (github_pat_… / ghp_…):");
-    })();
-  if (!grant) {
-    await creds.close();
-    await log.close();
-    console.error("nothing to connect — nothing written");
-    Deno.exit(2);
-  }
-
-  try {
-    const { login } = await connectGithubUser(grant, {
-      principal,
-      creds,
-      store: log, // connections live on the Log (§4)
-      publish: log.publish,
-    });
-    console.error(`\n✓ connected: github user ${login} → ${principal}`);
-    console.error("  (deno task status shows the map)");
-    await declared(root, "github");
-  } finally {
-    await creds.close();
-    await log.close();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    Deno.exit(1);
   }
 }

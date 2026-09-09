@@ -93,116 +93,121 @@ export function oneShot(
 }
 
 if (import.meta.main) {
-  const { openCredentials } = await import("../../store/credentials.ts");
-  const org = orgFlag();
-  const root = findRoot(org);
-  const dir = `${root}/data`;
-  const [verb, ...rest] = org.args;
-
-  const flags = new Map<string, string>();
-  const positional: string[] = [];
-  for (let i = 0; i < rest.length; i++) {
-    if (rest[i] === "--org") flags.set("org", "1");
-    else if (rest[i].startsWith("--")) flags.set(rest[i].slice(2), rest[++i] ?? "");
-    else positional.push(rest[i]);
-  }
-
-  const creds = await openCredentials(dir);
   try {
-    if (verb === "app") {
-      const ask = (label: string): string => {
-        const v = prompt(label)?.trim();
-        if (!v) {
-          console.error("nothing pasted — nothing written");
-          Deno.exit(2);
-        }
-        return v;
-      };
-      const clientId = ask("Client ID:");
-      const clientSecret = ask("Client secret:");
-      const redirectUri = prompt("Hosted redirect URI (empty to skip):")?.trim() || undefined;
-      const key = await connectGoogleApp({ clientId, clientSecret, redirectUri }, creds);
-      console.error(
-        `✓ app stored: ${key}` + (redirectUri ? ` (hosted callback: ${redirectUri})` : ""),
-      );
-    } else if (verb === "account") {
-      const { createGoogleOAuth } = await import("./oauth.ts");
-      const { openLog } = await import("../../store/log.ts");
-      const { userInfo } = await import("node:os");
-      const org = flags.has("org");
-      const agent = org ? undefined : positional[0] ?? (() => {
-        try {
-          return userInfo().username;
-        } catch {
-          return "principal";
-        }
-      })();
-      const app = await pickGoogleApp(creds, flags.get("app")).catch((e: Error) => {
-        console.error(e.message);
-        Deno.exit(2);
-      });
-      const { googleConfig } = await import("./config.ts");
-      const { oauthPort: port, scopes } = await googleConfig(root);
-      const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? scopes;
-      const callback = `http://localhost:${port}/oauth/google/callback`;
-      const log = await openLog(`${dir}/log`);
-      let shortfall: string[] = [];
-      const { handler, outcome } = oneShot(createGoogleOAuth({
-        config: {
-          clientId: app.value.client_id,
-          clientSecret: app.value.client_secret,
-          redirectUri: callback,
-          scopes: asked,
-        },
-        creds,
-        publish: log.publish,
-        store: log,
-        onGrant: (g) => (shortfall = g.missing),
-      }));
-      const server = Deno.serve({ port, onListen: () => {} }, handler);
-      const start = new URL(`http://localhost:${port}/oauth/google/start`);
-      if (agent) start.searchParams.set("agent", agent);
-      const hosted = app.extra?.redirect_uri as string | undefined;
-      console.error(
-        `Connecting a Google account${agent ? ` for "${agent}"` : " (org — ownerless)"} ` +
-          `via app ${app.value.client_id}.\nAsking for:\n  ${asked.join("\n  ")}\n` +
-          `Open and approve:\n  ${start.href}\n` +
-          `This door waits on localhost, so ${callback} must be registered on the OAuth ` +
-          `client — Google rejects the request with redirect_uri_mismatch otherwise.` +
-          (hosted
-            ? `\n(the app's hosted callback ${hosted} is the served door's, not this one's)`
-            : ""),
-      );
-      try { // best effort — the link above is the real door
-        new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {
-          args: [start.href],
-          stdout: "null",
-          stderr: "null",
-        }).spawn().unref();
-      } catch { /* headless is fine */ }
-      const res = await outcome;
-      await server.shutdown();
-      await log.close();
-      if (res.status !== 200) {
-        console.error(`✗ not connected: ${(await res.text()).trim()}`);
-        Deno.exit(1);
-      }
-      console.error(
-        shortfall.length
-          ? `\n⚠ connected, WITHOUT:\n  ${shortfall.join("\n  ")}\n` +
-            `The grant cannot do what those scopes carry — the API answers 403. Tick them ` +
-            `on the consent screen (or add them under Data access) and run this again; ` +
-            `consent is incremental, so it merges into this grant.`
-          : "\n✓ connected (deno task status shows the map)",
-      );
-      await declared(root, "google");
-    } else {
-      console.error(
-        'usage: connect:google app | account [principal] [--org] [--app <client_id>] [--scopes "…"]',
-      );
-      Deno.exit(2);
+    const { openCredentials } = await import("../../store/credentials.ts");
+    const org = orgFlag();
+    const root = findRoot(org);
+    const dir = `${root}/data`;
+    const [verb, ...rest] = org.args;
+
+    const flags = new Map<string, string>();
+    const positional: string[] = [];
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--org") flags.set("org", "1");
+      else if (rest[i].startsWith("--")) flags.set(rest[i].slice(2), rest[++i] ?? "");
+      else positional.push(rest[i]);
     }
-  } finally {
-    await creds.close();
+
+    const creds = await openCredentials(dir);
+    try {
+      if (verb === "app") {
+        const ask = (label: string): string => {
+          const v = prompt(label)?.trim();
+          if (!v) {
+            console.error("nothing pasted — nothing written");
+            Deno.exit(2);
+          }
+          return v;
+        };
+        const clientId = ask("Client ID:");
+        const clientSecret = ask("Client secret:");
+        const redirectUri = prompt("Hosted redirect URI (empty to skip):")?.trim() || undefined;
+        const key = await connectGoogleApp({ clientId, clientSecret, redirectUri }, creds);
+        console.error(
+          `✓ app stored: ${key}` + (redirectUri ? ` (hosted callback: ${redirectUri})` : ""),
+        );
+      } else if (verb === "account") {
+        const { createGoogleOAuth } = await import("./oauth.ts");
+        const { openLog } = await import("../../store/log.ts");
+        const { userInfo } = await import("node:os");
+        const org = flags.has("org");
+        const agent = org ? undefined : positional[0] ?? (() => {
+          try {
+            return userInfo().username;
+          } catch {
+            return "principal";
+          }
+        })();
+        const app = await pickGoogleApp(creds, flags.get("app")).catch((e: Error) => {
+          console.error(e.message);
+          Deno.exit(2);
+        });
+        const { googleConfig } = await import("./config.ts");
+        const { oauthPort: port, scopes } = await googleConfig(root);
+        const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? scopes;
+        const callback = `http://localhost:${port}/oauth/google/callback`;
+        const log = await openLog(`${dir}/log`);
+        let shortfall: string[] = [];
+        const { handler, outcome } = oneShot(createGoogleOAuth({
+          config: {
+            clientId: app.value.client_id,
+            clientSecret: app.value.client_secret,
+            redirectUri: callback,
+            scopes: asked,
+          },
+          creds,
+          publish: log.publish,
+          store: log,
+          onGrant: (g) => (shortfall = g.missing),
+        }));
+        const server = Deno.serve({ port, onListen: () => {} }, handler);
+        const start = new URL(`http://localhost:${port}/oauth/google/start`);
+        if (agent) start.searchParams.set("agent", agent);
+        const hosted = app.extra?.redirect_uri as string | undefined;
+        console.error(
+          `Connecting a Google account${agent ? ` for "${agent}"` : " (org — ownerless)"} ` +
+            `via app ${app.value.client_id}.\nAsking for:\n  ${asked.join("\n  ")}\n` +
+            `Open and approve:\n  ${start.href}\n` +
+            `This door waits on localhost, so ${callback} must be registered on the OAuth ` +
+            `client — Google rejects the request with redirect_uri_mismatch otherwise.` +
+            (hosted
+              ? `\n(the app's hosted callback ${hosted} is the served door's, not this one's)`
+              : ""),
+        );
+        try { // best effort — the link above is the real door
+          new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {
+            args: [start.href],
+            stdout: "null",
+            stderr: "null",
+          }).spawn().unref();
+        } catch { /* headless is fine */ }
+        const res = await outcome;
+        await server.shutdown();
+        await log.close();
+        if (res.status !== 200) {
+          console.error(`✗ not connected: ${(await res.text()).trim()}`);
+          Deno.exit(1);
+        }
+        console.error(
+          shortfall.length
+            ? `\n⚠ connected, WITHOUT:\n  ${shortfall.join("\n  ")}\n` +
+              `The grant cannot do what those scopes carry — the API answers 403. Tick them ` +
+              `on the consent screen (or add them under Data access) and run this again; ` +
+              `consent is incremental, so it merges into this grant.`
+            : "\n✓ connected (deno task status shows the map)",
+        );
+        await declared(root, "google");
+      } else {
+        console.error(
+          'usage: connect:google app | account [principal] [--org] [--app <client_id>] [--scopes "…"]',
+        );
+        Deno.exit(2);
+      }
+    } finally {
+      await creds.close();
+    }
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    Deno.exit(1);
   }
 }

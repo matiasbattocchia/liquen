@@ -14,55 +14,60 @@ import { openLog } from "../store/log.ts";
 import { findRoot, orgFlag } from "../config.ts";
 
 if (import.meta.main) {
-  const root = findRoot(orgFlag());
-  const dir = `${root}/data`;
-  const log = await openLog(`${dir}/log`);
-  const db = new DatabaseSync(`${dir}/log/log.db`);
-  const rows = (sql: string) => db.prepare(sql).all() as Record<string, unknown>[];
-
-  console.log("agents (the registry — folders + config.jsonc declare, table mirrors):");
-  for (const a of log.agents()) {
-    const opts = (["provider", "model", "effort", "email", "phone"] as const)
-      .filter((k) => a[k])
-      .map((k) => `${k}=${a[k]}`)
-      .join("  ");
-    console.log(`  ${a.agentId}  mind=${a.mind}${opts ? "  " + opts : ""}`);
-  }
-
-  console.log("\nconnections (owned=private · org-credentialed=shared · stub=gate-only, §6):");
-  for (const c of rows("SELECT * FROM connections ORDER BY service, address")) {
-    const owner = c.agent_id ? `owner=${c.agent_id}` : c.credential_key ? "shared" : "stub";
-    const cred = c.credential_key ? `  cred=${c.credential_key}` : "";
-    const extra = c.extra ? `  extra=${c.extra}` : "";
-    const dead = c.deleted_at ? `  DELETED ${c.deleted_at}` : "";
-    console.log(`  ${c.service}:${c.address}  ${owner}${cred}${extra}${dead}`);
-  }
-
-  console.log("\nmemberships (who is enrolled where):");
-  for (
-    const m of rows(
-      "SELECT * FROM memberships ORDER BY service, connection_address, conversation_address",
-    )
-  ) {
-    console.log(
-      `  ${m.service}:${m.connection_address} ${m.conversation_address}  ∋ ${m.agent_id}`,
-    );
-  }
-
-  // the vault shares log.db (§4) — list keys and value FIELD NAMES only, never secrets
   try {
-    console.log("\nvault (keys and value field names only — secrets never print):");
-    for (
-      const t of rows("SELECT key, value, agent_id, updated_at FROM credentials ORDER BY key")
-    ) {
-      const fields = Object.keys(JSON.parse(String(t.value))).join(",");
-      const owner = t.agent_id ? `owner=${t.agent_id}` : "org";
-      console.log(`  ${t.key}  ${owner}  fields=${fields}  (${t.updated_at})`);
-    }
-  } catch {
-    console.log("\nvault: (none)");
-  }
+    const root = findRoot(orgFlag());
+    const dir = `${root}/data`;
+    const log = await openLog(`${dir}/log`);
+    const db = new DatabaseSync(`${dir}/log/log.db`);
+    const rows = (sql: string) => db.prepare(sql).all() as Record<string, unknown>[];
 
-  db.close();
-  await log.close();
+    console.log("agents (the registry — folders + config.jsonc declare, table mirrors):");
+    for (const a of log.agents()) {
+      const opts = (["provider", "model", "effort", "email", "phone"] as const)
+        .filter((k) => a[k])
+        .map((k) => `${k}=${a[k]}`)
+        .join("  ");
+      console.log(`  ${a.agentId}  mind=${a.mind}${opts ? "  " + opts : ""}`);
+    }
+
+    console.log("\nconnections (owned=private · org-credentialed=shared · stub=gate-only, §6):");
+    for (const c of rows("SELECT * FROM connections ORDER BY service, address")) {
+      const owner = c.agent_id ? `owner=${c.agent_id}` : c.credential_key ? "shared" : "stub";
+      const cred = c.credential_key ? `  cred=${c.credential_key}` : "";
+      const extra = c.extra ? `  extra=${c.extra}` : "";
+      const dead = c.deleted_at ? `  DELETED ${c.deleted_at}` : "";
+      console.log(`  ${c.service}:${c.address}  ${owner}${cred}${extra}${dead}`);
+    }
+
+    console.log("\nmemberships (who is enrolled where):");
+    for (
+      const m of rows(
+        "SELECT * FROM memberships ORDER BY service, connection_address, conversation_address",
+      )
+    ) {
+      console.log(
+        `  ${m.service}:${m.connection_address} ${m.conversation_address}  ∋ ${m.agent_id}`,
+      );
+    }
+
+    // the vault shares log.db (§4) — list keys and value FIELD NAMES only, never secrets
+    try {
+      console.log("\nvault (keys and value field names only — secrets never print):");
+      for (
+        const t of rows("SELECT key, value, agent_id, updated_at FROM credentials ORDER BY key")
+      ) {
+        const fields = Object.keys(JSON.parse(String(t.value))).join(",");
+        const owner = t.agent_id ? `owner=${t.agent_id}` : "org";
+        console.log(`  ${t.key}  ${owner}  fields=${fields}  (${t.updated_at})`);
+      }
+    } catch {
+      console.log("\nvault: (none)");
+    }
+
+    db.close();
+    await log.close();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    Deno.exit(1);
+  }
 }

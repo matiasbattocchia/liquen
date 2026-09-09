@@ -475,155 +475,214 @@ async function defaultAuthTest(token: string): Promise<AuthTest> {
  *
  * A bare invocation (or a bare principal name) is the user door — the common case. */
 if (import.meta.main) {
-  const { openLog } = await import("../../store/log.ts");
-  const { openCredentials } = await import("../../store/credentials.ts");
-  const { userInfo } = await import("node:os");
-  const { slackConfig } = await import("./config.ts");
+  try {
+    const { openLog } = await import("../../store/log.ts");
+    const { openCredentials } = await import("../../store/credentials.ts");
+    const { userInfo } = await import("node:os");
+    const { slackConfig } = await import("./config.ts");
 
-  const org = orgFlag();
-  const root = findRoot(org);
-  const dir = `${root}/data`;
-  const [first, ...rest] = org.args;
-  const verb = first === "app" || first === "bot" || first === "socket" || first === "user"
-    ? first
-    : "user";
+    const org = orgFlag();
+    const root = findRoot(org);
+    const dir = `${root}/data`;
+    const [first, ...rest] = org.args;
+    const verb = first === "app" || first === "bot" || first === "socket" || first === "user"
+      ? first
+      : "user";
 
-  /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
-  const lines = Deno.stdin.isTerminal()
-    ? null
-    : (await new Response(Deno.stdin.readable).text()).split("\n").map((l) => l.trim());
-  const ask = (label: string): string | undefined =>
-    (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
+    /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
+    const lines = Deno.stdin.isTerminal()
+      ? null
+      : (await new Response(Deno.stdin.readable).text()).split("\n").map((l) => l.trim());
+    const ask = (label: string): string | undefined =>
+      (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
 
-  /** What the org still owes after this door — read off the vault, so finishing one door
-   *  is where you learn what the next one is. */
-  const owed = async (creds: { list: (p: string) => Promise<CredentialRow[]> }) => {
-    const next = slackNext(slackHave(await creds.list("slack:")));
-    if (next.length) console.error(`\nstill to do:\n  ${next.join("\n  ")}`);
-  };
+    /** What the org still owes after this door — read off the vault, so finishing one door
+     *  is where you learn what the next one is. */
+    const owed = async (creds: { list: (p: string) => Promise<CredentialRow[]> }) => {
+      const next = slackNext(slackHave(await creds.list("slack:")));
+      if (next.length) console.error(`\nstill to do:\n  ${next.join("\n  ")}`);
+    };
 
-  /** The grant landed and is stored; what it cannot do is the part worth saying out loud,
-   *  because Slack only mentions it again at the call that fails. */
-  const report = (missing: string[], remedy: string): void => {
-    if (missing.length === 0) return;
-    console.error(
-      `⚠ this token does NOT carry:\n  ${missing.join("\n  ")}\n` +
-        `  Calls needing them answer missing_scope. ${remedy}`,
-    );
-  };
-
-  if (verb === "app") {
-    const creds = await openCredentials(dir);
-    try {
-      // the app itself comes FIRST and comes from the manifest: Slack builds it in two
-      // clicks from this link, and everything else — the carrier, the bot, a member's
-      // leg — is a token that app issues. The OAuth client below is the hosted door's
-      // alone, so it is optional here.
-      const { botScopes, userScopes } = await slackConfig(root);
-      const url = manifestUrl(withScopes(
-        JSON.parse(
-          await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
-        ),
-        { bot: botScopes, user: userScopes },
-      ));
-      console.error(`Create the app (Slack builds it from the manifest):\n  ${url}\n`);
-      console.error("Then: Install to Workspace (xoxb) · Basic Information → App-Level");
-      console.error("Tokens (xapp). `liquen connect slack socket` and `bot` take those.\n");
-      try { // best effort — the link above is the real door
-        new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {
-          args: [url],
-          stdout: "null",
-          stderr: "null",
-        }).spawn().unref();
-      } catch { /* headless is fine */ }
-
-      const clientId = ask("Client ID (only the hosted oauth door needs it; empty to skip):");
-      const clientSecret = clientId ? ask("Client secret:") : undefined;
-      if (!clientId || !clientSecret) {
-        console.error(clientId ? "no secret pasted — nothing written" : "\nno client stored");
-        await owed(creds);
-        Deno.exit(clientId ? 2 : 0);
-      }
-      const signingSecret = ask("Signing secret (verifies HTTP ingest; empty to skip):");
-      const redirectUri = ask("Hosted redirect URI (empty to skip):");
-      const key = await connectSlackApp(
-        { clientId, clientSecret, signingSecret, redirectUri },
-        creds,
-      );
+    /** The grant landed and is stored; what it cannot do is the part worth saying out loud,
+     *  because Slack only mentions it again at the call that fails. */
+    const report = (missing: string[], remedy: string): void => {
+      if (missing.length === 0) return;
       console.error(
-        `✓ app stored: ${key}` + (redirectUri ? ` (hosted callback: ${redirectUri})` : ""),
+        `⚠ this token does NOT carry:\n  ${missing.join("\n  ")}\n` +
+          `  Calls needing them answer missing_scope. ${remedy}`,
       );
-      await owed(creds);
-    } finally {
-      await creds.close();
-    }
-    Deno.exit(0);
-  }
+    };
 
-  if (verb === "socket") {
-    console.error("In the app: Basic Information → App-Level Tokens → Generate Token and");
-    console.error("Scopes, with the `connections:write` scope. Slack has no API for this.\n");
-    const appToken = ask("Paste the app-level token (xapp-…):");
-    if (!appToken) {
-      console.error("no token pasted — nothing written");
-      Deno.exit(2);
-    }
-    const creds = await openCredentials(dir);
-    try {
-      const { appId } = await connectSlackSocket(appToken, { creds });
-      console.error(`\n✓ socket carrier stored for app ${appId} — ingest reads events over it`);
-      await owed(creds);
-    } catch (e) {
-      console.error(e instanceof Error ? e.message : String(e));
-      Deno.exit(2);
-    } finally {
-      await creds.close();
-    }
-    Deno.exit(0);
-  }
+    if (verb === "app") {
+      const creds = await openCredentials(dir);
+      try {
+        // the app itself comes FIRST and comes from the manifest: Slack builds it in two
+        // clicks from this link, and everything else — the carrier, the bot, a member's
+        // leg — is a token that app issues. The OAuth client below is the hosted door's
+        // alone, so it is optional here.
+        const { botScopes, userScopes } = await slackConfig(root);
+        const url = manifestUrl(withScopes(
+          JSON.parse(
+            await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
+          ),
+          { bot: botScopes, user: userScopes },
+        ));
+        console.error(`Create the app (Slack builds it from the manifest):\n  ${url}\n`);
+        console.error("Then: Install to Workspace (xoxb) · Basic Information → App-Level");
+        console.error("Tokens (xapp). `liquen connect slack socket` and `bot` take those.\n");
+        try { // best effort — the link above is the real door
+          new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {
+            args: [url],
+            stdout: "null",
+            stderr: "null",
+          }).spawn().unref();
+        } catch { /* headless is fine */ }
 
-  if (verb === "bot") {
-    // `--agent <name>`: the roster entry that speaks through this bot (§4) — an org agent
-    const at = rest.indexOf("--agent");
-    const agent = at < 0 ? undefined : rest[at + 1];
-    if (at >= 0 && !agent) {
-      console.error("--agent needs the roster name of the agent that speaks through the bot");
-      Deno.exit(2);
-    }
-    if (agent) {
-      const { readConfig } = await import("../../config.ts");
-      const entry = (await readConfig(root)).agents[agent];
-      if (!entry) {
-        console.error(
-          `no agent "${agent}" in ${root}/config.jsonc — \`liquen agent ${agent}\` adds one`,
+        const clientId = ask("Client ID (only the hosted oauth door needs it; empty to skip):");
+        const clientSecret = clientId ? ask("Client secret:") : undefined;
+        if (!clientId || !clientSecret) {
+          console.error(clientId ? "no secret pasted — nothing written" : "\nno client stored");
+          await owed(creds);
+          Deno.exit(clientId ? 2 : 0);
+        }
+        const signingSecret = ask("Signing secret (verifies HTTP ingest; empty to skip):");
+        const redirectUri = ask("Hosted redirect URI (empty to skip):");
+        const key = await connectSlackApp(
+          { clientId, clientSecret, signingSecret, redirectUri },
+          creds,
         );
-        Deno.exit(2);
+        console.error(
+          `✓ app stored: ${key}` + (redirectUri ? ` (hosted callback: ${redirectUri})` : ""),
+        );
+        await owed(creds);
+      } finally {
+        await creds.close();
       }
-      if (entry.mind === false) {
-        console.error(`"${agent}" is a member with no agent of their own (mind: false)`);
-        Deno.exit(2);
-      }
+      Deno.exit(0);
     }
-    console.error("In the app: OAuth & Permissions → the Bot User OAuth Token (xoxb-…).\n");
-    const token = ask("Paste the bot token (xoxb-…):");
+
+    if (verb === "socket") {
+      console.error("In the app: Basic Information → App-Level Tokens → Generate Token and");
+      console.error("Scopes, with the `connections:write` scope. Slack has no API for this.\n");
+      const appToken = ask("Paste the app-level token (xapp-…):");
+      if (!appToken) {
+        console.error("no token pasted — nothing written");
+        Deno.exit(2);
+      }
+      const creds = await openCredentials(dir);
+      try {
+        const { appId } = await connectSlackSocket(appToken, { creds });
+        console.error(`\n✓ socket carrier stored for app ${appId} — ingest reads events over it`);
+        await owed(creds);
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : String(e));
+        Deno.exit(2);
+      } finally {
+        await creds.close();
+      }
+      Deno.exit(0);
+    }
+
+    if (verb === "bot") {
+      // `--agent <name>`: the roster entry that speaks through this bot (§4) — an org agent
+      const at = rest.indexOf("--agent");
+      const agent = at < 0 ? undefined : rest[at + 1];
+      if (at >= 0 && !agent) {
+        console.error("--agent needs the roster name of the agent that speaks through the bot");
+        Deno.exit(2);
+      }
+      if (agent) {
+        const { readConfig } = await import("../../config.ts");
+        const entry = (await readConfig(root)).agents[agent];
+        if (!entry) {
+          console.error(
+            `no agent "${agent}" in ${root}/config.jsonc — \`liquen agent ${agent}\` adds one`,
+          );
+          Deno.exit(2);
+        }
+        if (entry.mind === false) {
+          console.error(`"${agent}" is a member with no agent of their own (mind: false)`);
+          Deno.exit(2);
+        }
+      }
+      console.error("In the app: OAuth & Permissions → the Bot User OAuth Token (xoxb-…).\n");
+      const token = ask("Paste the bot token (xoxb-…):");
+      if (!token) {
+        console.error("no token pasted — nothing written");
+        Deno.exit(2);
+      }
+      const log = await openLog(`${dir}/log`);
+      const creds = await openCredentials(dir);
+      try {
+        const { botScopes } = await slackConfig(root);
+        const { team, botUser, missing } = await connectSlackBot(token, {
+          creds,
+          store: log,
+          publish: log.publish,
+          asked: botScopes,
+        }, agent);
+        console.error(
+          `\n✓ connected: workspace ${team}, bot user ${botUser} → ${agent ?? "the org"}`,
+        );
+        report(missing, "Reinstall the app to the workspace after adding them.");
+        await owed(creds);
+        console.error("  (deno task status shows the map)");
+        await declared(root, "slack");
+      } finally {
+        await creds.close();
+        await log.close();
+      }
+      Deno.exit(0);
+    }
+
+    const principal = (verb === "user" && first === "user" ? rest[0] : first) ?? (() => {
+      try {
+        return userInfo().username;
+      } catch {
+        return "principal";
+      }
+    })();
+
+    const { botScopes, userScopes } = await slackConfig(root);
+    const manifest = userManifest(withScopes(
+      JSON.parse(
+        await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
+      ),
+      { bot: botScopes, user: userScopes },
+    ));
+    const url = manifestUrl(manifest);
+    console.error(`Connecting Slack as principal "${principal}".\n`);
+    console.error("1. Create the app (pick your workspace):\n   " + url + "\n");
+    console.error('2. In the app: OAuth & Permissions → "Install to Workspace" (approve).');
+    console.error('3. Same page, "OAuth Tokens": copy the "User OAuth Token" (xoxp-…) —');
+    console.error('   NOT the "Bot User OAuth Token" (xoxb-…). If no user token is shown,');
+    console.error('   check "User Token Scopes" has scopes, then "Reinstall to Workspace".\n');
+    try { // best effort — the link above is the real door
+      new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {
+        args: [url],
+        stdout: "null",
+        stderr: "null",
+      }).spawn().unref();
+    } catch { /* headless is fine */ }
+
+    const token = ask("Paste the user token (xoxp-…):");
     if (!token) {
       console.error("no token pasted — nothing written");
       Deno.exit(2);
     }
+
     const log = await openLog(`${dir}/log`);
     const creds = await openCredentials(dir);
     try {
-      const { botScopes } = await slackConfig(root);
-      const { team, botUser, missing } = await connectSlackBot(token, {
+      const { team, user, missing } = await connectSlackUser(token, {
+        principal,
         creds,
-        store: log,
+        store: log, // connections live on the Log (§4)
         publish: log.publish,
-        asked: botScopes,
-      }, agent);
-      console.error(
-        `\n✓ connected: workspace ${team}, bot user ${botUser} → ${agent ?? "the org"}`,
-      );
-      report(missing, "Reinstall the app to the workspace after adding them.");
+        asked: userScopes,
+      });
+      console.error(`\n✓ connected: workspace ${team}, slack user ${user} → ${principal}`);
+      report(missing, 'Add them under "User Token Scopes", then "Reinstall to Workspace".');
       await owed(creds);
       console.error("  (deno task status shows the map)");
       await declared(root, "slack");
@@ -631,62 +690,8 @@ if (import.meta.main) {
       await creds.close();
       await log.close();
     }
-    Deno.exit(0);
-  }
-
-  const principal = (verb === "user" && first === "user" ? rest[0] : first) ?? (() => {
-    try {
-      return userInfo().username;
-    } catch {
-      return "principal";
-    }
-  })();
-
-  const { botScopes, userScopes } = await slackConfig(root);
-  const manifest = userManifest(withScopes(
-    JSON.parse(
-      await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
-    ),
-    { bot: botScopes, user: userScopes },
-  ));
-  const url = manifestUrl(manifest);
-  console.error(`Connecting Slack as principal "${principal}".\n`);
-  console.error("1. Create the app (pick your workspace):\n   " + url + "\n");
-  console.error('2. In the app: OAuth & Permissions → "Install to Workspace" (approve).');
-  console.error('3. Same page, "OAuth Tokens": copy the "User OAuth Token" (xoxp-…) —');
-  console.error('   NOT the "Bot User OAuth Token" (xoxb-…). If no user token is shown,');
-  console.error('   check "User Token Scopes" has scopes, then "Reinstall to Workspace".\n');
-  try { // best effort — the link above is the real door
-    new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {
-      args: [url],
-      stdout: "null",
-      stderr: "null",
-    }).spawn().unref();
-  } catch { /* headless is fine */ }
-
-  const token = ask("Paste the user token (xoxp-…):");
-  if (!token) {
-    console.error("no token pasted — nothing written");
-    Deno.exit(2);
-  }
-
-  const log = await openLog(`${dir}/log`);
-  const creds = await openCredentials(dir);
-  try {
-    const { team, user, missing } = await connectSlackUser(token, {
-      principal,
-      creds,
-      store: log, // connections live on the Log (§4)
-      publish: log.publish,
-      asked: userScopes,
-    });
-    console.error(`\n✓ connected: workspace ${team}, slack user ${user} → ${principal}`);
-    report(missing, 'Add them under "User Token Scopes", then "Reinstall to Workspace".');
-    await owed(creds);
-    console.error("  (deno task status shows the map)");
-    await declared(root, "slack");
-  } finally {
-    await creds.close();
-    await log.close();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    Deno.exit(1);
   }
 }

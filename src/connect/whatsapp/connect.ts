@@ -162,97 +162,102 @@ export async function connectWhatsApp(
  *
  * Env: WA_BRIDGE_TOKEN (the secret); the knobs are connections.whatsapp. */
 if (import.meta.main) {
-  const { openLog } = await import("../../store/log.ts");
-  const { userInfo } = await import("node:os");
-  const { basename } = await import("node:path");
-  const qrcode = (await import("qrcode-terminal")).default;
-
-  const org = orgFlag();
-  const root = findRoot(org);
-  const dir = `${root}/data`;
-  const flags = new Map<string, string>();
-  const positional: string[] = [];
-  let orgOwned = false;
-  for (let i = 0; i < org.args.length; i++) {
-    if (org.args[i] === "--org") orgOwned = true;
-    else if (org.args[i].startsWith("--")) flags.set(org.args[i].slice(2), org.args[++i] ?? "");
-    else positional.push(org.args[i]);
-  }
-  if (orgOwned && positional.length > 0) {
-    console.error("--org pairs the org's own number: no principal to name");
-    Deno.exit(2);
-  }
-  const principal = orgOwned ? undefined : positional[0] ?? (() => {
-    try {
-      return userInfo().username;
-    } catch {
-      return "principal";
-    }
-  })();
-  const { whatsappConfig } = await import("./config.ts");
-  const { bridgeUrl: base, organizationId } = await whatsappConfig(root);
-  // the first door names the tenant after the folder and declares it; from then on the
-  // file says, and a rename of the folder moves nothing on the bridge
-  const tenant = organizationId ?? basename(root);
-  const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
-  const phoneNumber = flags.get("phone") || undefined;
-  if (flags.has("phone") && !phoneNumber) {
-    console.error("--phone needs the number (international digits, no `+`)");
-    Deno.exit(2);
-  }
-
-  const call = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
-    const res = await timedFetch(`${base}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${token}`,
-        ...(body !== undefined ? { "content-type": "application/json" } : {}),
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
-    if (!res.ok) {
-      const reason = (await res.text()).slice(0, 256).trim();
-      throw new Error(`bridge ${path} HTTP ${res.status}: ${reason}`);
-    }
-    return await res.json() as T;
-  };
-  const bridge: WABridgeSessions = {
-    create: (req) => call("POST", "/sessions", req),
-    pending: (id) => call("GET", `/sessions/pending/${id}`),
-  };
-
-  console.error(
-    `Connecting WhatsApp as ${
-      principal ? `principal "${principal}"` : "the org"
-    } (bridge ${base}, tenant "${tenant}") — ` +
-      `${phoneNumber ? `pairing code for ${phoneNumber}` : "QR"}.\n`,
-  );
-  const log = await openLog(`${dir}/log`);
   try {
-    const { address } = await connectWhatsApp({
-      bridge,
-      principal,
-      organizationId: tenant,
-      phoneNumber,
-      store: log, // connections live on the Log (§4)
-      publish: log.publish,
-      onState: (s) => {
-        if (s.pairing_code) {
-          console.error(`Pairing code:  ${s.pairing_code}\n`);
-          console.error("On the phone: WhatsApp → Settings → Linked devices → Link a device");
-          console.error("→ Link with phone number instead — and type the code.\n");
-        } else if (s.qr_code) {
-          console.error(
-            "Scan with the phone: WhatsApp → Settings → Linked devices → Link a device\n",
-          );
-          qrcode.generate(s.qr_code, { small: true }, (q: string) => console.error(q));
-        }
-      },
-    });
-    console.error(`\n✓ paired: ${address} → ${principal ?? "the org"}`);
-    console.error("  (deno task status shows the map; run:whatsapp to receive)");
-    await declared(root, "whatsapp", { organizationId: tenant });
-  } finally {
-    await log.close();
+    const { openLog } = await import("../../store/log.ts");
+    const { userInfo } = await import("node:os");
+    const { basename } = await import("node:path");
+    const qrcode = (await import("qrcode-terminal")).default;
+
+    const org = orgFlag();
+    const root = findRoot(org);
+    const dir = `${root}/data`;
+    const flags = new Map<string, string>();
+    const positional: string[] = [];
+    let orgOwned = false;
+    for (let i = 0; i < org.args.length; i++) {
+      if (org.args[i] === "--org") orgOwned = true;
+      else if (org.args[i].startsWith("--")) flags.set(org.args[i].slice(2), org.args[++i] ?? "");
+      else positional.push(org.args[i]);
+    }
+    if (orgOwned && positional.length > 0) {
+      console.error("--org pairs the org's own number: no principal to name");
+      Deno.exit(2);
+    }
+    const principal = orgOwned ? undefined : positional[0] ?? (() => {
+      try {
+        return userInfo().username;
+      } catch {
+        return "principal";
+      }
+    })();
+    const { whatsappConfig } = await import("./config.ts");
+    const { bridgeUrl: base, organizationId } = await whatsappConfig(root);
+    // the first door names the tenant after the folder and declares it; from then on the
+    // file says, and a rename of the folder moves nothing on the bridge
+    const tenant = organizationId ?? basename(root);
+    const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
+    const phoneNumber = flags.get("phone") || undefined;
+    if (flags.has("phone") && !phoneNumber) {
+      console.error("--phone needs the number (international digits, no `+`)");
+      Deno.exit(2);
+    }
+
+    const call = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
+      const res = await timedFetch(`${base}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(body !== undefined ? { "content-type": "application/json" } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+      if (!res.ok) {
+        const reason = (await res.text()).slice(0, 256).trim();
+        throw new Error(`bridge ${path} HTTP ${res.status}: ${reason}`);
+      }
+      return await res.json() as T;
+    };
+    const bridge: WABridgeSessions = {
+      create: (req) => call("POST", "/sessions", req),
+      pending: (id) => call("GET", `/sessions/pending/${id}`),
+    };
+
+    console.error(
+      `Connecting WhatsApp as ${
+        principal ? `principal "${principal}"` : "the org"
+      } (bridge ${base}, tenant "${tenant}") — ` +
+        `${phoneNumber ? `pairing code for ${phoneNumber}` : "QR"}.\n`,
+    );
+    const log = await openLog(`${dir}/log`);
+    try {
+      const { address } = await connectWhatsApp({
+        bridge,
+        principal,
+        organizationId: tenant,
+        phoneNumber,
+        store: log, // connections live on the Log (§4)
+        publish: log.publish,
+        onState: (s) => {
+          if (s.pairing_code) {
+            console.error(`Pairing code:  ${s.pairing_code}\n`);
+            console.error("On the phone: WhatsApp → Settings → Linked devices → Link a device");
+            console.error("→ Link with phone number instead — and type the code.\n");
+          } else if (s.qr_code) {
+            console.error(
+              "Scan with the phone: WhatsApp → Settings → Linked devices → Link a device\n",
+            );
+            qrcode.generate(s.qr_code, { small: true }, (q: string) => console.error(q));
+          }
+        },
+      });
+      console.error(`\n✓ paired: ${address} → ${principal ?? "the org"}`);
+      console.error("  (deno task status shows the map; run:whatsapp to receive)");
+      await declared(root, "whatsapp", { organizationId: tenant });
+    } finally {
+      await log.close();
+    }
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    Deno.exit(1);
   }
 }

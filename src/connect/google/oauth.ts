@@ -265,40 +265,45 @@ function text(status: number, message: string): Response {
  * among several. The redirect URI is the app row's `redirect_uri` sidecar (the hosted
  * callback), localhost when absent. The port is connections.google.oauthPort. */
 if (import.meta.main) {
-  const { openLog } = await import("../../store/log.ts");
-  const { openCredentials } = await import("../../store/credentials.ts");
-  const { pickGoogleApp } = await import("./connect.ts");
-  const { googleConfig } = await import("./config.ts");
-  const org = orgFlag();
-  const root = findRoot(org);
-  const dir = `${root}/data`;
-  const { oauthPort: port, scopes } = await googleConfig(root);
-  const creds = await openCredentials(dir);
-  const appFlag = org.args.indexOf("--app");
-  const appId = appFlag >= 0 ? org.args[appFlag + 1] : undefined;
-  const app = await pickGoogleApp(creds, appId).catch((e) => {
-    console.error(`[oauth] ${e.message}`);
-    Deno.exit(2);
-  });
-  const config: GoogleOAuthConfig = {
-    clientId: app.value.client_id,
-    clientSecret: app.value.client_secret,
-    redirectUri: (app.extra?.redirect_uri as string | undefined) ??
-      `http://localhost:${port}/oauth/google/callback`,
-    scopes,
-  };
-  const log = await openLog(`${dir}/log`);
-  const handler = createGoogleOAuth({
-    config,
-    creds,
-    publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
-    store: log, // connections live on the Log (§4) — the grant writes the map
-    onGrant: (g) =>
-      console.error(
-        `[oauth] granted ${g.email}${g.agent ? ` → ${g.agent}` : " (org)"}` +
-          (g.missing.length ? ` — WITHOUT ${g.missing.join(" ")}` : ""),
-      ),
-  });
-  console.error(`[oauth] on :${port} — agents mint <public>/oauth/google/start?agent=…`);
-  Deno.serve({ port }, handler);
+  try {
+    const { openLog } = await import("../../store/log.ts");
+    const { openCredentials } = await import("../../store/credentials.ts");
+    const { pickGoogleApp } = await import("./connect.ts");
+    const { googleConfig } = await import("./config.ts");
+    const org = orgFlag();
+    const root = findRoot(org);
+    const dir = `${root}/data`;
+    const { oauthPort: port, scopes } = await googleConfig(root);
+    const creds = await openCredentials(dir);
+    const appFlag = org.args.indexOf("--app");
+    const appId = appFlag >= 0 ? org.args[appFlag + 1] : undefined;
+    const app = await pickGoogleApp(creds, appId).catch((e) => {
+      console.error(`[oauth] ${e.message}`);
+      Deno.exit(2);
+    });
+    const config: GoogleOAuthConfig = {
+      clientId: app.value.client_id,
+      clientSecret: app.value.client_secret,
+      redirectUri: (app.extra?.redirect_uri as string | undefined) ??
+        `http://localhost:${port}/oauth/google/callback`,
+      scopes,
+    };
+    const log = await openLog(`${dir}/log`);
+    const handler = createGoogleOAuth({
+      config,
+      creds,
+      publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
+      store: log, // connections live on the Log (§4) — the grant writes the map
+      onGrant: (g) =>
+        console.error(
+          `[oauth] granted ${g.email}${g.agent ? ` → ${g.agent}` : " (org)"}` +
+            (g.missing.length ? ` — WITHOUT ${g.missing.join(" ")}` : ""),
+        ),
+    });
+    console.error(`[oauth] on :${port} — agents mint <public>/oauth/google/start?agent=…`);
+    Deno.serve({ port }, handler);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    Deno.exit(1);
+  }
 }

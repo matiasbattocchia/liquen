@@ -208,38 +208,43 @@ function text(status: number, message: string): Response {
  * <public>/oauth/slack/start — the admin distributes it; auto-registration binds
  * principals as `slack:<team>:<user>` until the identities map (v0.1) refines it. */
 if (import.meta.main) {
-  const { openLog } = await import("../../store/log.ts");
-  const { openCredentials } = await import("../../store/credentials.ts");
-  const { pickSlackApp } = await import("./connect.ts");
-  const { slackConfig } = await import("./config.ts");
-  const org = orgFlag();
-  const root = findRoot(org);
-  const dir = `${root}/data`;
-  const { oauthPort: port, botScopes, userScopes } = await slackConfig(root);
-  const creds = await openCredentials(dir);
-  const appFlag = org.args.indexOf("--app");
-  const app = await pickSlackApp(creds, appFlag >= 0 ? org.args[appFlag + 1] : undefined)
-    .catch((e) => {
-      console.error(`[oauth] ${e.message}`);
-      Deno.exit(2);
+  try {
+    const { openLog } = await import("../../store/log.ts");
+    const { openCredentials } = await import("../../store/credentials.ts");
+    const { pickSlackApp } = await import("./connect.ts");
+    const { slackConfig } = await import("./config.ts");
+    const org = orgFlag();
+    const root = findRoot(org);
+    const dir = `${root}/data`;
+    const { oauthPort: port, botScopes, userScopes } = await slackConfig(root);
+    const creds = await openCredentials(dir);
+    const appFlag = org.args.indexOf("--app");
+    const app = await pickSlackApp(creds, appFlag >= 0 ? org.args[appFlag + 1] : undefined)
+      .catch((e) => {
+        console.error(`[oauth] ${e.message}`);
+        Deno.exit(2);
+      });
+    const config: SlackOAuthConfig = {
+      clientId: app.value.client_id,
+      clientSecret: app.value.client_secret,
+      redirectUri: (app.extra?.redirect_uri as string | undefined) ??
+        `http://localhost:${port}/oauth/slack/callback`,
+      scopes: botScopes,
+      userScopes, // without it Slack returns an authed_user with no token — no principal grant
+    };
+    const log = await openLog(`${dir}/log`);
+    const handler = createSlackOAuth({
+      config,
+      creds,
+      publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
+      store: log, // connections live on the Log (§4) — the grant writes the map
+      // v0 auto-registration: the Slack-verified identity IS the principal handle for now
+      bindPrincipal: ({ team, user }) => Promise.resolve(`slack:${team}:${user}`),
     });
-  const config: SlackOAuthConfig = {
-    clientId: app.value.client_id,
-    clientSecret: app.value.client_secret,
-    redirectUri: (app.extra?.redirect_uri as string | undefined) ??
-      `http://localhost:${port}/oauth/slack/callback`,
-    scopes: botScopes,
-    userScopes, // without it Slack returns an authed_user with no token — no principal grant
-  };
-  const log = await openLog(`${dir}/log`);
-  const handler = createSlackOAuth({
-    config,
-    creds,
-    publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
-    store: log, // connections live on the Log (§4) — the grant writes the map
-    // v0 auto-registration: the Slack-verified identity IS the principal handle for now
-    bindPrincipal: ({ team, user }) => Promise.resolve(`slack:${team}:${user}`),
-  });
-  console.error(`[oauth] on :${port} — share <public>/oauth/slack/start`);
-  Deno.serve({ port }, handler);
+    console.error(`[oauth] on :${port} — share <public>/oauth/slack/start`);
+    Deno.serve({ port }, handler);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    Deno.exit(1);
+  }
 }
