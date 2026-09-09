@@ -21,7 +21,11 @@ export type {
 } from "./xi.ts";
 export { start } from "./main.ts";
 export type { Main, MainConfig } from "./main.ts";
+export { openLog } from "./store/log.ts";
 export type { Log } from "./store/log.ts";
+export { openFileDocs } from "./store/docs.ts";
+export type { Docs } from "./store/docs.ts";
 export { newId } from "./store/id.ts";
+export { scripted } from "./testing.ts";
 export { anthropicClient, anthropicTransport, metered } from "./transport.ts";
 export { init } from "./init.ts";
