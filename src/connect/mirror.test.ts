@@ -100,14 +100,15 @@ Deno.test("mirror fan-in: an alias inbound copies to the mind and cross-CCs the 
       external_id: "slack:T1:D1:111.1",
     }));
 
-    // the mind copy: wakes like a REPL line — sender kept, provenance in `via`, cause home
+    // the mind copy: wakes like a REPL line — signed with the principal the binding
+    // names (§4), provenance in `via`, cause home
     await waitFor(async () => (await inConv("mind@ana")).length === 1);
     const [copy] = await inConv("mind@ana");
     // the principal's stamp (§3): whose mind + through the harness — and no turn_id,
     // which is what keeps the copy input rather than voice
     assertEquals(copy.agent, { id: "ana", session_id: "mind" });
     assertEquals(copy.payload?.turn_id, undefined);
-    assertEquals(copy.envelope.sender?.address, "U1");
+    assertEquals(copy.envelope.sender, { address: "ana", name: "ana" });
     assertEquals(textOf(copy), "pick up milk");
     assertEquals(copy.payload?.ref_id, origin.id);
     assertEquals(copy.extra?.via, {
@@ -122,7 +123,7 @@ Deno.test("mirror fan-in: an alias inbound copies to the mind and cross-CCs the 
     await waitFor(async () => (await inConv("549")).length === 1);
     const [cc] = await inConv("549");
     assertEquals(cc.agent?.id, "ana");
-    assertEquals(textOf(cc), "`[you via slack]` pick up milk");
+    assertEquals(textOf(cc), "`[ana via slack]` pick up milk");
     // …and never back to the origin surface
     await new Promise((r) => setTimeout(r, 150));
     assertEquals((await inConv("D1")).length, 1);
@@ -174,8 +175,8 @@ Deno.test("mirror fan-out: a REPL-typed principal line CCs tagged with where it 
   await withMirror(async ({ publish, inConv, waitFor }) => {
     await publish(mindMsg("hola"));
     await waitFor(async () => (await inConv("D1")).length === 1);
-    assertEquals(textOf((await inConv("D1"))[0]), "`[you via repl]` hola");
-    assertEquals(textOf((await inConv("549"))[0]), "`[you via repl]` hola");
+    assertEquals(textOf((await inConv("D1"))[0]), "`[ana via repl]` hola");
+    assertEquals(textOf((await inConv("549"))[0]), "`[ana via repl]` hola");
   });
 });
 
@@ -494,4 +495,68 @@ Deno.test("mirror: a SILENCE note reaches no surface — nothing said is nothing
     }));
     await waitFor(async () => (await inConv("D1")).length === 1);
   });
+});
+
+Deno.test("mirror fan-in: a principal's DM with the org number copies to the org agent's mind, signed by the roster (§4)", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  log.syncAgents([
+    { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "549115550001" },
+    { agentId: "sol", mind: "mind@sol", name: "Sol", phone: "549115550002", runs: false },
+    { agentId: "ventas", mind: "mind@ventas", name: "Ventas", phone: "549117770000" },
+  ]);
+  log.upsertConnections([
+    { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" },
+  ]);
+  const stop = createMirror({
+    subscribe: (l, o) => log.subscribe(l, o),
+    publish: log.publish,
+    read: (q) => log.read(q),
+    aliases: () => log.aliases(),
+    nameOf: (id) => log.agents().find((a) => a.agentId === id)?.name ?? id,
+  }, 10);
+  const inConv = async (conversation: string) =>
+    (await log.read({ conversation, types: ["message"] })) as MessageEvent[];
+  const waitFor = async (cond: () => Promise<boolean>) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 10_000) {
+      if (await cond()) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error("waitFor timeout");
+  };
+  try {
+    await new Promise((r) => setTimeout(r, 50));
+    // matias, from his phone, to the org number — the classifier stamped him (§3)
+    await log.publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      agent: { id: "matias" },
+      envelope: {
+        service: "whatsapp",
+        connection_address: "549117770000",
+        conversation: { address: "549115550001", kind: "direct" },
+        sender: { address: "549115550001", name: "Matías (WA)" },
+        external_id: "whatsapp:wmw.1",
+      },
+      parts: [{ type: "text", kind: "text", text: "mandá los recordatorios" }],
+    });
+    await waitFor(async () => (await inConv("mind@ventas")).length === 1);
+    const [copy] = await inConv("mind@ventas");
+    assertEquals(copy.agent, { id: "ventas", session_id: "mind" }); // whose mind
+    assertEquals(copy.envelope.sender, { address: "matias", name: "Matías" }); // who spoke
+    assertEquals(textOf(copy), "mandá los recordatorios");
+    // and the other principal's DM gets the cross-broadcast, naming who typed it
+    await waitFor(async () => (await inConv("549115550002")).length === 1);
+    assertEquals(
+      textOf((await inConv("549115550002"))[0]),
+      "`[Matías via whatsapp]` mandá los recordatorios",
+    );
+    assertEquals((await inConv("549115550001")).length, 1); // never back to the origin
+    assertEquals((await inConv("549117770000")).length, 0); // the org number has no self-chat surface
+  } finally {
+    stop();
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
 });

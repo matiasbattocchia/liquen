@@ -1,24 +1,37 @@
 /**
- * agent.ts — `mu agent <name> [--name <full name>] [--email <address>] [--phone <number>]`:
- * add an agent to the roster (§9).
+ * agent.ts — `mu agent <name> [--name <full name>] [--email <address>] [--phone <number>]
+ * [--principal <member>]… [--no-mind]`: add a member to the roster (§9).
  *
  * One declaration in the catalog: `agents.<name>`, its identity holding the handles the
- * flags gave and null for the rest. The name is the agent's id, its folder under
- * `data/agents/` and its unix user in the container — boot compiles the entry into those
- * at the next `mu start`, and nothing is made here. Runs from anywhere inside the org, or
- * against one named with `--dir`.
+ * flags gave and null for the rest; `principals` when `--principal` named who steers it
+ * (roster names, repeatable); `mind: false` when `--no-mind` made it a person alone. The
+ * name is the member's id, its folder under `data/agents/` and its unix user in the
+ * container — boot compiles the entry into those at the next `mu start`, and nothing is
+ * made here. Runs from anywhere inside the org, or against one named with `--dir`.
  */
 
-import { declareAgent, findRoot, type Identity, IDENTITY_KEYS, orgFlag } from "./config.ts";
+import {
+  type AgentEntry,
+  declareAgent,
+  findRoot,
+  type Identity,
+  IDENTITY_KEYS,
+  orgFlag,
+} from "./config.ts";
 
 export const USAGE =
-  "usage: mu agent [--dir <org>] <name> [--name <full name>] [--email <address>] [--phone <number>]";
+  "usage: mu agent [--dir <org>] <name> [--name <full name>] [--email <address>] " +
+  "[--phone <number>] [--principal <member>]... [--no-mind]";
 
 /** The command line, `--dir` already taken out: one positional, the identity flags in
- *  either spelling (`--email x`, `--email=x`). Anything else is a usage error. */
-export function parseAgentArgs(args: string[]): { name: string; identity: Identity } {
+ *  either spelling (`--email x`, `--email=x`), `--principal` as often as there are
+ *  principals, `--no-mind` bare. Anything else is a usage error. */
+export function parseAgentArgs(
+  args: string[],
+): { name: string; identity: Identity; rest: Pick<AgentEntry, "principals" | "mind"> } {
   const positional: string[] = [];
   const identity: Identity = {};
+  const rest: Pick<AgentEntry, "principals" | "mind"> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (!arg.startsWith("--")) {
@@ -27,28 +40,40 @@ export function parseAgentArgs(args: string[]): { name: string; identity: Identi
     }
     const eq = arg.indexOf("=");
     const flag = eq < 0 ? arg.slice(2) : arg.slice(2, eq);
-    if (!(IDENTITY_KEYS as readonly string[]).includes(flag)) {
+    if (flag === "no-mind") {
+      rest.mind = false;
+      continue;
+    }
+    if (flag !== "principal" && !(IDENTITY_KEYS as readonly string[]).includes(flag)) {
       throw new Error(`unknown flag --${flag}\n${USAGE}`);
     }
     const value = eq < 0 ? args[++i] : arg.slice(eq + 1);
     if (value === undefined || value.length === 0) {
       throw new Error(`--${flag} needs a value\n${USAGE}`);
     }
-    identity[flag as (typeof IDENTITY_KEYS)[number]] = value;
+    if (flag === "principal") (rest.principals ??= []).push(value);
+    else identity[flag as (typeof IDENTITY_KEYS)[number]] = value;
   }
   if (positional.length !== 1) throw new Error(USAGE);
-  return { name: positional[0], identity };
+  return { name: positional[0], identity, rest };
 }
 
 if (import.meta.main) {
   const org = orgFlag();
   try {
-    const { name, identity } = parseAgentArgs(org.args);
+    const { name, identity, rest } = parseAgentArgs(org.args);
     const root = findRoot(org);
-    await declareAgent(root, name, identity);
-    const declared = IDENTITY_KEYS.filter((k) => identity[k] !== undefined);
-    const handles = declared.length > 0 ? ` (${declared.join(", ")} declared)` : "";
-    console.log(`${root}/config.jsonc: agents.${name}${handles}. \`mu start\` gives it a home.`);
+    await declareAgent(root, name, identity, rest);
+    const declared = [
+      ...IDENTITY_KEYS.filter((k) => identity[k] !== undefined),
+      ...(rest.principals ? [`principals: ${rest.principals.join(", ")}`] : []),
+      ...(rest.mind === false ? ["no mind"] : []),
+    ];
+    const handles = declared.length > 0 ? ` (${declared.join(", ")})` : "";
+    const next = rest.mind === false
+      ? "they steer, and no session of theirs will run."
+      : "`mu start` gives it a home.";
+    console.log(`${root}/config.jsonc: agents.${name}${handles}. ${next}`);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     Deno.exit(1);

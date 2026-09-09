@@ -109,3 +109,24 @@ Deno.test("a failed pairing throws and writes NOTHING", async () => {
   assertEquals(memberships.length, 0);
   assertEquals(published.length, 0);
 });
+
+Deno.test("--org: the pairing binds nobody — an ownerless, credentialed row and no membership (§4)", async () => {
+  const { bridge, creates } = fakeBridge(
+    pending(),
+    { session_id: "p1", status: "paired", address: "5491177700000" },
+  );
+  const { deps, connections, memberships, published } = harness(bridge, { principal: undefined });
+
+  await connectWhatsApp(deps, 1);
+
+  assertEquals(creates[0].agent_id, undefined);
+  assertEquals(connections, [{
+    service: "whatsapp",
+    address: "5491177700000",
+    credentialKey: "whatsapp:5491177700000",
+    extra: connections[0].extra,
+  }]);
+  assertEquals(memberships, []);
+  const note = published[0] as MessageEvent;
+  assertStringIncludes(note.parts[0].type === "text" ? note.parts[0].text : "", "the org");
+});

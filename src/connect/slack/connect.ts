@@ -224,6 +224,7 @@ export interface SlackBotDeps {
 export async function connectSlackBot(
   token: string,
   deps: SlackBotDeps,
+  agent?: string,
 ): Promise<{ team: string; botUser: string; missing: string[] }> {
   const authTest = deps.authTest ?? defaultAuthTest;
   const now = deps.now ?? (() => new Date().toISOString());
@@ -248,9 +249,17 @@ export async function connectSlackBot(
   // row is where bot-witnessed ones anchor (`<team>:<bot user>`, the ingest's anchor) and
   // the one that carries the credential — that account itself reads as the org (§6), so
   // no ownership edge and no membership on either
+  // a bot has no handle a human could declare, so which agent speaks through it is
+  // RECORDED on its row (`extra.agent`) the way an opaque id is (§4) — still nobody's:
+  // the account is the org's, every member reads it, and the roster steers the agent
   deps.store.upsertConnections([
     { service: "slack", address: team },
-    { service: "slack", address: `${team}:${botUser}`, credentialKey },
+    {
+      service: "slack",
+      address: `${team}:${botUser}`,
+      credentialKey,
+      ...(agent ? { extra: { agent } } : {}),
+    },
   ]);
   await deps.creds.put({
     key: credentialKey,
@@ -272,6 +281,7 @@ export async function connectSlackBot(
         type: "text",
         kind: "text",
         text: `Slack bot connected on workspace ${team} (bot user ${botUser})` +
+          (agent ? ` → ${agent}` : "") +
           (missing.length ? ` — NOT granted: ${missing.join(" ")}` : ""),
       }],
     } satisfies Draft<MessageEvent>,
@@ -460,7 +470,7 @@ async function defaultAuthTest(token: string): Promise<AuthTest> {
 /* ── local entry: the three doors ───────────────────────────────────────────────────────
  *
  *   deno task connect:slack user [principal]   # prefill link → install → paste xoxp
- *   deno task connect:slack bot                # paste xoxb (+ optional xapp carrier)
+ *   deno task connect:slack bot [--agent <name>] # paste xoxb; the agent that speaks as it
  *   deno task connect:slack app                # paste client id + secret → the vault
  *
  * A bare invocation (or a bare principal name) is the user door — the common case. */
@@ -573,6 +583,27 @@ if (import.meta.main) {
   }
 
   if (verb === "bot") {
+    // `--agent <name>`: the roster entry that speaks through this bot (§4) — an org agent
+    const at = rest.indexOf("--agent");
+    const agent = at < 0 ? undefined : rest[at + 1];
+    if (at >= 0 && !agent) {
+      console.error("--agent needs the roster name of the agent that speaks through the bot");
+      Deno.exit(2);
+    }
+    if (agent) {
+      const { readConfig } = await import("../../config.ts");
+      const entry = (await readConfig(root)).agents[agent];
+      if (!entry) {
+        console.error(
+          `no agent "${agent}" in ${root}/config.jsonc — \`mu agent ${agent}\` adds one`,
+        );
+        Deno.exit(2);
+      }
+      if (entry.mind === false) {
+        console.error(`"${agent}" is a member with no agent of their own (mind: false)`);
+        Deno.exit(2);
+      }
+    }
     console.error("In the app: OAuth & Permissions → the Bot User OAuth Token (xoxb-…).\n");
     const token = ask("Paste the bot token (xoxb-…):");
     if (!token) {
@@ -588,8 +619,10 @@ if (import.meta.main) {
         store: log,
         publish: log.publish,
         asked: botScopes,
-      });
-      console.error(`\n✓ connected: workspace ${team}, bot user ${botUser} → the org`);
+      }, agent);
+      console.error(
+        `\n✓ connected: workspace ${team}, bot user ${botUser} → ${agent ?? "the org"}`,
+      );
       report(missing, "Reinstall the app to the workspace after adding them.");
       await owed(creds);
       console.error("  (deno task status shows the map)");

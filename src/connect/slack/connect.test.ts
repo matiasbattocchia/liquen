@@ -422,3 +422,18 @@ Deno.test("config: the bot leg reads files — `url_private` answers a sign-in p
   assert(DEFAULT_USER_SCOPES.includes("files:read")); // the user list spreads the bot list
   assertEquals(new Set(DEFAULT_USER_SCOPES).size, DEFAULT_USER_SCOPES.length); // no duplicates
 });
+
+Deno.test("bot door: --agent records who speaks through the bot on its row, still nobody's (§4)", async () => {
+  const h = harness();
+  await connectSlackBot("xoxb-bot", {
+    ...h.deps,
+    authTest: () => Promise.resolve({ ok: true, team_id: "T1", user_id: "UBOT" }),
+  }, "ventas");
+  assertEquals(h.connections[1], {
+    service: "slack",
+    address: "T1:UBOT",
+    credentialKey: "slack:T1:org",
+    extra: { agent: "ventas" },
+  });
+  assertEquals(h.connections[1].agentId, undefined);
+});

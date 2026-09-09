@@ -58,8 +58,9 @@ export interface WABridgeSessions {
 
 export interface WhatsAppConnectDeps {
   bridge: WABridgeSessions;
-  /** The registry name the pairing binds to (v0: principal name = agent name). */
-  principal: string;
+  /** The member whose phone this is — the connection's owner (§4). Absent ⇒ the org's
+   *  number: an agent whose declared phone it is speaks through it, steered by the roster. */
+  principal?: string;
   /** The bridge's tenant id (it stores and echoes it back on session events). */
   organizationId?: string;
   /** Set ⇒ the pairing-code flow (typed into the phone); absent ⇒ the QR flow. */
@@ -93,7 +94,7 @@ export async function connectWhatsApp(
   let state = await deps.bridge.create({
     organization_id: org,
     ...(deps.phoneNumber ? { phone_number: deps.phoneNumber } : {}),
-    agent_id: deps.principal,
+    ...(deps.principal ? { agent_id: deps.principal } : {}),
   });
   deps.onState?.(state);
 
@@ -112,17 +113,21 @@ export async function connectWhatsApp(
   }
   const address = state.address;
 
-  // the map: one OWNED anchor row (opens the publish gate the next webhook batch
-  // checks), and the membership that carries the note into the principal's view
+  // the map: one anchor row (opens the publish gate the next webhook batch checks) —
+  // OWNED by the principal who paired their own phone, or the org's (§4: no owner, and a
+  // credential key naming the bridge session, which is the credential the org holds for
+  // it) — and, for a member's, the membership that carries the note into their view
   deps.store.upsertConnections([{
     service: SERVICE,
     address,
-    agentId: deps.principal,
+    ...(deps.principal ? { agentId: deps.principal } : { credentialKey: `${SERVICE}:${address}` }),
     extra: { state: "connected", connected_at: now(), organization_id: org },
   }]);
-  deps.store.upsertMemberships([
-    { service: SERVICE, connection: address, conversation: "connect", agentId: deps.principal },
-  ]);
+  if (deps.principal) {
+    deps.store.upsertMemberships([
+      { service: SERVICE, connection: address, conversation: "connect", agentId: deps.principal },
+    ]);
+  }
 
   // cross the frontier the only legal way: an event (§4)
   const note: Draft<MessageEvent> = {
@@ -137,7 +142,7 @@ export async function connectWhatsApp(
     parts: [{
       type: "text",
       kind: "text",
-      text: `WhatsApp connected: ${address} → ${deps.principal}`,
+      text: `WhatsApp connected: ${address} → ${deps.principal ?? "the org"}`,
     }],
   };
   await deps.publish(note);
@@ -148,9 +153,11 @@ export async function connectWhatsApp(
  *
  *   deno task connect:whatsapp [principal]                  # QR flow: scan with the phone
  *   deno task connect:whatsapp [principal] --phone <digits> # pairing-code flow
+ *   deno task connect:whatsapp --org [--phone <digits>]     # the org's own number (§4)
  *
  * The positional is the principal (default: the OS username — a session choice, so an
- * argument); the number is a flag, international digits, no `+`. The flow is chosen by
+ * argument); `--org` pairs a number nobody owns, the one an org agent speaks through;
+ * the number is a flag, international digits, no `+`. The flow is chosen by
  * the number's presence because the code flow CANNOT exist without it (whatsmeow's
  * PairPhone mints the code for that specific number), while the QR flow needs nothing.
  *
@@ -169,11 +176,17 @@ if (import.meta.main) {
   const dir = `${root}/data`;
   const flags = new Map<string, string>();
   const positional: string[] = [];
+  let orgOwned = false;
   for (let i = 0; i < org.args.length; i++) {
-    if (org.args[i].startsWith("--")) flags.set(org.args[i].slice(2), org.args[++i] ?? "");
+    if (org.args[i] === "--org") orgOwned = true;
+    else if (org.args[i].startsWith("--")) flags.set(org.args[i].slice(2), org.args[++i] ?? "");
     else positional.push(org.args[i]);
   }
-  const principal = positional[0] ?? (() => {
+  if (orgOwned && positional.length > 0) {
+    console.error("--org pairs the org's own number: no principal to name");
+    Deno.exit(2);
+  }
+  const principal = orgOwned ? undefined : positional[0] ?? (() => {
     try {
       return userInfo().username;
     } catch {
@@ -210,7 +223,9 @@ if (import.meta.main) {
   };
 
   console.error(
-    `Connecting WhatsApp as principal "${principal}" (bridge ${base}) — ` +
+    `Connecting WhatsApp as ${
+      principal ? `principal "${principal}"` : "the org"
+    } (bridge ${base}) — ` +
       `${phoneNumber ? `pairing code for ${phoneNumber}` : "QR"}.\n`,
   );
   const log = await openLog(`${dir}/log`);
@@ -235,7 +250,7 @@ if (import.meta.main) {
         }
       },
     });
-    console.error(`\n✓ paired: ${address} → ${principal}`);
+    console.error(`\n✓ paired: ${address} → ${principal ?? "the org"}`);
     console.error("  (deno task status shows the map; run:whatsapp to receive)");
     await declared(root, "whatsapp");
   } finally {

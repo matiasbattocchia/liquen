@@ -47,6 +47,12 @@ export async function resolveAgent(explicit?: string, dir?: string): Promise<Att
       `no agent "${target}" in ${root}/config.jsonc — \`mu agent ${target}\` adds one`,
     );
   }
+  if (catalog.agents[target].mind === false) {
+    throw new Error(
+      `"${target}" is a member with no agent of their own (mind: false in ${root}/config.jsonc)` +
+        " — name the agent to talk to",
+    );
+  }
   const model = catalog.agents[target].model ?? catalog.org.agent.model;
   return { root, dir: `${root}/data`, target, username, model };
 }

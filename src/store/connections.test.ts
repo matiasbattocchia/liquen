@@ -67,8 +67,22 @@ Deno.test("aliases: owned rows with a self_conversation, matched on the workspac
       { service: "email", address: "ana@org", agentId: "ana" }, // owned, no binding
     ]);
     assertEquals(log.aliases(), [
-      { service: "slack", connection: "T1:U1", conversation: "D1", agentId: "ana", live: true },
-      { service: "whatsapp", connection: "549", conversation: "549", agentId: "ana", live: true },
+      {
+        service: "slack",
+        connection: "T1:U1",
+        conversation: "D1",
+        agentId: "ana",
+        principal: "ana",
+        live: true,
+      },
+      {
+        service: "whatsapp",
+        connection: "549",
+        conversation: "549",
+        agentId: "ana",
+        principal: "ana",
+        live: true,
+      },
     ]);
 
     const rows = log.aliases();
@@ -89,6 +103,46 @@ Deno.test("aliases: owned rows with a self_conversation, matched on the workspac
     // a re-grant revives it
     log.upsertConnections([{ service: "slack", address: "T1:U1", agentId: "ana" }]);
     assertEquals(log.aliases().map((a) => a.live), [true, true]);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("aliases: a principal's DM with the org number is a surface of the org agent's mind (§4)", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  try {
+    log.syncAgents([
+      { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "549115550001" },
+      { agentId: "ventas", mind: "mind@ventas", name: "Ventas", phone: "549117770000" },
+    ]);
+    log.upsertConnections([
+      { service: "whatsapp", address: "549115550001", agentId: "matias" },
+      { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" },
+    ]);
+    assertEquals(log.principalsOf("ventas"), ["matias", "ventas"]);
+    assertEquals(log.principalsOf("matias"), ["matias"]);
+    assertEquals(log.aliases(), [
+      // the store's own: the member's self-chat
+      {
+        service: "whatsapp",
+        connection: "549115550001",
+        conversation: "549115550001",
+        agentId: "matias",
+        principal: "matias",
+        live: true,
+      },
+      // derived: matias's DM with the org number, a surface of ventas's mind
+      {
+        service: "whatsapp",
+        connection: "549117770000",
+        conversation: "549115550001",
+        agentId: "ventas",
+        principal: "matias",
+        live: true,
+      },
+    ]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

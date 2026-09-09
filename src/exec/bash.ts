@@ -113,17 +113,17 @@ export function bashTool(opts: BashOptions): ExecTool {
     spec: {
       name: "bash",
       description: "Run a bash command. The working directory PERSISTS between calls like a " +
-        "terminal (cd once, it sticks) — but " +
+        "terminal (cd once, it sticks), but " +
         "shell/env state (exported vars, activated venvs) does not, so re-export or chain those. " +
         `stdout+stderr merged; output truncated to the last ${MAX_LINES} lines / ${
           MAX_BYTES / 1024
-        }KB (override with max_lines/max_bytes when you deliberately need more or less) — ` +
+        }KB (override with max_lines/max_bytes when you deliberately need more or less); ` +
         "when truncated, the full output is saved to a file the footer names (page it with aread). " +
-        `Default timeout ${timeoutMsDefault / 1000}s — run long work in the background ` +
+        `Default timeout ${timeoutMsDefault / 1000}s; run long work in the background ` +
         "(cmd > out.log 2>&1 &) and poll with tail. Prefer fat commands: chain independent steps " +
         "with && or ; in ONE call, and emit multiple bash calls in one turn when they don't depend " +
-        "on each other — every separate call is a full round-trip. " +
-        "File helpers on PATH: aread <path> [offset] [limit] [maxBytes] — on an image or PDF it " +
+        "on each other; every separate call is a full round-trip. " +
+        "File helpers on PATH: aread <path> [offset] [limit] [maxBytes]; on an image or PDF it " +
         "attaches the file itself, so you see it · " +
         "awrite <path> (content on stdin/heredoc) · " +
         "aedit <path> (conflict-marker blocks on stdin: <<<<<<< old ======= new >>>>>>>). " +

@@ -198,20 +198,26 @@ export async function start(
   // main funnels the resolved values down the chain. Explicit principals (tests) carry
   // their own settings and need no catalog at all.
   const catalog = derived ? config.catalog ?? null : null;
-  const principals: Principal[] = config.principals ??
+  const roster: Principal[] = config.principals ??
     await compileRoster(dir, config, catalog!, Date.now());
   // config → tables → folders (§9): the declaration compiles into the registry — the table
-  // exists because policy derives from rows (RLS later, §6) and the ingest classifier
-  // scans the declared handles (email/phone → principal)
-  log.syncAgents(principals.map((p) => ({
+  // exists because policy derives from rows (RLS later, §6), the ingest classifier scans
+  // the declared handles (email/phone → member), and render names members by it (§5).
+  // Every entry is a row, a person alone included: they steer, they are named, no session
+  // of theirs ever runs (`mind: false`, §4).
+  log.syncAgents(roster.map((p) => ({
     agentId: p.agentId,
     mind: sessionAddress(p.agentId, MIND),
     provider: p.provider,
     model: p.model,
     effort: p.effort,
+    name: p.name,
     email: p.email,
     phone: p.phone,
+    principals: p.principals,
+    ...(p.runs === false ? { runs: false } : {}),
   })));
+  const principals = roster.filter((p) => p.runs !== false);
   // the mind is a ONE-MEMBER conversation (§6): seeding it as membership is what makes
   // "own mind readable, others' invisible" plain branch-3 policy, no special case
   log.upsertMemberships(principals.map((p) => (
@@ -475,6 +481,7 @@ export async function start(
     publish: log.publish,
     read: (q) => log.read(q),
     aliases: () => log.aliases(),
+    nameOf: (id) => log.agents().find((a) => a.agentId === id)?.name ?? id,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onError: (e, err) => console.error(`mirror FAILED on ${e.envelope.conversation.address}:`, err),
   }));
@@ -592,8 +599,13 @@ export async function start(
 }
 
 /** What runs plus what the registry mirrors: the runtime config, the policy seam, and the
- *  declared facts (`provider` for the transport seam, `email`/`phone` for the classifier). */
-type Principal = AgentConfig & Policy & { provider?: string };
+ *  declared facts (`provider` for the transport seam, `email`/`phone` for the classifier,
+ *  `principals` and `runs` for who steers and whether a session runs at all, §4). */
+type Principal = AgentConfig & Policy & {
+  provider?: string;
+  principals?: string[];
+  runs?: boolean;
+};
 
 /** The framework way (§9): the catalog's `agents` roster declares the org — each entry
  *  becomes a registry row and a home folder, config → tables → folders. agentId = the
@@ -619,9 +631,12 @@ async function compileRoster(
   const org = catalog.org.agent;
   const found: Principal[] = [];
   for (const [name, entry] of Object.entries(catalog.agents)) {
-    await Deno.mkdir(`${dir}/agents/${name}`, { recursive: true }); // the home is derived
-    const { identity = {}, ...cfg } = entry;
+    const { identity = {}, principals, mind, ...cfg } = entry;
+    // the home is derived — for an agent; a person alone (§4) has a row and no folder
+    if (mind !== false) await Deno.mkdir(`${dir}/agents/${name}`, { recursive: true });
     found.push({
+      principals,
+      ...(mind === false ? { runs: false } : {}),
       agentId: name,
       sessionId: MIND,
       model: cfg.model ?? defaults.model ?? org.model,

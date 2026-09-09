@@ -299,3 +299,17 @@ Deno.test("policyFor: the mind-alias conversation is invisible to its own agent 
     assert(ana.readable!(at("slack", "T1:U1", "C7")));
   });
 });
+
+Deno.test("policyFor: an alias conversation is invisible to EVERY agent, not only its own (§4)", async () => {
+  await withLog((log) => {
+    log.upsertConnections([
+      { service: "slack", address: "T1", credentialKey: "slack:T1:org" }, // the org's anchor
+      { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
+    ]);
+    // bo reads the org anchor's world — ana's self-DM is not part of it: ana's line there
+    // is stamped hers, and would read to bo as ana speaking in a room bo is in
+    const bo = policyFor({ agentId: "bo", id: "mind" }, log);
+    assert(!bo.readable!(at("slack", "T1", "D1")));
+    assert(bo.readable!(at("slack", "T1", "C7")));
+  });
+});

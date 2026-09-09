@@ -735,6 +735,7 @@ export interface XiPorts {
     & Reader
     & Locker
     & Pick<Registry, "agents">
+    & { principalsOf(agentId: string): string[] }
     & Pick<Standing, "remember" | "remembered">
     & Pick<Connections, "upsertMemberships" | "aliases" | "connections">
     & Pick<Timers, "arm" | "timers" | "disarm">;
@@ -940,6 +941,13 @@ async function think(
       ambient,
       // trailing-region media → real image/document blocks (§5); the store loads, render picks
       loadMedia,
+      // who is one of us (§4, §5): the roster's names, and who steers this agent — live
+      roster: {
+        names: Object.fromEntries(
+          ports.log.agents().map((a) => [a.agentId, a.name ?? a.agentId]),
+        ),
+        principals: ports.log.principalsOf(config.agentId),
+      },
       // the checkpoint instruction is a DOC (§5/§8) — editable like any instruction
       compactPrompt: () =>
         ports.docs.read({ agent: config.agentId, conversation: home }, {
@@ -1267,11 +1275,13 @@ const PENDING_APPROVAL = {
  *  wire address, a local room — is not a session target. */
 function sessionTarget(
   to: string,
-  agents: { agentId: string }[],
+  agents: { agentId: string; runs?: boolean }[],
 ): { agentId: string; sessionId: string } | null {
-  if (agents.some((a) => a.agentId === to)) return { agentId: to, sessionId: MIND };
+  // a person alone (`mind: false`, §4) runs no session: their name is nowhere to send
+  const minds = agents.filter((a) => a.runs !== false);
+  if (minds.some((a) => a.agentId === to)) return { agentId: to, sessionId: MIND };
   const s = parseSession(to);
-  return s !== null && agents.some((a) => a.agentId === s.agentId) ? s : null;
+  return s !== null && minds.some((a) => a.agentId === s.agentId) ? s : null;
 }
 
 /** Contact between sessions is a DM room (§4): `dm:` + the sorted pair of session
@@ -1328,16 +1338,22 @@ function selfSend(
   if (name !== "send") return undefined;
   const to = (input as { to?: unknown } | null)?.to;
   if (typeof to !== "string" || to === "") return undefined;
-  const me = ports.log.agents().find((a) => a.agentId === config.agentId);
-  // the session's OWN ROOM, and the principal's handles. The bare agent name is refused
-  // only from the mind — an agent IS its mind (§4), so from a sibling it is a real
-  // target, the dm: with the mind, not a self-send.
+  const agents = ports.log.agents();
+  const me = agents.find((a) => a.agentId === config.agentId);
+  // the session's OWN ROOM, the agent's own handles, and every principal's — their
+  // handles and, from the mind, their names (§4). The bare name is refused only from the
+  // mind — an agent IS its mind, so from a sibling it is a real target, the dm: with the
+  // mind, not a self-send.
+  const principals = ports.log.principalsOf(config.agentId)
+    .map((p) => agents.find((a) => a.agentId === p))
+    .filter((a): a is NonNullable<typeof a> => a !== undefined);
   const mine = new Set(
     [
       sessionAddress(config.agentId, config.sessionId),
-      ...(config.sessionId === MIND ? [config.agentId] : []),
+      ...(config.sessionId === MIND ? [config.agentId, ...principals.map((p) => p.agentId)] : []),
       me?.email,
       me?.phone,
+      ...principals.flatMap((p) => [p.email, p.phone]),
     ].filter((x): x is string => typeof x === "string" && x !== ""),
   );
   const alias = ports.log.aliases().some((r) =>
@@ -1566,12 +1582,18 @@ async function execute(
     // than letting it answer the wrong message.
     const target = args.re === undefined ? undefined : await referent(ports, to, String(args.re));
     // what the send DOES to its referent (§3, §5): the vocabulary the window renders, in
-    // reverse — the model writes back the action it reads. Absent, the send is a create,
-    // or a reply/an added reaction if it points somewhere.
-    const action = args.action === undefined ? undefined : String(args.action);
-    if (action !== undefined && !MUTATIONS.includes(action)) {
-      throw new Error(`unknown action "${action}" — one of ${MUTATIONS.join(", ")}`);
+    // reverse — the model writes back the action it reads. `create` and `add` are the
+    // defaults spelled out: what a body and a glyph already mean, so the send stands as
+    // a create, or a reply/an added reaction if it points somewhere.
+    const named = args.action === undefined ? undefined : String(args.action);
+    if (named !== undefined && !ACTIONS.includes(named)) {
+      throw new Error(`unknown action "${named}" — one of ${ACTIONS.join(", ")}`);
     }
+    if (named === "add" && !glyph) throw new Error("`add` needs `react`: the glyph it adds");
+    if (named === "create" && glyph) {
+      throw new Error("`create` sends text or files — a reaction is `add`");
+    }
+    const action = named === "create" || named === "add" ? undefined : named;
     if (action && !target) throw new Error(`\`${action}\` needs \`re\`: the message it acts on`);
     if (glyph && !target) throw new Error("a reaction needs `re`: the message it lands on");
     // the account may unsay its OWN words — either hand of `self`, since the wire holds one
@@ -1633,10 +1655,11 @@ async function execute(
   return await tool.execute(input, signal);
 }
 
-/** The actions a send may take ON its referent (§3 `Action`, §5 the rendered vocabulary).
- *  `reply`/`add` are not here: they are what a reference and a glyph already mean, so the
- *  model never has to name them. */
-const MUTATIONS = ["edit", "delete", "remove"];
+/** The actions a send may name (§3 `Action`, §5 the rendered vocabulary). `create` and
+ *  `add` are the defaults a body and a glyph already mean — named or not, a create that
+ *  points somewhere is stored as a `reply`, a glyph as an `add`. `reply` itself is never
+ *  named: it is what `re` beside text means. */
+const ACTIONS = ["create", "edit", "delete", "add", "remove"];
 
 /** How far back a reference may point: a superset of any render window, so every `id` the
  *  model can still read resolves, and the scan stays one conversation's recent rows. */
@@ -1759,48 +1782,41 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
     {
       name: "send",
       description:
-        "Dispatch a message to a peer conversation (never to your principal — just answer them directly).",
+        "Dispatch a message to an external world conversation (<conv>). Note: this tool is " +
+        "not needed for internal user-assistant conversations (<principal>).",
       input_schema: {
         type: "object",
         properties: {
-          to: {
+          to: { type: "string", description: "target <conv> `name` or `address`" },
+          text: {
             type: "string",
             description:
-              "target conversation address (as shown in its conv element), or a peer agent's " +
-              "name to DM them. Never your principal, their handles, or your own name: they " +
-              "read your reply itself, so a send at them is refused",
+              "the message body or the attachment caption; omit only when reacting or sending " +
+              "files without a caption",
           },
-          text: { type: "string", description: "the message body — omit only when reacting" },
           re: {
             type: "string",
             description:
-              "the message this call acts on, exactly as its line shows the id. REQUIRED with " +
-              "`react` and with every `action` — those have no object without it. With plain " +
-              "`text` it does something else: it QUOTES that message on the wire, a visible " +
-              "block above your words, so leave it out. Being a reply is already obvious from " +
-              "the fact that you replied, and quoting an ordinary answer is the loudest tell " +
-              "that a machine typed it. Set it there only when you can name the confusion it " +
-              "prevents: several threads live at once in one group, or an answer to something " +
-              "said well above the last line",
+              "target message `id`. REQUIRED with `react`. OPTIONAL with `text` and/or " +
+              "`files` (depends on the `action`)",
           },
-          react: {
-            type: "string",
-            description:
-              "an emoji to land on the `re` message instead of sending a message of your own",
-          },
+          react: { type: "string", description: "an emoji to land on the `re` message" },
           action: {
             type: "string",
-            enum: ["edit", "delete", "remove"],
+            enum: ACTIONS,
             description:
-              "what to do to the `re` message instead of adding to it: replace its text with `text` (edit, this account's own messages only — WhatsApp accepts one for about 20 minutes), take it back (delete, own only), or lift the `react` glyph you put on it (remove)",
+              "create (default for text or files) | edit | delete | add (default for react) | " +
+              "remove. Text or files: create without `re` sends a new message, with `re` " +
+              "*replies to* the target message; edit *replaces* content and delete *takes* it " +
+              "back (both require `re`). Reactions: add *reacts to* the target message, remove " +
+              "*takes* back the glyph you put on it",
           },
           files: {
             type: "array",
             items: { type: "string" },
             description:
-              "file paths to attach. A relative path resolves from your home — never from your " +
-              "shell's cwd, which may have moved. Your home's files, the org's, and the media " +
-              "store are attachable; nothing else",
+              "file paths to attach. A relative path resolves from your home, never from your " +
+              "shell's cwd, which may have moved",
           },
         },
         required: ["to"],
@@ -1809,7 +1825,7 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
     {
       name: "search",
       description:
-        "Search the message log — including everything older than your window. Every filter " +
+        "Search the message log, including everything older than your window. Every filter " +
         "narrows, and none is required: `in` with `after`/`before` and no `text` reads a " +
         `stretch of a conversation as it happened. The most recent matches come back (${SEARCH_LIMIT} ` +
         "unless you set `limit`), newest last, each as your window shows it: the words, then " +
@@ -1822,8 +1838,8 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
           in: {
             type: "string",
             description:
-              "one conversation: its address, or a name — a group's, or the person a direct " +
-              "chat is with (any part of it, case doesn't matter)",
+              "one conversation: its address, or a name (a group's, or the person a direct " +
+              "chat is with; any part of it, case doesn't matter)",
           },
           from: {
             type: "string",
@@ -1841,8 +1857,8 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
           text: {
             type: "string",
             description:
-              "a phrase the message contains — in its words, an attachment's caption or its " +
-              "filename — matched literally as one contiguous string, case-insensitive: no word " +
+              "a phrase the message contains (in its words, an attachment's caption or its " +
+              "filename), matched literally as one contiguous string, case-insensitive: no word " +
               "splitting, no fuzziness, no wildcards. Keep it short and distinctive: one word " +
               "or a fragment you are sure of beats a whole sentence",
           },
@@ -1858,16 +1874,16 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
       name: "schedule",
       description:
         "Wake yourself later with a note. At the time you set, the note arrives as an alarm " +
-        "in this conversation and you decide then what to do about it — nothing is executed " +
+        "in this conversation and you decide then what to do about it; nothing is executed " +
         "for you. Write the note to your future self, who will read it cold: say the thing " +
         "to do, not `as discussed`. Use `cancel` with the id to unset it. The horizon is a " +
-        "year — anything further out belongs in your files, not a timer.",
+        "year; anything further out belongs in your files, not a timer.",
       input_schema: {
         type: "object",
         properties: {
           note: {
             type: "string",
-            description: "what you want to be told when it fires — your own words, self-contained",
+            description: "what you want to be told when it fires; your own words, self-contained",
           },
           at: {
             type: "string",
@@ -1882,7 +1898,7 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
           cron: {
             type: "string",
             description:
-              "instead, repeat forever: five fields on your org's clock — `0 9 * * *` is every " +
+              "instead, repeat forever: five fields on your org's clock; `0 9 * * *` is every " +
               "day at 09:00, `*/15 9-18 * * 1-5` every quarter hour through the workweek",
           },
         },
@@ -1891,9 +1907,9 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
     },
     {
       name: "cancel",
-      description: "Unset something of yours that is still standing: a pending approval — a call " +
-        "awaiting a verdict that stopped being worth asking (your principal is told; the " +
-        "call never runs) — or a scheduled wake you no longer want.",
+      description: "Unset something of yours that is still standing: a pending approval (a call " +
+        "awaiting a verdict that stopped being worth asking; your principal is told, the " +
+        "call never runs) or a scheduled wake you no longer want.",
       input_schema: {
         type: "object",
         properties: {

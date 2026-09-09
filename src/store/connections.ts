@@ -57,15 +57,18 @@ export interface MembershipRow {
   sessionId?: string;
 }
 
-/** A mind-alias binding (§4): an OWNED connection's principal-identified conversation
- *  (self-talk). DERIVED where platform structure gives it away (a WA self-chat is
- *  addressed by the connection's own number), RECORDED (`extra.self_conversation`, the
+/** A mind-alias binding (§4): a conversation on the wire whose every counterpart is a
+ *  principal of the agent — self-talk on an OWNED connection, or a principal's DM with
+ *  the agent's own account. DERIVED where platform structure gives it away (a WA
+ *  self-chat is addressed by the connection's own number, a principal's DM by their own;
+ *  `store/roster.ts` derives the latter), RECORDED (`extra.self_conversation`, the
  *  connect flow's discovery) where the platform's id is opaque (the Slack self-DM). */
 export interface AliasRow {
   service: string;
   connection: string; // the binding row's own address (grant / paired number)
   conversation: string; // the self-conversation on the wire
-  agentId: string;
+  agentId: string; // whose mind the surface faces
+  principal: string; // who is on the other side of it — a roster username
   /** The grant still stands (no `deleted_at`): the surface is one somebody holds, so a
    *  mind copy sent there reaches them. A revoked binding is listed too — it keeps
    *  recognizing the history it ingested — but nothing is sent to it. */
@@ -270,6 +273,7 @@ export function createConnections(db: DatabaseSync): Connections {
         connection: r.address,
         conversation: r.conversation,
         agentId: r.agent_id,
+        principal: r.agent_id, // self-talk: the owner on both sides
         live: r.live === 1,
       }));
     },

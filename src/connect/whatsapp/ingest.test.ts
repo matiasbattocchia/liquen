@@ -555,3 +555,28 @@ Deno.test("the served ingest needs the bridge token — unset is a refusal to bi
   assertThrows(() => bridgeTokenOf(undefined), Error, "WA_BRIDGE_TOKEN");
   assertThrows(() => bridgeTokenOf(""), Error, "WA_BRIDGE_TOKEN");
 });
+
+Deno.test("the classifier reads the roster too (§4): a declared phone is that member, grant or no grant", async () => {
+  const { store } = fakeStore();
+  const { handler, published } = harness({
+    store: {
+      ...store,
+      agents: () => [
+        { agentId: "sol", mind: "mind@sol", phone: "+54 9 11 555-0002", runs: false },
+      ],
+    },
+  });
+  await handler(
+    post(
+      "/whatsapp-web-webhook",
+      batch({
+        messages: [
+          textMessage({ sender_address: "549115550002" }), // sol's own phone, never paired
+          textMessage({ external_id: "wmw.x.y.z.2", sender_address: "549116660002" }),
+        ],
+      }),
+    ),
+  );
+  assertEquals((published[0] as MessageEvent).agent, { id: "sol" });
+  assertEquals((published[1] as MessageEvent).agent, undefined);
+});

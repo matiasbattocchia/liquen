@@ -54,6 +54,7 @@ import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
 import { type Connections, CONNECTIONS_DDL, createConnections } from "./connections.ts";
 import { createTimers, type Timers, TIMERS_DDL } from "./timers.ts";
 import { createSweeper, type Sweeper } from "./sweep.ts";
+import { dmAliases, principalsOf } from "./roster.ts";
 
 /** A bounded, filtered read over the log. Fields AND-combine (the `search` half, §6). */
 export interface ReadQuery {
@@ -175,6 +176,9 @@ export type Log =
      *  `status` stages. An UPDATE — no new row: the append stream never sees it, only a
      *  subscriber that asked for `updates` does (§3, §4). */
     setDelivery(id: EventId, patch: DeliveryPatch): Promise<void>;
+    /** Who steers an agent (§4): the entry's list, else the roster when its account is
+     *  the org's, else itself. Live — read off the registry and the connections map. */
+    principalsOf(agentId: string): string[];
     close(): Promise<void>;
   };
 
@@ -254,6 +258,7 @@ export async function openLog(
   );
   migrate(db); // schema versions below the current one are rewritten in place, exactly once
   const connections = createConnections(db); // the gate below reads its table
+  const registry = createRegistry(db);
 
   const upsert = db.prepare(
     `INSERT INTO events (id, external_id, type, service, connection_address,
@@ -474,11 +479,18 @@ export async function openLog(
 
     lock: locker.lock, // the turn lease lives HERE — same DB, so one transaction holds both
     //                    a turn's last writes and its release (`publishAndRelease`, §2)
-    ...createRegistry(db), // the agent registry (§9): folders declare, this table mirrors
+    ...registry, // the agent registry (§9): folders declare, this table mirrors
     ...createTimers(db), // armed wakes (§10): the one non-log fact about the future
     ...createSweeper(db), // the harness-led retry (§5): a failed send re-offered as a state move
     ...createStanding(db), // remembered policies (§9): standing verdicts land here
     ...connections, // connections + memberships (§4, §6): what policy reads, live
+    // the mind's surfaces (§4): the store's own bindings (self-talk, recorded self-DMs)
+    // plus the DMs each principal holds with the agent's account — derived, not stored
+    aliases: () => [
+      ...connections.aliases(),
+      ...dmAliases(registry.agents(), connections.connections()),
+    ],
+    principalsOf: (agentId) => principalsOf(agentId, registry.agents(), connections.connections()),
 
     async publish(one: Draft | Draft[]): Promise<Event & Event[]> {
       return await (commit(one) as Promise<Event & Event[]>);
@@ -595,6 +607,21 @@ function migrate(db: DatabaseSync) {
   if (v < 4) migrateV4(db);
   if (v < 5) migrateV5(db);
   if (v < 6) migrateV6(db);
+  if (v < 7) migrateV7(db);
+}
+
+/** v7 — the registry carries the roster's word for each member (`name`), who steers
+ *  (`principals`) and whether a session runs (`runs`), §4. A projection re-synced at every
+ *  boot: the columns need existing, not backfilling. */
+function migrateV7(db: DatabaseSync) {
+  const cols = new Set(
+    (db.prepare("SELECT name FROM pragma_table_info('agents')").all() as { name: string }[])
+      .map((c) => c.name),
+  );
+  if (!cols.has("name")) db.exec("ALTER TABLE agents ADD COLUMN name TEXT");
+  if (!cols.has("principals")) db.exec("ALTER TABLE agents ADD COLUMN principals TEXT");
+  if (!cols.has("runs")) db.exec("ALTER TABLE agents ADD COLUMN runs INTEGER NOT NULL DEFAULT 1");
+  db.exec("PRAGMA user_version = 7");
 }
 
 function migrateV1(db: DatabaseSync) {

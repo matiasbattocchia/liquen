@@ -28,7 +28,7 @@ import type { DocEntry } from "./store/docs.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
-import { cancelled, render, SILENCE } from "./render.ts";
+import { cancelled, render, type Roster, SILENCE } from "./render.ts";
 import { type Effort, type ModelTransport, mu, type StepResult } from "./mu.ts";
 
 /** Re-exported so the layer above talks to nu, not past it (main → xi → nu → mu). */
@@ -93,6 +93,8 @@ export interface TurnInput {
   /** Media resolver for the trailing-region blocks (§5) — xi injects
    *  `store/media.loadMediaBlock`; render decides which uris to resolve. */
   loadMedia?: (uri: string) => { media_type: string; data: string } | null;
+  /** Who is one of us (§4, §5): names and principals, read off the registry by xi. */
+  roster?: Roster;
   /** The turn's interrupt (§2): fired by the principal's cancel while the call is in
    *  flight — the request is cut, and the turn closes on the `cancelled` row, unretried. */
   signal?: AbortSignal;
@@ -174,6 +176,7 @@ export async function nu(
     },
     ambient: input.ambient,
     loadMedia: input.loadMedia,
+    roster: input.roster,
   });
 
   let res: StepResult = { ok: false, error: "not attempted" };

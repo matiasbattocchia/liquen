@@ -175,6 +175,18 @@ export interface RenderInput {
    *  (§5 — the tool-pair collapse pattern; the path is the durable re-viewable handle).
    *  Absent ⇒ markers only. */
   loadMedia?: (uri: string) => { media_type: string; data: string } | null;
+  /** Who is one of us (§4, §5): the roster's word for each member, and who steers this
+   *  session's agent. Absent ⇒ every member is named by their username and nobody is a
+   *  principal but the agent itself. */
+  roster?: Roster;
+}
+
+export interface Roster {
+  /** agentId → `identity.name`, else the username: the string `<principal name>` and the
+   *  `principal`/`agent` marks wear. */
+  names: Record<string, string>;
+  /** The usernames of everyone who steers this session's agent. */
+  principals: string[];
 }
 
 /** The Anthropic request halves render produces — the seam between render and `mu`. */
@@ -484,9 +496,10 @@ export function parseVerdict(text: string): PermissionVerdict | undefined {
 const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 
 function renderMessages(
-  { events: window, session, now, zone, ambient, loadMedia }: RenderInput,
+  { events: window, session, now, zone, ambient, loadMedia, roster }: RenderInput,
 ): MessageParam[] {
   const me = session; // whose voice — the (agent, session) pair
+  const who: Roster = roster ?? { names: {}, principals: [session.agentId] };
   const here = session.conversation; // the session's own room — everything else is world
   const visible = applySummary(window.filter((e) => !silenced(e)));
   // the horizon is a LOG position (§5): what the boundary step consumed is what its read
@@ -614,7 +627,7 @@ function renderMessages(
       const earlier = elisions.earlier.get(e);
       if (earlier) cluster.lines.push(`… ${earlier} earlier, not shown`);
     }
-    cluster.lines.push(msgLine(e, me, zone, refOf(e)));
+    cluster.lines.push(msgLine(e, me, who, zone, refOf(e)));
   };
 
   // No separators (§5). They went through `place()`, so every date break and gap marker
@@ -699,7 +712,7 @@ function renderMessages(
       if (isSelf(e, me)) {
         placeOwn(bodyOf(e, zone)); // bare: the agent's own voice
       } else if (parseVerdict(textOf(e)) === undefined) {
-        place("user", { type: "text", text: principalEl(e, zone) }); // a verdict line is
+        place("user", { type: "text", text: principalEl(e, who, zone) }); // a verdict line is
         // steering, not conversation — the gate consumed it, so it draws no block
       }
     } else {
@@ -750,7 +763,7 @@ function renderMessages(
         placeOwn(bodyOf(e, zone)); // mid-chain assistant text
       } else if (e.envelope.conversation.address === here) {
         if (parseVerdict(textOf(e)) === undefined) {
-          place("user", { type: "text", text: principalEl(e, zone) });
+          place("user", { type: "text", text: principalEl(e, who, zone) });
         }
       } else {
         world(e);
@@ -880,52 +893,54 @@ function conversationEl(
  *  is outside this window. Nothing can point at a `<reaction>`, so reactions spend no id.
  *
  *  Body and sender name are attacker-controlled — escaped, so no message can close its own
- *  element or forge a mark. */
-/** A world sender's display label. The self labels are AUTHORSHIP marks — a claim about
- *  who is speaking — so a wire display name (attacker-controlled) that collides with one
- *  is not shown: the line wears the address instead, which the platform, not the sender's
- *  profile screen, vouches for. Escaping keeps a name from forging MARKUP; this keeps it
- *  from forging a LABEL the markup reserves. */
-function senderLabel(sender: { address?: string; name?: string }): string {
-  const name = sender.name;
-  if (name !== undefined && !/^\s*self\s*(\(|$)/i.test(name)) return name;
-  return sender.address ?? name ?? "peer";
+ *  element; and who among us is speaking is an attribute of its own (`markOf`), which no
+ *  name can spell. */
+/** `from` is the wire's word: the sender's name as the service shows it, their address
+ *  when it shows none, and — when the account itself spoke, which carries no sender — the
+ *  roster's word for whoever the account is. The local service has one word for a
+ *  session, its address (§4): a mind is the bare agent name, a named session
+ *  `build@matias`. Composed by hand, not `sessionAddress`: render never throws on an odd
+ *  stored name. */
+function fromOf(e: MessageEvent, session: SessionRef, roster: Roster): string {
+  const sender = e.envelope.sender;
+  if (sender) return sender.name ?? sender.address ?? "peer";
+  const id = e.agent?.id ?? session.agentId;
+  if (e.envelope.service === "local") {
+    const s = e.agent?.session_id ?? routedSession(e.envelope);
+    return s === MIND ? id : `${s}@${id}`;
+  }
+  return roster.names[id] ?? id;
 }
 
-/** Another session's line wears its ADDRESS — the handle `send` takes back (§4). An
- *  agent's mind wears the bare agent name (an agent IS its mind); a named session the
- *  full `build@matias`. Composed by hand, not `sessionAddress`: render never throws on
- *  an odd stored name. */
-function peerSession(e: Event): string {
-  const a = e.agent!;
-  const s = a.session_id ?? routedSession(e.envelope);
-  return s === MIND ? a.id : `${s}@${a.id}`;
+/** Who among us (§5) — an identity, never a session (which conversation a line is in
+ *  already says which hands are talking): ` self` = this agent's own voice, any session
+ *  of it (authorship, §3: `turn_id`); ` principal` = a principal of this agent, whichever
+ *  device they typed on (the classifier's `agent.id` stamp without a turn_id); ` agent` =
+ *  any other roster member, human or alter-ego alike, one complex. The value is the
+ *  roster's word for them, elided when it equals `from`. A sender-less row with no stamp
+ *  is the account speaking on its own — the account's owner, on their own phone. A
+ *  customer's line wears nothing. */
+function markOf(e: MessageEvent, session: SessionRef, roster: Roster, from: string): string {
+  const id = e.agent?.id ?? (e.envelope.sender === undefined ? session.agentId : undefined);
+  if (id === undefined) return "";
+  const voice = e.payload?.turn_id !== undefined || isSelf(e, session);
+  if (voice && id === session.agentId) return " self";
+  const attr = !voice && roster.principals.includes(id) ? "principal" : "agent";
+  const value = roster.names[id] ?? id;
+  return value === from ? ` ${attr}` : ` ${attr}="${escAttr(value)}"`;
 }
 
 function msgLine(
   e: MessageEvent,
   session: SessionRef,
+  roster: Roster,
   zone?: string,
   ref: Ref = { attr: "" },
 ): string {
   const re = ref.attr;
-  // `self` for both hands, because on the wire there IS only one: the account — the halves
-  // are told apart by AUTHORSHIP (§3): turn_id ⇒ the model's voice; the classifier's
-  // `agent.id` stamp without one ⇒ the principal (their grant named the mind, whichever
-  // device they typed on). A DIFFERENT session is a peer's voice — a teammate agent or a
-  // sibling session (team chat) — labelled by its address (§4). The sender-less fallback
-  // keeps pre-classifier coexistence rows labelled: no sender means the account spoke and
-  // it did not come through us — the principal, on their own phone.
-  const from = isSelf(e, session)
-    ? "self (you)"
-    : ownComplex(e, session)
-    ? "self (principal)"
-    : e.agent !== undefined
-    ? peerSession(e)
-    : e.envelope.sender === undefined
-    ? "self (principal)"
-    : senderLabel(e.envelope.sender);
-  const head = `id="${shortId(e.id)}" from="${escAttr(from)}" at="${hhmm(e.ts, zone)}"`;
+  const from = fromOf(e, session, roster);
+  const mark = markOf(e, session, roster, from);
+  const head = `id="${shortId(e.id)}" from="${escAttr(from)}"${mark} at="${hhmm(e.ts, zone)}"`;
 
   const action = e.payload?.action;
   // the hoisting rule: a message that IS one data part wears the envelope on its own element
@@ -934,7 +949,7 @@ function msgLine(
       e.parts[0].kind !== "reaction" && action !== "add" && action !== "remove"
     ? e.parts[0]
     : undefined;
-  if (solo) return dataLine(solo, e, from, re, zone);
+  if (solo) return dataLine(solo, e, from, mark, re, zone);
   if (action === "edit") {
     return `<msg ${head}${re} action="edit">${escText(textOf(e))}</msg>`;
   }
@@ -956,7 +971,7 @@ function msgLine(
     const glyph = r ? (r.data.unicode ?? r.data.name ?? "") : textOf(e);
     const removed = action === "remove" ? ' action="remove"' : "";
     // no `id`: a reaction is a leaf — nothing in the vocabulary can point back at one
-    const react = `from="${escAttr(from)}" at="${hhmm(e.ts, zone)}"`;
+    const react = `from="${escAttr(from)}"${mark} at="${hhmm(e.ts, zone)}"`;
     return `<reaction ${react}${re}${removed}>${escText(glyph)}</reaction>`;
   }
 
@@ -1009,7 +1024,7 @@ function dataEl(p: DataPart, head: string, zone?: string): string {
  *  the part's element wears the envelope attributes itself. A sender renders as `from` the
  *  usual way (a calendar event's creator, mapped to `envelope.sender` by the connector); a
  *  SENDERLESS line in a `broadcast` conversation wears none — fan-out is not a room anyone
- *  is in, so the "self (principal)" fallback must not mislabel a world fact (a cancellation
+ *  is in, so the account-spoke fallback must not mislabel a world fact (a cancellation
  *  tombstone has no creator). A delete spends no `id` (nothing points at one) and its `data`
  *  is whatever minimal handle the connector kept — e.g. a calendar tombstone's `{gid}`, the
  *  service-side id that stays actionable after the `re` referent scrolls out of the window. */
@@ -1017,6 +1032,7 @@ function dataLine(
   p: DataPart,
   e: MessageEvent,
   from: string,
+  mark: string,
   re: string,
   zone?: string,
 ): string {
@@ -1024,7 +1040,7 @@ function dataLine(
   const act = action === "edit" || action === "delete" ? ` action="${action}"` : "";
   const voiceless = e.envelope.conversation.kind === "broadcast" &&
     e.envelope.sender === undefined;
-  const voice = voiceless ? "" : ` from="${escAttr(from)}"`;
+  const voice = voiceless ? "" : ` from="${escAttr(from)}"${mark}`;
   const id = action === "delete" ? "" : `id="${shortId(e.id)}" `;
   const head = `${id}${voice ? voice.slice(1) + " " : ""}at="${hhmm(e.ts, zone)}"${re}${act}`;
   return dataEl(p, head, zone);
@@ -1253,17 +1269,22 @@ function mediaMarker(p: FilePart, head = ""): string {
  *  world, the harness, the summary, the principal — so the model reads who is speaking off
  *  the element's shape, and bare text is the model's own voice alone. Composed like a
  *  world line (escaped text, then markers), stamped with the org clock. */
-function principalEl(e: MessageEvent, zone?: string): string {
+function principalEl(e: MessageEvent, roster: Roster, zone?: string): string {
   const body = [
     escText(textOf(e)),
     ...filesOf(e).map((p) => mediaMarker(p)),
     ...datasOf(e).map((p) => dataEl(p, "", zone)),
   ].filter((s) => s.length > 0).join("\n");
-  // `name` when the envelope carries a sender: with one principal it is a courtesy, with
-  // several it is the identity — the element's shape does not change when that day comes.
-  // Trusted position: only a grant-classified row renders here, never a wire display name.
+  // `name` is the roster's word for them (§4): the sender's address is a username — the
+  // door's, or the one the mirror wrote from the binding — and the roster names it. With
+  // one principal it is a courtesy, with several it is the identity — the element's
+  // shape does not change. Trusted position: only a grant-classified row renders here.
   const who = e.envelope.sender;
-  const name = who ? ` name="${escAttr(who.name ?? who.address ?? "")}"` : "";
+  const name = who
+    ? ` name="${
+      escAttr((who.address && roster.names[who.address]) ?? who.name ?? who.address ?? "")
+    }"`
+    : "";
   return `<principal${name} at="${hhmm(e.ts, zone)}">${body}</principal>`;
 }
 

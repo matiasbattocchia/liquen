@@ -77,6 +77,9 @@ export interface MirrorDeps {
   read: Reader["read"];
   /** The live bindings (§4): connect flows write them, the mirror reads through. */
   aliases: () => AliasRow[];
+  /** The roster's word for a member (§4) — what a principal's copy is signed with, and
+   *  what the replayed-input tag names. Absent ⇒ the username. */
+  nameOf?: (agentId: string) => string;
   /** The unclaimed-CC repair: stamp a CC with the id its own post came back carrying —
    *  the dispatcher's `setDelivery`, run late by the mirror (it absorbs the echo row). */
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
@@ -100,7 +103,7 @@ export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): ()
     const mind = mindOf(e);
     if (mind !== null) {
       enqueue(e, async () => {
-        const parts = await ccParts(e, deps.read);
+        const parts = await ccParts(e, deps);
         if (parts) await fanOut(deps, e, mind, parts, now);
       });
       return;
@@ -186,9 +189,14 @@ async function fanIn(
       service: "local",
       connection_address: "agent",
       conversation: { address: sessionAddress(binding.agentId, MIND) },
-      // WA self-chat carries no sender (the account spoke) — but in an alias conversation
-      // the account IS the principal, and v0 principal name = agent name
-      sender: e.envelope.sender ?? { address: binding.agentId, name: binding.agentId },
+      // the binding says who is on the other side (§4): the copy is signed with their
+      // username and the roster's word for them, never the wire's display name — a
+      // self-chat carries no sender at all (the account spoke), a principal's DM carries
+      // the phone's
+      sender: {
+        address: binding.principal,
+        name: deps.nameOf?.(binding.principal) ?? binding.principal,
+      },
     },
     parts: e.parts ?? [],
     extra: {
@@ -291,11 +299,15 @@ async function fanOut(
 /** What a mind event looks like on a surface — exactly what the REPL shows (§4). Every
  *  line opens with WHO, because a self-conversation renders both speakers as the same
  *  account: `[agent] …` for the voice, `[agent tool] …` for a redacted tool call,
- *  `[agent asks] …` for a gate waiting on the principal, `[you via <surface>] …` for the
+ *  `[agent asks] …` for a gate waiting on the principal, `[<name> via <surface>] …` for a
  *  principal's own words replayed as output. Null ⇒ this event kind never crosses
  *  (thinking, results, the verdict itself — which is the principal's own `/y`; the
  *  agent's own settlement, a `cancel`, crosses as a `[system]` withdrawal). */
-async function ccParts(e: Event, read: Reader["read"]): Promise<Part[] | null> {
+async function ccParts(
+  e: Event,
+  deps: Pick<MirrorDeps, "read" | "nameOf">,
+): Promise<Part[] | null> {
+  const read = deps.read;
   if (silent(e)) return null; // the model said nothing (§5) — nothing crosses to a surface
   if (e.type === "tool_use") {
     // the same rendering the card gets (§9), addresses and all: a surface is where the
@@ -358,11 +370,16 @@ async function ccParts(e: Event, read: Reader["read"]): Promise<Part[] | null> {
     ];
   }
   if (!text) return null;
-  // the principal's own line, coming back as output on another surface: same tag shape as
-  // the voice, naming where it was typed — the REPL when the mind itself is where it landed
+  // a principal's own line, coming back as output on another surface: same tag shape as
+  // the voice, naming who typed it and where — the reader there may be another principal
+  // (§4), so the line says which; the REPL when the mind itself is where it landed
   const where = viaOf(e)?.service ?? "repl";
+  const sender = e.envelope.sender;
+  const who = sender?.address
+    ? deps.nameOf?.(sender.address) ?? sender.name ?? sender.address
+    : sender?.name ?? "you";
   return [
-    { type: "text", kind: "text", text: `\`[you via ${where}]\` ${text}` },
+    { type: "text", kind: "text", text: `\`[${who} via ${where}]\` ${text}` },
     ...parts.filter((p) => p.type === "file"),
   ];
 }

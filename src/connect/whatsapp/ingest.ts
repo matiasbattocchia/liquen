@@ -44,6 +44,8 @@
 
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
+import type { Registry } from "../../store/agents.ts";
+import { sameHandle } from "../../store/roster.ts";
 import type {
   Conversation,
   DataPart,
@@ -155,9 +157,10 @@ export type WAMedia = (
 export interface WhatsAppWebhookDeps {
   /** → the EventLog (the connection's only write). A batch publishes as ONE transaction. */
   publish: Appender["publish"];
-  /** The classifier + map-writer seam (§4): grant rows resolve senders; session events
-   *  write the connection row (the frontier gate publish checks). Absent ⇒ pure mapping. */
-  store?: Pick<Connections, "connection" | "upsertConnections">;
+  /** The classifier + map-writer seam (§4): grant rows and the registry's declared handles
+   *  resolve senders; session events write the connection row (the frontier gate publish
+   *  checks). Absent ⇒ pure mapping. */
+  store?: Pick<Connections, "connection" | "upsertConnections"> & Partial<Pick<Registry, "agents">>;
   /** The /media route's storage (absent ⇒ the route answers 501; messages still flow). */
   media?: WAMedia;
   /** Shared bearer token (the bridge's BRIDGE_TOKEN). Set ⇒ REQUIRED on every route. */
@@ -218,14 +221,18 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
       ...(batch.statuses ?? []).map((s) => mapStatus(s, connection, now)),
     ].filter((d): d is Draft<MessageEvent> => d !== null);
 
-    // the classifier (§3): a sender whose GRANT row names a mind is that principal —
-    // stamp `agent.id` (whose complex authored it; no session_id — a phone is not the
-    // harness). Presence-not-equality: turn_id, never this stamp, marks the model's voice.
+    // the classifier (§3): a sender whose GRANT row names a mind, or whose number is a
+    // member's declared handle (§4), is that member — stamp `agent.id` (whose complex
+    // authored it; no session_id — a phone is not the harness). Presence-not-equality:
+    // turn_id, never this stamp, marks the model's voice.
     if (deps.store) {
+      const store = deps.store;
+      const members = store.agents?.() ?? [];
       for (const d of drafts) {
         const s = d.envelope.sender?.address;
         if (!s || d.agent) continue;
-        const owner = deps.store.connection(SERVICE, s)?.agentId;
+        const owner = store.connection(SERVICE, s)?.agentId ??
+          members.find((a) => sameHandle(a.phone, s))?.agentId;
         if (owner) d.agent = { id: owner };
       }
     }

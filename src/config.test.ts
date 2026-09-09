@@ -337,3 +337,45 @@ Deno.test("an agent's model, maxTokens and provider are type-checked", async () 
     });
   }
 });
+
+Deno.test("the roster's principals and mind: names must be in the roster, mind a boolean", async () => {
+  await withDir(async (root) => {
+    const write = (agents: unknown) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ agents }));
+    await write({ matias: {}, ventas: { principals: ["matias"] }, sol: { mind: false } });
+    const cfg = await readConfig(root);
+    assertEquals(cfg.agents.ventas.principals, ["matias"]);
+    assertEquals(cfg.agents.sol.mind, false);
+    await write({ ventas: { principals: ["nobody"] } });
+    await assertRejects(() => readConfig(root), Error, 'names "nobody", not in the roster');
+    await write({ ventas: { principals: "matias" } });
+    await assertRejects(() => readConfig(root), Error, "must be a list of roster names");
+    await write({ sol: { mind: "no" } });
+    await assertRejects(() => readConfig(root), Error, "must be true or false");
+  });
+});
+
+Deno.test("declareAgent: --principal and --no-mind land as the entry's own keys", async () => {
+  await withDir(async (root) => {
+    await Deno.writeTextFile(`${root}/config.jsonc`, materialize(starterConfig(), [SPEC]));
+    await declareAgent(root, "matias", {});
+    await declareAgent(root, "sol", { name: "Sol" }, { mind: false });
+    await declareAgent(root, "ventas", { phone: "549117770000" }, {
+      principals: ["matias", "sol"],
+    });
+    const { agents } = await readConfig(root);
+    assertEquals(agents.sol, { identity: { name: "Sol", email: null, phone: null }, mind: false });
+    assertEquals(agents.ventas, {
+      identity: { name: null, email: null, phone: "549117770000" },
+      principals: ["matias", "sol"],
+    });
+    // a principal has to be in the roster already — the door refuses before writing
+    const before = await Deno.readTextFile(`${root}/config.jsonc`);
+    await assertRejects(
+      () => declareAgent(root, "bot", {}, { principals: ["ghost"] }),
+      Error,
+      '"ghost" is not in the roster',
+    );
+    assertEquals(await Deno.readTextFile(`${root}/config.jsonc`), before);
+  });
+});

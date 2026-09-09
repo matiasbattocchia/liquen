@@ -2004,3 +2004,61 @@ would refuse, before it writes. The two doors that add to the file share one sur
 (`declareIn`): the member's own lines inside the existing block, a comma only when a member
 already follows, the result parsed before it lands. The bench adapter runs both steps;
 `attach` points a missing agent at the command.
+
+### Many principals, one mind: org agents (2026-09-09) — LANDED
+
+An agent's principals are whoever may steer it through its mind, and the window they
+produce is the one it reads today: `<principal name>` lines in one thread, the name the
+only mark of who spoke. The door has this already — the socket proves the speaker may,
+`sender` says which principal — so the work is the connector side, and the mirror is the
+piece that takes it (DESIGN §4). Settled:
+
+- **No new mark in the catalog.** `identity` stays one object: the agent's own name and
+  the handles of the account it acts as. Ownership is the connection row — `agent_id` a
+  member's, null the org's — and the agent behind a connection is the roster entry whose
+  handle is the connection's address. A member's account makes an alter-ego, steered by its
+  owner; an org account a handle claims makes an org agent, steered by the whole roster,
+  since the org connection is every agent's to read already. `principals`, roster
+  usernames, replaces the derivation with the whole list — one entry ties a member to an
+  agent not their own, `[]` says nobody steers. Four shapes, all unix users: 1:1 (identity
+  alone), 1:n (identity + `principals`), 1:0 (`principals: []`), 0:1 (`mind: false` — a
+  member with identity and handles and no agent of their own, so no session ever runs).
+- **Mind surfaces are DMs.** Self-talk on the account (as today) and each principal's DM
+  with the agent's own number or bot — N surfaces of one mind, no membership tracked, no
+  wire admin able to seat a stranger. Nothing with a third party does: groups and channels
+  are room-defined, and a Slack mpim, member-defined and qualifying on paper, is served as
+  a room too. They stay world conversations, principals included. Rejected on WhatsApp: the self-chat as a shared
+  surface (no sender, so no way to tell principals apart — an org overloading one number
+  across many phones is the 1:1 duality, not this) and a group as the mind.
+- **Ownership caps authority; steering lends nothing.** An org agent acts as the org and
+  as nobody, however many steer it; a member who wants it to speak as them is asking for
+  their own alter-ego's leg (§8).
+- **The alias hides from every agent**, not only its own: a principal's line is stamped
+  with their agent id and reads as steering anywhere, so a member's DM with an org agent
+  left visible on the org connection would wake that member's alter-ego on it.
+- **`from` is the wire's word; who among us is a mark.** A world line's `from` is the
+  sender's name as the service shows it (address when it shows none, the account's roster
+  name when the account itself spoke) — external conversations look as they look. Three
+  attributes say who is one of us: `self` (this agent's voice), `principal` (a principal
+  of this agent), `agent` (any other roster member, human or alter-ego without
+  distinction). The mark's value is the roster's word for the person — `identity.name`,
+  else the username, the same string `<principal name>` wears — elided when it equals
+  `from`. The `self (you)` / `self (principal)` labels and the display-name collision
+  rule go with it: a name can forge a label, never an attribute.
+
+Built: `principals` and `mind` in the catalog (`mu agent --principal … --no-mind`) and
+the registry (`name`, `principals`, `runs`; schema v7); `store/roster.ts` derives who
+steers and the DM aliases off the registry and the connections map, and the log serves
+both live (`principalsOf`, `aliases`); render reads `<principal name>` and the three
+marks off a `Roster` xi hands nu; the policy hides every alias from every agent; the
+mirror signs a copy with the binding's principal and tags fan-out `[<name> via
+<surface>]`; the send refusal covers every principal's handles and, from the mind, their
+names; the WhatsApp ingest classifies a declared phone with or without a grant, and
+`connect:whatsapp --org` pairs a number nobody owns (ownerless, credentialed on the
+bridge session). Slack: a member is known by the email on their Slack profile
+(`users.info`, one call per user shared with the name directory, the `users:read.email`
+scope added to both scope lists and to this deployment's file), a member's DM with the bot
+is recorded on the bot's row at first sight (`extra.dms`), and the bot paste takes
+`--agent <name>` to say which agent speaks through it (`extra.agent`), the one account
+with no handle a human could declare. The hosted OAuth install writes no `extra.agent`:
+an org agent on Slack is declared at the paste door.

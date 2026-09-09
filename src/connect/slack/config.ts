@@ -23,6 +23,8 @@ export const DEFAULT_BOT_SCOPES = [
   "mpim:history",
   "channels:read",
   "users:read",
+  // the profile email — the handle the classifier scans the roster with (§4)
+  "users:read.email",
   "files:read",
   "chat:write",
 ];

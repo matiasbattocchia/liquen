@@ -89,6 +89,7 @@
         "mpim:history",
         "channels:read",
         "users:read",
+        "users:read.email",
         "chat:write"
       ],
       // the per-principal leg: scopes a member's own token is granted
@@ -99,6 +100,7 @@
         "mpim:history",
         "channels:read",
         "users:read",
+        "users:read.email",
         "chat:write",
         "groups:read",
         "im:read",

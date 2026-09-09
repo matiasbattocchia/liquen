@@ -3,7 +3,7 @@
  * fan-out, the boot poke, and a clean stop. (xi's behavior itself: integration.test.ts.)
  */
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { TextLineStream } from "@std/streams";
 import { start } from "./main.ts";
 import { openLog } from "./store/log.ts";
@@ -639,5 +639,45 @@ Deno.test("a cancel mid-think aborts the model call: no reply, the turn closes o
   } finally {
     await main.stop();
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a person alone (mind: false, §4): a registry row, no session, no home", async () => {
+  const { root, dir, catalog } = await orgDir({
+    ventas: { identity: { name: "Ventas", phone: "549117770000" } },
+    sol: { identity: { name: "Sol", phone: "549115550002" }, mind: false },
+  });
+  const { transport } = scripted([reply("hola")]);
+  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+    transport,
+  });
+  try {
+    assertEquals(main.log.agents(), [
+      {
+        agentId: "sol",
+        mind: "mind@sol",
+        model: "claude-x",
+        name: "Sol",
+        phone: "549115550002",
+        runs: false,
+      },
+      {
+        agentId: "ventas",
+        mind: "mind@ventas",
+        model: "claude-x",
+        name: "Ventas",
+        phone: "549117770000",
+      },
+    ]);
+    await Deno.stat(`${dir}/agents/ventas`);
+    await assertRejects(() => Deno.stat(`${dir}/agents/sol`), Deno.errors.NotFound);
+    // the org number, paired to nobody: ventas speaks through it and the roster steers it
+    main.log.upsertConnections([
+      { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" },
+    ]);
+    assertEquals(main.log.principalsOf("ventas"), ["sol", "ventas"]);
+  } finally {
+    await main.stop();
+    await Deno.remove(root, { recursive: true });
   }
 });

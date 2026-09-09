@@ -126,14 +126,19 @@ export interface AgentDefaults {
   sleepHours: string | null; // org-clock span "23-8"; null ⇒ never sleeps
 }
 
-/** One roster entry: overrides of `org.agent`, key by key, plus the principal's identity —
- *  the name the agent goes by (the principal's own, when the agent is their own) and the
- *  handles a human is known by, which a `send` refuses to target (an agent never messages
- *  its principal). Everything else about the agent is discovered (connect flows) or derived
- *  (the home folder). Null is "not declared", the shape `mu agent` writes for a handle it
- *  was not given. */
+/** One roster entry: overrides of `org.agent`, key by key, plus the agent's own identity —
+ *  the name it goes by and the handles of the account it acts as (§4). Whose that account
+ *  is — a member's, or the org's — is the connection row's fact, never declared here.
+ *  `principals` says who steers, as roster usernames, when the derivation of §4 (the owner;
+ *  every member when the account is the org's) is not wanted — `[]` for nobody. `mind`
+ *  false makes the entry a person alone: identity and handles, no session ever runs.
+ *  Everything else about the agent is discovered (connect flows) or derived (the home
+ *  folder). Null is "not declared", the shape `mu agent` writes for a handle it was not
+ *  given. */
 export interface AgentEntry extends Partial<AgentDefaults> {
   identity?: Identity;
+  principals?: string[];
+  mind?: boolean;
 }
 export interface Identity {
   name?: string | null;
@@ -141,8 +146,10 @@ export interface Identity {
   phone?: string | null;
 }
 export const IDENTITY_KEYS = ["name", "email", "phone"] as const;
-const IDENTITY_DOC = "<name>: any org.agent key re-declared, plus identity — the principal's " +
-  "name (the agent goes by it) and the handles they are known by; null ⇒ not declared";
+const IDENTITY_DOC = "<name>: any org.agent key re-declared, plus identity — the name the " +
+  "agent goes by and the handles of the account it acts as (null ⇒ not declared); " +
+  "principals — who steers it, roster names ([] ⇒ nobody; absent ⇒ its owner, or every " +
+  "member when the account is the org's); mind: false — a member with no agent of their own";
 
 export interface OrgConfig {
   system: {
@@ -310,7 +317,8 @@ const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
   org: "this deployment's identity — the clock, the backlog, and every agent's defaults",
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
-  agents: "the roster: every key is an agent, its folder and its unix user",
+  agents: "the roster: every key is a member — an agent, its folder and its unix user, or " +
+    "a person alone (mind: false)",
   connections: "the connectors' knobs — a subsection per connector, validated by its owner",
 };
 
@@ -451,7 +459,7 @@ export async function readConfig(root: string): Promise<OrgConfig> {
       );
     }
     const entry = asObject(body, `agents.${name}`);
-    const { identity, ...over } = entry;
+    const { identity, principals, mind, ...over } = entry;
     mergeSection(over, AGENT, path, `agents.${name}`); // unknown keys error; values stay sparse
     for (const [key, v] of Object.entries(asObject(identity, `agents.${name}.identity`))) {
       if (!(IDENTITY_KEYS as readonly string[]).includes(key)) {
@@ -461,8 +469,25 @@ export async function readConfig(root: string): Promise<OrgConfig> {
         throw new Error(`${path}: agents.${name}.identity.${key} must be a string or null`);
       }
     }
+    if (
+      principals !== undefined &&
+      (!Array.isArray(principals) || principals.some((p) => typeof p !== "string"))
+    ) {
+      throw new Error(`${path}: agents.${name}.principals must be a list of roster names`);
+    }
+    if (mind !== undefined && typeof mind !== "boolean") {
+      throw new Error(`${path}: agents.${name}.mind must be true or false`);
+    }
     validateAgent(over as Partial<AgentDefaults>, `${path}: agents.${name}`);
     cfg.agents[name] = entry;
+  }
+  // a principal is a roster entry (§4): the list can only name who is in the file
+  for (const [name, entry] of Object.entries(cfg.agents as Record<string, AgentEntry>)) {
+    for (const p of entry.principals ?? []) {
+      if (!(p in cfg.agents)) {
+        throw new Error(`${path}: agents.${name}.principals names "${p}", not in the roster`);
+      }
+    }
   }
   for (const [name, body] of Object.entries(asObject(found.connections, "connections"))) {
     if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -579,7 +604,12 @@ export function starterConfig(): OrgConfig {
  *  handle in view, null where the human declared none, so the file shows what can still
  *  be said about the agent. A name already in the roster is refused: the entry is the
  *  operator's to edit, not a door's to rewrite. */
-export async function declareAgent(root: string, name: string, identity: Identity): Promise<void> {
+export async function declareAgent(
+  root: string,
+  name: string,
+  identity: Identity,
+  rest: Pick<AgentEntry, "principals" | "mind"> = {},
+): Promise<void> {
   const path = `${root}/config.jsonc`;
   if (!AGENT_NAME.test(name)) {
     throw new Error(
@@ -591,8 +621,15 @@ export async function declareAgent(root: string, name: string, identity: Identit
   if (name in before.agents) {
     throw new Error(`${path}: agents.${name} is already in the roster — edit it there`);
   }
+  for (const p of rest.principals ?? []) {
+    if (!(p in before.agents) && p !== name) {
+      throw new Error(`${path}: principal "${p}" is not in the roster — \`mu agent ${p}\` first`);
+    }
+  }
   const entry: AgentEntry = {
     identity: Object.fromEntries(IDENTITY_KEYS.map((k) => [k, identity[k] ?? null])),
+    ...(rest.principals ? { principals: rest.principals } : {}),
+    ...(rest.mind === false ? { mind: false } : {}),
   };
   const member = `"${name}": ${JSON.stringify(entry, null, 2).replaceAll("\n", "\n    ")}`;
   await declareIn(root, "agents", member);

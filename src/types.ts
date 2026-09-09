@@ -533,7 +533,9 @@ export interface SendArgs {
   files?: string[]; // workspace or media-store paths
   re?: string; // the referenced message's short id
   react?: string; // a glyph to land on `re` instead of a message
-  action?: "edit" | "delete" | "remove"; // what to do TO `re` (§3 MUTATIONS)
+  /** The verb (§3 `Action` as the model names it): `create` and `add` are the defaults a
+   *  body and a glyph already mean; the other three act on `re`. */
+  action?: "create" | "edit" | "delete" | "add" | "remove";
 }
 export interface SendResult {
   /** The call ran and the message is on the log — the wire is the dispatcher's problem, and

@@ -5,17 +5,20 @@
 human-in-the-loop steering. Own harness — not Claude Code / Pi / OpenClaw — informed by
 all of them.*
 
-**Terminology (pinned):** **agent** = the AI (an alter-ego). **principal** = the human it
-belongs to (the member/owner). **peer** = the other party in a conversation (an external
-contact — a customer — or another agent). The agent↔principal conversation is the
-**principal-DM**.
+**Terminology (pinned):** **agent** = the AI. **principal** = a human who steers it, through
+its mind: an **alter-ego** has one, the member whose account it acts as; an **org agent**
+— one whose account is the org's — has every member of the roster. **peer** = the other
+party in a conversation (an external contact — a customer — or another agent). The
+agent↔principal conversation is the **principal-DM**.
 
 ---
 
 ## 1. Vision & v0 scope
 
-- **Agents (alter-egos)**: each org member (principal) gets an AI agent that acts under
-  their identity. WhatsApp → one agent as the account owner. Slack/Teams → one per principal.
+- **Agents**: each org member gets an alter-ego, an AI agent that acts under their
+  identity and answers to them alone. An account the org owns — a number, a bot — makes an
+  org agent: it acts as the org and every member steers it. Either way the agent reads one
+  mind, and a principal's line wears their name (§5).
 - Org-level (not personal-agent like OpenClaw/NanoClaw): shared inboxes, handoff between
   AI and humans, audit throughout.
 - Proven seed: Mirlo's cabra-bot (one long-running Claude Code session + Slack polling +
@@ -832,19 +835,53 @@ ownership) only if double-answers show up.
 
 ### Principal-DM bindings per platform
 
-**Mind flows are user-scoped**: only a conversation whose counterpart can be NOBODY but
-the principal binds as a mind surface — in practice, self-talk on an OWNED connection.
-A shared/org account never hosts a mind, however well the sender classifies: other
-humans stand behind a shared account (the secretary running the org WhatsApp would see
-the mind's traffic, and could write into it as a third participant). Their DMs with the
-org are world conversations the agent serves, not surfaces of its steering channel.
+**A mind surface is a conversation whose every counterpart is a principal of the agent.**
+Nobody else can read it or write into it, so whatever lands there is steering and
+whatever the agent says there reaches its principals and no one else. Two shapes satisfy
+it, and conversation identity (§3) says which platforms can host them:
+
+- **Self-talk on the account the agent acts as** — the alter-ego's, whose one principal
+  is the account's owner: the WA self-chat, the Slack self-DM. The counterpart set is
+  the principal alone.
+- **A DM between a principal and the agent's own account** — the org agent's shape, one
+  DM per principal, N surfaces of one mind. A DM has no third party, so no membership
+  is tracked and no admin on the wire can seat a stranger in it.
+
+Nothing with more than two parties hosts a mind. A group or a channel is room-defined —
+its identity survives churn, and whoever administers it on the wire decides who reads it;
+a Slack mpim is member-defined and would qualify on paper, but it is a room all the same
+and is served as one. They are world conversations the agent serves, whoever is in them,
+its principals included (they are then *coexisting*, §2, not steering).
+
+**Whose account.** The connection row carries ownership: `agent_id` names the member whose
+account it is, and null says the org's. The agent that speaks through a connection is the
+roster entry whose `identity` handle IS the connection's address — the registry's handle
+scan, read from the connection's side. A member's account makes its agent an alter-ego;
+an org account a handle claims makes an org agent; an org account no handle claims is
+the shared world every agent reads (§6). The account the agent
+acts as must be the agent's alone: a person also running that number on WhatsApp Web
+would read the mind's traffic and could write into it. That is a deployment rule, not a
+classifier's — it cannot be checked, only kept.
+
+**Who steers.** Derived from the same row when the entry says nothing: an alter-ego's
+principal is its owner; an org agent's principals are the roster — every member is a
+driver, which matches the org connection being every agent's to read. `principals` (§9)
+overrides the derivation with the whole list, roster usernames, owner not implied: a list
+of one ties a member to an agent that is not their own, an empty list says nobody steers
+(a service agent, reached only through its door). Every principal is a roster entry; one
+with `mind: false` is a person alone — identity, handles, a door, no session runs for
+them. The mind has one floor: any principal's word takes it (§2), and any principal's
+verdict rules on a card (§9).
 
 ```
-slack:  self-DM (agent posts via the principal's xoxp — true alter-ego in notes-to-self)
-wa:     self-chat ("Message Yourself") on the principal's own paired number (whatsmeow)
-teams:  later — the 1:1 bot chat is user-scoped but not self-talk: needs a binding door
+slack:  self-DM (an alter-ego posts via its owner's xoxp — notes-to-self)
+        a principal's DM with the agent's bot
+wa:     self-chat ("Message Yourself") on the owner's own paired number
+        a principal's DM with the agent's own number (an org-paired connection)
+teams:  later — the 1:1 bot chat is the DM shape, needs the bot to be the agent's own
 email:  not a mind surface
-cli/ui: native local conversations
+cli/ui: native local conversations, through the door (§9) — the socket proves the
+        speaker may, `sender` says which principal they are
         → all alias to the canonical local principal-DM (the agent's own DM)
 ```
 - **The canonical principal-DM IS the mind session** (2026-08-04): `mind@<agent>` — the
@@ -867,8 +904,9 @@ cli/ui: native local conversations
     the origin surface (read off `extra.via`): the agent's voice as `[agent] …` (a
     self-conversation renders both speakers as the principal — the tag is the surface's
     only input/output distinction; the log needs none, authorship is the bit), the
-    principal's own words as `[you via <surface>] …` (input replayed as output — fan-out
-    over fan-in's own copy is what cross-syncs surfaces), tool calls as redacted
+    a principal's own words as `[<name> via <surface>] …` (input replayed as output — fan-out
+    over fan-in's own copy is what cross-syncs surfaces, and the reader on the other
+    surface may be another principal, so the line names who spoke), tool calls as redacted
     one-liners under a tag of their own (`[agent tool] bash(git status)`). A CC is an ordinary
     outbound event on its service — the dispatchers post it, the platform echo merges into it (§4 echo-dedup).
     Fan-in guards that echo twice, because in an alias conversation an unmerged one reads
@@ -879,24 +917,35 @@ cli/ui: native local conversations
     unrecognized — the mirror stamps it, absorbing the echo the way the dispatcher would
     have, when a claim never lands (a crash between post and backfill, an API that
     returned no id).
-  The alias conversation itself is **invisible to its own agent** (policy, §6): the
+  The alias conversation itself is **invisible to every agent** (policy, §6): the
   copies are its face in the window — nothing to hide from the world render, and `send`
-  can't reach it. **No backfill**: the mirror tails live — a surface connected
+  can't reach it. Every agent, not only its own: the classifier stamps a principal's line
+  with THEIR agent id wherever it lands, and xi reads a principal's word anywhere as
+  steering (§2) — so a member's DM with an org agent, left visible on the org
+  connection, would wake that member's alter-ego on an instruction meant for someone else. **No backfill**: the mirror tails live — a surface connected
   mid-conversation starts mid-stream; history is asked of the log (an interface's `tail`
   takes a cursor), never replayed onto a surface. Per-service identification of the self-conversation (`aliases()`): **derived
   where platform structure gives it away, recorded where the id is opaque** — WA, the
   self-chat is addressed by the connection's own number, so an owned connection IS the
-  binding, nothing stored; Slack, the self-DM channel is resolved once at
+  binding, nothing stored, and a principal's DM with the agent's number is addressed by
+  the principal's own number, a registry handle, so the org agent's surfaces are the
+  handle scan too; Slack, the self-DM channel is resolved once at
   connect (`conversations.open` on the granting user's own id) and recorded as
   `extra.self_conversation` on the **grant row**,
   beside the ownership edge that already names the principal — the same "who a wire
-  address IS" semantics as the sender check; local, native.
-  The agent must never treat its own principal as a peer/customer.
+  address IS" semantics as the sender check — and a principal's DM with the bot is
+  recorded by the ingest on the bot's own row (`extra.dms`, member → channel) the first
+  time that member writes there, since the channel id is opaque; which member a Slack
+  user is comes from the email on their profile (`users.info`, the `users:read.email`
+  scope) scanned against the roster, never from a Slack user id — and which agent speaks
+  through the bot, an account with no handle at all, is recorded at the paste
+  (`mu connect slack bot --agent`, `extra.agent`); local, native.
+  The agent must never treat any of its principals as a peer/customer.
 - **`send` exteriorizes the mind.** The one door from the mind to the world: `send`
-  targets peer conversations only — the principal is never a send target, on any surface,
+  targets peer conversations only — no principal is ever a send target, on any surface,
   because every principal-identified surface IS the mind and the voice reaches it by
-  mirroring, not dispatch-by-address. Enforced, not merely instructed: a `send` naming the
-  principal (their handles, the agent's own name, the mind, an alias conversation) is
+  mirroring, not dispatch-by-address. Enforced, not merely instructed: a `send` naming a
+  principal (any of their handles, the agent's own name, the mind, an alias conversation) is
   refused with the hint **before the gate sees it**. It has to be before, because a card
   for such a call asks the principal to approve a message they were already going to
   receive — the live log grew both, a self-`send` that invented a conversation under their
@@ -1047,10 +1096,13 @@ The 3×2 grid, each cell real and distinct:
   credential** held by the **broker** (the §8 credential table on DB, a sidecar on files);
   the agent gets a **capability, not the raw secret** — it never enters the exec context.
   OAuth is exactly "delegate access without the password, with scopes + revocation."
-- **Cardinality sets the authority ceiling.** 1 principal → can act **as** them (the duality).
-  **0 principals** (autonomous/service agent) → bounded to org+self creds, **cannot act as
-  anyone** — a hard blast-radius limit. n principals (rare) → forces **per-principal
-  isolation** (no shared context holding all tokens; select per action; no cross-principal use).
+- **Ownership sets the authority ceiling; steering is a different set.** An alter-ego
+  acts **as** its owner (the duality) and nobody else. An org agent acts as the org —
+  bounded to org+self creds, **cannot act as anyone** — a hard blast-radius limit, however
+  many members steer it. Steering never lends a credential: a principal who wants an org
+  agent to speak as them is asking for their own leg, which is their alter-ego's. So no
+  context ever holds more than one identity's tokens, and the resolver below never picks
+  between people.
 - **Existence ≠ selection — a resolver.** When an action needs a credential, a **policy**
   picks which identity applies, keyed by (action/resource, available scopes, desired
   attribution). The design work is the resolver, not the store.
@@ -1105,18 +1157,22 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
 ### Two rendering modes, by conversation
 
 - **Home (principal-DM)** — the principal's line renders as a `<principal name at>`
-  element in the user turn (`name` from the grant-classified envelope — with one principal
-  a courtesy, with several the identity, same element either way); the agent's replies are bare `assistant` text. The element is the mark of
+  element in the user turn (`name` is the roster's word for them, `identity.name` or the
+  username when none is declared — with one principal a courtesy, with several the
+  identity, same element either way); the agent's replies are bare `assistant` text. The element is the mark of
   the one voice that outranks everything else — the model reads "answer in your own text"
   off its shape, and world text that types the tag arrives escaped, so an unescaped
   `<principal>` can only be render's own. A `/y` · `/n` verdict line draws no block at all
   (it is steering — the gate consumes it), and the principal's room is exempt from the WUM
   caps: their line is never redacted, whatever the world was doing around it. The agent's
   console; `send` never appears
-  here. Every principal-identified conversation reaches here (§4 self-talk): the mirror
-  copies the WA self-chat and the Slack self-DM into the mind, so the principal is plain
-  in this mode whichever surface they typed from — the surface lives in `extra.via`
-  (painted as a `[via slack]` tag in the REPL, invisible to the model).
+  here. Every principal-identified conversation reaches here (§4): the mirror
+  copies the WA self-chat, the Slack self-DM and each principal's DM with the agent's own
+  account into the mind, so a principal is plain in this mode whichever surface they
+  typed from — the surface lives in `extra.via` (painted as a `[via slack]` tag in the
+  REPL, invisible to the model). An org agent with five principals reads the same window
+  an alter-ego does: one thread, `<principal name>` lines, and the name is the only
+  thing that tells them apart.
 - **World (peer convos)** — one `<conv service connection address kind name thread>`
   element per run of a conversation's messages, one `<msg from at>` line each.
   Every non-null `Conversation` field is an attribute, plus the envelope's
@@ -1125,16 +1181,23 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   `connection` disambiguates multi-account services, `kind` (§3, stamped at ingest) tells
   a public channel from a DM, `thread` the subthread.
   `name`/`from` are display strings — attacker-controlled, hence attribute-escaped (a
-  WhatsApp contact can name themself `Ana" from="matias`), and a display name that claims
-  an authorship mark (`self`, `self (…)`) is not shown: the line wears the wire address,
-  which the platform vouches for. The account's own messages are
-  `self`, told apart by authorship: `from="self (you)"` = the agent published it (a
-  `send`, or its echo), `from="self (principal)"` = the account spoke and it did not come
-  through us (the principal on their own device — the ingest classifier stamps `agent.id`
-  from the sender's grant row on both wires, §3). A PEER session's line wears its address
-  (§4) — `from="build@matias"`; another agent's mind wears the bare agent name, an agent
-  being its mind — which is the handle `send` takes back. The reply sits with what it
-  answers. A dead delivery carries
+  WhatsApp contact can name themself `Ana" from="matias`). `from` is the wire's word
+  and nothing else: the sender's name as the service shows it, their address when it
+  shows none, the account's own roster name when the account itself spoke. **Who, among
+  us, is an attribute of its own**, so a name can never forge it: `self` = this agent's
+  own voice (a `send`, or its echo — authorship, §3: `turn_id`); `principal` = a principal
+  of this agent, whichever device they typed on (the ingest classifier stamps `agent.id`
+  from the sender's grant row or handle, §3); `agent` = any other roster member, human
+  or their alter-ego alike — one complex, one identity, and the difference is never the
+  model's business. `principal` and `agent` carry the roster's word for the person,
+  `identity.name` or the username, the same string `<principal name>` wears, so the
+  model can tie the "Matías" in a room to the one steering it; the value is elided when
+  it equals `from` (`<msg from="Sol" agent>`), written when the wire calls them
+  something else (`<msg from="Sol R." principal="Sol">`). A mark is an identity, never a
+  session: which hands of an agent are talking is the conversation's business (a `dm:`
+  address names both ends), and on the local service `from` is the session's address,
+  the one word that wire has. A customer's line carries no mark.
+  The reply sits with what it answers. A dead delivery carries
   `status="failed"`; wire mentions ride a `mentions=` attribute. **Two elements, the
   deviation marked** (§3): `<msg>` carries text — `action="edit"` renders the new
   content, `action="delete"` the removed content; `<reaction>` carries the glyph —
@@ -1183,7 +1246,7 @@ constraint, and render derives it **from the window's shape**:
   A directed send dispatched by a welded `tool_use` is **skipped** (its content is in the block);
   once its group falls behind the boundary, the pair drops and the *message* renders — same
   event, two ages, zero bookkeeping.
-- **Closed events collapse** — a `send` → its `from="self"` world line; tool pairs
+- **Closed events collapse** — a `send` → its `self`-marked world line; tool pairs
   **dropped** uniformly (a failed tool renders as any failed tool — errored result while
   trailing, gone when closed); `thinking` **dropped**. The trace that *persists* is the
   message's own **delivery status**: a dispatch failure stamps `envelope.status = failed`
@@ -1830,7 +1893,7 @@ its SQL side (5 tools: `executeSql`/`getDbSchema`/`sampleTableRows`/`selectAsCsv
 
 | tool | plane | signature → returns |
 |---|---|---|
-| `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{sent, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — it quotes on the wire; `react` lands a glyph on it; `action` (`edit`/`delete`/`remove`) acts on the referent instead of adding to it, and the two mutating ones reach only the account's own messages. **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
+| `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{sent, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — text beside it replies on the wire; `react` lands a glyph on it; `action` names the verb (`create` · `edit` · `delete` · `add` · `remove` — `create` and `add` are what a body and a glyph already mean, and the two mutating ones reach only the account's own messages). **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
 | `search` | control (dedicated) | `search({in?, from?, before?, after?, text?, limit?})` → `{hits, more?}`, RLS-scoped; a hit's text is the rendered line. Clean sugar over the control-plane log read (SELECT / ripgrep). |
 | `bash` | exec + durable-on-files | `bash(cmd)` → `{stdout, stderr, exit}`. The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
 | `sql` | durable-on-db | `sql(query)` → rows, RLS-scoped. The **database** substrate's one primitive; present only on the db backend (the sandbox can't touch the DB, §9 invariant). Capability via **functions** — the "DB OS": `db_schema` · `docs_write` · `docs_edit` · plus `grep`/`glob`/`ls` counterparts (FTS/`LIKE` · pattern-list · introspection). |
@@ -2328,8 +2391,9 @@ compiles into a registry row and a home folder (config → tables → folders; a
 is a blank agent). The REPL
 principal is the **OS username**, trusted because localhost; when the roster carries that
 name, principal name = agent name and **no identity map is
-needed** — and when they share user/pass, user and agent are one (the vision line). Later:
-N:M principals↔agents, and autonomous agents (no one holds the pass but the agent).
+needed** — and when they share user/pass, user and agent are one (the vision line). The
+roster is also the org: every principal is an entry, and an entry with `mind: false` is a
+person alone — a unix user with identity and handles, no session, no process at `mu start`.
 **The same framework way extends to connectors**: the shipped ones live in
 `src/connect/<service>/` (role-named files: `ingest.ts` · `dispatch.ts` · `oauth.ts` ·
 `connect.ts`, each optional); an org's own live in **`connectors/<name>/`** at the
@@ -2362,8 +2426,11 @@ backlogHours — the clock is the ORG's alone, one deployment one wall time — 
 `org.agent`, the defaults every agent inherits: model · effort · maxTokens · provider ·
 tools · rules · the attention knobs), `processors` (media→text commands, §5), `agents`
 (the roster: each entry re-declares `org.agent` keys sparsely, plus `identity` —
-`email`/`phone`, the handles a human knows the principal by, mirrored into the
-registry's columns), and `connections` (one subsection per connector, OWNED by the
+`name`/`email`/`phone`, the agent's own: the name it goes by and the handles of the
+account it acts as, mirrored into the registry's columns; whether that account is a
+member's or the org's is the connection row's fact, §4 — `principals`, the whole list of
+who steers as roster usernames when the derivation of §4 is not wanted, `[]` for nobody
+— and `mind: false`, a member with no agent of their own), and `connections` (one subsection per connector, OWNED by the
 connector: its `config.ts` declares the defaults and validates its subsection through
 `connectorConfig`, so custom connectors configure identically). `rules` is the
 permission policy as data (§2): ordered rows

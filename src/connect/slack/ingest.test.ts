@@ -24,6 +24,7 @@ function fakeStore(conn: ConnectionRow) {
     connection: (service, address) =>
       conn.service === service && conn.address === address ? conn : null,
     upsertMemberships: (rows) => upserts.push(...rows),
+    upsertConnections: () => {},
     deleteMemberships: (rows) => deletes.push(...rows),
   };
   return { store, upserts, deletes };
@@ -43,11 +44,12 @@ async function sign(ts: string, body: string): Promise<string> {
 }
 
 /** The name directory in miniature: a seeded map, learns recorded. */
-function fakeNames(seed: Record<string, string> = {}) {
+function fakeNames(seed: Record<string, string> = {}, emails: Record<string, string> = {}) {
   const known = new Map(Object.entries(seed)); // key: `${team}:${user}`
   const learned: string[] = [];
   const names: NonNullable<SlackWebhookDeps["names"]> = {
     nameOf: (team, user) => Promise.resolve(known.get(`${team}:${user}`) ?? null),
+    emailOf: (team, user) => Promise.resolve(emails[`${team}:${user}`] ?? null),
     learn: (team, user, name) => {
       known.set(`${team}:${user}`, name);
       learned.push(`${team}:${user}=${name}`);
@@ -382,6 +384,7 @@ Deno.test("slack: one shared-app delivery enrolls EVERY bound grant (§4 passive
     connection: (service, address) =>
       rows.find((r) => r.service === service && r.address === address) ?? null,
     upsertMemberships: (r) => upserts.push(...r),
+    upsertConnections: () => {},
     deleteMemberships: () => {},
   };
   const { handler } = harness(SECRET, store);
@@ -886,4 +889,68 @@ Deno.test("HTTP mode: every app's signing secret verifies, and no app means no s
   assertEquals(httpSigningSecrets([row("a"), row(""), row("b")]), ["a", "b"]);
   assertThrows(() => httpSigningSecrets([]), Error, "signing secret");
   assertThrows(() => httpSigningSecrets([row("")]), Error, "signing secret");
+});
+
+Deno.test("the classifier reads the roster by email (§4): a profile email that a member declared is that member", async () => {
+  const { names } = fakeNames({ "T1:U7": "Sol R." }, { "T1:U7": "Sol@Acme.co" });
+  const { store } = fakeStore({
+    service: "slack",
+    address: "T1:UBOT",
+    credentialKey: "slack:T1:org",
+  });
+  const { handler, published } = harness(
+    SECRET,
+    {
+      ...store,
+      agents: () => [{ agentId: "sol", mind: "mind@sol", email: "sol@acme.co", runs: false }],
+    },
+    undefined,
+    names,
+  );
+  await handler(await signedReq(messageEvent()));
+  const m = published[0] as MessageEvent;
+  assertEquals(m.agent, { id: "sol" }); // no grant row — the email named her
+  assertEquals(m.envelope.sender, { address: "U7", name: "Sol R." }); // the wire's word stays
+});
+
+Deno.test("a member's DM with the bot is recorded on the bot's row (§4): extra.dms, member → channel", async () => {
+  const { names } = fakeNames({}, { "T1:U7": "sol@acme.co" });
+  const bot: ConnectionRow = {
+    service: "slack",
+    address: "T1:UBOT",
+    credentialKey: "slack:T1:org",
+  };
+  const written: ConnectionRow[] = [];
+  const store: NonNullable<SlackWebhookDeps["store"]> = {
+    connection: (service, address) => service === "slack" && address === bot.address ? bot : null,
+    upsertMemberships: () => {},
+    upsertConnections: (rows) => written.push(...rows),
+    deleteMemberships: () => {},
+    agents: () => [{ agentId: "sol", mind: "mind@sol", email: "sol@acme.co" }],
+  };
+  const { handler } = harness(SECRET, store, undefined, names);
+  const im = (channel: string, text: string) =>
+    signedReq(messageEvent({
+      authorizations: [{ user_id: "UBOT", is_bot: true }],
+      event: { type: "message", channel, channel_type: "im", user: "U7", text, ts: "1.2" },
+    }));
+  await handler(await im("D77", "hola"));
+  assertEquals(written, [{ service: "slack", address: "T1:UBOT", extra: { dms: { sol: "D77" } } }]);
+  // a channel the row already names writes nothing; a room is never a DM
+  bot.extra = { dms: { sol: "D77" } };
+  await handler(await im("D77", "otra vez"));
+  await handler(
+    await signedReq(messageEvent({
+      authorizations: [{ user_id: "UBOT", is_bot: true }],
+      event: {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U7",
+        text: "x",
+        ts: "1.3",
+      },
+    })),
+  );
+  assertEquals(written.length, 1);
 });

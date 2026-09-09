@@ -72,12 +72,15 @@ export function policyFor(
   const { agentId, id: sessionId } = session;
   const visible = (e: { ts?: string; envelope: Envelope }): boolean => {
     const { service, connection_address: connection, conversation } = e.envelope;
-    // the mind-alias (§4): an agent's own alias conversation is INVISIBLE to it — the
-    // mirror's mind copies are its face in the window, and hiding the wire conversation
-    // is what keeps the surface out of the world render and out of `send`'s reach (the
-    // principal is never a send target). One predicate, reads and writes alike — and
-    // agent-wide: a surface is the AGENT's face, no session of it reads the wire copy.
-    if (aliasOf(map.aliases(), service, connection, conversation.address)?.agentId === agentId) {
+    // the mind-alias (§4): an alias conversation is INVISIBLE to every agent — the mirror's
+    // mind copies are its face in the window, and hiding the wire conversation is what
+    // keeps the surface out of the world render and out of `send`'s reach (a principal is
+    // never a send target). Every agent, not only its own: a principal's line is stamped
+    // with THEIR agent id wherever it lands and reads as steering anywhere, so a member's
+    // DM with an org agent, left visible on the org connection, would wake that member's
+    // alter-ego on an instruction meant for someone else. One predicate, reads and writes
+    // alike, and agent-wide: a surface is a mind's face, no session reads the wire copy.
+    if (aliasOf(map.aliases(), service, connection, conversation.address) !== undefined) {
       return false;
     }
     // branch 3: the member is the (agent, session) PAIR (§4) — a session reads and

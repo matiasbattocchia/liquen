@@ -40,6 +40,8 @@
 import type { MemberJoinedChannelEvent, MemberLeftChannelEvent, SlackEvent } from "@slack/types";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
+import type { Registry } from "../../store/agents.ts";
+import { sameHandle } from "../../store/roster.ts";
 import type { Conversation, Draft, FilePart, MessageEvent, Part } from "../../types.ts";
 import { fromSlack } from "../flavor.ts";
 import { findRoot, orgFlag } from "../../config.ts";
@@ -84,6 +86,11 @@ export interface SlackNames {
    *  now (no token, API miss) and UNCACHED, so a later delivery retries. `via` = the
    *  delivery's token-resolution candidates (same role as SlackMedia's `users`). */
   nameOf(team: string, user: string, via?: string[]): Promise<string | null>;
+  /** The profile's email for a user id, from the same `users.info` answer (the
+   *  `users:read.email` scope; without it the profile carries none and this is null).
+   *  The handle the classifier scans the roster with (§4): a member is known by the
+   *  email they declared, never by a Slack user id. */
+  emailOf(team: string, user: string, via?: string[]): Promise<string | null>;
   /** The push leg: `user_change` deliveries carry the fresh profile — no call needed. */
   learn(team: string, user: string, name: string): void;
 }
@@ -95,31 +102,44 @@ export interface SlackNames {
 export function slackNames(
   tokenFor: (team: string, users: string[]) => Promise<string | null>,
 ): SlackNames {
-  const cache = new Map<string, string>();
-  const inflight = new Map<string, Promise<string | null>>();
-  const nameOf = (team: string, user: string, via: string[] = []): Promise<string | null> => {
+  interface Profile {
+    name: string | null;
+    email: string | null;
+  }
+  const cache = new Map<string, Profile>();
+  const inflight = new Map<string, Promise<Profile>>();
+  // one users.info per first sight answers both questions; a miss on either field stays
+  // uncached so a later delivery asks again
+  const profileOf = (team: string, user: string, via: string[] = []): Promise<Profile> => {
     const key = `${team}:${user}`;
     const hit = cache.get(key);
-    if (hit !== undefined) return Promise.resolve(hit);
+    if (hit && hit.name !== null && hit.email !== null) return Promise.resolve(hit);
     const going = inflight.get(key);
     if (going) return going;
-    const p = (async () => {
+    const p = (async (): Promise<Profile> => {
       try {
         const token = await tokenFor(team, [user, ...via]);
-        if (!token) return null;
+        if (!token) return hit ?? { name: null, email: null };
         const res = await timedFetch(`https://slack.com/api/users.info?user=${user}`, {
           headers: { authorization: `Bearer ${token}` },
         });
         const body = await res.json() as {
           ok: boolean;
-          user?: { name?: string; profile?: { display_name?: string; real_name?: string } };
+          user?: {
+            name?: string;
+            profile?: { display_name?: string; real_name?: string; email?: string };
+          };
         };
         const u = body.ok ? body.user : undefined;
-        const name = u?.profile?.display_name || u?.profile?.real_name || u?.name || null;
-        if (name) cache.set(key, name);
-        return name;
+        const found: Profile = {
+          name: u?.profile?.display_name || u?.profile?.real_name || u?.name || hit?.name ||
+            null,
+          email: u?.profile?.email || hit?.email || null,
+        };
+        if (found.name || found.email) cache.set(key, found);
+        return found;
       } catch {
-        return null;
+        return hit ?? { name: null, email: null };
       } finally {
         inflight.delete(key);
       }
@@ -127,7 +147,14 @@ export function slackNames(
     inflight.set(key, p);
     return p;
   };
-  return { nameOf, learn: (team, user, name) => cache.set(`${team}:${user}`, name) };
+  return {
+    nameOf: async (team, user, via) => (await profileOf(team, user, via)).name,
+    emailOf: async (team, user, via) => (await profileOf(team, user, via)).email,
+    learn: (team, user, name) => {
+      const key = `${team}:${user}`;
+      cache.set(key, { name, email: cache.get(key)?.email ?? null });
+    },
+  };
 }
 
 export interface SlackWebhookDeps {
@@ -136,7 +163,12 @@ export interface SlackWebhookDeps {
   /** The classifier + mirror seam (§3, §4): `connection` resolves grant rows (sender →
    *  owner); memberships mirror joins/leaves and event visibility. Absent ⇒ pure mapping
    *  (an edge tier serving without the store). */
-  store?: Pick<Connections, "connection" | "upsertMemberships" | "deleteMemberships">;
+  store?:
+    & Pick<
+      Connections,
+      "connection" | "upsertMemberships" | "deleteMemberships" | "upsertConnections"
+    >
+    & Partial<Pick<Registry, "agents">>;
   /** File attachments → the media store (absent ⇒ files are dropped, text still flows). */
   media?: SlackMedia;
   /** The name directory (absent ⇒ senders ship bare ids, mentions decode to `@<id>`). */
@@ -247,8 +279,14 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       const who = e.user
         ? await deps.names?.nameOf(team, e.user, boundUsers(payload.authorizations))
         : undefined;
-      // same classifier stamp as messages (§3): the reactor's grant row names the mind
-      const owner = e.user && deps.store ? ownerOf(deps.store, team, e.user) : null;
+      // same classifier stamp as messages (§3): the reactor's grant row or email names them
+      const owner = await memberOf(
+        deps.store,
+        deps.names,
+        team,
+        e.user,
+        boundUsers(payload.authorizations),
+      );
       await deps.publish({
         ts: now(),
         type: "message",
@@ -312,6 +350,39 @@ function boundUsers(auths: Authorization[] | undefined): string[] {
 function ownerOf(store: Store | undefined, team: string, user: string | undefined): string | null {
   if (!store || !user) return null;
   return store.connection("slack", `${team}:${user}`)?.agentId ?? null;
+}
+
+/** The classifier's second look (§4): a sender with no grant row is still a member when
+ *  the email on their Slack profile is one the roster declares — the same handle scan
+ *  the WhatsApp ingest does on phones, one directory call away. */
+async function memberOf(
+  store: Store | undefined,
+  names: SlackNames | undefined,
+  team: string,
+  user: string | undefined,
+  via: string[],
+): Promise<string | null> {
+  const owner = ownerOf(store, team, user);
+  if (owner || !user || !store?.agents || !names) return owner;
+  const email = await names.emailOf(team, user, via);
+  if (!email) return null;
+  return store.agents().find((a) => sameHandle(a.email, email))?.agentId ?? null;
+}
+
+/** A principal's DM with the bot is a surface of the mind behind it (§4), and Slack's id
+ *  for it is opaque — so the first line a member sends the bot in an `im` RECORDS the
+ *  channel on the bot's own row (`extra.dms`, member → channel), where the alias
+ *  derivation reads it. Which members are principals is decided there, not here. */
+function recordDm(store: Store, anchor: string, member: string, channel: string): void {
+  const row = store.connection("slack", anchor);
+  if (!row) return;
+  const dms = (row.extra?.dms ?? {}) as Record<string, string>;
+  if (dms[member] === channel) return;
+  store.upsertConnections([{
+    service: "slack",
+    address: anchor,
+    extra: { dms: { ...dms, [member]: channel } },
+  }]);
 }
 
 /** `channel_type` → `conversation.kind` (§4): im/mpim are member-DEFINED (direct — the
@@ -438,10 +509,14 @@ async function mapMessage(
   // directory asks the service itself (users.info / user_change); still nothing of ours:
   // identity resolution is the classifier's business (§3)
   const who = m.user ? await names?.nameOf(team, m.user, via) : undefined;
-  // the classifier's authorship stamp (§3): a sender whose grant row names a mind is that
-  // principal — `agent.id` alone (a Slack client is not the harness, so no session_id);
-  // turn_id, never this stamp, marks the model's voice
-  const owner = m.user && store ? ownerOf(store, team, m.user) : null;
+  // the classifier's authorship stamp (§3): a sender whose grant row or declared email
+  // names a member is that member — `agent.id` alone (a Slack client is not the harness,
+  // so no session_id); turn_id, never this stamp, marks the model's voice
+  const owner = await memberOf(store, names, team, m.user, via);
+  // a member's DM with the bot: written down where the mind's surfaces are derived (§4)
+  if (owner && store && e.channel_type === "im" && anchor !== team) {
+    recordDm(store, anchor, owner, conversation);
+  }
   return [{
     ts: ctx.now(),
     type: "message",
