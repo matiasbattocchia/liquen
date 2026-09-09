@@ -427,16 +427,15 @@ async function defaultWhoami(token: string): Promise<{ login?: string; message?:
  * too: a device flow wants a human at a browser, and a secret manager isn't one. */
 const USAGE = `usage: liquen connect github app
        liquen connect github bot [account]
-       liquen connect github user [principal] [--token]
+       liquen connect github user [agent] [--token]
 
-  Three doors, each prompting for what to paste (or reading it line by line from a
-  piped stdin):
+  Connect GitHub — the App into the vault, its installation to the org, a member by
+  device flow; pasted at a prompt or piped one per line; knobs: connections.github.
 
-  app     the GitHub App: its ID, private key (.pem path), webhook secret, client id
-          and secret — into the vault
+  app     the GitHub App: ID, private key (.pem path), webhook secret, client id and secret
   bot     bind the App's installation on [account] to the org
-  user    sign [principal] in (default: your OS username) by the device flow — the
-          default door; --token pastes a personal access token instead
+  user    sign [agent] in (default: your OS username) by the device flow — the default
+          door; --token pastes a personal access token instead
   --dir <org>   the org, when run from elsewhere`;
 
 if (import.meta.main) {
@@ -525,7 +524,7 @@ if (import.meta.main) {
       }
     })();
 
-    console.error(`Connecting GitHub as principal "${principal}".\n`);
+    console.error(`Connecting GitHub as agent "${principal}".\n`);
 
     const log = await openLog(`${dir}/log`);
     const creds = await openCredentials(dir);

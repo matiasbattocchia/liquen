@@ -478,16 +478,16 @@ async function defaultAuthTest(token: string): Promise<AuthTest> {
 const USAGE = `usage: liquen connect slack app
        liquen connect slack bot [--agent <name>]
        liquen connect slack socket
-       liquen connect slack user [principal]
+       liquen connect slack user [agent]
 
-  Four doors into the vault, each prompting for what to paste (or reading it line by
-  line from a piped stdin):
+  Put Slack's credentials in the vault, pasted at a prompt or piped one per line;
+  knobs: connections.slack.
 
-  app      the OAuth client — id and secret — that every other door names
+  app      the OAuth client (id and secret) every other door names
   bot      the bot token (xoxb): the org's shared identity; --agent names the roster
            agent that speaks through it
   socket   the app-level token (xapp): the carrier ingest reads events over
-  user     a user token (xoxp): one person's leg — the default door, and [principal]
+  user     a user token (xoxp): one member's own leg — the default door; [agent]
            defaults to your OS username
   --dir <org>   the org, when run from elsewhere`;
 
@@ -669,7 +669,7 @@ if (import.meta.main) {
       { bot: botScopes, user: userScopes },
     ));
     const url = manifestUrl(manifest);
-    console.error(`Connecting Slack as principal "${principal}".\n`);
+    console.error(`Connecting Slack as agent "${principal}".\n`);
     console.error("1. Create the app (pick your workspace):\n   " + url + "\n");
     console.error('2. In the app: OAuth & Permissions → "Install to Workspace" (approve).');
     console.error('3. Same page, "OAuth Tokens": copy the "User OAuth Token" (xoxp-…) —');

@@ -210,8 +210,11 @@ function text(status: number, message: string): Response {
  * principals as `slack:<team>:<user>` until the identities map (v0.1) refines it. */
 const USAGE = `usage: liquen oauth:slack [--app <client_id>]
 
-  Serve the OAuth redirect for the Slack app in the vault (\`liquen connect slack app\`),
-  on connections.slack.oauthPort — put a synchronous tunnel (cloudflared) in front.
+  Serve the hosted Slack sign-in (/start, /callback) for members who are not at this
+  terminal: one shared link, each click its own grant; the app is the vault's
+  (\`liquen connect slack app\`); knobs: connections.slack (oauthPort). Put a synchronous
+  tunnel (cloudflared) in front.
+
   --app <client_id>   which app, when the vault holds several
   --dir <org>         the org, when run from elsewhere`;
 

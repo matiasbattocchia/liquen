@@ -158,12 +158,12 @@ export async function connectWhatsApp(
  * Expired ⇒ run the door again for a fresh one.
  *
  * Env: WA_BRIDGE_TOKEN (the secret); the knobs are connections.whatsapp. */
-const USAGE = `usage: liquen connect whatsapp [principal] [--phone <digits>]
+const USAGE = `usage: liquen connect whatsapp [agent] [--phone <digits>]
        liquen connect whatsapp --org [--phone <digits>]
 
-  Pair a WhatsApp number with the org through the whatsmeow bridge (connections.whatsapp).
+  Pair a WhatsApp number through the whatsmeow bridge; knobs: connections.whatsapp.
 
-  [principal]       the member whose phone this is (default: your OS username)
+  [agent]           the roster member whose phone this is (default: your OS username)
   --org             the org's own number — owned by nobody, spoken through by its agents
   --phone <digits>  the pairing-code flow for that number (international digits, no +);
                     without it, a QR code to scan from the phone
@@ -189,7 +189,7 @@ if (import.meta.main) {
       else positional.push(org.args[i]);
     }
     if (orgOwned && positional.length > 0) {
-      console.error("--org pairs the org's own number: no principal to name");
+      console.error("--org pairs the org's own number: no agent to name");
       Deno.exit(2);
     }
     const principal = orgOwned ? undefined : positional[0] ?? (() => {
@@ -233,7 +233,7 @@ if (import.meta.main) {
 
     console.error(
       `Connecting WhatsApp as ${
-        principal ? `principal "${principal}"` : "the org"
+        principal ? `agent "${principal}"` : "the org"
       } (bridge ${base}, tenant "${tenant}") — ` +
         `${phoneNumber ? `pairing code for ${phoneNumber}` : "QR"}.\n`,
     );

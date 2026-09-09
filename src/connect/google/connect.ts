@@ -94,12 +94,15 @@ export function oneShot(
 }
 
 const USAGE = `usage: liquen connect google app
-       liquen connect google account [principal] [--org] [--app <client_id>] [--scopes "…"]
+       liquen connect google account [agent] [--org] [--app <client_id>] [--scopes "…"]
 
-  app       paste the OAuth client id and secret into the vault
-  account   sign a Google account in — [principal]'s (default: your OS username) or,
-            with --org, the org's own; --app picks the client when the vault holds
-            several; --scopes overrides the catalog's (space- or comma-separated)
+  Connect Google from this terminal — the app into the vault, an account through the
+  browser here; knobs: connections.google.
+
+  app       the OAuth client (id and secret) the account door signs in with
+  account   sign a Google account in: [agent]'s (default: your OS username) or, with
+            --org, the org's own; --app picks the client when the vault holds several;
+            --scopes overrides the catalog's (space- or comma-separated)
   --dir <org>   the org, when run from elsewhere`;
 
 if (import.meta.main) {

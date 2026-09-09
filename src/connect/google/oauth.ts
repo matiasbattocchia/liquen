@@ -267,8 +267,11 @@ function text(status: number, message: string): Response {
  * callback), localhost when absent. The port is connections.google.oauthPort. */
 const USAGE = `usage: liquen oauth:google [--app <client_id>]
 
-  Serve the OAuth redirect for the Google app in the vault (\`liquen connect google app\`),
-  on connections.google.oauthPort — put a synchronous tunnel (cloudflared) in front.
+  Serve the hosted Google sign-in (/start, /callback) for members who are not at this
+  terminal: a link per member (\`/start?agent=<name>\`; none ⇒ the org's own account);
+  the app is the vault's (\`liquen connect google app\`); knobs: connections.google
+  (oauthPort). Put a synchronous tunnel (cloudflared) in front.
+
   --app <client_id>   which app, when the vault holds several
   --dir <org>         the org, when run from elsewhere`;
 

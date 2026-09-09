@@ -51,11 +51,15 @@ export function available(org: string): string[] {
   return [...SHIPPED, ...custom.sort()];
 }
 
-const USAGE = `usage: liquen connect                              the map: what is connected
-       liquen connect <service> [args…]             a service's door (--help on any)
-       liquen connect ./path/to/connect.ts [args…]  a door by module path
+const USAGE = `usage: liquen connect
+       liquen connect <service> [args…]
+       liquen connect ./path/to/connect.ts [args…]
 
-  doors: ${SHIPPED.join(" · ")}, and each <org>/connectors/<name>/connect.ts
+  Connect a service to the org; bare, the map of what is connected. --help on any door.
+
+  <service>     a shipped door: ${SHIPPED.join(" · ")}
+  <path>        a door by module path (anything with a slash) — the org's own live under
+                <org>/connectors/<name>/connect.ts and are named like the shipped ones
   --dir <org>   the org, when run from elsewhere`;
 
 if (import.meta.main) {
