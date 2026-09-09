@@ -1,0 +1,22 @@
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: the tag is the version
+        run: |
+          version=$(deno eval 'console.log(JSON.parse(Deno.readTextFileSync("deno.json")).version)')
+          test "v$version" = "$GITHUB_REF_NAME"
+      - run: deno publish
