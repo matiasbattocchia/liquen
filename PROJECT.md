@@ -2098,6 +2098,25 @@ not cache it either. A read-only cache serves the run, emit included. The contai
 Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
 first boot, a fetch the harness (root, with the network) makes.
 
+### A door knows what the console is about to ask (2026-09-10) — LANDED
+
+Both app doors sent a person to a vendor form and then asked for what came back, saying
+nothing about the fields the form itself asks for — and those fields have answers only the
+org knows. Google's console asks for the authorized redirect URIs while the client is being
+created, and the only URI a sign-in from that terminal can return to is the localhost
+callback the account door serves, on `connections.google.oauthPort`. The door printed it
+afterwards, at the account door, when the client already existed and the sign-in was already
+failing with `redirect_uri_mismatch`. It prints it first now, read from the org's own knob.
+
+GitHub's form takes URL parameters, so the github app door prints a link that fills it: the
+name, the two permissions a commenter needs, and the events — `connections.github.events`,
+so what the App subscribes to and what the ingest maps are the one list, the way slack's
+manifest link already worked. Four fields no link can carry are named instead of assumed:
+the webhook secret (offered as fresh hex, and stored only if the person says the form holds
+it — a secret in the vault that the App does not have makes the ingest refuse every
+delivery), the webhook URL (only for an org the internet can reach; `gh webhook forward`
+otherwise), Enable Device Flow, and the private key button.
+
 ### The github doors take the setup they are given (2026-09-10) — LANDED
 
 The connector assumed the fullest configuration and refused the rest. The bot door demanded

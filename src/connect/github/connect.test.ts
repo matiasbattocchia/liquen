@@ -2,6 +2,7 @@ import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/
 import { type createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
 import {
   APP_PREFIX,
+  appForm,
   connectGithubApp,
   connectGithubBot,
   connectGithubUser,
@@ -14,6 +15,7 @@ import {
   type Installation,
   ORG_KEY,
   pickGithubApp,
+  suggestSecret,
   type UserTokens,
 } from "./connect.ts";
 import { openCredentials } from "../../connector.ts";
@@ -467,4 +469,22 @@ Deno.test("next: the vault says what is owed — an app's three parts are named 
   const noApp = githubNext(githubHave([user]));
   assertEquals(noApp.length, 2);
   assertStringIncludes(noApp[1], "no app");
+});
+
+Deno.test("app door: the form link carries the org's own event list, and no webhook", () => {
+  const q = new URL(appForm("acme", ["issues", "pull_request"])).searchParams;
+  assertEquals(q.get("name"), "liquen-acme");
+  assertEquals(q.getAll("events[]"), ["issues", "pull_request"]);
+  assertEquals(q.get("issues"), "write");
+  assertEquals(q.get("pull_requests"), "write");
+  // GitHub cannot deliver to a laptop, and a link cannot carry a secret: the form's blanks
+  assertEquals(q.get("webhook_active"), "false");
+  assertEquals(q.get("webhook_url"), null);
+  assertEquals(q.get("webhook_secret"), null);
+});
+
+Deno.test("app door: a suggested secret is fresh hex, never the same twice", () => {
+  const a = suggestSecret();
+  assert(/^[0-9a-f]{32}$/.test(a));
+  assert(a !== suggestSecret());
 });

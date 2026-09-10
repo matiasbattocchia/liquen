@@ -3,7 +3,11 @@
  *
  *   app    the GitHub App's credentials, pasted once: App ID + private key (.pem) +
  *          webhook secret → vault `github:app:<app_id>` — what the broker signs
- *          installation JWTs with and what the ingest verifies deliveries against.
+ *          installation JWTs with and what the ingest verifies deliveries against. The
+ *          door opens with a link that prefills the registration form (`appForm`) off
+ *          `connections.github.events`, so what the app is subscribed to and what the
+ *          ingest maps are the same list, and offers a secret for the field no link can
+ *          carry.
  *   bot    the org's shared identity: the app's INSTALLATION. Discovered over the app's
  *          JWT (`GET /app/installations` — which also proves the pasted key really is the
  *          app's) → connections: the `github` anchor, org-credentialed → vault
@@ -86,6 +90,33 @@ export async function connectGithubApp(
     },
   });
   return key;
+}
+
+/** The registration form, prefilled by URL parameters (GitHub reads them at
+ *  /settings/apps/new): the name, the two permissions a commenter needs, and the events
+ *  the ingest maps — `connections.github.events`, so the subscription and the mapping stay
+ *  the one list. The webhook stays off: GitHub cannot reach a laptop, and a link cannot
+ *  carry a secret, so the URL and the secret are the form's own two blanks. */
+export function appForm(org: string, events: string[]): string {
+  const form = new URL("https://github.com/settings/apps/new");
+  const q = form.searchParams;
+  q.set("name", `liquen-${org}`);
+  q.set("description", "liquen agents, reading and answering on this org's repositories");
+  q.set("url", "https://jsr.io/@liquen/liquen");
+  q.set("public", "false");
+  q.set("issues", "write");
+  q.set("pull_requests", "write");
+  q.set("webhook_active", "false");
+  for (const e of events) q.append("events[]", e);
+  return form.href;
+}
+
+/** A webhook secret worth pasting: 32 hex from the platform CSPRNG. Offered, never
+ *  assumed — what the vault stores is what the person says the form holds. */
+export function suggestSecret(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /** The app a door builds on: the one `--app` names, the only one in the vault, or a
@@ -549,9 +580,10 @@ const USAGE = `usage: liquen connect github app
   which every agent falls back to, and an AGENT's own, which posts under that person's
   name. Answers are pasted at a prompt, or piped one per line for a secret manager.
 
-  app     register a GitHub App: ID, private key (.pem path), and — both optional — a
-          webhook secret (the ingest verifies deliveries with it) and a client id and
-          secret (the device flow signs people in with them). Several may coexist.
+  app     register a GitHub App: the door prints a link that fills the form for you, then
+          takes its ID, private key (.pem path), and — both optional — a webhook secret
+          (the ingest verifies deliveries with it) and a client id and secret (the device
+          flow signs people in with them). Several may coexist.
   bot     the org's identity from the App's INSTALLATION: nothing static is stored and the
           token is minted hourly. Needs an app; for an org that has none, the token route
           below with --org is the whole setup.
@@ -599,14 +631,22 @@ if (import.meta.main) {
       (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
 
     if (verb === "app") {
-      console.error("Register the app (once): https://github.com/settings/apps/new");
+      const { githubConfig } = await import("./config.ts");
+      const { ingestPort, events } = await githubConfig(root);
       console.error(
-        "  — permissions: Issues + Pull requests (read & write); subscribe to their events",
+        `Register the app (once) — this link fills the form with what this org needs:\n  ${
+          appForm(root.split("/").pop() ?? "liquen", events)
+        }\n`,
       );
-      console.error("  — set a webhook secret; generate a private key (downloads the .pem)");
       console.error(
-        "  — tick Enable Device Flow, and LEAVE ON expire user authorization tokens\n" +
-          "    (that pair is what `liquen connect github user` signs a person in with)\n",
+        `Four things a link cannot fill:\n` +
+          `  — Webhook secret: a fresh one to paste there and below → ${suggestSecret()}\n` +
+          `  — Webhook URL: only if this org answers from the internet; the ingest listens\n` +
+          `    on :${ingestPort} at /. Locally leave the webhook off and forward instead:\n` +
+          `      gh webhook forward --repo=<owner/repo> --url=http://localhost:${ingestPort}/\n` +
+          `  — Enable Device Flow: tick it, and LEAVE ON expire user authorization tokens\n` +
+          `    (that pair is what \`liquen connect github user\` signs a person in with)\n` +
+          `  — Generate a private key: the button at the bottom downloads the .pem\n`,
       );
       const appId = ask("App ID (the number on the About page):");
       const pemPath = ask("Private key file (path to the .pem):");
