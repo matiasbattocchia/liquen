@@ -86,6 +86,9 @@ export interface TurnInput {
   /** The surfaces the agent speaks through, named — the prefix's `connections:` line (§5).
    *  Stable between grants, so it sits with the cached prefix; xi reads the map. */
   surfaces?: string[];
+  /** The media kinds a processor makes readable — the prefix's `processors:` line (§5),
+   *  which tells the model to wait for the words rather than open the file. */
+  processors?: string[];
   ambient?: string[]; // volatile env lines for the anchor block (§5) — xi composes them
   /** Lazy source for the checkpoint instruction (the `harness/instruction/compaction` doc) —
    *  xi resolves the I/O, nu only calls it when a checkpoint actually runs (§5). */
@@ -173,6 +176,7 @@ export async function nu(
       timezone: config.timezone,
       locale: config.locale,
       connections: input.surfaces,
+      processors: input.processors,
     },
     ambient: input.ambient,
     loadMedia: input.loadMedia,

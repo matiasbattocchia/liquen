@@ -199,8 +199,13 @@ note reaches the model as `<audio/>`, a marker saying somebody spoke with no way
 what, so a turn that "read" one did not read it. The words land out of band minutes later
 (§4 processors), long after the wake that carried the note is spent, and queueing them for
 the next digest would decide that message on a second chance when the first was never
-usable. So a transcript whose note is already behind the last look wakes now. One whose note
-is still unread does not: its words are in the same pile the note is, and the digest reads
+usable. So a transcript whose note is already behind the last look wakes now. And while the
+words are on the way — a processor is configured for the note's kind (`processors` in the
+catalog, funneled to every agent's `Wake`) and the processor's deadline has not passed — the
+note is **sealed**: not news at all, wherever it landed, the mind included. Waking on the
+envelope only spends a turn learning it cannot be read; the words wake in its place, with
+its attention. Past the deadline nobody is coming, and the note is news as it stands. One
+whose note is still unread does not: its words are in the same pile the note is, and the digest reads
 the two together — and the depth counts them as the single arrival they are, so a handful of
 notes cannot fake a deep pile. The rung sits **below** sleep: a voice note is the ambient
 world, and the night swallows it like everything else.
@@ -1355,7 +1360,9 @@ Built by render from `docs.list()` (§8), led by the **env block** — one line 
 config owns about who and where the agent is, `agent · name · email · phone · home ·
 timezone · locale`, and one `connections:` line naming the surfaces it speaks through (the
 connections it owns, where it speaks as its principal, and the org's credentialed ones,
-where it speaks as the org — a stub row is nobody's voice) — harness-authored, so no doc
+where it speaks as the org — a stub row is nobody's voice), and, when the org configured
+one, a `processors:` line naming the media kinds made readable on their own, so the model
+waits for the `<transcript>` instead of opening the file — harness-authored, so no doc
 edit can lose them, and stable between grants, so the prefix stays cached. Then
 **instructions** = the bodies of `load:always` docs
 (system → org → agent), inlined; **skill / memory index** = pointers (name + description) for
@@ -1974,7 +1981,11 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   a need we've explicitly declined for the exec plane.)
 - Shims: every boot lays `aread`/`awrite`/`aedit` under `{dir}/system/bin` as `deno run`
   shims of the package's `bin/afs.ts`, addressed where the package is — a checkout's file or
-  the registry's URL — so the tool an agent runs answers for the version that booted. PATH widens by scope — `{dir}/system/bin` (the harness's),
+  the registry's URL — so the tool an agent runs answers for the version that booted. A shim
+  runs as the agent's uid out of the harness's own module cache (`DENO_DIR` pinned in the
+  shim line, `--cached-only`, the cache warmed at boot): the agent's uid has no cache of its
+  own and no road to the registry, and the pin stays in the shim so the agent's own deno is
+  untouched. PATH widens by scope — `{dir}/system/bin` (the harness's),
   `{dir}/org/bin` (the org's, `gws`), `{dir}/agents/<id>/bin` (the agent's own), then the
   system's — narrowest first, so a wider layer is reachable but cannot shadow a harness
   contract, exactly as the doc cascade resolves. The binaries'

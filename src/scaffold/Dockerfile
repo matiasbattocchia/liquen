@@ -14,8 +14,11 @@ RUN apt-get update && \
 WORKDIR /app
 COPY . .
 
-# the CLI is the package deno.jsonc names — cached into the image, so boot needs no network
-RUN deno install
+# one module cache for the box, at a path every uid can read: the harness fills it (the
+# package here at build, the file shims' module at boot) and the agents' shims read it —
+# an agent's uid has no cache of its own and no road to the registry (the egress proxy)
+ENV DENO_DIR=/deno-dir
+RUN deno install && chmod -R a+rX /deno-dir
 
 VOLUME /data
 ENTRYPOINT ["./entrypoint.sh"]

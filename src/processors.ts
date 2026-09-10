@@ -54,8 +54,9 @@ import type { Appender, Subscriber } from "./store/log.ts";
 import type { Draft, Event, FilePart, MessageEvent } from "./types.ts";
 
 /** A hung model must not wedge the queue (a real 0.9.1 failure mode): well past the
- *  transcribe-in-own-duration rule for the longest note a platform accepts. */
-const TIMEOUT_MS = 10 * 60_000;
+ *  transcribe-in-own-duration rule for the longest note a platform accepts. It is also the
+ *  deadline attention holds a sealed note for (xi §2): past it, nobody is coming. */
+export const PROCESSOR_TIMEOUT_MS = 10 * 60_000;
 
 export interface TranscriberDeps {
   subscribe: Subscriber["subscribe"];
@@ -107,7 +108,7 @@ async function transcribe(
     text = (await run(
       deps.command,
       await Deno.readFile(path),
-      TIMEOUT_MS,
+      PROCESSOR_TIMEOUT_MS,
       processorEnv(deps),
     )).trim();
     if (text) await Deno.writeTextFile(sidecar, text + "\n");

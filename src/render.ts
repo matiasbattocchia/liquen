@@ -73,7 +73,14 @@ export interface Env {
   locale?: string;
   /** Each surface named — `whatsapp 549… (yours)`, `slack acme.slack.com (org)`. */
   connections?: string[];
+  /** The media kinds a processor makes readable (`audio`): the model is told the words
+   *  follow on their own, so it waits for the `<transcript>` instead of opening the file. */
+  processors?: string[];
 }
+
+/** What a configured processor means to the model, said once beside the kinds. */
+const PROCESSORS_NOTE = "media of these kinds is made readable for you automatically, as a " +
+  "<transcript> that follows the message; it can take a couple of minutes to arrive";
 
 function envLine(env: Env): string | undefined {
   const facts = [
@@ -88,6 +95,9 @@ function envLine(env: Env): string | undefined {
   const lines = [
     facts.length ? facts.join(" · ") : undefined,
     env.connections?.length ? `connections: ${env.connections.join(" · ")}` : undefined,
+    env.processors?.length
+      ? `processors: ${env.processors.join(" · ")} (${PROCESSORS_NOTE})`
+      : undefined,
   ].filter((l): l is string => !!l);
   return lines.length ? lines.join("\n") : undefined;
 }

@@ -402,19 +402,48 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
   return lines;
 }
 
+/** This process's module cache — the one the shims read. Asked of the deno that runs the
+ *  harness (once per process), since the default is per user and the shims run as the
+ *  agent's uid. */
+let harnessDenoDir: Promise<string> | undefined;
+function denoDir(): Promise<string> {
+  return harnessDenoDir ??= new Deno.Command("deno", {
+    args: ["info", "--json"],
+    stdout: "piped",
+    stderr: "null",
+  }).output().then((o) => JSON.parse(new TextDecoder().decode(o.stdout)).denoDir as string);
+}
+
 /** The harness's own tools, on disk where a shell can exec them: `aread`/`awrite`/`aedit`
  *  under `<dir>/system/bin`, each a shim running `bin/afs.ts` by the URL this package
  *  resolves it at. Laid on every boot — the shims are the package's, not the org's, and a
- *  package upgrade must reach them. Returns the directory. */
+ *  package upgrade must reach them.
+ *
+ *  A shim runs as the agent's uid, which has no module cache of its own and no way to fill
+ *  one (the egress proxy does not front the registry, §9), so it reads THIS process's cache
+ *  — `DENO_DIR` pinned in the shim line, `--cached-only` so an agent's `aread` never reaches
+ *  for the network — and every boot warms that cache first (`deno cache` of the module by
+ *  its URL: a no-op once it is there; a fetch the harness, not the agent, makes). The pin
+ *  lives in the shim, not the agent's environment: a script the agent writes runs on the
+ *  agent's own deno, with its own cache and the proxy's network. Returns the directory. */
 async function layShims(dir: string): Promise<string> {
   const bin = `${dir}/system/bin`;
   await Deno.mkdir(bin, { recursive: true });
   const afs = import.meta.resolve("../bin/afs.ts");
+  const [cache, warm] = await Promise.all([
+    denoDir(),
+    new Deno.Command("deno", { args: ["cache", afs], stdout: "null", stderr: "piped" }).output(),
+  ]);
+  if (!warm.success) {
+    throw new Error(
+      `cannot cache ${afs} for the file shims: ${new TextDecoder().decode(warm.stderr).trim()}`,
+    );
+  }
   for (const [name, verb] of [["aread", "read"], ["awrite", "write"], ["aedit", "edit"]]) {
     const path = `${bin}/${name}`;
     await Deno.writeTextFile(
       path,
-      `#!/bin/sh\nexec deno run --allow-read --allow-write '${afs}' ${verb} "$@"\n`,
+      `#!/bin/sh\nexec env DENO_DIR='${cache}' deno run --cached-only --allow-read --allow-write '${afs}' ${verb} "$@"\n`,
     );
     await Deno.chmod(path, 0o755);
   }
@@ -432,8 +461,9 @@ async function layShims(dir: string): Promise<string> {
  *  nothing below can shadow a contract the layer above must keep:
  *    `<dir>/system/bin`       the harness's own — `aread`/`awrite`/`aedit`, shims every
  *                             boot lays, each running the package's `bin/afs.ts` where the
- *                             package is (a checkout's file, the registry's URL), so the
- *                             tool answers for the version that booted.
+ *                             package is (a checkout's file, the registry's URL) out of
+ *                             the harness's own module cache, so the tool answers for the
+ *                             version that booted and never fetches from an agent's uid.
  *    `<dir>/org/bin`          what the org installs for all its agents (`gws`).
  *    `<dir>/agents/<id>/bin`  what THIS agent installed for itself — its own folder, so a
  *                             binary it fetched is as private as its notes.

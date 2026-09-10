@@ -2087,10 +2087,15 @@ is required: the connect doors and each shipped connection's `run.ts` run by URL
 is a name, not a stat); the seed templates and the proxy CA are fetched and written under
 `data/system/`; the `aread`/`awrite`/`aedit` shims are laid under `data/system/bin` on
 every boot, each running `bin/afs.ts` by the package's own URL, so the tool answers for
-the version that booted. Open: in the container an agent runs as its own uid, whose Deno
-cache is not root's, so its first `aread` would fetch `afs.ts` — through the egress proxy,
-which does not front the registry. The image owes user space a readable, pre-warmed
-`DENO_DIR`.
+the version that booted. An agent runs as its own uid, whose Deno cache is not the
+harness's and whose network is the egress proxy, which does not front the registry — so a
+shim reads the harness's cache (`DENO_DIR` pinned in the shim line, `--cached-only`) and
+every boot warms it with `deno cache` of the module by its URL. A module the harness loaded
+through the `jsr:` specifier is not what `deno run <https-url>` looks for in the cache,
+so the warm is by URL, not implied by the package's own load; `deno install` alone does
+not cache it either. A read-only cache serves the run, emit included. The container's
+Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
+first boot, a fetch the harness (root, with the network) makes.
 
 ### An OAuth server is a door's, not the operator's (2026-09-09) — LANDED
 
@@ -2109,3 +2114,34 @@ serves the developer's own leg.
 Still open: vibes runs on Bun, which resolves neither `@std/*` nor `node:sqlite`, so its
 `@mu/*` path mapping onto the checkout serves the type checker; `attach.ts` and
 `describe.ts` cannot load there at runtime.
+
+### A note whose words are on the way is sealed (2026-09-09) — LANDED
+
+Two voice notes in the principal's self chat each cost two wakes and a wrong reply: the
+raw audio woke the mind (a line in the mind alias is the summons), the model tried to open
+the file with `aread` — the bash spec says that is how an image or PDF is seen, and
+nothing said a transcript was coming — failed, answered "no pude leer", and the transcript
+landed twenty seconds later as a second wake. Now attention treats such a note as
+**sealed**: with a processor configured for its kind (`Wake.processors`, funneled from the
+catalog's `processors` section) and the processor's deadline unspent, it is not news; the
+transcript is, and wakes with the note's own attention. The deadline is the transcriber's
+own timeout (`PROCESSOR_TIMEOUT_MS`), so a note that arrived while the daemon was down, or
+that the processor gave up on, is news as it stands ten minutes later. The system prompt's
+env block gains a `processors:` line naming the kinds and saying the words follow on their
+own, so the model has a reason to wait. The mirror's copy of a note is matched to its words
+by row (`ref_id`) as well as by wire id, since the copy's wire id is its own.
+
+Seen in the same window, not fixed here: a group message landed one second after it was
+sent as "…el domingo@" — 43 bytes, no hidden characters, no mention in its payload — while
+the phone's export of the same chat shows "…el domingo @Megavalo ?", and the principal's
+later forward carried "@5492617257886" with a mentions entry. Nothing on the way cuts
+text: the bridge's mention rewrite and markdown pass return that string verbatim in a
+probe, mu's ingest only renames tokens, and the store keeps bytes. What fits is a message
+sent as "domingo@" and edited seconds later, since an export renders an edited message
+by its final text — and **no WhatsApp edit has ever reached the log**, against 40 revokes,
+36 of them from LID groups through the same protocol-message branch of the bridge. The
+bridge's inbound edit code reads right offline and has no test; whether whatsmeow hands
+it the edit, or the branch returns on empty text, only a live edit will show. The
+checkpoint then recorded "asado en casa de Matías" as fact, and every later turn inherited
+it. The compaction instruction is the other lever: it lists threads and commitments
+without asking whose, so an open question in any chat reads as the principal's.

@@ -45,6 +45,11 @@ Deno.test("bash: PATH widens by scope — the agent's own bin cannot shadow the 
       await run("command -v aread"),
       `${dir}/system/bin/aread`,
     );
+    // the shim reads the harness's cache and never fetches: the agent's uid has no cache
+    // of its own and no road to the registry
+    const shim = await Deno.readTextFile(`${dir}/system/bin/aread`);
+    assertStringIncludes(shim, "env DENO_DIR='");
+    assertStringIncludes(shim, "--cached-only");
     const path = (await run("echo $PATH")).split(":");
     assert(
       path.indexOf(`${dir}/org/bin`) < path.indexOf(`${wsOf(dir)}/bin`),

@@ -123,6 +123,14 @@ Deno.test("the env line leads the prefix: home · timezone · locale, only the f
     withSurfaces.text,
     "agent: a1\nconnections: whatsapp 549 (yours) · slack acme.slack.com (org)",
   );
+  // a configured processor is a line of its own, and says what it means for the model
+  const [withProcessors] = renderSystem([], { agent: "a1", processors: ["audio"] });
+  assertEquals(
+    withProcessors.text,
+    "agent: a1\nprocessors: audio (media of these kinds is made readable for you " +
+      "automatically, as a <transcript> that follows the message; it can take a couple of " +
+      "minutes to arrive)",
+  );
   assertEquals(partial.cache_control, { type: "ephemeral", ttl: "1h" }); // still the prefix
 });
 

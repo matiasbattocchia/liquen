@@ -497,6 +497,36 @@ Deno.test("attention: a note and its words are ONE arrival, not two", () => {
   assertEquals(decide([looked(10), ...notes, ...words], SESSION, WAKE, NOON), "ignore");
 });
 
+Deno.test("attention: a note whose words are on the way is SEALED — not news until they land", () => {
+  const P: Wake = { processors: ["audio"] };
+  // the summons case: the mirror carries the principal's own note into the mind, where any
+  // line wakes now — but a processor is configured, so the note waits for its words
+  assertEquals(decide([looked(1), note(MIND, 0)], SESSION, WAKE, NOON), "think");
+  assertEquals(decide([looked(1), note(MIND, 0)], SESSION, P, NOON), "ignore");
+  // …and the words are the wake, carrying the note with them
+  assertEquals(decide([looked(1), note(MIND, 1), said(MIND, 0)], SESSION, P, NOON), "think");
+  // the mirror's copy names the note by ROW where the wire id is the copy's own (§4)
+  const copy = { ...note(MIND, 1, "copy:1"), id: "c1" } as Event;
+  const named = {
+    ...said(MIND, 0, "wa:n1"),
+    payload: { action: "add", ref_external_id: "wa:n1", ref_id: "c1" },
+  } as Event;
+  assertEquals(decide([looked(1), copy], SESSION, P, NOON), "ignore");
+  assertEquals(decide([looked(1), copy, named], SESSION, P, NOON), "think");
+  // past the processor's deadline nobody is coming: the note is news as it stands
+  assertEquals(decide([looked(20), note(MIND, 11)], SESSION, P, NOON), "think");
+  // a kind no processor takes is never sealed
+  assertEquals(
+    decide([looked(1), note(MIND, 0)], SESSION, { processors: ["image"] }, NOON),
+    "think",
+  );
+  // the world: a sealed note does not deepen the pile, and its words count once with it
+  const notes = Array.from({ length: 25 }, (_, i) => note(`slack:C${i % 5}`, 1, `wa:n${i}`));
+  assertEquals(decide([looked(2), ...notes], SESSION, P, NOON), "ignore");
+  const words = notes.map((_n, i) => said(`slack:C${i % 5}`, 0, `wa:n${i}`));
+  assertEquals(decide([looked(2), ...notes, ...words], SESSION, P, NOON), "think");
+});
+
 Deno.test("attention: the summons is the mind alias and NOTHING else", () => {
   assertEquals(decide([looked(1), world(MIND, 0)], SESSION, WAKE, NOON), "think");
   // a DM is a hail to the PRINCIPAL's account, in a room the agent is a bystander in

@@ -57,6 +57,7 @@ import {
   DEFAULT_WINDOW_LIMIT,
 } from "./config.ts";
 import { type Describe, describeCall, nameResolver } from "./describe.ts";
+import { PROCESSOR_TIMEOUT_MS } from "./processors.ts";
 import type { Appender, Reader } from "./store/log.ts";
 import type { Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
@@ -141,6 +142,9 @@ export interface Wake {
   digestMinutes?: number;
   /** Org-clock span "23-8" the ambient world waits out; null ⇒ never sleeps; unset ⇒ catalog. */
   sleepHours?: string | null;
+  /** The media kinds a processor makes readable (main: the catalog's configured ones,
+   *  `audio` today). A note of such a kind is sealed until its words land: not news yet. */
+  processors?: string[];
 }
 
 /** Decide — once, from one window — what is owed. Position-aware, so a late invocation that
@@ -184,13 +188,16 @@ export function decide(
  * A transcript is not a rung of its own: it INHERITS the attention of the note it names.
  * The words ARE that message, arriving late — so they wake once the note has been looked at
  * and could not be read (below the night, which swallows the note too), and they never count
- * as a second arrival in the depth.
+ * as a second arrival in the depth. And while the words are on the way — a processor is
+ * configured for the note's kind and its deadline has not passed — the note itself is not
+ * news at all (`sealed`): waking on the envelope only spends a turn learning it cannot be
+ * read, and the words arrive with the note's own attention anyway.
  *
  * Deferring costs nothing and loses nothing: the news stays owed in the log, and the clock
  * poke (main's tick) re-asks this same question until it is due.
  */
 function attention(events: Event[], session: Session, wake: Wake, now: number): Decision {
-  const news = newsOf(events, session);
+  const news = newsOf(events, session).filter((e) => !sealed(e, events, wake, now));
   if (news.length === 0) return "ignore";
   // a NAMED session is REACTIVE (§4): only its own rooms reach it at all — its window is
   // its enrollments — so every piece of news is addressed to it, and the ladder below
@@ -246,6 +253,27 @@ function words(e: Event): { ref: string } | undefined {
   if (!e.parts.some((p) => p.type === "text" && p.kind === "transcript")) return undefined;
   const ref = e.payload.ref_external_id;
   return typeof ref === "string" && ref !== "" ? { ref } : undefined;
+}
+
+/** A note whose words are ON THE WAY: a processor is configured for its kind (`Wake.
+ *  processors`), it is the shape the transcriber takes (a wire message carrying a file of
+ *  that kind — not a reply, a forward, or a turn's own attachment), no transcript in the
+ *  window names it yet, and the processor's deadline has not passed. The words name the
+ *  note by its wire id, or by its row when the mirror carried both into a mind (§4). */
+function sealed(e: Event, events: Event[], wake: Wake, now: number): boolean {
+  const kinds = wake.processors ?? [];
+  if (kinds.length === 0 || e.type !== "message") return false;
+  if (e.payload?.action !== undefined || e.payload?.turn_id !== undefined) return false;
+  if (!e.envelope.external_id) return false;
+  const media = e.parts.some((p) =>
+    p.type === "file" && kinds.includes(p.kind) && p.file.uri.startsWith("file://")
+  );
+  if (!media || now - Date.parse(e.ts) >= PROCESSOR_TIMEOUT_MS) return false;
+  return !events.some((x) => {
+    const w = words(x);
+    return w !== undefined &&
+      (w.ref === e.envelope.external_id || x.payload?.ref_id === e.id);
+  });
 }
 
 /** A transcript whose note is already BEHIND the last look — the half of rung-inheritance
@@ -938,6 +966,7 @@ async function think(
       tools: specsOf(ports, config),
       config,
       surfaces: surfaces.map(surfaceLine),
+      processors: config.processors,
       ambient,
       // trailing-region media → real image/document blocks (§5); the store loads, render picks
       loadMedia,
@@ -1783,7 +1812,8 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
       name: "send",
       description:
         "Dispatch a message to an external world conversation (<conv>). Note: this tool is " +
-        "not needed for internal user-assistant conversations (<principal>).",
+        "not needed for internal user-assistant conversations (<principal>); you must not " +
+        "use send to refer to a principal because they are present in this same conversation.",
       input_schema: {
         type: "object",
         properties: {

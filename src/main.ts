@@ -629,6 +629,9 @@ async function compileRoster(
   const hours = defaults.backlogHours ?? catalog.org.backlogHours;
   const since = new Date(startedAt - hours * 3_600_000).toISOString();
   const org = catalog.org.agent;
+  // the media kinds a processor makes readable — org-wide, one fact for every agent (§5)
+  const processors = Object.entries(catalog.processors).filter(([, cmd]) => !!cmd)
+    .map(([kind]) => kind);
   const found: Principal[] = [];
   for (const [name, entry] of Object.entries(catalog.agents)) {
     const { identity = {}, principals, mind, ...cfg } = entry;
@@ -655,6 +658,7 @@ async function compileRoster(
       digestMinutes: cfg.digestMinutes ?? org.digestMinutes,
       // null survives the funnel: it means "never sleeps", not "unset" (Wake, §2)
       sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.sleepHours,
+      processors,
       // the system half funnels too — org-wide, no per-agent seat (harness machinery)
       windowLimit: catalog.system.windowLimit,
       compactAt: catalog.system.compactAt,
