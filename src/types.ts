@@ -598,9 +598,16 @@ export interface Usage {
   cache_write_tokens?: number;
 }
 
-/** Ephemeral broadcast — stream the in-progress; never stored. Correctness never depends on it. */
+/** What a model call was for: the turn itself, or the checkpoint that displaces one (§5).
+ *  Spend is one row per call, so the kind is what makes "what has maintenance cost" a
+ *  query; a delta carries the same word so a surface knows which text it is watching. */
+export type CallKind = "think" | "checkpoint";
+
+/** Ephemeral broadcast — stream the in-progress; never stored. Correctness never depends on
+ *  it. Every kind reaches every tailer: what to show and what to fold away is the client's
+ *  call, and it can only make it if the words arrive. */
 export interface Delta {
-  kind: "text" | "thinking" | "error";
+  kind: "text" | "thinking" | "checkpoint" | "error";
   text?: string;
 }
 export type Emit = (delta: Delta) => void;

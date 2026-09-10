@@ -8,7 +8,8 @@
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Emission, ModelTransport } from "./mu.ts";
+import type { Emit } from "./types.ts";
+import { type Emission, type ModelTransport, mu, type StepCall } from "./mu.ts";
 import { SILENCE } from "./render.ts";
 
 /** An `Emission[]` as the model would actually have sent it: real content blocks. */
@@ -57,4 +58,10 @@ export function scripted(
     },
     calls: () => n,
   };
+}
+
+/** A `StepCall` over a transport — what nu hands down to whoever needs a model call, with
+ *  no ladder around it: one attempt, so a test's script is exactly what the caller sees. */
+export function stepping(transport: ModelTransport, emit?: Emit): StepCall {
+  return (step) => mu(step, transport, emit);
 }

@@ -2236,3 +2236,36 @@ it the edit, or the branch returns on empty text, only a live edit will show. Th
 checkpoint then recorded "asado en casa de Matías" as fact, and every later turn inherited
 it. The compaction instruction is the other lever: it lists threads and commitments
 without asking whose, so an open question in any chat reads as the principal's.
+
+### The checkpoint is a call like any other (2026-09-10) — LANDED
+
+A checkpoint whose model call failed returned null and fell through to a think over the
+window it had just failed to cover: no retry, no record, no line on any surface. It bought
+a second call on the next wake, and the one after, for as long as the reason stood — the
+invisible kind of failure, since nothing anywhere said an attempt had been made. Now nu
+hands compaction a **step-caller** rather than the transport, so the checkpoint takes the
+turn's own ladder (`RETRY_DELAYS_MS`, cut short the moment a cancel lands) and what
+outlasts it is an error event like the other two: unstamped, so the turn ends there and
+the next input retries. One call, one retry policy, one failure shape.
+
+Along the same seam the call says what it is for. `CallMeta.kind` rides beside `turn_id`
+to the metered transport, and `usage` gains a `kind` column (schema 8) — the 52-second
+compaction that had to be identified from the shape of its numbers, 14,763 in and 5,032
+out with zero cache, is now `WHERE kind = 'checkpoint'`.
+
+And it streams. `Delta` gains a `checkpoint` kind beside `text` and `thinking`, and nu
+wraps the emit it passes down so the record's own words arrive named. The door already
+fans every delta to every tailer, so what changed is that the words exist at all: paint
+puts a head line before the dim text and one closing line on the `summary` event, so a
+surface that keeps the machine's inner text folded still sees that the window was
+checkpointed. Which display is right is the client's call, and the client can only make it
+if it gets everything.
+
+Read from the SDK's own vocabulary and taken as confirmation rather than as code:
+`compaction_delta` sits beside the text and thinking deltas, and their compaction block is
+part of the conversation rather than an out-of-band event — both choices mu had already
+made. Left alone deliberately: `inputJson` and `contentBlock` would let a surface show a
+tool call while it is still being written, which means emitting a use before the turn's
+batch commits, across publish-and-release; `abort` needs nothing, since the SDK routes a
+cancel to its own listener rather than to `error` and `cancelled` is already the log's
+word for it.

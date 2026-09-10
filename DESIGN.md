@@ -71,8 +71,10 @@ Two planes:
 - **EventLog** — durable, append-only. *The API and the queue.* Producers (webhooks)
   publish; consumers (dispatchers) subscribe to the log's change feed (fs-watch on files /
   DB-webhook·Realtime·pgmq·cron on Postgres) — the `publish` is itself the trigger.
-- **Stream** — ephemeral broadcast for token deltas, thinking, and errors the operator
-  watches. Never stored. Rule: **stream the in-progress, log the completed.**
+- **Stream** — ephemeral broadcast for token deltas, thinking, checkpoints, and errors the
+  operator watches. Every kind reaches every tailer, named; what a surface shows and what
+  it folds away is its own call. Never stored. Rule: **stream the in-progress, log the
+  completed.**
 
 The ReAct loop is **unrolled across invocations** (invocation = step = one model call):
 
@@ -1460,9 +1462,23 @@ compaction proper is only pi's **checkpoint layer**:
   never-cut-a-tool-result rule, structurally: a step (the events sharing a call's
   `turn_id`) replays as one API turn, and stays whole on either side of the cut. The
   transcript the checkpoint works from carries the tool calls and their outcomes for the
-  same reason — inside a loop they ARE the content. A checkpoint the model wrote badly
-  (cut at the output ceiling, or empty) is an error event, not a record: the turn ends on
-  it and the next input retries; only a failed call falls through to a normal think.
+  same reason — inside a loop they ARE the content. A checkpoint that cannot be written is
+  an error event, not a record — the model wrote it badly (cut at the output ceiling, or
+  empty), or the call never completed. The turn ends on it, unstamped, and the next input
+  retries: the window stays uncovered whichever it was, a turn taken over it would cost
+  more and say less, and a checkpoint failing for a standing reason must not buy a second
+  call on every wake in silence.
+- **One call, attempted one way.** nu owns the retry ladder and the stream, and hands
+  compaction a *step-caller* rather than the transport: the checkpoint is retried over
+  weather exactly as a think is (`RETRY_DELAYS_MS`, stopping the moment a cancel lands),
+  streams to the same place, and is metered as the same kind of fact. The spend row carries
+  `kind` — `think` or `checkpoint` — beside its `turn_id`, so what maintenance costs is a
+  query rather than an inference from the shape of the numbers.
+- **The record streams, as its own kind.** `checkpoint` is a delta kind beside `text` and
+  `thinking`: a checkpoint is neither the model reasoning nor the model answering, and a
+  surface can only fold away what it can name. Every kind reaches every tailer whole
+  (§9) — what to show and what to keep folded is the client's call, and the `summary` event
+  itself gives even a folded surface one line saying the window was checkpointed.
 - **The prompt is a DOC** — `system/instructions/compaction.md` (seeded, lazy): readable and
   editable like any instruction, never hidden in code (the embedded constant is only the
   fallback for unseeded stores). One unified instruction covers first-checkpoint and fold

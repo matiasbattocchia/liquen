@@ -24,9 +24,10 @@ export type { ModelTransport };
  * so no layer above changes. Wrapped per agent in main, which is what attributes the spend
  * (and matches where per-agent providers will plug in).
  *
- * The row also carries the call's `turn_id` (`CallMeta`, minted by nu before the request):
- * spend is telemetry, but a turn is a log key, so "what did this conversation cost" is a
- * join rather than a guess from timestamps.
+ * The row also carries the call's `turn_id` and `kind` (`CallMeta`, both set by nu before
+ * the request): spend is telemetry, but a turn is a log key, so "what did this conversation
+ * cost" is a join rather than a guess from timestamps, and "what has maintenance cost" reads
+ * the kind rather than inferring it from the shape of the numbers.
  */
 export function metered(
   transport: ModelTransport,
@@ -40,6 +41,7 @@ export function metered(
         created_at: new Date().toISOString(),
         agent_id: agentId,
         ...(meta?.turn_id ? { turn_id: meta.turn_id } : {}),
+        ...(meta?.kind ? { kind: meta.kind } : {}),
         model: params.model,
         input_tokens: message.usage.input_tokens,
         output_tokens: message.usage.output_tokens,

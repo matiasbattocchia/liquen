@@ -43,6 +43,7 @@ export interface Painter {
 
 export function painter(s: Surface): Painter {
   let held = "";
+  let checkpointing = false; // a checkpoint is under way: its first delta announced it
   const say = (text: string) => {
     held += text;
     if (SILENCE.startsWith(held.trimStart())) return;
@@ -53,7 +54,13 @@ export function painter(s: Surface): Painter {
   const delta = (d: Delta): void => {
     if (d.kind === "text") say(d.text ?? "");
     else if (d.kind === "thinking" && s.thinking) s.write(`${DIM}${d.text ?? ""}${RESET}`);
-    else if (d.kind === "error") s.error(d.text ?? "");
+    else if (d.kind === "checkpoint" && s.thinking) {
+      // the record being written, behind a head that says what the dim text is — a surface
+      // that keeps the machine's inner text folded still gets the closing line below
+      if (!checkpointing) s.write(`\n${DIM}≡ checkpoint${RESET}\n`);
+      checkpointing = true;
+      s.write(`${DIM}${d.text ?? ""}${RESET}`);
+    } else if (d.kind === "error") s.error(d.text ?? "");
   };
 
   const event = (e: Event): void => {
@@ -114,6 +121,12 @@ export function painter(s: Surface): Painter {
         // settled elsewhere (the agent withdrew it, a surface answered it) — it is no
         // longer this surface's to answer
         if (typeof e.payload?.ref_id === "string") s.onGateSettled?.(e.payload.ref_id);
+        return;
+      }
+      case "summary": {
+        // the one line every surface gets: the window was folded, and this turn was that
+        checkpointing = false;
+        s.write(`\n${DIM}≡ checkpoint written${RESET}\n`);
         return;
       }
       case "error": {

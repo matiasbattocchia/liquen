@@ -29,7 +29,7 @@ import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
 import { cancelled, render, type Roster, SILENCE } from "./render.ts";
-import { type Effort, type ModelTransport, mu, type StepResult } from "./mu.ts";
+import { type Effort, type ModelTransport, mu, type StepInput, type StepResult } from "./mu.ts";
 
 /** Re-exported so the layer above talks to nu, not past it (main → xi → nu → mu). */
 export type { ModelTransport };
@@ -140,14 +140,30 @@ export async function nu(
   // invocation is exact — a checkpoint and a think are the same one model call, never both.
   const turnId = newId();
 
+  // One model call, attempted one way: the slow ladder over weather (the SDK client has
+  // already made its own fast attempts), stopping the moment the principal's cancel lands —
+  // a cut call is theirs, not the weather's. Whoever needs a call takes this, so a
+  // checkpoint is tried exactly as a think is.
+  const delays = config.retryDelaysMs ?? RETRY_DELAYS_MS;
+  const attempt = async (step: StepInput, stream?: Emit): Promise<StepResult> => {
+    let res: StepResult = { ok: false, error: "not attempted" };
+    for (let i = 0; i <= delays.length; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, delays[i - 1]));
+      res = await mu(step, transport, stream);
+      if (input.signal?.aborted || res.ok || !retryable(res.status)) break;
+    }
+    return res;
+  };
+
   // Maintenance first — and nu is where it belongs: nu is the layer that formats the window,
   // so it's the one that knows what the turn will actually weigh. When the VISIBLE window
   // outgrows the budget, THIS turn is the checkpoint: one model call either way (the
   // one-call-per-invocation invariant), and the summary's own insert wakes the think it
-  // displaced — the log is the continuation engine, applied to maintenance (§5). Weather
-  // (the call failed) is silent: null falls through to a normal turn, and the next think
-  // retries the checkpoint. A checkpoint the model wrote badly — cut off, or empty — comes
-  // back as an error event: unstamped, so the turn ends there, and the next input retries.
+  // displaced — the log is the continuation engine, applied to maintenance (§5). A
+  // checkpoint that cannot be written comes back as an error event: unstamped, so the turn
+  // ends there, and the next input retries. Its words stream as their own kind — a
+  // checkpoint is neither the model reasoning nor the model answering, and a surface can
+  // only fold away what it can name.
   const summary = await buildSummary({
     events: input.events,
     session,
@@ -158,7 +174,12 @@ export async function nu(
     prompt: input.compactPrompt,
     turnId,
     signal: input.signal,
-  }, transport);
+  }, (step) =>
+    attempt(
+      { ...step, kind: "checkpoint" },
+      emit && ((d) => emit(d.kind === "text" ? { ...d, kind: "checkpoint" } : d)),
+    ));
+  if (input.signal?.aborted) return [cancelled(here)]; // the cancel cut the checkpoint
   if (summary) return [summary];
 
   const rendered = render({
@@ -183,27 +204,17 @@ export async function nu(
     roster: input.roster,
   });
 
-  let res: StepResult = { ok: false, error: "not attempted" };
-  const delays = config.retryDelaysMs ?? RETRY_DELAYS_MS;
-  for (let attempt = 0; attempt <= delays.length; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, delays[attempt - 1]));
-    res = await mu(
-      {
-        ...rendered,
-        model: config.model,
-        maxTokens: config.maxTokens,
-        effort: config.effort,
-        tools: input.tools,
-        turnId,
-        signal: input.signal,
-      },
-      transport,
-      emit,
-    );
-    // the principal spoke, not the weather: a cut call is not retried
-    if (input.signal?.aborted) return [cancelled(here)];
-    if (res.ok || !retryable(res.status)) break;
-  }
+  const res = await attempt({
+    ...rendered,
+    model: config.model,
+    maxTokens: config.maxTokens,
+    effort: config.effort,
+    tools: input.tools,
+    turnId,
+    kind: "think",
+    signal: input.signal,
+  }, emit);
+  if (input.signal?.aborted) return [cancelled(here)]; // the principal spoke, not the weather
   if (!res.ok) return [errorEvent(res.error)]; // unstamped ⇒ terminal (decide idles)
 
   // The model's words in the session's own room. consumed: the coalescing horizon — what

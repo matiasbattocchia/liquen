@@ -7,13 +7,15 @@
  * Iterative: a later compaction folds the previous summary in (pi's update rule), and
  * `covers` chains from the previous summary's start so survivors get re-covered.
  *
- * xi calls `maybeCompact` under the turn lock, before thinking. Failure is silent — the
- * next think retries; nothing depends on a checkpoint existing.
+ * The call itself comes from nu, as a `StepCall`: nu owns the retry ladder and the stream,
+ * so the checkpoint is attempted exactly like a think and streams like one. A checkpoint
+ * that cannot be written comes back as an error event, whatever the reason — the window
+ * stays uncovered either way, and a turn taken over it would cost more and say less.
  */
 
 import type { Draft, ErrorEvent, Event, Session, SummaryEvent } from "./types.ts";
 import { applySummary, closingBoundary, deferredInput, outcomeLine, ownVoice } from "./render.ts";
-import { type ModelTransport, mu, type StepInput } from "./mu.ts";
+import type { StepCall, StepInput } from "./mu.ts";
 import { describeCall } from "./describe.ts";
 
 import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT } from "./config.ts";
@@ -193,14 +195,15 @@ function transcript(covered: Event[], session: Session): { text: string; previou
   return { text: lines.join("\n"), previous };
 }
 
-/** Run the checkpoint step and mint the summary event. Null ⇒ under threshold, or the
- *  call itself failed (weather — the next think retries). An error draft ⇒ the model
- *  answered but wrote no usable checkpoint — cut at the ceiling, or empty: a partial
- *  record would stand for the whole window, and an empty one would run again on every
- *  wake, so the turn ends on the error instead and the next input retries. */
+/** Run the checkpoint step and mint the summary event. Null ⇒ under threshold: there was
+ *  nothing to write. An error draft ⇒ there was, and it could not be written — the call
+ *  never completed, or the model answered without a usable checkpoint (cut at the ceiling,
+ *  or empty). All three end the turn on the error, unstamped, and the next input retries:
+ *  a partial record would stand for the whole window, and a checkpoint that keeps failing
+ *  would otherwise cost a call on every wake and show nowhere. */
 export async function buildSummary(
   input: CompactInput,
-  transport: ModelTransport,
+  call: StepCall,
 ): Promise<Draft<SummaryEvent> | Draft<ErrorEvent> | null> {
   const span = compactionSpan(
     input.events,
@@ -217,17 +220,6 @@ export async function buildSummary(
   // window that actually compacts pays the read); the embedded default otherwise
   prompt += (await input.prompt?.()) ?? DEFAULT_PROMPT;
 
-  const res = await mu({
-    system: [],
-    messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
-    model: input.model,
-    effort: input.effort,
-    maxTokens: SUMMARY_MAX_TOKENS,
-    tools: [],
-    turnId: input.turnId,
-    signal: input.signal,
-  }, transport);
-  if (!res.ok) return null; // silent — the next think retries
   const failed = (why: string): Draft<ErrorEvent> => ({
     ts: new Date().toISOString(),
     type: "error",
@@ -238,6 +230,18 @@ export async function buildSummary(
     }, // harness-authored: no `agent` (§3)
     parts: [{ type: "data", kind: "error", data: { error: `checkpoint failed: ${why}` } }],
   });
+
+  const res = await call({
+    system: [],
+    messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
+    model: input.model,
+    effort: input.effort,
+    maxTokens: SUMMARY_MAX_TOKENS,
+    tools: [],
+    turnId: input.turnId,
+    signal: input.signal,
+  });
+  if (!res.ok) return failed(res.error);
   if (res.stop === "max_tokens") return failed("cut off at the output ceiling");
   const summary = res.emissions.filter((e) => e.kind === "assistant")
     .map((e) => e.text).join("\n").trim();

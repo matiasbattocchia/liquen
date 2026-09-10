@@ -11,7 +11,7 @@ import type {
   ToolUseEvent,
 } from "./types.ts";
 import type Anthropic from "@anthropic-ai/sdk";
-import { canned } from "./testing.ts";
+import { canned, stepping } from "./testing.ts";
 
 let n = 0;
 const SESSION = { id: "s1", agentId: "a1", conversation: "mind@a1" };
@@ -90,7 +90,7 @@ Deno.test("buildSummary: mints a summary event; the checkpoint prompt carries th
     model: "claude-x",
     compactAt: 1,
     keepRecent: 0,
-  }, transport);
+  }, stepping(transport));
   assert(out !== null && out.type === "summary");
   assertEquals(out.payload.covers[0], events[0].id);
   assertStringIncludes(out.parts[0].text, "informe viernes");
@@ -120,7 +120,7 @@ Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", asyn
     model: "claude-x",
     compactAt: 1,
     keepRecent: 0,
-  }, transport);
+  }, stepping(transport));
   assert(out !== null && out.type === "summary");
   const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
   assertStringIncludes(prompt, "<previous-summary>\n## Ongoing threads\n- viejo hilo");
@@ -128,7 +128,7 @@ Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", asyn
   assertEquals(out.payload.covers[0], old.payload.covers[0]); // chains from the previous summary's start
 });
 
-Deno.test("buildSummary: a failed model call → null (silent; the next think retries)", async () => {
+Deno.test("buildSummary: a call that never completes is an error, not a silent retry", async () => {
   const events = [msg("hola", false), msg("¡hola!", true)];
   const out = await buildSummary({
     events,
@@ -136,8 +136,10 @@ Deno.test("buildSummary: a failed model call → null (silent; the next think re
     model: "claude-x",
     compactAt: 1,
     keepRecent: 0,
-  }, () => Promise.reject(new Error("overloaded")));
-  assertEquals(out, null);
+  }, stepping(() => Promise.reject(new Error("overloaded"))));
+  assert(out !== null && out.type === "error");
+  assertStringIncludes(out.parts[0].data.error as string, "checkpoint failed: overloaded");
+  assert(out.agent === undefined); // harness-authored (§3)
 });
 
 /* ── the threshold has to be REACHABLE (§5) ─────────────────────────────── */
@@ -279,16 +281,21 @@ Deno.test("buildSummary: an open loop's checkpoint carries the tool traffic — 
   const events: Event[] = [msg("hacé el informe", false)];
   for (let k = 1; k <= 8; k++) events.push(...step(k));
   const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
-  const out = await buildSummary({
-    events,
-    session: SESSION,
-    model: "claude-x",
-    compactAt: 1,
-    keepRecent: 400,
-  }, (p) => {
-    seen.push(p);
-    return Promise.resolve(canned([{ kind: "assistant", text: "## Ongoing threads\n- informe" }]));
-  });
+  const out = await buildSummary(
+    {
+      events,
+      session: SESSION,
+      model: "claude-x",
+      compactAt: 1,
+      keepRecent: 400,
+    },
+    stepping((p) => {
+      seen.push(p);
+      return Promise.resolve(
+        canned([{ kind: "assistant", text: "## Ongoing threads\n- informe" }]),
+      );
+    }),
+  );
   assert(out !== null && out.type === "summary");
   const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
   assertStringIncludes(prompt, "bash(step 1)");
@@ -305,10 +312,11 @@ Deno.test("buildSummary: a cut checkpoint is an error, not a record", async () =
       compactAt: 1,
       keepRecent: 0,
     },
-    () =>
+    stepping(() =>
       Promise.resolve(
         canned([{ kind: "assistant", text: "## Ongoing threads\n- cut" }], "max_tokens"),
-      ),
+      )
+    ),
   );
   assert(out !== null);
   assertEquals(out.type, "error");
@@ -322,7 +330,7 @@ Deno.test("buildSummary: an empty checkpoint is an error — not a silent retry 
     model: "claude-x",
     compactAt: 1,
     keepRecent: 0,
-  }, () => Promise.resolve(canned([{ kind: "assistant", text: " \n" }])));
+  }, stepping(() => Promise.resolve(canned([{ kind: "assistant", text: " \n" }]))));
   assert(out !== null);
   assertEquals(out.type, "error");
 });

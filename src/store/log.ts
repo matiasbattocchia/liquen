@@ -38,7 +38,15 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import type { Conversation, DeliveryStatus, Draft, Envelope, Event, EventId } from "../types.ts";
+import type {
+  CallKind,
+  Conversation,
+  DeliveryStatus,
+  Draft,
+  Envelope,
+  Event,
+  EventId,
+} from "../types.ts";
 import { newId } from "./id.ts";
 import {
   createLocker,
@@ -152,6 +160,9 @@ export interface UsageRow {
   /** The call's turn — the join key back to the log: the events this spend produced carry
    *  the same `payload.turn_id`, so a row's cost resolves to a conversation (§2). */
   turn_id?: string;
+  /** What the call was for — a turn, or the checkpoint that displaced one (§5). Two calls
+   *  in the same turn differ only here, so maintenance spend is a WHERE, not forensics. */
+  kind?: CallKind;
   model: string;
   input_tokens: number;
   output_tokens: number;
@@ -263,6 +274,7 @@ export async function openLog(
        created_at         TEXT NOT NULL,
        agent_id           TEXT,
        turn_id            TEXT,              -- the call's turn: joins spend back to the log
+       kind               TEXT,              -- what it paid for: a think, or a checkpoint
        model              TEXT NOT NULL,
        input_tokens       INTEGER NOT NULL,
        output_tokens      INTEGER NOT NULL,
@@ -478,8 +490,8 @@ export async function openLog(
   };
 
   const spend = db.prepare(
-    `INSERT INTO usage (created_at, agent_id, turn_id, model, input_tokens, output_tokens,
-       cache_read_tokens, cache_write_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO usage (created_at, agent_id, turn_id, kind, model, input_tokens, output_tokens,
+       cache_read_tokens, cache_write_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   return {
@@ -488,6 +500,7 @@ export async function openLog(
         row.created_at,
         row.agent_id ?? null,
         row.turn_id ?? null,
+        row.kind ?? null,
         row.model,
         row.input_tokens,
         row.output_tokens,
@@ -627,6 +640,18 @@ function migrate(db: DatabaseSync) {
   if (v < 5) migrateV5(db);
   if (v < 6) migrateV6(db);
   if (v < 7) migrateV7(db);
+  if (v < 8) migrateV8(db);
+}
+
+/** v8 — spend says what it paid for (§5): a turn, or the checkpoint that displaced one.
+ *  Rows written before the kind existed keep a null: what they cost is known, what kind of
+ *  call it was is not. */
+function migrateV8(db: DatabaseSync) {
+  const cols = db.prepare("SELECT name FROM pragma_table_info('usage')").all() as {
+    name: string;
+  }[];
+  if (!cols.some((c) => c.name === "kind")) db.exec("ALTER TABLE usage ADD COLUMN kind TEXT");
+  db.exec("PRAGMA user_version = 8");
 }
 
 /** v7 — the registry carries the roster's word for each member (`name`), who steers

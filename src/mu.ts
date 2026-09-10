@@ -14,11 +14,11 @@
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Effort, Emit, Json, Usage } from "./types.ts";
+import type { CallKind, Effort, Emit, Json, Usage } from "./types.ts";
 import type { RenderedRequest } from "./render.ts";
 import { DEFAULT_MAX_TOKENS } from "./config.ts";
 
-export type { Effort };
+export type { CallKind, Effort };
 
 /** What the model produced this step, pre-log. nu stamps id/ts/envelope/agent/turnId.
  *  `assistant` is the model's text (the assistant channel, §5); `thinking` is private
@@ -35,6 +35,7 @@ export interface StepInput extends RenderedRequest {
   maxTokens?: number; // API-required output cap; default: the catalog's (§9)
   effort?: Effort; // adaptive thinking depth; omit ⇒ the model's default
   turnId?: string; // the turn this call IS — rides past the params, to the meter (§2)
+  kind?: CallKind; // what the call is for — rides beside `turnId`, to the same meter
   /** The turn's interrupt (§2): the principal's cancel cuts the request itself. */
   signal?: AbortSignal;
 }
@@ -45,6 +46,11 @@ export interface StepInput extends RenderedRequest {
 export type StepResult =
   | { ok: true; emissions: Emission[]; usage: Usage; stop: Anthropic.StopReason }
   | { ok: false; error: string; status?: number };
+
+/** A step, already carrying whatever the layer above wraps around one: the retry ladder,
+ *  the stream it goes to, what the spend is for. Handed DOWN so a caller that needs a model
+ *  call (the checkpoint) makes it exactly as the turn does, without owning any of that. */
+export type StepCall = (input: StepInput) => Promise<StepResult>;
 
 /**
  * The impure edge: run the request, stream deltas via `emit`, return the final message.
@@ -62,6 +68,7 @@ export type ModelTransport = (
  *  provider never sees it; the metering wrapper does (§2: spend, joinable to the log). */
 export interface CallMeta {
   turn_id?: string;
+  kind?: CallKind;
 }
 
 /** Build `mu` over a transport. Returns the step function nu calls each invocation. */
@@ -82,7 +89,10 @@ export async function mu(
 
   let message: Anthropic.Message;
   try {
-    message = await transport(params, emit, { turn_id: input.turnId }, input.signal);
+    message = await transport(params, emit, {
+      turn_id: input.turnId,
+      kind: input.kind,
+    }, input.signal);
   } catch (err) {
     // the HTTP status rides along when the failure has one: nu's retry classifies on it
     const status = (err as { status?: unknown } | null)?.status;

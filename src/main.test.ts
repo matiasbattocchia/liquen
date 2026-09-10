@@ -202,12 +202,13 @@ Deno.test("every model call is metered: spend lands in the usage table, per agen
   // telemetry is a TABLE, not events: read it as one (the log API never serves it)
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(`${dir}/log/log.db`);
-  const rows = db.prepare("SELECT agent_id, turn_id, model, output_tokens FROM usage").all();
+  const rows = db.prepare("SELECT agent_id, turn_id, kind, model, output_tokens FROM usage").all();
   db.close();
   await Deno.remove(dir, { recursive: true });
   assertEquals(rows.length, 1);
   assertEquals(rows[0].agent_id, "a1");
   assertEquals(rows[0].model, "claude-x");
+  assertEquals(rows[0].kind, "think"); // what it paid for — maintenance is a WHERE away
   // and the spend JOINS the log: the row names the turn whose events it paid for
   assertEquals(rows[0].turn_id, turn);
 });

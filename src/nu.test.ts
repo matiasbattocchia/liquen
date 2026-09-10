@@ -4,7 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission } from "./mu.ts";
 import { canned } from "./testing.ts";
 import { SILENCE } from "./render.ts";
-import type { Event, MessageEvent, ThinkingEvent, ToolUseEvent } from "./types.ts";
+import type { Delta, Event, MessageEvent, ThinkingEvent, ToolUseEvent } from "./types.ts";
 
 const CONFIG: TurnConfig = {
   agentId: "a1",
@@ -254,6 +254,57 @@ Deno.test("nu: a checkpoint cut at max_tokens is an error, not a record — and 
   assertEquals(out.length, 1);
   assert(out[0].type === "error");
   assertEquals(out[0].agent, undefined); // harness-authored, unstamped ⇒ terminal
+});
+
+Deno.test("nu: a checkpoint streams as its own kind, and its spend says what it paid for", async () => {
+  const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
+  const kinds: (string | undefined)[] = [];
+  const deltas: Delta[] = [];
+  const out = await nu(
+    { events, docs: [], tools: [], config: { ...CONFIG, compactAt: 1, keepRecent: 0 } },
+    (_p, emit, meta) => {
+      kinds.push(meta?.kind);
+      emit?.({ kind: "text", text: "## Ongoing threads" });
+      return Promise.resolve(canned([{ kind: "assistant", text: "## Ongoing threads" }]));
+    },
+    (d) => deltas.push(d),
+  );
+  assert(out[0].type === "summary");
+  assertEquals(kinds, ["checkpoint"]); // the meter's word for the call, beside the turn id
+  // the record's text is neither reasoning nor a reply: a surface can name it, and fold it
+  assertEquals(deltas, [{ kind: "checkpoint", text: "## Ongoing threads" }]);
+});
+
+Deno.test("nu: a think's text streams as text — the kind belongs to the checkpoint alone", async () => {
+  const kinds: (string | undefined)[] = [];
+  const deltas: Delta[] = [];
+  await nu(
+    { events: [], docs: [], tools: [], config: CONFIG },
+    (_p, emit, meta) => {
+      kinds.push(meta?.kind);
+      emit?.({ kind: "text", text: "hola" });
+      return Promise.resolve(canned([{ kind: "assistant", text: "hola" }]));
+    },
+    (d) => deltas.push(d),
+  );
+  assertEquals(kinds, ["think"]);
+  assertEquals(deltas, [{ kind: "text", text: "hola" }]);
+});
+
+Deno.test("nu: a checkpoint call rides the ladder, and what outlasts it is an error", async () => {
+  const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
+  let calls = 0;
+  const out = await nu(
+    { events, docs: [], tools: [], config: { ...CONFIG, compactAt: 1, keepRecent: 0 } },
+    () => {
+      calls++;
+      return Promise.reject(Object.assign(new Error("overloaded"), { status: 529 }));
+    },
+  );
+  assertEquals(calls, 3); // weather is retried exactly as a think's is: the ladder is one
+  assertEquals(out.length, 1);
+  assert(out[0].type === "error"); // and then it is said, rather than paid for on every wake
+  assertEquals(out[0].agent, undefined);
 });
 
 Deno.test("nu: an empty checkpoint is an error too — not a full re-run on every wake", async () => {
