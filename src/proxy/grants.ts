@@ -113,22 +113,25 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
   };
 
   // github, the user leg: a user-to-server grant from the device flow — spend its
-  // refresh_token with the same app's client secret. GitHub ROTATES the refresh token on
+  // refresh_token against the same app's client. GitHub ROTATES the refresh token on
   // every use, so the answer's is stored back or the next re-issue has nothing to spend.
+  // The client secret rides only when the vault holds one: a grant the device flow minted
+  // is refreshed by client id alone, and an app registered without a secret would
+  // otherwise reach its first re-issue and die there.
   const refreshGithubUser = async (key: string, row: CredentialRow): Promise<string | null> => {
     const refreshToken = row.value.refresh_token;
     const appId = String(row.extra?.app_id ?? "");
     const app = appId ? await deps.creds.get(`github:app:${appId}`) : null;
     const clientId = app?.value.client_id;
     const clientSecret = app?.value.client_secret;
-    if (!refreshToken || !clientId || !clientSecret) return null;
+    if (!refreshToken || !clientId) return null;
 
     const tok = await userToken(
       new URLSearchParams({
         grant_type: "refresh_token",
         refresh_token: refreshToken,
         client_id: clientId,
-        client_secret: clientSecret,
+        ...(clientSecret ? { client_secret: clientSecret } : {}),
       }),
     );
     if (!tok.access_token) return null;

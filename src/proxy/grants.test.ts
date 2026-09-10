@@ -324,3 +324,54 @@ Deno.test("frontedFor: an agent is fronted with the org's rows and its OWN — n
   // a var only peers hold stays unset for the third agent; two org rows contending stay out
   assertEquals(keys("cy"), ["github:org"]);
 });
+
+Deno.test("accessTokenFor: a device-flow grant refreshes with no client secret to spend", async () => {
+  await withVault(async (creds) => {
+    // an app registered with Enable Device Flow and no secret: GitHub asks for none when
+    // the token being refreshed is the device flow's own
+    await creds.put({
+      key: "github:app:7",
+      value: { private_key: "unused here", client_id: "Iv1.abc" },
+    });
+    await creds.put({
+      key: "github:ana",
+      value: { token: "", access_token: "ghu_old", refresh_token: "ghr_one" },
+      agentId: "ana",
+      extra: { app_id: "7", login: "ana-dev", expiry: "2020-01-01T00:00:00Z" },
+    });
+    const asked: URLSearchParams[] = [];
+    const broker = createGrantBroker({
+      creds,
+      userToken: (body) => {
+        asked.push(body);
+        return Promise.resolve({ access_token: "ghu_new", expires_in: 28800 });
+      },
+    });
+    const h = broker.issue("github:ana", "ana");
+    assertEquals(await broker.accessTokenFor(h), "ghu_new");
+    assertEquals(asked[0].get("client_id"), "Iv1.abc");
+    assertEquals(asked[0].get("client_secret"), null); // absent, not empty
+  });
+});
+
+Deno.test("accessTokenFor: the org's pasted token is static — nothing is minted for it", async () => {
+  await withVault(async (creds) => {
+    await creds.put({
+      key: "github:org",
+      value: { token: "ghp_machine", access_token: "" },
+      extra: { login: "acme-bot", env: "GH_TOKEN", hosts: ["api.github.com"] },
+    });
+    let minted = 0;
+    const broker = createGrantBroker({
+      creds,
+      installationToken: () => {
+        minted++;
+        return Promise.resolve({ token: "never" });
+      },
+    });
+    const h = broker.issue("github:org");
+    assertEquals(await broker.accessTokenFor(h, "api.github.com"), "ghp_machine");
+    assertEquals(await broker.accessTokenFor(h, "evil.example"), null); // the hosts still bind
+    assertEquals(minted, 0);
+  });
+});

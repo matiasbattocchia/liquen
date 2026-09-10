@@ -2098,6 +2098,33 @@ not cache it either. A read-only cache serves the run, emit included. The contai
 Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
 first boot, a fetch the harness (root, with the network) makes.
 
+### The github doors take the setup they are given (2026-09-10) — LANDED
+
+The connector assumed the fullest configuration and refused the rest. The bot door demanded
+exactly one App in the vault and had no way to name a second; the user door's route was
+decided by silence; and an org with no App at all — the shape where a machine user's token
+is the org's hands — could not be expressed, because the only writer of `github:org` was the
+installation. The `--help` named none of it.
+
+The identity doors now separate WHAT is being connected from WHOSE it is, google's shape.
+`pickGithubApp` replaces the one-app rule with `--app <app_id>`, and the bot door takes both
+choices it can face: which App, and which installation. The user door takes `--org`, so one
+route — device flow or paste — writes either an agent's owned leg or the org's ownerless
+anchor, and the org's row is byte-for-byte what the installation route writes, so neither
+dispatch nor the proxy can tell them apart. `bot` keeps its one route, the installation,
+because that is the thing a paste cannot be.
+
+`githubNext` reads the vault and says what is still owed, as slack's has. The App is one
+row carrying three separable purchases — the key that mints the org's token, the secret the
+ingest verifies deliveries with, the client that signs a person in — and an org may stop at
+any of them, so each unbought part is named with what it would buy rather than treated as an
+error.
+
+One silent failure went with it. GitHub asks for no client secret when refreshing a token
+the device flow minted, but the broker required one, so an App registered with a client id
+and no secret signed people in and then dropped every grant at its first re-issue, eight
+hours later. The secret now rides only when the vault holds one.
+
 ### A refusal is a sentence, a bug is a stack (2026-09-10) — LANDED
 
 Every entry point ran its own error handling, and no two agreed. Twelve wrapped their body

@@ -88,21 +88,31 @@ export async function connectGithubApp(
   return key;
 }
 
-/** The one app in the vault, with its id read back off the key. Both doors that build on
- *  the app — the installation and the device flow — want exactly one and say so the same
- *  way: a missing app and an ambiguous one are different mistakes with different fixes. */
-export async function theApp(
+/** The app a door builds on: the one `--app` names, the only one in the vault, or a
+ *  refusal that says which choice is missing. The two routes that need an app — the
+ *  installation and the device flow — pick it the same way; a pasted token needs no app
+ *  and never asks. */
+export async function pickGithubApp(
   creds: Pick<Credentials, "list">,
+  appId?: string,
 ): Promise<{ app: CredentialRow; appId: string }> {
   const apps = await creds.list(APP_PREFIX);
+  const idOf = (row: CredentialRow) => row.key.slice(APP_PREFIX.length);
   if (apps.length === 0) {
-    throw new Error("no github app in the vault — `liquen connect github app` first");
+    throw new Error(
+      "no github app in the vault — `liquen connect github app` registers one; to connect " +
+        "without an app at all, paste a token (`liquen connect github user --token`)",
+    );
+  }
+  if (appId) {
+    const app = apps.find((a) => idOf(a) === appId);
+    if (!app) throw new Error(`no app ${appId} — the vault holds: ${apps.map(idOf).join(" ")}`);
+    return { app, appId };
   }
   if (apps.length > 1) {
-    const ids = apps.map((a) => a.key.slice(APP_PREFIX.length)).join("\n  ");
-    throw new Error(`several apps in the vault — this door expects one:\n  ${ids}`);
+    throw new Error(`several apps — name one with --app: ${apps.map(idOf).join(" ")}`);
   }
-  return { app: apps[0], appId: apps[0].key.slice(APP_PREFIX.length) };
+  return { app: apps[0], appId: idOf(apps[0]) };
 }
 
 /* ── the bot door: the installation — the org's shared identity ──────────────────────── */
@@ -121,24 +131,30 @@ export interface GithubBotDeps {
   now?: () => string;
 }
 
+/** Which of the two things a bot door may have to choose between. */
+export interface GithubBotPick {
+  account?: string; // the installation, when the app is installed on several accounts
+  app?: string; // the app, when the vault holds several
+}
+
 /** Bind the org to the app's installation: prove the key (the listing only answers a valid
- *  app JWT), pick the installation (`pick` = an account login or id when there are
- *  several), write the org-credentialed anchor, and record the mint coordinates in the
- *  vault. Throws (writing nothing) when the app is missing, uninstalled, or ambiguous. */
+ *  app JWT), pick the installation, write the org-credentialed anchor, and record the mint
+ *  coordinates in the vault. Throws (writing nothing) when the app is missing, uninstalled,
+ *  or ambiguous. */
 export async function connectGithubBot(
   deps: GithubBotDeps,
-  pick?: string,
+  pick: GithubBotPick = {},
 ): Promise<{ appId: string; installationId: string; account?: string }> {
   const now = deps.now ?? (() => new Date().toISOString());
-  const { app, appId } = await theApp(deps.creds);
+  const { app, appId } = await pickGithubApp(deps.creds, pick.app);
   if (!app.value.private_key) {
     throw new Error(`${app.key} holds no private key — re-run \`liquen connect github app\``);
   }
 
   const jwt = appJwt(appId, app.value.private_key, Date.now());
   const installs = await (deps.listInstallations ?? defaultListInstallations)(jwt);
-  const inst = pick
-    ? installs.find((i) => i.account?.login === pick || String(i.id) === pick)
+  const inst = pick.account
+    ? installs.find((i) => i.account?.login === pick.account || String(i.id) === pick.account)
     : installs.length === 1
     ? installs[0]
     : undefined;
@@ -150,8 +166,8 @@ export async function connectGithubBot(
     }
     const names = installs.map((i) => `${i.account?.login ?? "?"} (${i.id})`).join(" · ");
     throw new Error(
-      pick
-        ? `no installation "${pick}" — installed on: ${names}`
+      pick.account
+        ? `no installation "${pick.account}" — installed on: ${names}`
         : `several installations — name one: ${names}`,
     );
   }
@@ -272,6 +288,17 @@ export async function githubDeviceFlow(deps: DeviceFlowDeps): Promise<UserTokens
   throw new Error("device flow: the code expired before it was entered");
 }
 
+/* ── a pasted token: the route that needs no app at all ─────────────────────────────── */
+
+/** Every GitHub token is prefixed, and the app page shows the client secret and the webhook
+ *  secret an arm's length away — so the shape is checked before the network, and the wrong
+ *  paste is named as the wrong paste rather than as a 401. */
+function guardTokenShape(token: string): void {
+  if (!/^(gh[pousr]_|github_pat_)/.test(token)) {
+    throw new Error("not a GitHub token (ghp_… / github_pat_…) — that paste goes elsewhere");
+  }
+}
+
 /* ── the user door: the principal's own leg ──────────────────────────────────────────── */
 
 /** What the door is handed. A string is a pasted personal token: static, nothing to
@@ -280,8 +307,10 @@ export async function githubDeviceFlow(deps: DeviceFlowDeps): Promise<UserTokens
 export type UserGrant = string | (UserTokens & { appId: string });
 
 export interface GithubUserDeps {
-  /** The registry name the grant belongs to (v0: principal name = agent name). */
-  principal: string;
+  /** The registry name the grant belongs to (v0: principal name = agent name). Absent ⇒
+   *  the grant is the ORG's: ownerless, the shared identity every agent falls back to
+   *  (§6) — a machine user's token, or a person's own lent to the org. */
+  principal?: string;
   creds: Pick<Credentials, "put">;
   store: Pick<Connections, "upsertConnections" | "upsertMemberships">;
   publish: Appender["publish"];
@@ -290,8 +319,8 @@ export interface GithubUserDeps {
   now?: () => string;
 }
 
-/** Finish a user grant by either route: verify with GitHub, write the map, notify the log.
- *  Throws (writing nothing) when GitHub rejects the token. */
+/** Finish a grant by either route and for either owner: verify with GitHub, write the map,
+ *  notify the log. Throws (writing nothing) when GitHub rejects the token. */
 export async function connectGithubUser(
   grant: UserGrant,
   deps: GithubUserDeps,
@@ -300,27 +329,37 @@ export async function connectGithubUser(
   const flow = typeof grant === "string" ? undefined : grant;
   const token = flow ? flow.access_token ?? "" : grant as string;
 
-  // shape guard BEFORE the API call, on the paste only (the flow's token came from GitHub
-  // itself): every current token is prefixed, and the app page shows the client secret and
-  // webhook secret nearby — the paste-slips to catch
-  if (!flow && !/^(gh[pousr]_|github_pat_)/.test(token)) {
-    throw new Error("not a GitHub token (ghp_… / github_pat_…) — that paste goes elsewhere");
-  }
+  // the shape is guarded on the paste only: a device-flow token came from GitHub itself
+  if (!flow) guardTokenShape(token);
   if (!token) throw new Error("no access token in the grant");
 
   const who = await (deps.whoami ?? defaultWhoami)(token);
   if (!who.login) throw new Error(`GET /user: ${who.message ?? "no login in response"}`);
 
-  // two rows (§4): the service anchor — what opens the publish gate — and the OWNED grant,
-  // the identity/credential edge the classifier and dispatch resolve through
-  const credentialKey = `github:${deps.principal}`;
-  deps.store.upsertConnections([
-    { service: "github", address: "github" },
-    { service: "github", address: who.login, agentId: deps.principal, credentialKey },
-  ]);
-  deps.store.upsertMemberships([
-    { service: "github", connection: "github", conversation: "connect", agentId: deps.principal },
-  ]);
+  // an agent's grant is two rows (§4): the service anchor — what opens the publish gate —
+  // and the OWNED grant, the identity/credential edge the classifier and dispatch resolve
+  // through. The org's is the anchor itself, carrying the credential: ownerless and
+  // org-credentialed is what the shared inbox IS, and it is the row the installation route
+  // writes too, so neither dispatch nor the proxy can tell the two apart
+  const credentialKey = deps.principal ? `github:${deps.principal}` : ORG_KEY;
+  deps.store.upsertConnections(
+    deps.principal
+      ? [
+        { service: "github", address: "github" },
+        { service: "github", address: who.login, agentId: deps.principal, credentialKey },
+      ]
+      : [{ service: "github", address: "github", credentialKey }],
+  );
+  if (deps.principal) {
+    deps.store.upsertMemberships([
+      {
+        service: "github",
+        connection: "github",
+        conversation: "connect",
+        agentId: deps.principal,
+      },
+    ]);
+  }
   // an expiring grant is the refreshable one: an access token to spend now, a refresh
   // token to spend later, and the app that re-issues both. Anything else — a PAT, or a
   // user token from an app that doesn't expire them — is static, and rides the `token`
@@ -339,7 +378,7 @@ export async function connectGithubUser(
     value: refreshable
       ? { token: "", access_token: token, refresh_token: refreshable.refresh_token }
       : { token, access_token: "", refresh_token: "" },
-    agentId: deps.principal,
+    ...(deps.principal ? { agentId: deps.principal } : {}),
     extra: {
       login: who.login,
       env: GRANT_ENV,
@@ -361,11 +400,87 @@ export async function connectGithubUser(
       parts: [{
         type: "text",
         kind: "text",
-        text: `GitHub connected: ${deps.principal} (github user ${who.login})`,
+        text: deps.principal
+          ? `GitHub connected: ${deps.principal} (github user ${who.login})`
+          : `GitHub connected as the org (github user ${who.login})`,
       }],
     } satisfies Draft<MessageEvent>,
   );
   return { login: who.login };
+}
+
+/* ── what the org still owes, read off the vault ─────────────────────────────────────── */
+
+/** The pieces a working GitHub connection is made of. The app is one row carrying three
+ *  separable things, because each is bought at a different counter on the app's page and an
+ *  org may stop at any of them: the key that mints the org's identity, the secret that lets
+ *  the ingest trust a delivery, the client that signs a person in. */
+export interface GithubHave {
+  app: boolean; // `github:app:<app_id>` — the App ID and its private key
+  webhookSecret: boolean; // on the app row: what the ingest verifies deliveries against
+  clientId: boolean; // on the app row: what the device flow signs a member in with
+  org: boolean; // `github:org` — the org's identity, by installation or by pasted token
+  user: boolean; // at least one agent's own leg — `github:<agent>`
+}
+
+/** Sort the vault's github rows into the pieces. */
+export function githubHave(rows: { key: string; value: Record<string, unknown> }[]): GithubHave {
+  const have: GithubHave = {
+    app: false,
+    webhookSecret: false,
+    clientId: false,
+    org: false,
+    user: false,
+  };
+  for (const r of rows) {
+    if (r.key.startsWith(APP_PREFIX)) {
+      have.app = true;
+      if (r.value.webhook_secret) have.webhookSecret = true;
+      if (r.value.client_id) have.clientId = true;
+    } else if (r.key === ORG_KEY) have.org = true;
+    else have.user = true;
+  }
+  return have;
+}
+
+/** What is still owed, in the order a dev would do it — finishing one door is the natural
+ *  moment to learn what the next one is. Nothing here is mandatory in the abstract: an org
+ *  whose agents each paste their own token needs no app, and one whose only identity is a
+ *  machine user's token needs no installation. What each line buys is the point. */
+export function githubNext(have: GithubHave): string[] {
+  const next: string[] = [];
+  if (!have.org && !have.user) {
+    next.push(
+      "no identity yet — `liquen connect github user` (your own leg) or " +
+        "`liquen connect github bot` (the org's, from an App installation)",
+    );
+  } else if (!have.org) {
+    next.push(
+      "no org identity — `liquen connect github bot` binds the App's installation, or " +
+        "`liquen connect github user --org --token` pastes a machine user's; without one, " +
+        "only the agents who have their own leg can post",
+    );
+  }
+  if (!have.app) {
+    next.push(
+      "no app — `liquen connect github app` registers one; it is what mints the org's " +
+        "token, verifies deliveries, and signs a member in. A pasted token needs none",
+    );
+    return next;
+  }
+  if (!have.webhookSecret) {
+    next.push(
+      "deliveries arrive unsigned — the app page's webhook secret, then re-run " +
+        "`liquen connect github app` (fine behind `gh webhook forward`, wrong on a public URL)",
+    );
+  }
+  if (!have.clientId) {
+    next.push(
+      "no device flow — the app page's Enable Device Flow and its client id, then re-run " +
+        "`liquen connect github app`; without it `liquen connect github user` pastes a token",
+    );
+  }
+  return next;
 }
 
 /* ── the default API edges ───────────────────────────────────────────────────────────── */
@@ -427,17 +542,31 @@ async function defaultWhoami(token: string): Promise<{ login?: string; message?:
  * is no app to run it with (or when `--token` says so outright). Piped stdin is the paste
  * too: a device flow wants a human at a browser, and a secret manager isn't one. */
 const USAGE = `usage: liquen connect github app
-       liquen connect github bot [account]
-       liquen connect github user [agent] [--token]
+       liquen connect github bot [account] [--app <app_id>]
+       liquen connect github user [agent] [--org] [--token] [--app <app_id>]
 
-  Connect GitHub — the App into the vault, its installation to the org, a member by
-  device flow; pasted at a prompt or piped one per line; knobs: connections.github.
+  Connect GitHub. Two identities can exist and either alone is enough to start: the ORG's,
+  which every agent falls back to, and an AGENT's own, which posts under that person's
+  name. Answers are pasted at a prompt, or piped one per line for a secret manager.
 
-  app     the GitHub App: ID, private key (.pem path), webhook secret, client id and secret
-  bot     bind the App's installation on [account] to the org
-  user    sign [agent] in (default: your OS username) by the device flow — the default
-          door; --token pastes a personal access token instead
-  --dir <org>   the org, when run from elsewhere`;
+  app     register a GitHub App: ID, private key (.pem path), and — both optional — a
+          webhook secret (the ingest verifies deliveries with it) and a client id and
+          secret (the device flow signs people in with them). Several may coexist.
+  bot     the org's identity from the App's INSTALLATION: nothing static is stored and the
+          token is minted hourly. Needs an app; for an org that has none, the token route
+          below with --org is the whole setup.
+  user    a grant by the DEVICE FLOW — a code you type at github.com, no secret through the
+          terminal — or by paste. Whose it is: [agent] (default: your OS username), or the
+          org's with --org.
+
+  --org         file the grant as the org's, ownerless, rather than an agent's
+  --token       paste a token rather than run the device flow; also what happens on its own
+                when the vault holds no app with a client id
+  --app <id>    which App (its numeric App ID), when the vault holds several
+  [account]     which installation, when the App is installed on several accounts
+  --dir <org>   the org, when run from elsewhere
+
+  Every door closes by naming what the org still owes. Knobs: connections.github.`;
 
 if (import.meta.main) {
   await entry(async () => {
@@ -449,8 +578,18 @@ if (import.meta.main) {
     const root = findRoot(org);
     const dir = `${root}/data`;
     const flags = new Set(org.args.filter((a) => a.startsWith("--")));
-    const [first, ...rest] = org.args.filter((a) => !a.startsWith("--"));
+    const appFlag = org.args.indexOf("--app");
+    const pickedApp = appFlag >= 0 ? org.args[appFlag + 1] : undefined;
+    const words = org.args.filter((a) => !a.startsWith("--") && a !== pickedApp);
+    const [first, ...rest] = words;
     const verb = first === "app" || first === "bot" || first === "user" ? first : "user";
+
+    /** What the org still owes after this door — read off the vault, so finishing one door
+     *  is where you learn what the next one is. */
+    const owed = async (creds: { list: (p: string) => Promise<CredentialRow[]> }) => {
+      const next = githubNext(githubHave(await creds.list("github:")));
+      if (next.length) console.error(`\nstill to do:\n  ${next.join("\n  ")}`);
+    };
 
     /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
     const lines = Deno.stdin.isTerminal()
@@ -485,9 +624,8 @@ if (import.meta.main) {
           { appId, privateKey, webhookSecret, clientId, clientSecret },
           creds,
         );
-        console.error(
-          `✓ app stored: ${key} — next: \`liquen connect github bot\` binds the installation`,
-        );
+        console.error(`✓ app stored: ${key}`);
+        await owed(creds);
       } finally {
         await creds.close();
       }
@@ -502,7 +640,7 @@ if (import.meta.main) {
           creds,
           store: log,
           publish: log.publish,
-        }, rest[0]);
+        }, { account: rest[0], app: pickedApp });
         console.error(
           `\n✓ connected: app ${appId} on ${
             account ?? "?"
@@ -510,6 +648,7 @@ if (import.meta.main) {
         );
         console.error("  (deno task status shows the map)");
         await declared(root, "github");
+        await owed(creds);
       } finally {
         await creds.close();
         await log.close();
@@ -517,15 +656,20 @@ if (import.meta.main) {
       Deno.exit(0);
     }
 
-    const principal = (first === "user" ? rest[0] : first) ?? (() => {
-      try {
-        return userInfo().username;
-      } catch {
-        return "principal";
-      }
-    })();
+    const principal = flags.has("--org") ? undefined : ((first === "user" ? rest[0] : first) ??
+      (() => {
+        try {
+          return userInfo().username;
+        } catch {
+          return "principal";
+        }
+      })());
 
-    console.error(`Connecting GitHub as agent "${principal}".\n`);
+    console.error(
+      principal
+        ? `Connecting GitHub as agent "${principal}".\n`
+        : "Connecting GitHub as the org — ownerless, the identity every agent falls back to.\n",
+    );
 
     const log = await openLog(`${dir}/log`);
     const creds = await openCredentials(dir);
@@ -534,7 +678,10 @@ if (import.meta.main) {
     // terminal to type the code; `--token` and piped stdin both mean the paste instead
     const vaulted = flags.has("--token") || lines
       ? undefined
-      : await theApp(creds).catch(() => undefined);
+      : await pickGithubApp(creds, pickedApp).catch((e: Error) => {
+        if (pickedApp) throw e; // an app was NAMED — a wrong name is a mistake, not a route
+        return undefined;
+      });
     const app = vaulted?.app.value.client_id ? vaulted : undefined;
 
     const grant: UserGrant | undefined = app
@@ -549,10 +696,19 @@ if (import.meta.main) {
         return undefined;
       })
       : (() => {
-        if (!flags.has("--token")) {
-          console.error("(no app with a client id in the vault — pasting a token instead)\n");
+        if (!flags.has("--token") && !lines) {
+          console.error(
+            vaulted
+              ? `(app ${vaulted.appId} has no client id — pasting a token instead)\n`
+              : "(no app in the vault — pasting a token instead)\n",
+          );
         }
-        console.error("Create a fine-grained token (repo: Issues + Pull requests, read & write):");
+        console.error(
+          principal
+            ? "Create a fine-grained token (repo: Issues + Pull requests, read & write):"
+            : "The org's token — a machine user's, or your own (repo: Issues + Pull " +
+              "requests, read & write):",
+        );
         console.error("  https://github.com/settings/personal-access-tokens/new\n");
         return ask("Paste the token (github_pat_… / ghp_…):");
       })();
@@ -565,14 +721,15 @@ if (import.meta.main) {
 
     try {
       const { login } = await connectGithubUser(grant, {
-        principal,
+        ...(principal ? { principal } : {}),
         creds,
         store: log, // connections live on the Log (§4)
         publish: log.publish,
       });
-      console.error(`\n✓ connected: github user ${login} → ${principal}`);
+      console.error(`\n✓ connected: github user ${login} → ${principal ?? "the org"}`);
       console.error("  (deno task status shows the map)");
       await declared(root, "github");
+      await owed(creds);
     } finally {
       await creds.close();
       await log.close();

@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { type createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
 import {
   APP_PREFIX,
@@ -7,10 +7,13 @@ import {
   connectGithubUser,
   type DeviceCode,
   githubDeviceFlow,
+  githubHave,
+  githubNext,
   GRANT_ENV,
   GRANT_HOSTS,
   type Installation,
   ORG_KEY,
+  pickGithubApp,
   type UserTokens,
 } from "./connect.ts";
 import { openCredentials } from "../../connector.ts";
@@ -149,8 +152,13 @@ Deno.test("bot door: no app, no installation, or an ambiguous one — throws, wr
     const two = [{ id: 1, account: { login: "a" } }, { id: 2, account: { login: "b" } }];
     await assertRejects(() => connectGithubBot(withInstalls(two)), Error, "several");
     // …unless the arg names one — by account or by id
-    const picked = await connectGithubBot(withInstalls(two), "b");
-    assertEquals(picked.installationId, "2");
+    assertEquals((await connectGithubBot(withInstalls(two), { account: "b" })).installationId, "2");
+    assertEquals((await connectGithubBot(withInstalls(two), { account: "1" })).installationId, "1");
+    await assertRejects(
+      () => connectGithubBot(withInstalls(two), { account: "nope" }),
+      Error,
+      "no installation",
+    );
   });
 });
 
@@ -346,4 +354,117 @@ Deno.test("device flow: the default code and token calls each carry a timeout si
   }
   assertEquals(seen.length, 2);
   assert(seen.every((i) => i.signal instanceof AbortSignal), "both calls are bounded");
+});
+
+Deno.test("app pick: the only one is the choice; several demand --app; a wrong name is an error", async () => {
+  await withVault(async (creds) => {
+    await assertRejects(() => pickGithubApp(creds), Error, "no github app");
+    const { pem } = pkcs1Pem();
+    await connectGithubApp({ appId: "7", privateKey: pem }, creds);
+    assertEquals((await pickGithubApp(creds)).appId, "7");
+    await connectGithubApp({ appId: "9", privateKey: pem }, creds);
+    const err = await assertRejects(() => pickGithubApp(creds), Error);
+    assertStringIncludes(err.message, "--app");
+    assertStringIncludes(err.message, "9");
+    assertEquals((await pickGithubApp(creds, "9")).appId, "9");
+    await assertRejects(() => pickGithubApp(creds, "8"), Error, "no app 8");
+  });
+});
+
+Deno.test("bot door: --app picks the app when the vault holds several", async () => {
+  await withVault(async (creds) => {
+    const { pem } = pkcs1Pem();
+    await connectGithubApp({ appId: "7", privateKey: pem }, creds);
+    await connectGithubApp({ appId: "9", privateKey: pem }, creds);
+    const h = harness();
+    const deps = {
+      creds,
+      store: h.store,
+      publish: h.publish,
+      listInstallations: () => Promise.resolve([{ id: 42, account: { login: "acme" } }]),
+    };
+    await assertRejects(() => connectGithubBot(deps), Error, "--app");
+    assertEquals((await connectGithubBot(deps, { app: "9" })).appId, "9");
+    assertEquals((await creds.get(ORG_KEY))!.extra!.app_id, "9");
+  });
+});
+
+Deno.test("user door, --org: the anchor itself carries the credential — no owner, no membership", async () => {
+  await withVault(async (creds) => {
+    const h = harness();
+    const out = await connectGithubUser("ghp_machine", {
+      creds,
+      store: h.store,
+      publish: h.publish,
+      whoami: () => Promise.resolve({ login: "acme-bot" }),
+      now: () => "2026-09-10T00:00:00Z",
+    });
+    assertEquals(out, { login: "acme-bot" });
+    // ONE row, the shape the installation route writes — dispatch cannot tell them apart
+    assertEquals(h.connections, [
+      { service: "github", address: "github", credentialKey: ORG_KEY },
+    ]);
+    assertEquals(h.memberships, []);
+    const row = (await creds.get(ORG_KEY))!;
+    assertEquals(row.value.token, "ghp_machine"); // static: nothing to mint, nothing to refresh
+    assertEquals(row.agentId, undefined);
+    assertEquals(row.extra!.login, "acme-bot");
+    assertEquals(row.extra!.env, GRANT_ENV);
+    assertStringIncludes(h.notes[0].parts[0].text!, "as the org");
+  });
+});
+
+Deno.test("user door, --org: a paste that is not a token is refused before the network", async () => {
+  await withVault(async (creds) => {
+    const h = harness();
+    let called = false;
+    await assertRejects(
+      () =>
+        connectGithubUser("wh_secret_from_the_app_page", {
+          creds,
+          store: h.store,
+          publish: h.publish,
+          whoami: () => {
+            called = true;
+            return Promise.resolve({ login: "x" });
+          },
+        }),
+      Error,
+      "not a GitHub token",
+    );
+    assertEquals(called, false);
+    assertEquals(h.connections, []);
+  });
+});
+
+Deno.test("next: the vault says what is owed — an app's three parts are named separately", () => {
+  assertEquals(githubNext(githubHave([])).length, 2); // no identity, no app
+  assertStringIncludes(githubNext(githubHave([]))[0], "no identity yet");
+
+  const app = { key: "github:app:7", value: { private_key: "x" } };
+  const full = {
+    key: "github:app:7",
+    value: { private_key: "x", webhook_secret: "s", client_id: "c" },
+  };
+  const org = { key: "github:org", value: {} };
+  const user = { key: "github:matias", value: { token: "t" } };
+
+  // an app with nothing else: the two optional halves are each named
+  const bare = githubNext(githubHave([app, org]));
+  assertEquals(bare.length, 2);
+  assertStringIncludes(bare[0], "unsigned");
+  assertStringIncludes(bare[1], "device flow");
+
+  // a complete app and both identities: nothing owed
+  assertEquals(githubNext(githubHave([full, org, user])), []);
+
+  // an agent has a leg but the org has none — the fallback is what is missing
+  const noOrg = githubNext(githubHave([full, user]));
+  assertEquals(noOrg.length, 1);
+  assertStringIncludes(noOrg[0], "no org identity");
+
+  // no app at all is one line, and it does not go on to name the app's parts
+  const noApp = githubNext(githubHave([user]));
+  assertEquals(noApp.length, 2);
+  assertStringIncludes(noApp[1], "no app");
 });

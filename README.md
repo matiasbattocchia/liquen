@@ -48,13 +48,29 @@ secrets only. The org is where you run liquen; `--dir <path>` names it from anyw
 
 ### GitHub (dev-tier: `gh webhook forward`)
 
+Two identities, either alone enough to start: the org's, which every agent falls back to,
+and an agent's own, which posts under that person's name. The smallest setup is one paste
+and no GitHub App at all:
+
 ```sh
-deno task connect github     # app / bot / user doors → the vault (secrets live there)
-deno task start              # every declared connection: webhook receiver → the log, replies → gh api
+deno task connect github user --org --token   # a machine user's token → the org
+deno task start                               # webhook receiver → the log, replies → gh api
 gh webhook forward --repo=you/repo \
   --events=issue_comment,pull_request,pull_request_review_comment \
   --url=http://localhost:8788/
 ```
+
+An App buys three things a paste cannot: an org token minted hourly with nothing static
+stored, deliveries the ingest can verify, and a device flow that signs a person in without
+a secret crossing the terminal.
+
+```sh
+deno task connect github app     # App ID + .pem + (optional) webhook secret, client id/secret
+deno task connect github bot     # its installation → the org
+deno task connect github user    # the device flow → your own leg
+```
+
+Every door closes by naming what the org still owes, and `--help` explains each option.
 
 ### Slack (bring-your-own app, per org)
 
