@@ -65,6 +65,12 @@ const GRANT_PREFIX = "google:";
 const APP_PREFIX = "google:app:";
 const API = "https://www.googleapis.com/calendar/v3";
 
+/** A sweep that cannot read a grant is not yet an outage: one slow answer from the API is a
+ *  blip, and calling it a disconnection wakes the anchor to announce nothing. A grant is
+ *  `failing` once it has missed this many sweeps in a row — minutes, at the entry's cadence.
+ *  Recovery stays instant: the first sweep that reads is `connected` again. */
+const FAILING_AFTER_SWEEPS = 3;
+
 /** The slice of a Calendar `events` resource we read — and all we KEEP: `data` carries the
  *  pruned shape (`pruned` below), never the raw resource with its etags and policy noise.
  *  Pruning is the connector's job; render is service-agnostic and shows whatever rides here. */
@@ -122,6 +128,8 @@ export function createGoogleWebhook(deps: GoogleWebhookDeps): { tick(): Promise<
   // one state per grant, written only when it changes: a sweep that reads is `connected`,
   // one that cannot is `failing` — the row carries the reason
   const known = new Map<string, string>();
+  // consecutive sweeps a grant has missed — reset by the first one that reads
+  const missed = new Map<string, number>();
   const mark = (key: string, state: string, error?: string) => {
     if (!deps.store || known.get(key) === state) return;
     known.set(key, state);
@@ -145,8 +153,14 @@ export function createGoogleWebhook(deps: GoogleWebhookDeps): { tick(): Promise<
           deps.onError?.(grant.key, err);
         }
       }
-      if (failure === undefined) mark(grant.key, "connected");
-      else mark(grant.key, "failing", failure);
+      if (failure === undefined) {
+        missed.delete(grant.key);
+        mark(grant.key, "connected");
+      } else {
+        const n = (missed.get(grant.key) ?? 0) + 1;
+        missed.set(grant.key, n);
+        if (n >= FAILING_AFTER_SWEEPS) mark(grant.key, "failing", failure);
+      }
     }
   };
   let inflight: Promise<void> | null = null;
@@ -451,6 +465,12 @@ async function bootstrap(
  *  Returns stop: disarm the metronome, finish the sweep in flight, release the handles. */
 export async function runIngest(): Promise<() => Promise<void>> {
   const POLL_MS = 60_000;
+  /** A connection pool can die without saying so: a suspended host leaves sockets that accept
+   *  writes and never answer, so every poll after that times out against the same dead pool
+   *  and no amount of retrying reaches the network again. Only a fresh process clears it, and
+   *  the supervisor makes one in a second — so a poller this far gone stands down and lets it.
+   *  Well past FAILING_AFTER_SWEEPS: the connection is called down before anyone gives up. */
+  const WEDGED_AFTER_SWEEPS = 5;
   const { openLog } = await import("../../store/log.ts");
   const { openCredentials } = await import("../../store/credentials.ts");
   const { createGrantBroker } = await import("../../proxy/grants.ts");
@@ -462,13 +482,18 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
   const broker = createGrantBroker({ creds });
+  // this sweep's verdict, and how many in a row have come back empty-handed
+  const swept = { failed: false, inARow: 0 };
   const poller = createGoogleWebhook({
     publish: log.publish,
     creds,
     broker,
     store: log,
     calendars,
-    onError: (key, err) => console.error(`[ingest] poll FAILED on ${key}:`, err),
+    onError: (key, err) => {
+      swept.failed = true;
+      console.error(`[ingest] poll FAILED on ${key}:`, err);
+    },
     onPolled: (key, cal, n) => n && console.error(`[ingest] ${key} ${cal}: +${n} changes`),
   });
   console.error(
@@ -476,8 +501,23 @@ export async function runIngest(): Promise<() => Promise<void>> {
   );
   let sweep = poller.tick(); // once at boot: seed cursors / catch up
   await sweep;
+  // a tick landing mid-sweep JOINS it (createGoogleWebhook), and one sweep is one verdict
+  let counted: Promise<void> | null = null;
   const timer = setInterval(() => {
-    sweep = poller.tick();
+    const tick = poller.tick();
+    sweep = tick;
+    if (tick === counted) return;
+    counted = tick;
+    tick.finally(() => {
+      swept.inARow = swept.failed ? swept.inARow + 1 : 0;
+      swept.failed = false; // the verdict is in; the next sweep starts clean
+      if (swept.inARow < WEDGED_AFTER_SWEEPS) return;
+      console.error(
+        `[ingest] ${swept.inARow} sweeps in a row reached nothing — standing down for a ` +
+          `fresh process`,
+      );
+      Deno.exit(1);
+    });
   }, POLL_MS);
   return async () => {
     clearInterval(timer);

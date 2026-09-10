@@ -70,7 +70,7 @@ function syncOf(creds: Awaited<ReturnType<typeof openCredentials>>): Promise<
   return creds.get(KEY).then((r) => r!.extra?.calendar_sync as Record<string, string> | undefined);
 }
 
-Deno.test("a grant's state is written on the transition: failing when a sweep cannot read, connected when it reads again", async () => {
+Deno.test("a grant's state is written on the transition: failing once sweeps in a row cannot read, connected when it reads again", async () => {
   await withVault(async (creds) => {
     const upserts: ConnectionRow[] = [];
     const store = { upsertConnections: (rows: ConnectionRow[]) => upserts.push(...rows) };
@@ -85,7 +85,12 @@ Deno.test("a grant's state is written on the transition: failing when a sweep ca
       undefined,
       store,
     );
+    // a blip is not an outage: the first misses are tolerated in silence
     await p.tick();
+    await p.tick();
+    assertEquals(upserts.length, 0);
+
+    await p.tick(); // the third in a row is the grant giving up
     await p.tick(); // still failing: no second row — the state is written once per change
     assertEquals(upserts.length, 1);
     assertEquals(upserts[0].service, "google");
