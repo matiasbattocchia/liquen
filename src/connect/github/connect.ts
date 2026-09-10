@@ -416,10 +416,10 @@ async function defaultWhoami(token: string): Promise<{ login?: string; message?:
 
 /* ── local entry: the three doors ───────────────────────────────────────────────────────
  *
- *   deno task connect:github app                # App ID + .pem path + webhook secret
- *   deno task connect:github bot [account]      # bind the installation → the org
- *   deno task connect:github user [principal]   # device flow → the principal's leg
- *   deno task connect:github user [principal] --token   # …by pasting a PAT instead
+ *   deno task connect github app                # App ID + .pem path + webhook secret
+ *   deno task connect github bot [account]      # bind the installation → the org
+ *   deno task connect github user [principal]   # device flow → the principal's leg
+ *   deno task connect github user [principal] --token   # …by pasting a PAT instead
  *
  * A bare invocation (or a bare principal name) is the user door — the common case. It runs
  * the device flow off the vaulted app's client_id, and falls back to the paste when there

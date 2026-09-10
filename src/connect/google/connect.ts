@@ -72,8 +72,8 @@ export async function pickGoogleApp(
 
 /* ── local entry ────────────────────────────────────────────────────────────────────────
  *
- *   deno task connect:google app                          # paste client id + secret
- *   deno task connect:google account [principal] [--org] [--app <client_id>]
+ *   deno task connect google app                          # paste client id + secret
+ *   deno task connect google account [principal] [--org] [--app <client_id>]
  *                                    [--scopes "a b c"]   # default: connections.google.scopes
  *
  * The account door serves its callback on connections.google.oauthPort. */

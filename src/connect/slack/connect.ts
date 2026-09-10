@@ -470,9 +470,9 @@ async function defaultAuthTest(token: string): Promise<AuthTest> {
 
 /* ── local entry: the three doors ───────────────────────────────────────────────────────
  *
- *   deno task connect:slack user [principal]   # prefill link → install → paste xoxp
- *   deno task connect:slack bot [--agent <name>] # paste xoxb; the agent that speaks as it
- *   deno task connect:slack app                # paste client id + secret → the vault
+ *   deno task connect slack user [principal]   # prefill link → install → paste xoxp
+ *   deno task connect slack bot [--agent <name>] # paste xoxb; the agent that speaks as it
+ *   deno task connect slack app                # paste client id + secret → the vault
  *
  * A bare invocation (or a bare principal name) is the user door — the common case. */
 const USAGE = `usage: liquen connect slack app
