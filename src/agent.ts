@@ -7,7 +7,9 @@
  * (roster names, repeatable); `mind: false` when `--no-mind` made it a person alone. The
  * name is the member's id, its folder under `data/agents/` and its unix user in the
  * container — boot compiles the entry into those at the next `liquen start`, and nothing is
- * made here. Runs from anywhere inside the org, or against one named with `--dir`.
+ * made here. The line it prints says so: the home and the instruction placeholder are the
+ * next `liquen start`'s to lay, and the person's to write after. Runs from anywhere inside
+ * the org, or against one named with `--dir`.
  */
 
 import {
@@ -73,7 +75,9 @@ if (import.meta.main) {
     const handles = declared.length > 0 ? ` (${declared.join(", ")})` : "";
     const next = rest.mind === false
       ? "they steer, and no session of theirs will run."
-      : "`liquen start` gives it a home.";
+      : `\`liquen start\` gives it a home: data/agents/${name}/, and ` +
+        `instructions/agent.md in it to say who they are (a placeholder until you write it; ` +
+        "every turn reads it fresh, so it is never too late).";
     console.log(`${root}/config.jsonc: agents.${name}${handles}. ${next}`);
   });
 }
