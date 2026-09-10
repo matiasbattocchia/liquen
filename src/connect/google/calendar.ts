@@ -397,6 +397,21 @@ async function storeCursor(
 // join above holds every later tick behind it) — bound every call, fail into onError
 const FETCH_TIMEOUT_MS = 30_000;
 
+/** How long a connection may sit idle in the pool before it is dropped. Under the poll
+ *  cadence on purpose: between one sweep and the next, every socket is closed and the
+ *  next call dials a new one. A pooled connection outliving the gap is the one the far
+ *  side may already have closed without telling us, and reusing it does not fail — it
+ *  hangs, then times out, and the next sweep reaches for the same dead socket (live,
+ *  2026-09-10: three wedges, each ended only by a fresh process, the API answering in
+ *  1.3s throughout). One handshake a minute is the whole cost of never meeting one. */
+const POOL_IDLE_MS = 20_000;
+
+/** The poller's own client, so the pool it keeps is bounded by POOL_IDLE_MS rather than
+ *  by whatever the process-wide default is. */
+export function pollingClient(): Deno.HttpClient {
+  return Deno.createHttpClient({ poolIdleTimeout: POOL_IDLE_MS });
+}
+
 /** Thrown on a 410 — the syncToken is too old; the caller re-bootstraps. */
 class SyncTokenGone extends Error {}
 
@@ -484,12 +499,14 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const broker = createGrantBroker({ creds });
   // this sweep's verdict, and how many in a row have come back empty-handed
   const swept = { failed: false, inARow: 0 };
+  const client = pollingClient();
   const poller = createGoogleWebhook({
     publish: log.publish,
     creds,
     broker,
     store: log,
     calendars,
+    fetchApi: (input, init) => fetch(input, { ...init, client }),
     onError: (key, err) => {
       swept.failed = true;
       console.error(`[ingest] poll FAILED on ${key}:`, err);
@@ -522,6 +539,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   return async () => {
     clearInterval(timer);
     await sweep.catch(() => {/* onError already said it */});
+    client.close();
     await creds.close();
     await log.close();
   };
