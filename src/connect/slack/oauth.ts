@@ -20,8 +20,10 @@
  * only; the admin's personal xoxp comes from this door like every other member's.
  *
  * Nothing serves these routes standing: a door serves them for the length of one sign-in.
- * Both are SYNCHRONOUS request/response (a 302, a page), so whatever fronts them must
- * carry a redirect — an async webhook relay (Hookdeck) cannot.
+ * The redirect URI is the app's — the public callback pasted with the client
+ * (`extra.redirect_uri` on the app row). Both routes are SYNCHRONOUS request/response
+ * (a 302, a page), so whatever fronts them must carry a redirect — an async webhook relay
+ * (Hookdeck) cannot.
  */
 
 import type { OauthV2AccessResponse } from "@slack/web-api";

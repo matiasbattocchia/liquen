@@ -1,10 +1,10 @@
 /**
  * connect/google/connect.ts — `liquen connect google`: the two dev-side Google doors (§4).
  *
- *   app      the door's own key: paste the OAuth client (id + secret) → vault
- *            `google:app:<client_id>`. Not a grant — no connection, no membership, no
- *            event; nobody got connected. Several apps may coexist
- *            (`list("google:app:")`); the id in the key is what the account door picks by.
+ *   app      the door's own key: paste the OAuth client (id + secret + the public redirect
+ *            URI registered on it) → vault `google:app:<client_id>`. Not a grant — no
+ *            connection, no membership, no event; nobody got connected. Several apps may
+ *            coexist (`list("google:app:")`); the id in the key is what a sign-in picks by.
  *   account  a grant through the OAuth handler (connect/google/oauth.ts), served on
  *            localhost for exactly one sign-in: open the browser at /start, and the
  *            callback does what every grant does — writes the map. Ownership (the
@@ -12,8 +12,10 @@
  *            `?agent=`; `--org` mints an ownerless link, the org's shared account (§6).
  *            The handler only executes what the mint said.
  *
- * The callback is `http://localhost:<port>/oauth/google/callback`, which must be
- * registered on the OAuth client (Google allows plain-http localhost redirects).
+ * The account door overrides the app's redirect URI with its own localhost callback —
+ * `http://localhost:<port>/oauth/google/callback` must be registered on the OAuth client
+ * alongside the public one (Google allows plain-http localhost redirects). A sign-in
+ * served for a member elsewhere redirects to the public one.
  *
  * Removal is not a door yet: deleting an app or a grant is a deliberate SQL act (§9).
  */
@@ -28,10 +30,11 @@ export const APP_PREFIX = "google:app:";
 export interface GoogleApp {
   clientId: string;
   clientSecret: string;
+  redirectUri?: string; // the public callback registered on the client; the account door uses localhost
 }
 
 /** Store an OAuth client under its own id. The vault's merge lets a re-paste rotate the
- *  secret. */
+ *  secret without losing the sidecar. */
 export async function connectGoogleApp(
   app: GoogleApp,
   creds: Pick<Credentials, "put">,
@@ -41,6 +44,7 @@ export async function connectGoogleApp(
   await creds.put({
     key,
     value: { client_id: app.clientId, client_secret: app.clientSecret },
+    ...(app.redirectUri ? { extra: { redirect_uri: app.redirectUri } } : {}),
   });
   return key;
 }
@@ -132,8 +136,11 @@ if (import.meta.main) {
         };
         const clientId = ask("Client ID:");
         const clientSecret = ask("Client secret:");
-        const key = await connectGoogleApp({ clientId, clientSecret }, creds);
-        console.error(`✓ app stored: ${key}`);
+        const redirectUri = prompt("Public redirect URI (empty to skip):")?.trim() || undefined;
+        const key = await connectGoogleApp({ clientId, clientSecret, redirectUri }, creds);
+        console.error(
+          `✓ app stored: ${key}` + (redirectUri ? ` (public callback: ${redirectUri})` : ""),
+        );
       } else if (verb === "account") {
         const { createGoogleOAuth } = await import("./oauth.ts");
         const { openLog } = await import("../../store/log.ts");
@@ -171,12 +178,16 @@ if (import.meta.main) {
         const server = Deno.serve({ port, onListen: () => {} }, handler);
         const start = new URL(`http://localhost:${port}/oauth/google/start`);
         if (agent) start.searchParams.set("agent", agent);
+        const hosted = app.extra?.redirect_uri as string | undefined;
         console.error(
           `Connecting a Google account${agent ? ` for "${agent}"` : " (org — ownerless)"} ` +
             `via app ${app.value.client_id}.\nAsking for:\n  ${asked.join("\n  ")}\n` +
             `Open and approve:\n  ${start.href}\n` +
             `This door waits on localhost, so ${callback} must be registered on the OAuth ` +
-            `client — Google rejects the request with redirect_uri_mismatch otherwise.`,
+            `client — Google rejects the request with redirect_uri_mismatch otherwise.` +
+            (hosted
+              ? `\n(the app's public callback ${hosted} is a served sign-in's, not this one's)`
+              : ""),
         );
         try { // best effort — the link above is the real door
           new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {

@@ -2096,12 +2096,15 @@ which does not front the registry. The image owes user space a readable, pre-war
 
 The OAuth handlers (`connect/slack/oauth.ts`, `connect/google/oauth.ts`) are served by a
 door for the length of one sign-in — `liquen connect google account` on localhost — and
-by nothing standing: no `oauth:*` task, no export, no port to front with a tunnel, no
-redirect-URI sidecar on the app rows. Open: a member who is not at the terminal still has
-no way in. The shape is a connect tool a connector exposes, which spins the handler up,
-hands the member a link over the channel the agent already holds, and stops after the
-callback — the account door's one-shot, addressed from the org's side. Slack's twin of the
-account door does not exist yet; the paste door serves the developer's own leg.
+by nothing standing: no `oauth:*` task, no export, no port the operator fronts with a
+tunnel. The app row keeps its public redirect URI (`extra.redirect_uri`, pasted with the
+client): it is what the OAuth client has registered, and any sign-in served for a member
+elsewhere must land there. Open: that member still has no way in. The shape is a connect
+tool a connector exposes, which spins the handler up, hands the member a link over the
+channel the agent already holds, and stops after the callback — the account door's
+one-shot, addressed from the org's side, reachable at the app's redirect URI for the
+seconds it lives. Slack's twin of the account door does not exist yet; the paste door
+serves the developer's own leg.
 
 Still open: vibes runs on Bun, which resolves neither `@std/*` nor `node:sqlite`, so its
 `@mu/*` path mapping onto the checkout serves the type checker; `attach.ts` and

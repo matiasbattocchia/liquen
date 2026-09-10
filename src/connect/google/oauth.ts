@@ -28,8 +28,10 @@
  * short-lived access tokens (the credential stays broker-side, §9).
  *
  * Nothing serves these routes standing: a door serves them for the length of one sign-in
- * (`liquen connect google account`, on localhost). Both are SYNCHRONOUS request/response
- * (a 302, a page), so whatever fronts them must carry a redirect.
+ * (`liquen connect google account`, on localhost). The redirect URI is the app's — the
+ * public callback pasted with the client (`extra.redirect_uri` on the app row), which a
+ * sign-in served for a member elsewhere must be reachable at. Both routes are SYNCHRONOUS
+ * request/response (a 302, a page), so whatever fronts them must carry a redirect.
  */
 
 import { DEFAULT_SCOPES, GRANT_ENV, GRANT_HOSTS } from "./config.ts";

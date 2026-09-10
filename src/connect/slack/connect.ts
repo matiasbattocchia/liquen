@@ -159,6 +159,7 @@ export interface SlackApp {
   clientId: string;
   clientSecret: string;
   signingSecret?: string; // verifies HTTP-mode deliveries; socket mode needs none
+  redirectUri?: string; // the public callback registered on the client — where a served sign-in lands
 }
 
 /** Store an OAuth client under its own id (the google app door's twin). The vault's
@@ -176,6 +177,7 @@ export async function connectSlackApp(
       client_secret: app.clientSecret,
       ...(app.signingSecret ? { signing_secret: app.signingSecret } : {}),
     },
+    ...(app.redirectUri ? { extra: { redirect_uri: app.redirectUri } } : {}),
   });
   return key;
 }
@@ -562,8 +564,14 @@ if (import.meta.main) {
           Deno.exit(clientId ? 2 : 0);
         }
         const signingSecret = ask("Signing secret (verifies HTTP ingest; empty to skip):");
-        const key = await connectSlackApp({ clientId, clientSecret, signingSecret }, creds);
-        console.error(`✓ app stored: ${key}`);
+        const redirectUri = ask("Public redirect URI (empty to skip):");
+        const key = await connectSlackApp(
+          { clientId, clientSecret, signingSecret, redirectUri },
+          creds,
+        );
+        console.error(
+          `✓ app stored: ${key}` + (redirectUri ? ` (public callback: ${redirectUri})` : ""),
+        );
         await owed(creds);
       } finally {
         await creds.close();

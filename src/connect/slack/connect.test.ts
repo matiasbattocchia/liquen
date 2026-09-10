@@ -234,10 +234,16 @@ Deno.test("app door: the client lands under its own id; pick = only one, or by i
     list: (p: string) => Promise.resolve([...rows.values()].filter((r) => r.key.startsWith(p))),
   };
   await assertRejects(() => pickSlackApp(creds), Error, "liquen connect slack app");
-  const key = await connectSlackApp({ clientId: "123.456", clientSecret: "sec" }, creds);
+  const key = await connectSlackApp(
+    { clientId: "123.456", clientSecret: "sec", redirectUri: "https://org.example/cb" },
+    creds,
+  );
   assertEquals(key, "slack:app:123.456");
   assertEquals((await pickSlackApp(creds)).value.client_id, "123.456");
-  assertEquals((await pickSlackApp(creds, "123.456")).value.client_secret, "sec");
+  assertEquals(
+    (await pickSlackApp(creds, "123.456")).extra?.redirect_uri,
+    "https://org.example/cb",
+  );
   await connectSlackApp({ clientId: "789.000", clientSecret: "sec2" }, creds);
   await assertRejects(() => pickSlackApp(creds), Error, "--app"); // several ⇒ pick explicitly
 });
