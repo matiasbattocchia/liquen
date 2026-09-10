@@ -1453,14 +1453,15 @@ it": `liquen init` materializes it, `liquen connect` declares what a grant earne
 time with a human watching, both leaving a diff for git. The running system still never
 writes it.
 
-Open: where a coding agent STANDS. `liquen start` gives each agent `data/agents/<name>/` as
-its cwd, which is right for a resident agent whose instructions live there and wrong for
-`liquen cli "fix the test"` typed inside a repo — the hint the agent reads is its home, not
-the work. Two shapes were named: (A) attaching in a directory makes that directory the
-agent's working directory; (B) `liquen repl` outside an org scaffolds one, harness files under
-`.mu/` rather than scattered at the project root. A is wanted; B is acceptable at this
-stage. Neither is built, and A's open question is whose cwd wins when several attachments
-sit in different folders.
+Where a coding agent STANDS was open here in two shapes: (A) attaching in a directory makes
+that directory the agent's working directory; (B) `liquen repl` outside an org scaffolds one,
+harness files under `.mu/` rather than scattered at the project root. A landed on 2026-09-06
+(§ "The shell stands with its principal"): the tail carries the client's cwd, the door places
+THAT session's shell there, and the hang-up takes it home — so whose cwd wins is per session,
+not per agent. B is not built: attach walks up from cwd for a `config.jsonc`, so a repo
+outside every org has nothing to attach to. Still open either way: what the agent READS is
+its home's cascade — standing in the repo moves the shell and shows in the ambient block,
+it pulls no doc from the work.
 
 ### Many sessions per agent (2026-09-01) — LANDED (all six steps)
 
