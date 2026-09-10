@@ -1755,7 +1755,7 @@ docs {
   ports are the package boundary). Surface files are exactly what updates never touch;
   core updates are a version bump. The init is npx-shaped (`deno run -A jsr:@liquen/liquen/init .`;
   no folder → a short interview), additive and never-overwriting — re-run = update for
-  added surface files. Init stays dumb (copy the scaffold, materialize the catalog); the
+  added surface files. Init stays dumb (copy the scaffold, materialize the catalog, seed the org's docs); the
   intelligence is a doc. The **front door is agent-first**: a repo-root
   `SKILL.md` at a stable URL ("read this and follow it") — the developer's own agent is
   the installer, wrapping the deterministic steps and carrying the interview; plainly
@@ -1763,13 +1763,22 @@ docs {
   deterministic core the skill invokes. The core is the package `@liquen/liquen`, named in the org's
   `deno.jsonc` (a checkout stands in through Deno's `links`), kept
   **template-ready** — seeds live as real files under `src/seed/` (flat, `<scope>-<name>.md`), copied write-if-absent
-  into `{dir}/docs` at boot (interpolating `{{DOCS_ROOT}}`/`{{AGENT_ID}}`), never
-  overwriting edits. **Seed vs data is template vs LIVING state**: agents co-author
-  `{dir}/docs` at runtime (memories, later skills), so it drifts by design — git sees
+  into the data root BY THE DOOR THAT DECLARES: `liquen init` lays the org's half
+  (`system/`, `org/`) with the catalog, `liquen agent` lays that agent's
+  (`agents/<name>/`) with its roster entry, and boot lays whatever is still missing — a
+  roster entry typed into `config.jsonc` by hand. Seeding never overwrites and never
+  returns to a folder that exists, which is what lets all three be the same call; the door
+  that names a thing leaves the file to edit, so the persona does not wait on a run to
+  become writable.
+  **Seed vs data is template vs LIVING state**: agents co-author
+  the data root at runtime (memories, later skills), so it drifts by design — git sees
   `src/seed/` (the org definition, reproducible; private repo if sensitive), volumes hold
-  `data/`. Per-file if-absent ⇒ additive seed evolution flows to deployments; *edits* to
-  existing seeds reach live orgs only via an explicit migration action (future, ⟺ db
-  migration — on Postgres seeding IS an INSERT-if-absent migration). The Docker image is the *deploy* artifact of whichever mode
+  `data/`. The unit of if-absent is the FOLDER: an absent doc is an answer — a deployment
+  that deleted `org/instructions/organization.md`, or emptied `system/skills/`, wants none,
+  and no later boot may argue. So a new template reaches new orgs and new agents, not the
+  scopes a live org already has; deleting the folder is how an org asks for the set again,
+  and *edits* to existing seeds reach live orgs only via an explicit migration action
+  (future, ⟺ db migration — on Postgres seeding IS an INSERT-if-absent migration). The Docker image is the *deploy* artifact of whichever mode
   (`deno compile --include src/seed`), not the dev artifact. **Isolation is per
   folder**: all state lives under the project dir (log, locks, docs, keys) — N inits =
   N unrelated orgs, co-runnable on one machine; never write global state. **Deno-less

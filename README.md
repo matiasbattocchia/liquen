@@ -34,8 +34,16 @@ code of its own, so the package that runs is always the one the org's `deno.json
 deno install -g -A -n liquen jsr:@liquen/liquen/liquen
 ```
 
-First run seeds `./data/` from the package's `src/seed/` templates: the log, the agent's
-workspace, and its docs (identity, org, memories — edit them, boot never overwrites).
+`./data/` is seeded from the package's `src/seed/` templates by the command that declares:
+`liquen init` writes `data/system/` and `data/org/` — what every agent reads — and `liquen
+agent <name>` writes that agent's workspace, `data/agents/<name>/`, with the instruction
+file that says who they are and a memory to write the next by. So the words are on disk to
+edit before anything runs. A first run adds what only a run can make (the log, the CA and
+its bundle, the file shims) and seeds whatever is missing — a roster entry typed into
+`config.jsonc` by hand gets its home then. Nothing seeded is ever overwritten, and nothing
+is seeded into a folder that already exists — delete a doc you do not want and it stays
+deleted; delete the folder to ask for the set again. Docs are read fresh every turn, so an
+edit lands on the agent's next turn without a restart.
 `data/` is living state and stays out of git; `src/seed/` is the org definition at birth.
 
 ## Knobs

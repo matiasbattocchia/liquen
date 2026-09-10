@@ -39,7 +39,7 @@ import { type Policy, policyFor, scoped } from "./policy.ts";
 import { type Log, openLog } from "./store/log.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import { openFileDocs } from "./store/docs.ts";
-import { seedDocs } from "./store/seed.ts";
+import { seedAgent, seedOrg } from "./store/seed.ts";
 import { anthropicClient, anthropicTransport, metered, type ModelTransport } from "./transport.ts";
 import { type ExecGround, type ExecPlane, installExecGround } from "./exec/bash.ts";
 import { entry } from "./entry.ts";
@@ -231,7 +231,9 @@ export async function start(
     }
   )));
   if (config.connections) log.upsertConnections(config.connections);
-  for (const agent of principals) await seedDocs(dir, agent.agentId);
+  // the doors lay these when they declare; boot lays them for a roster entry typed by hand
+  await seedOrg(dir);
+  for (const agent of principals) if (agent.runs !== false) await seedAgent(dir, agent.agentId);
   const transport = overrides.transport ?? anthropicTransport(anthropicClient(config.apiKey));
   // the egress proxy (§9): front every credential row that declares an env var — user space
   // gets the placeholder + proxy env, never a real credential (see installProxy).

@@ -2098,6 +2098,27 @@ not cache it either. A read-only cache serves the run, emit included. The contai
 Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
 first boot, a fetch the harness (root, with the network) makes.
 
+### The door that declares lays the file (2026-09-10) — LANDED
+
+Every seeded doc waited for the first boot, so the one thing a person does between
+declaring an agent and running it — write who it is — had nowhere to happen. `liquen agent
+laura` answered with a line about what `liquen start` would eventually give her.
+
+The cascade is cut along the doors now: `seedOrg` (`system/`, `org/`) is `liquen init`'s,
+`seedAgent` (the home itself, `instructions/agent.md`, one memory) is `liquen agent`'s, and
+boot calls both for whatever is missing — a roster entry typed into `config.jsonc` by hand
+still gets its home. `--no-mind` seeds nothing, which also fixes a contradiction boot
+carried: `compileRoster` made no folder for a person alone, and the seeding loop right after
+made one anyway, with a persona in it.
+
+Seeding three times a day made the old if-absent unit wrong. Per FILE, a deployment that
+deleted `org/instructions/organization.md` got it back at the next boot, forever. The unit
+is the FOLDER now: an absent doc is an answer, and a folder that exists is the org's — its
+edits and its deletions alike. A folder two templates share is decided once, before either
+is written, so the pair still lands together on a first pass. What it costs is a template
+added to a folder live orgs already have: it reaches new orgs and new agents only, and
+deleting the folder is how an org asks for the set again.
+
 ### A door knows what the console is about to ask (2026-09-10) — LANDED
 
 Both app doors sent a person to a vendor form and then asked for what came back, saying

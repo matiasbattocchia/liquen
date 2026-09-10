@@ -1,15 +1,17 @@
 /**
  * init.ts — `liquen init <path>`: scaffold a new org project (§9).
  *
- * Dumb on purpose: materialize the catalog, copy the scaffold. The project it leaves
- * behind carries no runnable code — the CLI is the package its `deno.jsonc` names — and
- * `data/` fills at first boot: the catalog's roster becomes folders and rows then, not
- * here. What init decides is only what a human would otherwise type: the org's clock and
- * locale (the machine's). The roster starts empty; `liquen agent` adds each agent as its
- * own declaration.
+ * Dumb on purpose: materialize the catalog, copy the scaffold, seed the org's half of the
+ * doc cascade (`data/system/`, `data/org/` — what every agent will read, placeholders to
+ * edit). The project it leaves behind carries no runnable code — the CLI is the package
+ * its `deno.jsonc` names — and what only a run can make (the log, the CA, the shims) waits
+ * for the first boot. What init decides is only what a human would otherwise type: the
+ * org's clock and locale (the machine's). The roster starts empty; `liquen agent` adds
+ * each agent as its own declaration, and lays that agent's half of the cascade.
  */
 
 import { materialize, starterConfig } from "./config.ts";
+import { seedOrg } from "./store/seed.ts";
 import { entry } from "./entry.ts";
 
 /** template name in `scaffold/` → name in the project (dotfiles ship undotted so the
@@ -41,6 +43,7 @@ export async function init(path: string): Promise<void> {
     await Deno.writeFile(`${path}/${to}`, new Uint8Array(await res.arrayBuffer()));
   }
   await Deno.chmod(`${path}/entrypoint.sh`, 0o755);
+  await seedOrg(`${path}/data`); // the org's own words, on disk before anything runs
 }
 
 if (import.meta.main) {

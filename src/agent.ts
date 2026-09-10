@@ -6,10 +6,13 @@
  * flags gave and null for the rest; `principals` when `--principal` named who steers it
  * (roster names, repeatable); `mind: false` when `--no-mind` made it a person alone. The
  * name is the member's id, its folder under `data/agents/` and its unix user in the
- * container — boot compiles the entry into those at the next `liquen start`, and nothing is
- * made here. The line it prints says so: the home and the instruction placeholder are the
- * next `liquen start`'s to lay, and the person's to write after. Runs from anywhere inside
- * the org, or against one named with `--dir`.
+ * container. The declaration is the only thing boot needs — it compiles the roster into
+ * rows and homes at every `liquen start` — but the home is laid HERE too, with the agent's
+ * half of the doc cascade (`seedAgent`: `instructions/agent.md`, a memory to write the next
+ * by), because the persona is what a person writes between declaring an agent and running
+ * it, and there is nowhere to write it until the folder exists. Seeding never overwrites,
+ * so the door and boot are the same call. `--no-mind` makes a person alone: a row, no
+ * folder. Runs from anywhere inside the org, or against one named with `--dir`.
  */
 
 import {
@@ -20,6 +23,7 @@ import {
   IDENTITY_KEYS,
   orgFlag,
 } from "./config.ts";
+import { seedAgent } from "./store/seed.ts";
 import { entry } from "./entry.ts";
 
 export const USAGE =
@@ -67,6 +71,8 @@ if (import.meta.main) {
     const { name, identity, rest } = parseAgentArgs(org.args);
     const root = findRoot(org);
     await declareAgent(root, name, identity, rest);
+    // the home and the words that make it someone — a person alone (§4) has neither
+    if (rest.mind !== false) await seedAgent(`${root}/data`, name);
     const declared = [
       ...IDENTITY_KEYS.filter((k) => identity[k] !== undefined),
       ...(rest.principals ? [`principals: ${rest.principals.join(", ")}`] : []),
@@ -75,9 +81,9 @@ if (import.meta.main) {
     const handles = declared.length > 0 ? ` (${declared.join(", ")})` : "";
     const next = rest.mind === false
       ? "they steer, and no session of theirs will run."
-      : `\`liquen start\` gives it a home: data/agents/${name}/, and ` +
-        `instructions/agent.md in it to say who they are (a placeholder until you write it; ` +
-        "every turn reads it fresh, so it is never too late).";
+      : `data/agents/${name}/ is the workspace; write instructions/agent.md in it to say ` +
+        "who they are (every turn reads it fresh, so it is never too late). `liquen start` " +
+        "runs them.";
     console.log(`${root}/config.jsonc: agents.${name}${handles}. ${next}`);
   });
 }
