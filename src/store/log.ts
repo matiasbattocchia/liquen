@@ -202,6 +202,25 @@ export async function openLog(
   // the store's id authority: Postgres writes `DEFAULT uuidv7()`, SQLite needs the function
   // bound first — same DDL, same guarantee (evaluated at INSERT, under the write lock).
   db.function("uuidv7", () => newId());
+  // A log that cannot be read must say so once, in a sentence naming itself. Every child
+  // of the org opens this file, so a corrupt one otherwise arrives as four stack traces
+  // every few seconds, none of them saying which file or what to do about it — and the
+  // supervisor restarts them forever (live, 2026-09-10: a page count outrunning the file
+  // by 17MB, under bcachefs). `.recover` rebuilds what is still there.
+  let health: string | undefined;
+  try {
+    health = (db.prepare("PRAGMA quick_check(1)").get() as { quick_check: string }).quick_check;
+  } catch {
+    health = undefined; // too broken to even ask
+  }
+  if (health !== "ok") {
+    db.close();
+    throw new Error(
+      `the log at ${dir}/${DB_FILE} is corrupt (${health ?? "unreadable"}) — rebuild it with ` +
+        `\`sqlite3 ${DB_FILE} .recover | sqlite3 recovered.db\`, keeping the original until ` +
+        `the copy checks out`,
+    );
+  }
   db.exec(
     `PRAGMA busy_timeout=5000;
      PRAGMA journal_mode=WAL;
