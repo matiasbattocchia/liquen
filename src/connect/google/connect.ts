@@ -15,7 +15,9 @@
  * The account door overrides the app's redirect URI with its own localhost callback —
  * `http://localhost:<port>/oauth/google/callback` must be registered on the OAuth client
  * alongside the public one (Google allows plain-http localhost redirects). A sign-in
- * served for a member elsewhere redirects to the public one.
+ * served for a member elsewhere redirects to the public one. The app door prints that
+ * localhost URI before it asks for anything, so the console's "Authorized redirect URIs"
+ * field can be filled while the client is still being created.
  *
  * Removal is not a door yet: deleting an app or a grant is a deliberate SQL act (§9).
  */
@@ -127,6 +129,16 @@ if (import.meta.main) {
     const creds = await openCredentials(dir);
     try {
       if (verb === "app") {
+        const { googleConfig } = await import("./config.ts");
+        const { oauthPort } = await googleConfig(root);
+        console.error(
+          `Create the client at https://console.cloud.google.com/auth/clients — type "Web ` +
+            `application". Under "Authorized redirect URIs" register:\n` +
+            `  http://localhost:${oauthPort}/oauth/google/callback\n` +
+            `That is where a sign-in from this terminal comes back (the port is ` +
+            `connections.google.oauthPort). A sign-in served to a member elsewhere comes back ` +
+            `to a public URI instead — register that one too and paste it below.\n`,
+        );
         const ask = (label: string): string => {
           const v = prompt(label)?.trim();
           if (!v) {
