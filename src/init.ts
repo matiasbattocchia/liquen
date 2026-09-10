@@ -10,6 +10,7 @@
  */
 
 import { materialize, starterConfig } from "./config.ts";
+import { entry } from "./entry.ts";
 
 /** template name in `scaffold/` → name in the project (dotfiles ship undotted so the
  *  scaffold itself never acts as one) */
@@ -43,20 +44,17 @@ export async function init(path: string): Promise<void> {
 }
 
 if (import.meta.main) {
-  const [path, ...rest] = Deno.args;
-  if (!path || rest.length > 0) {
-    console.error("usage: deno run -A jsr:@liquen/liquen/init <path>");
-    Deno.exit(1);
-  }
-  try {
+  await entry(async () => {
+    const [path, ...rest] = Deno.args;
+    if (!path || rest.length > 0) {
+      console.error("usage: deno run -A jsr:@liquen/liquen/init <path>");
+      Deno.exit(1);
+    }
     await init(path);
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    Deno.exit(1);
-  }
-  console.log(
-    `${path}: a liquen org. \`liquen agent <name>\` adds an agent; \`liquen start\` runs it.\n` +
-      "(`liquen` is the org's `deno task` from anywhere inside it: " +
-      "`deno install -g -A -n liquen jsr:@liquen/liquen/liquen` puts it on the PATH.)",
-  );
+    console.log(
+      `${path}: a liquen org. \`liquen agent <name>\` adds an agent; \`liquen start\` runs it.\n` +
+        "(`liquen` is the org's `deno task` from anywhere inside it: " +
+        "`deno install -g -A -n liquen jsr:@liquen/liquen/liquen` puts it on the PATH.)",
+    );
+  });
 }

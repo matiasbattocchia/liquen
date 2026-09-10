@@ -29,3 +29,4 @@ export { newId } from "./store/id.ts";
 export { scripted } from "./testing.ts";
 export { anthropicClient, anthropicTransport, metered } from "./transport.ts";
 export { init } from "./init.ts";
+export { entry, report } from "./entry.ts";

@@ -24,6 +24,7 @@ import { resolve } from "node:path";
 import { applyEdits, parseEdits } from "../exec/edit.ts";
 import { truncateHead } from "../exec/truncate.ts";
 import { isBytes, looksBinary, MEDIA_MARK, mimeOf, sniffMime } from "../store/media.ts";
+import { report } from "../entry.ts";
 
 /** The first bytes of a file (the sniffing window) — never the whole thing. */
 async function headOf(path: string, n = 1024): Promise<Uint8Array> {
@@ -182,7 +183,7 @@ export async function run(args: string[]): Promise<number> {
     else throw new Error(`unknown command: ${cmd}`);
     return 0;
   } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
+    report(err);
     return 1;
   }
 }

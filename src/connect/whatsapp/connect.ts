@@ -30,6 +30,7 @@ import { SERVICE } from "./ingest.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { declared } from "../declare.ts";
+import { entry } from "../../entry.ts";
 
 /** The bridge's pairing poll response (sessions.go `PairingState`) — verbatim. */
 export interface WAPairingState {
@@ -170,7 +171,7 @@ const USAGE = `usage: liquen connect whatsapp [agent] [--phone <digits>]
   --dir <org>       the org, when run from elsewhere`;
 
 if (import.meta.main) {
-  try {
+  await entry(async () => {
     const { openLog } = await import("../../store/log.ts");
     const { userInfo } = await import("node:os");
     const { basename } = await import("node:path");
@@ -265,8 +266,5 @@ if (import.meta.main) {
     } finally {
       await log.close();
     }
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    Deno.exit(1);
-  }
+  });
 }

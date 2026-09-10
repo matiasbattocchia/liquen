@@ -36,8 +36,15 @@ Nothing below needs a sixth piece. What some of them need is **new state**, whic
 A connector is a **standalone process over the org's substrate**: it reaches liquen through
 the shared `./data` root and imports only the seam module, **`src/connector.ts`** — the log (`openLog`,
 `publish`, subscribe/`setDelivery`), the vault (`openCredentials`, the grant broker),
-`connectorConfig`, the event types, and the dispatch error contract. A deep import
-from a connector is a contract violation, not a convenience.
+`connectorConfig`, the event types, the dispatch error contract, and `entry` — the rule
+every liquen process ends by. A deep import from a connector is a contract violation, not
+a convenience.
+
+Run an `import.meta.main` body through `entry` and a custom connector fails the way a
+shipped one does: `throw new Error("the bridge is not answering on :8081")` reaches the
+operator as that sentence and nothing else, while a `TypeError` keeps the stack that
+locates it. Whatever the body prints and exits on its own — a usage line, a missing
+credential — is its own business; the rule is only for what throws.
 
 Configuration follows the harness's own config rules: the connector ships a `config.ts`
 declaring its DEFAULT_s and its `ConnectorSpec`; `connectorConfig` reads the

@@ -18,6 +18,7 @@ import {
   IDENTITY_KEYS,
   orgFlag,
 } from "./config.ts";
+import { entry } from "./entry.ts";
 
 export const USAGE =
   "usage: liquen agent [--dir <org>] <name> [--name <full name>] [--email <address>] " +
@@ -59,8 +60,8 @@ export function parseAgentArgs(
 }
 
 if (import.meta.main) {
-  const org = orgFlag();
-  try {
+  await entry(async () => {
+    const org = orgFlag();
     const { name, identity, rest } = parseAgentArgs(org.args);
     const root = findRoot(org);
     await declareAgent(root, name, identity, rest);
@@ -74,8 +75,5 @@ if (import.meta.main) {
       ? "they steer, and no session of theirs will run."
       : "`liquen start` gives it a home.";
     console.log(`${root}/config.jsonc: agents.${name}${handles}. ${next}`);
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    Deno.exit(1);
-  }
+  });
 }

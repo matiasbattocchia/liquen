@@ -12,9 +12,10 @@
 import { DatabaseSync } from "node:sqlite";
 import { openLog } from "../store/log.ts";
 import { findRoot, orgFlag } from "../config.ts";
+import { entry } from "../entry.ts";
 
 if (import.meta.main) {
-  try {
+  await entry(async () => {
     const root = findRoot(orgFlag());
     const dir = `${root}/data`;
     const log = await openLog(`${dir}/log`);
@@ -66,8 +67,5 @@ if (import.meta.main) {
 
     db.close();
     await log.close();
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    Deno.exit(1);
-  }
+  });
 }

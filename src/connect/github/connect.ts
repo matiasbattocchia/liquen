@@ -42,6 +42,7 @@ import {
   type MessageEvent,
   orgFlag,
 } from "../../connector.ts";
+import { entry } from "../../entry.ts";
 
 export const APP_PREFIX = "github:app:";
 export const ORG_KEY = "github:org";
@@ -439,7 +440,7 @@ const USAGE = `usage: liquen connect github app
   --dir <org>   the org, when run from elsewhere`;
 
 if (import.meta.main) {
-  try {
+  await entry(async () => {
     const { openLog, openCredentials } = await import("../../connector.ts");
     const { userInfo } = await import("node:os");
 
@@ -576,8 +577,5 @@ if (import.meta.main) {
       await creds.close();
       await log.close();
     }
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    Deno.exit(1);
-  }
+  });
 }

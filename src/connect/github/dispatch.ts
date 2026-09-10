@@ -34,6 +34,7 @@ import type {
   Subscriber,
 } from "../../connector.ts";
 import { createDispatcher, DispatchError, findRoot, orgFlag } from "../../connector.ts";
+import { entry } from "../../entry.ts";
 
 /** How long one post to GitHub may take, spawn to exit. */
 const API_TIMEOUT_MS = 30_000;
@@ -243,4 +244,4 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   };
 }
 
-if (import.meta.main) await runDispatch();
+if (import.meta.main) await entry(runDispatch);

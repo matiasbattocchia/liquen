@@ -21,6 +21,7 @@
 import { DEFAULT_EVENTS } from "./config.ts";
 import type { Appender, Draft, MessageEvent, Part } from "../../connector.ts";
 import { findRoot, orgFlag } from "../../connector.ts";
+import { entry } from "../../entry.ts";
 
 export interface GithubWebhookDeps {
   /** → the EventLog (the connection's only write). Bind liquen's `log.publish`. */
@@ -323,4 +324,4 @@ export async function runIngest(): Promise<() => Promise<void>> {
   };
 }
 
-if (import.meta.main) await runIngest();
+if (import.meta.main) await entry(runIngest);

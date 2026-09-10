@@ -42,6 +42,7 @@ import { openFileDocs } from "./store/docs.ts";
 import { seedDocs } from "./store/seed.ts";
 import { anthropicClient, anthropicTransport, metered, type ModelTransport } from "./transport.ts";
 import { type ExecGround, type ExecPlane, installExecGround } from "./exec/bash.ts";
+import { entry } from "./entry.ts";
 import { openCredentials } from "./store/credentials.ts";
 import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
@@ -696,25 +697,27 @@ const REAP_POLL_MS = 1_000;
 // and a clean quit are the same hang-up, and zero held for the linger means nobody is
 // coming back — stop and exit. A bare daemon never reads the count.
 if (import.meta.main) {
-  const org = orgFlag();
-  const root = findRoot(org);
-  const dir = `${root}/data`;
-  const catalog = await readConfig(root);
-  const main = await start({ dir, catalog });
-  console.error(`agents: ${Object.keys(catalog.agents).join(", ")} · log: ${dir}/log`);
-  for (const sig of ["SIGTERM", "SIGINT"] as const) {
-    Deno.addSignalListener(sig, () => {
-      main.stop().finally(() => Deno.exit(0));
-    });
-  }
-  if (org.args.includes("--ephemeral")) {
-    let occupied = Date.now(); // boot counts as occupied: the raiser gets the linger to arrive
-    const reaper = setInterval(() => {
-      if (main.attachments() > 0) occupied = Date.now();
-      else if (Date.now() - occupied >= LINGER_MS) {
-        clearInterval(reaper);
+  await entry(async () => {
+    const org = orgFlag();
+    const root = findRoot(org);
+    const dir = `${root}/data`;
+    const catalog = await readConfig(root);
+    const main = await start({ dir, catalog });
+    console.error(`agents: ${Object.keys(catalog.agents).join(", ")} · log: ${dir}/log`);
+    for (const sig of ["SIGTERM", "SIGINT"] as const) {
+      Deno.addSignalListener(sig, () => {
         main.stop().finally(() => Deno.exit(0));
-      }
-    }, REAP_POLL_MS);
-  }
+      });
+    }
+    if (org.args.includes("--ephemeral")) {
+      let occupied = Date.now(); // boot counts as occupied: the raiser gets the linger to arrive
+      const reaper = setInterval(() => {
+        if (main.attachments() > 0) occupied = Date.now();
+        else if (Date.now() - occupied >= LINGER_MS) {
+          clearInterval(reaper);
+          main.stop().finally(() => Deno.exit(0));
+        }
+      }, REAP_POLL_MS);
+    }
+  });
 }

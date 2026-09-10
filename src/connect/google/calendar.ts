@@ -58,6 +58,7 @@ import type { Connections } from "../../store/connections.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
 import type { CalendarData, CalendarPart, Conversation, Draft, MessageEvent } from "../../types.ts";
 import { findRoot, orgFlag } from "../../config.ts";
+import { entry } from "../../entry.ts";
 
 const SERVICE = "google" as const;
 const GRANT_PREFIX = "google:";
@@ -486,4 +487,4 @@ export async function runIngest(): Promise<() => Promise<void>> {
   };
 }
 
-if (import.meta.main) await runIngest();
+if (import.meta.main) await entry(runIngest);

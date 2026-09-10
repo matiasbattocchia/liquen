@@ -35,6 +35,7 @@ import { type Directory, whatsappMentions } from "../mentions.ts";
 import { toWhatsApp } from "../flavor.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
+import { entry } from "../../entry.ts";
 
 /** The bridge's dispatch request (server.go `dispatchRequest`) — record verbatim. */
 export interface WADispatchRecord {
@@ -306,4 +307,4 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   };
 }
 
-if (import.meta.main) await runDispatch();
+if (import.meta.main) await entry(runDispatch);

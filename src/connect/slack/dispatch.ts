@@ -28,6 +28,7 @@ import { type Directory, encodeSlackText } from "../mentions.ts";
 import { toSlack } from "../flavor.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
+import { entry } from "../../entry.ts";
 
 export interface SlackTarget {
   connection: string; // the workspace the conversation anchors to (§4)
@@ -449,4 +450,4 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   };
 }
 
-if (import.meta.main) await runDispatch();
+if (import.meta.main) await entry(runDispatch);

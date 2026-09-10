@@ -46,6 +46,7 @@ import type { Conversation, Draft, FilePart, MessageEvent, Part } from "../../ty
 import { fromSlack } from "../flavor.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
+import { entry } from "../../entry.ts";
 
 /** The wire's file attachment — only the fields the media seam reads. */
 export interface SlackFileRef {
@@ -913,4 +914,4 @@ export async function runIngest(): Promise<() => Promise<void>> {
   };
 }
 
-if (import.meta.main) await runIngest();
+if (import.meta.main) await entry(runIngest);

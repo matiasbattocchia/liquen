@@ -24,6 +24,7 @@ import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { declared } from "../declare.ts";
+import { entry } from "../../entry.ts";
 
 export const APP_PREFIX = "google:app:";
 
@@ -107,7 +108,7 @@ const USAGE = `usage: liquen connect google app
   --dir <org>   the org, when run from elsewhere`;
 
 if (import.meta.main) {
-  try {
+  await entry(async () => {
     const { openCredentials } = await import("../../store/credentials.ts");
     const org = orgFlag();
     helpFlag(org.args, USAGE);
@@ -219,8 +220,5 @@ if (import.meta.main) {
     } finally {
       await creds.close();
     }
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    Deno.exit(1);
-  }
+  });
 }

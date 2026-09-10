@@ -10,6 +10,7 @@
  */
 
 import { findRoot, orgFlag } from "../config.ts";
+import { entry, report } from "../entry.ts";
 
 /** The services that ship with the package — each `src/connect/<name>/` a connect door and
  *  a run.ts. A name, not a stat: where the package is may be a URL. */
@@ -63,29 +64,31 @@ const USAGE = `usage: liquen connect
   --dir <org>   the org, when run from elsewhere`;
 
 if (import.meta.main) {
-  // the flag rides through to the door: the org is where its custom doors live, and its
-  // to find again as a child
-  const org = orgFlag();
-  const [name, ...words] = org.args;
-  if (name === "--help" || name === "-h") {
-    console.log(USAGE);
-    Deno.exit(0);
-  }
-  const rest = org.dir ? ["--dir", org.dir, ...words] : words;
-  let target: string;
-  try {
-    target = name
-      ? resolveConnect(name, findRoot(org))
-      : new URL("./status.ts", import.meta.url).href; // bare `liquen connect` = the map
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    Deno.exit(2);
-  }
-  const child = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", target, ...rest],
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).spawn();
-  Deno.exit((await child.status).code);
+  await entry(async () => {
+    // the flag rides through to the door: the org is where its custom doors live, and its
+    // to find again as a child
+    const org = orgFlag();
+    const [name, ...words] = org.args;
+    if (name === "--help" || name === "-h") {
+      console.log(USAGE);
+      Deno.exit(0);
+    }
+    const rest = org.dir ? ["--dir", org.dir, ...words] : words;
+    let target: string;
+    try {
+      target = name
+        ? resolveConnect(name, findRoot(org))
+        : new URL("./status.ts", import.meta.url).href; // bare `liquen connect` = the map
+    } catch (err) {
+      report(err);
+      Deno.exit(2); // 2 says "no such door": nothing was spawned
+    }
+    const child = new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", target, ...rest],
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).spawn();
+    Deno.exit((await child.status).code);
+  });
 }

@@ -18,23 +18,26 @@
  */
 
 import { findRoot, orgFlag } from "./config.ts";
+import { entry, report } from "./entry.ts";
 
 if (import.meta.main) {
-  const org = orgFlag();
-  let root: string;
-  try {
-    root = findRoot(org);
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    Deno.exit(2);
-  }
-  const child = new Deno.Command(Deno.execPath(), {
-    args: ["task", "--cwd", root, ...org.args],
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).spawn();
-  Deno.addSignalListener("SIGINT", () => {});
-  Deno.addSignalListener("SIGTERM", () => child.kill("SIGTERM"));
-  Deno.exit((await child.status).code);
+  await entry(async () => {
+    const org = orgFlag();
+    let root: string;
+    try {
+      root = findRoot(org);
+    } catch (err) {
+      report(err);
+      Deno.exit(2); // 2 says "not here": no org to delegate to, and nothing was run
+    }
+    const child = new Deno.Command(Deno.execPath(), {
+      args: ["task", "--cwd", root, ...org.args],
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).spawn();
+    Deno.addSignalListener("SIGINT", () => {});
+    Deno.addSignalListener("SIGTERM", () => child.kill("SIGTERM"));
+    Deno.exit((await child.status).code);
+  });
 }

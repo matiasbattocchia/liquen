@@ -41,6 +41,7 @@ import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { declared } from "../declare.ts";
 import { missingScopes } from "./config.ts";
+import { entry } from "../../entry.ts";
 
 /** auth.test's answer, plus what the token may DO: the granted scopes ride the response
  *  header (`x-oauth-scopes`), never the body — for a pasted token it is the only account
@@ -492,7 +493,7 @@ const USAGE = `usage: liquen connect slack app
   --dir <org>   the org, when run from elsewhere`;
 
 if (import.meta.main) {
-  try {
+  await entry(async () => {
     const { openLog } = await import("../../store/log.ts");
     const { openCredentials } = await import("../../store/credentials.ts");
     const { userInfo } = await import("node:os");
@@ -708,8 +709,5 @@ if (import.meta.main) {
       await creds.close();
       await log.close();
     }
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    Deno.exit(1);
-  }
+  });
 }

@@ -2098,6 +2098,29 @@ not cache it either. A read-only cache serves the run, emit included. The contai
 Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
 first boot, a fetch the harness (root, with the network) makes.
 
+### A refusal is a sentence, a bug is a stack (2026-09-10) — LANDED
+
+Every entry point ran its own error handling, and no two agreed. Twelve wrapped their body
+in a try that printed `err.message`; seven printed nothing of their own, so a bad
+`config.jsonc` under `liquen start` reached the operator as Deno's `Uncaught (in promise)`
+above a frame in a jsr.io URL. Worse, where the catch existed it flattened everything: a
+`TypeError` in a door lost its stack and arrived as a bare sentence with nowhere to look.
+
+`src/entry.ts` holds the rule now, and every entry point runs its body through `entry`.
+A plain `Error` prints as its message alone; every other throwable prints its stack. The
+type IS the classification, so no throw site changed and none has to: the codebase throws
+`new Error` 156 times and a built-in subclass never, because a sentence written for a
+person is exactly what a refusal already was. `report` is the same rule as a function, for
+the two places that end differently — `liquen`'s and `liquen connect`'s "not here" exit 2,
+and `afs`, which answers its shim with a code rather than exiting.
+
+The rule reaches past the body. `entry` listens for a rejected promise nobody awaited and
+for a throw from a callback, so a daemon whose boot succeeded and whose serving later fails
+reads the same way its boot would have. What a body prints and exits on its own terms —
+a usage line, a missing app, `--help` — is untouched: only what THROWS meets the rule.
+
+Open: `connect/whatsapp/ingest.ts` is the one entry point still on the old line.
+
 ### An OAuth server is a door's, not the operator's (2026-09-09) — LANDED
 
 The OAuth handlers (`connect/slack/oauth.ts`, `connect/google/oauth.ts`) are served by a

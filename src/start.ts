@@ -20,6 +20,7 @@
 
 import { TextLineStream } from "@std/streams";
 import { findRoot, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
+import { entry } from "./entry.ts";
 import { SHIPPED } from "./connect/connect.ts";
 
 const RESTART_BASE_MS = 1_000;
@@ -89,64 +90,66 @@ export function roster(root: string, connections: Record<string, unknown>): [str
 }
 
 if (import.meta.main) {
-  const root = findRoot(orgFlag());
-  const catalog = await readConfig(root);
-  const procs = roster(root, catalog.connections);
-  const live = new Map<string, Deno.ChildProcess>();
-  const halt = new AbortController();
-  const stopping = () => halt.signal.aborted;
+  await entry(async () => {
+    const root = findRoot(orgFlag());
+    const catalog = await readConfig(root);
+    const procs = roster(root, catalog.connections);
+    const live = new Map<string, Deno.ChildProcess>();
+    const halt = new AbortController();
+    const stopping = () => halt.signal.aborted;
 
-  const keepAlive = async ([name, module]: [string, string]) => {
-    let failures = 0;
-    while (!stopping()) {
-      const started = Date.now();
-      const child = new Deno.Command(Deno.execPath(), {
-        args: ["run", "-A", module],
-        cwd: root,
-        stdout: "piped",
-        stderr: "piped",
-      }).spawn();
-      live.set(name, child);
-      const pumps = [pump(child.stdout, name, false), pump(child.stderr, name, true)];
-      const status = await child.status;
-      await Promise.all(pumps); // the streams end at exit; drain the tail before reporting
-      live.delete(name);
+    const keepAlive = async ([name, module]: [string, string]) => {
+      let failures = 0;
+      while (!stopping()) {
+        const started = Date.now();
+        const child = new Deno.Command(Deno.execPath(), {
+          args: ["run", "-A", module],
+          cwd: root,
+          stdout: "piped",
+          stderr: "piped",
+        }).spawn();
+        live.set(name, child);
+        const pumps = [pump(child.stdout, name, false), pump(child.stderr, name, true)];
+        const status = await child.status;
+        await Promise.all(pumps); // the streams end at exit; drain the tail before reporting
+        live.delete(name);
+        if (stopping()) return;
+        const uptime = Date.now() - started;
+        failures = uptime >= HEALTHY_MS ? 1 : failures + 1;
+        const wait = backoffMs(failures);
+        stamp(
+          "liquen",
+          // the signal is the whole diagnosis when a child dies quietly: a killed process
+          // reports code 0, so the code alone reads like a clean exit
+          `${name} exited (${status.signal ?? `code ${status.code}`}) after ` +
+            `${Math.round(uptime / 1000)}s — restarting in ${wait / 1000}s`,
+        );
+        await pause(wait, halt.signal);
+      }
+    };
+
+    const stop = () => {
       if (stopping()) return;
-      const uptime = Date.now() - started;
-      failures = uptime >= HEALTHY_MS ? 1 : failures + 1;
-      const wait = backoffMs(failures);
-      stamp(
-        "liquen",
-        // the signal is the whole diagnosis when a child dies quietly: a killed process
-        // reports code 0, so the code alone reads like a clean exit
-        `${name} exited (${status.signal ?? `code ${status.code}`}) after ` +
-          `${Math.round(uptime / 1000)}s — restarting in ${wait / 1000}s`,
-      );
-      await pause(wait, halt.signal);
-    }
-  };
-
-  const stop = () => {
-    if (stopping()) return;
-    halt.abort();
-    stamp("liquen", `stopping ${live.size} process(es)`);
-    for (const c of live.values()) {
-      try {
-        c.kill("SIGTERM");
-      } catch { /* already gone */ }
-    }
-    const hammer = setTimeout(() => {
+      halt.abort();
+      stamp("liquen", `stopping ${live.size} process(es)`);
       for (const c of live.values()) {
         try {
-          c.kill("SIGKILL");
+          c.kill("SIGTERM");
         } catch { /* already gone */ }
       }
-    }, STOP_TIMEOUT_MS);
-    Deno.unrefTimer(hammer); // children all exiting cleanly must let the process end
-  };
-  Deno.addSignalListener("SIGTERM", stop);
-  Deno.addSignalListener("SIGINT", stop);
+      const hammer = setTimeout(() => {
+        for (const c of live.values()) {
+          try {
+            c.kill("SIGKILL");
+          } catch { /* already gone */ }
+        }
+      }, STOP_TIMEOUT_MS);
+      Deno.unrefTimer(hammer); // children all exiting cleanly must let the process end
+    };
+    Deno.addSignalListener("SIGTERM", stop);
+    Deno.addSignalListener("SIGINT", stop);
 
-  stamp("liquen", `${procs.map(([n]) => n).join(" · ")} — root ${root}`);
-  await Promise.all(procs.map(keepAlive));
+    stamp("liquen", `${procs.map(([n]) => n).join(" · ")} — root ${root}`);
+    await Promise.all(procs.map(keepAlive));
+  });
 }

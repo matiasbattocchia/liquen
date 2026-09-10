@@ -31,6 +31,7 @@
 import type { GrantBroker } from "./grants.ts";
 import type { CA } from "./ca.ts";
 import { findRoot, orgFlag } from "../config.ts";
+import { entry } from "../entry.ts";
 
 // dropped when re-originating: hop-by-hop headers (RFC 7230 §6.1) + the tunnel's host
 const HOP_BY_HOP = new Set([
@@ -297,41 +298,43 @@ function defaultAudit(a: EgressAudit): void {
  *     gws calendar events list --params '{"calendarId":"primary"}'
  * Env: none — the port is EPHEMERAL (printed at start; main runs its own in-process). */
 if (import.meta.main) {
-  const { openCredentials } = await import("../store/credentials.ts");
-  const { createGrantBroker } = await import("./grants.ts");
-  const { openCA } = await import("./ca.ts");
-  const org = orgFlag();
-  const root = findRoot(org);
-  const dir = `${root}/data`;
-  const creds = await openCredentials(dir);
+  await entry(async () => {
+    const { openCredentials } = await import("../store/credentials.ts");
+    const { createGrantBroker } = await import("./grants.ts");
+    const { openCA } = await import("./ca.ts");
+    const org = orgFlag();
+    const root = findRoot(org);
+    const dir = `${root}/data`;
+    const creds = await openCredentials(dir);
 
-  let key = org.args[0];
-  if (!key) {
-    const grants = (await creds.list("google:")).filter((r) => !r.key.startsWith("google:app:"));
-    if (grants.length !== 1) {
-      console.error(
-        `[proxy] name a credential key: found ${grants.length} google grants` +
-          (grants.length ? `:\n  ${grants.map((g) => g.key).join("\n  ")}` : ""),
-      );
+    let key = org.args[0];
+    if (!key) {
+      const grants = (await creds.list("google:")).filter((r) => !r.key.startsWith("google:app:"));
+      if (grants.length !== 1) {
+        console.error(
+          `[proxy] name a credential key: found ${grants.length} google grants` +
+            (grants.length ? `:\n  ${grants.map((g) => g.key).join("\n  ")}` : ""),
+        );
+        Deno.exit(2);
+      }
+      key = grants[0].key;
+    }
+
+    const broker = createGrantBroker({ creds });
+    const ca = await openCA(dir);
+    const proxy = startProxy({ ca, broker });
+    const grant = await creds.get(key);
+    // the row's own declaration names the var (main.ts fronts the same way): a grant that
+    // declares none is fronted nowhere
+    const varName = grant?.extra?.env;
+    if (typeof varName !== "string") {
+      console.error(`[proxy] ${key} declares no env var (extra.env): nothing to front`);
       Deno.exit(2);
     }
-    key = grants[0].key;
-  }
-
-  const broker = createGrantBroker({ creds });
-  const ca = await openCA(dir);
-  const proxy = startProxy({ ca, broker });
-  const grant = await creds.get(key);
-  // the row's own declaration names the var (main.ts fronts the same way): a grant that
-  // declares none is fronted nowhere
-  const varName = grant?.extra?.env;
-  if (typeof varName !== "string") {
-    console.error(`[proxy] ${key} declares no env var (extra.env): nothing to front`);
-    Deno.exit(2);
-  }
-  const handle = broker.issue(key, grant?.agentId);
-  console.error(`[proxy] on :${proxy.port} — fronting ${key}\n`);
-  console.error(`export HTTPS_PROXY=http://127.0.0.1:${proxy.port}`);
-  console.error(`export SSL_CERT_FILE=${proxy.caPath}`);
-  console.error(`export ${varName}=${handle}`);
+    const handle = broker.issue(key, grant?.agentId);
+    console.error(`[proxy] on :${proxy.port} — fronting ${key}\n`);
+    console.error(`export HTTPS_PROXY=http://127.0.0.1:${proxy.port}`);
+    console.error(`export SSL_CERT_FILE=${proxy.caPath}`);
+    console.error(`export ${varName}=${handle}`);
+  });
 }

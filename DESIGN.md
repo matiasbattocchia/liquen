@@ -2357,6 +2357,19 @@ picks the knobs.
   Cloud Run** (wrangler nudges toward the Tier-3 edge, where there's no bash — the tool model
   changes). `liquen init` scaffolds; the knobs pick the tier; git-push or docker-push deploys.
 
+### How a process ends when it cannot go on
+
+Every entry point — the doors, the daemons, the file binaries — runs its body through
+`entry` (`src/entry.ts`), and one rule decides what the terminal gets. A plain `Error` is a
+REFUSAL: a sentence the code wrote for the person standing there, printed alone. Any other
+throwable — a `TypeError`, a `Deno.errors.*`, a thrown string — is the runtime naming a
+place the code did not mean to reach, and its stack prints whole. Both exit 1; a body's own
+`Deno.exit` still ends the process on its own terms. The distinction costs nothing at the
+throw site, since `throw new Error(...)` is already how a refusal is written and every
+other class is already a fault, and it holds past the body: `entry` answers a rejected
+promise and a throw from a callback the same way, so a daemon's later failure reads like
+its boot's.
+
 ### The two planes (broker · agent) and where things live
 
 Every tier splits the same way: a **broker plane** (main + connections: log, locks,
