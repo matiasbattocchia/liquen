@@ -120,6 +120,7 @@ export interface WABatch {
     conversation_address?: string;
     sender_address?: string;
     text: string;
+    mentions?: WAContent["mentions"]; // an edit is where an @name most often arrives
     timestamp: string;
     muted?: boolean; // an edit is its own event, so it carries the chat state too —
     archived?: boolean; //   else an edit in a muted chat would wake what the chat can't
@@ -216,7 +217,7 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
       ...(batch.messages ?? []).map((m) =>
         mapMessage(m, connection, groupNames, pushnames, now, batch.history === true)
       ),
-      ...(batch.edits ?? []).map((e) => mapEdit(e, connection, now)),
+      ...(batch.edits ?? []).map((e) => mapEdit(e, connection, pushnames, now)),
       ...(batch.revokes ?? []).flatMap((r) => mapRevoke(r, connection, now)),
       ...(batch.statuses ?? []).map((s) => mapStatus(s, connection, now)),
     ].filter((d): d is Draft<MessageEvent> => d !== null);
@@ -409,15 +410,24 @@ function mapMessage(
 function mapEdit(
   e: NonNullable<WABatch["edits"]>[number],
   connection: string,
+  pushnames: Map<string, string>,
   now: () => string,
 ): Draft<MessageEvent> | null {
   if (!e.original_message_id) return null;
   const ts = e.timestamp || now();
   const marks = { ...(e.muted ? { muted: true } : {}), ...(e.archived ? { archived: true } : {}) };
+  const mentioned = (e.mentions ?? [])
+    .filter((m): m is { address: string; name?: string } => !!m.address)
+    .map((m) => ({ address: m.address, ...(m.name ? { name: m.name } : {}) }));
+  const text = e.mentions?.length ? nameMentionTokens(e.text, e.mentions, pushnames) : e.text;
   return {
     ts,
     type: "message",
-    payload: { action: "edit", ref_external_id: externalId(e.original_message_id) },
+    payload: {
+      action: "edit",
+      ref_external_id: externalId(e.original_message_id),
+      ...(mentioned.length ? { mentions: mentioned } : {}),
+    },
     ...(Object.keys(marks).length ? { extra: marks } : {}),
     envelope: {
       service: SERVICE,
@@ -429,7 +439,7 @@ function mapEdit(
       ...(e.sender_address ? { sender: { address: e.sender_address } } : {}),
       external_id: externalId(e.external_id ?? `edit.${e.original_message_id}.${ts}`),
     },
-    parts: [{ type: "text", kind: "text", text: e.text }],
+    parts: [{ type: "text", kind: "text", text }],
   };
 }
 

@@ -384,6 +384,32 @@ Deno.test("an edit is its OWN event: action edit + ref to the original, new part
   assertEquals(e.parts, [{ type: "text", kind: "text", text: "hola (corregido)" }]);
 });
 
+Deno.test("an edit carries the @name it adds: payload mentions + the token named", async () => {
+  const { handler, published } = harness();
+  await handler(
+    post(
+      "/whatsapp-web-webhook",
+      batch({
+        contacts: [{ address: "5491100000001", extra: { name: "Megavalo" } }],
+        edits: [{
+          original_message_id: "wmw.orig.1",
+          text: "asado en tu casa el domingo @5491100000001 ?",
+          mentions: [{ address: "5491100000001" }],
+          timestamp: "2026-08-11T12:05:00Z",
+        }],
+      }),
+    ),
+  );
+  const e = published[0] as MessageEvent;
+  assertEquals(e.payload?.mentions, [{ address: "5491100000001" }]);
+  // the inline token reads as a name, exactly as it does on a message
+  assertEquals(e.parts, [{
+    type: "text",
+    kind: "text",
+    text: "asado en tu casa el domingo @Megavalo ?",
+  }]);
+});
+
 Deno.test("a revoke is TWO drafts: the delete event + deleted_at on the original", async () => {
   const { handler, published } = harness();
   await handler(
