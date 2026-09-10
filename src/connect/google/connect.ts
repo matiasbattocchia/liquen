@@ -26,6 +26,7 @@ import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { declared } from "../declare.ts";
+import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
 export const APP_PREFIX = "google:app:";
@@ -224,7 +225,7 @@ if (import.meta.main) {
               `consent is incremental, so it merges into this grant.`
             : "\n✓ connected (deno task status shows the map)",
         );
-        await declared(root, "google");
+        await declared(root, SPEC);
       } else {
         console.error(USAGE);
         Deno.exit(2);

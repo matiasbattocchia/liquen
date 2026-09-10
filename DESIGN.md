@@ -2604,7 +2604,13 @@ loudly, the same law as an unknown config key.
   URL, an Events API request URL) needs a declared port — parallel orgs each declare their
   own; a dialer that can read the announcement (`gh webhook forward`, a test, a terminal)
   can take `ingestPort: 0` — bind any free port and announce it (re-rolled on restart). A
-  taken port fails naming its own knob (`serveIngest`, src/connect/serve.ts).
+  taken port fails naming its own knob (`serveIngest`, src/connect/serve.ts). The knob is
+  picked where a human can still hear it: the connect door binds every `checkPort` knob in
+  the connector's spec before writing the subsection, keeps silent when the default is free
+  (the subsection stays empty, the default rules) and declares the next free one out loud
+  when it is not (`declared`, src/connect/declare.ts). The bind is the test, so only a
+  RUNNING sibling moves a port; two orgs installed and never run together still meet at the
+  boot that runs them both, where the failing message is the right one.
 - **Local dev keeps its inner loop.** `deno task cli` hosts main in-process behind the REPL,
   and `deno task run:<name>` runs one connection alone; `deno task start` is the same
   headless shape a deployment runs.

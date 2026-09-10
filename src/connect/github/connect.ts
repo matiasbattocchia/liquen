@@ -46,6 +46,7 @@ import {
   type MessageEvent,
   orgFlag,
 } from "../../connector.ts";
+import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
 export const APP_PREFIX = "github:app:";
@@ -687,7 +688,7 @@ if (import.meta.main) {
           } (installation ${installationId}) → the org`,
         );
         console.error("  (deno task status shows the map)");
-        await declared(root, "github");
+        await declared(root, SPEC);
         await owed(creds);
       } finally {
         await creds.close();
@@ -768,7 +769,7 @@ if (import.meta.main) {
       });
       console.error(`\n✓ connected: github user ${login} → ${principal ?? "the org"}`);
       console.error("  (deno task status shows the map)");
-      await declared(root, "github");
+      await declared(root, SPEC);
       await owed(creds);
     } finally {
       await creds.close();

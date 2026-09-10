@@ -40,7 +40,7 @@ import type { Draft, MessageEvent } from "../../types.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { declared } from "../declare.ts";
-import { missingScopes } from "./config.ts";
+import { missingScopes, SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
 /** auth.test's answer, plus what the token may DO: the granted scopes ride the response
@@ -646,7 +646,7 @@ if (import.meta.main) {
         report(missing, "Reinstall the app to the workspace after adding them.");
         await owed(creds);
         console.error("  (deno task status shows the map)");
-        await declared(root, "slack");
+        await declared(root, SPEC);
       } finally {
         await creds.close();
         await log.close();
@@ -704,7 +704,7 @@ if (import.meta.main) {
       report(missing, 'Add them under "User Token Scopes", then "Reinstall to Workspace".');
       await owed(creds);
       console.error("  (deno task status shows the map)");
-      await declared(root, "slack");
+      await declared(root, SPEC);
     } finally {
       await creds.close();
       await log.close();

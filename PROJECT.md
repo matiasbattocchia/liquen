@@ -2098,6 +2098,25 @@ not cache it either. A read-only cache serves the run, emit included. The contai
 Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
 first boot, a fetch the harness (root, with the network) makes.
 
+### The door picks the port, because it is the only moment anyone can (2026-09-10) — LANDED
+
+A second org on one machine took the first one's whatsapp ingest port, and said so in a
+restart loop: `port 8793 in use — another org running? set connections.whatsapp.ingestPort`,
+every two seconds, doubling. The message names the exact knob and is still the wrong place
+to learn it — boot has no human at the terminal and no file open.
+
+`declared` takes the connector's SPEC now instead of its name, and before writing the
+subsection it binds every knob the catalog validates with `checkPort`. A default that is
+free stays unwritten, so the subsection is still empty and the connector's default still
+rules; a default that is taken is stepped over and the free one is declared, out loud, on
+the same line that says the connection landed. `checkPort` is the whole declaration — a new
+connector gets this by writing its spec.
+
+The bind is the honest test: a port is held by a RUNNING process, not by a config file, so
+a sibling org that is merely installed does not move this one. Two orgs installed and never
+run together will still collide at the boot that runs them both — and that is when the old
+message, which is still there, is the right one.
+
 ### The door that declares lays the file (2026-09-10) — LANDED
 
 Every seeded doc waited for the first boot, so the one thing a person does between

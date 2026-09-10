@@ -30,6 +30,7 @@ import { SERVICE } from "./ingest.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { declared } from "../declare.ts";
+import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
 /** The bridge's pairing poll response (sessions.go `PairingState`) — verbatim. */
@@ -262,7 +263,7 @@ if (import.meta.main) {
       });
       console.error(`\n✓ paired: ${address} → ${principal ?? "the org"}`);
       console.error("  (deno task status shows the map; run:whatsapp to receive)");
-      await declared(root, "whatsapp", { organizationId: tenant });
+      await declared(root, SPEC, { organizationId: tenant });
     } finally {
       await log.close();
     }
