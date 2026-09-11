@@ -9,6 +9,31 @@
  * A taken port names its own knob — parallel orgs each declare their own.
  */
 
+/** Whether something is already answering on the org's ingest port.
+ *
+ *  The mirror of `serveIngest`, for the ONE door that needs it: a pairing hands a service
+ *  the org's address, and the service dials it from that second on — the whatsmeow bridge
+ *  posts the linked phone's history within seconds, and nothing retries it. So that door
+ *  asks first, and refuses when the answer is no.
+ *
+ *  It is a CONNECT, not a bind: the ingest is the thing that binds, so asking the kernel
+ *  for the port would only prove that NOBODY holds it. What this proves is the opposite
+ *  and exactly as much as the door needs — someone is there. Which process it is, it does
+ *  not ask; nothing else in the org wants that port, and a stranger holding it is the
+ *  collision `serveIngest` already names.
+ *
+ *  It probes loopback, where the door runs. `ingestUrl` may name the org by an address
+ *  only the service can resolve (a container's host alias), and that address is the
+ *  service's to reach, not ours to verify. */
+export async function ingestUp(port: number): Promise<boolean> {
+  try {
+    (await Deno.connect({ hostname: "127.0.0.1", port })).close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Serve `handler`, announcing the actually-bound port; a taken port throws naming
  *  `configKey` (e.g. `connections.slack.ingestPort`). */
 export function serveIngest(

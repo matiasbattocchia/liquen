@@ -2098,6 +2098,28 @@ not cache it either. A read-only cache serves the run, emit included. The contai
 Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
 first boot, a fetch the harness (root, with the network) makes.
 
+### The pairing door asks whether anyone is home (2026-09-11) — LANDED
+
+**What was wrong:** `liquen connect whatsapp` would pair happily into an org that was not
+running. The bridge keeps the address from that second on and posts the linked phone's
+history within seconds; a post that finds nobody there is logged once and dropped, and
+WhatsApp sends that history exactly once. So the one connect that cannot be re-run was
+also the one with no precondition.
+
+**What changed:** `ingestUp` (`connect/serve.ts`) — a connect to loopback on the
+connector's own port, the mirror of `serveIngest` — and the whatsapp door refuses when the
+answer is no, naming the port and the address the bridge would have used. A plain `Error`,
+so it prints as a sentence and exits `REFUSAL`.
+
+**Why only this door.** The others run BEFORE their connector can: it boots on the
+credential the door writes, and nothing is in flight while the paste happens, so requiring
+a listener would buy nothing and forbid the first run. Pairing is the only connect that
+makes a service start delivering at once.
+
+**What it deliberately does not check:** whether MAIN is running. The probe is the
+connector's port, so an org whose doors are up and whose agents are paused pairs fine —
+the log takes the rows and the backlog hands them over when the agents come back.
+
 ### A backfill fills, never overwrites (2026-09-11) — LANDED
 
 **What was wrong:** the merge law let any draft with parts re-state the body of the row

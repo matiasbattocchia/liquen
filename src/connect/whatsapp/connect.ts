@@ -22,6 +22,12 @@
  * even when the ingest webhook isn't up yet. Which ingest is the door's to say: the bridge
  * is one sidecar for many orgs, and `webhook_url` on the create request is where THIS
  * session's traffic lands from then on (`ingestUrlOf`, `config.ts`).
+ *
+ * Which is why this door, alone among the doors, REFUSES when the org's ingest is not up
+ * (`ingestUp`): pairing is the one connect that makes a service start delivering at once,
+ * and the history it sends arrives once or never. The other doors run BEFORE their
+ * connector can (it boots on the credential the door writes) and nothing is in flight
+ * while they do, so requiring a listener there would buy nothing and forbid the first run.
  */
 
 import { helpFlag } from "../help.ts";
@@ -31,6 +37,7 @@ import type { Draft, MessageEvent } from "../../types.ts";
 import { SERVICE } from "./ingest.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
+import { ingestUp } from "../serve.ts";
 import { declared } from "../declare.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
@@ -213,6 +220,16 @@ if (import.meta.main) {
     const cfg = await whatsappConfig(root);
     const { bridgeUrl: base, organizationId } = cfg;
     const webhookUrl = ingestUrlOf(cfg);
+    // the door is the only moment anyone can check this: from the pairing on, the bridge
+    // delivers to `webhookUrl` — the phone's history first, within seconds — and a post
+    // that finds nobody there is logged once and dropped
+    if (!await ingestUp(cfg.ingestPort)) {
+      throw new Error(
+        `nothing is listening on :${cfg.ingestPort} — the bridge delivers this pairing's ` +
+          `history, and every message after it, to ${webhookUrl}, and what arrives before ` +
+          `that door opens is lost. Run \`liquen start\` first, then this door.`,
+      );
+    }
     // the first door names the tenant after the folder and declares it; from then on the
     // file says, and a rename of the folder moves nothing on the bridge
     const tenant = organizationId ?? basename(root);
