@@ -85,11 +85,13 @@ Slack for and the consent the app declares are one list, not two that drift.
 
 ### Presence: nothing to build
 
-`[thinking...]` and `[compacting...]` reach a surface as ordinary log rows (`extra.delta`),
-published by main and carried by whatever dispatcher already serves that surface. A
-connector does nothing to get them — no filter, no code at all, including a connector that
-is a serverless function. Your service's echo of the send merges into the committed row by
-`external_id` the way every echo does. See §9 in DESIGN.md.
+`[agent thinking...]` and `[agent compacting...]` reach a surface as ordinary log rows: the
+mirror's CC of a `delta` event in the mind, carried by whatever dispatcher already serves
+that surface, the way a gate's `[agent asks]` card is. A connector does nothing to get them
+— no filter, no code at all, including a connector that is a serverless function. Your
+service's echo of the send merges into the committed row by `external_id` the way every
+echo does. The CC is marked `extra.delta`, and the one thing that mark means is that the
+sweeper never re-offers it. See §9 in DESIGN.md.
 
 ### Outbound media: the pull leg, signed and relative
 

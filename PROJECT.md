@@ -2140,28 +2140,24 @@ are not gated. Google is a poller with a from-now bootstrap and has no ingest to
 connector's port, so an org whose doors are up and whose agents are paused connects fine —
 the log takes the rows and the backlog hands them over when the agents come back.
 
-### `mind` is a knob, and the org has one too (2026-09-11) — LANDED
+### `mind` is a knob in view, and the section is `organization` (2026-09-11) — LANDED
 
 `agents.<name>.mind: false` was "a person alone" — a roster entry that never had an agent.
 It is also, on an entry that has a folder, a PAUSE: the session does not run, the folder
 stays, rows keep landing in the log, and the backlog owes them when the knob flips back.
-So it is now an `org.agent` key like the rest — `org.agent.mind`, materialized `true`,
-overridden per entry — and `false` there pauses every agent that does not say otherwise:
-the org's doors stay up, its minds do not, which is the half of "up" that has memory behind
-it. The command that flips it is deferred; the file is the path.
+Three things follow. It is an org-wide key like the rest — `organization.agents.mind`,
+materialized `true` — and `false` there pauses every agent that does not say otherwise: the
+doors stay up, the minds do not. It is WRITTEN on every roster entry (`liquen agent`
+writes `mind: true`; `--no-mind` writes `false`), because a switch someone flips is a knob
+in view, never a default the file leaves to be looked up. And a paused agent's door still
+opens: main installs one for every roster entry, a tail reads the rooms, and an order — a
+message, a call, a verdict, a control — is refused with the sentence that says why
+(`DoorAgent.paused`); the attach client no longer refuses on its own.
 
-### A backfill fills, never overwrites (2026-09-11) — LANDED
-
-**What was wrong:** the merge law let any draft with parts re-state the body of the row
-its `external_id` names — right for a retry or an echo, wrong for a history import: a
-re-pair re-sends what the ingest already received live, and WhatsApp's history file parts
-carry no uri (old bytes are gone from the CDN), so the live row's reference to the bytes
-on disk was replaced by nothing, and `extra.backfill` landed on a row that was never
-history, silencing it.
-
-**What changed:** in the upsert, a draft marked `extra.backfill` fills `parts` and `text`
-only where the row has none and leaves `extra` as it was; `status` still merges (a read
-receipt is knowledge). A row nobody had is the backfill's, mark included, as before.
+The section that held the org's identity is now `organization`, and its agent defaults
+`organization.agents` — the file reads as the sentences it stands for. Existing files
+rename the two keys by hand: no compatibility path reads the old ones. The command that
+flips the knob is deferred; the file is the path.
 
 ### The bridge delivers where the pairing said (2026-09-11) — LANDED
 
@@ -2463,3 +2459,32 @@ Also fixed here: `aboutOf`'s map key held a raw NUL byte, which parsed fine and 
 refused it (it is an escape now, same value, still text). And the presence test in main
 wakes a whatsapp conversation through the ambient ladder, so `asleep()` would decide its
 outcome by the hour: pinned with `sleepHours: null`.
+
+### Presence takes the gate's shape (2026-09-11) — LANDED
+
+The row was a message, and a message was the wrong thing for it to be: the mind never said
+`[thinking...]`. The question "what else is on the menu?" had one honest answer — nothing
+fits, `thinking` least of all, since that type is the model's own reasoning replayed
+verbatim into the next prompt — and one precedent that settles it: `permission_request`.
+
+A gate is a typed event in the mind's room, and it reaches a phone only because the mirror
+translates it into a message CC tagged `[agent asks]`. The principal's `/y` comes back as a
+plain message, and the mind parses the verdict out of the words itself. No typed event ever
+touches a wire, in either direction. That is the law presence now obeys: a `delta` event in
+the mind, one data part naming the kind; the mirror crosses it as `[agent thinking...]` or
+`[agent compacting...]`, the whole line being the tag, exactly the shape every crossing line
+opens with.
+
+The type turned out cheaper than the flag, not dearer. Every reader of the mind is already
+an allowlist — render's chain has no else, `newsOf` is messages and alarms, `relevant` is a
+switch, `search` reads messages — so the event is invisible everywhere with no predicate to
+maintain, and `ephemeral()` and its seat in `silenced()` came out. Along the way a fact I had
+not made explicit: policy hides alias conversations from every agent, reads and writes
+alike, so the old rows' seat in `silenced()` had been belt and braces. The one reader that
+genuinely needs a mark is the sweeper, and the mark rides the CC, which is the row it would
+otherwise re-offer.
+
+Presence shrank to the two questions that are its own — whether anyone is waiting, and once
+per kind per turn — and stopped choosing surfaces. Where a line goes is the mirror's rule,
+which is what was asked for two rounds earlier and is now literally true. The cost is a
+gate's: one event plus its CCs.

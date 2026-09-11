@@ -72,7 +72,6 @@ import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import {
   bodyOf,
   cancelled,
-  ephemeral,
   hhmm,
   isCancelled,
   ownComplex,
@@ -459,7 +458,7 @@ export function relevant(config: AgentConfig, event: Event): boolean {
     // the harness's `cancelled` closes one, and `decide` idles on it from the window side.
     //  turn (§5), so its insert must carry the think it displaced forward
     default:
-      return false; // thinking · error · permission_request · control · unknown
+      return false; // thinking · error · permission_request · control · delta · unknown
   }
 }
 
@@ -1786,9 +1785,6 @@ async function search(
     after: args.after,
     text: args.text,
     types: ["message"],
-    // the one silenced class `search` is NOT the door for: presence rows are transport,
-    // not history — the mind never said them, so there is nothing here to find (§5)
-    filter: (e) => !ephemeral(e),
     limit: limit + 1,
   });
   const more = rows.length > limit;

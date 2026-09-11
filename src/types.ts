@@ -291,9 +291,8 @@ export interface Payload {
  *  the machine never branches on service keys. Known keys: `backfill` (imported history),
  *  `muted` · `archived` (the chat's platform-synced state when the message arrived) — any
  *  of the three SILENCES the row: wakes nothing, renders nowhere, `search` is the door
- *  (§2, §5) — `delta` (presence, §2: a `[thinking...]` the mind never said, riding the log
- *  only to reach a wire; silenced like the three above, and unlike them neither searchable
- *  nor ever re-offered — it is transport, not history) — `consumed` (on the agent's closing
+ *  (§2, §5) — `delta` (on the mirror's CC of a presence event, §9: a line that is only
+ *  true while the turn runs, so the sweeper never re-offers it) — `consumed` (on the agent's closing
  *  session messages: the last event id the step's window read — the coalescing horizon
  *  `unanswered` measures against,
  *  §2), `via` (mirror provenance, §4), `timer` (alarm provenance, §10: the row that fired,
@@ -318,7 +317,8 @@ export type EventType =
   | "permission_response"
   | "summary"
   | "alarm"
-  | "error";
+  | "error"
+  | "delta";
 
 export interface EventBase {
   id: EventId;
@@ -479,6 +479,20 @@ export interface ErrorEvent extends EventBase {
   parts: [DataPart<"error", { error: string }>];
 }
 
+/** What a presence line says the mind is doing: the two stream deltas worth a word. */
+export type DeltaKind = "thinking" | "checkpoint";
+
+/** Presence (§9): the mind saying what it is DOING, as a fact in its own room. Harness-
+ *  authored while a turn runs, and only when somebody is there to read it. The fact is all
+ *  the log holds — the words belong to the mirror, which crosses it to every surface as a
+ *  tagged line, exactly as a gate crosses as `[agent asks]`. Every reader of the mind
+ *  excludes it by type: it renders nowhere, is not news, wakes nothing, and `search` never
+ *  finds it. */
+export interface DeltaEvent extends EventBase {
+  type: "delta";
+  parts: [DataPart<"delta", { kind: DeltaKind }>];
+}
+
 export type Event =
   | MessageEvent
   | ControlEvent
@@ -489,7 +503,8 @@ export type Event =
   | PermissionResponseEvent
   | SummaryEvent
   | AlarmEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | DeltaEvent;
 
 /**
  * An event as PRODUCERS build it: everything but the id. The id belongs to the STORE —

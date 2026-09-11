@@ -57,6 +57,8 @@ import { outcomeLine, silenced, silent } from "../render.ts";
 import { describeCall, nameResolver } from "../describe.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type {
+  DeltaEvent,
+  DeltaKind,
   Draft,
   ErrorEvent,
   Event,
@@ -292,9 +294,19 @@ async function fanOut(
       conversation: { address: a.conversation },
     },
     parts,
-    extra: { via: { event: e.id, service: "local", conversation: sessionAddress(agentId, MIND) } },
+    extra: {
+      via: { event: e.id, service: "local", conversation: sessionAddress(agentId, MIND) },
+      // presence is only true while the turn runs: the sweeper never re-offers it
+      ...(e.type === "delta" ? { delta: true } : {}),
+    },
   })));
 }
+
+/** The word a presence line carries for each delta (§9): the surface's, not the log's. */
+export const PRESENCE_WORD: Record<DeltaKind, string> = {
+  thinking: "thinking",
+  checkpoint: "compacting",
+};
 
 /** What a mind event looks like on a surface — exactly what the REPL shows (§4). Every
  *  line opens with WHO, because a self-conversation renders both speakers as the same
@@ -330,6 +342,13 @@ async function ccParts(
     // — a gate is waiting, so no turn will be taken to relay this
     const { error } = (e as ErrorEvent).parts[0].data;
     return [{ type: "text", kind: "text", text: `\`[system]\` ${error}` }];
+  }
+  if (e.type === "delta") {
+    // presence (§9): what the mind is doing, for the principal on the other side of a
+    // chat — the log holds the fact, the words are the surface's. The whole line is the
+    // tag, the same shape every crossing line opens with
+    const { kind } = (e as DeltaEvent).parts[0].data;
+    return [{ type: "text", kind: "text", text: `\`[agent ${PRESENCE_WORD[kind]}...]\`` }];
   }
   if (e.type === "permission_request") {
     // the approval card, wherever the principal is (§9). It carries the ARGUMENTS, not

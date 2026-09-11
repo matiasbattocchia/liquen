@@ -560,3 +560,35 @@ Deno.test("mirror fan-in: a principal's DM with the org number copies to the org
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("mirror fan-out: presence crosses as the tag alone, and the CC is marked transport", async () => {
+  await withMirror(async ({ publish, inConv, waitFor }) => {
+    const fact = await publish({
+      ts: new Date().toISOString(),
+      type: "delta",
+      agent: { id: "ana", session_id: "mind" },
+      envelope: {
+        service: "local",
+        connection_address: "agent",
+        conversation: { address: "mind@ana" },
+      },
+      parts: [{ type: "data", kind: "delta", data: { kind: "thinking" } }],
+    });
+    await waitFor(async () =>
+      (await inConv("D1")).length === 1 && (await inConv("549")).length === 1
+    );
+    for (const conv of ["D1", "549"]) {
+      const [cc] = await inConv(conv);
+      // the log holds the fact; the words are the surface's — the same tag shape as every
+      // crossing line, and nothing after it
+      assertEquals(textOf(cc), "`[agent thinking...]`");
+      assertEquals(cc.agent, { id: "ana", session_id: "mind" });
+      assertEquals(cc.payload?.ref_id, fact.id);
+      // only true while the turn runs: the mark the sweeper reads to never re-offer it
+      assertEquals(cc.extra?.delta, true);
+    }
+    // the fact stays where it was written: nothing fans back in
+    await new Promise((r) => setTimeout(r, 200));
+    assertEquals((await inConv("mind@ana")).length, 0); // inConv reads messages only
+  });
+});

@@ -454,14 +454,12 @@ export async function start(
       stand: (session, path) => shellOf(a.config.agentId, session).stand(path),
     })),
   );
-  // presence (§2): the same two facts the doors serve, said out loud where the mirror
-  // speaks. It publishes to the RAW log for the mirror's own reason — the rows land in
-  // alias conversations the agent's scoped port hides — as `extra.delta` rows, so
-  // everything that reads the log back skips them (`silenced`). Inert until a surface is
-  // bound.
+  // presence (§9): the same two facts the doors serve, written as a `delta` event in the
+  // mind's room — the mirror is what carries it to every surface, tagged. Inert until a
+  // surface is bound.
   const presence = createPresence({
     aliases: () => log.aliases(),
-    publish: (drafts) => log.publish(drafts),
+    publish: (draft) => log.publish(draft),
     onError: (err) => console.error("presence FAILED:", err),
   });
   cast = (agentId, sessionId, delta) => {

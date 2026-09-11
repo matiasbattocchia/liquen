@@ -256,7 +256,7 @@ arrives through the agent's scoped subscription, already readable (§6).
 | `alarm` | **yes** — a scheduled wake arriving with its note (§10) |
 | `control` | **no** — it never *starts* work; it ENDS it. A running turn arms an interrupt as it takes the lease (xi's `interrupt` port); main's tail fires it when a `control` row lands in that session's room — log-derived, because an out-of-process invocation can't be signalled |
 | `summary` | **yes** — a checkpoint DISPLACES a turn (§5): its insert carries the displaced think forward |
-| `permission_request` · `thinking` · *(unknown)* | **no** (spectators) |
+| `permission_request` · `thinking` · `delta` · *(unknown)* | **no** (spectators) |
 | `error` | **no** — and this one is policy, not economy: a logged error is a PERMANENT failure until something new arrives (transient ones were already retried inside nu before one was written). `decide` says the same from the window side, via the trailing-error rule. Waking here would hot-loop a failing think with no backoff |
 
 The derivations are **position-aware**, so a late invocation that arrives after the work was
@@ -710,6 +710,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `summary` | nu (the checkpoint IS the turn, §5) | leading text block (§5) | **think** (it displaced one) | parts(text) · payload{covers} |
 | `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `<system kind="wake">` carrying the note | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
 | `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
+| `delta` | main (presence, §9): the mind is at work and somebody is waiting | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
 
 - **mu emits 3**: `message` (say) + `tool_use` + `thinking`. Everything else is world + runtime.
 - **Only inbound types: `message`, `control`.** Open-set holds: unknown → ignore, safe to add.
@@ -879,9 +880,11 @@ of one ties a member to an agent that is not their own, an empty list says nobod
 (a service agent, reached only through its door). Every principal is a roster entry; one
 with `mind: false` is a person alone — identity, handles, a door, no session runs for
 them. The same knob on an agent that has a folder is a PAUSE: rows keep landing in the log
-and are owed when it comes back (the backlog, §5); `org.agent.mind: false` pauses every
+and are owed when it comes back (the backlog, §5); `organization.agents.mind: false` pauses every
 agent that does not say otherwise — the org's doors stay up, its minds do not, which is the
-half of "the org is up" that has memory behind it. The mind has one floor: any principal's word takes it (§2), and any principal's
+half of "the org is up" that has memory behind it. A paused agent's door still opens: a tail
+reads its rooms, and an order — a message, a call, a verdict — is refused in a sentence,
+since nobody would take it and a row nobody takes reads as ignored. The mind has one floor: any principal's word takes it (§2), and any principal's
 verdict rules on a card (§9).
 
 ```
@@ -2080,27 +2083,33 @@ connections:
 reaps itself after a linger with zero attachments — and "is one running?" is a
 `connect()`, never a `stat()`.
 
-**Presence is an EVENT.** `[thinking...]` and `[compacting...]` are rows on the log
-(`extra.delta`, `connect/presence.ts`), published by main beside the mirror and carried by
-whatever dispatcher already serves that surface. Nothing about it is a connector's
-business: no socket, no client, no filter at its own door — a connector that is a serverless
-function gets presence for nothing, which is what settles the design. The platform's echo
-merges into the committed row by `external_id` exactly as every other echo does.
+**Presence is a typed fact in the mind, and a message on the wire — the gate's own
+shape.** While a turn runs and somebody is waiting, main writes a `delta` event into the
+mind's room (`connect/presence.ts`): one data part naming the kind, `thinking` or
+`checkpoint`, harness-authored. That is all the log holds. The mirror crosses it to every
+live surface exactly as it crosses a `permission_request` — as a tagged line the surface can
+show, `[agent thinking...]` or `[agent compacting...]`, the whole line being the tag — and
+that CC rides whatever dispatcher already serves the surface. No typed event ever touches a
+wire, in either direction; a wire's only currency is a message, and the mirror is the one
+translator. Nothing about it is a connector's business — a connector that is a serverless
+function gets presence for nothing, which is what settles the design — and the platform's
+echo merges into the CC by `external_id` exactly as every other echo does.
 
-What keeps the words out of the mind is one flag in one predicate. `extra.delta` joins
-`silenced()`: the row wakes nothing, renders nowhere, is not news, is not mirrored, is not
-processed. Two places part company with the rest of that family, and both follow from the
-row being transport rather than history: `search` skips it (there is nothing to find — the
-mind never said it), and the sweeper never re-offers it, because a durable queue exists to
-deliver *later* and a `[thinking...]` delivered an hour late is worse than one never
+What keeps the words out of the mind is the type. Every reader of the mind is an allowlist:
+render draws no block for it, `newsOf` counts only messages and alarms, `relevant` says no,
+and `search` reads messages. So the event renders nowhere, is not news, wakes nothing, and
+cannot be found, with no predicate to maintain. The CC carries one mark, `extra.delta`, for
+one reader: the sweeper never re-offers it, because a durable queue exists to deliver
+*later* and a `[agent thinking...]` delivered an hour late is worse than one never
 delivered. Ephemera fails once, quietly.
 
-Where a presence line goes is the mirror's question, already answered: the agent's live
-alias bindings, and only for the MIND session. Deltas are the mind's, so they go where mind
-events go — the principal's own surfaces hear it, a group never does, and a named session
-says nothing because it is mirrored nowhere. Whether one is sent is `about`: only while the
-turn's freshest unanswered conversation is inside the minute, read across every service,
-because the mind is one.
+Where a presence line goes is therefore not presence's question at all: the mirror's
+fan-out rule decides — the agent's live alias bindings, for the MIND session only, so the
+principal's own surfaces hear it, a group never does, and a named session says nothing
+because it is mirrored nowhere. Whether one is written is `about`: only while the turn's
+freshest unanswered conversation is inside the minute, read across every service, because
+the mind is one; and never while no surface is bound, since a fact nobody can hear is not
+worth a row.
 
 **Discovery is a skill, not a file.** The agent is taught two lines — import `src/script.ts`
 and `bind` it to `new URL(".", import.meta.url).pathname` — and writes them into the script
@@ -2499,12 +2508,12 @@ homes, everything else funneled to the deepest function that needs it (main → 
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
 log.db tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
 tuning, every deployment works on the defaults: bashTimeoutMs ·
-compactAt · keepRecent · windowLimit · debounceMs), `org`
+compactAt · keepRecent · windowLimit · debounceMs), `organization`
 (this deployment's identity: timezone · locale ·
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
-`org.agent`, the defaults every agent inherits: model · effort · maxTokens · provider ·
+`organization.agents`, the defaults every agent inherits: model · effort · maxTokens · provider ·
 tools · rules · the attention knobs), `processors` (media→text commands, §5), `agents`
-(the roster: each entry re-declares `org.agent` keys sparsely, plus `identity` —
+(the roster: each entry re-declares `organization.agents` keys sparsely, plus `identity` —
 `name`/`email`/`phone`, the agent's own: the name it goes by and the handles of the
 account it acts as, mirrored into the registry's columns; whether that account is a
 member's or the org's is the connection row's fact, §4 — `principals`, the whole list of
@@ -2525,7 +2534,7 @@ that call landed (upserted by scope: a later verdict replaces the action). The g
 compiles both, remembered first: the principal outranks the base, and among the
 remembered the most specific wins. Same division of labor as the registry — humans write
 config, verdicts write rows, the reader merges. Resolution, most specific wins:
-`agents.<name>` → MainConfig (the process: tests) → `org.agent` → the catalog's
+`agents.<name>` → MainConfig (the process: tests) → `organization.agents` → the catalog's
 constants — a key left out takes its default, and an unknown key or malformed value
 fails the boot loudly: a typo must not run silently, and a silent fallback would run the
 org on settings the human believes overridden. The functions are 100% parametrized —

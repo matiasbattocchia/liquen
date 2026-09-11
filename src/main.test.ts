@@ -684,7 +684,7 @@ Deno.test("a person alone (mind: false, §4): a registry row, no session, no hom
 });
 
 Deno.test({
-  name: "presence: a turn over a fresh word says [thinking...] on the mirror's surface only",
+  name: "presence: a turn over a fresh word says [agent thinking...] on the mirror's surface only",
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
@@ -720,20 +720,25 @@ Deno.test({
         parts: [{ type: "text", kind: "text", text: "¿estás?" }],
       } as Draft<MessageEvent>);
 
+      // the fact lands in the mind's room, and the mirror carries it to the self-chat as
+      // the tagged line — the whole path, main → presence → mirror → the surface's row
       const surface = async () =>
         (await main.log.read({ conversation: "5491133585694" }))
           .filter((e) => e.extra?.delta === true);
       await waitFor(async () => (await surface()).length > 0);
       const [said] = await surface();
+      assertEquals(said.type, "message");
       assertEquals(said.agent, { id: "a1", session_id: "mind" });
       assertEquals(said.envelope.service, "whatsapp");
       assertEquals(said.envelope.connection_address, "5491133585694");
       assertEquals((said as MessageEvent).parts, [
-        { type: "text", kind: "text", text: "[thinking...]" },
+        { type: "text", kind: "text", text: "`[agent thinking...]`" },
       ]);
+      const [fact] = await main.log.read({ conversation: "mind@a1", types: ["delta"] });
+      assertEquals(said.payload?.ref_id, fact.id);
 
-      // and nowhere else: the turn ends, and the sender's conversation and the mind's own
-      // room hold no presence — only the mirror's surface heard it
+      // and nowhere else: the turn ends, and the sender's conversation holds no presence —
+      // only the mirror's surface heard it
       await waitFor(async () =>
         (await main.log.read({ types: ["message"] })).some((e) =>
           e.agent !== undefined && e.extra?.delta !== true
