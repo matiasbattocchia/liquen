@@ -23,11 +23,8 @@
  * is one sidecar for many orgs, and `webhook_url` on the create request is where THIS
  * session's traffic lands from then on (`ingestUrlOf`, `config.ts`).
  *
- * Which is why this door, alone among the doors, REFUSES when the org's ingest is not up
- * (`ingestUp`): pairing is the one connect that makes a service start delivering at once,
- * and the history it sends arrives once or never. The other doors run BEFORE their
- * connector can (it boots on the credential the door writes) and nothing is in flight
- * while they do, so requiring a listener there would buy nothing and forbid the first run.
+ * Which is why the door REFUSES when the org's ingest is not up (`requireIngest`): pairing
+ * makes the bridge start delivering at once, and the history it sends arrives once or never.
  */
 
 import { helpFlag } from "../help.ts";
@@ -37,8 +34,7 @@ import type { Draft, MessageEvent } from "../../types.ts";
 import { SERVICE } from "./ingest.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
-import { ingestUp } from "../serve.ts";
-import { declared } from "../declare.ts";
+import { requireIngest } from "../declare.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
@@ -217,22 +213,16 @@ if (import.meta.main) {
       }
     })();
     const { ingestUrlOf, whatsappConfig } = await import("./config.ts");
-    const cfg = await whatsappConfig(root);
-    const { bridgeUrl: base, organizationId } = cfg;
-    const webhookUrl = ingestUrlOf(cfg);
-    // the door is the only moment anyone can check this: from the pairing on, the bridge
-    // delivers to `webhookUrl` — the phone's history first, within seconds — and a post
-    // that finds nobody there is logged once and dropped
-    if (!await ingestUp(cfg.ingestPort)) {
-      throw new Error(
-        `nothing is listening on :${cfg.ingestPort} — the bridge delivers this pairing's ` +
-          `history, and every message after it, to ${webhookUrl}, and what arrives before ` +
-          `that door opens is lost. Run \`liquen start\` first, then this door.`,
-      );
-    }
     // the first door names the tenant after the folder and declares it; from then on the
     // file says, and a rename of the folder moves nothing on the bridge
-    const tenant = organizationId ?? basename(root);
+    const tenant = (await whatsappConfig(root)).organizationId ?? basename(root);
+    // declared, and up: from the pairing on, the bridge delivers to this org's ingest —
+    // the phone's history first, within seconds — and a post that finds nobody there is
+    // logged once and dropped. The door is the only moment anyone can check.
+    await requireIngest(root, SPEC, { organizationId: tenant });
+    const cfg = await whatsappConfig(root);
+    const { bridgeUrl: base } = cfg;
+    const webhookUrl = ingestUrlOf(cfg);
     const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
     const phoneNumber = flags.get("phone") || undefined;
     if (flags.has("phone") && !phoneNumber) {
@@ -290,8 +280,7 @@ if (import.meta.main) {
         },
       });
       console.error(`\n✓ paired: ${address} → ${principal ?? "the org"}`);
-      console.error("  (deno task status shows the map; run:whatsapp to receive)");
-      await declared(root, SPEC, { organizationId: tenant });
+      console.error("  (deno task status shows the map)");
     } finally {
       await log.close();
     }

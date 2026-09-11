@@ -54,6 +54,12 @@ secrets only. The org is where you run liquen; `--dir <path>` names it from anyw
 
 ## Connections
 
+A connect door refuses a grant nobody is listening for: a granted service delivers from
+that second on, and a delivery that finds no door is dropped by everyone. So the org runs
+first — `deno task start` — and the doors run against it. On a fresh org the first door
+declares its connection in `config.jsonc` and waits while you restart `start` in the
+other terminal, so it can go on in the same run.
+
 ### GitHub (dev-tier: `gh webhook forward`)
 
 Two identities, either alone enough to start: the org's, which every agent falls back to,
@@ -61,8 +67,8 @@ and an agent's own, which posts under that person's name. The smallest setup is 
 and no GitHub App at all:
 
 ```sh
-deno task connect github user --org --token   # a machine user's token → the org
 deno task start                               # webhook receiver → the log, replies → gh api
+deno task connect github user --org --token   # a machine user's token → the org
 gh webhook forward --repo=you/repo \
   --events=issue_comment,pull_request,pull_request_review_comment \
   --url=http://localhost:8788/
@@ -106,12 +112,9 @@ Every door closes by naming what the org still owes, and `--help` explains each 
    deno task connect slack user [agent]
    ```
 
-4. **Run the connection** (both halves, over the shared `./data` root):
-
-   ```sh
-   deno task start             # both halves in one process: Socket Mode (or HTTP) in,
-                               # chat.postMessage out (tokens from the vault)
-   ```
+4. **The connection runs under `deno task start`** — both halves in one process: Socket
+   Mode (or HTTP) in, chat.postMessage out, tokens from the vault. A token pasted through
+   a door (2, 3) is picked up on the next start.
 
    The ingest is one webhook function either way — Socket Mode is just the local carrier;
    an edge deploy serves the same function at the app's Events API request URL.

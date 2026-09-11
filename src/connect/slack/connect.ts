@@ -39,7 +39,7 @@ import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
-import { declared } from "../declare.ts";
+import { requireIngest } from "../declare.ts";
 import { missingScopes, SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
@@ -507,6 +507,9 @@ if (import.meta.main) {
     const verb = first === "app" || first === "bot" || first === "socket" || first === "user"
       ? first
       : "user";
+    // a grant makes the workspace deliver from that second on, so the door is the moment
+    // to know somebody is listening (`requireIngest`); `app` lands no grant and needs nothing
+    if (verb !== "app") await requireIngest(root, SPEC);
 
     /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
     const lines = Deno.stdin.isTerminal()
@@ -646,7 +649,6 @@ if (import.meta.main) {
         report(missing, "Reinstall the app to the workspace after adding them.");
         await owed(creds);
         console.error("  (deno task status shows the map)");
-        await declared(root, SPEC);
       } finally {
         await creds.close();
         await log.close();
@@ -704,7 +706,6 @@ if (import.meta.main) {
       report(missing, 'Add them under "User Token Scopes", then "Reinstall to Workspace".');
       await owed(creds);
       console.error("  (deno task status shows the map)");
-      await declared(root, SPEC);
     } finally {
       await creds.close();
       await log.close();

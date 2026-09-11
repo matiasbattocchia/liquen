@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { API_TIMEOUT_MS, timedFetch, withTimeout } from "./http.ts";
+import { API_TIMEOUT_MS, said, timedFetch, withTimeout } from "./http.ts";
 
 /** A fetch that never answers on its own — only the signal ends it, as a stalled socket
  *  would behave under a real `fetch`. */
@@ -41,4 +41,55 @@ Deno.test("http: timedFetch carries the module's bound on every call", async () 
   assertEquals(seen[0].method, "POST");
   assert(seen[0].signal instanceof AbortSignal, "a signal rides the call");
   assert(API_TIMEOUT_MS > 0);
+});
+
+Deno.test("http: said turns the two transport failures into sentences and lets the rest through", async () => {
+  // the runtime's network failure, both ways Deno has worded it: wrapped (2.9+, the
+  // transport's error in `cause`) and bare
+  const transport = "error sending request for url (http://127.0.0.1:9/x): client error " +
+    "(Connect): tcp connect error: Connection refused (os error 111)";
+  for (
+    const refused of [
+      new TypeError("fetch failed", { cause: new Error(transport) }),
+      new TypeError(transport),
+    ]
+  ) {
+    const failing = (() => Promise.reject(refused)) as typeof fetch;
+    const down = await assertRejects(() => said(failing, 30_000)("http://127.0.0.1:9/x"));
+    assert((down as Error).constructor === Error, "a plain Error — a refusal, not a fault");
+    assertEquals(
+      (down as Error).message,
+      "cannot reach 127.0.0.1:9 — client error (Connect): tcp connect error: " +
+        "Connection refused (os error 111)",
+    );
+  }
+
+  // the bound's own timeout
+  const slow = await assertRejects(() =>
+    said(withTimeout(hang, 20), 30_000)("https://api.example/x")
+  );
+  assert((slow as Error).constructor === Error);
+  assertEquals((slow as Error).message, "no answer from api.example within 30s");
+
+  // a caller's own abort is the caller's, and a bug is a bug
+  const own = new AbortController();
+  const p = said(withTimeout(hang, 10_000), 10_000)("https://api.example/x", {
+    signal: own.signal,
+  });
+  own.abort(new Error("caller cancelled"));
+  assertEquals(((await assertRejects(() => p)) as Error).message, "caller cancelled");
+  const bug = (() => Promise.reject(new TypeError("x is not a function"))) as typeof fetch;
+  assert((await assertRejects(() => said(bug, 1)("https://api.example/x"))) instanceof TypeError);
+});
+
+Deno.test("http: timedFetch says it for a real refused connection", async () => {
+  const probe = Deno.listen({ port: 0 });
+  const port = (probe.addr as Deno.NetAddr).port;
+  probe.close(); // nobody is on it now
+  const err = await assertRejects(() => timedFetch(`http://127.0.0.1:${port}/x`));
+  assert((err as Error).constructor === Error, String(err));
+  assert(
+    (err as Error).message.startsWith(`cannot reach 127.0.0.1:${port} — `),
+    (err as Error).message,
+  );
 });

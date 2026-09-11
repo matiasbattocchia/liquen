@@ -109,3 +109,11 @@ Deno.test("report: a refusal with an empty message still prints a line", () => {
   assertEquals(lines, [""]);
   assert(lines.length === 1);
 });
+
+Deno.test("report: what the program modeled is a sentence, what the runtime raised is a fault", () => {
+  class Modeled extends Error {} // DispatchError, LeaseLost: an expected condition with a class
+  assertEquals(report(new Modeled("the wire said no")), REFUSAL);
+  assertEquals(report(new Deno.errors.AddrInUse("port")), 1);
+  assertEquals(report(new DOMException("timed out", "TimeoutError")), 1);
+  assertEquals(report(new RangeError("x")), 1);
+});

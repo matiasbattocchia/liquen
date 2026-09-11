@@ -662,11 +662,14 @@ async function compileRoster(
   const found: Principal[] = [];
   for (const [name, entry] of Object.entries(catalog.agents)) {
     const { identity = {}, principals, mind, ...cfg } = entry;
-    // the home is derived — for an agent; a person alone (§4) has a row and no folder
-    if (mind !== false) await Deno.mkdir(`${dir}/agents/${name}`, { recursive: true });
+    // a session runs unless the entry — or `org.agent.mind`, for all of them — says not
+    // (§4). The home is derived, for an agent: a person alone has a row and no folder, and
+    // a paused agent keeps the folder it has and takes no turn until the knob flips back
+    const runs = mind ?? org.mind;
+    if (runs) await Deno.mkdir(`${dir}/agents/${name}`, { recursive: true });
     found.push({
       principals,
-      ...(mind === false ? { runs: false } : {}),
+      ...(runs ? {} : { runs: false }),
       agentId: name,
       sessionId: MIND,
       model: cfg.model ?? defaults.model ?? org.model,

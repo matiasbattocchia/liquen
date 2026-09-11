@@ -13,7 +13,14 @@
  * stepped over and the free one is declared, out loud.
  */
 
-import { checkPort, type ConnectorSpec, declareConnection } from "../config.ts";
+import {
+  checkPort,
+  connectorConfig,
+  type ConnectorSpec,
+  declareConnection,
+  readConfig,
+} from "../config.ts";
+import { ingestUp } from "./serve.ts";
 
 /** The first port from `want` up that nothing is listening on — the honest test is the
  *  bind itself, since a port is taken by a RUNNING process, not by a config file. So a
@@ -70,4 +77,50 @@ export async function declared(
       } } in config.jsonc — \`liquen start\` runs it`
       : `  config.jsonc already declares "${spec.name}" — \`liquen start\` runs it`,
   );
+}
+
+/** How long a door waits for the org to come up around it, and how often it looks. */
+export const INGEST_WAIT_MS = 120_000;
+const INGEST_POLL_MS = 1_000;
+
+/** The door's FIRST step, before the service is asked for anything: the connection
+ *  DECLARED, and its process UP.
+ *
+ *  Declared, because `liquen start` runs one child per `connections.<name>` and nothing
+ *  else does — a door on a fresh org would otherwise wait for a listener nothing will ever
+ *  start. Running the door is the decision, so the file says so from the first run on.
+ *
+ *  Up, because a grant makes the service deliver from that second on — the whatsmeow
+ *  bridge posts the phone's history within seconds of a pairing, an installed Slack app
+ *  was sending before the door ran — and a delivery that finds no listener is dropped by
+ *  everyone. So the door refuses, in a sentence, rather than take a grant it cannot
+ *  receive on. Between saying so and refusing it WAITS: the person reading the line is at
+ *  a terminal, and `liquen start` in the next one brings the port up in a second.
+ *
+ *  `ingestPort: 0` skips the probe: an OS-picked port is held by no service and read off
+ *  the announcement by a human (`gh webhook forward`, a dev loop) — nothing delivers there
+ *  unattended, so there is nothing to protect. */
+export async function requireIngest(
+  root: string,
+  spec: ConnectorSpec,
+  decided: Record<string, unknown> = {},
+  waitMs: number = INGEST_WAIT_MS,
+): Promise<void> {
+  if (!(spec.name in (await readConfig(root)).connections)) await declared(root, spec, decided);
+  const { ingestPort } = await connectorConfig<{ ingestPort: number }>(root, spec);
+  if (ingestPort === 0) return;
+  if (await ingestUp(ingestPort)) return;
+  const sentence = `nothing is listening on :${ingestPort} — ${spec.name}'s ingest is the door ` +
+    `the service delivers to, and what arrives before it opens is lost. Run \`liquen start\` ` +
+    `(it runs ${spec.name} now that the file declares it), then this door.`;
+  console.error(`${sentence}\n  waiting up to ${Math.round(waitMs / 1_000)}s for it…`);
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, Math.min(INGEST_POLL_MS, waitMs)));
+    if (await ingestUp(ingestPort)) {
+      console.error(`  :${ingestPort} is up — going on`);
+      return;
+    }
+  }
+  throw new Error(sentence);
 }

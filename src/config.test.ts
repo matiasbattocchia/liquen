@@ -401,3 +401,29 @@ Deno.test("declareAgent: --principal and --no-mind land as the entry's own keys"
     assertEquals(await Deno.readTextFile(`${root}/config.jsonc`), before);
   });
 });
+
+Deno.test("org.agent.mind: the org's default, an entry's override, and a boolean or nothing", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(`${root}/config.jsonc`, materialize(starterConfig()));
+    assertEquals((await readConfig(root)).org.agent.mind, true); // materialized, on by default
+
+    // the whole org paused, one agent kept awake by its own entry
+    await Deno.writeTextFile(
+      `${root}/config.jsonc`,
+      JSON.stringify({ org: { agent: { mind: false } }, agents: { ana: {}, sol: { mind: true } } }),
+    );
+    const cfg = await readConfig(root);
+    assertEquals(cfg.org.agent.mind, false);
+    assertEquals(cfg.agents.ana.mind, undefined); // sparse: inherits the org's
+    assertEquals(cfg.agents.sol.mind, true);
+
+    await Deno.writeTextFile(
+      `${root}/config.jsonc`,
+      JSON.stringify({ org: { agent: { mind: "no" } } }),
+    );
+    await assertRejects(() => readConfig(root), Error, "mind must be true or false");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

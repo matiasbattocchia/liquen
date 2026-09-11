@@ -40,11 +40,11 @@ import {
   type Connections,
   type CredentialRow,
   type Credentials,
-  declared,
   type Draft,
   findRoot,
   type MessageEvent,
   orgFlag,
+  requireIngest,
 } from "../../connector.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
@@ -616,6 +616,9 @@ if (import.meta.main) {
     const words = org.args.filter((a) => !a.startsWith("--") && a !== pickedApp);
     const [first, ...rest] = words;
     const verb = first === "app" || first === "bot" || first === "user" ? first : "user";
+    // a grant makes the App deliver from that second on, so the door is the moment to know
+    // somebody is listening (`requireIngest`); `app` registers and lands no grant
+    if (verb !== "app") await requireIngest(root, SPEC);
 
     /** What the org still owes after this door — read off the vault, so finishing one door
      *  is where you learn what the next one is. */
@@ -688,7 +691,6 @@ if (import.meta.main) {
           } (installation ${installationId}) → the org`,
         );
         console.error("  (deno task status shows the map)");
-        await declared(root, SPEC);
         await owed(creds);
       } finally {
         await creds.close();
@@ -769,7 +771,6 @@ if (import.meta.main) {
       });
       console.error(`\n✓ connected: github user ${login} → ${principal ?? "the org"}`);
       console.error("  (deno task status shows the map)");
-      await declared(root, SPEC);
       await owed(creds);
     } finally {
       await creds.close();

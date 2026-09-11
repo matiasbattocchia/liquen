@@ -2098,27 +2098,57 @@ not cache it either. A read-only cache serves the run, emit included. The contai
 Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
 first boot, a fetch the harness (root, with the network) makes.
 
-### The pairing door asks whether anyone is home (2026-09-11) — LANDED
+### Errors: what the program modeled is a sentence, what the runtime raised is a fault (2026-09-11) — LANDED
 
-**What was wrong:** `liquen connect whatsapp` would pair happily into an org that was not
-running. The bridge keeps the address from that second on and posts the linked phone's
-history within seconds; a post that finds nobody there is logged once and dropped, and
-WhatsApp sends that history exactly once. So the one connect that cannot be re-run was
-also the one with no precondition.
+**What was wrong:** `entry`'s rule read "a plain `Error` is a refusal, anything else a
+fault" — and the proxy was too narrow in both directions. Too narrow one way: three
+classes this program models as expected conditions (`DispatchError`, `LeaseLost`,
+`SyncTokenGone`) would print frames if they ever reached an entry point, because their
+constructor is not `Error`. Too narrow the other way: a bridge that is not there is a
+`TypeError` from `fetch`, so the whatsapp door printed a stack for the most ordinary
+failure a door has.
 
-**What changed:** `ingestUp` (`connect/serve.ts`) — a connect to loopback on the
-connector's own port, the mirror of `serveIngest` — and the whatsapp door refuses when the
-answer is no, naming the port and the address the bridge would have used. A plain `Error`,
-so it prints as a sentence and exits `REFUSAL`.
+**What changed:** the rule is now about WHO raised it. The runtime's own classes —
+`TypeError`, `RangeError` and their siblings, `DOMException`, every `Deno.errors.*` — are
+faults: nobody in this program chose them to say something, so the frames are the message.
+Any other `Error` — plain or subclassed — was modeled by someone, and prints as its
+sentence. And the one seam where a runtime error carries an expected fact is translated
+there: `timedFetch` (`connect/http.ts`) says `cannot reach <host> — <cause>` and `no
+answer from <host> within <bound>` as plain errors, so every door and dispatcher gets the
+line for free. `withTimeout` stays the primitive and keeps its TimeoutError.
 
-**Why only this door.** The others run BEFORE their connector can: it boots on the
-credential the door writes, and nothing is in flight while the paste happens, so requiring
-a listener would buy nothing and forbid the first run. Pairing is the only connect that
-makes a service start delivering at once.
+### The doors ask whether anyone is home (2026-09-11) — LANDED
+
+**What was wrong:** a door would take a grant into an org that was not running. A granted
+service delivers from that second on — the bridge posts the phone's history within seconds
+of a pairing, an installed Slack app was already sending — and a delivery that finds no
+listener is dropped by everyone; WhatsApp's history is sent once. So the connects that
+cannot be re-run had no precondition. And the fix has a trap: `liquen start` runs a
+connector only once `connections.<name>` is declared, and the door declared it only after
+the grant — so "start first" on a fresh org could never be satisfied.
+
+**What changed:** `requireIngest` (`connect/declare.ts`), the door's FIRST step for
+whatsapp, slack and github: declare the connection if the file does not (running the door
+is the decision), then probe the connector's own port — a connect to loopback (`ingestUp`,
+`connect/serve.ts`), the mirror of `serveIngest`. Nobody there ⇒ the sentence, then a
+bounded wait (`INGEST_WAIT_MS`) so `liquen start` in the next terminal lets the same run go
+on; still nobody ⇒ refuse. `ingestPort: 0` skips the probe: an OS-picked port is held by
+no service. The `app` verbs (a manifest link, an App registration form) land no grant and
+are not gated. Google is a poller with a from-now bootstrap and has no ingest to ask for.
 
 **What it deliberately does not check:** whether MAIN is running. The probe is the
-connector's port, so an org whose doors are up and whose agents are paused pairs fine —
+connector's port, so an org whose doors are up and whose agents are paused connects fine —
 the log takes the rows and the backlog hands them over when the agents come back.
+
+### `mind` is a knob, and the org has one too (2026-09-11) — LANDED
+
+`agents.<name>.mind: false` was "a person alone" — a roster entry that never had an agent.
+It is also, on an entry that has a folder, a PAUSE: the session does not run, the folder
+stays, rows keep landing in the log, and the backlog owes them when the knob flips back.
+So it is now an `org.agent` key like the rest — `org.agent.mind`, materialized `true`,
+overridden per entry — and `false` there pauses every agent that does not say otherwise:
+the org's doors stay up, its minds do not, which is the half of "up" that has memory behind
+it. The command that flips it is deferred; the file is the path.
 
 ### A backfill fills, never overwrites (2026-09-11) — LANDED
 

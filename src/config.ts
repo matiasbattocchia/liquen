@@ -124,6 +124,7 @@ export interface AgentDefaults {
   digestAfterMessages: number; //   a conversation hot · the ambient pile that forces a
   digestMinutes: number; //   wake · the ambient look interval
   sleepHours: string | null; // org-clock span "23-8"; null ⇒ never sleeps
+  mind: boolean; // false ⇒ no session runs (§4): a member with no agent, or an agent paused
 }
 
 /** One roster entry: overrides of `org.agent`, key by key, plus the agent's own identity —
@@ -131,14 +132,14 @@ export interface AgentDefaults {
  *  is — a member's, or the org's — is the connection row's fact, never declared here.
  *  `principals` says who steers, as roster usernames, when the derivation of §4 (the owner;
  *  every member when the account is the org's) is not wanted — `[]` for nobody. `mind`
- *  false makes the entry a person alone: identity and handles, no session ever runs.
- *  Everything else about the agent is discovered (connect flows) or derived (the home
- *  folder). Null is "not declared", the shape `liquen agent` writes for a handle it was not
- *  given. */
+ *  false runs no session for the entry: a person alone (identity and handles, never a
+ *  folder), or an agent PAUSED — its folder stays, its rows keep landing, and the backlog
+ *  hands them over when it comes back. Everything else about the agent is discovered
+ *  (connect flows) or derived (the home folder). Null is "not declared", the shape
+ *  `liquen agent` writes for a handle it was not given. */
 export interface AgentEntry extends Partial<AgentDefaults> {
   identity?: Identity;
   principals?: string[];
-  mind?: boolean;
 }
 export interface Identity {
   name?: string | null;
@@ -149,7 +150,8 @@ export const IDENTITY_KEYS = ["name", "email", "phone"] as const;
 const IDENTITY_DOC = "<name>: any org.agent key re-declared, plus identity — the name the " +
   "agent goes by and the handles of the account it acts as (null ⇒ not declared); " +
   "principals — who steers it, roster names ([] ⇒ nobody; absent ⇒ its owner, or every " +
-  "member when the account is the org's); mind: false — a member with no agent of their own";
+  "member when the account is the org's); mind: false — no session runs: a member with no " +
+  "agent of their own, or an agent paused";
 
 export interface OrgConfig {
   system: {
@@ -301,6 +303,13 @@ const AGENT: Entry[] = [
     key: "sleepHours",
     value: DEFAULT_SLEEP_HOURS,
     doc: 'attention: org-clock span "from-to" the ambient world waits out; null ⇒ never sleeps',
+  },
+  {
+    key: "mind",
+    value: true,
+    doc: "whether a session runs for the agent; false PAUSES it — its rows still land in " +
+      "the log and are owed when it comes back. Here, false pauses every agent that does " +
+      "not say otherwise: the org's doors stay up, its minds do not",
   },
 ];
 
@@ -743,6 +752,9 @@ function validateAgent(a: Partial<AgentDefaults>, path: string): void {
   }
   if (a.effort != null && !(EFFORTS as readonly string[]).includes(a.effort)) {
     throw new Error(`${path}: unknown effort "${a.effort}" (one of ${EFFORTS.join(", ")})`);
+  }
+  if (a.mind !== undefined && typeof a.mind !== "boolean") {
+    throw new Error(`${path}: mind must be true or false`);
   }
   if (a.tools != null) {
     const ok = Array.isArray(a.tools) &&

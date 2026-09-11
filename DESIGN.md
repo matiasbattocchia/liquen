@@ -878,7 +878,10 @@ overrides the derivation with the whole list, roster usernames, owner not implie
 of one ties a member to an agent that is not their own, an empty list says nobody steers
 (a service agent, reached only through its door). Every principal is a roster entry; one
 with `mind: false` is a person alone — identity, handles, a door, no session runs for
-them. The mind has one floor: any principal's word takes it (§2), and any principal's
+them. The same knob on an agent that has a folder is a PAUSE: rows keep landing in the log
+and are owed when it comes back (the backlog, §5); `org.agent.mind: false` pauses every
+agent that does not say otherwise — the org's doors stay up, its minds do not, which is the
+half of "the org is up" that has memory behind it. The mind has one floor: any principal's word takes it (§2), and any principal's
 verdict rules on a card (§9).
 
 ```
@@ -2408,10 +2411,13 @@ picks the knobs.
 ### How a process ends when it cannot go on
 
 Every entry point — the doors, the daemons, the file binaries — runs its body through
-`entry` (`src/entry.ts`), and one rule decides what the terminal gets. A plain `Error` is a
-REFUSAL: a sentence the code wrote for the person standing there, printed alone. Any other
-throwable — a `TypeError`, a `Deno.errors.*`, a thrown string — is the runtime naming a
-place the code did not mean to reach, and its stack prints whole. Both exit 1; a body's own
+`entry` (`src/entry.ts`), and one rule decides what the terminal gets, by WHO raised it. An
+`Error` this program modeled — a plain one, or a class of ours like `DispatchError` — is a
+REFUSAL: a sentence written for the person standing there, printed alone. The runtime's
+own — a `TypeError`, a `DOMException`, a `Deno.errors.*`, a thrown string — is the engine
+naming a place the code did not mean to reach, and its stack prints whole. A seam that
+meets the world translates at the seam (`connect/http.ts`: an absent host is a `TypeError`
+to `fetch` and a sentence to us), so the rule stays about classes. A body's own
 `Deno.exit` still ends the process on its own terms. The distinction costs nothing at the
 throw site, since `throw new Error(...)` is already how a refusal is written and every
 other class is already a fault, and it holds past the body: `entry` answers a rejected
@@ -2635,8 +2641,8 @@ loudly, the same law as an unknown config key.
   RUNNING sibling moves a port; two orgs installed and never run together still meet at the
   boot that runs them both, where the failing message is the right one.
 - **A crash comes back, a refusal does not.** `entry` picks the exit code by the same rule
-  it picks the message: a plain `Error` is a refusal and exits `REFUSAL` (2), anything else
-  is a fault and exits 1. The supervisor reads that code (`comesBack`, src/start.ts): a
+  it picks the message: an `Error` the program modeled is a refusal and exits `REFUSAL`
+  (2), the runtime's own is a fault and exits 1. The supervisor reads that code (`comesBack`, src/start.ts): a
   fault, a signal or an unasked-for clean exit are restarted with backoff; a refusal is
   logged once and left down, because a port already held or a key the file got wrong will be
   held and wrong again a second later. The org keeps running with whatever is left, and
