@@ -31,14 +31,18 @@
  *                                                          already classified: `cancel`
  *                                                          cuts the session's running turn
  *                                                          (§2) → {ok, id}
- *   tail                 {op, from?, session?, cwd?}     → {ok} — then the connection also
- *                                                  PUSHES: {event} per row of that
- *                                                  session's scoped view (from the
+ *   tail          {op, from?, session?, cwd?, recall?} → {ok, recalled?} — then the
+ *                                                  connection also PUSHES: {event} per row
+ *                                                  of that session's scoped view (from the
  *                                                  cursor), {delta} per model delta,
  *                                                  {status} on the session's turn edges
  *                                                  (below). Full disclosure: what to do
  *                                                  with a gate or `<|SILENCE|>` is the
  *                                                  interface's decision, never the door's.
+ *                                                  `recall` asks the reply to carry the
+ *                                                  last N lines the principal SENT to this
+ *                                                  session — the past of a surface whose
+ *                                                  screen is the present (§9).
  *
  * One synthetic turn key per connection (`job:<id>`): a `call` run is a turn no session
  * ever held, so its uses read as fresh work to act, its results weld to their uses in the
@@ -67,6 +71,7 @@ import type {
 import type { Log } from "./store/log.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
+import { textOf } from "./render.ts";
 
 export interface DoorAgent {
   agentId: string;
@@ -74,7 +79,7 @@ export interface DoorAgent {
   sessionId: string;
   /** A SESSION's scoped port (§6): the door reads and writes as the session the request
    *  named, never wider. Asking for a session is what births it (main's runner). */
-  port(sessionId: string): Pick<Log, "publish" | "subscribe">;
+  port(sessionId: string): Pick<Log, "publish" | "subscribe" | "read">;
   /** No session runs for this agent (`mind: false`, §4). The door still opens — a tail
    *  reads the rooms, a search answers — and REFUSES an order: a message, a call, a
    *  verdict, a control. Nobody would take it, and a row nobody takes reads as ignored. */
@@ -398,8 +403,10 @@ async function handle(
       }
       await stand(session, req.cwd);
     }
+    // read the past before opening on the present, so the two never name the same row
+    const recalled = req.recall === undefined ? undefined : await sent(port, address, req.recall);
     tail(session, typeof req.from === "string" ? req.from : undefined);
-    return { ok: true, status: "tailing" };
+    return { ok: true, status: "tailing", ...(recalled ? { recalled } : {}) };
   }
   throw new Error(
     `unknown op "${String(req.op)}" — the door speaks call, message, control, ` +
@@ -408,6 +415,31 @@ async function handle(
 }
 
 const CONTROLS: readonly ControlKind[] = ["stop", "cancel"];
+
+/** The most a `recall` may ask for: a ring to reach back through, not a transcript. */
+export const MAX_RECALL = 500;
+
+/** The lines the principal SENT to this session, oldest first. The input half of a complex
+ *  is the row with a sender and no `turn_id` (§3) — the shape this door's own `message` op
+ *  writes, and the shape the mirror carries in when the principal speaks from a wire. */
+async function sent(
+  port: Pick<Log, "read">,
+  conversation: string,
+  limit: unknown,
+): Promise<string[]> {
+  if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1) {
+    throw new Error("tail recall must be a positive integer");
+  }
+  const rows = await port.read({
+    conversation,
+    types: ["message"],
+    limit: Math.min(limit, MAX_RECALL),
+    filter: (e) =>
+      e.envelope.sender !== undefined &&
+      (e as MessageEvent).payload?.turn_id === undefined,
+  });
+  return rows.map((e) => textOf(e)).filter((t) => t !== "");
+}
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);

@@ -18,10 +18,14 @@
  *   /cancel             → cut the running turn: a thinking model is hung up on, a running
  *                         tool is killed, and the agent idles until you speak again (§2)
  *   /quit (or Ctrl-D)   → hang up — the daemon's life is its attachments, not ours
+ *
+ * The line you type is the REPL's own (`line.ts`): arrows place the cursor and walk the
+ * lines you sent before — this session's, back past this REPL's lifetime, because the log
+ * is what remembers them — and the transcript prints above the line without disturbing it.
  */
 
-import { TextLineStream } from "@std/streams";
 import { attach, resolveAgent, wire } from "./attach.ts";
+import { createScreen } from "./line.ts";
 import { orgFlag } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { DIM, painter, RED, RESET } from "./paint.ts";
@@ -30,6 +34,10 @@ import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
 
 export const USAGE = "usage: liquen repl [--dir <org>] [agent] [--session <name>]";
+
+/** How far back the up arrow reaches when the REPL opens: the last lines this principal
+ *  sent to this session, read off the log the door already keeps. */
+const RECALL = 200;
 
 await entry(async () => {
   // `liquen repl [agent] [--session name]` — both are session choices, so arguments, not
@@ -50,8 +58,12 @@ await entry(async () => {
   const conn = await attach(a);
   let leaving = false;
 
-  const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
-  const prompt = () => write("\n> ");
+  // the screen owns the line being typed, so the transcript may print while it is typed;
+  // the ring it opens with is what the tail recalls, asked for once the door has answered
+  let recalled: string[] = [];
+  const screen = createScreen({ recalled: () => recalled });
+  const write = (s: string) => screen.write(s);
+  const prompt = () => screen.prompt();
 
   // every approval card still waiting, oldest first. A bare `/y` answers the newest (the
   // one just painted); `/y all` answers the whole pile, which is the point of the list.
@@ -81,46 +93,42 @@ await entry(async () => {
   w.hangup.then(() => {
     if (!leaving) {
       write(`\n${RED}the daemon hung up${RESET}\n`);
+      screen.close();
       Deno.exit(1);
     }
   });
 
-  // live: the screen is the present, the log holds the past. The agent's shell stands where
-  // its principal does — a place it cannot stand in ends the REPL before a word is typed.
-  const t = await w.request({ op: "tail", session, cwd: Deno.cwd() });
+  // live: the screen is the present, and the past it does load is the principal's own —
+  // what they sent here, ready under the up arrow. The agent's shell stands where its
+  // principal does — a place it cannot stand in ends the REPL before a word is typed.
+  const t = await w.request({ op: "tail", session, cwd: Deno.cwd(), recall: RECALL });
   if (!t.ok) {
     write(`${RED}${t.error}${RESET}\n`);
     leaving = true;
     conn.close();
     Deno.exit(1);
   }
+  recalled = t.recalled ?? [];
 
   write(
     `${DIM}liquen — ${home} · ${a.model}${
       a.paused ? " · PAUSED (mind: false — reads only)" : ""
-    } · log: ${a.dir} · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n> `,
+    } · log: ${a.dir} · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n`,
   );
 
-  const lines = Deno.stdin.readable
-    .pipeThrough(new TextDecoderStream())
-    .pipeThrough(new TextLineStream());
-
-  for await (const line of lines) {
+  for await (const line of screen.lines()) {
     const text = line.trim();
-    if (text === "") {
-      write("> ");
-      continue;
-    }
+    if (text === "") continue;
     if (text === "/quit" || text === "/q") break;
     if (text === "/cancel") {
       const r = await w.request({ op: "control", kind: "cancel", session });
-      write(r.ok ? `${DIM}cancel sent${RESET}\n> ` : `\n${RED}! ${r.error}${RESET}\n> `);
+      write(r.ok ? `${DIM}cancel sent${RESET}\n` : `\n${RED}! ${r.error}${RESET}\n`);
       continue;
     }
     const verdict = text.startsWith("/y") || text.startsWith("/n") ? parseVerdict(text) : undefined;
     if (verdict) {
       if (pending.length === 0) {
-        write(`${DIM}nothing pending${RESET}\n> `);
+        write(`${DIM}nothing pending${RESET}\n`);
         continue;
       }
       // `all` takes the pile in the order it was asked; a bare word takes the newest card,
@@ -128,7 +136,7 @@ await entry(async () => {
       const answered = verdict.every ? pending.splice(0) : [pending.pop()!];
       for (const ref of answered) {
         const r = await w.request({ op: "permission_response", ref_id: ref, verdict, session });
-        if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
+        if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n`);
       }
       if (answered.length > 1) write(`${DIM}${answered.length} approvals answered${RESET}\n`);
       continue;
@@ -139,13 +147,14 @@ await entry(async () => {
       sender: { address: a.username, name: a.username },
       session,
     });
-    if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
+    if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n`);
   }
 
   leaving = true;
   try {
     conn.close();
   } catch { /* already closed */ }
+  screen.close();
   write(`\n${DIM}bye${RESET}\n`);
   Deno.exit(0);
 });

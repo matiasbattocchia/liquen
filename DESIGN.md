@@ -2070,15 +2070,22 @@ running turn, §2), `permission_response` (a gate answered), and `tail` (the age
 view pushed from a cursor, model deltas riding the same wire — `onDelta` is a fan-out over
 the tailers; its `cwd` is where the client stands, and the session's shell starts there for
 as long as the connection lives — tried as the agent's uid before the tail opens, so a place
-the agent cannot stand in refuses the attach itself). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
+the agent cannot stand in refuses the attach itself; its `recall` asks the reply to carry the
+last N lines the principal SENT to that session, read off the scoped view like anything else,
+which is how a surface whose screen is the present still opens knowing what was said through
+it). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
 begins, `{status: "idle", after}` when `decide` answers `ignore` — the one fact an attach
 client cannot compute, since only the deciding read runs under the lease. `after` is the
 last event that read saw, so a client that wrote id M knows its line was weighed once
 `after >= M` (UUIDv7 order) — an address comparison, never a judgment. Edge-triggered and
 ephemeral like a delta: never stored, correctness never rides it. The door discloses the
 whole session; what to do with a gate, `<|SILENCE|>`, an error row, or an idle over an
-open approval is each interface's decision. The daemon's life derives from the same
-connections:
+open approval is each interface's decision. A terminal surface owns its input line for the
+same reason (`line.ts`): raw mode is what makes an arrow a movement rather than three bytes
+of message, and a line the principal is half-way through survives the transcript printing
+above it. The ring those arrows walk is the tail's recall — what a surface remembers of
+itself it remembers out of the log, never out of a file beside it. The daemon's life derives
+from the same connections:
 `liquen start`'s main runs regardless, while one an interface raised (`main.ts --ephemeral`)
 reaps itself after a linger with zero attachments — and "is one running?" is a
 `connect()`, never a `stat()`.

@@ -90,6 +90,8 @@ export interface Reply {
   error?: string;
   id?: string;
   status?: string;
+  /** A tail that asked to `recall`: the lines the principal sent before, oldest first. */
+  recalled?: string[];
 }
 
 export interface Wire {

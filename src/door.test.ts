@@ -631,3 +631,66 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: "door: a tail recalls the lines the principal sent, and nothing the agent said",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { dir, log, down } = await up();
+    try {
+      const sender = { address: "matias", name: "matias" };
+      const client = await rawClient(dir);
+      await client.request({ op: "message", text: "uno", sender });
+      await client.request({ op: "message", text: "dos", sender });
+      // the agent's own half of the complex: a turn_id and no sender — never a line to recall
+      await log.publish(
+        {
+          ts: new Date().toISOString(),
+          type: "message",
+          payload: { turn_id: "t1" },
+          agent: { id: "ana", session_id: "mind" },
+          envelope: {
+            service: "local",
+            connection_address: "agent",
+            conversation: { address: "mind@ana" },
+          },
+          parts: [{ type: "text", kind: "text", text: "hola" }],
+        } satisfies Draft<MessageEvent>,
+      );
+      await client.request({ op: "message", text: "tres", sender });
+
+      // a fresh attachment opens standing after everything this principal has said here
+      const next = await rawClient(dir);
+      assertEquals(await next.request({ op: "tail", recall: 10 }), {
+        ok: true,
+        status: "tailing",
+        recalled: ["uno", "dos", "tres"],
+      });
+
+      // the most recent N, still in the order they were said
+      const few = await rawClient(dir);
+      assertEquals((await few.request({ op: "tail", recall: 2 })).recalled, ["dos", "tres"]);
+
+      // another session's room is another past
+      const other = await rawClient(dir);
+      assertEquals(
+        (await other.request({ op: "tail", session: "build", recall: 10 })).recalled,
+        [],
+      );
+
+      // a tail that asks for nothing is answered as it always was
+      const bare = await rawClient(dir);
+      assertEquals(await bare.request({ op: "tail" }), { ok: true, status: "tailing" });
+
+      const bad = await rawClient(dir);
+      const refused = await bad.request({ op: "tail", recall: 0 });
+      assertEquals(refused.ok, false);
+      assertStringIncludes(String(refused.error), "positive integer");
+
+      for (const c of [client, next, few, other, bare, bad]) c.conn.close();
+    } finally {
+      await down();
+    }
+  },
+});

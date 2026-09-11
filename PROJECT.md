@@ -2536,3 +2536,32 @@ Presence shrank to the two questions that are its own — whether anyone is wait
 per kind per turn — and stopped choosing surfaces. Where a line goes is the mirror's rule,
 which is what was asked for two rounds earlier and is now literally true. The cost is a
 gate's: one event plus its CCs.
+
+### The REPL's line is the REPL's own (2026-09-11) — LANDED
+
+The REPL read stdin as a stream of lines, which means the kernel was doing the editing —
+and the kernel's editor has no memory and no arrows: pressing ← sent `^[[D` into the
+message, and everything said in an earlier REPL was gone the moment it exited. `line.ts`
+takes the job: raw mode, `keys()` turning bytes into intents, `edit()` applying one to a
+buffer, a ring the arrows walk. The three are pure and separate on purpose — the editor is
+proved without a terminal, and the parts that can only be seen on one (wrapping, repaint)
+were driven through a pty and read back as a rendered screen.
+
+Owning the line is what let the second thing fall out: the screen owns its bottom rows, so
+every transcript write erases the line, prints above it, and draws it back where the cursor
+was. A reply streaming in no longer walks over what you are half-way through typing, and
+`erase` puts the cursor back mid-row when the transcript stopped mid-row, so a streamed
+sentence continues rather than breaking.
+
+Where the past comes from was the real decision. A `.history` file beside the org would
+have been zero protocol, but the log already holds every line the principal sent, and a
+surface keeping a second copy of that is a second truth. So `tail` grew one field, `recall`,
+and its reply carries the last N lines this principal sent to this session — read through
+the same scoped port as everything else, which means no new authority and no new verb. The
+query is exact rather than heuristic: the input half of a complex is the row with a sender
+and no `turn_id` (§3), which is precisely what the door's own `message` op writes. Nothing
+about the screen changed — it is still the present, never a replayed transcript.
+
+The consequence worth naming: lines sent from WhatsApp come back under the up arrow too,
+because the mirror puts the principal's word in the mind's room and that is the room the
+REPL recalls. One mind, several mouths — the ring reflects it for free.
