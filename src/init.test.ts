@@ -12,7 +12,7 @@ Deno.test("init scaffolds a project the reader accepts, roster empty, and refuse
     const cfg = await readConfig(path);
     assertEquals(cfg.agents, {}); // `liquen agent` declares each one
     assertEquals(cfg.connections, {});
-    assert(cfg.org.timezone.length > 0); // the machine's clock, interviewed for the human
+    assert(cfg.organization.timezone.length > 0); // the machine's clock, interviewed for the human
     for (
       const f of [
         "Dockerfile",
@@ -28,7 +28,7 @@ Deno.test("init scaffolds a project the reader accepts, roster empty, and refuse
     ) await Deno.stat(`${path}/${f}`);
     // the org's own words are on disk before anything runs — no roster, so no agent scope
     await Deno.stat(`${path}/data/system/instructions/system.md`);
-    await Deno.stat(`${path}/data/org/instructions/organization.md`);
+    await Deno.stat(`${path}/data/organizations/instructions/organization.md`);
     assertEquals(await Deno.stat(`${path}/data/agents`).catch(() => null), null);
     const mode = (await Deno.stat(`${path}/entrypoint.sh`)).mode! & 0o777;
     assertEquals(mode, 0o755);

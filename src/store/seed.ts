@@ -30,7 +30,7 @@ const read = (rel: string) => fetch(new URL(rel, TEMPLATES)).then((r) => r.text(
 /** Copy templates into the data root — a template only where its FOLDER does not exist.
  *
  *  The folder, not the file, because an absent doc is an answer: a deployment that deleted
- *  `org/instructions/organization.md`, or emptied `system/skills/`, said it wants none, and
+ *  `organizations/instructions/organization.md`, or emptied `system/skills/`, said it wants none, and
  *  the next boot must not argue. What that costs is a template added to a folder an org
  *  already has: it reaches new orgs and no existing one. Deleting the folder is how an org
  *  asks for the set again. */
@@ -58,7 +58,7 @@ export function seedOrg(root: string): Promise<void> {
     ["system/instructions/compaction.md", "system-compaction.md"],
     ["system/skills/workflows.md", "system-skills-workflows.md"],
     ["system/skills/transcribe-audio.md", "system-skills-transcribe-audio.md"],
-    ["org/instructions/organization.md", "organization.md"],
+    ["organizations/instructions/organization.md", "organization.md"],
   ]);
 }
 

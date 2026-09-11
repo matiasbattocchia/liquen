@@ -50,7 +50,7 @@ import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
 import { createPresence } from "./connect/presence.ts";
 import { createTranscriber } from "./processors.ts";
-import { installDoors, type Status } from "./door.ts";
+import { type DoorAgent, installDoors, type Status } from "./door.ts";
 import type { About, AlarmEvent, Delta, Draft, Event } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
@@ -221,8 +221,9 @@ export async function start(
   })));
   const principals = roster.filter((p) => p.runs !== false);
   // the mind is a ONE-MEMBER conversation (§6): seeding it as membership is what makes
-  // "own mind readable, others' invisible" plain branch-3 policy, no special case
-  log.upsertMemberships(principals.map((p) => (
+  // "own mind readable, others' invisible" plain branch-3 policy, no special case. EVERY
+  // roster entry has the room — a paused agent's is what its door still reads (§4)
+  log.upsertMemberships(roster.map((p) => (
     {
       service: "local",
       connection: "agent",
@@ -256,7 +257,7 @@ export async function start(
   };
   // the org's locale reaches user space under the names every program reads (§9): the
   // shell speaks the org's language, and a script the agent runs by hand does too
-  const locale = catalog?.org.locale;
+  const locale = catalog?.organization.locale;
   const localeEnv: Record<string, string> = locale ? { LANG: locale } : {};
   for (const p of principals) {
     const userEnv = () => ({ ...proxy.env(p.agentId), ...localeEnv });
@@ -270,7 +271,7 @@ export async function start(
   // naming a path elsewhere is refused broker-side, before any byte is read.
   const filesOf = (agentId: string) => {
     const home = `${dir}/agents/${agentId}`;
-    return { home, roots: [home, `${dir}/org`, `${dir}/system`, `${dir}/conversations`] };
+    return { home, roots: [home, `${dir}/organizations`, `${dir}/system`, `${dir}/conversations`] };
   };
 
   let stopped = false;
@@ -445,14 +446,33 @@ export async function start(
   // what births it.
   const doors = await installDoors(
     dir,
-    agents.map((a) => ({
-      agentId: a.config.agentId,
-      sessionId: a.config.sessionId,
-      port: (sessionId: string) =>
-        sessionId === a.config.sessionId ? a.log : runnerOf(a.config.agentId, sessionId)!.log,
-      // where the principal stands is where the session's shell starts (§9)
-      stand: (session, path) => shellOf(a.config.agentId, session).stand(path),
-    })),
+    roster.map((p): DoorAgent => {
+      const a = agents.find((x) => x.config.agentId === p.agentId);
+      if (a) {
+        return {
+          agentId: a.config.agentId,
+          sessionId: a.config.sessionId,
+          port: (sessionId: string) =>
+            sessionId === a.config.sessionId ? a.log : runnerOf(a.config.agentId, sessionId)!.log,
+          // where the principal stands is where the session's shell starts (§9)
+          stand: (session, path) => shellOf(a.config.agentId, session).stand(path),
+        };
+      }
+      // a PAUSED agent (`mind: false`, §4): the door still opens on its rooms — a tail reads
+      // what landed, an order is refused — and no runner, no shell, stands behind it
+      return {
+        agentId: p.agentId,
+        sessionId: p.sessionId,
+        paused: true,
+        port: (sessionId: string) =>
+          scoped(
+            log,
+            derived
+              ? policyFor({ agentId: p.agentId, id: sessionId }, log)
+              : { readable: p.readable, writable: p.writable },
+          ),
+      };
+    }),
   );
   // presence (§9): the same two facts the doors serve, written as a `delta` event in the
   // mind's room — the mirror is what carries it to every surface, tagged. Inert until a
@@ -518,7 +538,7 @@ export async function start(
       subscribe: (l, o) => log.subscribe(l, o),
       publish: log.publish,
       command: catalog.processors.audio,
-      locale: catalog.org.locale,
+      locale: catalog.organization.locale,
       onError: (e, err) =>
         console.error(`transcriber FAILED on ${e.envelope.conversation.address}:`, err),
     }));
@@ -641,7 +661,7 @@ type Principal = AgentConfig & Policy & {
  *  ("principal handle → principal-DM alias", the special wiring).
  *
  *  Resolution, most specific wins: agents.<name> → MainConfig (the process: tests) →
- *  org.agent — every key has a default, so nothing falls through. The clock and locale
+ *  organization.agents — every key has a default, so nothing falls through. The clock and locale
  *  are the ORG's alone: one deployment, one wall time. */
 async function compileRoster(
   dir: string,
@@ -651,18 +671,18 @@ async function compileRoster(
 ): Promise<Principal[]> {
   // the backlog is resolved ONCE, into an instant: every agent in this org comes up owing
   // the same stretch of history, and no later read re-decides where that stretch begins
-  const hours = defaults.backlogHours ?? catalog.org.backlogHours;
+  const hours = defaults.backlogHours ?? catalog.organization.backlogHours;
   const since = new Date(startedAt - hours * 3_600_000).toISOString();
-  const org = catalog.org.agent;
+  const org = catalog.organization.agents;
   // the media kinds a processor makes readable — org-wide, one fact for every agent (§5)
   const processors = Object.entries(catalog.processors).filter(([, cmd]) => !!cmd)
     .map(([kind]) => kind);
   const found: Principal[] = [];
   for (const [name, entry] of Object.entries(catalog.agents)) {
     const { identity = {}, principals, mind, ...cfg } = entry;
-    // a session runs unless the entry — or `org.agent.mind`, for all of them — says not
-    // (§4). The home is derived, for an agent: a person alone has a row and no folder, and
-    // a paused agent keeps the folder it has and takes no turn until the knob flips back
+    // a session runs unless the entry — or `organization.agents.mind`, for all of them — says not
+    // (§4). The workspace is derived, for an agent: a person alone gets none (the door's
+    // socket is all its folder holds), a paused agent keeps the one it has and takes no turn
     const runs = mind ?? org.mind;
     if (runs) await Deno.mkdir(`${dir}/agents/${name}`, { recursive: true });
     found.push({
@@ -677,8 +697,8 @@ async function compileRoster(
       tools: (cfg.tools !== undefined ? cfg.tools : org.tools) ?? undefined,
       rules: cfg.rules ?? org.rules,
       since,
-      timezone: catalog.org.timezone || undefined,
-      locale: catalog.org.locale ?? undefined,
+      timezone: catalog.organization.timezone || undefined,
+      locale: catalog.organization.locale ?? undefined,
       home: `${dir}/agents/${name}`,
       // attention (§2): the wake policy is the agent's — hot, summoned, or on the digest
       engagedMinutes: cfg.engagedMinutes ?? org.engagedMinutes,

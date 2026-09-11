@@ -48,7 +48,7 @@ type ContentBlockParam = Anthropic.ContentBlockParam;
 type Role = "user" | "assistant";
 
 const KIND_ORDER: DocKind[] = ["instruction", "skill", "memory", "tool"];
-const SCOPE_ORDER: DocScope[] = ["system", "org", "agent", "conversation"];
+const SCOPE_ORDER: DocScope[] = ["system", "organization", "agent", "conversation"];
 
 /**
  * Docs → the top-level `system` prefix (§5, §8).

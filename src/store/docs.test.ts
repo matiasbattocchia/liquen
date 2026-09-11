@@ -26,15 +26,15 @@ const ref = (docs: DocEntry[]) =>
 Deno.test("list returns every doc's header across the cascade (§8 layout)", async () => {
   await withRoot(async (root) => {
     await put(root, "agents/a1/instructions/persona", doc("instruction", "be helpful"));
-    await put(root, "org/instructions/policy", doc("instruction", "org policy"));
+    await put(root, "organizations/instructions/policy", doc("instruction", "org policy"));
     await put(root, "system/instructions/base", doc("instruction", "world model"));
-    await put(root, "org/skills/refunds", doc("skill", "how to refund"));
+    await put(root, "organizations/skills/refunds", doc("skill", "how to refund"));
 
     const docs = await openFileDocs(root).list({ agent: "a1" });
     assertEquals(ref(docs).sort(), [
       "agent/instruction/instructions/persona",
-      "org/instruction/instructions/policy",
-      "org/skill/skills/refunds",
+      "organization/instruction/instructions/policy",
+      "organization/skill/skills/refunds",
       "system/instruction/instructions/base",
     ]);
   });
@@ -82,10 +82,10 @@ Deno.test("load: always ⇒ body is inlined; otherwise header-only pointer", asy
   await withRoot(async (root) => {
     await put(
       root,
-      "org/instructions/policy",
+      "organizations/instructions/policy",
       doc("instruction", "follow the rules", "load: always\n"),
     );
-    await put(root, "org/skills/refunds", doc("skill", "Step 1. ...", "load: lazy\n"));
+    await put(root, "organizations/skills/refunds", doc("skill", "Step 1. ...", "load: lazy\n"));
 
     const byName = new Map(
       (await openFileDocs(root).list({ agent: "a1" })).map((d) => [d.header.name, d]),
@@ -99,7 +99,7 @@ Deno.test("header carries parsed YAML frontmatter (quotes and colons handled)", 
   await withRoot(async (root) => {
     await put(
       root,
-      "org/skills/x",
+      "organizations/skills/x",
       '---\nkind: skill\ndescription: "ratio a:b, quoted"\n---\nbody',
     );
     const [d] = await openFileDocs(root).list({ agent: "a1" });
@@ -109,9 +109,9 @@ Deno.test("header carries parsed YAML frontmatter (quotes and colons handled)", 
 
 Deno.test("read pulls a pointer's body on demand and strips frontmatter", async () => {
   await withRoot(async (root) => {
-    await put(root, "org/skills/refunds", doc("skill", "Step 1. ...", "load: lazy\n"));
+    await put(root, "organizations/skills/refunds", doc("skill", "Step 1. ...", "load: lazy\n"));
     const body = await openFileDocs(root).read({ agent: "a1" }, {
-      scope: "org",
+      scope: "organization",
       kind: "skill",
       name: "skills/refunds", // name IS the scope-relative path — kind is metadata (§8)
     });
@@ -135,19 +135,28 @@ Deno.test("conversation scope is listed only when requested", async () => {
 
 Deno.test("non-.md files are ignored; a missing scope lists empty; missing read ⇒ null", async () => {
   await withRoot(async (root) => {
-    await put(root, "org/instructions/x", doc("instruction", "body"));
-    await Deno.writeTextFile(`${root}/org/instructions/notes.txt`, "---\nkind: skill\n---\nignore");
+    await put(root, "organizations/instructions/x", doc("instruction", "body"));
+    await Deno.writeTextFile(
+      `${root}/organizations/instructions/notes.txt`,
+      "---\nkind: skill\n---\nignore",
+    );
 
     const docs = openFileDocs(root);
-    assertEquals(ref(await docs.list({ agent: "a1" })), ["org/instruction/instructions/x"]);
+    assertEquals(ref(await docs.list({ agent: "a1" })), [
+      "organization/instruction/instructions/x",
+    ]);
     // an agent with no folder still sees the cascade above it — just nothing of its own
-    assertEquals(ref(await docs.list({ agent: "nobody" })), ["org/instruction/instructions/x"]);
+    assertEquals(ref(await docs.list({ agent: "nobody" })), [
+      "organization/instruction/instructions/x",
+    ]);
     assertEquals(
-      await docs.read({ agent: "a1" }, { scope: "org", kind: "skill", name: "ghost" }),
+      await docs.read({ agent: "a1" }, { scope: "organization", kind: "skill", name: "ghost" }),
       null,
     );
     assert(
-      (await docs.list({ agent: "a1" }))[0].header.path.endsWith("/org/instructions/x.md"),
+      (await docs.list({ agent: "a1" }))[0].header.path.endsWith(
+        "/organizations/instructions/x.md",
+      ),
     );
   });
 });

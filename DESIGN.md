@@ -1740,7 +1740,7 @@ Registers (same substrate, different rules):
 
 ```ts
 docs {
-  scope:  "system" | "org" | "agent" | "conversation"        // (subagent worker-overlay deferred)
+  scope:  "system" | "organization" | "agent" | "conversation"        // (subagent worker-overlay deferred)
   kind:   "instruction" | "skill" | "memory" | "tool"        // tool = MCP config (nu-consumed)
   name, description, body
   load:   "always" | "lazy"
@@ -1797,7 +1797,7 @@ docs {
   the data root at runtime (memories, later skills), so it drifts by design — git sees
   `src/seed/` (the org definition, reproducible; private repo if sensitive), volumes hold
   `data/`. The unit of if-absent is the FOLDER: an absent doc is an answer — a deployment
-  that deleted `org/instructions/organization.md`, or emptied `system/skills/`, wants none,
+  that deleted `organizations/instructions/organization.md`, or emptied `system/skills/`, wants none,
   and no later boot may argue. So a new template reaches new orgs and new agents, not the
   scopes a live org already has; deleting the folder is how an org asks for the set again,
   and *edits* to existing seeds reach live orgs only via an explicit migration action
@@ -2018,7 +2018,7 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   shim line, `--cached-only`, the cache warmed at boot): the agent's uid has no cache of its
   own and no road to the registry, and the pin stays in the shim so the agent's own deno is
   untouched. PATH widens by scope — `{dir}/system/bin` (the harness's),
-  `{dir}/org/bin` (the org's, `gws`), `{dir}/agents/<id>/bin` (the agent's own), then the
+  `{dir}/organizations/bin` (the org's, `gws`), `{dir}/agents/<id>/bin` (the agent's own), then the
   system's — narrowest first, so a wider layer is reachable but cannot shadow a harness
   contract, exactly as the doc cascade resolves. The binaries'
   *contracts* are the spec the db substrate's helper functions mirror later (§9 symmetry).

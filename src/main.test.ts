@@ -243,7 +243,7 @@ Deno.test("the framework way: the catalog's roster declares the org; the table m
 
 Deno.test("config.jsonc declares the agent: settings override defaults, handles mirror in (§9)", async () => {
   const { root, dir, catalog } = await orgDir({
-    // org.agent's keys, overridden per agent — plus the handles a human knows it by
+    // organization.agents' keys, overridden per agent — plus the handles a human knows it by
     ana: { model: "claude-y", effort: "low", identity: { email: "ana@org.example" } },
   });
   const { transport } = scripted([reply("hola")]);
@@ -643,7 +643,7 @@ Deno.test("a cancel mid-think aborts the model call: no reply, the turn closes o
   }
 });
 
-Deno.test("a person alone (mind: false, §4): a registry row, no session, no home", async () => {
+Deno.test("a person alone (mind: false, §4): a registry row, a door, no session, no workspace", async () => {
   const { root, dir, catalog } = await orgDir({
     ventas: { identity: { name: "Ventas", phone: "549117770000" } },
     sol: { identity: { name: "Sol", phone: "549115550002" }, mind: false },
@@ -670,8 +670,10 @@ Deno.test("a person alone (mind: false, §4): a registry row, no session, no hom
         phone: "549117770000",
       },
     ]);
-    await Deno.stat(`${dir}/agents/ventas`);
-    await assertRejects(() => Deno.stat(`${dir}/agents/sol`), Deno.errors.NotFound);
+    await Deno.stat(`${dir}/agents/ventas/instructions/agent.md`); // a workspace, seeded
+    // a person alone has a DOOR — its socket is all the folder holds — and no workspace
+    await Deno.stat(`${dir}/agents/sol/door.sock`);
+    await assertRejects(() => Deno.stat(`${dir}/agents/sol/instructions`), Deno.errors.NotFound);
     // the org number, paired to nobody: ventas speaks through it and the roster steers it
     main.log.upsertConnections([
       { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" },

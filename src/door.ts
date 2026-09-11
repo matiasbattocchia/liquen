@@ -75,6 +75,10 @@ export interface DoorAgent {
   /** A SESSION's scoped port (§6): the door reads and writes as the session the request
    *  named, never wider. Asking for a session is what births it (main's runner). */
   port(sessionId: string): Pick<Log, "publish" | "subscribe">;
+  /** No session runs for this agent (`mind: false`, §4). The door still opens — a tail
+   *  reads the rooms, a search answers — and REFUSES an order: a message, a call, a
+   *  verdict, a control. Nobody would take it, and a row nobody takes reads as ignored. */
+  paused?: boolean;
   /** Where a SESSION's shell starts (§9): the tail's `cwd` while its connection lives,
    *  the workspace (`undefined`) once it hangs up. Rejects a place the agent cannot stand
    *  in, and the tail is refused with it. */
@@ -278,6 +282,9 @@ async function serve(conn: Deno.Conn, agent: DoorAgent, cast: Set<Tailer>) {
   }
 }
 
+/** The verbs that ASK something of the agent — refused on a paused one (`DoorAgent.paused`). */
+const ORDERS = ["call", "message", "permission_response", "control"];
+
 async function handle(
   req: Record<string, unknown>,
   agent: DoorAgent,
@@ -293,6 +300,12 @@ async function handle(
     : agent.sessionId;
   const address = sessionAddress(agent.agentId, session);
   const port = agent.port(session);
+  if (agent.paused && ORDERS.includes(req.op as string)) {
+    throw new Error(
+      `${agent.agentId} is paused — mind: false in config.jsonc (agents.${agent.agentId}, ` +
+        `or organization.agents for every agent); the door reads, it takes no orders`,
+    );
+  }
   const envelope = {
     service: "local" as const,
     connection_address: "agent",

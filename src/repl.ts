@@ -86,7 +86,9 @@ if (!t.ok) {
 }
 
 write(
-  `${DIM}liquen — ${home} · ${a.model} · log: ${a.dir} · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n> `,
+  `${DIM}liquen — ${home} · ${a.model}${
+    a.paused ? " · PAUSED (mind: false — reads only)" : ""
+  } · log: ${a.dir} · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n> `,
 );
 
 const lines = Deno.stdin.readable

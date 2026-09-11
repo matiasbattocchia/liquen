@@ -12,7 +12,7 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
     assertEquals(refs, [
       "agent/instruction/instructions/agent",
       "agent/memory/memories/example",
-      "org/instruction/instructions/organization",
+      "organization/instruction/instructions/organization",
       "system/instruction/instructions/compaction",
       "system/instruction/instructions/system",
       "system/skill/skills/transcribe-audio",
@@ -36,7 +36,7 @@ Deno.test("seeding never overwrites an edited doc", async () => {
   const root = await Deno.makeTempDir();
   try {
     await seedOrg(root);
-    const path = `${root}/org/instructions/organization.md`;
+    const path = `${root}/organizations/instructions/organization.md`;
     await Deno.writeTextFile(path, "---\nkind: instruction\nload: always\n---\nEDITED");
     await seedOrg(root); // idempotent boot
     assertStringIncludes(await Deno.readTextFile(path), "EDITED");
@@ -51,14 +51,14 @@ Deno.test("a deleted doc stays deleted — the folder is what says the org has t
     await seedOrg(root);
     await seedAgent(root, "alter");
     // an org that wants no org-wide instruction, and an agent that keeps no memories
-    await Deno.remove(`${root}/org/instructions/organization.md`);
+    await Deno.remove(`${root}/organizations/instructions/organization.md`);
     await Deno.remove(`${root}/agents/alter/memories/example.md`);
     // and one that wants the scope gone altogether
     await Deno.remove(`${root}/system/skills`, { recursive: true });
     await seedOrg(root); // every later boot
     await seedAgent(root, "alter");
     assertEquals(
-      await Deno.stat(`${root}/org/instructions/organization.md`).catch(() => null),
+      await Deno.stat(`${root}/organizations/instructions/organization.md`).catch(() => null),
       null,
     );
     assertEquals(

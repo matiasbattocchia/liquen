@@ -35,11 +35,14 @@ function doc(
 /** The clinic scenario's docs, deliberately out of order. */
 function clinicDocs(): DocEntry[] {
   return [
-    doc("org", "skill", "reschedule", { description: "reprogramar un turno", load: "lazy" }),
+    doc("organization", "skill", "reschedule", {
+      description: "reprogramar un turno",
+      load: "lazy",
+    }),
     doc("agent", "instruction", "persona", { load: "always" }, "Hablás como Ana: cálida, breve."),
     doc("system", "instruction", "base", { load: "always" }, "Sos el alter-ego de Ana."),
-    doc("org", "memory", "patients", { description: "notas de pacientes", load: "lazy" }),
-    doc("org", "instruction", "clinic", { load: "always" }, "Clínica Sur · 9–18h L–V."),
+    doc("organization", "memory", "patients", { description: "notas de pacientes", load: "lazy" }),
+    doc("organization", "instruction", "clinic", { load: "always" }, "Clínica Sur · 9–18h L–V."),
   ];
 }
 
@@ -49,15 +52,15 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
   assertEquals(
     prefix.text,
     "[system/base]\nSos el alter-ego de Ana.\n\n" +
-      "[org/clinic]\nClínica Sur · 9–18h L–V.\n\n" +
+      "[organization/clinic]\nClínica Sur · 9–18h L–V.\n\n" +
       "[agent/persona]\nHablás como Ana: cálida, breve.",
   );
   assertEquals(
     index.text,
     "Your on-demand docs — this index is COMPLETE (nothing else exists; never search " +
       "the docs tree). Pull a body with `aread`:\n" +
-      "- org/reschedule — reprogramar un turno → aread /docs/org/skill/reschedule.md\n" +
-      "- org/patients — notas de pacientes → aread /docs/org/memory/patients.md",
+      "- organization/reschedule — reprogramar un turno → aread /docs/organization/skill/reschedule.md\n" +
+      "- organization/patients — notas de pacientes → aread /docs/organization/memory/patients.md",
   );
 });
 
@@ -71,7 +74,7 @@ Deno.test("one cache breakpoint, on the last — an HOUR, since docs change when
 Deno.test("kind is the major sort key, then cascade scope, then name", () => {
   // an agent-scope instruction must precede an org-scope skill (instruction < skill)
   const docs = [
-    doc("org", "skill", "a", {}, "skill-body"),
+    doc("organization", "skill", "a", {}, "skill-body"),
     doc("agent", "instruction", "z", {}, "instr-body"),
   ];
   const text = renderSystem(docs)[0].text;
@@ -79,19 +82,22 @@ Deno.test("kind is the major sort key, then cascade scope, then name", () => {
 });
 
 Deno.test("only-bodies ⇒ single block (cached); only-pointers ⇒ single index block (cached)", () => {
-  const bodiesOnly = renderSystem([doc("org", "instruction", "x", {}, "body")]);
+  const bodiesOnly = renderSystem([doc("organization", "instruction", "x", {}, "body")]);
   assertEquals(bodiesOnly.length, 1);
   assertEquals(bodiesOnly[0].cache_control, { type: "ephemeral", ttl: "1h" });
 
-  const pointersOnly = renderSystem([doc("org", "skill", "x", { description: "d" })]);
+  const pointersOnly = renderSystem([doc("organization", "skill", "x", { description: "d" })]);
   assertEquals(pointersOnly.length, 1);
   assert(pointersOnly[0].text.startsWith("Your on-demand docs"));
   assertEquals(pointersOnly[0].cache_control, { type: "ephemeral", ttl: "1h" });
 });
 
 Deno.test("a pointer with no description shows its ref + pull path", () => {
-  const [index] = renderSystem([doc("org", "skill", "bare", {})]);
-  assertEquals(index.text.endsWith("- org/bare → aread /docs/org/skill/bare.md"), true);
+  const [index] = renderSystem([doc("organization", "skill", "bare", {})]);
+  assertEquals(
+    index.text.endsWith("- organization/bare → aread /docs/organization/skill/bare.md"),
+    true,
+  );
 });
 
 Deno.test("empty docs ⇒ empty system", () => {
@@ -99,7 +105,7 @@ Deno.test("empty docs ⇒ empty system", () => {
 });
 
 Deno.test("the env line leads the prefix: home · timezone · locale, only the facts that are set", () => {
-  const [lead] = renderSystem([doc("org", "instruction", "x", {}, "body")], {
+  const [lead] = renderSystem([doc("organization", "instruction", "x", {}, "body")], {
     agent: "a1",
     name: "Ana",
     email: "ana@x.io",

@@ -26,7 +26,7 @@
  *     agent via the substrate read, or by render via `read()`.
  *
  * Files adapter, rooted at the DATA ROOT (the §9 layout):
- *   <root>/system/**  ·  <root>/org/**  ·  <root>/agents/<agentId>/**
+ *   <root>/system/**  ·  <root>/organizations/**  ·  <root>/agents/<agentId>/**
  *   <root>/conversations/<convId>/**
  * A doc's `name` is its path relative to the scope dir, minus `.md` (so the conventional
  * `instructions/compaction`). Reads are fresh from disk (multi-process, like the log). On db
@@ -36,7 +36,7 @@
 import { parse as parseYaml } from "@std/yaml";
 import type { AgentId } from "../types.ts";
 
-export type DocScope = "system" | "org" | "agent" | "conversation";
+export type DocScope = "system" | "organization" | "agent" | "conversation";
 export type DocKind = "instruction" | "skill" | "memory" | "tool";
 
 const KINDS: readonly string[] = ["instruction", "skill", "memory", "tool"];
@@ -122,7 +122,7 @@ function kindOf(frontmatter: Record<string, unknown>): DocKind {
 /** The scope directories to walk, in cascade order — skipping any that don't apply. */
 function scopeDirs(root: string, ctx: DocContext): [DocScope, string][] {
   const out: [DocScope, string][] = [];
-  for (const scope of ["system", "org", "agent", "conversation"] as DocScope[]) {
+  for (const scope of ["system", "organization", "agent", "conversation"] as DocScope[]) {
     const dir = scopeDir(root, scope, ctx);
     if (dir !== null) out.push([scope, dir]);
   }
@@ -133,8 +133,8 @@ function scopeDir(root: string, scope: DocScope, ctx: DocContext): string | null
   switch (scope) {
     case "system":
       return `${root}/system`;
-    case "org":
-      return `${root}/org`;
+    case "organization":
+      return `${root}/organizations`;
     case "agent":
       return `${root}/agents/${ctx.agent}`;
     case "conversation":

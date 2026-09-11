@@ -21,9 +21,10 @@
  *     view. A key left out takes the default defined HERE (the file may be sparse); an
  *     unknown key or section is a boot error — a typo must not run silently.
  *   · Placement is by audience. `system`: machinery tuning — every deployment works on the
- *     defaults. `org`: this deployment's identity — the clock, the backlog, and under
- *     `org.agent` the defaults every agent inherits. `agents.<name>`: the roster — each
- *     entry overrides `org.agent` key by key and may declare the handles a human knows the
+ *     defaults. `organization`: this deployment's identity — the clock, the backlog, and
+ *     under `organization.agents` the defaults every agent inherits. `agents.<name>`: the
+ *     roster — each entry overrides `organization.agents` key by key and may declare the
+ *     handles a human knows the
  *     agent by. `connections.<name>` belongs to the connectors: each ships its own
  *     `config.ts` (its DEFAULT_s, the same rules) and validates ITS subsection.
  *   · `start` / `xi` / `nu` / `mu` are 100% parametrized — values arrive as arguments,
@@ -40,11 +41,11 @@ import type { Effort, PolicyAction, Rule } from "./types.ts";
 
 /* ── the defaults: the single source ─────────────────────────────────────── */
 
-// org — this deployment's identity
+// organization — this deployment's identity
 export const DEFAULT_BACKLOG_HOURS = 24;
 export const DEFAULT_TIMEZONE = "UTC"; // explicit, so two boxes render the same stamps
 
-// org.agent — every agent's defaults (an `agents.<name>` entry re-declares these, key by key)
+// organization.agents — every agent's defaults (an `agents.<name>` entry re-declares these, key by key)
 export const DEFAULT_MODEL = "claude-sonnet-5";
 export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + tools + text
 // the default deployment's whole offer: the four built-ins plus the exec plane's bash.
@@ -111,7 +112,7 @@ export const ACTIONS: readonly PolicyAction[] = ["allow", "ask", "deny"];
 
 /* ── the shape the reader returns ────────────────────────────────────────── */
 
-/** The keys every agent resolves — `org.agent` declares the org's values, an
+/** The keys every agent resolves — `organization.agents` declares the org's values, an
  *  `agents.<name>` entry re-declares them for one agent. */
 export interface AgentDefaults {
   model: string;
@@ -127,13 +128,13 @@ export interface AgentDefaults {
   mind: boolean; // false ⇒ no session runs (§4): a member with no agent, or an agent paused
 }
 
-/** One roster entry: overrides of `org.agent`, key by key, plus the agent's own identity —
+/** One roster entry: overrides of `organization.agents`, key by key, plus the agent's own identity —
  *  the name it goes by and the handles of the account it acts as (§4). Whose that account
  *  is — a member's, or the org's — is the connection row's fact, never declared here.
  *  `principals` says who steers, as roster usernames, when the derivation of §4 (the owner;
  *  every member when the account is the org's) is not wanted — `[]` for nobody. `mind`
- *  false runs no session for the entry: a person alone (identity and handles, never a
- *  folder), or an agent PAUSED — its folder stays, its rows keep landing, and the backlog
+ *  false runs no session for the entry: a person alone (identity and handles, never a workspace, just a
+ *  door), or an agent PAUSED — its folder stays, its rows keep landing, and the backlog
  *  hands them over when it comes back. Everything else about the agent is discovered
  *  (connect flows) or derived (the home folder). Null is "not declared", the shape
  *  `liquen agent` writes for a handle it was not given. */
@@ -147,7 +148,8 @@ export interface Identity {
   phone?: string | null;
 }
 export const IDENTITY_KEYS = ["name", "email", "phone"] as const;
-const IDENTITY_DOC = "<name>: any org.agent key re-declared, plus identity — the name the " +
+const IDENTITY_DOC =
+  "<name>: any organization.agents key re-declared, plus identity — the name the " +
   "agent goes by and the handles of the account it acts as (null ⇒ not declared); " +
   "principals — who steers it, roster names ([] ⇒ nobody; absent ⇒ its owner, or every " +
   "member when the account is the org's); mind: false — no session runs: a member with no " +
@@ -161,11 +163,11 @@ export interface OrgConfig {
     windowLimit: number;
     debounceMs: number;
   };
-  org: {
+  organization: {
     timezone: string; // the ORG's clock — every stamp, cron and sleep span reads it (§5)
     locale: string | null; // LANG in every agent shell and media processor
     backlogHours: number;
-    agent: AgentDefaults;
+    agents: AgentDefaults;
   };
   processors: {
     /** Shell command: audio bytes on stdin → transcript text on stdout (non-zero exit =
@@ -324,7 +326,7 @@ const PROCESSORS: Entry[] = [
 
 const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
-  org: "this deployment's identity — the clock, the backlog, and every agent's defaults",
+  organization: "this deployment's identity — the clock, the backlog, and every agent's defaults",
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
   agents: "the roster: every key is a member — an agent, its folder and its unix user, or " +
     "a person alone (mind: false)",
@@ -342,7 +344,7 @@ function fromEntries(entries: Entry[]): Record<string, unknown> {
 function defaults(): OrgConfig {
   return {
     system: fromEntries(SYSTEM),
-    org: { ...fromEntries(ORG), agent: fromEntries(AGENT) },
+    organization: { ...fromEntries(ORG), agents: fromEntries(AGENT) },
     processors: fromEntries(PROCESSORS),
     agents: {},
     connections: {},
@@ -350,7 +352,7 @@ function defaults(): OrgConfig {
 }
 
 /** Merge one section: the user's values over the entries' defaults; an unknown key is a
- *  boot error. `label` names the section in the complaint ("org.agent.model"). */
+ *  boot error. `label` names the section in the complaint ("organization.agents.model"). */
 function mergeSection(
   given: Record<string, unknown>,
   entries: Entry[],
@@ -444,13 +446,18 @@ export async function readConfig(root: string): Promise<OrgConfig> {
     }
     return v as Record<string, unknown>;
   };
-  const orgGiven = asObject(found.org, "org");
-  const { agent: agentGiven, ...orgPlain } = orgGiven;
+  const orgGiven = asObject(found.organization, "organization");
+  const { agents: agentsGiven, ...orgPlain } = orgGiven;
   const cfg = {
     system: mergeSection(asObject(found.system, "system"), SYSTEM, path, "system"),
-    org: {
-      ...mergeSection(orgPlain, ORG, path, "org"),
-      agent: mergeSection(asObject(agentGiven, "org.agent"), AGENT, path, "org.agent"),
+    organization: {
+      ...mergeSection(orgPlain, ORG, path, "organization"),
+      agents: mergeSection(
+        asObject(agentsGiven, "organization.agents"),
+        AGENT,
+        path,
+        "organization.agents",
+      ),
     },
     processors: mergeSection(
       asObject(found.processors, "processors"),
@@ -563,13 +570,13 @@ export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string
   lines.push(`  // ${SECTION_DOCS.system}`, `  "system": {`);
   emit("    ", SYSTEM, cfg.system as unknown as Record<string, unknown>);
   lines.push("  },");
-  lines.push(`  // ${SECTION_DOCS.org}`, `  "org": {`);
-  emit("    ", ORG, cfg.org as unknown as Record<string, unknown>, ",");
+  lines.push(`  // ${SECTION_DOCS.organization}`, `  "organization": {`);
+  emit("    ", ORG, cfg.organization as unknown as Record<string, unknown>, ",");
   lines.push(
     `    // every agent's defaults — an agents.<name> entry re-declares these, key by key`,
   );
-  lines.push(`    "agent": {`);
-  emit("      ", AGENT, cfg.org.agent as unknown as Record<string, unknown>);
+  lines.push(`    "agents": {`);
+  emit("      ", AGENT, cfg.organization.agents as unknown as Record<string, unknown>);
   lines.push("    }", "  },");
   lines.push(`  // ${SECTION_DOCS.processors}`, `  "processors": {`);
   emit("    ", PROCESSORS, cfg.processors as unknown as Record<string, unknown>);
@@ -606,8 +613,8 @@ export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string
  *  line each. */
 export function starterConfig(): OrgConfig {
   const cfg = defaults();
-  cfg.org.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? DEFAULT_TIMEZONE;
-  cfg.org.locale = machineLocale();
+  cfg.organization.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? DEFAULT_TIMEZONE;
+  cfg.organization.locale = machineLocale();
   return cfg;
 }
 
@@ -650,7 +657,9 @@ export async function declareAgent(
   const entry: AgentEntry = {
     identity: Object.fromEntries(IDENTITY_KEYS.map((k) => [k, identity[k] ?? null])),
     ...(rest.principals ? { principals: rest.principals } : {}),
-    ...(rest.mind === false ? { mind: false } : {}),
+    // the one org-wide key every entry carries: a switch someone flips is a knob in view,
+    // never a default the file leaves to be looked up
+    mind: rest.mind ?? true,
   };
   const member = `"${name}": ${JSON.stringify(entry, null, 2).replaceAll("\n", "\n    ")}`;
   await declareIn(root, "agents", member);
@@ -677,10 +686,25 @@ export async function declareConnection(
  *  insertion is the member's own lines inside the existing block, a comma on the member
  *  before it when there is one, and every other byte is left as it was found. The result is
  *  parsed before it lands — a write that would not read back is no write at all. */
+/** Where `"section":` opens at the file's TOP level — depth one in braces — or -1. The
+ *  first match in the file is not it: `"agents":` also names the defaults every agent
+ *  inherits, one level down under `organization`. */
+function topLevel(raw: string, section: string): number {
+  for (const m of raw.matchAll(new RegExp(`"${section}"\\s*:`, "g"))) {
+    let depth = 0;
+    for (let i = 0; i < m.index; i++) {
+      if (raw[i] === "{") depth++;
+      else if (raw[i] === "}") depth--;
+    }
+    if (depth === 1) return m.index;
+  }
+  return -1;
+}
+
 async function declareIn(root: string, section: string, member: string): Promise<void> {
   const path = `${root}/config.jsonc`;
   const raw = await Deno.readTextFile(path);
-  const at = raw.search(new RegExp(`"${section}"\\s*:`));
+  const at = topLevel(raw, section);
   const open = at < 0 ? -1 : raw.indexOf("{", at);
   if (open < 0) throw new Error(`${path}: no "${section}" section to declare in`);
   let depth = 0, close = open;
@@ -719,15 +743,17 @@ function parseStrict(raw: string, path: string): unknown {
 }
 
 function validateOrg(cfg: OrgConfig, path: string): void {
-  if (!(cfg.org.backlogHours > 0)) {
+  if (!(cfg.organization.backlogHours > 0)) {
     throw new Error(
-      `${path}: backlogHours must be a positive number (got ${cfg.org.backlogHours})`,
+      `${path}: backlogHours must be a positive number (got ${cfg.organization.backlogHours})`,
     );
   }
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: cfg.org.timezone });
+    new Intl.DateTimeFormat("en-US", { timeZone: cfg.organization.timezone });
   } catch {
-    throw new Error(`${path}: unknown timezone "${cfg.org.timezone}" (IANA name expected)`);
+    throw new Error(
+      `${path}: unknown timezone "${cfg.organization.timezone}" (IANA name expected)`,
+    );
   }
   if (cfg.processors.audio !== null && typeof cfg.processors.audio !== "string") {
     throw new Error(
@@ -735,7 +761,7 @@ function validateOrg(cfg: OrgConfig, path: string): void {
         `${JSON.stringify(cfg.processors.audio)})`,
     );
   }
-  validateAgent(cfg.org.agent, path);
+  validateAgent(cfg.organization.agents, `${path}: organization.agents`);
 }
 
 /** The checks that would otherwise surface as a RangeError inside a turn's render or as an

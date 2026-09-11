@@ -464,7 +464,7 @@ async function layShims(dir: string): Promise<string> {
  *                             package is (a checkout's file, the registry's URL) out of
  *                             the harness's own module cache, so the tool answers for the
  *                             version that booted and never fetches from an agent's uid.
- *    `<dir>/org/bin`          what the org installs for all its agents (`gws`).
+ *    `<dir>/organizations/bin`          what the org installs for all its agents (`gws`).
  *    `<dir>/agents/<id>/bin`  what THIS agent installed for itself — its own folder, so a
  *                             binary it fetched is as private as its notes.
  *    the process's own PATH   inherited verbatim: the system underneath.
@@ -479,9 +479,9 @@ export async function installExecGround(
 ): Promise<ExecGround> {
   const workspace = `${dir}/agents/${agentId}`;
   const shipped = await layShims(dir);
-  const binPath = `${shipped}:${dir}/org/bin:${workspace}/bin`;
+  const binPath = `${shipped}:${dir}/organizations/bin:${workspace}/bin`;
   await Deno.mkdir(workspace, { recursive: true });
-  await Deno.mkdir(`${dir}/org/bin`, { recursive: true });
+  await Deno.mkdir(`${dir}/organizations/bin`, { recursive: true });
   await Deno.mkdir(`${workspace}/bin`, { recursive: true });
   const user = agentUser(agentId);
   // the folder is the agent's: the seeded docs and `bin/` were laid by the harness, and

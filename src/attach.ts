@@ -24,6 +24,7 @@ export interface Attached {
   target: string; // the agent this client fronts
   username: string; // the trusted-localhost principal (§9): the OS username
   model: string; // resolved the roster's own way, so a banner names what will run
+  paused: boolean; // no session runs (mind: false, §4): the door reads, it takes no orders
 }
 
 /** The org lives where you run liquen: the nearest config.jsonc up from cwd is the project
@@ -47,14 +48,11 @@ export async function resolveAgent(explicit?: string, dir?: string): Promise<Att
       `no agent "${target}" in ${root}/config.jsonc — \`liquen agent ${target}\` adds one`,
     );
   }
-  if (catalog.agents[target].mind === false) {
-    throw new Error(
-      `"${target}" is a member with no agent of their own (mind: false in ${root}/config.jsonc)` +
-        " — name the agent to talk to",
-    );
-  }
-  const model = catalog.agents[target].model ?? catalog.org.agent.model;
-  return { root, dir: `${root}/data`, target, username, model };
+  // a paused agent (mind: false, §4) is still attached to: what landed in its rooms reads,
+  // and the door — not this client — refuses an order with the sentence that says why
+  const paused = (catalog.agents[target].mind ?? catalog.organization.agents.mind) === false;
+  const model = catalog.agents[target].model ?? catalog.organization.agents.model;
+  return { root, dir: `${root}/data`, target, username, model, paused };
 }
 
 /** Attach to the agent's door. A refusal means no daemon — raise an ephemeral one and

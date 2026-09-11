@@ -9,7 +9,13 @@
  * API deliberately has no close.
  */
 
-import { assert, assertEquals, assertMatch, assertRejects } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { installDoors, MAX_PENDING_LINES, type Status } from "./door.ts";
 import { bind, type Mu } from "./script.ts";
 import { type Log, openLog } from "./store/log.ts";
@@ -579,6 +585,49 @@ Deno.test({
       assertEquals(rows.at(-1)!.envelope.conversation.address, "build@ana");
     } finally {
       await down();
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a paused agent's door reads and refuses orders (mind: false, §4)",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
+    const log = await openLog(`${dir}/log`);
+    const doors = await installDoors(dir, [{ ...AGENT, paused: true, port: () => log }]);
+    try {
+      const c = await rawClient(dir);
+      // an order: refused with the sentence, and nothing lands
+      const refused = await c.request({ op: "message", text: "hola" });
+      assertEquals(refused.ok, false);
+      assertStringIncludes(String(refused.error), "paused");
+      assertEquals((await c.request({ op: "call", tool: "search", input: {} })).ok, false);
+      assertEquals((await c.request({ op: "control", kind: "cancel" })).ok, false);
+      assertEquals((await log.read()).length, 0);
+      // a read: the tail opens, and what lands in the room reaches it
+      assertEquals((await c.request({ op: "tail" })).ok, true);
+      await log.publish(
+        {
+          ts: new Date().toISOString(),
+          type: "message",
+          envelope: {
+            service: "local",
+            connection_address: "agent",
+            conversation: { address: "mind@ana" },
+            sender: { address: "matias" },
+          },
+          parts: [{ type: "text", kind: "text", text: "landed while paused" }],
+        } satisfies Draft<MessageEvent>,
+      );
+      await c.settle(() => c.events.length === 1);
+      assertEquals(c.events.length, 1);
+      c.conn.close();
+    } finally {
+      await doors.close();
+      await log.close();
+      await Deno.remove(dir, { recursive: true });
     }
   },
 });

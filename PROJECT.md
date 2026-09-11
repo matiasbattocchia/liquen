@@ -2155,7 +2155,9 @@ message, a call, a verdict, a control — is refused with the sentence that says
 (`DoorAgent.paused`); the attach client no longer refuses on its own.
 
 The section that held the org's identity is now `organization`, and its agent defaults
-`organization.agents` — the file reads as the sentences it stands for. Existing files
+`organization.agents` — the file reads as the sentences it stands for. The doc scope
+`org` is `organization` and its folder `data/org/` is `data/organizations/`, the way the
+`agent` scope lives in `agents/`. Existing files
 rename the two keys by hand: no compatibility path reads the old ones. The command that
 flips the knob is deferred; the file is the path.
 

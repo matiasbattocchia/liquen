@@ -36,11 +36,11 @@ Deno.test("bash: runs in the workspace, merges stdout+stderr", async () => {
 Deno.test("bash: PATH widens by scope — the agent's own bin cannot shadow the shipped one", async () => {
   await withPlane(async ({ run, dir }) => {
     // same name in every writable layer: whoever answers is the one PATH reaches first
-    for (const at of [`${dir}/org/bin`, `${wsOf(dir)}/bin`]) {
+    for (const at of [`${dir}/organizations/bin`, `${wsOf(dir)}/bin`]) {
       await Deno.writeTextFile(`${at}/whose`, `#!/bin/sh\necho ${at}\n`);
       await Deno.chmod(`${at}/whose`, 0o755);
     }
-    assertEquals(await run("whose"), `${dir}/org/bin`);
+    assertEquals(await run("whose"), `${dir}/organizations/bin`);
     assertEquals(
       await run("command -v aread"),
       `${dir}/system/bin/aread`,
@@ -52,7 +52,7 @@ Deno.test("bash: PATH widens by scope — the agent's own bin cannot shadow the 
     assertStringIncludes(shim, "--cached-only");
     const path = (await run("echo $PATH")).split(":");
     assert(
-      path.indexOf(`${dir}/org/bin`) < path.indexOf(`${wsOf(dir)}/bin`),
+      path.indexOf(`${dir}/organizations/bin`) < path.indexOf(`${wsOf(dir)}/bin`),
       "the org's bin must precede the agent's",
     );
   });
