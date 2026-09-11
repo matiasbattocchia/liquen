@@ -289,3 +289,46 @@ Deno.test("startProxy: an authority no grant fronts is tunneled blind — the or
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// The bug this rule exists for: `fetch` hands back a DECODED body but headers that
+// describe the ENCODED entity. Copying them through truncates every reader at the
+// compressed length — which is how a 170 KB Google discovery document reached an agent
+// as 23 KB of valid-prefix JSON and broke `gws` with a parse error.
+Deno.test("proxyRequest: the answer is identity — no encoding headers survive a decoded body", async () => {
+  const body = JSON.stringify({ padding: "x".repeat(50_000) }); // what fetch DECODED
+  let sentAcceptEncoding: string | null = "unset";
+  const res = await proxyRequest(
+    "www.googleapis.com",
+    new Request("https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest", {
+      // a client that negotiates for itself: fetch would decode for ITS terms, not these
+      headers: { "accept-encoding": "gzip, deflate, br" },
+    }),
+    {
+      ca: null as never,
+      broker: fakeBroker(),
+      audit: () => {},
+      originFetch: (input, init) => {
+        sentAcceptEncoding = headersOf(input, init).get("accept-encoding");
+        return Promise.resolve(
+          new Response(body, {
+            headers: {
+              "content-type": "application/json",
+              "content-encoding": "gzip", // true of the wire, false of `body`
+              "content-length": "22828", // the compressed count — a reader would stop here
+            },
+          }),
+        );
+      },
+    },
+  );
+
+  // the client's own negotiation never reaches the origin: fetch asks for what it decodes
+  assertEquals(sentAcceptEncoding, null);
+  assertEquals(res.headers.get("content-encoding"), null);
+  assertEquals(res.headers.get("content-length"), null);
+  assertEquals(res.headers.get("content-type"), "application/json"); // the rest rides through
+  // and the whole body arrives, not the first 22828 bytes of it
+  const got = await res.text();
+  assertEquals(got.length, body.length);
+  assertEquals(JSON.parse(got).padding.length, 50_000);
+});

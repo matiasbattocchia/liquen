@@ -22,6 +22,15 @@
  * we stand up a loopback `Deno.serve` with that host's leaf (giving us Request/Response
  * directly), and pipe the tunnel's bytes into it. A handful of backends over a process life.
  *
+ * The proxy speaks IDENTITY to its client. `fetch` negotiates compression with the origin
+ * and hands back a DECODED body, but the headers it exposes still describe the encoded
+ * entity — `content-encoding: gzip` over bytes that are no longer gzip, `content-length`
+ * counting the compressed ones. Copying those onto the decoded body truncates every reader
+ * at the compressed length: a 170 KB discovery document arriving as 23 KB of
+ * valid-prefix JSON, which is how this was found. So the request's own `accept-encoding`
+ * is dropped on the way out (let `fetch` ask for what it can decode) and both headers are
+ * dropped on the way back — the hop is loopback, where a compressed body buys nothing.
+ *
  * One policy rule attaches at the plaintext seam: the grant's HOST BINDING. A credential
  * row that declares `extra.hosts` spends only toward those origins — the swap refuses any
  * other dial (grants.ts hostAllowed), so a handle can't be aimed at an echo endpoint to
@@ -89,7 +98,13 @@ export async function proxyRequest(host: string, req: Request, deps: ProxyDeps):
   const target = `https://${host}${url.pathname}${url.search}`;
 
   const headers = new Headers();
-  for (const [k, v] of req.headers) if (!HOP_BY_HOP.has(k.toLowerCase())) headers.set(k, v);
+  for (const [k, v] of req.headers) {
+    const key = k.toLowerCase();
+    // `fetch` decodes what IT asked for; a client's own negotiation would let an encoding
+    // through that the body no longer carries (see the header note above)
+    if (HOP_BY_HOP.has(key) || key === "accept-encoding") continue;
+    headers.set(k, v);
+  }
 
   let swapped = false;
   let agentId: string | undefined;
@@ -136,9 +151,14 @@ export async function proxyRequest(host: string, req: Request, deps: ProxyDeps):
   });
   audit({ method: req.method, host, path: url.pathname, status: res.status, agentId, swapped });
 
-  // strip hop-by-hop off the way back too; keep the body streaming
+  // strip hop-by-hop off the way back too, and the two headers that describe an encoding
+  // the body no longer carries; keep the body streaming and let the runtime frame it
   const out = new Headers();
-  for (const [k, v] of res.headers) if (!HOP_BY_HOP.has(k.toLowerCase())) out.set(k, v);
+  for (const [k, v] of res.headers) {
+    const key = k.toLowerCase();
+    if (HOP_BY_HOP.has(key) || key === "content-encoding" || key === "content-length") continue;
+    out.set(k, v);
+  }
   return new Response(res.body, { status: res.status, headers: out });
 }
 

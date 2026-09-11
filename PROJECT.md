@@ -2098,6 +2098,33 @@ not cache it either. A read-only cache serves the run, emit included. The contai
 Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
 first boot, a fetch the harness (root, with the network) makes.
 
+### The proxy spoke gzip over plaintext (2026-09-11) — LANDED
+
+An agent asked `gws` for the day's calendar and got
+`error[discovery]: EOF while parsing a string`, at a different offset each run. The
+discovery document Google serves is 169,810 bytes; what reached the tool was 23,239 — a
+valid PREFIX of the JSON, which is the signature of a reader stopping early rather than of
+corruption.
+
+**Cause:** `fetch` negotiates compression with the origin and hands back a DECODED body,
+but the headers it exposes still describe the ENCODED entity — `content-encoding: gzip`
+over bytes that are no longer gzip, and `content-length` counting the compressed ones
+(22,828 against a 169,810-byte body, measured). `proxyRequest` copied every non-hop-by-hop
+header onto the decoded body, so every client through the proxy truncated at the compressed
+length. Nothing in the org had pulled a large response through the proxy until now: a small
+one fits inside the reader's own buffering, and the mismatch never shows.
+
+**Fix:** the proxy speaks IDENTITY to its client. The request's own `accept-encoding` is
+dropped on the way out, so `fetch` asks for what it can decode rather than for the client's
+terms; `content-encoding` and `content-length` are dropped on the way back, and the runtime
+frames the stream. The hop is loopback, where a compressed body buys nothing. Verified
+against the live origin: 169,810 bytes through the proxy, semantically identical to a
+direct fetch.
+
+**The blast radius was outside the org.** `gws` caches discovery documents under the
+user's own `~/.config/gws/`, so the truncated ones broke the tool for the human too, not
+just for the agent. Both were deleted; they refetch.
+
 ### The two attach clients were never under the rule (2026-09-11) — LANDED
 
 `liquen repl --help` answered `no agent "--help" in config.jsonc`, printed as a stack
