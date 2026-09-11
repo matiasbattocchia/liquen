@@ -17,6 +17,9 @@
  *                 `json_patch` (open-bsp's before-update merge trigger, verbatim SQLite).
  *                 One mechanism = retry-dedup + echo-reconciliation + edits (§3, §4):
  *                 updates mint no new row, so they never wake a mind — wake-on-insert only.
+ *                 A BACKFILL (`extra.backfill`, an import of history) is the one merge that
+ *                 fills instead of overwriting: a re-pair re-sends what was already
+ *                 received live, and the live row is the richer one.
  *   • read      — an indexed SELECT; filters (and the readable scope, §6) are WHERE clauses,
  *                 so private rows never leave the store.
  *   • subscribe — dir-watch (WAL commits) + a poll backstop. Two cursors: appends on `id`,
@@ -298,13 +301,23 @@ export async function openLog(
        text, parts, payload, extra, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(external_id) WHERE external_id IS NOT NULL DO UPDATE SET
-       parts      = coalesce(excluded.parts, events.parts),
+       -- a BACKFILL (extra.backfill — an import of history) FILLS, never overwrites: the
+       -- row it meets was written live, and live is the richer view (a history file part
+       -- carries no uri; the live one names the bytes on disk), and its marks stay off a
+       -- row that was never history. Anything else with parts is a re-statement of the
+       -- body — a retry, an echo — and lands as said.
+       parts      = CASE WHEN json_extract(excluded.extra, '$.backfill') = 1
+                         THEN coalesce(events.parts, excluded.parts)
+                         ELSE coalesce(excluded.parts, events.parts) END,
        payload    = json_patch(events.payload, excluded.payload),
        extra      = CASE WHEN excluded.extra IS NULL THEN events.extra
+                         WHEN json_extract(excluded.extra, '$.backfill') = 1 THEN events.extra
                          ELSE json_patch(coalesce(events.extra, '{}'), excluded.extra) END,
        status     = CASE WHEN excluded.status IS NULL THEN events.status
                          ELSE json_patch(coalesce(events.status, '{}'), excluded.status) END,
-       text       = coalesce(excluded.text, events.text),
+       text       = CASE WHEN json_extract(excluded.extra, '$.backfill') = 1
+                         THEN coalesce(events.text, excluded.text)
+                         ELSE coalesce(excluded.text, events.text) END,
        -- identity FILLS, never overwrites (§3): write-once facts — the first NON-EMPTY
        -- writer wins. Overwrite is the openbsp Instagram-echo bug (the wire's view of our
        -- own message is peer-shaped, and merging it flipped direction — their

@@ -763,3 +763,37 @@ Deno.test("an agent's message bound for a wire is born queued; the mind's local 
     assertEquals(standing.map((e) => e.id), [ours.id]);
   });
 });
+
+Deno.test("a backfill fills a row it meets, never overwrites it: the live row is the richer one", async () => {
+  await withLog(async (log) => {
+    // received live: the bridge landed the bytes first, so the part names them
+    const live = keyed("01", "whatsapp:wmw.1.2.3.ABC", "");
+    live.parts = [{
+      type: "file",
+      kind: "image",
+      file: { mime_type: "image/jpeg", uri: "internal://media/x" },
+    }];
+    live.extra = { muted: true };
+    await log.publish(live);
+    // a re-pair's history sync re-sends it: no uri (old bytes are gone from the CDN), and the
+    // import mark that would silence it retroactively
+    const sync = keyed("02", "whatsapp:wmw.1.2.3.ABC", "");
+    // (the ingest passes the wire's `uri` through as it comes, and history's is absent)
+    sync.parts = [{
+      type: "file",
+      kind: "image",
+      file: { mime_type: "image/jpeg" },
+    }] as unknown as MessageEvent["parts"];
+    sync.extra = { backfill: true };
+    await log.publish(sync);
+    const [row] = (await log.read()) as MessageEvent[];
+    assertEquals((row.parts[0] as { file: { uri?: string } }).file.uri, "internal://media/x");
+    assertEquals(row.extra, { muted: true }); // a row received live was never history: no mark
+    // and on a row nobody had: the backfill IS the row, mark included
+    const fresh = keyed("03", "whatsapp:wmw.1.2.3.OLD", "from before the pairing");
+    fresh.extra = { backfill: true };
+    await log.publish(fresh);
+    const old = (await log.read()).find((e) => e.id === "03")!;
+    assertEquals(old.extra, { backfill: true });
+  });
+});

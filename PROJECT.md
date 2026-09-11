@@ -2098,6 +2098,19 @@ not cache it either. A read-only cache serves the run, emit included. The contai
 Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
 first boot, a fetch the harness (root, with the network) makes.
 
+### A backfill fills, never overwrites (2026-09-11) — LANDED
+
+**What was wrong:** the merge law let any draft with parts re-state the body of the row
+its `external_id` names — right for a retry or an echo, wrong for a history import: a
+re-pair re-sends what the ingest already received live, and WhatsApp's history file parts
+carry no uri (old bytes are gone from the CDN), so the live row's reference to the bytes
+on disk was replaced by nothing, and `extra.backfill` landed on a row that was never
+history, silencing it.
+
+**What changed:** in the upsert, a draft marked `extra.backfill` fills `parts` and `text`
+only where the row has none and leaves `extra` as it was; `status` still merges (a read
+receipt is knowledge). A row nobody had is the backfill's, mark included, as before.
+
 ### The bridge delivers where the pairing said (2026-09-11) — LANDED
 
 **What was wrong:** the whatsmeow bridge is multi-tenant everywhere but the destination:
