@@ -36,8 +36,8 @@ Nothing below needs a sixth piece. What some of them need is **new state**, whic
 A connector is a **standalone process over the org's substrate**: it reaches liquen through
 the shared `./data` root and imports only the seam module, **`src/connector.ts`** — the log (`openLog`,
 `publish`, subscribe/`setDelivery`), the vault (`openCredentials`, the grant broker),
-`connectorConfig`, the event types, the dispatch error contract, `watchStream` (the
-ephemeral channel, below), and `entry` — the rule every liquen process ends by. A deep
+`connectorConfig`, the event types, the dispatch error contract, and `entry` — the rule
+every liquen process ends by. A deep
 import from a connector is a contract violation, not a convenience.
 
 Run an `import.meta.main` body through `entry` and a custom connector fails the way a
@@ -83,43 +83,13 @@ When a connector also **prints an app definition** — slack's manifest, the pre
 mode); what the app may do comes from `connections.slack`, so the consent the door asks
 Slack for and the consent the app declares are one list, not two that drift.
 
-### The ephemeral channel: what a connector can do that the log cannot say
+### Presence: nothing to build
 
-Some of what a service offers has no place in a log. A typing indicator, an assistant
-thread's status line, a presence hint: they live for seconds, belong to no conversation
-history, and must never become a row the agent later reads back as its own words. So they
-do not travel as events at all.
-
-`watchStream(dir, handlers, options)` opens the org's ephemeral channel (`stream.sock`,
-beside the log). What arrives is what is happening now — a turn's edges (`busy`/`idle`),
-and model deltas if asked for — carrying **what the turn is about**: the conversations
-whose words it has not answered, named as `{service, connection, conversation, since}`.
-That naming is the point: a connector holds no session and can act on no room address, but
-it knows its own service and an address on it. Filter by `service`, ignore the rest.
-
-Three rules, all of them load-bearing:
-
-- **Never depend on it.** `watchStream` never throws and never blocks: main not being up,
-  hanging up, or not existing at all are one case, and the loop simply waits and offers
-  again. A connector that ignores the channel entirely is complete and correct. This is
-  what keeps the org free of startup order.
-- **The reply is yours to make, and it is not a log row.** You already hold the service's
-  credentials and client, so a poke is a call you make — never a `publish`.
-- **Freshness is your rule.** Every unanswered conversation is named, stale ones included.
-  `since` says when it last spoke; whether that is recent enough to act on is your
-  judgment. Edges are edge-triggered, so anything that lapses on its own (a typing
-  indicator does) is re-posed on your own timer until the idle arrives.
-- **If your service echoes, you meet your own poke at the door.** A wire that posts back
-  what you send (the whatsmeow bridge and Slack both do) will hand your poke to your own
-  ingest, and a poke that lands in the log is a word the agent reads back as its own. That
-  is the reason to reach for this channel only for things the wire treats as ephemeral in
-  its own right — a typing indicator, a thread status — which leave nothing to echo.
-
-**What is NOT on this channel: presence.** `[thinking...]` and `[compacting...]` reach a
-surface as ordinary log rows (`extra.delta`), published by main and carried by whatever
-dispatcher already serves that surface. A connector does nothing to get them — no watch,
-no filter, no code at all, including a connector that is a serverless function. See §2 in
-DESIGN.md.
+`[thinking...]` and `[compacting...]` reach a surface as ordinary log rows (`extra.delta`),
+published by main and carried by whatever dispatcher already serves that surface. A
+connector does nothing to get them — no filter, no code at all, including a connector that
+is a serverless function. Your service's echo of the send merges into the committed row by
+`external_id` the way every echo does. See §9 in DESIGN.md.
 
 ### Outbound media: the pull leg, signed and relative
 

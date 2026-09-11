@@ -1717,3 +1717,42 @@ Deno.test("a tool's attachment outside the agent's ground is refused, and the re
     await Deno.remove(ground, { recursive: true });
   }
 });
+
+Deno.test("search is not the door for presence: transport is not history", async () => {
+  // `[thinking...]` rows exist so a dispatcher can carry them; the mind never said them,
+  // so there is nothing here to find — unlike the other silenced classes, which ARE history
+  const inChat = (text: string, extra?: Record<string, unknown>): Draft<MessageEvent> => ({
+    ts: new Date(Date.now() - 40 * 3_600_000).toISOString(),
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "15613518605", kind: "direct", name: "Gianvito" },
+      sender: { address: "15613518605", name: "Gianvito" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+    ...(extra ? { extra } : {}),
+  });
+
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "search", input: { text: "thinking" } }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("buscá eso"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+      const [found] = await read("tool_result");
+      const { hits } = (found as ToolResultEvent).parts[0].data.output as {
+        hits: { text: string }[];
+      };
+      assertEquals(hits.length, 1);
+      assertStringIncludes(hits[0].text, "estaba thinking");
+    },
+    {},
+    [
+      inChat("estaba thinking en eso"),
+      inChat("[thinking...]", { delta: true }),
+    ],
+  );
+});

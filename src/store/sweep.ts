@@ -40,8 +40,12 @@ export interface Sweeper {
   sweep(now: string): number;
 }
 
-/** The dispatcher's own rows (`isOutbound`, minus the state it reads off the lifecycle). */
-const OURS = "type = 'message' AND agent_id IS NOT NULL AND external_id IS NULL";
+/** The dispatcher's own rows (`isOutbound`, minus the state it reads off the lifecycle).
+ *  Presence is excluded by the one thing that makes it presence: `extra.delta` says the row
+ *  is only true while the turn runs, and a `[thinking...]` re-offered an hour later would
+ *  be a lie the ladder told. Ephemera fails once, quietly — that is its correct ending. */
+const OURS =
+  "type = 'message' AND agent_id IS NOT NULL AND external_id IS NULL AND json_extract(extra, '$.delta') IS NOT 1";
 
 export function createSweeper(db: DatabaseSync): Sweeper {
   const rung = RETRY_BACKOFF_MS

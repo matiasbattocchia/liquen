@@ -291,8 +291,11 @@ export interface Payload {
  *  the machine never branches on service keys. Known keys: `backfill` (imported history),
  *  `muted` · `archived` (the chat's platform-synced state when the message arrived) — any
  *  of the three SILENCES the row: wakes nothing, renders nowhere, `search` is the door
- *  (§2, §5) — `consumed` (on the agent's closing session messages: the last
- *  event id the step's window read — the coalescing horizon `unanswered` measures against,
+ *  (§2, §5) — `delta` (presence, §2: a `[thinking...]` the mind never said, riding the log
+ *  only to reach a wire; silenced like the three above, and unlike them neither searchable
+ *  nor ever re-offered — it is transport, not history) — `consumed` (on the agent's closing
+ *  session messages: the last event id the step's window read — the coalescing horizon
+ *  `unanswered` measures against,
  *  §2), `via` (mirror provenance, §4), `timer` (alarm provenance, §10: the row that fired,
  *  who armed it and when), and per-service provenance under the service name —
  *  how the wire said it, not what the event means (`slack: {subtype, authorizations}`,
@@ -602,6 +605,17 @@ export interface Usage {
  *  Spend is one row per call, so the kind is what makes "what has maintenance cost" a
  *  query; a delta carries the same word so a surface knows which text it is watching. */
 export type CallKind = "think" | "checkpoint";
+
+/** What a turn is ABOUT, named the way the wire names it rather than the way a session
+ *  does: the conversations whose words the turn has not answered. `since` is when that
+ *  conversation last spoke; whether that is recent enough to act on is the reader's rule
+ *  (presence, §2: it speaks only while somebody is there). */
+export interface About {
+  service: string;
+  connection: string;
+  conversation: string;
+  since: string;
+}
 
 /** Ephemeral broadcast — stream the in-progress; never stored. Correctness never depends on
  *  it. Every kind reaches every tailer: what to show and what to fold away is the client's

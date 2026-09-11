@@ -137,3 +137,16 @@ Deno.test("the re-offer rides the update stream to a subscriber that asked — a
     assertEquals(wakes.length, 0); // a state move is not news
   });
 });
+
+Deno.test("presence is never re-offered: ephemera fails once, quietly", async () => {
+  await withLog(async (log) => {
+    const e = (await log.publish({ ...outbound("[thinking...]"), extra: { delta: true } }))!;
+    await log.setDelivery(e.id, {
+      status: { state: "failed", failed_at: iso(T0 - 10 * MIN), error: "boom" },
+    });
+    // a transient failure with no class, ten minutes past the first rung — an ordinary
+    // row would go again; this one is only true while its turn runs
+    assertEquals(log.sweep(iso(T0)), 0);
+    assertEquals((await row(log, e.id)).status?.state, "failed");
+  });
+});

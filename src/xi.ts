@@ -26,6 +26,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
+  About,
   Action,
   AlarmEvent,
   Draft,
@@ -71,6 +72,7 @@ import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import {
   bodyOf,
   cancelled,
+  ephemeral,
   hhmm,
   isCancelled,
   ownComplex,
@@ -680,6 +682,28 @@ function newsOf(events: Event[], session: Session): (MessageEvent | AlarmEvent)[
   return events.slice(from + 1).filter(news);
 }
 
+/** The conversations behind a turn's news, one entry each, carrying when that conversation
+ *  last spoke. This is the news translated OUT of session terms, into the service, the
+ *  connection and the address a wire knows. Every unanswered conversation is named, stale
+ *  ones included — the reader has `since` and its own rule for what is worth acting on
+ *  (§2: the daemon discloses, the reader decides). */
+export function aboutOf(events: Event[], session: Session): About[] {
+  const newest = new Map<string, About>();
+  for (const e of newsOf(events, session)) {
+    const key = `${e.envelope.service}\u0000${e.envelope.conversation.address}`;
+    const held = newest.get(key);
+    if (held === undefined || e.ts > held.since) {
+      newest.set(key, {
+        service: e.envelope.service,
+        connection: e.envelope.connection_address,
+        conversation: e.envelope.conversation.address,
+        since: e.ts,
+      });
+    }
+  }
+  return [...newest.values()];
+}
+
 /** All our uses have results but no turn output followed ⇒ the closing think is owed.
  *  Turn output = our thinking / tool_use / home message; a directed peer send is not. */
 function unclosedChain(events: Event[], session: Session): boolean {
@@ -779,8 +803,14 @@ export interface XiPorts {
   onDelta?: Emit; // → the harness stream (fire-and-forget)
   /** The decision, disclosed the moment it is made — fire-and-forget like onDelta: main
    *  fans it to the door's tailers as a turn edge ({status}), the one fact an attach
-   *  client cannot compute for itself. `cursor` is the last event the deciding read saw. */
-  onDecision?: (verdict: Decision, cursor: string | undefined) => void;
+   *  client cannot compute for itself. `cursor` is the last event the deciding read saw;
+   *  `about` names the conversations whose words the turn has not answered, and when they
+   *  last spoke — what presence reads to know whether anyone is there (§2). */
+  onDecision?: (
+    verdict: Decision,
+    cursor: string | undefined,
+    about: About[],
+  ) => void;
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
   /** The turn's interrupt (§2): xi arms a controller as it takes the lease and hands it
    *  here; main fires it when a `control` row lands in the session's room while it is
@@ -884,7 +914,7 @@ export async function xi(
     if (settled) events.push(settled);
   }
   const v = decide(events, session, config);
-  ports.onDecision?.(v, events.at(-1)?.id);
+  ports.onDecision?.(v, events.at(-1)?.id, aboutOf(events, session));
   if (v === "ignore") {
     disarm();
     await lock.release();
@@ -912,7 +942,12 @@ export async function xi(
     // the verdict the turn's own end implies, disclosed here: a closing message pokes the
     // next invocation, which discloses again, but a terminal error or a cancel wakes
     // nothing on purpose (`relevant`), and the idle they leave would otherwise go unsaid
-    ports.onDecision?.(decide([...events, ...landed], session, config), landed.at(-1)?.id);
+    const after = [...events, ...landed];
+    ports.onDecision?.(
+      decide(after, session, config),
+      landed.at(-1)?.id,
+      aboutOf(after, session),
+    );
   } catch (err) {
     // declared dead mid-turn: a successor took the lease and is redoing this window from
     // the same events. Dropping the work is the point — landing it would publish the turn
@@ -1751,6 +1786,9 @@ async function search(
     after: args.after,
     text: args.text,
     types: ["message"],
+    // the one silenced class `search` is NOT the door for: presence rows are transport,
+    // not history — the mind never said them, so there is nothing here to find (§5)
+    filter: (e) => !ephemeral(e),
     limit: limit + 1,
   });
   const more = rows.length > limit;

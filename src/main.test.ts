@@ -682,3 +682,70 @@ Deno.test("a person alone (mind: false, §4): a registry row, no session, no hom
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test({
+  name: "presence: a turn over a fresh word says [thinking...] on the mirror's surface only",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir();
+    // the scripted model, plus the one delta a script never emits on its own
+    const { transport: base } = scripted([reply("dale")]);
+    const transport: ModelTransport = (params, emit) => {
+      emit?.({ kind: "thinking" });
+      return base(params, emit);
+    };
+    // a wire conversation is the AMBIENT class, so the night would decide this test's
+    // outcome by the hour it ran at: `sleepHours: null` makes the turn happen at 3am and
+    // at noon alike
+    const main = await start(
+      { dir, debounceMs: 0, principals: [agent("1", { sleepHours: null })] },
+      { transport },
+    );
+    try {
+      // the number is a1's own: its self-chat is the mirror's surface (§4), and the wire
+      // message is theirs to answer (§6)
+      main.log.upsertConnections([
+        { service: "whatsapp", address: "5491133585694", agentId: "a1" },
+      ]);
+      await main.log.publish({
+        ts: new Date().toISOString(),
+        type: "message",
+        envelope: {
+          service: "whatsapp",
+          connection_address: "5491133585694",
+          conversation: { address: "5492614694650" },
+          sender: { address: "5492614694650", name: "Luciano" },
+        },
+        parts: [{ type: "text", kind: "text", text: "¿estás?" }],
+      } as Draft<MessageEvent>);
+
+      const surface = async () =>
+        (await main.log.read({ conversation: "5491133585694" }))
+          .filter((e) => e.extra?.delta === true);
+      await waitFor(async () => (await surface()).length > 0);
+      const [said] = await surface();
+      assertEquals(said.agent, { id: "a1", session_id: "mind" });
+      assertEquals(said.envelope.service, "whatsapp");
+      assertEquals(said.envelope.connection_address, "5491133585694");
+      assertEquals((said as MessageEvent).parts, [
+        { type: "text", kind: "text", text: "[thinking...]" },
+      ]);
+
+      // and nowhere else: the turn ends, and the sender's conversation and the mind's own
+      // room hold no presence — only the mirror's surface heard it
+      await waitFor(async () =>
+        (await main.log.read({ types: ["message"] })).some((e) =>
+          e.agent !== undefined && e.extra?.delta !== true
+        )
+      );
+      const spoken = (await main.log.read({ types: ["message"] }))
+        .filter((e) => e.extra?.delta === true)
+        .map((e) => e.envelope.conversation.address);
+      assertEquals(spoken, ["5491133585694"]);
+    } finally {
+      await main.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

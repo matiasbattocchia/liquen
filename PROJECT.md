@@ -2331,3 +2331,70 @@ tool call while it is still being written, which means emitting a use before the
 batch commits, across publish-and-release; `abort` needs nothing, since the SDK routes a
 cancel to its own listener rather than to `error` and `cancelled` is already the log's
 word for it.
+
+### Presence: the mind says what it is doing (2026-09-11) — LANDED
+
+The motive was concrete: the harness looked stuck a couple of times, and from the other side
+of a chat a mind that has been thinking for forty seconds and a mind that is wedged are the
+same silence. So a `thinking` delta becomes `[thinking...]` and a `checkpoint` delta becomes
+`[compacting...]`. WhatsApp has no ephemeral text, so these are real messages that stay in
+the chat — the accepted price of saying more than a typing bubble can.
+
+It went through three shapes in one sitting, and the third is the one that is right.
+
+The first sent them out of band. A socket beside the log (`stream.sock`) carried the turn's
+edges and **what the turn was about** — the unanswered conversations translated out of
+session terms into `{service, connection, conversation, since}` — to the org's other
+processes, and the connector watched it and posted with its own client. That ran into the
+echo. The bridge deliberately posts everything
+it sends back as a webhook, and Slack does the same; a poke has no committed row to dedupe
+against, so it would land as a fresh event stamped with the agent's own id — waking nothing,
+and doing something worse: rendering in the next window as the agent's own prior words,
+teaching it to say `[thinking...]` itself. Stopping that needs a rule at every ingest door,
+and every version of the rule is unhappy. Remembering the id of each line sent needs memory
+in every connector, and the memory is gone exactly when it is needed, after a crash between
+the send and the echo. Recognizing the line by what it SAYS needs none — but N connectors
+carrying a copy of one rule is N chances to drift.
+
+The third shape removes the question instead of answering it: **presence is an event**. An
+`extra.delta` row, published by main beside the mirror, carried by whatever dispatcher
+already serves that surface. The echo merges into the committed row by `external_id` exactly
+as every other echo does. No door filter anywhere, no vocabulary to reserve, no socket, no
+client — a connector does nothing at all to get presence, including a connector that is a
+serverless function, which is the argument that settled it.
+
+What keeps the words out of the mind is one flag in one predicate. `extra.delta` joins
+`silenced()` — the family `backfill`/`muted`/`archived` already named — so the row wakes
+nothing, renders nowhere, is not news, is not mirrored, is not processed, all from one edit.
+Two places part company with the rest of the family, and both follow from the row being
+transport rather than history: `search` skips it (the mind never said it, so there is nothing
+to find), and the sweeper never re-offers it. That last one is the sharpest thing the
+comparison turned up: a durable queue exists to deliver LATER, and a `[thinking...]`
+delivered an hour late is worse than one never delivered. Ephemera fails once, quietly.
+
+Where a line goes was the other correction, and the mirror had already answered it: the
+agent's live alias bindings, for the MIND session only. Deltas are the mind's, so they go
+where mind events go. That dissolved the question that started as "do groups get these too?"
+— a group is not a surface the mind speaks on. Whether one is sent is `about`: only while the
+turn's freshest unanswered conversation is inside the minute, read across every service,
+because the mind is one, so a line typed on Slack is a reason to say `[thinking...]` on
+WhatsApp. A 3am tick says nothing to anybody.
+
+Presence is not a knob. A `connections.whatsapp.presence` entry was written and then taken
+back out — this is how the harness behaves, and a switch would only have offered to make it
+silent again.
+
+The socket went with the first shape. Once presence was an event it had no consumer, and a
+channel nobody reads is a promise the org would have to keep for nothing. What survived it
+is the translation: `aboutOf` still names the turn's unanswered conversations in the wire's
+terms, because that is what presence reads to know whether anyone is there. A service's
+own ephemera — a typing indicator, Slack's `assistant.threads.setStatus` — has no carrier
+today; the bridge's typing far side (`server.go`'s `status` op) stands uncalled, and whether
+an account that never announces availability can have its chatstate delivered at all is
+unverified.
+
+Also fixed here: `aboutOf`'s map key held a raw NUL byte, which parsed fine and made
+`src/xi.ts` a binary file to every tool that reads it — `file` called it "data" and grep
+refused it (it is an escape now, same value, still text). And the presence test in main
+wakes a whatsapp conversation through the ambient ladder, so `asleep()` would decide its
+outcome by the hour: pinned with `sleepHours: null`.

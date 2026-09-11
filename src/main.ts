@@ -48,9 +48,10 @@ import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
 import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
+import { createPresence } from "./connect/presence.ts";
 import { createTranscriber } from "./processors.ts";
 import { installDoors, type Status } from "./door.ts";
-import type { AlarmEvent, Delta, Draft, Event } from "./types.ts";
+import type { About, AlarmEvent, Delta, Draft, Event } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
   findRoot,
@@ -276,7 +277,12 @@ export async function start(
   // the fan-outs' late half: ports close over `cast`/`castStatus` before the doors exist,
   // and the doors — which know who is tailing — take them over once they are up
   let cast: (agentId: string, sessionId: string, delta: Delta) => void = () => {};
-  let castStatus: (agentId: string, sessionId: string, line: Status) => void = () => {};
+  let castStatus: (
+    agentId: string,
+    sessionId: string,
+    line: Status,
+    about: About[],
+  ) => void = () => {};
   // the status push is EDGE-triggered (§2): one line per change of what the daemon would
   // say — per SESSION, so siblings' edges never collide — and a quiet org tails quietly:
   // the ticker's steady `ignore`s all collapse here
@@ -286,6 +292,7 @@ export async function start(
     sessionId: string,
     verdict: Decision,
     cursor: string | undefined,
+    about: About[] = [],
   ) => {
     const line: Status = verdict === "ignore"
       ? { status: "idle", ...(cursor !== undefined ? { after: cursor } : {}) }
@@ -294,7 +301,7 @@ export async function start(
     const key = line.status + (line.after ?? "");
     if (reported.get(who) === key) return;
     reported.set(who, key);
-    castStatus(agentId, sessionId, line);
+    castStatus(agentId, sessionId, line, about);
   };
   // the turns' interrupts (§2): a session's running turn arms one here, and a `control`
   // row landing in that session's room fires it — the log is the signal's carrier, so a
@@ -329,7 +336,8 @@ export async function start(
         exec: shellOf(agent.agentId, agent.sessionId).exec,
         files: filesOf(agent.agentId),
         onDelta: (d) => cast(agent.agentId, agent.sessionId, d),
-        onDecision: (v, cursor) => disclose(agent.agentId, agent.sessionId, v, cursor),
+        onDecision: (v, cursor, about) =>
+          disclose(agent.agentId, agent.sessionId, v, cursor, about),
         ambient: shellOf(agent.agentId, agent.sessionId).ambient,
         interrupt: interruptOf(agent.agentId, agent.sessionId),
       } satisfies XiPorts,
@@ -420,8 +428,8 @@ export async function start(
         exec: shell.exec,
         files: base.ports.files,
         onDelta: (d: Delta) => cast(agentId, sessionId, d),
-        onDecision: (v: Decision, cursor: string | undefined) =>
-          disclose(agentId, sessionId, v, cursor),
+        onDecision: (v: Decision, cursor: string | undefined, about: About[]) =>
+          disclose(agentId, sessionId, v, cursor, about),
         ambient: shell.ambient,
         interrupt: interruptOf(agentId, sessionId),
       } satisfies XiPorts,
@@ -446,8 +454,24 @@ export async function start(
       stand: (session, path) => shellOf(a.config.agentId, session).stand(path),
     })),
   );
-  cast = (agentId, sessionId, delta) => doors.emit(agentId, sessionId, delta);
-  castStatus = (agentId, sessionId, line) => doors.status(agentId, sessionId, line);
+  // presence (§2): the same two facts the doors serve, said out loud where the mirror
+  // speaks. It publishes to the RAW log for the mirror's own reason — the rows land in
+  // alias conversations the agent's scoped port hides — as `extra.delta` rows, so
+  // everything that reads the log back skips them (`silenced`). Inert until a surface is
+  // bound.
+  const presence = createPresence({
+    aliases: () => log.aliases(),
+    publish: (drafts) => log.publish(drafts),
+    onError: (err) => console.error("presence FAILED:", err),
+  });
+  cast = (agentId, sessionId, delta) => {
+    doors.emit(agentId, sessionId, delta);
+    presence.delta(agentId, sessionId, delta);
+  };
+  castStatus = (agentId, sessionId, line, about) => {
+    doors.status(agentId, sessionId, line);
+    presence.status(agentId, sessionId, line.status, about);
+  };
 
   const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
   /** The named sessions an event's address names — its own room, or the dm: ends. */

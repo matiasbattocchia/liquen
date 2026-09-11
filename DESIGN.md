@@ -71,10 +71,11 @@ Two planes:
 - **EventLog** — durable, append-only. *The API and the queue.* Producers (webhooks)
   publish; consumers (dispatchers) subscribe to the log's change feed (fs-watch on files /
   DB-webhook·Realtime·pgmq·cron on Postgres) — the `publish` is itself the trigger.
-- **Stream** — ephemeral broadcast for token deltas, thinking, checkpoints, and errors the
-  operator watches. Every kind reaches every tailer, named; what a surface shows and what
-  it folds away is its own call. Never stored. Rule: **stream the in-progress, log the
-  completed.**
+- **Stream** — ephemeral broadcast for token deltas, thinking, checkpoints, turn edges,
+  and errors the operator watches. Every kind reaches every tailer, named; what a surface
+  shows and what it folds away is its own call. Never stored. Rule: **stream the
+  in-progress, log the completed.** It reaches attach clients through each agent's door
+  (§9). What a chat surface gets of it is presence (§9): two of its facts, as rows.
 
 The ReAct loop is **unrolled across invocations** (invocation = step = one model call):
 
@@ -2075,6 +2076,28 @@ connections:
 `liquen start`'s main runs regardless, while one an interface raised (`main.ts --ephemeral`)
 reaps itself after a linger with zero attachments — and "is one running?" is a
 `connect()`, never a `stat()`.
+
+**Presence is an EVENT.** `[thinking...]` and `[compacting...]` are rows on the log
+(`extra.delta`, `connect/presence.ts`), published by main beside the mirror and carried by
+whatever dispatcher already serves that surface. Nothing about it is a connector's
+business: no socket, no client, no filter at its own door — a connector that is a serverless
+function gets presence for nothing, which is what settles the design. The platform's echo
+merges into the committed row by `external_id` exactly as every other echo does.
+
+What keeps the words out of the mind is one flag in one predicate. `extra.delta` joins
+`silenced()`: the row wakes nothing, renders nowhere, is not news, is not mirrored, is not
+processed. Two places part company with the rest of that family, and both follow from the
+row being transport rather than history: `search` skips it (there is nothing to find — the
+mind never said it), and the sweeper never re-offers it, because a durable queue exists to
+deliver *later* and a `[thinking...]` delivered an hour late is worse than one never
+delivered. Ephemera fails once, quietly.
+
+Where a presence line goes is the mirror's question, already answered: the agent's live
+alias bindings, and only for the MIND session. Deltas are the mind's, so they go where mind
+events go — the principal's own surfaces hear it, a group never does, and a named session
+says nothing because it is mirrored nowhere. Whether one is sent is `about`: only while the
+turn's freshest unanswered conversation is inside the minute, read across every service,
+because the mind is one.
 
 **Discovery is a skill, not a file.** The agent is taught two lines — import `src/script.ts`
 and `bind` it to `new URL(".", import.meta.url).pathname` — and writes them into the script

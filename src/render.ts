@@ -433,10 +433,24 @@ export function capRun(
  * and the agent honors it — a mention in a muted group stays silent (WhatsApp's own
  * semantics), and an unmute wakes only what arrives after it: the stamp is per message,
  * never retroactive, the same denormalization as names.
+ *
+ * `delta` — presence (`connect/presence.ts`): `[thinking...]` on the principal's surfaces
+ * while a turn runs. The mind never said it, so it must never read it back; riding the log
+ * is only how it reaches a wire, which is what buys every connector — a serverless one
+ * included — presence for nothing. The one place it parts company with the marks above:
+ * they are history and `search` is their door, while this is transport, so `search` skips
+ * it and the sweeper never re-offers it (a `[thinking...]` delivered an hour late is worse
+ * than one never delivered).
  */
 export function silenced(event: Event): boolean {
   return event.extra?.backfill === true || event.extra?.muted === true ||
-    event.extra?.archived === true;
+    event.extra?.archived === true || ephemeral(event);
+}
+
+/** A row that exists only to reach a wire: presence. Not history — the log carries it the
+ *  way it carries a send, and everything that reads the log back skips it. */
+export function ephemeral(event: Event): boolean {
+  return event.extra?.delta === true;
 }
 
 /**
