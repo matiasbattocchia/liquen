@@ -26,115 +26,126 @@ import { orgFlag } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { DIM, painter, RED, RESET } from "./paint.ts";
 import { parseVerdict } from "./xi.ts";
+import { entry } from "./entry.ts";
+import { helpFlag } from "./connect/help.ts";
 
-// `liquen repl [agent] [--session name]` — both are session choices, so arguments, not
-// config: the agent picks the door, the session picks the room behind it (default: the
-// mind). Naming a session is what births it (§4).
-const org = orgFlag();
-const args = org.args;
-const si = args.indexOf("--session");
-const session = si >= 0 ? args.splice(si, 2)[1] ?? "" : MIND;
-const a = await resolveAgent(args[0], org.dir);
-const home = sessionAddress(a.target, session); // refuses a malformed session name
+export const USAGE = "usage: liquen repl [--dir <org>] [agent] [--session <name>]";
 
-const conn = await attach(a);
-let leaving = false;
+await entry(async () => {
+  // `liquen repl [agent] [--session name]` — both are session choices, so arguments, not
+  // config: the agent picks the door, the session picks the room behind it (default: the
+  // mind). Naming a session is what births it (§4).
+  const org = orgFlag();
+  const args = org.args;
+  helpFlag(args, USAGE);
+  const si = args.indexOf("--session");
+  const session = si >= 0 ? args.splice(si, 2)[1] ?? "" : MIND;
+  // a flag is never an agent name: `--typo` would otherwise be looked up in the roster and
+  // reported as a missing agent, which sends the reader to the wrong file
+  const stray = args.find((x) => x.startsWith("-"));
+  if (stray) throw new Error(`unknown flag ${stray}\n${USAGE}`);
+  const a = await resolveAgent(args[0], org.dir);
+  const home = sessionAddress(a.target, session); // refuses a malformed session name
 
-const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
-const prompt = () => write("\n> ");
+  const conn = await attach(a);
+  let leaving = false;
 
-// every approval card still waiting, oldest first. A bare `/y` answers the newest (the
-// one just painted); `/y all` answers the whole pile, which is the point of the list.
-const pending: string[] = [];
+  const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
+  const prompt = () => write("\n> ");
 
-const p = painter({
-  session: { agentId: a.target, id: session }, // the pair — bare names collide (§4)
-  home,
-  write,
-  error: (t) => {
-    write(`\n${RED}! ${t}${RESET}`);
-    prompt();
-  },
-  prompt,
-  thinking: true,
-  gateHint: "  /{y,n} [once|conv|conn|always|all] [reason]",
-  onGate: (ref) => {
-    if (!pending.includes(ref)) pending.push(ref);
-  },
-  onGateSettled: (ref) => {
-    const i = pending.indexOf(ref);
-    if (i >= 0) pending.splice(i, 1);
-  },
-});
+  // every approval card still waiting, oldest first. A bare `/y` answers the newest (the
+  // one just painted); `/y all` answers the whole pile, which is the point of the list.
+  const pending: string[] = [];
 
-const w = wire(conn, { event: p.event, delta: p.delta });
-w.hangup.then(() => {
-  if (!leaving) {
-    write(`\n${RED}the daemon hung up${RESET}\n`);
+  const p = painter({
+    session: { agentId: a.target, id: session }, // the pair — bare names collide (§4)
+    home,
+    write,
+    error: (t) => {
+      write(`\n${RED}! ${t}${RESET}`);
+      prompt();
+    },
+    prompt,
+    thinking: true,
+    gateHint: "  /{y,n} [once|conv|conn|always|all] [reason]",
+    onGate: (ref) => {
+      if (!pending.includes(ref)) pending.push(ref);
+    },
+    onGateSettled: (ref) => {
+      const i = pending.indexOf(ref);
+      if (i >= 0) pending.splice(i, 1);
+    },
+  });
+
+  const w = wire(conn, { event: p.event, delta: p.delta });
+  w.hangup.then(() => {
+    if (!leaving) {
+      write(`\n${RED}the daemon hung up${RESET}\n`);
+      Deno.exit(1);
+    }
+  });
+
+  // live: the screen is the present, the log holds the past. The agent's shell stands where
+  // its principal does — a place it cannot stand in ends the REPL before a word is typed.
+  const t = await w.request({ op: "tail", session, cwd: Deno.cwd() });
+  if (!t.ok) {
+    write(`${RED}${t.error}${RESET}\n`);
+    leaving = true;
+    conn.close();
     Deno.exit(1);
   }
-});
 
-// live: the screen is the present, the log holds the past. The agent's shell stands where
-// its principal does — a place it cannot stand in ends the REPL before a word is typed.
-const t = await w.request({ op: "tail", session, cwd: Deno.cwd() });
-if (!t.ok) {
-  write(`${RED}${t.error}${RESET}\n`);
-  leaving = true;
-  conn.close();
-  Deno.exit(1);
-}
+  write(
+    `${DIM}liquen — ${home} · ${a.model}${
+      a.paused ? " · PAUSED (mind: false — reads only)" : ""
+    } · log: ${a.dir} · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n> `,
+  );
 
-write(
-  `${DIM}liquen — ${home} · ${a.model}${
-    a.paused ? " · PAUSED (mind: false — reads only)" : ""
-  } · log: ${a.dir} · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n> `,
-);
+  const lines = Deno.stdin.readable
+    .pipeThrough(new TextDecoderStream())
+    .pipeThrough(new TextLineStream());
 
-const lines = Deno.stdin.readable
-  .pipeThrough(new TextDecoderStream())
-  .pipeThrough(new TextLineStream());
-
-for await (const line of lines) {
-  const text = line.trim();
-  if (text === "") {
-    write("> ");
-    continue;
-  }
-  if (text === "/quit" || text === "/q") break;
-  if (text === "/cancel") {
-    const r = await w.request({ op: "control", kind: "cancel", session });
-    write(r.ok ? `${DIM}cancel sent${RESET}\n> ` : `\n${RED}! ${r.error}${RESET}\n> `);
-    continue;
-  }
-  const verdict = text.startsWith("/y") || text.startsWith("/n") ? parseVerdict(text) : undefined;
-  if (verdict) {
-    if (pending.length === 0) {
-      write(`${DIM}nothing pending${RESET}\n> `);
+  for await (const line of lines) {
+    const text = line.trim();
+    if (text === "") {
+      write("> ");
       continue;
     }
-    // `all` takes the pile in the order it was asked; a bare word takes the newest card,
-    // the one whose text is still on screen
-    const answered = verdict.every ? pending.splice(0) : [pending.pop()!];
-    for (const ref of answered) {
-      const r = await w.request({ op: "permission_response", ref_id: ref, verdict, session });
-      if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
+    if (text === "/quit" || text === "/q") break;
+    if (text === "/cancel") {
+      const r = await w.request({ op: "control", kind: "cancel", session });
+      write(r.ok ? `${DIM}cancel sent${RESET}\n> ` : `\n${RED}! ${r.error}${RESET}\n> `);
+      continue;
     }
-    if (answered.length > 1) write(`${DIM}${answered.length} approvals answered${RESET}\n`);
-    continue;
+    const verdict = text.startsWith("/y") || text.startsWith("/n") ? parseVerdict(text) : undefined;
+    if (verdict) {
+      if (pending.length === 0) {
+        write(`${DIM}nothing pending${RESET}\n> `);
+        continue;
+      }
+      // `all` takes the pile in the order it was asked; a bare word takes the newest card,
+      // the one whose text is still on screen
+      const answered = verdict.every ? pending.splice(0) : [pending.pop()!];
+      for (const ref of answered) {
+        const r = await w.request({ op: "permission_response", ref_id: ref, verdict, session });
+        if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
+      }
+      if (answered.length > 1) write(`${DIM}${answered.length} approvals answered${RESET}\n`);
+      continue;
+    }
+    const r = await w.request({
+      op: "message",
+      text,
+      sender: { address: a.username, name: a.username },
+      session,
+    });
+    if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
   }
-  const r = await w.request({
-    op: "message",
-    text,
-    sender: { address: a.username, name: a.username },
-    session,
-  });
-  if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n> `);
-}
 
-leaving = true;
-try {
-  conn.close();
-} catch { /* already closed */ }
-write(`\n${DIM}bye${RESET}\n`);
-Deno.exit(0);
+  leaving = true;
+  try {
+    conn.close();
+  } catch { /* already closed */ }
+  write(`\n${DIM}bye${RESET}\n`);
+  Deno.exit(0);
+});

@@ -45,7 +45,8 @@ export async function resolveAgent(explicit?: string, dir?: string): Promise<Att
   const target = explicit ?? username;
   if (!(target in catalog.agents)) {
     throw new Error(
-      `no agent "${target}" in ${root}/config.jsonc — \`liquen agent ${target}\` adds one`,
+      `no agent "${target}" in ${root}/config.jsonc — \`liquen agent ${target}\` adds one ` +
+        `(\`liquen repl --help\` for the usage)`,
     );
   }
   // a paused agent (mind: false, §4) is still attached to: what landed in its rooms reads,

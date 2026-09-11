@@ -2098,6 +2098,25 @@ not cache it either. A read-only cache serves the run, emit included. The contai
 Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
 first boot, a fetch the harness (root, with the network) makes.
 
+### The two attach clients were never under the rule (2026-09-11) — LANDED
+
+`liquen repl --help` answered `no agent "--help" in config.jsonc`, printed as a stack
+trace. Three faults in one line, and the audit found the shape of each.
+
+**`repl.ts` and `cli.ts` ran no `entry`.** Every other entry point wraps its body; these
+two were plain top-level scripts, so a refusal printed frames and exited 1 — the same gap
+`run.ts` had. Both now run inside `entry`, which also installs the listeners that catch a
+rejection from the attached session, not just the boot.
+
+**Neither answered `--help`.** `helpFlag` existed and only the connect doors called it.
+Both now carry a `USAGE` and answer it on stdout, exit 0 — as does `liquen agent`, which
+the roster's own error message points people at.
+
+**A flag was taken as an agent name.** The REPL passed `args[0]` straight to
+`resolveAgent`, so any mistyped flag was looked up in the roster and reported as a missing
+agent, sending the reader to the wrong file. A leading `-` is now a usage error naming the
+flag, and the missing-agent sentence points at `--help`.
+
 ### Errors: what the program modeled is a sentence, what the runtime raised is a fault (2026-09-11) — LANDED
 
 **What was wrong:** `entry`'s rule read "a plain `Error` is a refusal, anything else a

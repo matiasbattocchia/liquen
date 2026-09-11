@@ -25,6 +25,7 @@ import {
 } from "./config.ts";
 import { seedAgent } from "./store/seed.ts";
 import { entry } from "./entry.ts";
+import { helpFlag } from "./connect/help.ts";
 
 export const USAGE =
   "usage: liquen agent [--dir <org>] <name> [--name <full name>] [--email <address>] " +
@@ -67,6 +68,7 @@ export function parseAgentArgs(
 
 if (import.meta.main) {
   await entry(async () => {
+    helpFlag(orgFlag().args, USAGE);
     const org = orgFlag();
     const { name, identity, rest } = parseAgentArgs(org.args);
     const root = findRoot(org);
