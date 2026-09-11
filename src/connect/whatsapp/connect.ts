@@ -19,7 +19,9 @@
  *
  * The bridge posts its own `connected` session event at the ingest too — same upsert,
  * either order (§4: the map converges by upsert); the door's write means pairing works
- * even when the ingest webhook isn't up yet.
+ * even when the ingest webhook isn't up yet. Which ingest is the door's to say: the bridge
+ * is one sidecar for many orgs, and `webhook_url` on the create request is where THIS
+ * session's traffic lands from then on (`ingestUrlOf`, `config.ts`).
  */
 
 import { helpFlag } from "../help.ts";
@@ -50,6 +52,8 @@ export interface WABridgeSessions {
     organization_id: string;
     phone_number?: string;
     agent_id?: string;
+    /** where the bridge delivers this session's traffic — this org's ingest */
+    webhook_url: string;
   }): Promise<WAPairingState>;
   pending(id: string): Promise<WAPairingState>;
 }
@@ -62,6 +66,9 @@ export interface WhatsAppConnectDeps {
   /** The bridge's tenant id — `connections.whatsapp.organizationId` (it stores and
    *  echoes it back on session events). */
   organizationId: string;
+  /** This org's ingest as the bridge reaches it (`ingestUrlOf`) — kept with the session:
+   *  the bridge is multi-tenant, and each tenant's traffic lands at its own door. */
+  webhookUrl: string;
   /** Set ⇒ the pairing-code flow (typed into the phone); absent ⇒ the QR flow. */
   phoneNumber?: string;
   /** The machinery's write side (§4) — the same seam the sessions/events route uses. */
@@ -91,6 +98,7 @@ export async function connectWhatsApp(
 
   let state = await deps.bridge.create({
     organization_id: deps.organizationId,
+    webhook_url: deps.webhookUrl,
     ...(deps.phoneNumber ? { phone_number: deps.phoneNumber } : {}),
     ...(deps.principal ? { agent_id: deps.principal } : {}),
   });
@@ -201,8 +209,10 @@ if (import.meta.main) {
         return "principal";
       }
     })();
-    const { whatsappConfig } = await import("./config.ts");
-    const { bridgeUrl: base, organizationId } = await whatsappConfig(root);
+    const { ingestUrlOf, whatsappConfig } = await import("./config.ts");
+    const cfg = await whatsappConfig(root);
+    const { bridgeUrl: base, organizationId } = cfg;
+    const webhookUrl = ingestUrlOf(cfg);
     // the first door names the tenant after the folder and declares it; from then on the
     // file says, and a rename of the folder moves nothing on the bridge
     const tenant = organizationId ?? basename(root);
@@ -236,7 +246,7 @@ if (import.meta.main) {
     console.error(
       `Connecting WhatsApp as ${
         principal ? `agent "${principal}"` : "the org"
-      } (bridge ${base}, tenant "${tenant}") — ` +
+      } (bridge ${base}, tenant "${tenant}", ingest ${webhookUrl}) — ` +
         `${phoneNumber ? `pairing code for ${phoneNumber}` : "QR"}.\n`,
     );
     const log = await openLog(`${dir}/log`);
@@ -245,6 +255,7 @@ if (import.meta.main) {
         bridge,
         principal,
         organizationId: tenant,
+        webhookUrl,
         phoneNumber,
         store: log, // connections live on the Log (§4)
         publish: log.publish,

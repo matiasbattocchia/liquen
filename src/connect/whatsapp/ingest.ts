@@ -18,7 +18,8 @@
  * The entry adds a fourth route the bridge dials at the same address — `GET /m/<signed>`,
  * the outbound bytes the dispatch process minted a path for (`store/media.ts`). Inbound
  * media is PUSHED to us and outbound is PULLED from us, but both legs use this one door,
- * so the bridge is told where liquen is exactly once (`OPENBSP_URL`) and liquen is told nothing.
+ * so the bridge is told where liquen is exactly once — at pairing, as the session's
+ * `webhook_url` (`connect.ts`) — and liquen is told nothing.
  *
  * Mapping (§3, §4): `external_id = whatsapp:<wmw-id>` — the bridge's own id
  * (`wmw.<own>.<chat>.<sender>.<id>`) already encodes direction and the group participant,
@@ -59,6 +60,7 @@ import type {
   Payload,
 } from "../../types.ts";
 import { findRoot, orgFlag } from "../../config.ts";
+import { entry } from "../../entry.ts";
 
 /* ── the bridge's wire shapes (openbsp.go is the source of truth — the bridge's own
  *    contract, not a platform API, so hand-rolled here is honest) ─────────────────── */
@@ -588,9 +590,9 @@ function json(status: number, body: unknown): Response {
   });
 }
 
-/* ── local entry: HTTP server the bridge's OPENBSP_URL points at ───────────────────
+/* ── local entry: HTTP server the session's webhook_url points at ─────────────────────
  *
- *   deno task run:whatsapp        # serves :8793; bridge env → OPENBSP_URL=http://localhost:8793
+ *   deno task run:whatsapp        # serves :8793 — the address the pairing door registered
  *
  * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN; required); the port is
  * connections.whatsapp.ingestPort. */
@@ -643,4 +645,4 @@ export async function runIngest(): Promise<() => Promise<void>> {
   };
 }
 
-if (import.meta.main) await runIngest();
+if (import.meta.main) await entry(runIngest);

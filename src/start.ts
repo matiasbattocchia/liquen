@@ -8,6 +8,12 @@
  * way every process does (cwd walks up to config.jsonc), and env rides through untouched
  * (secrets only).
  *
+ * A child that CRASHES comes back; a child that REFUSES does not. The two are told apart
+ * by the exit code `entry` chose (`REFUSAL` — a sentence was printed, and a port already
+ * held or a key the file got wrong will be held and wrong again a second later), so the
+ * org runs on with whatever is left instead of reprinting one complaint every minute
+ * forever. When nothing is left, `liquen start` refuses too, naming who gave up.
+ *
  * Death is loud on stderr and nowhere else — the supervisor never opens the log; the
  * outer layer (docker restart, systemd, the terminal) supervises `liquen start` itself.
  * SIGTERM fans out to the children, waits `STOP_TIMEOUT_MS`, then SIGKILLs.
@@ -20,12 +26,21 @@
 
 import { TextLineStream } from "@std/streams";
 import { findRoot, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
-import { entry } from "./entry.ts";
+import { entry, REFUSAL } from "./entry.ts";
 import { SHIPPED } from "./connect/connect.ts";
 
 const RESTART_BASE_MS = 1_000;
 const RESTART_CAP_MS = 60_000;
 const HEALTHY_MS = 60_000; // uptime that forgives past crashes: the next backoff starts over
+
+/** Whether a child that just exited earns another try. A REFUSAL is the one exit that
+ *  does not: the child printed a sentence about the world as it is (a port already held, a
+ *  key the file got wrong), and a second run reads the same world. Every other death —
+ *  a fault, a signal, a clean exit nobody asked for — comes back. A signalled child is
+ *  never a refusal whatever code it reports: the code is the killer's, not the child's. */
+export function comesBack(status: Deno.CommandStatus): boolean {
+  return !(status.code === REFUSAL && status.signal === null);
+}
 
 /** Doubling delay per consecutive early exit, capped. */
 export function backoffMs(failures: number): number {
@@ -95,6 +110,7 @@ if (import.meta.main) {
     const catalog = await readConfig(root);
     const procs = roster(root, catalog.connections);
     const live = new Map<string, Deno.ChildProcess>();
+    const refused: string[] = []; // gave up on purpose — the child said why, once
     const halt = new AbortController();
     const stopping = () => halt.signal.aborted;
 
@@ -115,6 +131,13 @@ if (import.meta.main) {
         live.delete(name);
         if (stopping()) return;
         const uptime = Date.now() - started;
+        // a refusal is a decision about the world, not a stumble in it: the child already
+        // said what it wants, and saying it again on a timer teaches nobody anything
+        if (!comesBack(status)) {
+          refused.push(name);
+          stamp("liquen", `${name} refused after ${Math.round(uptime / 1000)}s — not retrying`);
+          return;
+        }
         failures = uptime >= HEALTHY_MS ? 1 : failures + 1;
         const wait = backoffMs(failures);
         stamp(
@@ -151,5 +174,9 @@ if (import.meta.main) {
 
     stamp("liquen", `${procs.map(([n]) => n).join(" · ")} — root ${root}`);
     await Promise.all(procs.map(keepAlive));
+    // every process is down and at least one meant it — the org has nothing left to run
+    if (!stopping() && refused.length > 0) {
+      throw new Error(`nothing left running — ${refused.join(", ")} refused (said why above)`);
+    }
   });
 }

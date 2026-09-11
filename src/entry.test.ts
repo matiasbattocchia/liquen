@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { report } from "./entry.ts";
+import { REFUSAL, report } from "./entry.ts";
 
 /** Capture what `report` writes, in order. */
 function said(err: unknown): string[] {
@@ -14,10 +14,13 @@ function said(err: unknown): string[] {
   return lines;
 }
 
-Deno.test("report: a plain Error is a refusal — the sentence alone", () => {
+Deno.test("report: a plain Error is a refusal — the sentence alone, and the code says so", () => {
   assertEquals(said(new Error("pairing timed out — run the door again")), [
     "pairing timed out — run the door again",
   ]);
+  assertEquals(report(new Error("x")), REFUSAL);
+  assertEquals(report(new TypeError("x")), 1);
+  assertEquals(report("just a string"), 1);
 });
 
 Deno.test("report: a subclass is the runtime speaking — the stack survives", () => {
@@ -59,11 +62,11 @@ async function ran(body: string): Promise<{ code: number; err: string }> {
   }
 }
 
-Deno.test("entry: a refusal is one line and exit 1 — no frames, no `Uncaught`", async () => {
+Deno.test("entry: a refusal is one line and its own code — no frames, no `Uncaught`", async () => {
   const { code, err } = await ran(`await entry(() => {
     throw new Error("sole-bot is already a liquen org");
   });`);
-  assertEquals(code, 1);
+  assertEquals(code, REFUSAL); // the supervisor reads this: nothing to retry
   assertEquals(err.trim(), "sole-bot is already a liquen org");
 });
 
@@ -71,7 +74,7 @@ Deno.test("entry: a bug keeps its frames", async () => {
   const { code, err } = await ran(`await entry(() => {
     (undefined as unknown as { go: () => void }).go();
   });`);
-  assertEquals(code, 1);
+  assertEquals(code, 1); // a fault is worth another try
   assertStringIncludes(err, "TypeError");
   assertStringIncludes(err, "at ");
 });
@@ -82,7 +85,7 @@ Deno.test("entry: what escapes AFTER the body meets the same rule", async () => 
       throw new Error("the bridge went away");
     }, 1);
   });`);
-  assertEquals(code, 1);
+  assertEquals(code, REFUSAL);
   assertEquals(err.trim(), "the bridge went away");
 });
 

@@ -36,9 +36,9 @@ Nothing below needs a sixth piece. What some of them need is **new state**, whic
 A connector is a **standalone process over the org's substrate**: it reaches liquen through
 the shared `./data` root and imports only the seam module, **`src/connector.ts`** — the log (`openLog`,
 `publish`, subscribe/`setDelivery`), the vault (`openCredentials`, the grant broker),
-`connectorConfig`, the event types, the dispatch error contract, and `entry` — the rule
-every liquen process ends by. A deep import from a connector is a contract violation, not
-a convenience.
+`connectorConfig`, the event types, the dispatch error contract, `watchStream` (the
+ephemeral channel, below), and `entry` — the rule every liquen process ends by. A deep
+import from a connector is a contract violation, not a convenience.
 
 Run an `import.meta.main` body through `entry` and a custom connector fails the way a
 shipped one does: `throw new Error("the bridge is not answering on :8081")` reaches the
@@ -67,7 +67,8 @@ A connector's subsection holds what is **that service's**: the addresses of its 
 scopes it asks for, the events it maps, the tenant it files the org under. A value that is
 merely *arbitrary and fixed* is a constant at the top of the file that uses it, not a knob:
 how often the pairing door polls the bridge is `POLL_MS` in `whatsapp/connect.ts`. And
-liquen's own address is never a knob at all (below).
+liquen's own address is stated once at most — to a service that keeps it, by the door
+that hands it over (below).
 
 A door may **decide** a knob's value the way `liquen init` decides the org's clock — what a
 human would otherwise type, typed once and written with the section, so the file says it
@@ -82,6 +83,44 @@ When a connector also **prints an app definition** — slack's manifest, the pre
 mode); what the app may do comes from `connections.slack`, so the consent the door asks
 Slack for and the consent the app declares are one list, not two that drift.
 
+### The ephemeral channel: what a connector can do that the log cannot say
+
+Some of what a service offers has no place in a log. A typing indicator, an assistant
+thread's status line, a presence hint: they live for seconds, belong to no conversation
+history, and must never become a row the agent later reads back as its own words. So they
+do not travel as events at all.
+
+`watchStream(dir, handlers, options)` opens the org's ephemeral channel (`stream.sock`,
+beside the log). What arrives is what is happening now — a turn's edges (`busy`/`idle`),
+and model deltas if asked for — carrying **what the turn is about**: the conversations
+whose words it has not answered, named as `{service, connection, conversation, since}`.
+That naming is the point: a connector holds no session and can act on no room address, but
+it knows its own service and an address on it. Filter by `service`, ignore the rest.
+
+Three rules, all of them load-bearing:
+
+- **Never depend on it.** `watchStream` never throws and never blocks: main not being up,
+  hanging up, or not existing at all are one case, and the loop simply waits and offers
+  again. A connector that ignores the channel entirely is complete and correct. This is
+  what keeps the org free of startup order.
+- **The reply is yours to make, and it is not a log row.** You already hold the service's
+  credentials and client, so a poke is a call you make — never a `publish`.
+- **Freshness is your rule.** Every unanswered conversation is named, stale ones included.
+  `since` says when it last spoke; whether that is recent enough to act on is your
+  judgment. Edges are edge-triggered, so anything that lapses on its own (a typing
+  indicator does) is re-posed on your own timer until the idle arrives.
+- **If your service echoes, you meet your own poke at the door.** A wire that posts back
+  what you send (the whatsmeow bridge and Slack both do) will hand your poke to your own
+  ingest, and a poke that lands in the log is a word the agent reads back as its own. That
+  is the reason to reach for this channel only for things the wire treats as ephemeral in
+  its own right — a typing indicator, a thread status — which leave nothing to echo.
+
+**What is NOT on this channel: presence.** `[thinking...]` and `[compacting...]` reach a
+surface as ordinary log rows (`extra.delta`), published by main and carried by whatever
+dispatcher already serves that surface. A connector does nothing to get them — no watch,
+no filter, no code at all, including a connector that is a serverless function. See §2 in
+DESIGN.md.
+
 ### Outbound media: the pull leg, signed and relative
 
 Most services take a file by **push** — Slack's `files.uploadV2`, Gmail's MIME body: liquen
@@ -92,9 +131,14 @@ whatsmeow bridge, Twilio's `MediaUrl`, the Cloud API's `link`), and for a file i
 It points back **relatively**. `signMediaPath` (`store/media.ts`) mints `/m/<payload>.<mac>`
 — the absolute path and an expiry, HMAC'd with a key in the vault — and the service
 resolves it against the address it already delivers to. That address is the connector's
-own ingest: the same door the service posts events at serves `/m/…`, so liquen never states
-its own hostname anywhere, and a containerized bridge is configured once (its
-`OPENBSP_URL`) instead of twice.
+own ingest: the same door the service posts events at serves `/m/…`, so the ingest's
+address is said once, not once per leg. Who says it is the pairing door: the whatsmeow
+bridge is one sidecar for many orgs, and `liquen connect whatsapp` registers this org's
+ingest as the session's `webhook_url`, which the bridge keeps with the session and dials
+for everything about it — batches, media, lifecycle, and the relative media path. The
+value is `connections.whatsapp.ingestUrl`, null ⇒ localhost on `ingestPort`, which holds
+whenever the sidecar shares the host; a bridge in a container declares the one it can
+reach.
 
 Three properties come from signing rather than remembering: verification holds no state,
 so the ingest and the dispatch can be different processes; a restart doesn't invalidate a

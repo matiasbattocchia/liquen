@@ -2098,6 +2098,49 @@ not cache it either. A read-only cache serves the run, emit included. The contai
 Dockerfile puts the cache at `/deno-dir`, readable by every uid; the shim module joins it at
 first boot, a fetch the harness (root, with the network) makes.
 
+### The bridge delivers where the pairing said (2026-09-11) — LANDED
+
+**What was wrong:** the whatsmeow bridge is multi-tenant everywhere but the destination:
+`bridge_sessions` files each device under an org, and one global `OPENBSP_URL` said where
+every org's traffic went. Two orgs on one sidecar (`~/new` and `~/sole-bot`) could each
+declare their own `ingestPort` and only one of them would ever hear a message. All four
+bridge→liquen contracts (webhook batch, media upload, session events, the relative
+`/m/<signed>` fetch) dial the same base, so inverting one of them to a websocket or a
+poll would not have helped; fusing whatsmeow into the connector would have shipped a Go
+binary per org.
+
+**What changed:** `bridge_sessions.webhook_url`, set from `POST /sessions` and kept with
+the mapping; each `Session` holds the `*OpenBSP` client aimed at it (`at`), and every post
+about the session rides that client, including the base a relative `media_url` resolves
+against. `OPENBSP_URL` is now the fallback for a pairing that names none, and optional: a
+bridge whose sessions all name their receiver needs none, and a pairing that names none on
+such a bridge is refused at the door. On liquen's side `liquen connect whatsapp` sends
+`webhook_url: ingestUrlOf(cfg)` — `connections.whatsapp.ingestUrl`, null ⇒ localhost on
+`ingestPort` (an `ingestPort` of 0 is refused there: the bridge keeps the address).
+
+**The limit, stated:** a session paired before this carries an empty `webhook_url` and
+keeps delivering to `OPENBSP_URL`. Re-pair it, or set the column by hand.
+
+### A refusal is not retried, and `run.ts` was never under the rule (2026-09-11) — LANDED
+
+The port collision printed a stack, which the error rule was supposed to have ended. The
+rule was fine; it was not reaching the file. `entry` sat on the standalone mains
+(`if (import.meta.main) await entry(runIngest)`) and every connector is spawned through
+`run.ts`, which was a bare top-level await — so `liquen start` got Deno's
+`Uncaught (in promise)` and the frames, and a running connector had no
+`unhandledrejection` listener at all. All four `run.ts` are wrapped now, and
+`whatsapp/ingest.ts`'s own main, which was the last one still unwrapped.
+
+Then the supervisor kept retrying it, every 60s, forever. A refusal is a decision about the
+world as it is — a port already held, a key the file got wrong — and a second run reads the
+same world, so `entry` now exits `REFUSAL` (2) for a plain Error and 1 for everything else;
+`report` returns the code it chose rather than printing and leaving the choice to the
+caller. `comesBack(status)` is the supervisor's whole rule: a fault, a signal or an
+unasked-for clean exit all come back, a refusal stays down, and a signalled child is never a
+refusal whatever code it reports, because that code is the killer's. The org runs on with
+whatever is left; when nothing is left and someone meant it, `liquen start` refuses too,
+naming who gave up.
+
 ### The door picks the port, because it is the only moment anyone can (2026-09-10) — LANDED
 
 A second org on one machine took the first one's whatsapp ingest port, and said so in a

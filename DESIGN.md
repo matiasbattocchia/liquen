@@ -2611,6 +2611,13 @@ loudly, the same law as an unknown config key.
   when it is not (`declared`, src/connect/declare.ts). The bind is the test, so only a
   RUNNING sibling moves a port; two orgs installed and never run together still meet at the
   boot that runs them both, where the failing message is the right one.
+- **A crash comes back, a refusal does not.** `entry` picks the exit code by the same rule
+  it picks the message: a plain `Error` is a refusal and exits `REFUSAL` (2), anything else
+  is a fault and exits 1. The supervisor reads that code (`comesBack`, src/start.ts): a
+  fault, a signal or an unasked-for clean exit are restarted with backoff; a refusal is
+  logged once and left down, because a port already held or a key the file got wrong will be
+  held and wrong again a second later. The org keeps running with whatever is left, and
+  `liquen start` refuses when nothing is.
 - **Local dev keeps its inner loop.** `deno task cli` hosts main in-process behind the REPL,
   and `deno task run:<name>` runs one connection alone; `deno task start` is the same
   headless shape a deployment runs.

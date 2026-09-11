@@ -12,8 +12,8 @@
  * WhatsApp itself (encrypt + CDN push are ITS job — the multi-device protocol has no
  * send-by-link, so whoever sends must hold the plaintext). A local `file://` part needs
  * a url the bridge can reach: the `mediaUrl` seam mints a RELATIVE signed path
- * (`/m/<payload>.<mac>`, `store/media.ts`) which the bridge resolves against its
- * `OPENBSP_URL` — our ingest — and fetches there. An external `http(s)` part passes
+ * (`/m/<payload>.<mac>`, `store/media.ts`) which the bridge resolves against the
+ * session's receiver — our ingest, registered at pairing — and fetches there. An external `http(s)` part passes
  * through as-is. The token and the files stay broker-side (§9).
  *
  * One event, N parts → N bridge calls (the bridge takes ONE content each): the first
