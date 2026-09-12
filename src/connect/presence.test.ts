@@ -33,11 +33,25 @@ function watching(over: Partial<PresenceDeps> = {}) {
   return { on, wrote, said };
 }
 
-const spokeAt = (ms: number, service = "whatsapp"): About => ({
+/** The principal's word, in the one room it always lands in: the mind's own, whether they
+ *  typed it into a door or the mirror carried it in off a wire. */
+const spokeAt = (ms: number, over: Partial<About> = {}): About => ({
+  service: "local",
+  connection: "agent",
+  conversation: `mind@${AGENT}`,
+  since: new Date(NOW - ms).toISOString(),
+  spoken: true,
+  ...over,
+});
+
+/** News from anywhere else — a group, a stranger's DM. It wakes the mind exactly as the
+ *  principal's word does, which is the whole reason presence cannot read it as presence. */
+const elsewhere = (ms: number, service = "whatsapp"): About => ({
   service,
   connection: OWN,
   conversation: "5492614694650",
   since: new Date(NOW - ms).toISOString(),
+  spoken: true,
 });
 
 Deno.test("presence: a thinking delta is one fact in the mind's room, once", async () => {
@@ -84,12 +98,58 @@ Deno.test("presence: a turn with no news at all — the tick's wake — says not
   assertEquals(said(), []);
 });
 
-Deno.test("presence: the mind is one — fresh news on another wire still counts", async () => {
+Deno.test("presence: the mind is one — the principal's word counts whatever wire brought it", async () => {
   const { on, said } = watching();
-  on.status(AGENT, "mind", "busy", [spokeAt(10 * 60_000), spokeAt(2_000, "slack")]);
+  on.status(AGENT, "mind", "busy", [elsewhere(10 * 60_000), spokeAt(2_000)]);
   on.delta(AGENT, "mind", { kind: "thinking" });
   await Promise.resolve();
   assertEquals(said(), ["thinking"]);
+});
+
+// The line is painted on the PRINCIPAL's surface. A group message wakes the mind the same
+// way their own does, and saying `[agent thinking...]` to them about it is a machine
+// talking to itself in front of someone who never spoke.
+Deno.test("presence: a stranger's message wakes the mind, and says nothing to the principal", async () => {
+  const { on, said } = watching();
+  on.status(AGENT, "mind", "busy", [elsewhere(2_000)]);
+  on.delta(AGENT, "mind", { kind: "thinking" });
+  await Promise.resolve();
+  assertEquals(said(), []);
+});
+
+Deno.test("presence: an alarm in the mind's room is the clock, not a person", async () => {
+  const { on, said } = watching();
+  on.status(AGENT, "mind", "busy", [spokeAt(2_000, { spoken: false })]);
+  on.delta(AGENT, "mind", { kind: "thinking" });
+  await Promise.resolve();
+  assertEquals(said(), []);
+});
+
+// The minute asks whether anybody is there, not how long the mind may take. A fold that
+// runs for five minutes is exactly the silence this module exists to fill, and the
+// principal who asked before it started is still sitting in front of it.
+Deno.test("presence: the turn heard them once — the minute does not run out mid-answer", async () => {
+  let clock = NOW;
+  const { on, said } = watching({ now: () => clock });
+  on.status(AGENT, "mind", "busy", [spokeAt(2_000)]);
+  on.delta(AGENT, "mind", { kind: "checkpoint" });
+  clock = NOW + 5 * 60_000; // the fold took minutes; the question is still unanswered
+  on.delta(AGENT, "mind", { kind: "thinking" });
+  await Promise.resolve();
+  assertEquals(said(), ["checkpoint", "thinking"]);
+});
+
+Deno.test("presence: a turn nobody asked for stays quiet until somebody asks into it", async () => {
+  const { on, said } = watching();
+  on.status(AGENT, "mind", "busy", [elsewhere(2_000)]);
+  on.delta(AGENT, "mind", { kind: "thinking" });
+  await Promise.resolve();
+  assertEquals(said(), []);
+  // they write while the mind is already at work: from here it is their answer too
+  on.status(AGENT, "mind", "busy", [elsewhere(2_000), spokeAt(0)]);
+  on.delta(AGENT, "mind", { kind: "checkpoint" });
+  await Promise.resolve();
+  assertEquals(said(), ["checkpoint"]);
 });
 
 Deno.test("presence: a named session is mirrored nowhere, so it says nothing", async () => {

@@ -630,6 +630,10 @@ export interface About {
   connection: string;
   conversation: string;
   since: string;
+  /** Whether the freshest news here is somebody's WORD rather than the clock's — a message,
+   *  not an alarm. Presence rides it (§9): a room whose newest news nobody spoke has nobody
+   *  waiting in it. */
+  spoken: boolean;
 }
 
 /** Ephemeral broadcast — stream the in-progress; never stored. Correctness never depends on

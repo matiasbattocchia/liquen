@@ -705,8 +705,9 @@ Deno.test({
       { transport },
     );
     try {
-      // the number is a1's own: its self-chat is the mirror's surface (§4), and the wire
-      // message is theirs to answer (§6)
+      // the number is a1's own: its self-chat is the mirror's surface (§4), so a word the
+      // principal types there is both the wake and the reason to answer it out loud — the
+      // mirror crosses it into the mind's room, which is where presence looks for them
       main.log.upsertConnections([
         { service: "whatsapp", address: "5491133585694", agentId: "a1" },
       ]);
@@ -716,8 +717,8 @@ Deno.test({
         envelope: {
           service: "whatsapp",
           connection_address: "5491133585694",
-          conversation: { address: "5492614694650" },
-          sender: { address: "5492614694650", name: "Luciano" },
+          conversation: { address: "5491133585694" },
+          sender: { address: "5491133585694", name: "matias" },
         },
         parts: [{ type: "text", kind: "text", text: "¿estás?" }],
       } as Draft<MessageEvent>);

@@ -697,6 +697,7 @@ export function aboutOf(events: Event[], session: Session): About[] {
         connection: e.envelope.connection_address,
         conversation: e.envelope.conversation.address,
         since: e.ts,
+        spoken: e.type === "message",
       });
     }
   }

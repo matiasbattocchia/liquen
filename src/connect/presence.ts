@@ -14,12 +14,19 @@
  *
  * Two questions are this module's own:
  *
- *   - **WHETHER** — only when somebody is there. A turn's `about` carries `since` per
- *     unanswered conversation; presence speaks only while the freshest of them is within
- *     `RECENT_MS`, read across every service, because the mind is one: a line typed on
- *     Slack is a reason to say `[agent thinking...]` on WhatsApp. A 3am tick wakes the mind
- *     over a three-day-old window and says nothing. And nothing at all is written while no
- *     surface is bound: a fact nobody can hear is not worth a row.
+ *   - **WHETHER** — only when the PRINCIPAL is there, because the line is painted on THEIR
+ *     surface. A turn's `about` carries `since` per unanswered conversation; presence reads
+ *     the one room the principal speaks in, the mind's own, where their word lands whether
+ *     typed into a door or crossed in by the mirror — so a line sent from Slack is still a
+ *     reason to say `[agent thinking...]` on WhatsApp, and a stranger's message in some
+ *     group, which wakes the mind exactly the same way, is not. It must also be a word:
+ *     an alarm ringing in that room is the clock, and nobody is waiting on it. Then the
+ *     word must be within `RECENT_MS` — a 3am tick over a three-day-old window says
+ *     nothing. That question is settled ONCE, at the turn's edge: the answer a principal
+ *     waits five minutes for is the one they most need a sign of life during, and the
+ *     minute is about whether they are there, not how long the mind may take. And nothing
+ *     at all is written while no surface is bound: a fact nobody can hear is not worth a
+ *     row.
  *   - **HOW OFTEN** — once per kind per turn.
  */
 
@@ -49,9 +56,10 @@ export interface Presence {
   delta(agentId: string, sessionId: string, delta: Delta): void;
 }
 
-/** An open turn: when its freshest news spoke, and what has already been said about it. */
+/** An open turn: whether the principal was there when it began, and what it has already
+ *  said about itself. */
 interface Turn {
-  since: number;
+  heard: boolean;
   told: Set<DeltaKind>;
 }
 
@@ -74,22 +82,29 @@ export function createPresence(deps: PresenceDeps): Presence {
         turns.delete(agentId);
         return;
       }
-      // the freshest news of the whole turn, whatever service carried it: one mind
+      // when the PRINCIPAL last spoke: their word lands in the mind's own room whatever
+      // carried it — typed into a door, or crossed in by the mirror from any wire
+      const home = sessionAddress(agentId, MIND);
       const since = about
+        .filter((a) => a.conversation === home && a.spoken)
         .map((a) => Date.parse(a.since))
         .filter((t) => !Number.isNaN(t))
         .reduce((a, b) => Math.max(a, b), -Infinity);
+      // asked once, at the edge: somebody who asked a minute ago is somebody who is still
+      // waiting, however long the answer takes — and the long answers are the ones worth
+      // saying anything about. A turn that opened over nothing can still be joined: a word
+      // spoken into it is the principal arriving mid-answer.
+      const heard = now() - since <= recentMs;
       const held = turns.get(agentId);
-      if (held) held.since = Math.max(held.since, since);
-      else turns.set(agentId, { since, told: new Set() });
+      if (held) held.heard ||= heard;
+      else turns.set(agentId, { heard, told: new Set() });
     },
     delta(agentId, sessionId, delta) {
       const kind = delta.kind;
       if (kind !== "thinking" && kind !== "checkpoint") return;
       if (sessionId !== MIND) return;
       const turn = turns.get(agentId);
-      if (!turn || turn.told.has(kind)) return;
-      if (now() - turn.since > recentMs) return;
+      if (!turn || !turn.heard || turn.told.has(kind)) return;
       if (!deps.aliases().some((a) => a.live && a.agentId === agentId)) return;
       turn.told.add(kind); // claim the seat BEFORE the await: the deltas do not wait
       deps.publish(factOf(agentId, kind, new Date().toISOString()))

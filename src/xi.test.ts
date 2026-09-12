@@ -781,6 +781,17 @@ Deno.test("aboutOf: the news, translated out of session terms — one entry per 
   );
 });
 
+// Both wake a mind; only one of them is a person waiting for it (§9).
+Deno.test("aboutOf: a word is spoken news, the clock's own ring is not", () => {
+  const word = wireMsg("5492614694650", "2026-09-10T20:50:00.000Z");
+  const rang = { ...word, id: "e900", type: "alarm", ts: "2026-09-10T20:55:00.000Z" } as Event;
+
+  assertEquals(aboutOf([word], SESSION)[0].spoken, true);
+  const after = aboutOf([word, rang], SESSION)[0];
+  assertEquals(after.since, "2026-09-10T20:55:00.000Z"); // the newest is what the room is about
+  assertEquals(after.spoken, false);
+});
+
 Deno.test("aboutOf: answered news is not news — nothing to be about", () => {
   const asked = wireMsg("5492614694650", "2026-09-10T20:50:00.000Z");
   const answered = selfMsg();

@@ -2096,9 +2096,15 @@ reaps itself after a linger with zero attachments — and "is one running?" is a
 `connect()`, never a `stat()`.
 
 **Presence is a typed fact in the mind, and a message on the wire — the gate's own
-shape.** While a turn runs and somebody is waiting, main writes a `delta` event into the
-mind's room (`connect/presence.ts`): one data part naming the kind, `thinking` or
-`checkpoint`, harness-authored. That is all the log holds. The mirror crosses it to every
+shape.** While a turn runs and the PRINCIPAL is waiting, main writes a `delta` event into
+the mind's room (`connect/presence.ts`): one data part naming the kind, `thinking` or
+`checkpoint`, harness-authored. Waiting is read off the mind's own room, the one place
+their word lands whatever carried it — a door, or the mirror off any wire — and it must be
+a word: every other thing that wakes a mind (a stranger's message in a group, an alarm
+coming due) would otherwise paint a line on a surface belonging to somebody who never
+spoke. The minute is asked once, at the turn's edge, because it asks whether they are
+there and not how long the mind may take: a fold that runs five minutes is the silence
+this exists to fill. That is all the log holds. The mirror crosses it to every
 live surface exactly as it crosses a `permission_request` — as a tagged line the surface can
 show, `[agent thinking...]` or `[agent compacting...]`, the whole line being the tag — and
 that CC rides whatever dispatcher already serves the surface. No typed event ever touches a
