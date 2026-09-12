@@ -438,7 +438,9 @@ function editor(head: string, recalled: () => readonly string[]): Screen {
   };
 }
 
-// CSI sequences move the cursor and colour it; they occupy no column
+// CSI sequences move the cursor and colour it; they occupy no column — ESC is the byte
+// that opens one, so the control character is the point of the pattern
+// deno-lint-ignore no-control-regex
 const ESCAPES = /\x1b\[[0-9;?]*[@-~]/g;
 
 /** Where the cursor stands after printing `s` from column `col`. */
