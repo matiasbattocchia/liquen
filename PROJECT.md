@@ -2537,6 +2537,36 @@ per kind per turn — and stopped choosing surfaces. Where a line goes is the mi
 which is what was asked for two rounds earlier and is now literally true. The cost is a
 gate's: one event plus its CCs.
 
+### The registered redirect URI is the door's whole address (2026-09-11) — LANDED
+
+The account door used to build its callback inline from the catalog while the app door
+printed the string to register from a second template, and the two had to agree character
+for character or Google answered `redirect_uri_mismatch` — 2026-09-01. Now there is one
+expression, `localCallback(oauthPort)`, and one address per sign-in: the app row's public
+`extra.redirect_uri` when it has one, that loopback URL when it does not. Either way it is
+sent verbatim, so what Google matches against its own list is exactly what was registered.
+An absent public URI is not a gap to fill — it says the dev never set one up, so the
+sign-in is their own. A pasted URI the handler could never answer (no `/callback` suffix) is
+refused at paste time rather than after a member has already consented.
+
+One rule, read off that URI's host, covers both audiences and needs no flag. A loopback host
+is the dev's own browser, which Google permits in plain http, and it names the port the door
+binds because that browser dials the door directly; the command opens it. Any other host is a
+member's, so the command prints the link to send and binds `connections.google.oauthPort` for
+whatever terminates TLS to forward to. That closes the "member still has no way in" left open
+on 2026-09-09: a public app row plus a tunnel or a real host makes the same one-shot door
+reachable by the person whose link it is.
+
+The one thing that must NOT follow the dev is the browser launch. The Google link carries
+`?agent=` and the door is one-shot, so opening a member's link here would spend that sign-in
+on whoever this browser is logged in as, and the grant would land under someone else's name
+looking perfectly successful. `doorAddress` is the seam that decides all of it, and it is
+pure: `{callback, start, port, loopback}` from the URI plus the configured port.
+
+Open: Slack's twin. Its redirect URLs must be HTTPS with no loopback exception, and its
+`/start` asks for bot scopes on every click, so under one shared app every member's sign-in
+re-installs the workspace leg.
+
 ### The REPL's line is the REPL's own (2026-09-11) — LANDED
 
 The REPL read stdin as a stream of lines, which means the kernel was doing the editing —
@@ -2565,3 +2595,34 @@ about the screen changed — it is still the present, never a replayed transcrip
 The consequence worth naming: lines sent from WhatsApp come back under the up arrow too,
 because the mirror puts the principal's word in the mind's room and that is the room the
 REPL recalls. One mind, several mouths — the ring reflects it for free.
+
+### Slack has two doors, and its served one is Google's twin (2026-09-12) — LANDED
+
+Four verbs (`app`, `bot`, `socket`, `user`) were four trips to the same console for pieces
+Slack hands out in one sitting, and the default `user` verb minted a per-member app from a
+trimmed manifest — one app per person, when the whole point of an app is that a workspace
+installs it once. Meanwhile `createSlackOAuth` was served by nothing: its header called the
+link "shared" and the callback promised to auto-register whoever Slack said clicked, through
+a `bindPrincipal` that existed only in a test. Slack ids name nobody in the roster, so that
+promise could never have been kept.
+
+Now `app` is the sitting: manifest link, then every paste the console shows, each empty to
+skip — client, signing secret, app-level token, public redirect URI — and `--bot` / `--user`
+add the two tokens the install just issued, with the agent asked beside each token rather
+than as flags, because the bot's agent and the dev's own are two different names. There is
+no `--socket`: ingest already reads the carrier off the vault, an xapp row is the socket and
+a signing secret is HTTP, so a flag would have chosen nothing.
+
+`user` is the served sign-in and mimics Google's exactly. The link carries `?agent=` and is
+good for one person; the door mounts the handler with `oneShot`, prints the link, waits, and
+reports `slack user U… → <agent>` — the verified id Google cannot give, put to its real use:
+letting the dev notice a link that reached the wrong hands. `/start` asks user scopes only,
+so a member's sign-in can neither reinstall nor rescope the bot, and the callback lands the
+grant through `landSlackUser`, the same function a paste lands through, so a leg looks the
+same however it arrived. Slack registers https only with no loopback exception, so this door
+works only through the app row's public URI; `slackDoor` refuses a loopback or plain-http one
+at paste time, and a `user` on an app with no URI says what to put in front of
+`connections.slack.oauthPort`. The dev's own leg on the dev's own machine is `app --user`.
+
+`oneShot` and `doorAddress` moved to `connect/door.ts`, shared by both services. That closes
+the Slack twin left open on 2026-09-11.

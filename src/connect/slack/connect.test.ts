@@ -4,7 +4,13 @@
  * string never identifies one) and a rejected token writes NOTHING.
  */
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { missingScopes } from "./config.ts";
 import {
   appIdOf,
@@ -14,9 +20,9 @@ import {
   connectSlackUser,
   manifestUrl,
   pickSlackApp,
+  slackDoor,
   slackHave,
   slackNext,
-  userManifest,
   withScopes,
 } from "./connect.ts";
 import { DEFAULT_BOT_SCOPES, DEFAULT_USER_SCOPES } from "./config.ts";
@@ -137,22 +143,6 @@ Deno.test("connect: a rejected token writes NOTHING — verify before the map", 
   assertEquals(h.published.length, 0);
 });
 
-Deno.test("connect: the default door mints a USER-ONLY app — every bot limb dropped", () => {
-  const m = userManifest({
-    display_information: { name: "mu" },
-    features: { bot_user: { display_name: "mu" } },
-    oauth_config: { scopes: { bot: ["chat:write"], user: ["chat:write", "im:history"] } },
-    settings: {
-      event_subscriptions: { bot_events: ["message.im"], user_events: ["message.im"] },
-      socket_mode_enabled: true,
-    },
-  }) as Record<string, Record<string, unknown>>;
-  assertEquals(m.features, undefined); // bot_user gone; empty features pruned
-  assertEquals(m.oauth_config.scopes, { user: ["chat:write", "im:history"] });
-  assertEquals(m.settings.event_subscriptions, { user_events: ["message.im"] });
-  assertEquals(m.settings.socket_mode_enabled, true); // the carrier stays
-});
-
 Deno.test("connect: the manifest's consent comes from the catalog, not the seed", async () => {
   const seed = JSON.parse(
     await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
@@ -169,9 +159,20 @@ Deno.test("connect: the manifest's consent comes from the catalog, not the seed"
   };
   assertEquals(filled.oauth_config.scopes.bot, DEFAULT_BOT_SCOPES);
   assertEquals(filled.oauth_config.scopes.user, DEFAULT_USER_SCOPES);
-  // and the user door drops the bot leg from what it just filled in
-  const user = userManifest(filled) as { oauth_config: { scopes: Record<string, string[]> } };
-  assertEquals(user.oauth_config.scopes, { user: DEFAULT_USER_SCOPES });
+});
+
+Deno.test("slackDoor: a public https callback is served on the configured port; loopback and http are refused at paste time", () => {
+  const d = slackDoor("https://liquen.example/oauth/slack/callback", 8790);
+  assertEquals(d.loopback, false);
+  assertEquals(d.port, 8790);
+  assertEquals(d.start, "https://liquen.example/oauth/slack/start");
+  assertThrows(() => slackDoor("http://liquen.example/oauth/slack/callback", 8790), Error, "https");
+  assertThrows(
+    () => slackDoor("https://localhost:8790/oauth/slack/callback", 8790),
+    Error,
+    "loopback",
+  );
+  assertThrows(() => slackDoor("https://liquen.example/oauth/slack", 8790), Error, "/callback");
 });
 
 Deno.test("connect: the prefill link embeds the manifest for api.slack.com to build from", () => {
@@ -208,7 +209,7 @@ Deno.test("bot door: xoxb → the org-credentialed anchor + the vault blob", asy
   assertEquals(h.published.length, 1); // the note crossed the frontier as an event
 });
 
-Deno.test("bot door: a USER token is refused by shape and points at the user door", async () => {
+Deno.test("bot door: a USER token is refused by shape and points at the user paste", async () => {
   const h = harness();
   await assertRejects(
     () =>
@@ -217,7 +218,7 @@ Deno.test("bot door: a USER token is refused by shape and points at the user doo
         authTest: () => Promise.resolve({ ok: true, team_id: "T1", user_id: "U7" }),
       }),
     Error,
-    "liquen connect slack user",
+    "--user",
   );
   assertEquals(h.connections.length, 0);
   assertEquals(h.credentials.length, 0);
@@ -328,10 +329,11 @@ Deno.test("slackHave: the vault's slack rows sort into app, bot, carrier, user",
 Deno.test("slackNext: a user leg alone is told what inbound still needs", () => {
   const next = slackNext({ app: false, bot: false, appToken: false, user: true });
   assertEquals(next.length, 3); // the bot, the carrier, the oauth client
-  assertStringIncludes(next[0], "liquen connect slack bot");
-  assertStringIncludes(next[1], "liquen connect slack socket");
+  assertStringIncludes(next[0], "liquen connect slack app --bot");
+  assertStringIncludes(next[1], "App-Level Tokens");
   assertStringIncludes(next[1], "PUBLIC request URL"); // the alternative, named
   assertStringIncludes(next[2], "liquen connect slack app");
+  assertStringIncludes(next[2], "liquen connect slack user"); // the one door that needs it
 });
 
 Deno.test("slackNext: a bot without its app-level token is told where to generate one", () => {
@@ -390,7 +392,7 @@ Deno.test("socket door: an identity token is refused by shape, and pointed home"
   await assertRejects(
     () => connectSlackSocket("xoxb-bot", { creds: h.deps.creds, probe: () => never() }),
     Error,
-    "liquen connect slack bot",
+    "--bot",
   );
   assertEquals(h.credentials.length, 0);
 });

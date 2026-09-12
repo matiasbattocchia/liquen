@@ -1064,15 +1064,20 @@ The 3×2 grid, each cell real and distinct:
   devs expect (Claude-Code MCP logins likewise): a `liquen connect <service>` flow writes the
   connection row + vault rows; the same flow is later steerable through the agent (§8
   conversational setup), since the REPL into the mind is already the operator console.
-  **The paste doors (`liquen connect slack {app,bot,user}`, `connect/slack/connect.ts`)**: the dashboard's
+  **The two Slack doors (`liquen connect slack {app,user}`, `connect/slack/connect.ts`)**: the dashboard's
   "Install to Workspace" button IS an OAuth flow with Slack hosting the redirect, so a
-  dev self-serves tokens with zero public surface — the CLI prints the manifest prefill
-  link (app creation and app-level tokens have no public API; the link is the automation
-  ceiling), the dev pastes the token, and `auth.test` resolves the workspace (a token
-  string never identifies one) before the SAME map writes as the OAuth handler — bound to
-  the real registry name. The `app` paste vaults the OAuth client (`slack:app:<id>`, what the handler signs a member in with), the `bot` paste vaults the org identity (`slack:<team>:org`, xoxb + the xapp socket carrier the ingest picks up). A paste serves whoever
-  is at the terminal; the OAuth handler, served by a door for one sign-in, serves a member
-  who is not. Facts
+  dev self-serves tokens with zero public surface — `app` is one sitting at the console:
+  the CLI prints the manifest prefill link (app creation and app-level tokens have no
+  public API; the link is the automation ceiling) and takes what the console shows, the
+  OAuth client (`slack:app:<id>`), its signing secret, the xapp socket carrier
+  (`slack:socket:<app id>`), the public redirect URI, and with `--bot`/`--user` the tokens
+  the install issued (`slack:<team>:org`, the dev's own leg). `auth.test` resolves the
+  workspace (a token string never identifies one) before the map writes. A paste serves
+  whoever is at the terminal; `user` serves a member who is not, through the OAuth handler
+  mounted for one sign-in at the app's registered https URI — the link carries the agent
+  name the way Google's does, Slack's verified `authed_user.id` is what the terminal
+  reports against it, and the grant lands through the same `landSlackUser` a paste lands
+  through. Only user scopes are asked there: the bot is the org's, from the install. Facts
   that shaped it: one app × workspace = ONE bot (reinstall rotates the token, never a
   second bot; more bots ⇒ more apps — per-agent apps named after the agent), multiple
   apps coexist under ONE anchor row (per-bot identity lives in the vault, and the

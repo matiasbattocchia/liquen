@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { APP_PREFIX, connectGoogleApp, oneShot, pickGoogleApp } from "./connect.ts";
+import { APP_PREFIX, connectGoogleApp, localCallback, pickGoogleApp } from "./connect.ts";
+import { doorAddress } from "../door.ts";
 import { openCredentials } from "../../store/credentials.ts";
 
 async function withVault(
@@ -29,6 +30,18 @@ Deno.test("app: the paste lands under its own id — several apps coexist", asyn
   });
 });
 
+Deno.test("app: no public URI is the loopback door — the dev's own browser, nothing stored", async () => {
+  await withVault(async (creds) => {
+    await connectGoogleApp({ clientId: "cid1", clientSecret: "s" }, creds);
+    const row = (await creds.get(`${APP_PREFIX}cid1`))!;
+    assertEquals(row.extra?.redirect_uri, undefined);
+    // what the app door prints to register is what a sign-in sends: one expression
+    const door = doorAddress(localCallback(8791), 8791);
+    assertEquals(door.loopback, true);
+    assertEquals(door.port, 8791);
+  });
+});
+
 Deno.test("app: a re-paste rotates the secret, the sidecar survives (vault merge)", async () => {
   await withVault(async (creds) => {
     await connectGoogleApp(
@@ -54,24 +67,4 @@ Deno.test("pick: the only app is the choice; several demand a name; none is an e
     assertEquals((await pickGoogleApp(creds, "cid2")).value.client_id, "cid2");
     await assertRejects(() => pickGoogleApp(creds, "nope"), Error, "no app nope");
   });
-});
-
-Deno.test("oneShot: the first callback settles the door whichever way it went — a failure does not hang it", async () => {
-  const { handler, outcome } = oneShot((req) =>
-    Promise.resolve(
-      new URL(req.url).pathname.endsWith("/callback")
-        ? new Response("state mismatch", { status: 400 })
-        : new Response(null, { status: 302 }),
-    )
-  );
-  await handler(new Request("http://localhost/oauth/google/start"));
-  const res = await handler(new Request("http://localhost/oauth/google/callback?state=x"));
-  assertEquals(res.status, 400);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const settled = await Promise.race([
-    outcome.then((r) => r.status),
-    new Promise<string>((r) => (timer = setTimeout(() => r("hung"), 500))),
-  ]);
-  clearTimeout(timer);
-  assertEquals(settled, 400);
 });

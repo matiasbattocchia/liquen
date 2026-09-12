@@ -780,9 +780,9 @@ export function slackSocket(
  *   deno task run:slack       # xapp in the vault → socket mode; else HTTP on :8789
  *
  * Env: none — everything comes from the vault. Socket carriers are the app-level
- * tokens the socket door stored (`liquen connect slack socket`), one socket per app (§4). No
- * carrier ⇒ HTTP mode on connections.slack.ingestPort, verified by the apps' signing
- * secrets (`liquen connect slack app` stores them); no app, no server. */
+ * tokens `liquen connect slack app` stored, one socket per app (§4). No carrier ⇒ HTTP
+ * mode on connections.slack.ingestPort, verified by the apps' signing secrets (the same
+ * door stores them); no app, no server. */
 /** The secrets an HTTP-mode server verifies with: every app row's `signing_secret`. None
  *  is a refusal to serve — an unverified Events URL would take any POST as the workspace's
  *  word, `authorizations` included. */
@@ -790,8 +790,8 @@ export function httpSigningSecrets(apps: { value: Record<string, string> }[]): s
   const secrets = apps.map((a) => a.value.signing_secret).filter((s) => s);
   if (secrets.length === 0) {
     throw new Error(
-      "HTTP mode needs a signing secret — `liquen connect slack app` stores it, or " +
-        "`liquen connect slack socket` for Socket Mode",
+      "HTTP mode needs a signing secret — `liquen connect slack app` pastes it, or an " +
+        "app-level token (xapp) for Socket Mode",
     );
   }
   return secrets;

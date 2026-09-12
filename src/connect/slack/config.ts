@@ -3,14 +3,15 @@
  * its DEFAULT_s live here and nowhere else, used as argument defaults; the values heal
  * into `data/config.jsonc` under `connections.slack` and are validated at boot.
  *
- * The two scope lists are the ONE source: the OAuth handler asks Slack for exactly these
- * (`scope` / `user_scope`) and the app manifest `liquen connect slack` prints is filled from
- * them (`withScopes`) — so the app you create and the consent you request cannot drift.
+ * The two scope lists are the ONE source: the app manifest `liquen connect slack app` prints
+ * is filled from both (`withScopes`), and the user door asks Slack for exactly the user
+ * list (`user_scope`) — so the app you create and the consent you request cannot drift.
  */
 
 import { checkPort, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
 
 export const DEFAULT_INGEST_PORT = 8789;
+export const DEFAULT_OAUTH_PORT = 8790;
 /** The BOT is one identity for the whole org: it sees a channel only once invited, so
  *  reading the roster and the history of what it was invited to is the whole job — the
  *  attachments included: `files:read` is what lets the bot token fetch a shared file's
@@ -56,6 +57,13 @@ export const SPEC: ConnectorSpec = {
       key: "ingestPort",
       value: DEFAULT_INGEST_PORT,
       doc: "the HTTP-mode ingest port (Socket Mode needs none); 0 = any free port, announced",
+      check: checkPort,
+    },
+    {
+      key: "oauthPort",
+      value: DEFAULT_OAUTH_PORT,
+      doc:
+        "the port the user door binds for whatever terminates TLS at the app's redirect URI to forward to",
       check: checkPort,
     },
     {

@@ -38,7 +38,8 @@ export const SPEC: ConnectorSpec = {
     {
       key: "oauthPort",
       value: DEFAULT_OAUTH_PORT,
-      doc: "the localhost port the account door serves its OAuth callback on",
+      doc:
+        "the port the account door binds when the app's callback is remote; a loopback one names its own",
       check: checkPort,
     },
     {

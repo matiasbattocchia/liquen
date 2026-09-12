@@ -2,63 +2,59 @@
  * connect/slack/oauth.ts — the Slack OAuth surface of the connection (DESIGN §4, §9).
  *
  * Two routes, one portable handler (`(Request) => Response`, deps injected — the same
- * open-bsp function shape as the github connector's ingest.ts):
+ * shape as connect/google/oauth.ts):
  *
  *   GET /start     mint a one-time `state` → 302 to Slack's consent screen. The link is
- *                  stable and shareable: each click gets its own CSRF state, and Slack
- *                  verifies who clicked (§4: the log is the frontier).
+ *                  minted PER MEMBER, like Google's: `?agent=<name>` rides into the state
+ *                  and the callback binds the grant to that member. A user token is
+ *                  always someone's, so a link naming nobody is refused. Only user scopes
+ *                  are asked (`user_scope`): the bot is the org's and comes from the
+ *                  install, pasted at `liquen connect slack app --bot`, so a member signing
+ *                  in can neither reinstall nor rescope it.
  *   GET /callback  verify state (one-time, TTL) → exchange the code (oauth.v2.access) →
- *                  write the granted connections + vault rows: xoxb → the bot pipe (the
- *                  bare `<team>`, ownerless ⇒ the org's shared inbox, §6), xoxp → the
- *                  principal's OWN grant (`<team>:<user>`, owned ⇒ private), binding the
- *                  principal from the Slack-VERIFIED `authed_user.id` (auto-register on
- *                  first connect — the consent flow itself proves identity)
- *                  → publish a notification event to the log (the only legal way to tell
- *                  the harness anything) → a plain "you can close this window" page.
+ *                  land the user token exactly as a paste lands one (`landSlackUser`):
+ *                  the workspace stub, the member's OWN grant `<team>:<user>` with the
+ *                  Slack-VERIFIED `authed_user.id` as its address, the self-DM binding,
+ *                  the vault row `slack:<team>:<agent>`, the grant event
+ *                  → a plain "you can close this window" page.
  *
- * Everyone connects through the same flow — installing the app granted the workspace leg
- * only; the admin's personal xoxp comes from this door like every other member's.
+ * The verified id is what lets the terminal say `slack user U… → <agent>` and the dev
+ * notice a link that reached the wrong hands; the binding itself is the dev's, decided at
+ * mint time, because the roster names people and Slack ids name nobody in it.
  *
- * Nothing serves these routes standing: a door serves them for the length of one sign-in.
- * The redirect URI is the app's — the public callback pasted with the client
- * (`extra.redirect_uri` on the app row). Both routes are SYNCHRONOUS request/response
- * (a 302, a page), so whatever fronts them must carry a redirect — an async webhook relay
- * (Hookdeck) cannot.
+ * Nothing serves these routes standing: a door serves them for the length of one sign-in
+ * (`liquen connect slack user`). The redirect URI is the app's — `extra.redirect_uri` on
+ * the app row — sent verbatim and served at; Slack registers https only, with no loopback
+ * exception, so it is always a public address that something terminating TLS forwards to
+ * the door. Both routes are SYNCHRONOUS request/response (a 302, a page), so whatever
+ * fronts them must carry a redirect.
  */
 
 import type { OauthV2AccessResponse } from "@slack/web-api";
-import { DEFAULT_BOT_SCOPES, missingScopes } from "./config.ts";
-import type { Appender } from "../../store/log.ts";
-import type { Connections } from "../../store/connections.ts";
+import { DEFAULT_USER_SCOPES, missingScopes } from "./config.ts";
+import { landSlackUser, type SlackGrantDeps } from "./connect.ts";
 import type { Credentials } from "../../store/credentials.ts";
-import type { Draft, MessageEvent } from "../../types.ts";
 import { timedFetch } from "../http.ts";
 
 export interface SlackOAuthConfig {
   clientId: string;
   clientSecret: string;
-  redirectUri: string; // must (partially) match a registered redirect URL
-  scopes?: string[]; // bot scopes requested alongside (kept in sync with the manifest)
-  userScopes?: string[]; // the per-principal leg
+  redirectUri: string; // must exactly match a registered redirect URL
+  userScopes?: string[]; // the default ask when /start names none
 }
 
 /** oauth.v2.access — the OFFICIAL response type (the open-bsp lesson: we assumed shapes
  *  the API never promised; adopting Slack's own types is what surfaces those). */
 export type SlackAccess = OauthV2AccessResponse;
 
-export interface SlackOAuthDeps {
+export interface SlackOAuthDeps extends Omit<SlackGrantDeps, "principal"> {
   config: SlackOAuthConfig;
   creds: Pick<Credentials, "put" | "mintState" | "consumeState">;
-  /** → the EventLog: the grant notification crosses the frontier as an event (§4). */
-  publish: Appender["publish"];
-  /** The machinery's write side (§4): a grant is what CREATES the connection anchor —
-   *  the vault holds the secrets, these tables hold the map. */
-  store: Pick<Connections, "upsertConnections" | "upsertMemberships">;
-  /** Resolve a Slack-verified user to a principal id (existing binding or auto-register). */
-  bindPrincipal: (slack: { team: string; user: string }) => Promise<string>;
   /** The code exchange — injectable for tests; default POSTs oauth.v2.access. */
   exchange?: (code: string, config: SlackOAuthConfig) => Promise<SlackAccess>;
-  now?: () => string;
+  /** Called once the grant is written, before the page returns: a door that has a
+   *  terminal in front of it (the user verb) reports there and then. */
+  onGrant?: (grant: { team: string; user: string; agent: string; missing: string[] }) => void;
 }
 
 export type OAuthHandler = (req: Request) => Promise<Response>;
@@ -67,20 +63,20 @@ export type OAuthHandler = (req: Request) => Promise<Response>;
 export function createSlackOAuth(deps: SlackOAuthDeps): OAuthHandler {
   const { config } = deps;
   const exchange = deps.exchange ?? defaultExchange;
-  const now = deps.now ?? (() => new Date().toISOString());
 
   return async (req) => {
     const url = new URL(req.url);
     if (req.method !== "GET") return text(405, "method not allowed");
 
     if (url.pathname.endsWith("/start")) {
-      const state = await deps.creds.mintState("slack", {});
+      const agent = url.searchParams.get("agent");
+      if (!agent) return text(400, "this link names nobody — a user token is always someone's");
+      const scopes = url.searchParams.get("scopes")?.split(/[ ,]+/).filter(Boolean) ??
+        config.userScopes ?? DEFAULT_USER_SCOPES;
+      const state = await deps.creds.mintState("slack", { agent, scopes });
       const auth = new URL("https://slack.com/oauth/v2/authorize");
       auth.searchParams.set("client_id", config.clientId);
-      auth.searchParams.set("scope", (config.scopes ?? DEFAULT_BOT_SCOPES).join(","));
-      if (config.userScopes?.length) {
-        auth.searchParams.set("user_scope", config.userScopes.join(","));
-      }
+      auth.searchParams.set("user_scope", scopes.join(","));
       auth.searchParams.set("redirect_uri", config.redirectUri);
       auth.searchParams.set("state", state);
       return new Response(null, { status: 302, headers: { location: auth.href } });
@@ -91,87 +87,29 @@ export function createSlackOAuth(deps: SlackOAuthDeps): OAuthHandler {
       const state = url.searchParams.get("state");
       if (!code || !state) return text(400, "missing code/state");
       // one-time, TTL'd — a replayed or forged callback dies here (§9 boundary check)
-      if ((await deps.creds.consumeState("slack", state)) === null) {
-        return text(400, "bad state");
-      }
+      const bound = await deps.creds.consumeState("slack", state);
+      if (bound === null || typeof bound.agent !== "string") return text(400, "bad state");
       const acc = await exchange(code, config);
-      if (!acc.ok || !acc.team?.id) return text(502, `exchange failed: ${acc.error ?? "?"}`);
-      const team = acc.team.id;
-      // what each leg came back with, against what /start asked for: an install can grant
+      const grant = acc.authed_user;
+      if (!acc.ok || !acc.team?.id || !grant?.id || !grant.access_token) {
+        return text(502, `exchange failed: ${acc.error ?? "no user token in response"}`);
+      }
+      // what the leg came back with, against what /start asked for: a member can grant
       // less than the app requests, and the token then fails at the CALL, not here
-      const short = [
-        ...missingScopes(acc.access_token ? config.scopes ?? DEFAULT_BOT_SCOPES : [], acc.scope),
-        ...missingScopes(
-          acc.authed_user?.access_token ? config.userScopes ?? [] : [],
-          acc.authed_user?.scope,
-        ),
-      ];
-
-      // the bare WORKSPACE — the anchor of personal-witnessed deliveries; registering
-      // it opens the log (§4, the gate). It stays a STUB (§6): membership-only.
-      deps.store.upsertConnections([{ service: "slack", address: team }]);
-      if (acc.access_token) { // the org (bot) grant — first install or re-consent: the
-        // bot's OWN row `<team>:<bot user>`, ownerless + org-credentialed ⇒ the shared
-        // inbox (§6) — bot-witnessed deliveries anchor here
-        await deps.creds.put({ key: `slack:${team}:org`, value: { token: acc.access_token } });
-        deps.store.upsertConnections([
-          {
-            service: "slack",
-            address: acc.bot_user_id ? `${team}:${acc.bot_user_id}` : team,
-            credentialKey: `slack:${team}:org`,
-          },
-        ]);
-      }
-      let who = "workspace";
-      if (acc.authed_user?.id && acc.authed_user.access_token) { // the principal's grant:
-        // their own connection `<team>:<user>`, owned ⇒ private (§6) — N principals on
-        // one workspace are N rows, each grant its own ownership edge
-        const principal = await deps.bindPrincipal({ team, user: acc.authed_user.id });
-        const credentialKey = `slack:${team}:${principal}`;
-        await deps.creds.put({
-          key: credentialKey,
-          value: { token: acc.authed_user.access_token },
-          agentId: principal,
-          extra: { scope: acc.authed_user.scope },
-        });
-        deps.store.upsertConnections([
-          {
-            service: "slack",
-            address: `${team}:${acc.authed_user.id}`,
-            agentId: principal,
-            credentialKey,
-          },
-        ]);
-        // the grant note is the principal's to see even on a stub workspace (§6)
-        deps.store.upsertMemberships([
-          { service: "slack", connection: team, conversation: "oauth", agentId: principal },
-        ]);
-        who = principal;
-      }
-
-      // cross the frontier the only legal way: an event (§4). Whatever agent cares reacts.
-      const note: Draft<MessageEvent> = {
-        ts: now(),
-        type: "message",
-        envelope: {
-          service: "slack",
-          connection_address: team, // the workspace this grant registered (§4, the gate)
-          conversation: { address: "oauth" },
-          sender: { address: "slack-oauth" },
-        },
-        parts: [{
-          type: "text",
-          kind: "text",
-          text: `Slack connected on workspace ${team}: ${who}` +
-            (acc.authed_user?.id ? ` (slack user ${acc.authed_user.id})` : "") +
-            (short.length ? ` — NOT granted: ${short.join(" ")}` : ""),
-        }],
-      };
-      await deps.publish(note);
+      const asked = Array.isArray(bound.scopes)
+        ? bound.scopes.filter((s): s is string => typeof s === "string")
+        : [];
+      const missing = missingScopes(asked, grant.scope);
+      const team = acc.team.id;
+      await landSlackUser(
+        { token: grant.access_token, team, user: grant.id, missing },
+        { ...deps, principal: bound.agent },
+      );
+      deps.onGrant?.({ team, user: grant.id, agent: bound.agent, missing });
       return new Response(
-        short.length
-          ? `Connected on ${team}, but the install did not grant:\n  ${short.join("\n  ")}\n\n` +
-            `Calls needing them answer missing_scope. Add them to the app and install again.`
+        missing.length
+          ? `Connected on ${team}, but the sign-in did not grant:\n  ${missing.join("\n  ")}\n\n` +
+            `Calls needing them answer missing_scope. Approve them and sign in again.`
           : "✓ Connected. You can close this window.",
         { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } },
       );

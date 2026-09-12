@@ -88,33 +88,32 @@ Every door closes by naming what the org still owes, and `--help` explains each 
 
 ### Slack (bring-your-own app, per org)
 
-1. **Create the app** — print the prefill link and open it (creates the app in your
-   workspace, pre-configured from [`src/seed/slack-manifest.json`](./src/seed/slack-manifest.json);
-   edit the `redirect_urls` placeholder to your public host first):
+1. **One sitting at the console.** The door prints the prefill link and opens it (Slack
+   builds the app from [`src/seed/slack-manifest.json`](./src/seed/slack-manifest.json),
+   consent lists filled from `connections.slack`), then takes what the console shows,
+   each paste empty to skip: the OAuth client, its signing secret (HTTP ingest only), the
+   app-level token (xapp, the Socket Mode carrier), and a public redirect URI. *Install to
+   Workspace* while you are there, and the flags take the tokens it issued:
 
    ```sh
-   deno eval "console.log('https://api.slack.com/apps?new_app=1&manifest_json=' +
-     encodeURIComponent(await (await fetch(
-       'https://raw.githubusercontent.com/matiasbattocchia/liquen/main/src/seed/slack-manifest.json')).text()))"
+   deno task connect slack app --bot --user   # xoxb → the org's shared identity, xoxp → your own leg
    ```
 
-2. **Install it** (admin, once): *Install to Workspace* on the app page → the workspace
-   leg. Then paste the pieces into the vault:
+   Which carrier ingest opens is read off the vault: an app-level token is the socket, a
+   signing secret is HTTP.
 
-   ```sh
-   deno task connect slack bot      # bot token (xoxb) — the org's shared identity
-   deno task connect slack socket   # app-level token (xapp) — the Socket Mode carrier
-   ```
-3. **Connect your own leg**: installing granted the workspace only; each member's user
-   token (xoxp, *OAuth & Permissions → User OAuth Token*) is pasted through their door:
+2. **Connect a member who is not at this terminal**: Slack redirects to https only, so this
+   needs the public redirect URI from step 1 with a tunnel or a real host in front of
+   `connections.slack.oauthPort`. The door prints a link that binds the grant to `[agent]`
+   and is good for one sign-in; send it to them and the door waits until they finish:
 
    ```sh
    deno task connect slack user [agent]
    ```
 
-4. **The connection runs under `deno task start`** — both halves in one process: Socket
-   Mode (or HTTP) in, chat.postMessage out, tokens from the vault. A token pasted through
-   a door (2, 3) is picked up on the next start.
+3. **The connection runs under `deno task start`** — both halves in one process: Socket
+   Mode (or HTTP) in, chat.postMessage out, tokens from the vault. A token landed through
+   a door (1, 2) is picked up on the next start.
 
    The ingest is one webhook function either way — Socket Mode is just the local carrier;
    an edge deploy serves the same function at the app's Events API request URL.

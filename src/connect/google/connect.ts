@@ -5,19 +5,23 @@
  *            URI registered on it) → vault `google:app:<client_id>`. Not a grant — no
  *            connection, no membership, no event; nobody got connected. Several apps may
  *            coexist (`list("google:app:")`); the id in the key is what a sign-in picks by.
- *   account  a grant through the OAuth handler (connect/google/oauth.ts), served on
- *            localhost for exactly one sign-in: open the browser at /start, and the
- *            callback does what every grant does — writes the map. Ownership (the
- *            connection's agent_id) is decided HERE, at mint time: the agent arg rides
- *            `?agent=`; `--org` mints an ownerless link, the org's shared account (§6).
- *            The handler only executes what the mint said.
+ *   account  a grant through the OAuth handler (connect/google/oauth.ts), served for
+ *            exactly one sign-in: hand out /start, and the callback does what every grant
+ *            does — writes the map. Ownership (the connection's agent_id) is decided HERE,
+ *            at mint time: the agent arg rides `?agent=`; `--org` mints an ownerless link,
+ *            the org's shared account (§6). The handler only executes what the mint said.
  *
- * The account door overrides the app's redirect URI with its own localhost callback —
- * `http://localhost:<port>/oauth/google/callback` must be registered on the OAuth client
- * alongside the public one (Google allows plain-http localhost redirects). A sign-in
- * served for a member elsewhere redirects to the public one. The app door prints that
- * localhost URI before it asks for anything, so the console's "Authorized redirect URIs"
- * field can be filled while the client is still being created.
+ * One registered redirect URI is the whole of the account door's addressing: the app row's
+ * public one, or `localCallback` when it names none. It is sent verbatim as `redirect_uri`,
+ * so the string Google matches against its own list is the one that was registered, and its
+ * host decides who can reach that sign-in. A loopback URI is the dev's own browser — Google
+ * permits plain http there — and it names the port the door binds, because that browser dials
+ * the door directly; the command opens it. Any other host is one a member elsewhere can
+ * reach, so the command prints the link to send instead and binds
+ * `connections.google.oauthPort` for whatever terminates TLS to forward to.
+ *
+ * The app door prints the loopback URI before it asks for anything, so the console's
+ * "Authorized redirect URIs" field can be filled while the client is still being created.
  *
  * Removal is not a door yet: deleting an app or a grant is a deliberate SQL act (§9).
  */
@@ -26,6 +30,7 @@ import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { declared } from "../declare.ts";
+import { type DoorAddress, doorAddress, oneShot, openBrowser } from "../door.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
@@ -34,7 +39,7 @@ export const APP_PREFIX = "google:app:";
 export interface GoogleApp {
   clientId: string;
   clientSecret: string;
-  redirectUri?: string; // the public callback registered on the client; the account door uses localhost
+  redirectUri?: string; // a public callback registered on the client; none ⇒ the loopback one
 }
 
 /** Store an OAuth client under its own id. The vault's merge lets a re-paste rotate the
@@ -81,21 +86,13 @@ export async function pickGoogleApp(
  *                                    [--scopes "a b c"]   # default: connections.google.scopes
  *
  * The account door serves its callback on connections.google.oauthPort. */
-/** A handler wrapped for a one-shot door: the first callback — whichever way it went —
- *  settles `outcome`, so the command reports and exits instead of waiting on a page that
- *  already told the member it failed. */
-export function oneShot(
-  handler: (req: Request) => Promise<Response>,
-): { handler: (req: Request) => Promise<Response>; outcome: Promise<Response> } {
-  const done = Promise.withResolvers<Response>();
-  return {
-    outcome: done.promise,
-    handler: async (req) => {
-      const res = await handler(req);
-      if (new URL(req.url).pathname.endsWith("/callback")) done.resolve(res.clone());
-      return res;
-    },
-  };
+
+/** The door's address when the app row names no public one: this machine's browser, on
+ *  `oauthPort`. The app door prints it for the console's "Authorized redirect URIs" field
+ *  and a sign-in sends it — one expression, so the registered string and the sent string
+ *  cannot drift apart. */
+export function localCallback(oauthPort: number): string {
+  return `http://localhost:${oauthPort}/oauth/google/callback`;
 }
 
 const USAGE = `usage: liquen connect google app
@@ -132,13 +129,15 @@ if (import.meta.main) {
       if (verb === "app") {
         const { googleConfig } = await import("./config.ts");
         const { oauthPort } = await googleConfig(root);
+        const local = localCallback(oauthPort);
         console.error(
           `Create the client at https://console.cloud.google.com/auth/clients — type "Web ` +
             `application". Under "Authorized redirect URIs" register:\n` +
-            `  http://localhost:${oauthPort}/oauth/google/callback\n` +
+            `  ${local}\n` +
             `That is where a sign-in from this terminal comes back (the port is ` +
-            `connections.google.oauthPort). A sign-in served to a member elsewhere comes back ` +
-            `to a public URI instead — register that one too and paste it below.\n`,
+            `connections.google.oauthPort), and it is what this door serves unless you paste ` +
+            `a public URI below. A member signing in elsewhere needs one: register that too, ` +
+            `paste it, and their sign-in is served there instead.\n`,
         );
         const ask = (label: string): string => {
           const v = prompt(label)?.trim();
@@ -151,10 +150,16 @@ if (import.meta.main) {
         const clientId = ask("Client ID:");
         const clientSecret = ask("Client secret:");
         const redirectUri = prompt("Public redirect URI (empty to skip):")?.trim() || undefined;
+        if (redirectUri) {
+          try { // a URI the door cannot serve is caught here, not after someone consents
+            doorAddress(redirectUri, oauthPort);
+          } catch (e) {
+            console.error(e instanceof Error ? e.message : String(e));
+            Deno.exit(2);
+          }
+        }
         const key = await connectGoogleApp({ clientId, clientSecret, redirectUri }, creds);
-        console.error(
-          `✓ app stored: ${key}` + (redirectUri ? ` (public callback: ${redirectUri})` : ""),
-        );
+        console.error(`✓ app stored: ${key} (callback: ${redirectUri ?? local})`);
       } else if (verb === "account") {
         const { createGoogleOAuth } = await import("./oauth.ts");
         const { openLog } = await import("../../store/log.ts");
@@ -172,16 +177,25 @@ if (import.meta.main) {
           Deno.exit(2);
         });
         const { googleConfig } = await import("./config.ts");
-        const { oauthPort: port, scopes } = await googleConfig(root);
+        const { oauthPort, scopes } = await googleConfig(root);
         const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? scopes;
-        const callback = `http://localhost:${port}/oauth/google/callback`;
+        // no public URI on the app row means the dev never set one up: the sign-in is theirs
+        const registered = (app.extra?.redirect_uri as string | undefined) ??
+          localCallback(oauthPort);
+        let door: DoorAddress;
+        try {
+          door = doorAddress(registered, oauthPort);
+        } catch (e) {
+          console.error(e instanceof Error ? e.message : String(e));
+          Deno.exit(2);
+        }
         const log = await openLog(`${dir}/log`);
         let shortfall: string[] = [];
         const { handler, outcome } = oneShot(createGoogleOAuth({
           config: {
             clientId: app.value.client_id,
             clientSecret: app.value.client_secret,
-            redirectUri: callback,
+            redirectUri: door.callback,
             scopes: asked,
           },
           creds,
@@ -189,27 +203,26 @@ if (import.meta.main) {
           store: log,
           onGrant: (g) => (shortfall = g.missing),
         }));
-        const server = Deno.serve({ port, onListen: () => {} }, handler);
-        const start = new URL(`http://localhost:${port}/oauth/google/start`);
+        const server = Deno.serve({ port: door.port, onListen: () => {} }, handler);
+        const start = new URL(door.start);
         if (agent) start.searchParams.set("agent", agent);
-        const hosted = app.extra?.redirect_uri as string | undefined;
         console.error(
           `Connecting a Google account${agent ? ` for "${agent}"` : " (org — ownerless)"} ` +
-            `via app ${app.value.client_id}.\nAsking for:\n  ${asked.join("\n  ")}\n` +
-            `Open and approve:\n  ${start.href}\n` +
-            `This door waits on localhost, so ${callback} must be registered on the OAuth ` +
-            `client — Google rejects the request with redirect_uri_mismatch otherwise.` +
-            (hosted
-              ? `\n(the app's public callback ${hosted} is a served sign-in's, not this one's)`
-              : ""),
+            `via app ${app.value.client_id}.\nAsking for:\n  ${asked.join("\n  ")}\n`,
         );
-        try { // best effort — the link above is the real door
-          new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {
-            args: [start.href],
-            stdout: "null",
-            stderr: "null",
-          }).spawn().unref();
-        } catch { /* headless is fine */ }
+        if (door.loopback) {
+          console.error(`Open and approve:\n  ${start.href}`);
+          openBrowser(start.href);
+        } else {
+          // opening it here would spend the one sign-in on whoever is logged in to this
+          // browser, and the grant would land under the name meant for someone else
+          console.error(
+            `Send this link to the person signing in:\n  ${start.href}\n` +
+              `It binds the grant to ${agent ? `"${agent}"` : "the org"} and is good for one ` +
+              `sign-in, so it goes to exactly one person. This door waits until they finish, ` +
+              `serving ${door.callback} on port ${door.port}.`,
+          );
+        }
         const res = await outcome;
         await server.shutdown();
         await log.close();

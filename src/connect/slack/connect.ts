@@ -1,33 +1,39 @@
 /**
- * connect/slack/connect.ts — `liquen connect slack`: the PASTE door (DESIGN §4).
+ * connect/slack/connect.ts — `liquen connect slack`: the two dev-side Slack doors (§4).
  *
- * The dashboard's "Install to Workspace" button IS an OAuth flow with Slack hosting the
- * redirect — so a dev can self-serve a user token (xoxp) with zero public surface: the
- * CLI prints the app-manifest prefill link, the dev creates + installs the app and pastes
- * the token back. The paste is the grant, and THE GRANT WRITES THE MAP — the same two
- * writes as the OAuth handler (connect/slack/oauth.ts), from a different door:
+ *   app   one sitting in front of the Slack console. Prints the manifest prefill link (Slack
+ *         builds the app from it; app creation and app-level tokens have no public API, so
+ *         the link is the automation ceiling), then takes what that console shows, each
+ *         paste skippable: the OAuth client (id + secret) → vault `slack:app:<client_id>`,
+ *         its signing secret (HTTP ingest only), the app-level token (xapp) → vault
+ *         `slack:socket:<app id>` — the Socket Mode carrier, app-scoped, so it keys by the
+ *         app id the token carries — and the public redirect URI the user door serves.
+ *         With `--bot` and `--user` it also takes the tokens "Install to Workspace" just
+ *         issued: xoxb → vault `slack:<team>:org`, the org's shared identity; xoxp → the
+ *         dev's own leg, landed exactly as the user door lands one. Which carrier ingest
+ *         opens is read off the vault, never chosen here: an xapp row is the socket, a
+ *         signing secret is HTTP.
+ *   user  a member's own leg through the OAuth handler (connect/slack/oauth.ts), served for
+ *         exactly one sign-in: hand out /start, and the callback lands the grant. Ownership
+ *         is decided HERE, at mint time — the agent arg rides `?agent=` — and Slack's
+ *         verified `authed_user.id` is what the terminal reports against it. Slack registers
+ *         https redirect URLs only, no loopback exception, so this door works only through
+ *         the app row's public URI; a dev on their own machine pastes at `app --user`.
  *
- *   auth.test(xoxp) → team + user (the paste never identifies the workspace; Slack does)
- *     → connections: the GRANT, OWNED — address `<team>:<user>` (a user grant is its own
- *                    connection, §4), `agent_id` = the principal (owned ⇒ private, §6),
- *                    `credential_key` → the vault row below
- *     → vault:       key `slack:<team>:<principal>` — the `token` field of the blob
+ * Either way THE GRANT WRITES THE MAP, and it is one function (`landSlackUser`) whichever
+ * door the token came through:
  *
- * Four doors, one map (google's twins):
+ *   → connections: the workspace stub (the anchor every event carries; registering it opens
+ *                  the log) and the GRANT, OWNED — address `<team>:<user>` (a user grant is
+ *                  its own connection, §4), `agent_id` = the principal (owned ⇒ private,
+ *                  §6), `credential_key` → the vault row below, the self-DM as the
+ *                  mind-alias binding
+ *   → vault:       key `slack:<team>:<principal>` — the `token` field of the blob
+ *   → the log:     the grant note, an event (the only legal way to tell the harness)
  *
- *   user    the paste above — the principal's own leg (xoxp), owned ⇒ private (§6)
- *   bot     the org's shared identity: xoxb → vault `slack:<team>:org`, org-credentialed
- *           anchor
- *   socket  the app-level token (xapp) → vault `slack:socket:<app id>`. Not a grant: it
- *           names no identity and grants no reach, it says HOW events arrive. App-scoped
- *           where a grant is workspace-scoped, so it keys by the app id the token carries
- *   app     the OAuth client (id + secret) → vault `slack:app:<client_id>` — what the
- *           OAuth handler signs a member in with
- *
- * Arg (user door): the principal (default: the OS username). Env: none.
- *
- * The manifest it prints is `src/seed/slack-manifest.json` — the app's SHAPE (name, events,
- * redirect, socket mode) — with the consent lists filled from `connections.slack`
+ * A paste never identifies its workspace; `auth.test` does, and a rejected token writes
+ * nothing. The manifest printed is `src/seed/slack-manifest.json` — the app's SHAPE (name,
+ * events, socket mode) — with the consent lists filled from `connections.slack`
  * (`withScopes`), so what the app may do is a knob and lives in one place.
  */
 
@@ -40,6 +46,7 @@ import type { Draft, MessageEvent } from "../../types.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { requireIngest } from "../declare.ts";
+import { type DoorAddress, doorAddress, oneShot, openBrowser } from "../door.ts";
 import { missingScopes, SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
@@ -48,54 +55,45 @@ import { entry } from "../../entry.ts";
  *  Slack gives of its reach. */
 export type AuthTest = AuthTestResponse & { scopes?: string[] };
 
-export interface SlackConnectDeps {
-  /** The registry name the pasted grant belongs to (v0: principal name = agent name). */
+/** What landing a user grant needs, whichever door it came through. */
+export interface SlackGrantDeps {
+  /** The registry name the grant belongs to (v0: principal name = agent name). */
   principal: string;
   creds: Pick<Credentials, "put">;
-  /** The machinery's write side (§4) — the same seam the oauth callback uses. */
+  /** The machinery's write side (§4). */
   store: Pick<Connections, "upsertConnections" | "upsertMemberships">;
   /** → the EventLog: the grant notification crosses the frontier as an event (§4). */
   publish: Appender["publish"];
-  /** auth.test — injectable for tests; default POSTs with the pasted token. */
-  authTest?: (token: string) => Promise<AuthTest>;
-  /** The scopes this leg is supposed to carry (`connections.slack.userScopes`): what the
-   *  installed app granted is compared against it, and the difference is the caller's to
-   *  report. Absent ⇒ nothing to compare, and the grant claims nothing about its reach. */
-  asked?: string[];
   /** conversations.open on the granting user's own id → the self-DM channel (the
    *  mind-alias binding, §4). Injectable; undefined result ⇒ no binding recorded. */
   openSelfIm?: (token: string, user: string) => Promise<string | undefined>;
   now?: () => string;
 }
 
-/** Finish a pasted user-token grant: verify with Slack, write the map, notify the log.
- *  Throws (writing nothing) when Slack rejects the token. */
-export async function connectSlackUser(
-  token: string,
-  deps: SlackConnectDeps,
-): Promise<{ team: string; user: string; missing: string[] }> {
-  const authTest = deps.authTest ?? defaultAuthTest;
+export interface SlackConnectDeps extends SlackGrantDeps {
+  /** auth.test — injectable for tests; default POSTs with the pasted token. */
+  authTest?: (token: string) => Promise<AuthTest>;
+  /** The scopes this leg is supposed to carry (`connections.slack.userScopes`): what the
+   *  installed app granted is compared against it, and the difference is the caller's to
+   *  report. Absent ⇒ nothing to compare, and the grant claims nothing about its reach. */
+  asked?: string[];
+}
+
+/** A user token Slack has already vouched for, and what it fell short of. */
+export interface SlackUserGrant {
+  token: string;
+  team: string;
+  user: string;
+  url?: string; // the workspace's, when auth.test said
+  missing: string[];
+}
+
+/** Land a verified user grant: write the map, vault the token, notify the log. The one
+ *  write both doors make — a paste after `auth.test`, the OAuth callback after the code
+ *  exchange — so a member's leg looks the same however it arrived. */
+export async function landSlackUser(grant: SlackUserGrant, deps: SlackGrantDeps): Promise<void> {
   const now = deps.now ?? (() => new Date().toISOString());
-
-  // shape guard BEFORE auth.test: a bot token also passes auth.test (returning the BOT's
-  // user id), and storing it as the principal's user leg would bind the bot's handle to
-  // a human — the dashboard shows both tokens side by side, so this paste-slip is easy
-  if (!token.startsWith("xoxp-")) {
-    const got = token.startsWith("xoxb-")
-      ? 'the BOT token (xoxb) — on OAuth & Permissions, copy the "User OAuth Token" instead'
-      : token.startsWith("xapp-")
-      ? "an app-level token (xapp) — that's the socket carrier, not an identity"
-      : "not a Slack user token";
-    throw new Error(`expected a user token (xoxp-…), got ${got}`);
-  }
-
-  const who = await authTest(token);
-  if (!who.ok || !who.team_id || !who.user_id) {
-    throw new Error(`auth.test: ${who.error ?? "no team/user in response"}`);
-  }
-  const { team_id: team, user_id: user } = who;
-  const missing = missingScopes(deps.asked ?? [], who.scopes);
-
+  const { token, team, user, missing } = grant;
   // two rows (§4): the WORKSPACE — the anchor every event carries; registering it is
   // what OPENS the log (the publish gate) — and the OWNED grant `<team>:<user>`, the
   // identity/credential edge the classifier and dispatch resolve through
@@ -125,7 +123,7 @@ export async function connectSlackUser(
     key: credentialKey,
     value: { token },
     agentId: deps.principal,
-    ...(who.url ? { extra: { url: who.url } } : {}),
+    ...(grant.url ? { extra: { url: grant.url } } : {}),
   });
 
   // cross the frontier the only legal way: an event (§4)
@@ -149,10 +147,39 @@ export async function connectSlackUser(
     }],
   };
   await deps.publish(note);
+}
+
+/** Finish a pasted user-token grant: verify with Slack, then land it. Throws (writing
+ *  nothing) when Slack rejects the token. */
+export async function connectSlackUser(
+  token: string,
+  deps: SlackConnectDeps,
+): Promise<{ team: string; user: string; missing: string[] }> {
+  const authTest = deps.authTest ?? defaultAuthTest;
+
+  // shape guard BEFORE auth.test: a bot token also passes auth.test (returning the BOT's
+  // user id), and storing it as the principal's user leg would bind the bot's handle to
+  // a human — the dashboard shows both tokens side by side, so this paste-slip is easy
+  if (!token.startsWith("xoxp-")) {
+    const got = token.startsWith("xoxb-")
+      ? 'the BOT token (xoxb) — on OAuth & Permissions, copy the "User OAuth Token" instead'
+      : token.startsWith("xapp-")
+      ? "an app-level token (xapp) — that's the socket carrier, not an identity"
+      : "not a Slack user token";
+    throw new Error(`expected a user token (xoxp-…), got ${got}`);
+  }
+
+  const who = await authTest(token);
+  if (!who.ok || !who.team_id || !who.user_id) {
+    throw new Error(`auth.test: ${who.error ?? "no team/user in response"}`);
+  }
+  const { team_id: team, user_id: user } = who;
+  const missing = missingScopes(deps.asked ?? [], who.scopes);
+  await landSlackUser({ token, team, user, url: who.url, missing }, deps);
   return { team, user, missing };
 }
 
-/* ── the app door: `liquen connect slack app` — the OAuth client into the vault ──────────── */
+/* ── the OAuth client into the vault ─────────────────────────────────────────────────────── */
 
 export const APP_PREFIX = "slack:app:";
 
@@ -183,7 +210,25 @@ export async function connectSlackApp(
   return key;
 }
 
-/** The OAuth handler's app: the only one, or the one `clientId` names. */
+/** The user door's address, from the app row's registered redirect URI. Slack takes https
+ *  only and grants loopback no exception, so a URI this door could bind and be reached at
+ *  directly does not exist: a loopback or plain-http one is refused at paste time, before
+ *  a member's sign-in 404s or trips a certificate warning after consent. */
+export function slackDoor(redirectUri: string, oauthPort: number): DoorAddress {
+  const door = doorAddress(redirectUri, oauthPort);
+  if (!redirectUri.startsWith("https://")) {
+    throw new Error(`Slack registers https redirect URLs only: ${redirectUri}`);
+  }
+  if (door.loopback) {
+    throw new Error(
+      `a loopback host cannot carry Slack's https redirect: ${redirectUri} — put a tunnel or ` +
+        `a real host in front of connections.slack.oauthPort and register that`,
+    );
+  }
+  return door;
+}
+
+/** The user door's app: the only one, or the one `clientId` names. */
 export async function pickSlackApp(
   creds: Pick<Credentials, "get" | "list">,
   clientId?: string,
@@ -204,25 +249,25 @@ export async function pickSlackApp(
   return apps[0];
 }
 
-/* ── the bot door: `liquen connect slack bot` — the org's shared identity ────────────────── */
+/* ── the bot token: the org's shared identity ───────────────────────────────────────────── */
 
 export interface SlackBotDeps {
   creds: Pick<Credentials, "put">;
   store: Pick<Connections, "upsertConnections">;
   publish: Appender["publish"];
   authTest?: (token: string) => Promise<AuthTest>;
-  /** `connections.slack.botScopes` — the same comparison the user door makes. */
+  /** `connections.slack.botScopes` — the same comparison the user leg makes. */
   asked?: string[];
   now?: () => string;
 }
 
-/** Finish a pasted bot-token grant: verify with Slack, write the same two rows the OAuth
- *  handler writes — the bare workspace stub (membership-only; the anchor of personal-witnessed
- *  deliveries) and the bot's own grant row `<team>:<bot user>` carrying `credential_key`
- *  (no owner ⇒ the org's shared inbox, §6; bot-witnessed deliveries anchor here) — and
- *  vault the blob at `slack:<team>:org`. The identity and nothing else: the socket carrier
- *  is its own door (`liquen connect slack socket`), app-scoped where this is workspace-scoped.
- *  Throws (writing nothing) on a rejected token. */
+/** Finish a pasted bot-token grant: verify with Slack, write the bare workspace stub
+ *  (membership-only; the anchor of personal-witnessed deliveries) and the bot's own grant
+ *  row `<team>:<bot user>` carrying `credential_key` (no owner ⇒ the org's shared inbox,
+ *  §6; bot-witnessed deliveries anchor here) — and vault the blob at `slack:<team>:org`.
+ *  The identity and nothing else: the socket carrier is app-scoped where this is
+ *  workspace-scoped, and lands under its own key. Throws (writing nothing) on a rejected
+ *  token. */
 export async function connectSlackBot(
   token: string,
   deps: SlackBotDeps,
@@ -232,9 +277,9 @@ export async function connectSlackBot(
   const now = deps.now ?? (() => new Date().toISOString());
   if (!token.startsWith("xoxb-")) {
     const got = token.startsWith("xoxp-")
-      ? "the USER token (xoxp) — that one goes through `liquen connect slack user`"
+      ? "the USER token (xoxp) — that one is `--user`'s paste"
       : token.startsWith("xapp-")
-      ? "an app-level token (xapp) — that's the socket carrier, `liquen connect slack socket`"
+      ? "an app-level token (xapp) — that's the socket carrier, its own paste"
       : "not a Slack bot token";
     throw new Error(`expected a bot token (xoxb-…), got ${got}`);
   }
@@ -291,7 +336,7 @@ export async function connectSlackBot(
   return { team, botUser, missing };
 }
 
-/* ── the socket door: `liquen connect slack socket` — the app-level token ───────────────── */
+/* ── the app-level token: the socket carrier ────────────────────────────────────────────── */
 
 export const SOCKET_PREFIX = "slack:socket:";
 
@@ -322,9 +367,9 @@ export async function connectSlackSocket(
 ): Promise<{ appId: string }> {
   if (!appToken.startsWith("xapp-")) {
     const got = appToken.startsWith("xoxb-")
-      ? "the BOT token (xoxb) — that one goes through `liquen connect slack bot`"
+      ? "the BOT token (xoxb) — that one is `--bot`'s paste"
       : appToken.startsWith("xoxp-")
-      ? "a USER token (xoxp) — that one goes through `liquen connect slack user`"
+      ? "a USER token (xoxp) — that one is `--user`'s paste"
       : "not a Slack app-level token";
     throw new Error(`expected an app-level token (xapp-…), got ${got}`);
   }
@@ -381,58 +426,41 @@ export function slackNext(have: SlackHave): string[] {
   const next: string[] = [];
   if (!have.user && !have.bot) {
     next.push(
-      "no identity yet — `liquen connect slack user` (your own leg) or " +
-        "`liquen connect slack bot` (the org's)",
+      "no identity yet — `liquen connect slack app --user` (your own leg) or " +
+        "`liquen connect slack app --bot` (the org's)",
     );
   }
   if (!have.bot) {
     next.push(
-      "no org identity — `liquen connect slack bot` (the org's shared inbox; a bot is also " +
-        "what an app needs to be installed with bot events)",
+      "no org identity — `liquen connect slack app --bot` (the org's shared inbox; a bot is " +
+        "also what an app needs to be installed with bot events)",
     );
   }
   if (!have.appToken) {
     next.push(
       "no socket carrier — Basic Information → App-Level Tokens → Generate Token and " +
-        "Scopes (`connections:write`), then `liquen connect slack socket` (without one, " +
+        "Scopes (`connections:write`), pasted at `liquen connect slack app` (without one, " +
         "ingest needs a PUBLIC request URL)",
     );
   }
   if (!have.app) {
     next.push(
-      "no OAuth client — `liquen connect slack app` (only the HOSTED door needs it; the " +
-        "paste doors do not)",
+      "no OAuth client — `liquen connect slack app` (only `liquen connect slack user`, " +
+        "a member's served sign-in, needs it; a paste does not)",
     );
   }
   return next;
 }
 
 /** Fill the manifest's consent lists from the catalog — the seed carries the app's shape
- *  (name, events, redirect, socket mode), the config carries what it may do, so the app a
- *  door creates asks for exactly what the OAuth handler later requests. */
+ *  (name, events, socket mode), the config carries what it may do, so the app a door
+ *  creates asks for exactly what the user door later requests. */
 export function withScopes(
   manifest: Record<string, unknown>,
   scopes: { bot: string[]; user: string[] },
 ): Record<string, unknown> {
   const m = structuredClone(manifest) as { oauth_config?: Record<string, unknown> };
   m.oauth_config = { ...m.oauth_config, scopes: { bot: scopes.bot, user: scopes.user } };
-  return m as Record<string, unknown>;
-}
-
-/** The USER door mints a USER-ONLY app: no bot user, no bot scopes, no bot events.
- *  The bot is not required for the user leg — and asking for one puts an xoxb next to
- *  the xoxp on the dashboard, the exact paste-slip the shape guard catches. The bot is
- *  its own deliberate door (`liquen connect slack bot`). */
-export function userManifest(manifest: Record<string, unknown>): Record<string, unknown> {
-  const m = structuredClone(manifest) as {
-    features?: Record<string, unknown>;
-    oauth_config?: { scopes?: Record<string, unknown> };
-    settings?: { event_subscriptions?: Record<string, unknown> };
-  };
-  delete m.features?.bot_user;
-  if (m.features && Object.keys(m.features).length === 0) delete m.features;
-  delete m.oauth_config?.scopes?.bot;
-  delete m.settings?.event_subscriptions?.bot_events;
   return m as Record<string, unknown>;
 }
 
@@ -469,27 +497,27 @@ async function defaultAuthTest(token: string): Promise<AuthTest> {
   };
 }
 
-/* ── local entry: the three doors ───────────────────────────────────────────────────────
+/* ── local entry: the two doors ─────────────────────────────────────────────────────────
  *
- *   deno task connect slack user [principal]   # prefill link → install → paste xoxp
- *   deno task connect slack bot [--agent <name>] # paste xoxb; the agent that speaks as it
- *   deno task connect slack app                # paste client id + secret → the vault
+ *   deno task connect slack app [--bot] [--user]           # the console sitting, pasted
+ *   deno task connect slack user [agent] [--app <client_id>] [--scopes "…"]
  *
- * A bare invocation (or a bare principal name) is the user door — the common case. */
-const USAGE = `usage: liquen connect slack app
-       liquen connect slack bot [--agent <name>]
-       liquen connect slack socket
-       liquen connect slack user [agent]
+ * The user door serves its callback on connections.slack.oauthPort. */
+const USAGE = `usage: liquen connect slack app [--bot] [--user]
+       liquen connect slack user [agent] [--app <client_id>] [--scopes "…"]
 
-  Put Slack's credentials in the vault, pasted at a prompt or piped one per line;
-  knobs: connections.slack.
+  Connect Slack from this terminal — the app's pieces pasted into the vault, a member's
+  own leg through a served sign-in; knobs: connections.slack.
 
-  app      the OAuth client (id and secret) every other door names
-  bot      the bot token (xoxb): the org's shared identity; --agent names the roster
-           agent that speaks through it
-  socket   the app-level token (xapp): the carrier ingest reads events over
-  user     a user token (xoxp): one member's own leg — the default door; [agent]
-           defaults to your OS username
+  app     paste what the app's console shows, each empty to skip: the OAuth client (id
+          and secret), its signing secret (HTTP ingest only), the app-level token (xapp,
+          the Socket Mode carrier), the public redirect URI the user door serves;
+          --bot also takes the bot token (xoxb, the org's shared identity) and the
+          roster agent that speaks through it; --user also takes your own user token
+          (xoxp) and the agent it belongs to (default: your OS username)
+  user    sign a member in through the app's public redirect URI: [agent]'s own leg
+          (default: your OS username); --app picks the client when the vault holds
+          several; --scopes overrides the catalog's (space- or comma-separated)
   --dir <org>   the org, when run from elsewhere`;
 
 if (import.meta.main) {
@@ -498,18 +526,32 @@ if (import.meta.main) {
     const { openCredentials } = await import("../../store/credentials.ts");
     const { userInfo } = await import("node:os");
     const { slackConfig } = await import("./config.ts");
+    const { readConfig } = await import("../../config.ts");
 
     const org = orgFlag();
     helpFlag(org.args, USAGE);
     const root = findRoot(org);
     const dir = `${root}/data`;
-    const [first, ...rest] = org.args;
-    const verb = first === "app" || first === "bot" || first === "socket" || first === "user"
-      ? first
-      : "user";
-    // a grant makes the workspace deliver from that second on, so the door is the moment
-    // to know somebody is listening (`requireIngest`); `app` lands no grant and needs nothing
-    if (verb !== "app") await requireIngest(root, SPEC);
+    const [verb, ...rest] = org.args;
+    if (verb !== "app" && verb !== "user") {
+      console.error(USAGE);
+      Deno.exit(2);
+    }
+
+    const flags = new Map<string, string>();
+    const positional: string[] = [];
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--bot" || rest[i] === "--user") flags.set(rest[i].slice(2), "1");
+      else if (rest[i].startsWith("--")) flags.set(rest[i].slice(2), rest[++i] ?? "");
+      else positional.push(rest[i]);
+    }
+    const me = (): string => {
+      try {
+        return userInfo().username;
+      } catch {
+        return "principal";
+      }
+    };
 
     /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
     const lines = Deno.stdin.isTerminal()
@@ -517,6 +559,21 @@ if (import.meta.main) {
       : (await new Response(Deno.stdin.readable).text()).split("\n").map((l) => l.trim());
     const ask = (label: string): string | undefined =>
       (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
+
+    /** A roster agent, or the reason it cannot speak through a bot. */
+    const rosterAgent = async (name: string): Promise<void> => {
+      const entry = (await readConfig(root)).agents[name];
+      if (!entry) {
+        console.error(
+          `no agent "${name}" in ${root}/config.jsonc — \`liquen agent ${name}\` adds one`,
+        );
+        Deno.exit(2);
+      }
+      if (entry.mind === false) {
+        console.error(`"${name}" is a member with no agent of their own (mind: false)`);
+        Deno.exit(2);
+      }
+    };
 
     /** What the org still owes after this door — read off the vault, so finishing one door
      *  is where you learn what the next one is. */
@@ -535,180 +592,176 @@ if (import.meta.main) {
       );
     };
 
+    const { botScopes, userScopes, oauthPort } = await slackConfig(root);
+
     if (verb === "app") {
-      const creds = await openCredentials(dir);
-      try {
-        // the app itself comes FIRST and comes from the manifest: Slack builds it in two
-        // clicks from this link, and everything else — the carrier, the bot, a member's
-        // leg — is a token that app issues. The OAuth client below is what the OAuth
-        // handler signs a member in with, so it is optional here.
-        const { botScopes, userScopes } = await slackConfig(root);
-        const url = manifestUrl(withScopes(
-          JSON.parse(
-            await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
-          ),
-          { bot: botScopes, user: userScopes },
-        ));
-        console.error(`Create the app (Slack builds it from the manifest):\n  ${url}\n`);
-        console.error("Then: Install to Workspace (xoxb) · Basic Information → App-Level");
-        console.error("Tokens (xapp). `liquen connect slack socket` and `bot` take those.\n");
-        try { // best effort — the link above is the real door
-          new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {
-            args: [url],
-            stdout: "null",
-            stderr: "null",
-          }).spawn().unref();
-        } catch { /* headless is fine */ }
+      const pastes = flags.has("bot") || flags.has("user");
+      // a grant makes the workspace deliver from that second on, so the door is the moment
+      // to know somebody is listening (`requireIngest`); the app's own pieces land no grant
+      if (pastes) await requireIngest(root, SPEC);
+      const url = manifestUrl(withScopes(
+        JSON.parse(
+          await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
+        ),
+        { bot: botScopes, user: userScopes },
+      ));
+      console.error(`Create the app (Slack builds it from the manifest):\n  ${url}\n`);
+      console.error("Then paste from Basic Information → App Credentials and App-Level Tokens,");
+      console.error("and, after Install to Workspace, from OAuth & Permissions. Empty skips.\n");
+      openBrowser(url);
 
-        const clientId = ask("Client ID (the OAuth client; empty to skip):");
-        const clientSecret = clientId ? ask("Client secret:") : undefined;
-        if (!clientId || !clientSecret) {
-          console.error(clientId ? "no secret pasted — nothing written" : "\nno client stored");
-          await owed(creds);
-          Deno.exit(clientId ? 2 : 0);
+      const creds = await openCredentials(dir);
+      const log = pastes ? await openLog(`${dir}/log`) : null;
+      try {
+        const clientId = ask("Client ID:");
+        if (clientId) {
+          const clientSecret = ask("Client secret:");
+          if (!clientSecret) {
+            console.error("a client id without its secret — nothing written for the client");
+            Deno.exit(2);
+          }
+          const signingSecret = ask("Signing secret (HTTP ingest only):");
+          const redirectUri = ask("Public redirect URI (the user door's, https):");
+          if (redirectUri) {
+            try { // a URI the door cannot serve is caught here, not after someone consents
+              slackDoor(redirectUri, oauthPort);
+            } catch (e) {
+              console.error(e instanceof Error ? e.message : String(e));
+              Deno.exit(2);
+            }
+          }
+          const key = await connectSlackApp(
+            { clientId, clientSecret, signingSecret, redirectUri },
+            creds,
+          );
+          console.error(
+            `✓ app stored: ${key}` + (redirectUri ? ` (callback: ${redirectUri})` : ""),
+          );
         }
-        const signingSecret = ask("Signing secret (verifies HTTP ingest; empty to skip):");
-        const redirectUri = ask("Public redirect URI (empty to skip):");
-        const key = await connectSlackApp(
-          { clientId, clientSecret, signingSecret, redirectUri },
-          creds,
-        );
-        console.error(
-          `✓ app stored: ${key}` + (redirectUri ? ` (public callback: ${redirectUri})` : ""),
-        );
-        await owed(creds);
-      } finally {
-        await creds.close();
-      }
-      Deno.exit(0);
-    }
 
-    if (verb === "socket") {
-      console.error("In the app: Basic Information → App-Level Tokens → Generate Token and");
-      console.error("Scopes, with the `connections:write` scope. Slack has no API for this.\n");
-      const appToken = ask("Paste the app-level token (xapp-…):");
-      if (!appToken) {
-        console.error("no token pasted — nothing written");
-        Deno.exit(2);
-      }
-      const creds = await openCredentials(dir);
-      try {
-        const { appId } = await connectSlackSocket(appToken, { creds });
-        console.error(`\n✓ socket carrier stored for app ${appId} — ingest reads events over it`);
+        const appToken = ask("App-level token (xapp-…):");
+        if (appToken) {
+          const { appId } = await connectSlackSocket(appToken, { creds });
+          console.error(`✓ socket carrier stored for app ${appId} — ingest reads events over it`);
+        }
+
+        if (flags.has("bot")) {
+          const token = ask("Bot token (xoxb-…):");
+          if (token) {
+            const agent = ask("Agent that speaks through it (empty = the org):");
+            if (agent) await rosterAgent(agent);
+            const { team, botUser, missing } = await connectSlackBot(token, {
+              creds,
+              store: log!,
+              publish: log!.publish,
+              asked: botScopes,
+            }, agent);
+            console.error(
+              `✓ bot connected: workspace ${team}, bot user ${botUser} → ${agent ?? "the org"}`,
+            );
+            report(missing, "Reinstall the app to the workspace after adding them.");
+          }
+        }
+
+        if (flags.has("user")) {
+          const token = ask("User token (xoxp-…):");
+          if (token) {
+            const principal = ask(`Agent it belongs to (empty = ${me()}):`) ?? me();
+            const { team, user, missing } = await connectSlackUser(token, {
+              principal,
+              creds,
+              store: log!,
+              publish: log!.publish,
+              asked: userScopes,
+            });
+            console.error(`✓ connected: workspace ${team}, slack user ${user} → ${principal}`);
+            report(missing, 'Add them under "User Token Scopes", then "Reinstall to Workspace".');
+          }
+        }
         await owed(creds);
+        if (pastes) console.error("  (deno task status shows the map)");
       } catch (e) {
         console.error(e instanceof Error ? e.message : String(e));
         Deno.exit(2);
       } finally {
         await creds.close();
+        await log?.close();
       }
       Deno.exit(0);
     }
 
-    if (verb === "bot") {
-      // `--agent <name>`: the roster entry that speaks through this bot (§4) — an org agent
-      const at = rest.indexOf("--agent");
-      const agent = at < 0 ? undefined : rest[at + 1];
-      if (at >= 0 && !agent) {
-        console.error("--agent needs the roster name of the agent that speaks through the bot");
+    // user: a served sign-in
+    await requireIngest(root, SPEC);
+    const { createSlackOAuth } = await import("./oauth.ts");
+    const agent = positional[0] ?? me();
+    const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? userScopes;
+    const creds = await openCredentials(dir);
+    try {
+      const app = await pickSlackApp(creds, flags.get("app")).catch((e: Error) => {
+        console.error(e.message);
+        Deno.exit(2);
+      });
+      const registered = app.extra?.redirect_uri as string | undefined;
+      if (!registered) {
+        console.error(
+          `app ${app.value.client_id} has no public redirect URI, and Slack redirects to https ` +
+            `only — no loopback. Put a tunnel or a real host in front of port ${oauthPort}, ` +
+            `register its https://…/oauth/slack/callback on the app, and paste it at ` +
+            `\`liquen connect slack app\`. Your own leg on this machine needs none: ` +
+            `\`liquen connect slack app --user\` pastes it.`,
+        );
         Deno.exit(2);
       }
-      if (agent) {
-        const { readConfig } = await import("../../config.ts");
-        const entry = (await readConfig(root)).agents[agent];
-        if (!entry) {
-          console.error(
-            `no agent "${agent}" in ${root}/config.jsonc — \`liquen agent ${agent}\` adds one`,
-          );
-          Deno.exit(2);
-        }
-        if (entry.mind === false) {
-          console.error(`"${agent}" is a member with no agent of their own (mind: false)`);
-          Deno.exit(2);
-        }
-      }
-      console.error("In the app: OAuth & Permissions → the Bot User OAuth Token (xoxb-…).\n");
-      const token = ask("Paste the bot token (xoxb-…):");
-      if (!token) {
-        console.error("no token pasted — nothing written");
+      let door: DoorAddress;
+      try {
+        door = slackDoor(registered, oauthPort);
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : String(e));
         Deno.exit(2);
       }
       const log = await openLog(`${dir}/log`);
-      const creds = await openCredentials(dir);
-      try {
-        const { botScopes } = await slackConfig(root);
-        const { team, botUser, missing } = await connectSlackBot(token, {
-          creds,
-          store: log,
-          publish: log.publish,
-          asked: botScopes,
-        }, agent);
-        console.error(
-          `\n✓ connected: workspace ${team}, bot user ${botUser} → ${agent ?? "the org"}`,
-        );
-        report(missing, "Reinstall the app to the workspace after adding them.");
-        await owed(creds);
-        console.error("  (deno task status shows the map)");
-      } finally {
-        await creds.close();
-        await log.close();
-      }
-      Deno.exit(0);
-    }
-
-    const principal = (verb === "user" && first === "user" ? rest[0] : first) ?? (() => {
-      try {
-        return userInfo().username;
-      } catch {
-        return "principal";
-      }
-    })();
-
-    const { botScopes, userScopes } = await slackConfig(root);
-    const manifest = userManifest(withScopes(
-      JSON.parse(
-        await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
-      ),
-      { bot: botScopes, user: userScopes },
-    ));
-    const url = manifestUrl(manifest);
-    console.error(`Connecting Slack as agent "${principal}".\n`);
-    console.error("1. Create the app (pick your workspace):\n   " + url + "\n");
-    console.error('2. In the app: OAuth & Permissions → "Install to Workspace" (approve).');
-    console.error('3. Same page, "OAuth Tokens": copy the "User OAuth Token" (xoxp-…) —');
-    console.error('   NOT the "Bot User OAuth Token" (xoxb-…). If no user token is shown,');
-    console.error('   check "User Token Scopes" has scopes, then "Reinstall to Workspace".\n');
-    try { // best effort — the link above is the real door
-      new Deno.Command(Deno.build.os === "darwin" ? "open" : "xdg-open", {
-        args: [url],
-        stdout: "null",
-        stderr: "null",
-      }).spawn().unref();
-    } catch { /* headless is fine */ }
-
-    const token = ask("Paste the user token (xoxp-…):");
-    if (!token) {
-      console.error("no token pasted — nothing written");
-      Deno.exit(2);
-    }
-
-    const log = await openLog(`${dir}/log`);
-    const creds = await openCredentials(dir);
-    try {
-      const { team, user, missing } = await connectSlackUser(token, {
-        principal,
+      let landed: { user: string; missing: string[] } | undefined;
+      const { handler, outcome } = oneShot(createSlackOAuth({
+        config: {
+          clientId: app.value.client_id,
+          clientSecret: app.value.client_secret,
+          redirectUri: door.callback,
+          userScopes: asked,
+        },
         creds,
-        store: log, // connections live on the Log (§4)
         publish: log.publish,
-        asked: userScopes,
-      });
-      console.error(`\n✓ connected: workspace ${team}, slack user ${user} → ${principal}`);
-      report(missing, 'Add them under "User Token Scopes", then "Reinstall to Workspace".');
+        store: log,
+        onGrant: (g) => (landed = g),
+      }));
+      const server = Deno.serve({ port: door.port, onListen: () => {} }, handler);
+      const start = new URL(door.start);
+      start.searchParams.set("agent", agent);
+      console.error(
+        `Connecting Slack for "${agent}" via app ${app.value.client_id}.\nAsking for:\n  ${
+          asked.join("\n  ")
+        }\n`,
+      );
+      // never opened here: the link binds the grant to a name, and this browser's Slack
+      // login would land under it looking perfectly successful
+      console.error(
+        `Send this link to the person signing in:\n  ${start.href}\n` +
+          `It binds the grant to "${agent}" and is good for one sign-in, so it goes to ` +
+          `exactly one person. This door waits until they finish, serving ${door.callback} ` +
+          `on port ${door.port}.`,
+      );
+      const res = await outcome;
+      await server.shutdown();
+      await log.close();
+      if (res.status !== 200 || !landed) {
+        console.error(`✗ not connected: ${(await res.text()).trim()}`);
+        Deno.exit(1);
+      }
+      console.error(`\n✓ connected: slack user ${landed.user} → ${agent}`);
+      report(landed.missing, "Approve them on the consent screen and run this again.");
       await owed(creds);
       console.error("  (deno task status shows the map)");
     } finally {
       await creds.close();
-      await log.close();
     }
   });
 }
