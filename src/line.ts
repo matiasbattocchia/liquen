@@ -302,13 +302,13 @@ function editor(head: string, recalled: () => readonly string[]): Screen {
   let rows = 1; // rows the drawn block spans
   let row = 0; // the row within it the cursor sits on
   let broke = false; // the block opened with a newline of its own
-  let col = 0; // where the transcript stands on its own row
+  let col = 0; // the SCREEN column the transcript stands at, wraps counted
   let raw = false;
   let closed = false; // the terminal is the caller's again: print, draw nothing
 
   const transcript = (s: string) => {
     out(s);
-    col = columnAfter(col, s);
+    col = columnAfter(col, s, cols());
   };
 
   const cols = () => {
@@ -443,12 +443,24 @@ function editor(head: string, recalled: () => readonly string[]): Screen {
 // deno-lint-ignore no-control-regex
 const ESCAPES = /\x1b\[[0-9;?]*[@-~]/g;
 
-/** Where the cursor stands after printing `s` from column `col`. */
-export function columnAfter(col: number, s: string): number {
+/**
+ * Where the cursor stands after printing `s` from column `col` — a SCREEN column, so it
+ * counts what the terminal shows and not what was written. A line longer than the screen
+ * is already on a later row by the time it ends, and a count that kept climbing sent the
+ * repaint's `\x1b[{col}C` past the right margin, where it clamps: every streamed chunk
+ * after the first wrap printed hard against the edge.
+ *
+ * A width the text fills exactly answers `width`, never 0: the terminal holds that cursor
+ * at the last column with the wrap still pending, and `width` is both the column it is at
+ * and the "a newline is owed here" the repaint needs.
+ */
+export function columnAfter(col: number, s: string, width = FALLBACK_COLS): number {
   const plain = s.replace(ESCAPES, "");
   const nl = plain.lastIndexOf("\n");
   const tail = nl === -1 ? plain : plain.slice(nl + 1);
   const cr = tail.lastIndexOf("\r");
   const from = nl === -1 && cr === -1 ? col : 0;
-  return from + [...(cr === -1 ? tail : tail.slice(cr + 1))].length;
+  const at = from + [...(cr === -1 ? tail : tail.slice(cr + 1))].length;
+  const on = at % width;
+  return on === 0 && at > 0 ? width : on;
 }

@@ -22,22 +22,28 @@
  * The line you type is the REPL's own (`line.ts`): arrows place the cursor and walk the
  * lines you sent before — this session's, back past this REPL's lifetime, because the log
  * is what remembers them — and the transcript prints above the line without disturbing it.
+ * The screen opens on that same past: the room's last messages, stamped and named, so
+ * dialling back in after two days shows what happened while you were gone.
  */
 
+import meta from "../deno.json" with { type: "json" };
 import { attach, resolveAgent, wire } from "./attach.ts";
 import { createScreen } from "./line.ts";
 import { orgFlag } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { DIM, painter, RED, RESET } from "./paint.ts";
+import { ownVoice, textOf } from "./render.ts";
+import type { Event } from "./types.ts";
 import { parseVerdict } from "./xi.ts";
 import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
 
 export const USAGE = "usage: liquen repl [--dir <org>] [agent] [--session <name>]";
 
-/** How far back the up arrow reaches when the REPL opens: the last lines this principal
- *  sent to this session, read off the log the door already keeps. */
-const RECALL = 200;
+/** How much of the room the REPL opens on: the last N messages, read off the log the door
+ *  already keeps. They are the screen's first paint and the up arrow's reach both — one
+ *  past, asked for once. */
+const RECALL = 25;
 
 await entry(async () => {
   // `liquen repl [agent] [--session name]` — both are session choices, so arguments, not
@@ -59,9 +65,13 @@ await entry(async () => {
   let leaving = false;
 
   // the screen owns the line being typed, so the transcript may print while it is typed;
-  // the ring it opens with is what the tail recalls, asked for once the door has answered
-  let recalled: string[] = [];
-  const screen = createScreen({ recalled: () => recalled });
+  // the ring it opens with is the principal's half of what the tail recalled — their own
+  // words, the only ones the up arrow is for
+  let recalled: Event[] = [];
+  const me = { agentId: a.target, id: session }; // the pair — bare names collide (§4)
+  const screen = createScreen({
+    recalled: () => recalled.filter((e) => !ownVoice(e, me)).map(textOf),
+  });
   const write = (s: string) => screen.write(s);
   const prompt = () => screen.prompt();
 
@@ -70,8 +80,9 @@ await entry(async () => {
   const pending: string[] = [];
 
   const p = painter({
-    session: { agentId: a.target, id: session }, // the pair — bare names collide (§4)
+    session: me,
     home,
+    zone: a.timezone,
     write,
     error: (t) => {
       write(`\n${RED}! ${t}${RESET}`);
@@ -98,9 +109,9 @@ await entry(async () => {
     }
   });
 
-  // live: the screen is the present, and the past it does load is the principal's own —
-  // what they sent here, ready under the up arrow. The agent's shell stands where its
-  // principal does — a place it cannot stand in ends the REPL before a word is typed.
+  // live: the tail opens on the present, and carries the room's last messages back with
+  // it. The agent's shell stands where its principal does — a place it cannot stand in
+  // ends the REPL before a word is typed.
   const t = await w.request({ op: "tail", session, cwd: Deno.cwd(), recall: RECALL });
   if (!t.ok) {
     write(`${RED}${t.error}${RESET}\n`);
@@ -110,11 +121,14 @@ await entry(async () => {
   }
   recalled = t.recalled ?? [];
 
+  // the banner names what is about to run: the build you are speaking to, the room, and
+  // the model with the effort it will think at
   write(
-    `${DIM}liquen — ${home} · ${a.model}${
+    `${DIM}liquen v${meta.version} — ${home} · ${a.model}${a.effort ? ` (${a.effort})` : ""}${
       a.paused ? " · PAUSED (mind: false — reads only)" : ""
-    } · log: ${a.dir} · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n`,
+    } · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n`,
   );
+  p.recap(recalled);
 
   for await (const line of screen.lines()) {
     const text = line.trim();

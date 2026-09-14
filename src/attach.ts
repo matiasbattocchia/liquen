@@ -11,7 +11,7 @@ import { TextLineStream } from "@std/streams";
 import { userInfo } from "node:os";
 import { findRoot, readConfig } from "./config.ts";
 import type { Status } from "./door.ts";
-import type { Delta, Event } from "./types.ts";
+import type { Delta, Effort, Event } from "./types.ts";
 
 // A raised daemon owes the client a bound socket within this window — seeding, the exec
 // planes and the proxy all sit between spawn and bind.
@@ -24,6 +24,8 @@ export interface Attached {
   target: string; // the agent this client fronts
   username: string; // the trusted-localhost principal (§9): the OS username
   model: string; // resolved the roster's own way, so a banner names what will run
+  effort: Effort | null; // how hard that model is asked to think; null ⇒ the model decides
+  timezone: string; // the org's clock (§5) — the one a recalled stamp is read in
   paused: boolean; // no session runs (mind: false, §4): the door reads, it takes no orders
 }
 
@@ -53,7 +55,9 @@ export async function resolveAgent(explicit?: string, dir?: string): Promise<Att
   // and the door — not this client — refuses an order with the sentence that says why
   const paused = (catalog.agents[target].mind ?? catalog.organization.agents.mind) === false;
   const model = catalog.agents[target].model ?? catalog.organization.agents.model;
-  return { root, dir: `${root}/data`, target, username, model, paused };
+  const effort = catalog.agents[target].effort ?? catalog.organization.agents.effort;
+  const timezone = catalog.organization.timezone;
+  return { root, dir: `${root}/data`, target, username, model, effort, timezone, paused };
 }
 
 /** Attach to the agent's door. A refusal means no daemon — raise an ephemeral one and
@@ -90,8 +94,8 @@ export interface Reply {
   error?: string;
   id?: string;
   status?: string;
-  /** A tail that asked to `recall`: the lines the principal sent before, oldest first. */
-  recalled?: string[];
+  /** A tail that asked to `recall`: the session room's last messages, oldest first. */
+  recalled?: Event[];
 }
 
 export interface Wire {

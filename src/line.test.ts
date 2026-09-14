@@ -135,3 +135,18 @@ Deno.test("columnAfter: where the transcript stands, colour costing nothing", ()
   assertEquals(columnAfter(0, "\x1b[2mdim\x1b[0m"), 3);
   assertEquals(columnAfter(3, "\rotra"), 4);
 });
+
+// A streamed sentence outgrows the screen long before it ends its line, and the repaint
+// walks back to where it stopped. Counting characters instead of columns sent that walk
+// past the right margin, where the terminal clamps it: every chunk after the first wrap
+// printed hard against the edge, one fragment per row.
+Deno.test("columnAfter: the count is the SCREEN's, so a wrapped line does not run away", () => {
+  assertEquals(columnAfter(0, "x".repeat(153), 100), 53);
+  assertEquals(columnAfter(90, "x".repeat(20), 100), 10);
+  assertEquals(columnAfter(0, "x".repeat(260), 100), 60);
+  // a newline starts the count over, wherever the wrapping had reached
+  assertEquals(columnAfter(90, "abc\nde", 100), 2);
+  // filled to the edge exactly: the cursor waits at the last column, a wrap still owed
+  assertEquals(columnAfter(0, "x".repeat(100), 100), 100);
+  assertEquals(columnAfter(100, "x", 100), 1);
+});

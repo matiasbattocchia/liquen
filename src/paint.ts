@@ -10,7 +10,7 @@
  * pays one delta of latency, and a turn that says nothing prints nothing.
  */
 
-import { isCancelled, outcomeLine, ownVoice, SILENCE, silent, textOf } from "./render.ts";
+import { hhmm, isCancelled, outcomeLine, ownVoice, SILENCE, silent, textOf } from "./render.ts";
 import { describeCall } from "./describe.ts";
 import type { Delta, Event, SessionRef } from "./types.ts";
 
@@ -31,6 +31,7 @@ export interface Surface {
   error(s: string): void;
   prompt(): void;
   thinking: boolean; // stream thinking deltas (dim) or drop them
+  zone?: string; // the org's clock, for the stamps a recap carries (§5)
   gateHint?: string; // the answer vocabulary printed under an approval card
   onGate?(ref: string): void;
   onGateSettled?(ref: string): void;
@@ -39,6 +40,8 @@ export interface Surface {
 export interface Painter {
   delta(d: Delta): void;
   event(e: Event): void;
+  /** What the room already holds, oldest first — the door's `recall` (§9). */
+  recap(events: Event[]): void;
 }
 
 export function painter(s: Surface): Painter {
@@ -146,5 +149,29 @@ export function painter(s: Surface): Painter {
     }
   };
 
-  return { delta, event };
+  /**
+   * The room as it already stands, painted before the tail opens on the present.
+   *
+   * The live transcript names nobody and stamps nothing, and is right not to: the
+   * principal's own line is on screen because they just typed it, and the model's answer
+   * arrives as deltas while they watch. A surface opening on two days it did not witness
+   * has neither, so the past says who and when — the org's clock, the same one the model
+   * reads (§5), because a mind and its principal must agree on what "yesterday" was.
+   */
+  const recap = (events: Event[]): void => {
+    let block = "";
+    for (const e of events) {
+      if (e.type !== "message") continue;
+      const text = textOf(e);
+      if (text === "" || silent(e)) continue;
+      const who = ownVoice(e, s.session)
+        ? s.session.agentId
+        : e.envelope.sender?.name ?? e.envelope.sender?.address ?? s.session.agentId;
+      block += `${DIM}${hhmm(e.ts, s.zone)} ${who}${RESET}  ${text}\n`;
+    }
+    // one write: the past arrives as a page, not as a line the surface redraws around
+    if (block !== "") s.write(block);
+  };
+
+  return { delta, event, recap };
 }

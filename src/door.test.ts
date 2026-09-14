@@ -23,10 +23,12 @@ import { openFileDocs } from "./store/docs.ts";
 import { scoped } from "./policy.ts";
 import { type AgentConfig, xi } from "./xi.ts";
 import { scripted } from "./testing.ts";
+import { textOf } from "./render.ts";
 import type {
   ControlEvent,
   Draft,
   Event,
+  Json,
   MessageEvent,
   PermissionResponseEvent,
   SearchResult,
@@ -633,44 +635,50 @@ Deno.test({
 });
 
 Deno.test({
-  name: "door: a tail recalls the lines the principal sent, and nothing the agent said",
+  name: "door: a tail recalls the room's last messages, both halves, and skips a silence",
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
     const { dir, log, down } = await up();
     try {
       const sender = { address: "matias", name: "matias" };
+      /** The agent's half of a complex: a turn_id and no sender (§3). */
+      const said = (text: string, extra?: Record<string, Json>) =>
+        log.publish(
+          {
+            ts: new Date().toISOString(),
+            type: "message",
+            payload: { turn_id: "t1" },
+            agent: { id: "ana", session_id: "mind" },
+            envelope: {
+              service: "local",
+              connection_address: "agent",
+              conversation: { address: "mind@ana" },
+            },
+            parts: [{ type: "text", kind: "text", text }],
+            ...(extra ? { extra } : {}),
+          } satisfies Draft<MessageEvent>,
+        );
       const client = await rawClient(dir);
       await client.request({ op: "message", text: "uno", sender });
+      await said("hola");
       await client.request({ op: "message", text: "dos", sender });
-      // the agent's own half of the complex: a turn_id and no sender — never a line to recall
-      await log.publish(
-        {
-          ts: new Date().toISOString(),
-          type: "message",
-          payload: { turn_id: "t1" },
-          agent: { id: "ana", session_id: "mind" },
-          envelope: {
-            service: "local",
-            connection_address: "agent",
-            conversation: { address: "mind@ana" },
-          },
-          parts: [{ type: "text", kind: "text", text: "hola" }],
-        } satisfies Draft<MessageEvent>,
-      );
+      // the turn that answered nothing drew no block in any prompt; it draws none here
+      await said("<|SILENCE|>", { silence: true });
       await client.request({ op: "message", text: "tres", sender });
 
-      // a fresh attachment opens standing after everything this principal has said here
+      const texts = (r: Record<string, unknown>) => ((r.recalled ?? []) as Event[]).map(textOf);
+
+      // a fresh attachment opens on the exchange — what was asked AND what was answered
       const next = await rawClient(dir);
-      assertEquals(await next.request({ op: "tail", recall: 10 }), {
-        ok: true,
-        status: "tailing",
-        recalled: ["uno", "dos", "tres"],
-      });
+      const opened = await next.request({ op: "tail", recall: 10 });
+      assertEquals(opened.ok, true);
+      assertEquals(opened.status, "tailing");
+      assertEquals(texts(opened), ["uno", "hola", "dos", "tres"]);
 
       // the most recent N, still in the order they were said
       const few = await rawClient(dir);
-      assertEquals((await few.request({ op: "tail", recall: 2 })).recalled, ["dos", "tres"]);
+      assertEquals(texts(await few.request({ op: "tail", recall: 2 })), ["dos", "tres"]);
 
       // another session's room is another past
       const other = await rawClient(dir);
