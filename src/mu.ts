@@ -22,12 +22,13 @@ export type { CallKind, Effort };
 
 /** What the model produced this step, pre-log. nu stamps id/ts/envelope/agent/turnId.
  *  `assistant` is the model's text (the assistant channel, §5); `thinking` is private
- *  (`redacted_thinking` when the API withheld it — opaque, replayed as is); `tool_use` acts. */
+ *  (`redacted_thinking` when the API withheld it — opaque, replayed as is); `tool_use` acts,
+ *  carrying the id the provider minted for the call (`ToolCall.call_id`). */
 export type Emission =
   | { kind: "thinking"; thinking: string; signature: string }
   | { kind: "redacted_thinking"; data: string }
   | { kind: "assistant"; text: string }
-  | { kind: "tool_use"; name: string; input: Json };
+  | { kind: "tool_use"; name: string; input: Json; call_id?: string };
 
 export interface StepInput extends RenderedRequest {
   model: string;
@@ -123,7 +124,7 @@ function parse(content: Anthropic.ContentBlock[]): Emission[] {
     } else if (b.type === "redacted_thinking") {
       out.push({ kind: "redacted_thinking", data: b.data });
     } else if (b.type === "tool_use") {
-      out.push({ kind: "tool_use", name: b.name, input: b.input as Json });
+      out.push({ kind: "tool_use", name: b.name, input: b.input as Json, call_id: b.id });
     }
   }
   return out;

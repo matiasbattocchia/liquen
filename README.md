@@ -18,6 +18,7 @@ deno task agent <you>
 # 2. credentials — one of:
 echo 'ANTHROPIC_API_KEY=sk-ant-…' > .env   # a Console API key
 ant auth login                             # or platform OAuth (then NO key line in .env, not even empty)
+# an agent declared `provider: "google"` reads GEMINI_API_KEY from .env instead
 
 # 3. talk to your agent
 deno task repl

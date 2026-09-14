@@ -2626,3 +2626,125 @@ at paste time, and a `user` on an app with no URI says what to put in front of
 
 `oneShot` and `doorAddress` moved to `connect/door.ts`, shared by both services. That closes
 the Slack twin left open on 2026-09-11.
+
+### Dialling back in: the REPL opens on the room, not on a blank screen (2026-09-14) — LANDED
+
+`recall` landed on 2026-09-11 as a ring for the arrows, and the screen deliberately stayed
+the present. Driving it says that was half an answer: you dial into a mind you left two
+days ago and the terminal shows a banner and a prompt, as if nothing had happened while you
+were gone — and everything that did happen is one query away, in the room you are standing
+in.
+
+So the recall widened from the principal's lines to the room's last 25 messages, both halves
+of every complex, and the screen paints them before the tail opens on the present. The ring
+is now a projection of that same page — the rows the principal did not speak, filtered out
+in the surface — so there is still ONE past, asked for once, and 25 is the one constant that
+sets both.
+
+The recap is the only place a transcript says who and when. Live it needs neither: the
+principal's own line is on screen because they just typed it, and the model's answer streams
+in as it is said. A page of history has neither, so each line carries a stamp in the ORG's
+clock — the same one the model reads (§5), because a mind and its principal have to agree on
+what "yesterday" was — and the name that wrote it. A turn that answered `<|SILENCE|>` draws
+nothing here either, which is the same rule as every other reader of the log.
+
+The banner now names the build: `liquen v0.1.23 — mind@laura · claude-sonnet-5 (high)`. The
+version comes from `deno.json` itself, imported as JSON, so a release stays the one-line
+bump it has always been and no second copy can drift from it. The effort rides beside the
+model because they are one decision. The log path left: it answered a question nobody
+standing at that prompt was asking.
+
+Found the same day, in the same session: sole-bot's daemon had been up since 0.1.22, and an
+old door parses `recall`, does not recognise it, and answers without it. The client asks,
+the reply is silently short, and the feature looks unbuilt. Nothing to fix in the code — a
+door is allowed not to know a field yet — but it is worth knowing that the failure mode of
+a new tail field is "looks like it was never written".
+
+### A second provider, and the request vocabulary it adapts to (2026-09-14) — LANDED
+
+`provider: "google"` runs an agent on Gemini through Google's Interactions API. The seam
+was always the transport (`mu` takes the model call as a parameter), but its request
+vocabulary — the Anthropic Messages shape `render` emits — had been the only one spoken, so
+the first question was whether to lift the seam to a neutral request type or to name that
+shape the harness's own. It is the harness's own: `render`, `mu`, `nu` and `xi` are
+unchanged, and `transport/steps.ts` translates both ways at the leaf — the request into a
+flat timeline of typed steps, the assembled interaction back into the message `mu` parses,
+with `stop_reason` and usage in the same words. `transport/` is now a directory: `mod.ts`
+picks a transport by the agent's `provider` and holds one client per provider for the
+whole process; `anthropic.ts` and `google.ts` are the two edges.
+
+Google has two surfaces. `generateContent` is the stable one and the closer cousin of the
+Messages shape; the Interactions API is in beta, warns of breaking changes, and is where new
+models and capabilities land. Interactions it is — with `store: false` on every call, since
+the log is the only record of a conversation and a server-held `previous_interaction_id`
+would be a second one. Its schema is pinned by the SDK version (`@google/genai@2.22.0`,
+exact) and confined to `google.ts` and `steps.ts`, so a schema break is a diff in one pure
+module with its own tests.
+
+What the wire actually does, learned with a key rather than from the reference:
+
+- A stateless, streamed interaction works (`stream: true` + `store: false`); the docs never
+  show the pair together but list nothing against it. `interaction.completed` carries the
+  status and usage and no steps, so the transport assembles the steps itself from
+  `step.start`/`step.delta`/`step.stop` — a function call's arguments arrive as JSON string
+  fragments to concatenate and parse.
+- A `function_result` must carry the tool's `name` — the reference calls it optional; the
+  server answers `invalid_request` without it. The Messages `tool_result` block has no name,
+  so the mapping reads it off the `tool_use` the result answers, earlier in the same request.
+- The `thought` step's `signature` is mandatory inside a tool cycle: drop the step, or its
+  signature, and the replay is a 400. Its `summary` is the exception, not the rule — the
+  common thought step is a signature and nothing else, so a Google `thinking` event usually
+  has an empty body and a load-bearing signature. `thinking_summaries: auto` is sent; when a
+  summary comes, it streams as the `thinking` delta and is what the body holds.
+- The `function_call.id` is the server's (`call_123`), and its result answers by `call_id`.
+  This is the one change above the transport: `ToolCall` carries an optional `call_id`,
+  `mu` reads it off every `tool_use` block, `nu` stamps it, and `render` replays it as the
+  block's id — on both sides of the pair — falling back to the event id for a row without
+  one. The Anthropic edge rides the same path, so a Messages tool cycle now replays under
+  the ids that API minted rather than re-minted ones; it accepts both. Google, today,
+  also accepts a wrong `call_id` (it matched by position or name in the probe) — the handle
+  is kept because the documentation says the id is exact, and lenience in a beta is not a
+  contract.
+- Usage: `total_input_tokens` includes the cached prefix and `total_output_tokens` leaves
+  the thought tokens out, each the reverse of the Messages convention, so the mapping
+  subtracts and adds respectively; `total_tokens = input + output + thought` confirmed it.
+  There is no cache write to report — Interactions has no explicit caching, only implicit.
+- Errors arrive two ways: the SDK throws with a numeric HTTP `status` (a 404 for an unknown
+  model), and the stream can carry an `error` event whose `code` is a string. The weather
+  codes map to their HTTP twins for `retryable`; every other code — and none — reads as the
+  request's own fault, so a standing failure never buys a second call in silence.
+
+Two facts the org's config is checked against at boot, never mid-turn: a google agent's
+model must be a `gemini-*` name (the provider's list is closed and prefixed; Anthropic's
+names are the API's to judge), and its `effort` must be one `thinking_level` can express —
+`low`, `medium`, `high`. The catalog's `xhigh` and `max` are refused for a google agent
+rather than collapsed. `provider` itself is validated against the known names
+(`anthropic`, `google`) where it used to accept any string.
+
+What the wire has no home for, and how each degrades: `cache_control` marks are dropped
+(the system blocks join into one `system_instruction` string); a `redacted_thinking` block
+is never produced to a Google model, so none is replayed; media by URL becomes a text marker
+naming the link, since the API fetches nothing itself; a document inside a tool result
+becomes a `<document/>` marker (results take text and images). Server-side tools —
+`google_search`, `url_context`, `code_execution` — are not declared: a capability the
+permission gate never sees is a side door.
+
+Open, in order:
+
+- **Audio.** Gemini takes audio natively; the rule is decided and not yet built: inline the
+  bytes iff the provider accepts the kind and no processor covers it. `inlineable`
+  (`store/media.ts`) is the Anthropic modality set hardcoded and becomes provider-derived;
+  `env.processors` is already in render. Audio only, reusing `INLINE_CAP`. Gated on a smoke
+  with a real WhatsApp voice note: the supported list says OGG *Vorbis*, and voice notes are
+  opus in ogg under the same `audio/ogg` label. The per-request budget moves with it —
+  Gemini's 20MB is the whole request including the prompt, below `MEDIA_BUDGET` plus a
+  window.
+- **Rate limits.** The free tier meters `gemini-3.5-flash` at 20 requests per window
+  (`too_many_requests`, "retry in 30s"), which a tool cycle's smoke plus a few probes
+  exhausts; the SDK retries before nu's ladder does, so a limited call takes tens of
+  seconds to fail or pass. Each model is metered on its own — `GEMINI_SMOKE_MODEL` picks
+  the one the smoke runs on. `gemini-2.5-flash` is in the documented model table and
+  answers `not_found` ("no longer available to new users"); the table lags the service.
+- `@google/genai` declares npm build scripts it does not need. With `"nodeModulesDir": "auto"`
+  Deno materializes `node_modules/` (ignored by git) on the first run and stays quiet after;
+  without it every run warns that the scripts were skipped.

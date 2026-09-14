@@ -657,9 +657,10 @@ function renderMessages(
   // parallel tools weld order-independently and a half-filled barrier never leaves an
   // unpaired block for the API to reject.
   const trailing = [...deferred, ...events.slice(boundary + 1)];
-  const usePresent = new Set(
-    trailing.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => u.id),
+  const useById = new Map(
+    trailing.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => [u.id, u]),
   );
+  const usePresent = new Set(useById.keys());
   // a DEFERRED outcome never welds (§9): its `tool_use` was answered long ago, with
   // `pending_approval`, so the pair is spent — a second `tool_result` block against the same
   // id is not a thing the API has. It renders as harness narration instead.
@@ -764,7 +765,7 @@ function renderMessages(
       // tool_use it answers is spent. Narration, so it can stand alone in any position.
       place("user", { type: "text", text: systemEl("outcome", outcomeLine(e)) });
     } else if (e.type === "tool_result" && welded.has(e.payload.ref_id)) {
-      place("user", toolResultBlock(e, mediaBlocks(e)));
+      place("user", toolResultBlock(e, useById.get(e.payload.ref_id)!, mediaBlocks(e)));
     } else if (e.type === "message") {
       // a directed send dispatched by a welded tool_use is already in the block — skip it
       if (e.payload?.ref_id && welded.has(e.payload.ref_id)) continue;
@@ -1137,9 +1138,15 @@ function systemEl(kind: "error" | "cancelled" | "wake" | "outcome", text: string
   return `<system kind="${kind}">${escText(text)}</system>`;
 }
 
+/** The call's wire id is the provider's when the row kept one (`call_id`, §5): a tool cycle
+ *  replays the id the model was answered under. A row without one replays the event id. */
+function wireId(e: ToolUseEvent): string {
+  return e.parts[0].data.call_id ?? e.id;
+}
+
 function toolUseBlock(e: ToolUseEvent): Anthropic.ToolUseBlockParam {
   const { name, input } = e.parts[0].data;
-  return { type: "tool_use", id: e.id, name, input };
+  return { type: "tool_use", id: wireId(e), name, input };
 }
 
 /** `media` = the result's rendered attachments (§5) — image/document blocks INSIDE the
@@ -1147,14 +1154,14 @@ function toolUseBlock(e: ToolUseEvent): Anthropic.ToolUseBlockParam {
  *  so an `aread` on a picture answers with the picture. Empty ⇒ plain string content. */
 function toolResultBlock(
   e: ToolResultEvent,
+  use: ToolUseEvent,
   media: ContentBlockParam[],
 ): Anthropic.ToolResultBlockParam {
   const { output, is_error } = e.parts[0].data;
   const text = typeof output === "string" ? output : JSON.stringify(output);
   return {
     type: "tool_result",
-    tool_use_id: e.payload.ref_id, // the specific tool_use this result answers — REQUIRED:
-    // the old `?? turnId` fallback emitted an id matching no tool_use block (a certain 400)
+    tool_use_id: wireId(use), // the specific tool_use this result answers, by ITS wire id
     content: media.length
       ? [{ type: "text", text }, ...media as Anthropic.ImageBlockParam[]]
       : text,

@@ -91,7 +91,7 @@ suspension free (no verdict → no trigger), parallelism trivial.
 
 ```ts
 mu({system, messages, tools, model, maxTokens, effort?, turnId?}, transport, emit?) → StepResult
-// transport = the model edge (main picks it — Anthropic today; where a provider adapts in)
+// transport = the model edge (one per provider, main picks by the agent's `provider`)
 //   + CallMeta{turn_id}: what the call is FOR — the provider never sees it, the meter does
   ok:    { emissions, usage, stop }     // usage → telemetry table, NOT the log
   fail:  { error }                      // nu owns retry policy; permanent → error event
@@ -587,7 +587,7 @@ one peripheral for both.
     action?: "edit" | "add" | "remove" | "delete" | "reply" | "forward"
     ref_external_id? | ref_id?    // the referent (the reference rule, below)
     turn_id?          // groups one step's emissions (boundary rule §5, tool barrier §2)
-    stop_reason?      // on a turn's LAST event: the provider's verbatim stop (decide reads it)
+    stop_reason?      // on a turn's LAST event: the stop, in the harness's vocabulary (decide reads it)
     covers?           // on a summary: [from,to] — the id range the checkpoint stands for
     mentions?         // wire mentions, canonical addresses
     control?          // ingest-classified reserved word (stop | cancel)
@@ -1513,7 +1513,10 @@ compaction proper is only pi's **checkpoint layer**:
 
 `render({ events, docs, session, now }) → { system, messages }`. No I/O — nu resolves the
 log window, docs, and tool set and feeds them. Output uses `@anthropic-ai/sdk` message /
-content-block / system-block types, so it feeds `mu` untranslated.
+content-block / system-block types, so it feeds `mu` untranslated. That shape is the
+harness's request vocabulary, by decision: a provider whose wire differs adapts to it in
+its transport (`transport/`), and `stop_reason`, usage and content come back in the same
+vocabulary — nothing above the transport knows which provider answered.
 
 ## 6. Contexts
 
@@ -2076,9 +2079,9 @@ view pushed from a cursor, model deltas riding the same wire — `onDelta` is a 
 the tailers; its `cwd` is where the client stands, and the session's shell starts there for
 as long as the connection lives — tried as the agent's uid before the tail opens, so a place
 the agent cannot stand in refuses the attach itself; its `recall` asks the reply to carry the
-last N lines the principal SENT to that session, read off the scoped view like anything else,
-which is how a surface whose screen is the present still opens knowing what was said through
-it). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
+last N messages of that session's room — both halves of every complex, read off the scoped
+view like anything else — which is how a surface that only ever holds the present opens
+knowing what was said through it). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
 begins, `{status: "idle", after}` when `decide` answers `ignore` — the one fact an attach
 client cannot compute, since only the deciding read runs under the lease. `after` is the
 last event that read saw, so a client that wrote id M knows its line was weighed once
@@ -2088,8 +2091,11 @@ whole session; what to do with a gate, `<|SILENCE|>`, an error row, or an idle o
 open approval is each interface's decision. A terminal surface owns its input line for the
 same reason (`line.ts`): raw mode is what makes an arrow a movement rather than three bytes
 of message, and a line the principal is half-way through survives the transcript printing
-above it. The ring those arrows walk is the tail's recall — what a surface remembers of
-itself it remembers out of the log, never out of a file beside it. The daemon's life derives
+above it. That surface opens on the tail's recall twice over: the room's last messages
+painted with the hand and the clock that wrote each one — the only place a transcript needs
+either, since live the principal's own line is on screen and the answer streams in as it is
+said — and, under the arrows, the principal's half of those same rows. What a surface
+remembers it remembers out of the log, never out of a file beside it. The daemon's life derives
 from the same connections:
 `liquen start`'s main runs regardless, while one an interface raised (`main.ts --ephemeral`)
 reaps itself after a linger with zero attachments — and "is one running?" is a
@@ -2560,7 +2566,7 @@ org on settings the human believes overridden. The functions are 100% parametriz
 arguments and never read env; their argument defaults are the same exported constants
 (ergonomics for direct callers: tests), so code and file cannot drift. Env is for secrets only
 (the tokens a service holds; `ANTHROPIC_API_KEY` belongs to the SDK's own credential
-chain, not to us); session choices — which agent the REPL faces, which principal a connect
+chain and `GEMINI_API_KEY` to the Google edge, not to us); session choices — which agent the REPL faces, which principal a connect
 door binds — are CLI arguments, per-invocation by nature.
 **Which numbers are knobs, and how a test moves the rest.** One question sorts every
 number in the codebase: *would two healthy deployments ever want different values?* Yes

@@ -31,7 +31,7 @@
  *     never from the environment. Argument defaults are ergonomics for direct callers
  *     (tests); they are the named constants defined here, the single source.
  *   · env is for secrets only (tokens the services hold; `ANTHROPIC_API_KEY` belongs to
- *     the SDK's own credential chain, not to us). The org lives where its config.jsonc
+ *     the SDK's own credential chain, not to us; `GEMINI_API_KEY` is the Google edge's). The org lives where its config.jsonc
  *     lives — cwd selects it, no variable does. Session choices (which agent a REPL faces)
  *     are CLI arguments — per-invocation by nature, no seat in the file.
  */
@@ -108,6 +108,9 @@ export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for
 export const TICK_MS = 60_000;
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+/** The model providers a transport exists for (transport/mod.ts); `provider: null` ⇒ the first. */
+export const PROVIDERS = ["anthropic", "google"] as const;
+export type ProviderName = (typeof PROVIDERS)[number];
 export const ACTIONS: readonly PolicyAction[] = ["allow", "ask", "deny"];
 
 /* ── the shape the reader returns ────────────────────────────────────────── */
@@ -118,7 +121,7 @@ export interface AgentDefaults {
   model: string;
   effort: Effort | null; // null ⇒ the model decides
   maxTokens: number;
-  provider: string | null; // the transport seam; null ⇒ Anthropic
+  provider: ProviderName | null; // the transport seam; null ⇒ anthropic
   tools: string[] | null; // the tools offered to the model, by name; null ⇒ all of them
   rules: Rule[]; // permission policy as data (§9)
   engagedMinutes: number; // attention (§2): how long the agent's own last word keeps
@@ -271,7 +274,7 @@ const AGENT: Entry[] = [
   {
     key: "provider",
     value: null,
-    doc: "model provider (the transport seam); null ⇒ Anthropic",
+    doc: `model provider (${PROVIDERS.join("|")}); null ⇒ anthropic`,
   },
   {
     key: "tools",
@@ -770,8 +773,10 @@ function validateAgent(a: Partial<AgentDefaults>, path: string): void {
   if (a.model != null && (typeof a.model !== "string" || a.model === "")) {
     throw new Error(`${path}: model must be a model name`);
   }
-  if (a.provider != null && (typeof a.provider !== "string" || a.provider === "")) {
-    throw new Error(`${path}: provider must be a name`);
+  if (a.provider != null && !(PROVIDERS as readonly string[]).includes(a.provider as string)) {
+    throw new Error(
+      `${path}: unknown provider "${a.provider}" (one of ${PROVIDERS.join(", ")})`,
+    );
   }
   if (a.maxTokens != null && !(Number.isInteger(a.maxTokens) && a.maxTokens > 0)) {
     throw new Error(`${path}: maxTokens must be a positive integer (got ${a.maxTokens})`);

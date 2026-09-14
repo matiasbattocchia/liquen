@@ -336,6 +336,10 @@ export interface EventBase {
 export interface ToolCall {
   name: string;
   input: Json;
+  /** The id the PROVIDER minted for this call — what its result answers to on the wire.
+   *  The event's own id is the log's key; this one is replayed verbatim inside the tool
+   *  cycle (§5), and a row without it replays the event id instead. */
+  call_id?: string;
 }
 
 export interface ToolOutput {

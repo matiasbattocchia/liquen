@@ -1,7 +1,7 @@
 import { assert } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
-import { anthropicClient, anthropicTransport } from "./transport.ts";
-import { mu } from "./mu.ts";
+import { anthropicClient, anthropicTransport } from "./anthropic.ts";
+import { mu } from "../mu.ts";
 
 const KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const MODEL = "claude-sonnet-5"; // adaptive-thinking-capable (mu always sends thinking)

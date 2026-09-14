@@ -33,6 +33,8 @@ One of, in the developer's preference order:
 
 Claude-Code/claude.ai subscription logins do NOT work for the API — only the two above.
 
+An agent declared `provider: "google"` (a `gemini-*` model) reads `GEMINI_API_KEY` from `.env`.
+
 ## 3. First run
 
 ```sh

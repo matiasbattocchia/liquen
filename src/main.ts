@@ -40,7 +40,13 @@ import { type Log, openLog } from "./store/log.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { seedAgent, seedOrg } from "./store/seed.ts";
-import { anthropicClient, anthropicTransport, metered, type ModelTransport } from "./transport.ts";
+import {
+  checkProvider,
+  metered,
+  type ModelTransport,
+  providerOf,
+  transports,
+} from "./transport/mod.ts";
 import { type ExecGround, type ExecPlane, installExecGround } from "./exec/bash.ts";
 import { entry } from "./entry.ts";
 import { openCredentials } from "./store/credentials.ts";
@@ -166,7 +172,7 @@ export interface MainConfig {
    *  runtime data, §4: an OAuth callback or pairing flow binds them while the org runs;
    *  `liquen connect` is the real writer). */
   connections?: ConnectionRow[];
-  apiKey?: string; // default: env ANTHROPIC_API_KEY
+  apiKey?: string; // Anthropic; default: env ANTHROPIC_API_KEY (Google reads GEMINI_API_KEY)
   /** Dev/test seam: the shutdown grace (`STOP_TIMEOUT_MS`) — so a test can watch a wedged
    *  turn be abandoned without sitting out the real one. */
   stopTimeoutMs?: number;
@@ -220,6 +226,8 @@ export async function start(
     ...(p.runs === false ? { runs: false } : {}),
   })));
   const principals = roster.filter((p) => p.runs !== false);
+  // the provider can run the model at the effort declared (§9): refused here, not mid-turn
+  for (const p of principals) checkProvider(p);
   // the mind is a ONE-MEMBER conversation (§6): seeding it as membership is what makes
   // "own mind readable, others' invisible" plain branch-3 policy, no special case. EVERY
   // roster entry has the room — a paused agent's is what its door still reads (§4)
@@ -236,7 +244,11 @@ export async function start(
   // the doors lay these when they declare; boot lays them for a roster entry typed by hand
   await seedOrg(dir);
   for (const agent of principals) if (agent.runs !== false) await seedAgent(dir, agent.agentId);
-  const transport = overrides.transport ?? anthropicTransport(anthropicClient(config.apiKey));
+  // one transport per provider, shared by every agent declared on it; a test's scripted
+  // edge stands in for all of them
+  const transportOf = transports({ anthropic: config.apiKey });
+  const transportFor = (p: Principal): ModelTransport =>
+    overrides.transport ?? transportOf(providerOf(p.provider));
   // the egress proxy (§9): front every credential row that declares an env var — user space
   // gets the placeholder + proxy env, never a real credential (see installProxy).
   const proxy = await installProxy(dir);
@@ -333,7 +345,7 @@ export async function start(
         docs,
         // metered per agent: every model call this agent makes lands in the usage table
         // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in
-        transport: metered(transport, (row) => log.meter(row), agent.agentId),
+        transport: metered(transportFor(agent), (row) => log.meter(row), agent.agentId),
         exec: shellOf(agent.agentId, agent.sessionId).exec,
         files: filesOf(agent.agentId),
         onDelta: (d) => cast(agent.agentId, agent.sessionId, d),

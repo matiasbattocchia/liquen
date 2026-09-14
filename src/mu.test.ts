@@ -60,20 +60,25 @@ Deno.test("parses thinking · assistant · tool_use into emissions, in order", a
   assertEquals(res.emissions, [
     { kind: "thinking", thinking: "she wants a reply", signature: "sig" },
     { kind: "assistant", text: "Le escribo a Mariana." },
-    { kind: "tool_use", name: "send", input: { text: "hola" } },
+    { kind: "tool_use", name: "send", input: { text: "hola" }, call_id: "toolu_x" },
   ]);
   assertEquals(res.stop, "tool_use");
 });
 
-Deno.test("maps usage (incl. cache) for telemetry; drops the API tool_use id (nu re-mints)", async () => {
+Deno.test("maps usage (incl. cache) for telemetry; keeps the API tool_use id (the wire replays it)", async () => {
   const { transport } = fakeTransport(message([
-    { type: "tool_use", id: "toolu_DISCARDED", name: "search", input: { q: "x" } },
+    { type: "tool_use", id: "toolu_kept", name: "search", input: { q: "x" } },
   ], "tool_use"));
 
   const res = await mu(baseInput, transport);
   assert(res.ok);
   assertEquals(res.usage, { input_tokens: 120, output_tokens: 45, cache_read_tokens: 100 });
-  assertEquals(res.emissions[0], { kind: "tool_use", name: "search", input: { q: "x" } });
+  assertEquals(res.emissions[0], {
+    kind: "tool_use",
+    name: "search",
+    input: { q: "x" },
+    call_id: "toolu_kept",
+  });
 });
 
 Deno.test("builds the request: nu's maxTokens; adaptive thinking; effort sets output_config", async () => {
@@ -134,7 +139,7 @@ Deno.test("redacted_thinking is an emission of its own — replayed verbatim, ne
   assert(res.ok);
   assertEquals(res.emissions, [
     { kind: "redacted_thinking", data: "EmUCAQ" },
-    { kind: "tool_use", name: "send", input: {} },
+    { kind: "tool_use", name: "send", input: {}, call_id: "toolu_x" },
   ]);
 });
 

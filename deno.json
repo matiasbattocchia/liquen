@@ -26,11 +26,12 @@
   "exclude": [
     "**/*.md"
   ],
+  "nodeModulesDir": "auto",
   "tasks": {
     "check": "deno fmt --check && deno lint && deno check src",
     "fix": "deno fmt && deno lint",
     "test": "deno test -A",
-    "smoke": "deno test -A --env-file=.env src/transport.test.ts",
+    "smoke": "deno test -A --env-file=.env src/transport/",
     "cli": "deno run -A --env-file=.env src/cli.ts",
     "repl": "deno run -A --env-file=.env src/repl.ts",
     "start": "deno run -A --env-file=.env src/start.ts",
@@ -53,6 +54,7 @@
   },
   "imports": {
     "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.112.0",
+    "@google/genai": "npm:@google/genai@2.22.0",
     "@slack/types": "npm:@slack/types@^2",
     "@slack/web-api": "npm:@slack/web-api@^7",
     "@std/assert": "jsr:@std/assert@^1",

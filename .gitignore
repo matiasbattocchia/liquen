@@ -5,3 +5,6 @@
 
 # local Claude Code overrides
 .claude/settings.local.json
+
+# materialized by nodeModulesDir: auto
+node_modules/

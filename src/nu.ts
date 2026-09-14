@@ -279,7 +279,11 @@ export async function nu(
         payload: { turn_id: turnId },
         agent: self,
         envelope: here,
-        parts: [{ type: "data", kind: "tool_use", data: { name: em.name, input: em.input } }],
+        parts: [{
+          type: "data",
+          kind: "tool_use",
+          data: { name: em.name, input: em.input, ...(em.call_id ? { call_id: em.call_id } : {}) },
+        }],
       };
       events.push(e);
     }
