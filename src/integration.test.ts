@@ -258,6 +258,73 @@ Deno.test("send: directed message + sent result, both cause-linked", async () =>
   );
 });
 
+/** The log keys on addresses and the model reads names — `search` hands it both and the
+ *  card prints the name — so `to` takes either. */
+const namedChat = (
+  address: string,
+  name: string,
+  text: string,
+): Draft<MessageEvent> => ({
+  ts: new Date(Date.now() - 3_600_000).toISOString(),
+  type: "message",
+  envelope: {
+    service: "local",
+    connection_address: "agent",
+    conversation: { address, kind: "direct", name },
+    sender: { address, name },
+  },
+  parts: [{ type: "text", kind: "text", text }],
+});
+
+Deno.test("send: a name no conversation is addressed by lands on the one it names", async () => {
+  await scenario(
+    [
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "Verónica Sesto", text: "hola!" } }],
+        "tool_use",
+      ),
+      ok([{ kind: "assistant", text: "le escribí" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(namedChat("5492616104507", "Verónica Sesto", "¡Hola! Quiero más información"));
+      await publish(principalMsg("saludá a verónica"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+
+      const directed = (await read("message")).filter((e) =>
+        e.envelope.conversation.address === "5492616104507" &&
+        JSON.stringify(e.parts).includes("hola!")
+      );
+      assertEquals(directed.length, 1); // the NAME reached the address, not a stranger
+    },
+  );
+});
+
+Deno.test("send: a name two conversations answer to is handed back, never guessed", async () => {
+  await scenario(
+    [
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "Verónica", text: "hola!" } }],
+        "tool_use",
+      ),
+      ok([{ kind: "assistant", text: "¿cuál de las dos?" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(namedChat("5492616104507", "Verónica Sesto", "quiero información"));
+      await publish(namedChat("5492614696945", "Verónica Mori", "buenas"));
+      await publish(principalMsg("saludá a verónica"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+
+      const [result] = await read("tool_result");
+      const said = JSON.stringify(result.parts);
+      assert(said.includes("names 2 conversations"), said);
+      assert(said.includes("5492616104507") && said.includes("5492614696945"), said);
+      // the wrong recipient is the one send that cannot be taken back: nothing went out
+      const sent = (await read("message")).filter((e) => JSON.stringify(e.parts).includes("hola!"));
+      assertEquals(sent.length, 0);
+    },
+  );
+});
+
 Deno.test("send at the principal lands nowhere — refused before it is ever gated", async () => {
   // gating ON, so the test also proves no card is raised: the whole point is that the
   // principal is not asked to approve a message they were already going to receive

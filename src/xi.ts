@@ -1360,9 +1360,39 @@ function sessionDm(self: { id: string; session_id: string }, target: {
   );
 }
 
-/** Where a send LANDS (§9): the destination's own envelope — the same anchoring read and
- *  peer-name canonicalization `execute` does, so a scoped rule matches the conversation
- *  the log will record. Tools that dispatch nowhere have no target. */
+/** How many events a name is looked for in: the scan only has to see each conversation the
+ *  name reaches once, and a name that reaches more than a handful is ambiguous anyway. */
+const NAME_SCAN = 50;
+
+/** What a `to` names. The tool takes a name or an address, and only the wire's addresses
+ *  are conversations: `search` hands the model both, and the card prints the name, so a
+ *  name is what a model reaches for. A `to` no conversation answers to is looked up as one
+ *  before it is taken for a stranger — and a name several conversations answer to comes
+ *  back as `candidates` rather than a guess, because the wrong recipient is the one send
+ *  that cannot be taken back. Resolution reads through the SCOPED log, so a name only ever
+ *  reaches conversations the agent can already see. */
+async function namesTo(
+  to: string,
+  ports: XiPorts,
+): Promise<{ address: string; candidates: Event[] }> {
+  if ((await ports.log.read({ conversation: to, limit: 1 })).length > 0) {
+    return { address: to, candidates: [] };
+  }
+  const named = await ports.log.read({ conversationName: to, limit: NAME_SCAN });
+  const first = new Map<string, Event>();
+  for (const e of named) {
+    const at = e.envelope.conversation.address;
+    if (at !== undefined && !first.has(at)) first.set(at, e);
+  }
+  const found = [...first.values()];
+  return found.length === 1
+    ? { address: found[0].envelope.conversation.address!, candidates: [] }
+    : { address: to, candidates: found };
+}
+
+/** Where a send LANDS (§9): the destination's own envelope — the same anchoring read,
+ *  name resolution and peer-name canonicalization `execute` does, so a scoped rule matches
+ *  the conversation the log will record. Tools that dispatch nowhere have no target. */
 async function targetOf(
   use: ToolUseEvent,
   self: { id: string; session_id: string },
@@ -1377,6 +1407,7 @@ async function targetOf(
   if (target && !(target.agentId === self.id && target.sessionId === self.session_id)) {
     to = sessionDm(self, target);
   }
+  to = (await namesTo(to, ports)).address;
   const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
   return prior
     ? { connection: prior.envelope.connection_address, conversation: to }
@@ -1611,6 +1642,19 @@ async function execute(
         },
       ]);
     }
+    // A name is as good as an address (§5) — and `targetOf` resolved the same way, so the
+    // rule that judged this call named the conversation the log is about to record.
+    const aimed = await namesTo(to, ports);
+    if (aimed.candidates.length > 0) {
+      throw new Error(
+        `"${to}" names ${aimed.candidates.length} conversations — say which: ${
+          aimed.candidates.map((e) =>
+            `${e.envelope.conversation.name ?? "?"} (${e.envelope.conversation.address})`
+          ).join(", ")
+        }`,
+      );
+    }
+    to = aimed.address;
     // The tool gave us an address; the envelope is ours to write (§2). The conversation's
     // events ARE its record: complete service · connection · kind from the latest visible
     // one, so a reply carries the envelope its conversation always had — and the SCOPED
