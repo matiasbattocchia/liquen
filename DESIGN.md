@@ -921,7 +921,13 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     a principal's own words as `[<name> via <surface>] …` (input replayed as output — fan-out
     over fan-in's own copy is what cross-syncs surfaces, and the reader on the other
     surface may be another principal, so the line names who spoke), tool calls as redacted
-    one-liners under a tag of their own (`[agent tool] bash(git status)`). A CC is an ordinary
+    one-liners under a tag of their own (`[agent tool] bash(git status)`). The tags, the
+    reply hint under a card and the presence words are the harness's own, so they speak the
+    org's tongue (config `locale`, language subtag: `es_AR.UTF-8` ⇒ `[agente pregunta] …`;
+    unknown or unset ⇒ English) — the model's voice needs no translating, the prefix states
+    the locale and it answers in it. What never translates is what is read back or quoted:
+    `/y` and `/n` are commands, a tool's detail is API surface, an error is upstream's
+    words. Model-facing render (§5 stamps) stays English on purpose. A CC is an ordinary
     outbound event on its service — the dispatchers post it, the platform echo merges into it (§4 echo-dedup).
     Fan-in guards that echo twice, because in an alias conversation an unmerged one reads
     as the principal speaking and cross-broadcasts to the other surfaces, which echo in

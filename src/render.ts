@@ -1349,8 +1349,9 @@ export function bodyOf(e: Event, zone?: string): string {
  * time, so `at=` reads as the hour the humans experienced; unset ⇒ the deployment's own
  * zone. `Intl` does the zone math — no timezone database of our own.
  */
-// English until there is an i18n seam: the `locale` slot already sits beside `timezone`
-// in org config; these constants are what it will replace.
+// English on purpose: these stamps face the MODEL, which reads them fine in any tongue. The
+// org's `locale` translates the harness's human-facing words (the mirror's tags, §4), not
+// what the model is shown.
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTHS_LONG = [
   "January",

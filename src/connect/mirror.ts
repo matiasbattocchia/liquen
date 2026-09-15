@@ -55,10 +55,10 @@ import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { MIND, parseSession, sessionAddress } from "../session.ts";
 import { outcomeLine, silenced, silent } from "../render.ts";
 import { describeCall, nameResolver } from "../describe.ts";
+import { type Words, words } from "../i18n.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type {
   DeltaEvent,
-  DeltaKind,
   Draft,
   ErrorEvent,
   Event,
@@ -82,6 +82,10 @@ export interface MirrorDeps {
   /** The roster's word for a member (§4) — what a principal's copy is signed with, and
    *  what the replayed-input tag names. Absent ⇒ the username. */
   nameOf?: (agentId: string) => string;
+  /** The org's language (config `locale`) — the harness's own words on a surface: the tags,
+   *  the reply hint, the presence line. The model's voice needs no translating: the prefix
+   *  states the locale and it answers in it. Unset, or a tongue we don't speak ⇒ English. */
+  locale?: string | null;
   /** The unclaimed-CC repair: stamp a CC with the id its own post came back carrying —
    *  the dispatcher's `setDelivery`, run late by the mirror (it absorbs the echo row). */
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
@@ -94,6 +98,7 @@ export interface MirrorDeps {
  *  passes a smaller one rather than sitting out the real window. */
 export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): () => void {
   const now = deps.now ?? (() => new Date().toISOString());
+  const w = words(deps.locale);
   let chain: Promise<void> = Promise.resolve();
   const enqueue = (e: Event, work: () => Promise<void>) => {
     chain = chain.then(work).catch((err) => deps.onError?.(e, err));
@@ -105,7 +110,7 @@ export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): ()
     const mind = mindOf(e);
     if (mind !== null) {
       enqueue(e, async () => {
-        const parts = await ccParts(e, deps);
+        const parts = await ccParts(e, deps, w);
         if (parts) await fanOut(deps, e, mind, parts, now);
       });
       return;
@@ -302,12 +307,6 @@ async function fanOut(
   })));
 }
 
-/** The word a presence line carries for each delta (§9): the surface's, not the log's. */
-export const PRESENCE_WORD: Record<DeltaKind, string> = {
-  thinking: "thinking",
-  checkpoint: "compacting",
-};
-
 /** What a mind event looks like on a surface — exactly what the REPL shows (§4). Every
  *  line opens with WHO, because a self-conversation renders both speakers as the same
  *  account: `[agent] …` for the voice, `[agent tool] …` for a redacted tool call,
@@ -318,6 +317,7 @@ export const PRESENCE_WORD: Record<DeltaKind, string> = {
 async function ccParts(
   e: Event,
   deps: Pick<MirrorDeps, "read" | "nameOf">,
+  w: Words,
 ): Promise<Part[] | null> {
   const read = deps.read;
   if (silent(e)) return null; // the model said nothing (§5) — nothing crosses to a surface
@@ -329,26 +329,26 @@ async function ccParts(
     return [{
       type: "text",
       kind: "text",
-      text: `\`[agent tool]\` ${boldName(describeCall(call, { resolve }))}`,
+      text: `\`[${w.tool}]\` ${boldName(describeCall(call, { resolve }))}`,
     }];
   }
   if (e.type === "tool_result" && e.payload.deferred) {
     // a call the principal approved, now run: they asked for it, so they hear how it went
     // — the same sentence the model is given (§9). Ordinary results never cross.
-    return [{ type: "text", kind: "text", text: `\`[system]\` ${outcomeLine(e, 160)}` }];
+    return [{ type: "text", kind: "text", text: `\`[${w.system}]\` ${outcomeLine(e, 160)}` }];
   }
   if (e.type === "error") {
     // the harness's own voice reaching the principal (§2): it speaks when the model can't
     // — a gate is waiting, so no turn will be taken to relay this
     const { error } = (e as ErrorEvent).parts[0].data;
-    return [{ type: "text", kind: "text", text: `\`[system]\` ${error}` }];
+    return [{ type: "text", kind: "text", text: `\`[${w.system}]\` ${error}` }];
   }
   if (e.type === "delta") {
     // presence (§9): what the mind is doing, for the principal on the other side of a
     // chat — the log holds the fact, the words are the surface's. The whole line is the
     // tag, the same shape every crossing line opens with
     const { kind } = (e as DeltaEvent).parts[0].data;
-    return [{ type: "text", kind: "text", text: `\`[agent ${PRESENCE_WORD[kind]}...]\`` }];
+    return [{ type: "text", kind: "text", text: `\`[${w.presence[kind]}]\`` }];
   }
   if (e.type === "permission_request") {
     // the approval card, wherever the principal is (§9). It carries the ARGUMENTS, not
@@ -358,8 +358,8 @@ async function ccParts(
     return [{
       type: "text",
       kind: "text",
-      text: `\`[agent asks]\` approve ${boldName(ask.detail)}\n` +
-        `\`reply /y to approve · /n <reason> to refuse\``,
+      // a blank row between them: the legend reads apart from the call it is about
+      text: `\`[${w.asks}]\` ${w.approve} ${boldName(ask.detail)}\n\n\`${w.hint}\``,
     }];
   }
   if (e.type === "permission_response" && e.payload?.turn_id !== undefined) {
@@ -370,7 +370,7 @@ async function ccParts(
     return [{
       type: "text",
       kind: "text",
-      text: `\`[system]\` withdrawn: ${boldName(call ?? "a pending approval")}`,
+      text: `\`[${w.system}]\` ${w.withdrawn}: ${boldName(call ?? "…")}`,
     }];
   }
   if (e.type !== "message") return null;
@@ -384,7 +384,7 @@ async function ccParts(
     // tag is the only thing that tells output from input there.
     if (!text && parts.length === 0) return null;
     return [
-      ...(text ? [{ type: "text", kind: "text", text: `\`[agent]\` ${text}` } as const] : []),
+      ...(text ? [{ type: "text", kind: "text", text: `\`[${w.agent}]\` ${text}` } as const] : []),
       ...parts.filter((p) => p.type === "file"),
     ];
   }
@@ -398,7 +398,7 @@ async function ccParts(
     ? deps.nameOf?.(sender.address) ?? sender.name ?? sender.address
     : sender?.name ?? "you";
   return [
-    { type: "text", kind: "text", text: `\`[${who} via ${where}]\` ${text}` },
+    { type: "text", kind: "text", text: `\`[${w.via(who, where)}]\` ${text}` },
     ...parts.filter((p) => p.type === "file"),
   ];
 }

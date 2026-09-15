@@ -539,6 +539,7 @@ export async function start(
     read: (q) => log.read(q),
     aliases: () => log.aliases(),
     nameOf: (id) => log.agents().find((a) => a.agentId === id)?.name ?? id,
+    locale: catalog?.organization.locale,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onError: (e, err) => console.error(`mirror FAILED on ${e.envelope.conversation.address}:`, err),
   }));

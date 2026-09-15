@@ -1,6 +1,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { createMirror } from "./mirror.ts";
+import { words } from "../i18n.ts";
 import { SILENCE } from "../render.ts";
+import { parseVerdict } from "../xi.ts";
 import { openLog } from "../store/log.ts";
 import type { Draft, Event, MessageEvent, ToolUseEvent } from "../types.ts";
 import type { Connections } from "../store/connections.ts";
@@ -17,6 +19,7 @@ async function withMirror(
     log: Pick<Connections, "deleteConnections">;
   }) => Promise<void>,
   settleMs = 30, // the waited constant, shrunk (§9) — one test widens it to race the backfill
+  locale?: string, // the org's tongue — unset, the harness speaks English
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -31,6 +34,7 @@ async function withMirror(
     read: (q) => log.read(q),
     aliases: () => log.aliases(),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
+    locale,
   }, settleMs);
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {
     const t0 = Date.now();
@@ -280,6 +284,61 @@ Deno.test("mirror fan-out: the approval card crosses, arguments and reply syntax
     assertStringIncludes(line, "/y");
     assertStringIncludes(line, "/n");
   });
+});
+
+Deno.test("mirror fan-out: under a Spanish locale the harness speaks Spanish — the keys stay `/y` `/n`", async () => {
+  await withMirror(
+    async ({ publish, inConv, waitFor }) => {
+      await publish({
+        ts: new Date().toISOString(),
+        type: "permission_request",
+        payload: { ref_id: "01a0-use" },
+        agent: { id: "ana", session_id: "mind" },
+        envelope: {
+          service: "local",
+          connection_address: "agent",
+          conversation: { address: "mind@ana" },
+        },
+        parts: [{
+          type: "data",
+          kind: "permission_request",
+          data: { tool: "send", call: "send(to: Vivian)", detail: "send(to: Vivian, text: hola)" },
+        }],
+      } as Draft<Event>);
+      await publish({
+        ts: new Date().toISOString(),
+        type: "delta",
+        agent: { id: "ana", session_id: "mind" },
+        envelope: {
+          service: "local",
+          connection_address: "agent",
+          conversation: { address: "mind@ana" },
+        },
+        parts: [{ type: "data", kind: "delta", data: { kind: "thinking" } }],
+      });
+      await waitFor(async () => (await inConv("D1")).length === 2);
+      const [card, presence] = (await inConv("D1")).map(textOf);
+      // the frame translates; the tool detail (API surface) and the commands the verdict
+      // parser reads do not — a principal typing off the hint still settles the card
+      assertStringIncludes(
+        card,
+        "`[agente pregunta]` aprobar **send**(to: Vivian, text: hola)\n\n" +
+          "`responder /y para aprobar · /n <motivo> para rechazar`",
+      );
+      assertEquals(parseVerdict("/y"), { behavior: "allow", scope: "once" });
+      assertEquals(presence, "`[agente pensando...]`");
+    },
+    30,
+    "es_AR.UTF-8",
+  );
+});
+
+Deno.test("words: the tongue is the locale's language subtag; one we don't speak is English", () => {
+  assertEquals(words("es_AR.UTF-8").agent, "agente");
+  assertEquals(words("es").agent, "agente");
+  assertEquals(words("pt_BR.UTF-8").agent, "agent");
+  assertEquals(words(null).agent, "agent");
+  assertEquals(words(undefined).agent, "agent");
 });
 
 Deno.test("mirror fan-in: a quoted CC is TRANSLATED — the copy's ref_id names the mind event (§9)", async () => {
