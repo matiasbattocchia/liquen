@@ -33,16 +33,21 @@ export const RESET = "\x1b[0m";
 export const YOU = "❯";
 export const AGENT = "•";
 
-/** The surface's half: sinks and reactions. `prompt` is the transcript's line-end (the
- *  REPL redraws `"\n> "`, the CLI writes `"\n"`); `error` is where failures land (the
- *  REPL's screen, the CLI's stderr); the gate hooks let a surface keep an approval pile —
- *  the painter only reports what the tail disclosed. */
+/** The surface's half: sinks and reactions. `error` is where failures land (the REPL's
+ *  screen, the CLI's stderr); the gate hooks let a surface keep an approval pile — the
+ *  painter only reports what the tail disclosed.
+ *
+ *  `prompt` and `gap` are the painter asking for a shape rather than printing one: close
+ *  the row, and stand one blank row under what was said. Only the surface knows where its
+ *  cursor is — a painter that wrote its own newlines would have to guess, and two parts
+ *  guessing the same blank line is how a transcript grows an empty column. */
 export interface Surface {
   session: SessionRef; // the ownVoice discriminator (§3) — the pair, never the bare name
   home: string; // the session conversation this surface fronts
   write(s: string): void;
   error(s: string): void;
   prompt(): void;
+  gap(): void;
   thinking: boolean; // stream thinking deltas (dim) or drop them
   zone?: string; // the org's clock, the one every stamp is read in (§5)
   clock?: () => Date; // now, for the stamp a live block opens with; tests hand a fixed one
@@ -68,13 +73,12 @@ export function painter(s: Surface): Painter {
   // the agent's text, released: the first of a block opens it — a blank line, the time
   // and the mark — and the rest flows through the markdown stream
   const show = (raw: string) => {
-    let out = "";
     if (block !== "text") {
-      out += `${block === "none" ? "\n" : "\n\n"}${stamp(clock().toISOString())}${AGENT} `;
+      s.gap(); // a block of its own, standing clear of the last one
+      s.write(`${stamp(clock().toISOString())}${AGENT} `);
       block = "text";
     }
-    out += md.feed(raw);
-    s.write(out);
+    s.write(md.feed(raw));
   };
   const say = (text: string) => {
     held += text;
@@ -94,13 +98,16 @@ export function painter(s: Surface): Painter {
     if (d.kind === "text") say(d.text ?? "");
     else if (d.kind === "thinking" && s.thinking) {
       if (block === "text") settle();
-      if (block === "none") s.write("\n");
+      if (block === "none") s.gap(); // thinking is a block too, and opens like one
       block = "thinking";
       s.write(`${DIM}${d.text ?? ""}${RESET}`);
     } else if (d.kind === "checkpoint" && s.thinking) {
       // the record being written, behind a head that says what the dim text is — a surface
       // that keeps the machine's inner text folded still gets the closing line below
-      if (!checkpointing) s.write(`\n${DIM}≡ checkpoint${RESET}\n`);
+      if (!checkpointing) {
+        s.gap();
+        s.write(`${DIM}≡ checkpoint${RESET}\n`);
+      }
       checkpointing = true;
       s.write(`${DIM}${d.text ?? ""}${RESET}`);
     } else if (d.kind === "error") s.error(d.text ?? "");
@@ -118,7 +125,8 @@ export function painter(s: Surface): Painter {
           // the principal spoke — locally it's already on screen; through a mind-alias
           // surface (§4) the mirror's copy is the only sighting, so paint it, tagged
           if (via && e.envelope.conversation.address === s.home) {
-            s.write(`\n${stamp(e.ts)}${YOU} ${CYAN}[via ${via.service}]${RESET} ${text}`);
+            s.gap();
+            s.write(`${stamp(e.ts)}${YOU} ${CYAN}[via ${via.service}]${RESET} ${text}`);
             s.prompt();
           }
           return;
@@ -133,20 +141,23 @@ export function painter(s: Surface): Painter {
           held = "";
           const spoke = block !== "none";
           settle();
-          if (spoke) {
-            s.write("\n"); // the blank line between this block and the next
-            s.prompt(); // the body itself already streamed
-          }
+          if (spoke) s.gap(); // the body itself already streamed; this closes it off
         } else {
           settle();
-          s.write(`\n${stamp(e.ts)}${CYAN}→ ${e.envelope.conversation.address}:${RESET} ${text}`);
+          s.gap();
+          s.write(`${stamp(e.ts)}${CYAN}→ ${e.envelope.conversation.address}:${RESET} ${text}`);
           s.prompt();
         }
         return;
       }
       case "tool_use": {
+        // a call the agent made mid-sentence belongs to that block, on the row under its
+        // words; one that opens a turn is a block of its own and stands clear
+        const inBlock = block !== "none";
         settle();
-        s.write(`\n${DIM}⚙ ${describeCall(e.parts[0].data)}${RESET}\n`);
+        if (inBlock) s.prompt();
+        else s.gap();
+        s.write(`${DIM}⚙ ${describeCall(e.parts[0].data)}${RESET}\n`);
         return;
       }
       case "tool_result": {
@@ -154,7 +165,8 @@ export function painter(s: Surface): Painter {
         // it reads as a sentence, not a checkmark, because nothing on screen expects it
         if (e.payload.deferred) {
           settle();
-          s.write(`\n${YELLOW}${outcomeLine(e, 160)}${RESET}`);
+          s.gap();
+          s.write(`${YELLOW}${outcomeLine(e, 160)}${RESET}`);
           s.prompt();
           return;
         }
@@ -166,7 +178,8 @@ export function painter(s: Surface): Painter {
         const { detail } = e.parts[0].data;
         const ref = e.payload?.ref_id;
         if (typeof ref === "string") s.onGate?.(ref);
-        s.write(`\n${YELLOW}? approve ${detail}${RESET}${s.gateHint ? `\n${s.gateHint}` : ""}`);
+        s.gap();
+        s.write(`${YELLOW}? approve ${detail}${RESET}${s.gateHint ? `\n${s.gateHint}` : ""}`);
         s.prompt();
         return;
       }
@@ -179,7 +192,8 @@ export function painter(s: Surface): Painter {
       case "summary": {
         // the one line every surface gets: the window was folded, and this turn was that
         checkpointing = false;
-        s.write(`\n${DIM}≡ checkpoint written${RESET}\n`);
+        s.gap();
+        s.write(`${DIM}≡ checkpoint written${RESET}\n`);
         return;
       }
       case "error": {
@@ -191,7 +205,8 @@ export function painter(s: Surface): Painter {
         if (!isCancelled(e)) return;
         held = "";
         settle();
-        s.write(`\n${DIM}${textOf(e)}${RESET}`);
+        s.gap();
+        s.write(`${DIM}${textOf(e)}${RESET}`);
         s.prompt();
         return;
       }

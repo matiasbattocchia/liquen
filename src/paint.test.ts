@@ -1,5 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { painter, type Surface } from "./paint.ts";
+import { tailOf } from "./line.ts";
 import type { Event, Json, MessageEvent } from "./types.ts";
 
 const AGENT = "laura";
@@ -15,13 +16,21 @@ const plain = (s: string) => s.replaceAll(COLOURS, "");
 /** The screen, as a string — the painter's whole output, escapes and all. */
 function surface(over: Partial<Surface> = {}) {
   let screen = "";
+  // the fake screen keeps its tail the way a real one does: the painter asks for a closed
+  // row or a blank one, and gets only what is missing
+  const tail = tailOf();
+  const put = (t: string) => {
+    tail.note(t);
+    screen += t;
+  };
   const s: Surface = {
     session: SESSION,
     home: HOME,
     zone: ZONE,
-    write: (t) => screen += t,
+    write: put,
     error: (t) => screen += `!${t}`,
-    prompt: () => screen += "\n> ",
+    prompt: () => put(tail.owed(1)),
+    gap: () => put(tail.owed(2)),
     thinking: true,
     clock: () => new Date("2026-09-11T14:14:00Z"),
     ...over,
@@ -126,15 +135,15 @@ Deno.test("live: the agent's text opens with a blank line, the time and its mark
   p.delta({ kind: "text", text: "el tuyo " });
   p.delta({ kind: "text", text: "y el de la clínica" });
   p.event(answered("2026-09-11T14:14:00Z", "el tuyo y el de la clínica"));
-  assertEquals(plain(screen()), "\n11 Sep 11:14 • el tuyo y el de la clínica\n\n> ");
+  assertEquals(plain(screen()), "11 Sep 11:14 • el tuyo y el de la clínica\n\n");
 });
 
 Deno.test("live: markdown streams as styles, a span held until it closes", () => {
   const { p, screen } = surface();
   p.delta({ kind: "text", text: "es **muy" });
-  assertEquals(plain(screen()), "\n11 Sep 11:14 • es ");
+  assertEquals(plain(screen()), "11 Sep 11:14 • es ");
   p.delta({ kind: "text", text: " simple** sí" });
-  assertEquals(screen(), "\n\x1b[2m11 Sep 11:14\x1b[0m • es \x1b[1mmuy simple\x1b[22m sí");
+  assertEquals(screen(), "\x1b[2m11 Sep 11:14\x1b[0m • es \x1b[1mmuy simple\x1b[22m sí");
 });
 
 // an idle hour is sixty silent turns: each one painting a line's end would be a column
@@ -152,7 +161,7 @@ Deno.test("live: the sentinel after words is not a word", () => {
   p.delta({ kind: "text", text: "listo." });
   p.delta({ kind: "text", text: "\n\n<|SILENCE|>" });
   p.event(answered("2026-09-11T14:14:00Z", "listo.\n\n<|SILENCE|>"));
-  assertEquals(plain(screen()), "\n11 Sep 11:14 • listo.\n\n> ");
+  assertEquals(plain(screen()), "11 Sep 11:14 • listo.\n\n");
 });
 
 Deno.test("live: the principal's line through a wire is dated and marked like a recalled one", () => {
@@ -161,7 +170,7 @@ Deno.test("live: the principal's line through a wire is dated and marked like a 
     ...asked("2026-09-11T14:13:00Z", "buen día", "Matías (WhatsApp)"),
     extra: { via: { service: "whatsapp" } },
   });
-  assertEquals(plain(screen()), "\n11 Sep 11:13 ❯ [via whatsapp] buen día\n> ");
+  assertEquals(plain(screen()), "11 Sep 11:13 ❯ [via whatsapp] buen día\n");
 });
 
 Deno.test("live: text after a tool line is a block of its own, marked again", () => {
@@ -178,7 +187,7 @@ Deno.test("live: text after a tool line is a block of its own, marked again", ()
   } as unknown as Event);
   p.delta({ kind: "text", text: "tenés dos turnos" });
   const out = plain(screen());
-  assertEquals(out.startsWith("\n11 Sep 11:14 • miro el calendario\n⚙ "), true);
+  assertEquals(out.startsWith("11 Sep 11:14 • miro el calendario\n⚙ "), true);
   assertEquals(out.endsWith("\n\n11 Sep 11:14 • tenés dos turnos"), true);
 });
 
@@ -186,5 +195,47 @@ Deno.test("live: thinking streams dim in a block of its own, and the answer foll
   const { p, screen } = surface();
   p.delta({ kind: "thinking", text: "veamos" });
   p.delta({ kind: "text", text: "listo" });
-  assertEquals(plain(screen()), "\nveamos\n\n11 Sep 11:14 • listo");
+  assertEquals(plain(screen()), "veamos\n\n11 Sep 11:14 • listo");
+});
+
+// The screen's shape is asked for, never printed: whatever order the tail hands things
+// over in, one blank row stands between blocks and no run of events grows a column.
+Deno.test("live: blocks stand one blank row apart, however the turn goes", () => {
+  const { p, screen } = surface();
+  const gate: Event = {
+    id: "g1",
+    ts: "2026-09-11T14:14:00Z",
+    type: "permission_request",
+    payload: { ref_id: "u1" },
+    agent: { id: AGENT, session_id: "mind" },
+    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    parts: [{ type: "data", kind: "permission_request", data: { detail: "send(...)" } }],
+  } as unknown as Event;
+  const use = {
+    ...gate,
+    id: "u1",
+    type: "tool_use",
+    payload: { turn_id: "t1" },
+    parts: [{ type: "data", kind: "tool_use", data: { name: "send", input: {} } }],
+  } as unknown as Event;
+  const done = {
+    ...use,
+    id: "r1",
+    type: "tool_result",
+    parts: [{ type: "data", kind: "tool_result", data: { is_error: false, output: "ok" } }],
+  } as unknown as Event;
+
+  p.delta({ kind: "text", text: "mando" });
+  p.event(use);
+  p.event(gate);
+  p.event(done);
+  p.delta({ kind: "text", text: "listo" });
+  p.event(answered("2026-09-11T14:14:00Z", "listo"));
+  p.event(use); // a second call, straight after a closed turn
+  p.event(done);
+
+  const out = plain(screen());
+  assertEquals(out.includes("\n\n\n"), false, `a column of blank lines:\n${JSON.stringify(out)}`);
+  assertEquals(out.includes("mando\n⚙ send"), true); // the call sits under the words
+  assertEquals(out.includes("✓\n\n11 Sep 11:14 • listo"), true); // the next block, one row down
 });

@@ -5,7 +5,7 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { columnAfter, createRing, type Edit, edit, keys } from "./line.ts";
+import { columnAfter, createRing, type Edit, edit, keys, tailOf } from "./line.ts";
 
 /** Type a chunk into a line, the way the editor's loop does. */
 function type(start: Edit, chunk: string): Edit {
@@ -149,4 +149,25 @@ Deno.test("columnAfter: the count is the SCREEN's, so a wrapped line does not ru
   // filled to the edge exactly: the cursor waits at the last column, a wrap still owed
   assertEquals(columnAfter(0, "x".repeat(100), 100), 100);
   assertEquals(columnAfter(100, "x", 100), 1);
+});
+
+// What the tail stands as is the one fact a surface needs to print the right amount of
+// nothing: asking for a blank row twice asks for it once.
+Deno.test("tailOf: what is already standing is never written twice", () => {
+  const t = tailOf();
+  assertEquals(t.owed(1), ""); // an empty screen owes nothing
+  assertEquals(t.owed(2), "");
+  t.note("11 Sep 11:14 • listo");
+  assertEquals(t.owed(1), "\n"); // mid-row: one to close it
+  assertEquals(t.owed(2), "\n\n"); // and another to stand clear
+  t.note("\n");
+  assertEquals(t.owed(1), "");
+  assertEquals(t.owed(2), "\n");
+  t.note("\n");
+  assertEquals(t.owed(2), ""); // the blank row stands: asking again writes nothing
+  t.note("\x1b[2m\x1b[0m"); // escapes paint, they do not move
+  assertEquals(t.owed(2), "");
+  t.note("⚙ send(...)\n");
+  assertEquals(t.owed(1), "");
+  assertEquals(t.owed(2), "\n");
 });

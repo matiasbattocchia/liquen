@@ -243,10 +243,35 @@ export interface Screen {
   lines(): AsyncIterableIterator<string>;
   /** Transcript text — printed above the line being typed, which stays where it was. */
   write(s: string): void;
-  /** Close a block of transcript: the next line starts on a fresh row. */
+  /** Close the row the transcript stands on. Nothing to close, nothing written. */
   prompt(): void;
+  /** Open a block: leave exactly one blank row under what was said, however much of it
+   *  already stands. Asking twice is asking once — which is what keeps a transcript from
+   *  drifting downward as the parts that print take turns each assuming the worst. */
+  gap(): void;
   /** Hand the terminal back the way it was found. */
   close(): void;
+}
+
+/** What the tail of a transcript stands as, kept by whoever does the writing. Escapes
+ *  paint, they do not move: only the newlines count, and two is the ceiling — nothing on
+ *  screen is ever owed more than one blank row. */
+export function tailOf() {
+  let gap = 2; // an empty screen already stands as though a blank row were under it
+  return {
+    /** Take account of what was just written. */
+    note(s: string) {
+      const plain = s.replace(ESCAPES, "");
+      if (plain === "") return;
+      const body = plain.replace(/\n+$/, "");
+      const ends = plain.length - body.length;
+      gap = ends === 0 ? 0 : Math.min(2, (body === "" ? gap : 0) + ends);
+    },
+    /** The newlines still owed to stand `want` deep: 1 = a closed row, 2 = a blank one. */
+    owed(want: 1 | 2): string {
+      return "\n".repeat(Math.max(0, want - gap));
+    },
+  };
 }
 
 export interface ScreenOptions {
@@ -281,19 +306,25 @@ const out = (s: string) => {
 /** No terminal: the kernel's lines are the principal's lines, and the transcript is
  *  whatever we print. */
 function plain(head: string): Screen {
+  const tail = tailOf();
+  const say = (s: string) => {
+    tail.note(s);
+    out(s);
+  };
   return {
     async *lines() {
       const stream = Deno.stdin.readable
         .pipeThrough(new TextDecoderStream())
         .pipeThrough(new TextLineStream());
-      out(head);
+      say(head);
       for await (const line of stream) {
         yield line;
-        out(head);
+        say(head);
       }
     },
-    write: out,
-    prompt: () => out(`\n${head}`),
+    write: say,
+    prompt: () => say(tail.owed(1) + head),
+    gap: () => say(tail.owed(2)),
     close: () => {},
   };
 }
@@ -320,8 +351,10 @@ function editor(
   let raw = false;
   let closed = false; // the terminal is the caller's again: print, draw nothing
 
+  const tail = tailOf();
   const transcript = (s: string) => {
     out(s);
+    tail.note(s);
     col = columnAfter(col, s, cols());
   };
 
@@ -374,6 +407,17 @@ function editor(
     paint();
   };
 
+  /** Leave the transcript standing `want` deep — a closed row, or a blank one under it —
+   *  writing only what it does not already stand as. Nothing owed, nothing touched: the
+   *  block below stays exactly as it was drawn. */
+  const stand = (want: 1 | 2) => {
+    const owed = tail.owed(want);
+    if (owed === "") return;
+    erase();
+    transcript(owed);
+    if (!closed) paint();
+  };
+
   const setRaw = (on: boolean) => {
     if (raw === on) return;
     try {
@@ -404,7 +448,9 @@ function editor(
               // says — and the block is drawn fresh below it; an empty one joins nothing
               const line = e.text;
               erase();
-              if (line !== "") transcript(`${col > 0 ? "\n" : ""}${sent(line)}\n`);
+              // the sent line is the principal's block: it stands clear of the last one,
+              // by however much the transcript does not already stand clear
+              if (line !== "") transcript(`${tail.owed(2)}${sent(line)}\n`);
               ring.add(line);
               e = { text: "", at: 0 };
               // the caller works between lines: what it writes lands above a line drawn
@@ -440,9 +486,10 @@ function editor(
       if (!closed) paint();
     },
     prompt() {
-      erase();
-      transcript("\n");
-      if (!closed) paint();
+      stand(1);
+    },
+    gap() {
+      stand(2);
     },
     close() {
       erase();

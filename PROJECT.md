@@ -2823,3 +2823,22 @@ from the workspace, which is where the shell stands. `instructions/agent.md` for
 the path and its description, nothing else. The provenance header, the pointer and the
 argument to `aread` are the same string. ~/new's index went from 1460 to 1120 chars and says
 more. The substrate path stands in when there is no workspace to count from.
+
+### The screen owns the blank line (2026-09-15) — LANDED
+
+Blank lines kept appearing in the REPL that nobody meant. The silent-turn fix took the
+worst of it, but the cause was structural and survived: the painter printed its own
+newlines — `"\n"` before a tool line, `"\n\n"` between blocks, a `prompt()` that always
+wrote one — while only the screen knows what column the cursor is on. Two parts guessing
+the same blank line is an empty column, and which sequence of events produced one depended
+on the order the tail happened to hand things over in.
+
+Now the painter asks for a shape and the surface prints it. `prompt` closes the row, `gap`
+leaves exactly one blank row under what was said, and both write only what is missing:
+`tailOf` (line.ts) keeps what the transcript stands as — mid-row, closed, or clear — and
+answers what is owed, for the editor, the pipe screen and the CLI's stdout alike. Asking
+twice is asking once, so no run of events can grow a column. A tool call made mid-sentence
+sits on the row under its words; one that opens a turn stands clear as its own block; the
+sent line stands clear too. Verified on a real pty (a gate, a denial, a bash call, three
+turns) by replaying the capture through a terminal emulator — reading the capture as BYTES,
+since text mode eats the `\r` that every erase is built from.

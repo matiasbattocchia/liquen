@@ -91,10 +91,12 @@ await entry(async () => {
     zone: a.timezone,
     write,
     error: (t) => {
-      write(`\n${RED}! ${t}${RESET}`);
+      screen.gap();
+      write(`${RED}! ${t}${RESET}`);
       prompt();
     },
     prompt,
+    gap: () => screen.gap(),
     thinking: true,
     gateHint: "  /{y,n} [once|conv|conn|always|all] [reason]",
     onGate: (ref) => {

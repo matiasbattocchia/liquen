@@ -21,6 +21,7 @@
 import { attach, resolveAgent, wire } from "./attach.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { painter } from "./paint.ts";
+import { tailOf } from "./line.ts";
 import { orgFlag } from "./config.ts";
 import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
@@ -52,7 +53,14 @@ await entry(async () => {
   const conn = await attach(a);
   let leaving = false;
 
-  const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
+  // stdout has no block of its own to redraw, but it still has a tail: the painter asks
+  // for a closed row or a blank one, and this answers with the newlines it actually owes
+  const tail = tailOf();
+  const say = (s: string) => {
+    tail.note(s);
+    Deno.stdout.writeSync(new TextEncoder().encode(s));
+  };
+  const write = say;
 
   const p = painter({
     session: { agentId: a.target, id: session },
@@ -60,7 +68,8 @@ await entry(async () => {
     zone: a.timezone,
     write,
     error: (t) => console.error(t),
-    prompt: () => write("\n"),
+    prompt: () => say(tail.owed(1)),
+    gap: () => say(tail.owed(2)),
     thinking: false,
   });
 

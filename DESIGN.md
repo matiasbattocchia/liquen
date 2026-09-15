@@ -2112,7 +2112,11 @@ wrote it, a live block by the clock it opens on; the deltas inside need none —
 spoke is a mark and never a name: `❯` heads the principal's line, `•` each block of the
 agent's, a blank line between blocks; the agent's markdown is shown as terminal styles as
 it streams (`md.ts`), a span the moment it closes; a turn that says nothing paints
-nothing, so an idle hour leaves the screen as it was. What a surface
+nothing, so an idle hour leaves the screen as it was. **The painter asks for a shape and
+the surface prints it**: `prompt` closes the row, `gap` leaves one blank row under what was
+said, and each writes only what is not already standing — only the surface knows where its
+cursor is, and a painter writing its own newlines would be a second guesser of the same
+blank line, which is how a transcript grows an empty column. What a surface
 remembers it remembers out of the log, never out of a file beside it. The daemon's life derives
 from the same connections:
 `liquen start`'s main runs regardless, while one an interface raised (`main.ts --ephemeral`)
