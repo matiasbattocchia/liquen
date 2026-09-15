@@ -1,5 +1,6 @@
 import { assertEquals } from "@std/assert";
-import { describeCall } from "./describe.ts";
+import { describeCall, nameResolver } from "./describe.ts";
+import type { Event } from "./types.ts";
 
 Deno.test("describeCall: one string argument prints bare — the argument IS the call", () => {
   assertEquals(
@@ -23,9 +24,16 @@ Deno.test("describeCall: empty arguments are not shown — a call reads as what 
 
 Deno.test("describeCall: send says WHO — the name, with the address as the fallback", () => {
   const call = { name: "send", input: { to: "5492604586396", text: "ya salgo" } };
+  const vivian = (a: string) => a === "5492604586396" ? { name: "Vivian", address: a } : undefined;
   assertEquals(
-    describeCall(call, { resolve: (a) => a === "5492604586396" ? "Vivian" : undefined }),
+    describeCall(call, { resolve: (a) => vivian(a) }),
     "send(to: Vivian, text: ya salgo)",
+  );
+  // the CARD names the address too: approving is choosing a person, and a name alone
+  // cannot tell two of them apart
+  assertEquals(
+    describeCall(call, { resolve: (a) => vivian(a), full: true }),
+    "send(to: Vivian (5492604586396), text: ya salgo)",
   );
   assertEquals(describeCall(call), "send(to: 5492604586396, text: ya salgo)");
 });
@@ -35,7 +43,7 @@ Deno.test("describeCall: search says WHERE and WHO — `in`/`from` are addresses
     "120363429869958481@g.us": "Sprinters Friends",
     "5492604586396": "Vivian Sobisch",
   };
-  const resolve = (a: string) => names[a];
+  const resolve = (a: string) => names[a] ? { name: names[a], address: a } : undefined;
   assertEquals(
     describeCall({ name: "search", input: { in: "120363429869958481@g.us", text: "Catamarca" } }, {
       resolve,
@@ -84,4 +92,56 @@ Deno.test("describeCall: the line cut never splits a character", () => {
   });
   assertEquals(line.endsWith("…)"), true);
   assertEquals(line.isWellFormed(), true);
+});
+
+Deno.test("nameResolver: the directory shows both halves — who, and which", async () => {
+  const chat = (address: string, name: string, kind = "direct"): Event => ({
+    id: `01-${address}`,
+    ts: "2026-09-15T15:20:12.000Z",
+    type: "message",
+    envelope: {
+      service: "whatsapp",
+      connection_address: "5492615682044",
+      conversation: { address, kind, name },
+      sender: { address, name },
+    },
+    parts: [{ type: "text", kind: "text", text: "hola" }],
+  } as unknown as Event);
+
+  const rows = [chat("5492616104507", "Verónica Sesto"), chat("5492614696945", "Verónica Mori")];
+  const read = (q: { conversation?: string; conversationName?: string }) =>
+    Promise.resolve(
+      q.conversation !== undefined
+        ? rows.filter((r) => r.envelope.conversation.address === q.conversation)
+        : rows.filter((r) =>
+          (r.envelope.conversation.name ?? "").toLowerCase().includes(
+            (q.conversationName ?? "").toLowerCase(),
+          )
+        ),
+    );
+
+  // an ADDRESS gains the name it goes by
+  const byAddress = await nameResolver(read as never, [
+    { name: "send", input: { to: "5492616104507" } },
+  ]);
+  assertEquals(byAddress("5492616104507"), { name: "Verónica Sesto", address: "5492616104507" });
+
+  // …and a NAME renders the same, so the card says where the send will LAND, not what was typed
+  const byName = await nameResolver(read as never, [
+    { name: "send", input: { to: "Verónica Sesto" } },
+  ]);
+  assertEquals(byName("Verónica Sesto"), { name: "Verónica Sesto", address: "5492616104507" });
+
+  // a name two conversations answer to promises nothing — the send refuses it with the list
+  const ambiguous = await nameResolver(read as never, [{
+    name: "send",
+    input: { to: "Verónica" },
+  }]);
+  assertEquals(ambiguous("Verónica"), undefined);
+
+  // an address nobody knows stands as written
+  const stranger = await nameResolver(read as never, [
+    { name: "send", input: { to: "5491122334455" } },
+  ]);
+  assertEquals(stranger("5491122334455"), undefined);
 });

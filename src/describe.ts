@@ -19,13 +19,14 @@
  * what will be said, and a 200-character JSON slice is the wrong thing to judge).
  */
 
-import type { Json, ToolCall } from "./types.ts";
+import type { Event, Json, ToolCall } from "./types.ts";
 import type { Reader } from "./store/log.ts";
 import { clipEnd } from "./exec/truncate.ts";
 
-/** A wire address → the name a human knows it by. Resolution needs a directory (the log,
- *  the window), so it is supplied by the caller; unresolved ⇒ the address stands. */
-export type Resolve = (address: string) => string | undefined;
+/** An addressed argument → who it reaches: the name a human knows them by and the address
+ *  the call will actually land on. Resolution needs a directory (the log, the window), so it
+ *  is supplied by the caller; unresolved ⇒ the argument stands as written. */
+export type Resolve = (addressed: string) => { name: string; address: string } | undefined;
 
 /** The arguments that carry a wire address, and so are offered to `resolve`: `send(to:)` —
  *  the one a human weighs before approving — and `search(in:/from:)`, which name the
@@ -60,7 +61,7 @@ const BUILTIN: Record<string, Describe> = {
   send: (input, opts) => {
     const a = argsOf(input);
     const to = a.to === undefined ? "" : String(a.to);
-    const bits = [`to: ${opts.resolve?.(to) ?? to}`];
+    const bits = [`to: ${named("to", to, opts)}`];
     // what the send DOES, when it is not a plain create (§3) — the part a human weighs
     if (a.action !== undefined) bits.push(`action: ${a.action}`);
     if (a.react !== undefined) bits.push(`react: ${a.react}`);
@@ -84,33 +85,61 @@ function generic(input: Json, opts: DescribeOpts): string {
 }
 
 /** An addressed argument prints as the name a human knows it by — `in: Sprinters Friends`,
- *  not `in: 1203…@g.us`. Anything unresolved (or unaddressed) stands as written: these keys
- *  take a name as readily as an address, and a name needs no resolving. */
+ *  not `in: 1203…@g.us`. The CARD adds the address, because approving is choosing a person
+ *  and two Verónicas read alike until the number is there; a glance (the tool trace, the
+ *  pending line) is not deciding anything and keeps the name alone. Anything unresolved or
+ *  unaddressed stands as written: a name nothing answers to is still what the model asked
+ *  for. */
 function named(key: string, v: Json, opts: DescribeOpts): Json {
-  return typeof v === "string" && ADDRESSED.has(key) ? opts.resolve?.(v) ?? v : v;
+  if (typeof v !== "string" || !ADDRESSED.has(key)) return v;
+  const who = opts.resolve?.(v);
+  if (who === undefined) return v;
+  return opts.full ? `${who.name} (${who.address})` : who.name;
 }
 
 /** How far back a name is looked for — a conversation names itself within a page or two. */
 const NAME_REACH = 200;
 
 /** The directory `resolve` needs, built from the log: every addressed argument in `calls`
- *  looked up once. A conversation's own name wins (a group's title); a direct chat carries
- *  none, so the other side's sender name is the name it goes by. An address nothing is
- *  known about is simply absent — the address then stands, which is what it is for. */
+ *  looked up once, and answered with BOTH halves — the name to know them by, the address
+ *  the call lands on — so the consumer decides which its reader needs. An argument nothing
+ *  is known about is simply absent; it then stands as written, which is what it is for.
+ *
+ *  `to` takes a name as readily as an address (§5), so a name is looked up as one too and
+ *  answers with the address it resolves to: the card then says where the call will LAND
+ *  rather than what was typed, and two calls that behave the same can no longer read
+ *  differently — nor two that differ read the same, which is how a name that reached
+ *  nobody once passed for an address that reached someone (live, 2026-09-15). A name
+ *  several conversations answer to resolves to none of them: the send refuses it with the
+ *  list, and the card has nothing to promise. */
 export async function nameResolver(read: Reader["read"], calls: ToolCall[]): Promise<Resolve> {
-  const names = new Map<string, string>();
+  const shown = new Map<string, { name: string; address: string }>();
   for (const { input } of calls) {
     for (const [k, v] of Object.entries(argsOf(input))) {
-      if (!ADDRESSED.has(k) || typeof v !== "string" || v === "" || names.has(v)) continue;
+      if (!ADDRESSED.has(k) || typeof v !== "string" || v === "" || shown.has(v)) continue;
       const rows = await read({ conversation: v, limit: NAME_REACH });
-      const named = rows.find((r) => r.envelope.conversation.name)?.envelope.conversation.name ??
-        (rows.some((r) => r.envelope.conversation.kind === "direct")
-          ? rows.find((r) => r.envelope.sender?.name)?.envelope.sender?.name
-          : undefined);
-      if (named) names.set(v, named);
+      if (rows.length > 0) {
+        const name = nameIn(rows);
+        if (name) shown.set(v, { name, address: v });
+        continue;
+      }
+      const named = await read({ conversationName: v, limit: NAME_REACH });
+      const at = [...new Set(named.map((r) => r.envelope.conversation.address))];
+      if (at.length === 1 && at[0] !== undefined) {
+        shown.set(v, { name: nameIn(named) ?? v, address: at[0] });
+      }
     }
   }
-  return (address) => names.get(address);
+  return (value) => shown.get(value);
+}
+
+/** What a conversation goes by: its own name wins (a group's title); a direct chat carries
+ *  none, so the other side's sender name is the name it is known by. */
+function nameIn(rows: Event[]): string | undefined {
+  return rows.find((r) => r.envelope.conversation.name)?.envelope.conversation.name ??
+    (rows.some((r) => r.envelope.conversation.kind === "direct")
+      ? rows.find((r) => r.envelope.sender?.name)?.envelope.sender?.name
+      : undefined);
 }
 
 function argsOf(input: Json): Record<string, Json> {
