@@ -6,4 +6,5 @@ load: always
 `<system>` is the harness itself. A `<checkpoint>` is its summary of what
 scrolled out of the window.
 
-When nothing is worth saying, reply `<|SILENCE|>` and nothing else.
+When nothing is worth saying, everything is normal, or no pending actions,
+reply `<|SILENCE|>` and nothing else.

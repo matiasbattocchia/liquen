@@ -25,6 +25,13 @@
  *   • otherwise      → `{ header }` only, a pointer; the body is pulled on demand — by the
  *     agent via the substrate read, or by render via `read()`.
  *
+ * The **system** scope alone has two layers, because those words are the harness's and an
+ * upgrade must be able to change them (§8): `system/seed/` is the package's own, laid fresh
+ * every boot (store/seed.ts), and anything the org writes directly under `system/` answers
+ * for that name instead — a real doc replaces it, a file with no frontmatter says the org
+ * wants none. So an org that writes nothing tracks the package, and one that writes is
+ * never argued with.
+ *
  * Files adapter, rooted at the DATA ROOT (the §9 layout):
  *   <root>/system/**  ·  <root>/organizations/**  ·  <root>/agents/<agentId>/**
  *   <root>/conversations/<convId>/**
@@ -35,6 +42,7 @@
 
 import { parse as parseYaml } from "@std/yaml";
 import type { AgentId } from "../types.ts";
+import { SEED_DIR } from "./seed.ts";
 
 export type DocScope = "system" | "organization" | "agent" | "conversation";
 export type DocKind = "instruction" | "skill" | "memory" | "tool";
@@ -84,17 +92,17 @@ export function openFileDocs(root: string): Docs {
     async list(ctx: DocContext): Promise<DocEntry[]> {
       const out: DocEntry[] = [];
       for (const [scope, dir] of scopeDirs(root, ctx)) {
-        for (const name of await markdownUnder(dir)) {
-          const path = `${dir}/${name}.md`;
-          const frontmatter = await readFrontmatter(path);
-          if (frontmatter === null) continue; // no frontmatter ⇒ not a doc (workspace file)
-          const entry: DocEntry = {
-            header: { scope, kind: kindOf(frontmatter), name, frontmatter, path },
-          };
-          if (frontmatter.load === "always") {
-            entry.body = stripFrontmatter(await Deno.readTextFile(path));
-          }
-          out.push(entry);
+        // the org's own, whatever stands in the scope — minus the harness's own folder
+        const own = (await markdownUnder(dir)).filter((n) =>
+          scope !== "system" || !n.startsWith(`${SEED_DIR}/`)
+        );
+        for (const name of own) out.push(...await entryOf(scope, name, `${dir}/${name}.md`));
+        if (scope !== "system") continue;
+        // and the harness's own, for every name the org did not answer itself
+        const answered = new Set(own); // a name, not a doc: a frontmatter-less file says "none"
+        for (const name of await markdownUnder(`${dir}/${SEED_DIR}`)) {
+          if (answered.has(name)) continue;
+          out.push(...await entryOf(scope, name, `${dir}/${SEED_DIR}/${name}.md`));
         }
       }
       return out;
@@ -103,14 +111,32 @@ export function openFileDocs(root: string): Docs {
     async read(ctx: DocContext, ref: DocRef): Promise<string | null> {
       const dir = scopeDir(root, ref.scope, ctx);
       if (dir === null) return null;
-      try {
-        return stripFrontmatter(await Deno.readTextFile(`${dir}/${ref.name}.md`));
-      } catch (err) {
-        if (err instanceof Deno.errors.NotFound) return null;
-        throw err;
+      // same order as `list`: the org's file if it stands there, else the harness's copy
+      const paths = ref.scope === "system"
+        ? [`${dir}/${ref.name}.md`, `${dir}/${SEED_DIR}/${ref.name}.md`]
+        : [`${dir}/${ref.name}.md`];
+      for (const path of paths) {
+        try {
+          return stripFrontmatter(await Deno.readTextFile(path));
+        } catch (err) {
+          if (!(err instanceof Deno.errors.NotFound)) throw err;
+        }
       }
+      return null;
     },
   };
+}
+
+/** One file's entry — none at all when it carries no frontmatter (⇒ not a doc), the body
+ *  inlined when it asks to load always. */
+async function entryOf(scope: DocScope, name: string, path: string): Promise<DocEntry[]> {
+  const frontmatter = await readFrontmatter(path);
+  if (frontmatter === null) return []; // no frontmatter ⇒ not a doc (workspace file)
+  const entry: DocEntry = {
+    header: { scope, kind: kindOf(frontmatter), name, frontmatter, path },
+  };
+  if (frontmatter.load === "always") entry.body = stripFrontmatter(await Deno.readTextFile(path));
+  return [entry];
 }
 
 /** `kind` is frontmatter metadata, never path: unknown/absent falls back to `memory`. */

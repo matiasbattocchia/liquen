@@ -2859,3 +2859,29 @@ the live transcript does, one blank row between blocks, through the same `tailOf
 screen uses. A card already answered reads as history, dim and without its hint; one still
 open is painted live and handed to `onGate`, so the pile survives a restart. The recall
 width went from 25 to 60: the page counts rows now, not turns.
+
+### The system scope is the harness's, not the org's copy of it (2026-09-15) — LANDED
+
+Three orgs, three copies of the same four files, and one of them was already a symlink back
+into `src/seed/` — the tell that seeding the system scope was the wrong shape. Those docs
+are not the deployment's words to edit, they are the harness's own; write-if-absent meant an
+edit to `src/seed/system.md` reached exactly nobody, and a released org could never be told
+anything new without a hand-copy.
+
+Now `system/` has two layers. Every boot lays the package's set under `system/seed/` —
+overwriting, on purpose — and whatever the org writes directly under `system/` answers for
+that name instead: a real doc replaces it, a file with no frontmatter says the org wants
+none. `read` follows the same order, so a name resolves the same way whether it is listed or
+pulled. An org that writes nothing tracks the package: a checkout at once, a released org at
+its next version. The org and agent scopes keep the old rule — they are the deployment's own
+words, and no boot may rewrite them.
+
+The compaction prompt lost its frontmatter in the same pass. It is the only doc the harness
+sends *as itself*, never something the agent reads, and it was costing a line in every
+pull-index for a skill nobody can use. No frontmatter ⇒ no doc: it is still read by name
+when a checkpoint is due, and `docs.read` reaching a file that is not a doc is what makes
+that work.
+
+`~/new` and `~/vibes` dropped their copies (symlinks included), `~/sole-bot` too — its
+`system.md` had grown an edit worth keeping ("everything is normal, or no pending actions"),
+which is now in the seed and therefore in every org.

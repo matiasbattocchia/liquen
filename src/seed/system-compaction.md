@@ -1,8 +1,3 @@
----
-kind: instruction
-load: lazy
-description: How conversation history is checkpointed when the window grows — the prompt the harness sends to summarize the archived region.
----
 The conversation above is being archived. Write a structured checkpoint summary that a
 later step of the same agent will rely on to continue seamlessly.
 

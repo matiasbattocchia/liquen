@@ -187,3 +187,33 @@ Deno.test("a linked doc is a doc, a linked folder is a folder, a dangling link i
     }
   });
 });
+
+// §8: the system scope is the only one with two layers — the package's own set under
+// `system/seed/`, and whatever this org put in its place
+Deno.test("system: the org's file answers for a name, the package's stands for the rest", async () => {
+  await withRoot(async (root) => {
+    await put(
+      root,
+      "system/seed/instructions/system",
+      doc("instruction", "shipped", "load: always\n"),
+    );
+    await put(root, "system/seed/skills/workflows", doc("skill", "shipped skill"));
+    await put(root, "system/seed/instructions/compaction", "no frontmatter — the harness's own");
+    await put(root, "system/instructions/system", doc("instruction", "ours", "load: always\n"));
+    await put(root, "system/skills/workflows", ""); // this org wants no such skill
+
+    const docs = openFileDocs(root);
+    const listed = await docs.list({ agent: "a1" });
+    // the seed layer is never a name of its own: `instructions/system`, not `seed/…`
+    assertEquals(ref(listed).sort(), ["system/instruction/instructions/system"]);
+    assertEquals(listed[0].body, "ours");
+    assertEquals(listed[0].header.path, `${root}/system/instructions/system.md`);
+    // read follows the same order, and reaches a file that is no doc at all
+    const at = (name: string) =>
+      docs.read({ agent: "a1" }, { scope: "system", kind: "instruction", name });
+    assertEquals(await at("instructions/system"), "ours");
+    assertEquals(await at("skills/workflows"), "");
+    assertEquals(await at("instructions/compaction"), "no frontmatter — the harness's own");
+    assertEquals(await at("instructions/ghost"), null);
+  });
+});

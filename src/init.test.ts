@@ -27,8 +27,13 @@ Deno.test("init scaffolds a project the reader accepts, roster empty, and refuse
       ]
     ) await Deno.stat(`${path}/${f}`);
     // the org's own words are on disk before anything runs — no roster, so no agent scope
-    await Deno.stat(`${path}/data/system/instructions/system.md`);
     await Deno.stat(`${path}/data/organizations/instructions/organization.md`);
+    // the harness's are laid apart, under the name a later boot overwrites
+    await Deno.stat(`${path}/data/system/seed/instructions/system.md`);
+    assertEquals(
+      await Deno.stat(`${path}/data/system/instructions`).catch(() => null),
+      null,
+    );
     assertEquals(await Deno.stat(`${path}/data/agents`).catch(() => null), null);
     const mode = (await Deno.stat(`${path}/entrypoint.sh`)).mode! & 0o777;
     assertEquals(mode, 0o755);

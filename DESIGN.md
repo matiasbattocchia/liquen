@@ -1503,9 +1503,11 @@ compaction proper is only pi's **checkpoint layer**:
   surface can only fold away what it can name. Every kind reaches every tailer whole
   (§9) — what to show and what to keep folded is the client's call, and the `summary` event
   itself gives even a folded surface one line saying the window was checkpointed.
-- **The prompt is a DOC** — `system/instructions/compaction.md` (seeded, lazy): readable and
-  editable like any instruction, never hidden in code (the embedded constant is only the
-  fallback for unseeded stores). One unified instruction covers first-checkpoint and fold
+- **The prompt is a DOC** — `system/seed/instructions/compaction.md` (laid every boot, §8):
+  readable and editable like any instruction, never hidden in code (the embedded constant is
+  only the fallback for unseeded stores). It carries NO frontmatter, so it is no doc to the
+  cascade: the harness reads it by name when a checkpoint is due, and the agent is never
+  shown a pull-index line for a prompt it does not send. One unified instruction covers first-checkpoint and fold
   (it branches on `<previous-summary>` itself, so the code doesn't).
 - **Prompt shape** = pi's structured checkpoint, adapted from task-scoped to conversational:
   ongoing threads · constraints & preferences · commitments · key facts & decisions ·
@@ -1737,6 +1739,15 @@ A cascade is a PLACE, so whatever stands in it counts: a symlinked file is a doc
 symlinked folder is walked — the seed doc a deployment links to the repo instead of copying
 reads exactly like a copied one, and only a dangling link is nothing.
 
+**The system scope has two layers** (2026-09-15), because those words are the HARNESS's and
+an upgrade must be able to change them: `system/seed/` is the package's own set, laid fresh
+on every boot (never seeded write-if-absent, never edited in place), and whatever the org
+writes directly under `system/` answers for that name instead — a real doc replaces it, a
+file with no frontmatter is how an org says it wants none. An org that writes nothing tracks
+the package: a checkout's edit lands at once, a released org's at its next version. That
+inverts the §9 seeding rule for this scope alone, and only for this scope: the org and agent
+scopes are the deployment's own words, which no boot may rewrite.
+
 Registers (same substrate, different rules):
 
 | | instructions | memory |
@@ -1814,17 +1825,19 @@ docs {
   `deno.jsonc` (a checkout stands in through Deno's `links`), kept
   **template-ready** — seeds live as real files under `src/seed/` (flat, `<scope>-<name>.md`), copied write-if-absent
   into the data root BY THE DOOR THAT DECLARES: `liquen init` lays the org's half
-  (`system/`, `org/`) with the catalog, `liquen agent` lays that agent's
+  (`org/`) with the catalog, `liquen agent` lays that agent's
   (`agents/<name>/`) with its roster entry, and boot lays whatever is still missing — a
   roster entry typed into `config.jsonc` by hand. Seeding never overwrites and never
   returns to a folder that exists, which is what lets all three be the same call; the door
   that names a thing leaves the file to edit, so the persona does not wait on a run to
-  become writable.
+  become writable. The `system/` half is NOT seeded (§8): those are the harness's words, so
+  every pass rewrites `system/seed/` and the org overrides by name — the one scope where an
+  upgrade is meant to reach a live org without a migration.
   **Seed vs data is template vs LIVING state**: agents co-author
   the data root at runtime (memories, later skills), so it drifts by design — git sees
   `src/seed/` (the org definition, reproducible; private repo if sensitive), volumes hold
   `data/`. The unit of if-absent is the FOLDER: an absent doc is an answer — a deployment
-  that deleted `organizations/instructions/organization.md`, or emptied `system/skills/`, wants none,
+  that deleted `organizations/instructions/organization.md`, or emptied `agents/<name>/memories/`, wants none,
   and no later boot may argue. So a new template reaches new orgs and new agents, not the
   scopes a live org already has; deleting the folder is how an org asks for the set again,
   and *edits* to existing seeds reach live orgs only via an explicit migration action
@@ -2514,7 +2527,8 @@ The Docker layout, concretely — one volume, one project, root supervising:
 /data/                       the single volume: the org's living state
   log/                       root:root 0700 — the substrate; no agent reads it directly
   org/                       root:agents 2775 + default ACL — the shared floor
-  system/                    read-only for everyone — the harness's docs
+  system/                    read-only for everyone — the harness's docs (`seed/`, relaid
+                             each boot) plus whatever this org writes over them
   agents/<name>/             <name>:agents 0700 — personal, invisible to peers
 /home/<name> → /data/agents/<name>    the entrypoint's symlink: $HOME IS the workspace
 ```
