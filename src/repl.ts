@@ -22,8 +22,10 @@
  * The line you type is the REPL's own (`line.ts`): arrows place the cursor and walk the
  * lines you sent before — this session's, back past this REPL's lifetime, because the log
  * is what remembers them — and the transcript prints above the line without disturbing it.
- * The screen opens on that same past: the room's last messages, stamped and named, so
- * dialling back in after two days shows what happened while you were gone.
+ * The screen opens on that same past: the room's last messages, stamped and marked, so
+ * dialling back in after two days shows what happened while you were gone. Who spoke is
+ * a mark, never a name — `❯` is you, `•` is the agent — and the agent's markdown is shown
+ * as styles (`md.ts`), which is how the transcript reads in `paint.ts`.
  */
 
 import meta from "../deno.json" with { type: "json" };
@@ -31,7 +33,7 @@ import { attach, resolveAgent, wire } from "./attach.ts";
 import { createScreen } from "./line.ts";
 import { orgFlag } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
-import { DIM, painter, RED, RESET } from "./paint.ts";
+import { DIM, painter, RED, RESET, YOU } from "./paint.ts";
 import { ownVoice, textOf } from "./render.ts";
 import type { Event } from "./types.ts";
 import { parseVerdict } from "./xi.ts";
@@ -70,6 +72,7 @@ await entry(async () => {
   let recalled: Event[] = [];
   const me = { agentId: a.target, id: session }; // the pair — bare names collide (§4)
   const screen = createScreen({
+    head: `${YOU} `, // the line wears the principal's mark, as its recalled lines do
     recalled: () => recalled.filter((e) => !ownVoice(e, me)).map(textOf),
   });
   const write = (s: string) => screen.write(s);

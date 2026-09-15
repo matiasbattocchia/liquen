@@ -907,8 +907,9 @@ function conversationEl(
  *  element; and who among us is speaking is an attribute of its own (`markOf`), which no
  *  name can spell. */
 /** `from` is the wire's word: the sender's name as the service shows it, their address
- *  when it shows none, and — when the account itself spoke, which carries no sender — the
- *  roster's word for whoever the account is. The local service has one word for a
+ *  when it shows none, and — when the row names no sender at all — the roster's word for
+ *  whoever authored it (a wire's echo of our own send names the account, so this is the
+ *  local service's case). The local service has one word for a
  *  session, its address (§4): a mind is the bare agent name, a named session
  *  `build@matias`. Composed by hand, not `sessionAddress`: render never throws on an odd
  *  stored name. */
@@ -928,17 +929,25 @@ function fromOf(e: MessageEvent, session: SessionRef, roster: Roster): string {
  *  of it (authorship, §3: `turn_id`); ` principal` = a principal of this agent, whichever
  *  device they typed on (the classifier's `agent.id` stamp without a turn_id); ` agent` =
  *  any other roster member, human or alter-ego alike, one complex. The value is the
- *  roster's word for them, elided when it equals `from`. A sender-less row with no stamp
- *  is the account speaking on its own — the account's owner, on their own phone. A
- *  customer's line wears nothing. */
+ *  roster's word for them, elided when it equals `from`. ` org` = the account itself
+ *  spoke and nobody among us is stamped on it: an org-wide account has companion
+ *  devices, and which member held one is a fact the wire never carries — so the org
+ *  has spoken, and no member is invented for it. A customer's line wears nothing. */
 function markOf(e: MessageEvent, session: SessionRef, roster: Roster, from: string): string {
-  const id = e.agent?.id ?? (e.envelope.sender === undefined ? session.agentId : undefined);
-  if (id === undefined) return "";
+  const id = e.agent?.id;
+  if (id === undefined) return ownSide(e) ? " org" : "";
   const voice = e.payload?.turn_id !== undefined || isSelf(e, session);
   if (voice && id === session.agentId) return " self";
   const attr = !voice && roster.principals.includes(id) ? "principal" : "agent";
   const value = roster.names[id] ?? id;
   return value === from ? ` ${attr}` : ` ${attr}="${escAttr(value)}"`;
+}
+
+/** The account itself is the sender: the wire named its own address as the author (the
+ *  echo of anything sent from any device), or named nobody at all. */
+function ownSide(e: MessageEvent): boolean {
+  const sender = e.envelope.sender;
+  return sender === undefined || sender.address === e.envelope.connection_address;
 }
 
 function msgLine(

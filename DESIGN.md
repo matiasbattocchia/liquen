@@ -1203,13 +1203,19 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   `name`/`from` are display strings — attacker-controlled, hence attribute-escaped (a
   WhatsApp contact can name themself `Ana" from="matias`). `from` is the wire's word
   and nothing else: the sender's name as the service shows it, their address when it
-  shows none, the account's own roster name when the account itself spoke. **Who, among
+  shows none — the account's own name on the echo of our own send, since every wire
+  names its own side too. **Who, among
   us, is an attribute of its own**, so a name can never forge it: `self` = this agent's
   own voice (a `send`, or its echo — authorship, §3: `turn_id`); `principal` = a principal
   of this agent, whichever device they typed on (the ingest classifier stamps `agent.id`
   from the sender's grant row or handle, §3); `agent` = any other roster member, human
   or their alter-ego alike — one complex, one identity, and the difference is never the
-  model's business. `principal` and `agent` carry the roster's word for the person,
+  model's business; `org` = the account itself is the sender and nobody among us is
+  stamped on the row — an org-wide account has companion devices, and which member
+  held one is a fact the wire never carries, so the org has spoken and no member is
+  invented for it (`<msg from="Dra. Suarez" org>`; the same account under `self` is
+  `<msg from="Dra. Suarez" self>` — `from` is the wire's, the mark is ours).
+  `principal` and `agent` carry the roster's word for the person,
   `identity.name` or the username, the same string `<principal name>` wears, so the
   model can tie the "Matías" in a room to the one steering it; the value is elided when
   it equals `from` (`<msg from="Sol" agent>`), written when the wire calls them
@@ -2092,9 +2098,12 @@ open approval is each interface's decision. A terminal surface owns its input li
 same reason (`line.ts`): raw mode is what makes an arrow a movement rather than three bytes
 of message, and a line the principal is half-way through survives the transcript printing
 above it. That surface opens on the tail's recall twice over: the room's last messages
-painted with the hand and the clock that wrote each one — the only place a transcript needs
-either, since live the principal's own line is on screen and the answer streams in as it is
-said — and, under the arrows, the principal's half of those same rows. What a surface
+painted with the clock that wrote each one — the only place a transcript needs it, since
+live the principal's own line is on screen and the answer streams in as it is said — and,
+under the arrows, the principal's half of those same rows. Who spoke is a mark and never a
+name, live and recalled alike: `❯` heads the principal's line, `•` each block of the
+agent's, a blank line between blocks; the agent's markdown is shown as terminal styles as
+it streams (`md.ts`), a span the moment it closes. What a surface
 remembers it remembers out of the log, never out of a file beside it. The daemon's life derives
 from the same connections:
 `liquen start`'s main runs regardless, while one an interface raised (`main.ts --ephemeral`)

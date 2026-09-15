@@ -1150,10 +1150,11 @@ Deno.test("stamps format through the org's zone — the humans' clock, not the s
   assertStringIncludes(dump, "now: Tuesday 11 August, 2026 - 20:15");
 });
 
-Deno.test("self is ONE identity, two hands: `self` is ours, `principal` is the phone", () => {
+Deno.test("one account, two marks: `self` is our send, `org` is the account with nobody stamped", () => {
   const t = "2026-08-12T09:00:00Z";
   const ours = worldMsg("e1", t, { address: "wa:sol", kind: "direct" }, null, "ya te paso");
-  // the account spoke, but not through us: no sender, no agent — the principal's own phone
+  // the account spoke, but not through us and with no member stamped: a companion device
+  // of an org-wide account — the wire names the account as sender, and nobody among us
   const theirs: MessageEvent = {
     id: "e2",
     ts: t,
@@ -1162,11 +1163,26 @@ Deno.test("self is ONE identity, two hands: `self` is ours, `principal` is the p
       service: "whatsapp",
       connection_address: "org",
       conversation: { address: "wa:sol", kind: "direct" },
+      sender: { address: "org", name: "Dra. Suarez" },
     },
     parts: [{ type: "text", kind: "text", text: "disculpá, te respondí muy rápido" }],
   };
+  // the same, before the wire named the account at all: still the account's, still `org`
+  const unnamed: MessageEvent = {
+    ...theirs,
+    id: "e3",
+    envelope: { ...theirs.envelope, sender: undefined },
+    parts: [{ type: "text", kind: "text", text: "ahí va" }],
+  };
+  // a customer: named by the wire, claimed by nobody — no mark at all
+  const customer: MessageEvent = {
+    ...theirs,
+    id: "e4",
+    envelope: { ...theirs.envelope, sender: { address: "5491", name: "Sol" } },
+    parts: [{ type: "text", kind: "text", text: "gracias!" }],
+  };
   const { messages } = render({
-    events: [ours, theirs],
+    events: [ours, theirs, unnamed, customer],
     docs: [],
     session: SESSION,
     zone: "UTC",
@@ -1174,7 +1190,12 @@ Deno.test("self is ONE identity, two hands: `self` is ours, `principal` is the p
   });
   const dump = JSON.stringify(messages);
   assertStringIncludes(dump, 'from=\\"a1\\" self at=\\"12 Aug 9:00\\">ya te paso');
-  assertStringIncludes(dump, 'from=\\"a1\\" principal at=\\"12 Aug 9:00\\">disculpá');
+  // `from` is the wire's word for the account, and the mark says the org has spoken:
+  // no member is invented for a line the wire cannot attribute
+  assertStringIncludes(dump, 'from=\\"Dra. Suarez\\" org at=\\"12 Aug 9:00\\">disculpá');
+  assertStringIncludes(dump, 'from=\\"a1\\" org at=\\"12 Aug 9:00\\">ahí va');
+  assertStringIncludes(dump, 'from=\\"Sol\\" at=\\"12 Aug 9:00\\">gracias!');
+  assertEquals(dump.includes("principal"), false); // nobody was named who was not there
   assertEquals(dump.includes('from=\\"peer\\"'), false); // never a stranger
 });
 

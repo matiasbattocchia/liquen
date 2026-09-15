@@ -63,18 +63,21 @@ function answered(ts: string, text: string, extra?: Record<string, Json>): Messa
   };
 }
 
-// The recap is the only place a surface says who and when: live, the principal's own line
-// is on screen because they typed it, and the answer streams in while they watch.
-Deno.test("recap: every message says who said it and when, in the org's clock", () => {
+// The recap is the only place a surface says when: live, the principal's own line is on
+// screen because they typed it, and the answer streams in while they watch. Who is a
+// mark on both — the same marks, so the page reads like the transcript it precedes.
+Deno.test("recap: every message wears its mark and its time, in the org's clock, a blank line between", () => {
   const { p, screen } = surface();
   p.recap([
     asked("2026-09-11T14:13:00Z", "qué calendarios podés ver?"),
     answered("2026-09-11T14:14:00Z", "el tuyo y el de la clínica"),
+    asked("2026-09-11T14:15:00Z", "gracias"),
   ]);
   assertEquals(
     plain(screen()),
-    "11 Sep 11:13 matias  qué calendarios podés ver?\n" +
-      "11 Sep 11:14 laura  el tuyo y el de la clínica\n",
+    "11 Sep 11:13 ❯ qué calendarios podés ver?\n\n" +
+      "11 Sep 11:14 • el tuyo y el de la clínica\n\n" +
+      "11 Sep 11:15 ❯ gracias\n\n",
   );
 });
 
@@ -84,15 +87,25 @@ Deno.test("recap: a turn that said nothing shows as nothing", () => {
     asked("2026-09-11T14:13:00Z", "hola"),
     answered("2026-09-11T14:20:00Z", "<|SILENCE|>", { silence: true }),
   ]);
-  assertEquals(plain(screen()), "11 Sep 11:13 matias  hola\n");
+  assertEquals(plain(screen()), "11 Sep 11:13 ❯ hola\n\n");
 });
 
-Deno.test("recap: a wire's name is the one it signed with", () => {
+Deno.test("recap: a line that came through a wire says which, as the live copy does", () => {
   const { p, screen } = surface();
-  p.recap([asked("2026-09-11T14:13:00Z", "buen día", "Matías (WhatsApp)")]);
+  const wired: Event = {
+    ...asked("2026-09-11T14:13:00Z", "buen día", "Matías (WhatsApp)"),
+    extra: { via: { service: "whatsapp" } },
+  };
+  p.recap([wired]);
+  assertEquals(plain(screen()), "11 Sep 11:13 ❯ [via whatsapp] buen día\n\n");
+});
+
+Deno.test("recap: the agent's markdown is shown as styles", () => {
+  const { p, screen } = surface();
+  p.recap([answered("2026-09-11T14:14:00Z", "## Plan\nprimero **esto**, después `eso`")]);
   assertEquals(
-    plain(screen()),
-    "11 Sep 11:13 Matías (WhatsApp)  buen día\n",
+    screen(),
+    `\x1b[2m11 Sep 11:14\x1b[0m • \x1b[1mPlan\x1b[22m\nprimero \x1b[1mesto\x1b[22m, después \x1b[36meso\x1b[39m\n\n`,
   );
 });
 
@@ -103,5 +116,56 @@ Deno.test("recap: a bodiless row is not a line — a picture with no caption pai
     parts: [{ type: "data", kind: "search", data: {} }],
   } as Event;
   p.recap([media, answered("2026-09-11T14:14:00Z", "listo")]);
-  assertEquals(plain(screen()), "11 Sep 11:14 laura  listo\n");
+  assertEquals(plain(screen()), "11 Sep 11:14 • listo\n\n");
+});
+
+/* ── live: the agent's text, block by block ───────────────────────────────────── */
+
+Deno.test("live: the agent's text opens with a blank line and its mark, and closes with a blank line", () => {
+  const { p, screen } = surface();
+  p.delta({ kind: "text", text: "el tuyo " });
+  p.delta({ kind: "text", text: "y el de la clínica" });
+  p.event(answered("2026-09-11T14:14:00Z", "el tuyo y el de la clínica"));
+  assertEquals(plain(screen()), "\n• el tuyo y el de la clínica\n\n> ");
+});
+
+Deno.test("live: markdown streams as styles, a span held until it closes", () => {
+  const { p, screen } = surface();
+  p.delta({ kind: "text", text: "es **muy" });
+  assertEquals(plain(screen()), "\n• es ");
+  p.delta({ kind: "text", text: " simple** sí" });
+  assertEquals(screen(), "\n• es \x1b[1mmuy simple\x1b[22m sí");
+});
+
+Deno.test("live: a turn that says nothing paints no mark either", () => {
+  const { p, screen } = surface();
+  p.delta({ kind: "text", text: "<|SIL" });
+  p.delta({ kind: "text", text: "ENCE|>" });
+  p.event(answered("2026-09-11T14:20:00Z", "<|SILENCE|>", { silence: true }));
+  assertEquals(plain(screen()), "\n> ");
+});
+
+Deno.test("live: text after a tool line is a block of its own, marked again", () => {
+  const { p, screen } = surface();
+  p.delta({ kind: "text", text: "miro el calendario" });
+  p.event({
+    id: "u1",
+    ts: "2026-09-11T14:14:00Z",
+    type: "tool_use",
+    payload: { turn_id: "t1" },
+    agent: { id: AGENT, session_id: "mind" },
+    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    parts: [{ type: "data", kind: "tool_use", data: { name: "search", input: {} } }],
+  } as unknown as Event);
+  p.delta({ kind: "text", text: "tenés dos turnos" });
+  const out = plain(screen());
+  assertEquals(out.startsWith("\n• miro el calendario\n⚙ "), true);
+  assertEquals(out.endsWith("\n\n• tenés dos turnos"), true);
+});
+
+Deno.test("live: thinking streams dim in a block of its own, and the answer follows marked", () => {
+  const { p, screen } = surface();
+  p.delta({ kind: "thinking", text: "veamos" });
+  p.delta({ kind: "text", text: "listo" });
+  assertEquals(plain(screen()), "\nveamos\n\n• listo");
 });

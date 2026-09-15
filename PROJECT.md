@@ -2748,3 +2748,47 @@ Open, in order:
 - `@google/genai` declares npm build scripts it does not need. With `"nodeModulesDir": "auto"`
   Deno materializes `node_modules/` (ignored by git) on the first run and stays quiet after;
   without it every run warns that the scripts were skipped.
+
+### The org has spoken: a fourth mark, and the account's own name on the wire (2026-09-14) — LANDED
+
+Every one of the clinic's 9,787 own lines in sole-bot's log carried the account's address
+and no name, and rendered with no mark at all — or, sender-less, as `principal="Laura"`:
+a member invented for a line nobody could attribute. Two causes, two fixes.
+
+**The bridge dropped its own name.** whatsmeow provides it twice over (`evt.Info.PushName`
+on an echo, `Client.Store.PushName` always), but one variable in `events.go` fed both the
+sender's name and the DM's — so the guard that keeps a peer's chat from being named after
+us also threw our own name away, on the live path and in `history.go`'s import alike.
+Split: an echo's `SenderName` now comes off the device store (`ownName`: push name, else
+the business name), and the DM lookup keeps its empty `live`. Both logs were backfilled
+with a one-off `UPDATE` where `sender_address = connection_address` and the name was
+empty — the value read out of the bridge's `session.db`, not typed.
+
+**`markOf` invented a member.** Its sender-less fallback assumed `session.agentId`. The
+marks now follow one rule (§5): `self` = own voice (`turn_id`); `principal` / `agent` =
+the classifier's stamp (`connections.agent_id` or an `identity` handle), a principal by
+`principalsOf` — the declared list, else everyone on an org account, else itself;
+**`org`** = the account itself is the sender (its own address, or none) and nobody among
+us is stamped — an org-wide account has companion devices, and which member held one the
+wire never says, so no member is invented. `from` stays the wire's word throughout, which
+is why the same account reads `<msg from="Dra. Soledad Suarez" self>` when laura sent it
+and `<msg from="Dra. Soledad Suarez" org>` when a phone did.
+
+Checked on the way: GitHub already names our side (`sender.name = login`); Slack resolves
+the bot's user id through `users.info` like any other and its dispatcher stamps `sender`
+from the send response, so the same shape holds; Google discloses a name and we never ask
+for it — `DEFAULT_SCOPES` omits `profile` and `claimsOf` reads only `email`/`sub` (the
+Workspace `hd` claim is dropped too). Open, and a consent-screen decision: add `profile`
+and record `name`/`hd` on the connection row.
+
+### The REPL reads like a chat: marks, blank lines, markdown (2026-09-14) — LANDED
+
+The recap named every line (`14 Sep 8:16 laura`) in a room where who speaks is never in
+doubt, and the agent's markdown arrived as asterisks. Now `❯` heads the principal's line —
+the screen's own head and the recalled lines alike — and `•` each block of the agent's,
+re-marked after a tool line so a reply that paused reads as what it is; a blank line
+stands between blocks, live and recalled; the stamp stays, dim, on recalled lines only.
+The agent's text goes through `md.ts`, a streaming formatter for the marks a chat answer
+uses — headings, fences, bold, italic, inline code — that holds text from an unclosed
+opener until it closes or the line ends, the `<|SILENCE|>` bargain again: a plain
+sentence streams untouched, a span appears whole. Tables and links stay as written.
