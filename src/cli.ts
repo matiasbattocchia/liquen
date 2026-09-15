@@ -57,6 +57,7 @@ await entry(async () => {
   const p = painter({
     session: { agentId: a.target, id: session },
     home: sessionAddress(a.target, session),
+    zone: a.timezone,
     write,
     error: (t) => console.error(t),
     prompt: () => write("\n"),

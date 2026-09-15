@@ -12,7 +12,10 @@
  * Who is speaking is a mark, never a name: `❯` opens the principal's lines (the screen's
  * own head, and the recap's), `•` opens the agent's — each block of its text, so a reply
  * that pauses for a tool starts again with its mark. A blank line stands between blocks.
- * The agent's text is markdown, and it is shown as styles as it streams (`md.ts`).
+ * Every message line says when, dim, in the org's clock: a recalled row by the clock that
+ * wrote it, a live block by the surface's clock as it opens — the deltas inside it need
+ * no time of their own. The agent's text is markdown, and it is shown as styles as it
+ * streams (`md.ts`). A turn that says nothing paints nothing — not even a line's end.
  */
 
 import { hhmm, isCancelled, outcomeLine, ownVoice, SILENCE, silent, textOf } from "./render.ts";
@@ -41,7 +44,8 @@ export interface Surface {
   error(s: string): void;
   prompt(): void;
   thinking: boolean; // stream thinking deltas (dim) or drop them
-  zone?: string; // the org's clock, for the stamps a recap carries (§5)
+  zone?: string; // the org's clock, the one every stamp is read in (§5)
+  clock?: () => Date; // now, for the stamp a live block opens with; tests hand a fixed one
   gateHint?: string; // the answer vocabulary printed under an approval card
   onGate?(ref: string): void;
   onGateSettled?(ref: string): void;
@@ -59,12 +63,14 @@ export function painter(s: Surface): Painter {
   let checkpointing = false; // a checkpoint is under way: its first delta announced it
   let md = markdown();
   let block: "none" | "text" | "thinking" = "none"; // what the transcript last streamed
-  // the agent's text, released: the first of a block opens it — a blank line and the
-  // mark — and the rest flows through the markdown stream
+  const clock = s.clock ?? (() => new Date());
+  const stamp = (ts: string) => `${DIM}${hhmm(ts, s.zone)}${RESET} `;
+  // the agent's text, released: the first of a block opens it — a blank line, the time
+  // and the mark — and the rest flows through the markdown stream
   const show = (raw: string) => {
     let out = "";
     if (block !== "text") {
-      out += `${block === "none" ? "\n" : "\n\n"}${AGENT} `;
+      out += `${block === "none" ? "\n" : "\n\n"}${stamp(clock().toISOString())}${AGENT} `;
       block = "text";
     }
     out += md.feed(raw);
@@ -112,24 +118,28 @@ export function painter(s: Surface): Painter {
           // the principal spoke — locally it's already on screen; through a mind-alias
           // surface (§4) the mirror's copy is the only sighting, so paint it, tagged
           if (via && e.envelope.conversation.address === s.home) {
-            s.write(`\n${CYAN}[via ${via.service}]${RESET} ${text}`);
+            s.write(`\n${stamp(e.ts)}${YOU} ${CYAN}[via ${via.service}]${RESET} ${text}`);
             s.prompt();
           }
           return;
         }
         if (via) return; // an alias CC is plumbing — its mind original already painted
         if (e.envelope.conversation.address === s.home) {
-          // the message is published: whatever `say` is still holding was the sentinel,
-          // or the tail of a reply that ended mid-word. Either way this turn is over.
-          if (!silent(e) && held !== "") show(held);
+          // the message is published: whatever `say` is still holding is the sentinel —
+          // which is never a word, even after words — or the tail of a reply that ended
+          // mid-word. Either way this turn is over; one that said nothing leaves the
+          // screen as it found it, or an idle hour would be a column of blank lines.
+          if (!silent(e) && held !== "" && held.trim() !== SILENCE) show(held);
           held = "";
           const spoke = block !== "none";
           settle();
-          if (spoke) s.write("\n"); // the blank line between this block and the next
-          s.prompt(); // the body itself already streamed
+          if (spoke) {
+            s.write("\n"); // the blank line between this block and the next
+            s.prompt(); // the body itself already streamed
+          }
         } else {
           settle();
-          s.write(`\n${CYAN}→ ${e.envelope.conversation.address}:${RESET} ${text}`);
+          s.write(`\n${stamp(e.ts)}${CYAN}→ ${e.envelope.conversation.address}:${RESET} ${text}`);
           s.prompt();
         }
         return;
@@ -191,15 +201,11 @@ export function painter(s: Surface): Painter {
   };
 
   /**
-   * The room as it already stands, painted before the tail opens on the present.
-   *
-   * The live transcript stamps nothing, and is right not to: the principal's own line is
-   * on screen because they just typed it, and the model's answer arrives as deltas while
-   * they watch. A surface opening on two days it did not witness has neither, so the past
-   * says when — the org's clock, the same one the model reads (§5), because a mind and
-   * its principal must agree on what "yesterday" was — and who, by the same marks the
-   * live transcript wears. A line that came in through a wire says which one, the way
-   * the mirror's live copy does.
+   * The room as it already stands, painted before the tail opens on the present: the
+   * same lines the live transcript would have shown — when, by the clock that wrote each
+   * row (the org's, the same one the model reads (§5), because a mind and its principal
+   * must agree on what "yesterday" was), who, by the same marks, and through which wire
+   * when a line came in through one.
    */
   const recap = (events: Event[]): void => {
     let page = "";
@@ -207,13 +213,12 @@ export function painter(s: Surface): Painter {
       if (e.type !== "message") continue;
       const text = textOf(e);
       if (text === "" || silent(e)) continue;
-      const stamp = `${DIM}${hhmm(e.ts, s.zone)}${RESET}`;
       if (ownVoice(e, s.session)) {
-        page += `${stamp} ${AGENT} ${renderMarkdown(text)}\n\n`;
+        page += `${stamp(e.ts)}${AGENT} ${renderMarkdown(text)}\n\n`;
       } else {
         const via = (e.extra?.via ?? undefined) as { service?: string } | undefined;
         const wire = via?.service ? `${CYAN}[via ${via.service}]${RESET} ` : "";
-        page += `${stamp} ${YOU} ${wire}${text}\n\n`;
+        page += `${stamp(e.ts)}${YOU} ${wire}${text}\n\n`;
       }
     }
     // one write: the past arrives as a page, not as a line the surface redraws around

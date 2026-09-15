@@ -24,8 +24,9 @@
  * is what remembers them — and the transcript prints above the line without disturbing it.
  * The screen opens on that same past: the room's last messages, stamped and marked, so
  * dialling back in after two days shows what happened while you were gone. Who spoke is
- * a mark, never a name — `❯` is you, `•` is the agent — and the agent's markdown is shown
- * as styles (`md.ts`), which is how the transcript reads in `paint.ts`.
+ * a mark, never a name — `❯` is you, `•` is the agent — every message line is dated in
+ * the org's clock, and the agent's markdown is shown as styles (`md.ts`), which is how
+ * the transcript reads in `paint.ts`. A rule stands between the transcript and the line.
  */
 
 import meta from "../deno.json" with { type: "json" };
@@ -34,7 +35,7 @@ import { createScreen } from "./line.ts";
 import { orgFlag } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { DIM, painter, RED, RESET, YOU } from "./paint.ts";
-import { ownVoice, textOf } from "./render.ts";
+import { hhmm, ownVoice, textOf } from "./render.ts";
 import type { Event } from "./types.ts";
 import { parseVerdict } from "./xi.ts";
 import { entry } from "./entry.ts";
@@ -73,6 +74,8 @@ await entry(async () => {
   const me = { agentId: a.target, id: session }; // the pair — bare names collide (§4)
   const screen = createScreen({
     head: `${YOU} `, // the line wears the principal's mark, as its recalled lines do
+    // and once sent it stands as a recalled line would: the time, the mark, the words
+    sent: (line) => `${DIM}${hhmm(new Date().toISOString(), a.timezone)}${RESET} ${YOU} ${line}`,
     recalled: () => recalled.filter((e) => !ownVoice(e, me)).map(textOf),
   });
   const write = (s: string) => screen.write(s);

@@ -2787,7 +2787,13 @@ The recap named every line (`14 Sep 8:16 laura`) in a room where who speaks is n
 doubt, and the agent's markdown arrived as asterisks. Now `❯` heads the principal's line —
 the screen's own head and the recalled lines alike — and `•` each block of the agent's,
 re-marked after a tool line so a reply that paused reads as what it is; a blank line
-stands between blocks, live and recalled; the stamp stays, dim, on recalled lines only.
+stands between blocks, live and recalled; every message line is dated, dim, in the org's
+clock — a recalled row by its own, a live block by the clock it opens on, the sent line
+rewritten with its time as it joins the transcript — so live and recalled read alike. A
+rule stands between the transcript and the line, as Claude Code draws one, so the last
+`❯` said and the empty one waiting are never confused. A silent turn paints nothing, not
+even a line's end: an idle hour of ticks used to leave a column of blank lines under the
+last thing said. A sentinel the model appends after words is dropped, not shown.
 The agent's text goes through `md.ts`, a streaming formatter for the marks a chat answer
 uses — headings, fences, bold, italic, inline code — that holds text from an unclosed
 opener until it closes or the line ends, the `<|SILENCE|>` bargain again: a plain

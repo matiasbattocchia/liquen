@@ -252,6 +252,9 @@ export interface Screen {
 export interface ScreenOptions {
   /** What stands at the head of the line. */
   head?: string;
+  /** How a sent line stands in the transcript once entered — the surface's chance to
+   *  date and mark it. Default: the head and the line, as they were typed. */
+  sent?: (line: string) => string;
   /** The lines already sent, oldest first — the ring opens standing after them. Asked for
    *  when the first line is read, so a surface may still be learning its past while it
    *  builds the screen it will print on. */
@@ -263,8 +266,12 @@ export interface ScreenOptions {
 export function createScreen(opts: ScreenOptions = {}): Screen {
   const head = opts.head ?? "> ";
   const recalled = opts.recalled ?? (() => []);
-  return Deno.stdin.isTerminal() ? editor(head, recalled) : plain(head);
+  const sent = opts.sent ?? ((line: string) => head + line);
+  return Deno.stdin.isTerminal() ? editor(head, recalled, sent) : plain(head);
 }
+
+const DIM = "\x1b[2m";
+const RESET = "\x1b[0m";
 
 const encoder = new TextEncoder();
 const out = (s: string) => {
@@ -293,13 +300,20 @@ function plain(head: string): Screen {
 
 /** The editor: raw keys in, one owned block of screen at the bottom.
  *
- * The block is `head` plus the line, wrapped over as many rows as it takes. `erase` walks
- * back up over it and leaves the cursor where the transcript last stopped — mid-row if the
- * transcript stopped mid-row, so a streamed sentence continues where it left off. */
-function editor(head: string, recalled: () => readonly string[]): Screen {
+ * The block is a rule across the screen — the transcript ends above it, the line lives
+ * below, so the last `❯` of the transcript and the empty one of the line are never taken
+ * for each other — then `head` plus the line, wrapped over as many rows as it takes.
+ * `erase` walks back up over all of it and leaves the cursor where the transcript last
+ * stopped — mid-row if the transcript stopped mid-row, so a streamed sentence continues
+ * where it left off. */
+function editor(
+  head: string,
+  recalled: () => readonly string[],
+  sent: (line: string) => string,
+): Screen {
   let e: Edit = { text: "", at: 0 };
   let drawn = false;
-  let rows = 1; // rows the drawn block spans
+  let rows = 1; // rows the drawn line spans, the rule's not counted
   let row = 0; // the row within it the cursor sits on
   let broke = false; // the block opened with a newline of its own
   let col = 0; // the SCREEN column the transcript stands at, wraps counted
@@ -320,9 +334,10 @@ function editor(head: string, recalled: () => readonly string[]): Screen {
   };
 
   const paint = () => {
-    broke = col > 0; // the line never shares a row with the transcript
+    broke = col > 0; // the block never shares a row with the transcript
     if (broke) out("\n");
     const width = cols();
+    out(`${DIM}${"─".repeat(width)}${RESET}\n`);
     const line = head + e.text;
     const len = [...line].length;
     out(line);
@@ -345,8 +360,8 @@ function editor(head: string, recalled: () => readonly string[]): Screen {
     if (!drawn) return;
     const down = rows - 1 - row;
     if (down > 0) out(`\x1b[${down}B`);
-    for (let i = rows - 1; i > 0; i--) out("\r\x1b[0K\x1b[1A");
-    out("\r\x1b[0K");
+    for (let i = rows; i > 0; i--) out("\r\x1b[0K\x1b[1A"); // the line's rows, up onto the rule
+    out("\r\x1b[0K"); // the rule
     if (broke) {
       out("\x1b[1A"); // back onto the transcript's own row, where it stopped
       if (col > 0) out(`\x1b[${col}C`);
@@ -385,12 +400,11 @@ function editor(head: string, recalled: () => readonly string[]): Screen {
           if (n === null) return;
           for (const k of keys(decoder.decode(buf.subarray(0, n), { stream: true }))) {
             if (k.k === "enter") {
-              e = { text: e.text, at: [...e.text].length };
-              redraw(); // the sent line stands complete, cursor at its end
-              out("\n");
-              col = 0;
-              drawn = false;
+              // the sent line joins the transcript — dated and marked as the surface
+              // says — and the block is drawn fresh below it; an empty one joins nothing
               const line = e.text;
+              erase();
+              if (line !== "") transcript(`${col > 0 ? "\n" : ""}${sent(line)}\n`);
               ring.add(line);
               e = { text: "", at: 0 };
               // the caller works between lines: what it writes lands above a line drawn

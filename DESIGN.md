@@ -2097,13 +2097,15 @@ whole session; what to do with a gate, `<|SILENCE|>`, an error row, or an idle o
 open approval is each interface's decision. A terminal surface owns its input line for the
 same reason (`line.ts`): raw mode is what makes an arrow a movement rather than three bytes
 of message, and a line the principal is half-way through survives the transcript printing
-above it. That surface opens on the tail's recall twice over: the room's last messages
-painted with the clock that wrote each one — the only place a transcript needs it, since
-live the principal's own line is on screen and the answer streams in as it is said — and,
-under the arrows, the principal's half of those same rows. Who spoke is a mark and never a
-name, live and recalled alike: `❯` heads the principal's line, `•` each block of the
+above it, under a rule that keeps the transcript's last `❯` and the line's empty one
+apart. That surface opens on the tail's recall twice over: the room's last messages, and,
+under the arrows, the principal's half of those same rows. Recalled and live read the
+same: every message line is dated in the org's clock — a recalled row by the clock that
+wrote it, a live block by the clock it opens on; the deltas inside need none — and who
+spoke is a mark and never a name: `❯` heads the principal's line, `•` each block of the
 agent's, a blank line between blocks; the agent's markdown is shown as terminal styles as
-it streams (`md.ts`), a span the moment it closes. What a surface
+it streams (`md.ts`), a span the moment it closes; a turn that says nothing paints
+nothing, so an idle hour leaves the screen as it was. What a surface
 remembers it remembers out of the log, never out of a file beside it. The daemon's life derives
 from the same connections:
 `liquen start`'s main runs regardless, while one an interface raised (`main.ts --ephemeral`)

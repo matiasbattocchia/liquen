@@ -23,6 +23,7 @@ function surface(over: Partial<Surface> = {}) {
     error: (t) => screen += `!${t}`,
     prompt: () => screen += "\n> ",
     thinking: true,
+    clock: () => new Date("2026-09-11T14:14:00Z"),
     ...over,
   };
   return { p: painter(s), screen: () => screen };
@@ -63,9 +64,8 @@ function answered(ts: string, text: string, extra?: Record<string, Json>): Messa
   };
 }
 
-// The recap is the only place a surface says when: live, the principal's own line is on
-// screen because they typed it, and the answer streams in while they watch. Who is a
-// mark on both — the same marks, so the page reads like the transcript it precedes.
+// The recap says when and who the way the live transcript does — the same stamps, the
+// same marks — so the page reads like the transcript it precedes.
 Deno.test("recap: every message wears its mark and its time, in the org's clock, a blank line between", () => {
   const { p, screen } = surface();
   p.recap([
@@ -121,28 +121,47 @@ Deno.test("recap: a bodiless row is not a line — a picture with no caption pai
 
 /* ── live: the agent's text, block by block ───────────────────────────────────── */
 
-Deno.test("live: the agent's text opens with a blank line and its mark, and closes with a blank line", () => {
+Deno.test("live: the agent's text opens with a blank line, the time and its mark, and closes with a blank line", () => {
   const { p, screen } = surface();
   p.delta({ kind: "text", text: "el tuyo " });
   p.delta({ kind: "text", text: "y el de la clínica" });
   p.event(answered("2026-09-11T14:14:00Z", "el tuyo y el de la clínica"));
-  assertEquals(plain(screen()), "\n• el tuyo y el de la clínica\n\n> ");
+  assertEquals(plain(screen()), "\n11 Sep 11:14 • el tuyo y el de la clínica\n\n> ");
 });
 
 Deno.test("live: markdown streams as styles, a span held until it closes", () => {
   const { p, screen } = surface();
   p.delta({ kind: "text", text: "es **muy" });
-  assertEquals(plain(screen()), "\n• es ");
+  assertEquals(plain(screen()), "\n11 Sep 11:14 • es ");
   p.delta({ kind: "text", text: " simple** sí" });
-  assertEquals(screen(), "\n• es \x1b[1mmuy simple\x1b[22m sí");
+  assertEquals(screen(), "\n\x1b[2m11 Sep 11:14\x1b[0m • es \x1b[1mmuy simple\x1b[22m sí");
 });
 
-Deno.test("live: a turn that says nothing paints no mark either", () => {
+// an idle hour is sixty silent turns: each one painting a line's end would be a column
+// of blank lines under the last thing said
+Deno.test("live: a turn that says nothing paints nothing at all", () => {
   const { p, screen } = surface();
   p.delta({ kind: "text", text: "<|SIL" });
   p.delta({ kind: "text", text: "ENCE|>" });
   p.event(answered("2026-09-11T14:20:00Z", "<|SILENCE|>", { silence: true }));
-  assertEquals(plain(screen()), "\n> ");
+  assertEquals(plain(screen()), "");
+});
+
+Deno.test("live: the sentinel after words is not a word", () => {
+  const { p, screen } = surface();
+  p.delta({ kind: "text", text: "listo." });
+  p.delta({ kind: "text", text: "\n\n<|SILENCE|>" });
+  p.event(answered("2026-09-11T14:14:00Z", "listo.\n\n<|SILENCE|>"));
+  assertEquals(plain(screen()), "\n11 Sep 11:14 • listo.\n\n> ");
+});
+
+Deno.test("live: the principal's line through a wire is dated and marked like a recalled one", () => {
+  const { p, screen } = surface();
+  p.event({
+    ...asked("2026-09-11T14:13:00Z", "buen día", "Matías (WhatsApp)"),
+    extra: { via: { service: "whatsapp" } },
+  });
+  assertEquals(plain(screen()), "\n11 Sep 11:13 ❯ [via whatsapp] buen día\n> ");
 });
 
 Deno.test("live: text after a tool line is a block of its own, marked again", () => {
@@ -159,13 +178,13 @@ Deno.test("live: text after a tool line is a block of its own, marked again", ()
   } as unknown as Event);
   p.delta({ kind: "text", text: "tenés dos turnos" });
   const out = plain(screen());
-  assertEquals(out.startsWith("\n• miro el calendario\n⚙ "), true);
-  assertEquals(out.endsWith("\n\n• tenés dos turnos"), true);
+  assertEquals(out.startsWith("\n11 Sep 11:14 • miro el calendario\n⚙ "), true);
+  assertEquals(out.endsWith("\n\n11 Sep 11:14 • tenés dos turnos"), true);
 });
 
 Deno.test("live: thinking streams dim in a block of its own, and the answer follows marked", () => {
   const { p, screen } = surface();
   p.delta({ kind: "thinking", text: "veamos" });
   p.delta({ kind: "text", text: "listo" });
-  assertEquals(plain(screen()), "\nveamos\n\n• listo");
+  assertEquals(plain(screen()), "\nveamos\n\n11 Sep 11:14 • listo");
 });
