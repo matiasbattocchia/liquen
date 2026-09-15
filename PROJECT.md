@@ -2811,3 +2811,15 @@ is a copy, was never affected. A cascade is a place: `markdownUnder` now stats a
 takes the target for what it stands for — a linked file is a doc, a linked folder is
 walked, a dangling link is nothing. Silent by nature, which is why it lasted: nothing fails
 when a doc is missing, the agent simply knows less.
+
+### A doc is named by the way to it (2026-09-15) — LANDED
+
+The prefix used to name a doc by scope and name — `[agent/instructions/agent]` — and then,
+in the index, repeat the whole substrate path so the doc could actually be opened:
+`- agent/memories/react-funny — … → aread /home/matias/new/data/agents/matias/memories/react-funny.md`.
+Two names for one file, neither of them the one the agent types. Now there is one: the path
+from the workspace, which is where the shell stands. `instructions/agent.md` for its own,
+`../../organizations/instructions/organization.md` for a scope above, and the index line is
+the path and its description, nothing else. The provenance header, the pointer and the
+argument to `aread` are the same string. ~/new's index went from 1460 to 1120 chars and says
+more. The substrate path stands in when there is no workspace to count from.

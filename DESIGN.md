@@ -1385,7 +1385,7 @@ one, a `processors:` line naming the media kinds made readable on their own, so 
 waits for the `<transcript>` instead of opening the file — harness-authored, so no doc
 edit can lose them, and stable between grants, so the prefix stays cached. Then
 **instructions** = the bodies of `load:always` docs
-(system → org → agent), inlined; **skill / memory index** = pointers (name + description) for
+(system → org → agent), inlined; **skill / memory index** = pointers (path + description) for
 the rest, which the agent pulls via `aread` on demand; **cron / projections** = always-on.
 Ordered most-stable → most-volatile, with a cache breakpoint at the end — the first of the
 two the request carries; the second closes the collapsed history (above). An hour's TTL,
@@ -1741,10 +1741,14 @@ Registers (same substrate, different rules):
 | authority | binding | evidence; instructions override |
 
 - **Load policy (v0): progressive disclosure** (the `MEMORY.md`/CLAUDE.md lazy-load model).
-  nu pushes an **always-loaded index** — every doc's `name + description + scope` — plus the
+  nu pushes an **always-loaded index** — every doc's `path + description` — plus the
   **bodies of `load:"always"` docs** (persona, core instructions). `load:"lazy"` docs appear
   as index pointers only; **mu pulls a body on demand via the substrate read** (`aread`/`sql`
-  — "doc-read = the substrate read", §9). nu stays dumb (no relevance matching); mu decides
+  — "doc-read = the substrate read", §9). **A doc is named by the way to it from the agent's
+  workspace**, which is where its shell stands: `instructions/agent.md` for its own,
+  `../../organizations/instructions/x.md` for a scope above. One handle — the provenance
+  header over an inlined body, the index line, and the argument that opens the file are the
+  same string, so nothing has to be translated to be read. nu stays dumb (no relevance matching); mu decides
   what to pull. Keeps the prompt (and its cache prefix) lean as doc volume grows.
 - Media lands NATIVE (§5): images/PDFs the model reads directly, everything else a
   marker + path. The PREPROCESSOR step (voice→transcription, image→described for

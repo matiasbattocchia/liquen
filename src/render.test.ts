@@ -19,6 +19,15 @@ import type {
   ToolUseEvent,
 } from "./types.ts";
 
+/** The agent whose workspace every handle is counted from, and the §9 layout it sits in. */
+const HOME = "/data/agents/a1";
+const SCOPE_DIR: Record<DocScope, string> = {
+  system: "/data/system",
+  organization: "/data/organizations",
+  agent: HOME,
+  conversation: "/data/conversations/c1",
+};
+
 function doc(
   scope: DocScope,
   kind: DocKind,
@@ -26,7 +35,7 @@ function doc(
   frontmatter: Record<string, unknown>,
   body?: string,
 ): DocEntry {
-  const path = `/docs/${scope}/${kind}/${name}.md`;
+  const path = `${SCOPE_DIR[scope]}/${name}.md`;
   const entry: DocEntry = { header: { scope, kind, name, frontmatter, path } };
   if (body !== undefined) entry.body = body;
   return entry;
@@ -46,22 +55,29 @@ function clinicDocs(): DocEntry[] {
   ];
 }
 
+// A doc is named by the way to it from where the agent stands: its own docs by a bare
+// path, a scope above by the climb. One handle for reading it and for saying which it is.
 Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index", () => {
-  const [prefix, index] = renderSystem(clinicDocs());
+  const [, prefix, index] = renderSystem(clinicDocs(), { home: HOME });
 
   assertEquals(
     prefix.text,
-    "[system/base]\nSos el alter-ego de Ana.\n\n" +
-      "[organization/clinic]\nClínica Sur · 9–18h L–V.\n\n" +
-      "[agent/persona]\nHablás como Ana: cálida, breve.",
+    "[../../system/base.md]\nSos el alter-ego de Ana.\n\n" +
+      "[../../organizations/clinic.md]\nClínica Sur · 9–18h L–V.\n\n" +
+      "[persona.md]\nHablás como Ana: cálida, breve.",
   );
   assertEquals(
     index.text,
     "Your on-demand docs — this index is COMPLETE (nothing else exists; never search " +
-      "the docs tree). Pull a body with `aread`:\n" +
-      "- organization/reschedule — reprogramar un turno → aread /docs/organization/skill/reschedule.md\n" +
-      "- organization/patients — notas de pacientes → aread /docs/organization/memory/patients.md",
+      "the docs tree). The path is the doc's own, from your workspace; `aread` one to read it:\n" +
+      "- ../../organizations/reschedule.md — reprogramar un turno\n" +
+      "- ../../organizations/patients.md — notas de pacientes",
   );
+});
+
+Deno.test("no workspace to count from ⇒ the substrate path stands in as the handle", () => {
+  const [prefix] = renderSystem([doc("agent", "instruction", "persona", { load: "always" }, "x")]);
+  assertEquals(prefix.text, "[/data/agents/a1/persona.md]\nx");
 });
 
 Deno.test("one cache breakpoint, on the last — an HOUR, since docs change when a human edits", () => {
@@ -92,12 +108,9 @@ Deno.test("only-bodies ⇒ single block (cached); only-pointers ⇒ single index
   assertEquals(pointersOnly[0].cache_control, { type: "ephemeral", ttl: "1h" });
 });
 
-Deno.test("a pointer with no description shows its ref + pull path", () => {
-  const [index] = renderSystem([doc("organization", "skill", "bare", {})]);
-  assertEquals(
-    index.text.endsWith("- organization/bare → aread /docs/organization/skill/bare.md"),
-    true,
-  );
+Deno.test("a pointer with no description is its path alone", () => {
+  const [, index] = renderSystem([doc("organization", "skill", "bare", {})], { home: HOME });
+  assertEquals(index.text.endsWith("- ../../organizations/bare.md"), true);
 });
 
 Deno.test("empty docs ⇒ empty system", () => {

@@ -112,12 +112,12 @@ export function renderSystem(docs: DocEntry[], env: Env = {}): TextBlockParam[] 
 
   const bodies = ordered.filter((d) => d.body !== undefined);
   if (bodies.length > 0) {
-    blocks.push({ type: "text", text: bodies.map(section).join("\n\n") });
+    blocks.push({ type: "text", text: bodies.map((d) => section(d, env.home)).join("\n\n") });
   }
 
   const pointers = ordered.filter((d) => d.body === undefined);
   if (pointers.length > 0) {
-    blocks.push({ type: "text", text: renderIndex(pointers) });
+    blocks.push({ type: "text", text: renderIndex(pointers, env.home) });
   }
 
   const last = blocks.at(-1);
@@ -136,28 +136,40 @@ function byCascade(a: DocEntry, b: DocEntry): number {
     (a.header.name < b.header.name ? -1 : a.header.name > b.header.name ? 1 : 0);
 }
 
-/** A doc's rendered handle: scope + name. The name already carries its folder
- *  (`instructions/agent`, `skills/workflows`), so the kind would say it twice. */
-function ref(d: DocEntry): string {
-  return `${d.header.scope}/${d.header.name}`;
+/** A doc's rendered handle: the way to it from the agent's workspace, which is where its
+ *  shell stands — `instructions/agent.md` for its own, `../../system/instructions/base.md`
+ *  for a scope above. One handle, and it is also the argument that opens the file: nothing
+ *  to translate between what a doc is called and how it is read. The substrate path stands
+ *  in when there is no workspace to count from (an env line without `home`). */
+function ref(d: DocEntry, home?: string): string {
+  return home ? from(home, d.header.path) : d.header.path;
+}
+
+/** The path to `to` as walked from `from` — the shell's own arithmetic, no dependency. */
+function from(here: string, there: string): string {
+  const a = here.split("/").filter(Boolean);
+  const b = there.split("/").filter(Boolean);
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return [...a.slice(i).map(() => ".."), ...b.slice(i)].join("/");
 }
 
 /** An inlined always-doc: a provenance header, then its body. */
-function section(d: DocEntry): string {
-  return `[${ref(d)}]\n${d.body ?? ""}`;
+function section(d: DocEntry, home?: string): string {
+  return `[${ref(d, home)}]\n${d.body ?? ""}`;
 }
 
-/** The pull-index: one pointer line per lazy doc — description when it has one, and the
- *  doc's REAL substrate path (the ref alone isn't pullable: agent/conversation scopes add
- *  an id segment on disk, and bash runs in the workspace, not the docs root). */
-function renderIndex(pointers: DocEntry[]): string {
+/** The pull-index: one pointer line per lazy doc — its handle, which is its path, and its
+ *  description when it has one. */
+function renderIndex(pointers: DocEntry[], home?: string): string {
   const lines = pointers.map((d) => {
     const desc = d.header.frontmatter.description;
     const tail = typeof desc === "string" && desc.length > 0 ? ` — ${desc}` : "";
-    return `- ${ref(d)}${tail} → aread ${d.header.path}`;
+    return `- ${ref(d, home)}${tail}`;
   });
   return "Your on-demand docs — this index is COMPLETE (nothing else exists; never search " +
-    `the docs tree). Pull a body with \`aread\`:\n${lines.join("\n")}`;
+    "the docs tree). The path is the doc's own, from your workspace; `aread` one to read " +
+    `it:\n${lines.join("\n")}`;
 }
 
 /* ─────────────────────── (b) the messages tail (§5) ─────────────────────── */
