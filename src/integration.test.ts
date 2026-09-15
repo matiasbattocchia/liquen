@@ -8,6 +8,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { type AgentConfig, xi, type XiPorts } from "./xi.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { LOCK_TTL_MS } from "./store/lock.ts";
+import type { AgentRow } from "./store/agents.ts";
 import { openFileDocs } from "./store/docs.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
@@ -113,9 +114,11 @@ async function scenario(
   config: Partial<AgentConfig> = {},
   preload: Draft<Event>[] = [], // events in the log before the fan-out starts (recovery)
   ports: Partial<XiPorts> = {}, // what a scenario adds to the agent's ports (a tool, a scope)
+  roster: AgentRow[] = [], // the registry as the org declared it — handles included
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
+  if (roster.length > 0) log.syncAgents(roster);
   const preloaded: Event[] = [];
   for (const e of preload) preloaded.push((await log.publish(e))!);
   const { transport, calls } = scripted(script);
@@ -356,6 +359,34 @@ Deno.test("send at the principal lands nowhere — refused before it is ever gat
       { gate: () => "ask" },
     );
   }
+});
+
+Deno.test("send at the principal: their number however it was typed, not only as stored", async () => {
+  // a handle is written the way a person writes one — `+54 9 11 6754-2610` is the number
+  // the wire calls `5491167542610` — so the guard compares handles, never strings
+  await scenario(
+    [
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "5491167542610", text: "hola" } }],
+        "tool_use",
+      ),
+      ok([{ kind: "assistant", text: "hola" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("escribime"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+      const [answer] = await read("tool_result") as ToolResultEvent[];
+      assertEquals(answer.parts[0].data.is_error, true);
+      assertStringIncludes(
+        JSON.stringify(answer.parts[0].data.output),
+        "that address is your principal",
+      );
+    },
+    {},
+    [],
+    {},
+    [{ agentId: "a1", mind: "mind@a1", phone: "+54 9 11 6754-2610" }],
+  );
 });
 
 Deno.test("gating: the ask is part of executing — the call is answered, then run or refused", async () => {

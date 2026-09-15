@@ -65,6 +65,7 @@ import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { ConnectionRow, Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
+import { sameHandle } from "./store/roster.ts";
 import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
 import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import type { FilePart } from "./types.ts";
@@ -1442,19 +1443,21 @@ function selfSend(
   const principals = ports.log.principalsOf(config.agentId)
     .map((p) => agents.find((a) => a.agentId === p))
     .filter((a): a is NonNullable<typeof a> => a !== undefined);
-  const mine = new Set(
+  // ids are ours and exact; handles are the WORLD's, and a phone number is written however
+  // the person who typed it felt like — `+54 9 11 6754-2610` is the number the wire calls
+  // `5491167542610`. One form is never adopted on both sides, so the comparison is what
+  // tolerates the variants (`sameHandle`: digits for a number, folded case for an address).
+  const ids = new Set(
     [
       sessionAddress(config.agentId, config.sessionId),
       ...(config.sessionId === MIND ? [config.agentId, ...principals.map((p) => p.agentId)] : []),
-      me?.email,
-      me?.phone,
-      ...principals.flatMap((p) => [p.email, p.phone]),
     ].filter((x): x is string => typeof x === "string" && x !== ""),
   );
+  const handles = [me?.email, me?.phone, ...principals.flatMap((p) => [p.email, p.phone])];
   const alias = ports.log.aliases().some((r) =>
     r.agentId === config.agentId && r.conversation === to
   );
-  if (!mine.has(to) && !alias) return undefined;
+  if (!ids.has(to) && !handles.some((h) => sameHandle(h, to)) && !alias) return undefined;
   return "that address is your principal — `send` is for everyone ELSE. What you say to " +
     "them is the assistant channel: write it as your reply and it reaches them when the " +
     "turn closes.";
