@@ -22,6 +22,7 @@ import { hhmm, isCancelled, outcomeLine, ownVoice, SILENCE, silent, textOf } fro
 import { describeCall } from "./describe.ts";
 import { markdown, renderMarkdown } from "./md.ts";
 import type { Delta, Event, SessionRef } from "./types.ts";
+import { tailOf } from "./line.ts";
 
 export const DIM = "\x1b[2m";
 export const RED = "\x1b[31m";
@@ -216,28 +217,96 @@ export function painter(s: Surface): Painter {
   };
 
   /**
-   * The room as it already stands, painted before the tail opens on the present: the
-   * same lines the live transcript would have shown — when, by the clock that wrote each
-   * row (the org's, the same one the model reads (§5), because a mind and its principal
-   * must agree on what "yesterday" was), who, by the same marks, and through which wire
-   * when a line came in through one.
+   * The room as it already stands, painted before the tail opens on the present: the same
+   * lines the live transcript would have shown — when, by the clock that wrote each row
+   * (the org's, the same one the model reads (§5), because a mind and its principal must
+   * agree on what "yesterday" was), who, by the same marks, through which wire when a line
+   * came in through one, and WHAT THE AGENT DID: the calls it made, the outcomes, the
+   * cards it raised. A recap of messages alone reads like a mind that only ever talked —
+   * every tool it ran and every approval it is still waiting on would vanish the moment
+   * the surface was reopened, which is also the moment a principal most needs to see them.
+   *
+   * A card nobody answered is still a card: it is painted live, with its hint, and handed
+   * to the surface's pile, so `/y` after a restart answers what was asked before it.
    */
   const recap = (events: Event[]): void => {
+    // the page keeps its own tail: one blank row between blocks, as the live screen has
+    const tail = tailOf();
     let page = "";
+    const put = (t: string) => {
+      tail.note(t);
+      page += t;
+    };
+    const gap = () => put(tail.owed(2)); // open a block
+    const row = () => put(tail.owed(1)); // stay in one, on a fresh row
+    const settled = new Set(
+      events.filter((e) => e.type === "permission_response")
+        .map((e) => String(e.payload?.ref_id ?? "")),
+    );
     for (const e of events) {
-      if (e.type !== "message") continue;
-      const text = textOf(e);
-      if (text === "" || silent(e)) continue;
-      if (ownVoice(e, s.session)) {
-        page += `${stamp(e.ts)}${AGENT} ${renderMarkdown(text)}\n\n`;
-      } else {
-        const via = (e.extra?.via ?? undefined) as { service?: string } | undefined;
-        const wire = via?.service ? `${CYAN}[via ${via.service}]${RESET} ` : "";
-        page += `${stamp(e.ts)}${YOU} ${wire}${text}\n\n`;
+      switch (e.type) {
+        case "message": {
+          const text = textOf(e);
+          if (text === "" || silent(e)) continue;
+          gap();
+          if (ownVoice(e, s.session)) put(`${stamp(e.ts)}${AGENT} ${renderMarkdown(text)}`);
+          else {
+            const via = (e.extra?.via ?? undefined) as { service?: string } | undefined;
+            const wire = via?.service ? `${CYAN}[via ${via.service}]${RESET} ` : "";
+            put(`${stamp(e.ts)}${YOU} ${wire}${text}`);
+          }
+          continue;
+        }
+        case "tool_use": {
+          gap();
+          put(`${DIM}⚙ ${describeCall(e.parts[0].data)}${RESET}`);
+          continue;
+        }
+        case "tool_result": {
+          // a deferred outcome answers a call from another turn: it stands alone, as it
+          // does live. An ordinary one belongs to the call right above it.
+          if (e.payload.deferred) {
+            gap();
+            put(`${YELLOW}${outcomeLine(e, 160)}${RESET}`);
+            continue;
+          }
+          row();
+          put(e.parts[0].data.is_error ? `${RED}✗ tool failed${RESET}` : `${DIM}✓${RESET}`);
+          continue;
+        }
+        case "permission_request": {
+          const ref = e.payload?.ref_id;
+          const open = typeof ref === "string" && !settled.has(ref);
+          if (open && typeof ref === "string") s.onGate?.(ref); // still ours to answer
+          gap();
+          const { detail } = e.parts[0].data;
+          // an answered card is history, and reads as history: no hint under it, since
+          // there is nothing left to type
+          if (open) {
+            put(`${YELLOW}? approve ${detail}${RESET}${s.gateHint ? `\n${s.gateHint}` : ""}`);
+          } else put(`${DIM}? approve ${detail} — answered${RESET}`);
+          continue;
+        }
+        case "summary": {
+          gap();
+          put(`${DIM}≡ checkpoint written${RESET}`);
+          continue;
+        }
+        case "control": {
+          if (!isCancelled(e)) continue;
+          gap();
+          put(`${DIM}${textOf(e)}${RESET}`);
+          continue;
+        }
+        default:
+          continue; // thinking · deltas · errors · the substrate: none of them are lines
       }
     }
     // one write: the past arrives as a page, not as a line the surface redraws around
-    if (page !== "") s.write(page);
+    if (page !== "") {
+      put("\n");
+      s.write(page);
+    }
   };
 
   return { delta, event, recap };

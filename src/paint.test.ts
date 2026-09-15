@@ -86,7 +86,7 @@ Deno.test("recap: every message wears its mark and its time, in the org's clock,
     plain(screen()),
     "11 Sep 11:13 ❯ qué calendarios podés ver?\n\n" +
       "11 Sep 11:14 • el tuyo y el de la clínica\n\n" +
-      "11 Sep 11:15 ❯ gracias\n\n",
+      "11 Sep 11:15 ❯ gracias\n",
   );
 });
 
@@ -96,7 +96,7 @@ Deno.test("recap: a turn that said nothing shows as nothing", () => {
     asked("2026-09-11T14:13:00Z", "hola"),
     answered("2026-09-11T14:20:00Z", "<|SILENCE|>", { silence: true }),
   ]);
-  assertEquals(plain(screen()), "11 Sep 11:13 ❯ hola\n\n");
+  assertEquals(plain(screen()), "11 Sep 11:13 ❯ hola\n");
 });
 
 Deno.test("recap: a line that came through a wire says which, as the live copy does", () => {
@@ -106,7 +106,7 @@ Deno.test("recap: a line that came through a wire says which, as the live copy d
     extra: { via: { service: "whatsapp" } },
   };
   p.recap([wired]);
-  assertEquals(plain(screen()), "11 Sep 11:13 ❯ [via whatsapp] buen día\n\n");
+  assertEquals(plain(screen()), "11 Sep 11:13 ❯ [via whatsapp] buen día\n");
 });
 
 Deno.test("recap: the agent's markdown is shown as styles", () => {
@@ -114,7 +114,7 @@ Deno.test("recap: the agent's markdown is shown as styles", () => {
   p.recap([answered("2026-09-11T14:14:00Z", "## Plan\nprimero **esto**, después `eso`")]);
   assertEquals(
     screen(),
-    `\x1b[2m11 Sep 11:14\x1b[0m • \x1b[1mPlan\x1b[22m\nprimero \x1b[1mesto\x1b[22m, después \x1b[36meso\x1b[39m\n\n`,
+    `\x1b[2m11 Sep 11:14\x1b[0m • \x1b[1mPlan\x1b[22m\nprimero \x1b[1mesto\x1b[22m, después \x1b[36meso\x1b[39m\n`,
   );
 });
 
@@ -125,7 +125,7 @@ Deno.test("recap: a bodiless row is not a line — a picture with no caption pai
     parts: [{ type: "data", kind: "search", data: {} }],
   } as Event;
   p.recap([media, answered("2026-09-11T14:14:00Z", "listo")]);
-  assertEquals(plain(screen()), "11 Sep 11:14 • listo\n\n");
+  assertEquals(plain(screen()), "11 Sep 11:14 • listo\n");
 });
 
 /* ── live: the agent's text, block by block ───────────────────────────────────── */
@@ -238,4 +238,47 @@ Deno.test("live: blocks stand one blank row apart, however the turn goes", () =>
   assertEquals(out.includes("\n\n\n"), false, `a column of blank lines:\n${JSON.stringify(out)}`);
   assertEquals(out.includes("mando\n⚙ send"), true); // the call sits under the words
   assertEquals(out.includes("✓\n\n11 Sep 11:14 • listo"), true); // the next block, one row down
+});
+
+// Reopening a surface must not rewrite history into a mind that only ever talked: the
+// calls it made, the outcomes and the cards it raised were the transcript too.
+Deno.test("recap: the work shows, not just the words — and an open card is still answerable", () => {
+  const gates: string[] = [];
+  const { p, screen } = surface({ onGate: (ref) => gates.push(ref) });
+  const at = (id: string, type: string, data: Json, payload: Record<string, Json> = {}): Event => ({
+    id,
+    ts: "2026-09-11T14:14:00Z",
+    type,
+    payload: { turn_id: "t1", ...payload },
+    agent: { id: AGENT, session_id: "mind" },
+    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    parts: [{ type: "data", kind: type, data }],
+  } as unknown as Event);
+
+  p.recap([
+    asked("2026-09-11T14:13:00Z", "mandale el saludo a Verónica"),
+    at("u1", "tool_use", { name: "send", input: {} }),
+    at("r1", "tool_result", { is_error: false, output: "ok" }),
+    at(
+      "g1",
+      "permission_request",
+      { tool: "send", call: "send(…)", detail: "send(to: Verónica)" },
+      {
+        ref_id: "u1",
+      },
+    ),
+    at("g2", "permission_request", { tool: "send", call: "send(…)", detail: "send(to: Sofía)" }, {
+      ref_id: "u2",
+    }),
+    at("p1", "permission_response", { behavior: "allow", scope: "once" }, { ref_id: "u2" }),
+    answered("2026-09-11T14:14:00Z", "queda pendiente tu aprobación"),
+  ]);
+
+  const out = plain(screen());
+  assertEquals(out.includes("⚙ send"), true); // the call it made
+  assertEquals(out.includes("✓"), true); // and how it went
+  assertEquals(out.includes("? approve send(to: Verónica)"), true);
+  assertEquals(out.includes("? approve send(to: Sofía) — answered"), true); // history, not a card
+  assertEquals(gates, ["u1"]); // only the open one joins the pile `/y` answers
+  assertEquals(out.includes("\n\n\n"), false);
 });

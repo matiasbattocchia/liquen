@@ -2842,3 +2842,20 @@ sits on the row under its words; one that opens a turn stands clear as its own b
 sent line stands clear too. Verified on a real pty (a gate, a denial, a bash call, three
 turns) by replaying the capture through a terminal emulator — reading the capture as BYTES,
 since text mode eats the `\r` that every erase is built from.
+
+### A reopened surface reads what happened, not just what was said (2026-09-15) — LANDED
+
+Reported from a live session: the REPL "is omitting agent asks". It was — but only in
+history, which is why every live reproduction looked fine. The door's `recall` read
+`types: ["message"]` and `recap()` skipped anything that was not a message, so reopening
+the REPL rewrote the past as a mind that only ever talked: no `⚙` calls, no outcomes, and
+— the part that matters — no approval cards. An approval raised while the surface was
+closed was invisible the moment its principal reopened it to look, and `/y` answered
+"nothing pending" because the card never reached the pile.
+
+Now the recall carries the classes a surface draws (message, tool_use, tool_result,
+permission_request, permission_response, summary, control) and the page paints them the way
+the live transcript does, one blank row between blocks, through the same `tailOf` the
+screen uses. A card already answered reads as history, dim and without its hint; one still
+open is painted live and handed to `onGate`, so the pile survives a restart. The recall
+width went from 25 to 60: the page counts rows now, not turns.

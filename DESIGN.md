@@ -2105,8 +2105,13 @@ open approval is each interface's decision. A terminal surface owns its input li
 same reason (`line.ts`): raw mode is what makes an arrow a movement rather than three bytes
 of message, and a line the principal is half-way through survives the transcript printing
 above it, under a rule that keeps the transcript's last `❯` and the line's empty one
-apart. That surface opens on the tail's recall twice over: the room's last messages, and,
-under the arrows, the principal's half of those same rows. Recalled and live read the
+apart. That surface opens on the tail's recall twice over: the room as it stands, and,
+under the arrows, the principal's half of the messages in it. **The recall is what
+HAPPENED, not only what was said**: the calls the agent made, how they went, the cards it
+raised and the verdicts on them ride back with the words, and a card nobody answered is
+painted live and joins the surface's pile, so `/y` after a reopen answers what was asked
+before it. A recall of messages alone hands back a mind that only ever talked, and drops
+the approval still waiting at the moment its principal reopened the surface to look for it. Recalled and live read the
 same: every message line is dated in the org's clock — a recalled row by the clock that
 wrote it, a live block by the clock it opens on; the deltas inside need none — and who
 spoke is a mark and never a name: `❯` heads the principal's line, `•` each block of the

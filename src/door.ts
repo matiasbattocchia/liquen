@@ -419,11 +419,15 @@ const CONTROLS: readonly ControlKind[] = ["stop", "cancel"];
 /** The most a `recall` may ask for: a ring to reach back through, not a transcript. */
 export const MAX_RECALL = 500;
 
-/** What was said in this session's room, oldest first: BOTH halves of every complex (§3),
- *  so a surface that opens two days later reads the exchange and not just its own side.
- *  A row the harness silenced drew no block in any prompt and draws none here either, and
- *  `silenced: false` keeps imported and muted history out — the recall is what happened,
- *  at the width the surface asked for. */
+/** What HAPPENED in this session's room, oldest first: BOTH halves of every complex (§3),
+ *  so a surface that opens two days later reads the exchange and not just its own side —
+ *  and not only what was said. The calls the agent made, how they went, the cards it
+ *  raised and the verdicts on them are the transcript too: a recall of messages alone
+ *  hands back a mind that only ever talked, and drops the approval still waiting at the
+ *  very moment its principal reopened the surface to look for it. A row the harness
+ *  silenced drew no block in any prompt and draws none here either, and `silenced: false`
+ *  keeps imported and muted history out — the recall is what happened, at the width the
+ *  surface asked for. */
 async function recap(
   port: Pick<Log, "read">,
   conversation: string,
@@ -434,12 +438,24 @@ async function recap(
   }
   return await port.read({
     conversation,
-    types: ["message"],
+    types: [...RECALLED],
     silenced: false,
     limit: Math.min(limit, MAX_RECALL),
-    filter: (e) => !silent(e) && textOf(e) !== "",
+    // the emptiness test is a MESSAGE's: a data row carries no text and is not blank for it
+    filter: (e) => e.type !== "message" || (!silent(e) && textOf(e) !== ""),
   });
 }
+
+/** The classes a surface draws a line for (`paint.ts`) — what a recall carries back. */
+const RECALLED = [
+  "message",
+  "tool_use",
+  "tool_result",
+  "permission_request",
+  "permission_response",
+  "summary",
+  "control",
+] as const;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);

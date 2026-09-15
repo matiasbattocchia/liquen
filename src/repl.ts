@@ -46,7 +46,9 @@ export const USAGE = "usage: liquen repl [--dir <org>] [agent] [--session <name>
 /** How much of the room the REPL opens on: the last N messages, read off the log the door
  *  already keeps. They are the screen's first paint and the up arrow's reach both — one
  *  past, asked for once. */
-const RECALL = 25;
+// the page counts rows, not turns: the calls and the cards ride back with the words now,
+// so the same depth of conversation needs a wider window
+const RECALL = 60;
 
 await entry(async () => {
   // `liquen repl [agent] [--session name]` — both are session choices, so arguments, not
@@ -76,7 +78,7 @@ await entry(async () => {
     head: `${YOU} `, // the line wears the principal's mark, as its recalled lines do
     // and once sent it stands as a recalled line would: the time, the mark, the words
     sent: (line) => `${DIM}${hhmm(new Date().toISOString(), a.timezone)}${RESET} ${YOU} ${line}`,
-    recalled: () => recalled.filter((e) => !ownVoice(e, me)).map(textOf),
+    recalled: () => recalled.filter((e) => e.type === "message" && !ownVoice(e, me)).map(textOf),
   });
   const write = (s: string) => screen.write(s);
   const prompt = () => screen.prompt();
