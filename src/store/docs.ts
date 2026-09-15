@@ -143,14 +143,19 @@ function scopeDir(root: string, scope: DocScope, ctx: DocContext): string | null
 }
 
 /** Sorted scope-relative `.md` names (no extension), walked recursively; [] if `dir` is
- *  absent. Skips workspace noise dirs. */
+ *  absent. Skips workspace noise dirs. A symlinked doc or folder is a doc or folder: a
+ *  cascade is a place, and what stands in that place is what counts — a linked seed doc
+ *  the same as a copied one. */
 async function markdownUnder(dir: string, prefix = ""): Promise<string[]> {
   const names: string[] = [];
   try {
     for await (const entry of Deno.readDir(dir)) {
-      if (entry.isFile && entry.name.endsWith(".md")) {
+      // readDir describes the LINK, which is neither file nor directory; the target is
+      // what it stands for, and a dangling one stands for nothing
+      const what = entry.isSymlink ? await targetOf(`${dir}/${entry.name}`) : entry;
+      if (what.isFile && entry.name.endsWith(".md")) {
         names.push(`${prefix}${entry.name.slice(0, -3)}`);
-      } else if (entry.isDirectory && !SKIP_DIRS.has(entry.name)) {
+      } else if (what.isDirectory && !SKIP_DIRS.has(entry.name)) {
         names.push(...await markdownUnder(`${dir}/${entry.name}`, `${prefix}${entry.name}/`));
       }
     }
@@ -159,6 +164,15 @@ async function markdownUnder(dir: string, prefix = ""): Promise<string[]> {
     throw err;
   }
   return names.sort();
+}
+
+/** What a link points at — nothing, when it points nowhere. */
+async function targetOf(path: string): Promise<{ isFile: boolean; isDirectory: boolean }> {
+  try {
+    return await Deno.stat(path); // follows the link
+  } catch {
+    return { isFile: false, isDirectory: false };
+  }
 }
 
 /** Parse a doc's YAML frontmatter, reading only up to the closing `---`.

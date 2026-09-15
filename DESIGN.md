@@ -1727,6 +1727,9 @@ to the code. On the §9 layout the scope dirs are `system/` · `org/` · `agents
 `conversations/<id>/` — so **the agent scope IS the agent's workspace**: a cloned repo's
 READMEs have no frontmatter and stay files; the agent's frontmattered notes anywhere in its
 home are its docs. A doc's `name` is its scope-relative path (`instructions/compaction`).
+A cascade is a PLACE, so whatever stands in it counts: a symlinked file is a doc and a
+symlinked folder is walked — the seed doc a deployment links to the repo instead of copying
+reads exactly like a copied one, and only a dangling link is nothing.
 
 Registers (same substrate, different rules):
 

@@ -160,3 +160,30 @@ Deno.test("non-.md files are ignored; a missing scope lists empty; missing read 
     );
   });
 });
+
+// a doc kept under version control and linked into the cascade is the doc that stands
+// there: the seed's system.md, edited in the repo, read by the org
+Deno.test("a linked doc is a doc, a linked folder is a folder, a dangling link is nothing", async () => {
+  await withRoot(async (root) => {
+    const outside = await Deno.makeTempDir();
+    try {
+      await put(outside, "system", doc("instruction", "the legend", "load: always\n"));
+      await put(outside, "shared/playbook", doc("skill", "how we work"));
+      await Deno.mkdir(`${root}/system/instructions`, { recursive: true });
+      await Deno.mkdir(`${root}/organizations`, { recursive: true });
+      await Deno.symlink(`${outside}/system.md`, `${root}/system/instructions/system.md`);
+      await Deno.symlink(`${outside}/shared`, `${root}/organizations/skills`);
+      await Deno.symlink(`${outside}/gone.md`, `${root}/system/instructions/gone.md`);
+
+      const docs = await openFileDocs(root).list({ agent: "a1" });
+      assertEquals(ref(docs).sort(), [
+        "organization/skill/skills/playbook",
+        "system/instruction/instructions/system",
+      ]);
+      // and it is read through the link, body and all
+      assertEquals(docs.find((d) => d.header.name === "instructions/system")?.body, "the legend");
+    } finally {
+      await Deno.remove(outside, { recursive: true });
+    }
+  });
+});

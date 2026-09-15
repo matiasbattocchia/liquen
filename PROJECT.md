@@ -2798,3 +2798,16 @@ The agent's text goes through `md.ts`, a streaming formatter for the marks a cha
 uses — headings, fences, bold, italic, inline code — that holds text from an unclosed
 opener until it closes or the line ends, the `<|SILENCE|>` bargain again: a plain
 sentence streams untouched, a span appears whole. Tables and links stay as written.
+
+### A linked doc is a doc (2026-09-15) — LANDED
+
+Found by rendering ~/new's system message and reading it: `system/instructions/system.md`
+was not in it. The file is there, as a symlink into the repo's seed so a doc can be edited
+where it is version-controlled — and `Deno.readDir` describes the LINK, which is neither a
+file nor a directory, so the cascade walked straight past it. The matias agent had been
+running without the legend (`<conv>`, `<principal>`, `<system>`, `<checkpoint>`) and without
+the `<|SILENCE|>` rule since the link was made on 2026-09-09; sole-bot, whose `system.md`
+is a copy, was never affected. A cascade is a place: `markdownUnder` now stats a link and
+takes the target for what it stands for — a linked file is a doc, a linked folder is
+walked, a dangling link is nothing. Silent by nature, which is why it lasted: nothing fails
+when a doc is missing, the agent simply knows less.
