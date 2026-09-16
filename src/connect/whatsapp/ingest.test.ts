@@ -631,7 +631,7 @@ Deno.test("the classifier reads the roster too (§4): a declared phone is that m
   assertEquals((published[1] as MessageEvent).agent, undefined);
 });
 
-Deno.test("the contacts feed never names the account's own lines — the wire may (§5)", async () => {
+Deno.test("the account's own lines keep its name, from the feed or the wire — the window decides (§5)", async () => {
   const account = "5491100000000"; // = organization_address: the account's own side
   const { store, upserts } = fakeStore({ service: "whatsapp", address: account, agentId: "laura" });
   const { handler, published } = harness({ store });
@@ -666,13 +666,12 @@ Deno.test("the contacts feed never names the account's own lines — the wire ma
   });
   await handler(post("/whatsapp-web-webhook", feed));
   await handler(post("/whatsapp-web-webhook", feed)); // the same feed again — a live bridge repeats itself
-  // the CACHE does not reach the account's own side — its entry there is the feed naming
-  // the account to itself, no fact of any message — but the wire's own stamp is kept: the
-  // log records what was said, and the window is where an author is decided (§5)
+  // the row keeps the name whichever way it came — the feed fills the blank line, the wire's
+  // own stamp stays on the other. It is the ACCOUNT's name, not an author: the log records
+  // what it heard, and the window is where an author is decided (§5, render.test.ts)
   const own = published.filter((e) => (e as MessageEvent).envelope.sender?.address === account);
   assertEquals(own.length, 4); // two lines, and a live bridge repeats its batch
-  const named = own.map((e) => (e as MessageEvent).envelope.sender?.name);
-  assertEquals(named, [undefined, "Dra. Suarez", undefined, "Dra. Suarez"]);
+  for (const e of own) assertEquals((e as MessageEvent).envelope.sender?.name, "Dra. Suarez");
   // a customer is still named off the feed
   const ana = published.find((e) =>
     (e as MessageEvent).envelope.sender?.address === "5491177777777"

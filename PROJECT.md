@@ -3128,3 +3128,24 @@ Untested against a live phone: whether a LID-keyed save (a hidden-number group m
 lands. The index accepts one — the bridge's own store holds 1,601 LID-keyed entries the
 phone synced through it, 19 with address-book names — so nothing refuses it; whether the
 phone honours `SaveOnPrimaryAddressbook` for one is the wire's to show.
+
+### The log records, the window decides: the account's own name stays on its lines (2026-09-16) — LANDED
+
+Reversed the entry two above. Dropping the account's own name from its own-side rows was
+fixing the log to solve a rendering problem the window had already solved: `authorOf` never
+reads `sender.name` once `agent_id` is stamped, and an own-side row with nobody stamped wears
+`org` — both pinned in `render.test.ts` with a row that CARRIES "Dra. Suarez" and a window
+that shows it nowhere. The ingest, meanwhile, had thrown away a true thing the wire said
+(§5 has always read: every wire names its own side too), and `search` showed the cost in one
+line — a hit on the principal's message answered with a bare phone number where the row
+used to hold a name.
+
+The row keeps the name again, whichever way it came in: the bridge's own `sender_name`, or
+the contacts feed's entry for the account through the pushname cache, the way the cache
+fills anyone else's blank line. It is the ACCOUNT's name and not an author — one identity
+covers every device and every human behind it — and only render spends `agent_id`. The
+connection row still hears it from both sources (`extra.name`, once per name).
+
+The boundary, stated so it is not crossed again: the ingest records what the wire said,
+and a cache fills a blank the same way for everyone; who wrote a line is decided where the
+line is drawn, from the classifier's stamp, never by editing what the row holds.

@@ -399,18 +399,14 @@ function mapMessage(
   const sender = m.sender_address || undefined; // "" = the wire couldn't name the account side
   // sender.name is the SERVICE's display fact — what the account calls this person, nothing
   // of ours: identity resolution (who a grant binds) is the classifier's business (§3).
-  // The row KEEPS whatever the wire said, the account's own side included: the bridge
-  // stamps `sender_name` there too, and that is the account's own name — a true thing the
-  // log should hold, searchable like any other. It is not an authorship claim: one
-  // WhatsApp identity covers every device and every human behind it, so the wire cannot
-  // say who typed. WHO is the classifier's answer (`agent_id`) and only render spends it —
-  // an own-side line wears `org` or its principal's mark and shows no sender at all (§5),
-  // which is why a name here was never the window's problem to solve.
-  // The CACHE is the one thing that does not reach across: its entry for the account is
-  // the contacts feed naming the account to itself, a first-sight courtesy and no fact of
-  // this message, so it fills in nobody's own side.
-  const who = m.sender_name ||
-    (sender && sender !== connection ? pushnames.get(sender) : undefined);
+  // The row KEEPS the name, the account's own side included — the bridge stamps
+  // `sender_name` there too, and the contacts feed lists the account like anyone else.
+  // That is the account's own name, a true thing the log holds, searchable like any other;
+  // it is not an authorship claim, since one WhatsApp identity covers every device and
+  // every human behind it and the wire cannot say who typed. WHO is the classifier's
+  // answer (`agent_id`), and only render spends it — an own-side line wears `org` or its
+  // principal's mark and shows no sender at all (§5). The log records; the window decides.
+  const who = m.sender_name || (sender ? pushnames.get(sender) : undefined);
   const state = m.status ? stateOf(m.status) : undefined;
   // the SERVICE-NEUTRAL silencing marks (§3 extra, §5): a consumer skipping history or a
   // muted chat reads the same keys across every connector
