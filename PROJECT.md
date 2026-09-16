@@ -3016,3 +3016,25 @@ ahead of its parent earns nothing but a restart, and then whatever is still stan
 nobody's child, an ephemeral main under a REPL that hangs up when it goes. Each signal is
 followed by a wait for that lock to come free, so the shape the operator types,
 `liquen stop && liquen start`, is a fact and not a hope.
+
+### The account's own side is never named by the wire (2026-09-16) — LANDED
+
+The pushname leak was closed at one source and stayed open at the other. A line typed on the
+companion device at 15:17, ingested by the fixed build, still arrived carrying "Dra. Soledad
+Suarez": the contacts cache was no longer filling it, but the bridge stamps `sender_name` on
+the account's own messages itself — which the type's own docstring says it does not do. Both
+sources were offering the same wrong answer from opposite directions.
+
+So the rule moved up out of the sources and into the fact: one WhatsApp identity covers every
+device and every human behind it, so the wire cannot say who typed, and a name on the
+account's own side is always the ACCOUNT's — a fact of the connection, recorded on its row,
+which on a phone-typed line reads as the owner speaking when it was a principal at the phone.
+The ingest drops it whichever way it came in, and the docstring now says what the wire
+actually does rather than what it promised.
+
+Render never depended on this — an author hint comes from `agent_id`, not from a name the
+wire chose — which is why the window was already right. `search` did: it answers
+`sender: e.envelope.sender?.name ?? …`, so until now a hit on the principal's own message
+named the doctor. It now answers with the account's address, which is honest but not yet the
+word the window uses; the two surfaces still spell the same author differently, and sharing
+one decision between them is the next thing.

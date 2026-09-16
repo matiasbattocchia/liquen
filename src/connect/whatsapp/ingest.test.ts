@@ -624,6 +624,15 @@ Deno.test("the account's own pushname names the CONNECTION, never its own lines 
         sender_address: account,
         conversation_address: "5491177777777",
       }),
+      // the same line with the bridge's own stamp on it — live behaviour, against the
+      // contract ("absent on the account's own messages"): the same wrong name, the other
+      // way in
+      textMessage({
+        external_id: "wmw.own.2",
+        sender_address: account,
+        sender_name: "Dra. Suarez",
+        conversation_address: "5491177777777",
+      }),
       textMessage({
         external_id: "wmw.ana.1",
         sender_address: "5491177777777",
@@ -633,10 +642,10 @@ Deno.test("the account's own pushname names the CONNECTION, never its own lines 
   });
   await handler(post("/whatsapp-web-webhook", feed));
   await handler(post("/whatsapp-web-webhook", feed)); // the same feed again — a live bridge repeats itself
-  // the cache never names the account's own side: that name is the account's, and on a
+  // NEITHER source names the account's own side: that name is the account's, and on a
   // principal's phone-typed line it read as the owner speaking
   const own = published.filter((e) => (e as MessageEvent).envelope.sender?.address === account);
-  assertEquals(own.length, 2);
+  assertEquals(own.length, 4); // two lines, and a live bridge repeats its batch
   for (const e of own) assertEquals((e as MessageEvent).envelope.sender?.name, undefined);
   // a customer is still named off the feed
   const ana = published.find((e) =>

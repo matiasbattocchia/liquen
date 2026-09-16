@@ -6,6 +6,7 @@
     "jsr:@std/encoding@1": "1.0.10",
     "jsr:@std/internal@^1.0.6": "1.0.13",
     "jsr:@std/json@^1.0.2": "1.1.0",
+    "jsr:@std/jsonc@*": "1.0.2",
     "jsr:@std/jsonc@1": "1.0.2",
     "jsr:@std/streams@1": "1.1.0",
     "jsr:@std/yaml@1": "1.1.2",

@@ -87,9 +87,12 @@ export interface WAMessage {
   // own account too; absent/empty only where the platform can't name its own side
   /** WHO those addresses are, denormalized per message: the account's own name for the
    *  author (address book first, pushname otherwise) and for the room (a group's subject,
-   *  or the peer, since a DM is its peer). Absent on the account's own messages, and on
-   *  anyone nobody has ever named. This is where names come from — the batch feeds below
-   *  are a first-sight courtesy, and a name only they carry is lost on restart. */
+   *  or the peer, since a DM is its peer). Absent on anyone nobody has ever named — and not
+   *  to be believed about the account's own side: the contract says absent there, the live
+   *  bridge sends the account's own name, and the ingest drops it either way, because one
+   *  identity cannot say which of its humans typed. This is where names come from — the
+   *  batch feeds below are a first-sight courtesy, and a name only they carry is lost on
+   *  restart. */
   sender_name?: string;
   conversation_name?: string;
   content: WAContent;
@@ -387,12 +390,18 @@ function mapMessage(
   const name = m.conversation_name || groupNames.get(address);
   const sender = m.sender_address || undefined; // "" = the wire couldn't name the account side
   // sender.name is the SERVICE's display fact — what the account calls this person, nothing
-  // of ours: identity resolution (who a grant binds) is the classifier's business (§3)
-  // the cache never names the account's own side: its entry there is the ACCOUNT's name
-  // (recorded on the connection row above), and stamped on a companion-device line it
-  // read as the account's owner speaking — when it was a principal at the phone
-  const who = m.sender_name ||
-    (sender && sender !== connection ? pushnames.get(sender) : undefined);
+  // of ours: identity resolution (who a grant binds) is the classifier's business (§3).
+  // THE ACCOUNT'S OWN SIDE IS NEVER NAMED, from either source. One WhatsApp identity covers
+  // every device and every human behind it, so the wire cannot say who typed — the
+  // classifier answers that (`agent_id`) and the line wears it as its author hint (§5).
+  // Both sources offer the same wrong answer, the ACCOUNT's own name: the contacts feed
+  // carries the account's entry like any other, and the bridge stamps `sender_name` on the
+  // account's own messages despite its contract saying it does not. That name is a fact of
+  // the connection — it is recorded on its row above — and on a companion-device line it
+  // reads as the account's owner speaking, when it was a principal at the phone.
+  const who = sender === undefined || sender === connection
+    ? undefined
+    : m.sender_name || pushnames.get(sender);
   const state = m.status ? stateOf(m.status) : undefined;
   // the SERVICE-NEUTRAL silencing marks (§3 extra, §5): a consumer skipping history or a
   // muted chat reads the same keys across every connector
