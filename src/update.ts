@@ -26,7 +26,7 @@
 import { parse } from "@std/jsonc";
 import { findRoot, orgFlag } from "./config.ts";
 import { entry } from "./entry.ts";
-import { holder } from "./stop.ts";
+import { running } from "./stop.ts";
 
 /** The package an org runs on — the one dependency this command is about. */
 export const PACKAGE = "@liquen/liquen";
@@ -104,11 +104,10 @@ if (import.meta.main) {
         ? `${PACKAGE} ${shown(after)} — already the newest release`
         : `${PACKAGE} ${shown(before)} → ${shown(after)}`,
     );
-    const pid = await holder(`${root}/data`);
-    if (pid !== null) {
-      console.log(
-        `running as pid ${pid} — \`liquen stop\` then \`liquen start\` to run the new one`,
-      );
+    const live = await running(`${root}/data`);
+    if (live.size > 0) {
+      const who = [...live].map(([role, pid]) => `${role} (${pid})`).join(" · ");
+      console.log(`running ${who} — \`liquen stop\` then \`liquen start\` to run the new one`);
     }
   });
 }

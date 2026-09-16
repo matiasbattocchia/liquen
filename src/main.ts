@@ -49,6 +49,7 @@ import {
 } from "./transport/mod.ts";
 import { type ExecGround, type ExecPlane, installExecGround } from "./exec/bash.ts";
 import { entry } from "./entry.ts";
+import { claim, MAIN } from "./stop.ts";
 import { openCredentials } from "./store/credentials.ts";
 import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
@@ -762,6 +763,14 @@ if (import.meta.main) {
     const root = findRoot(org);
     const dir = `${root}/data`;
     const catalog = await readConfig(root);
+    // ONE MIND PER ORG (stop.ts): a second main over one log is two tails, two fan-outs and
+    // two mirrors of every line the agent speaks — the duplicate a REPL's ephemeral daemon
+    // and a `liquen start` used to make between them
+    const lock = claim(dir, MAIN);
+    if ("taken" in lock) {
+      const who = lock.taken === null ? "" : ` (pid ${lock.taken})`;
+      throw new Error(`a main already runs ${root}${who} — \`liquen stop\` first`);
+    }
     const main = await start({ dir, catalog });
     console.error(`agents: ${Object.keys(catalog.agents).join(", ")} · log: ${dir}/log`);
     for (const sig of ["SIGTERM", "SIGINT"] as const) {

@@ -14,9 +14,10 @@
  * org runs on with whatever is left instead of reprinting one complaint every minute
  * forever. When nothing is left, `liquen start` refuses too, naming who gave up.
  *
- * One supervisor per org. A run holds `data/liquen.pid` for its life (stop.ts) — the lock
- * that makes it findable, so `liquen stop` has a pid to signal and a second `liquen start`
- * refuses instead of doubling every tail and dispatch over one log.
+ * One of each role. A run holds `data/run/liquen.pid` for its life and its main holds
+ * `data/run/main.pid` (stop.ts) — the locks that make them findable, so `liquen stop` has
+ * pids to signal, and a second supervisor, or a start over a mind an interface already
+ * raised, refuses instead of doubling every tail, fan-out and mirror over one log.
  *
  * Death is loud on stderr and nowhere else — the supervisor never opens the log; the
  * outer layer (docker restart, systemd, the terminal) supervises `liquen start` itself.
@@ -31,7 +32,7 @@
 import { TextLineStream } from "@std/streams";
 import { findRoot, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
 import { entry, REFUSAL } from "./entry.ts";
-import { claim } from "./stop.ts";
+import { claim, holder, MAIN, SUPERVISOR } from "./stop.ts";
 import { SHIPPED } from "./connect/connect.ts";
 
 const RESTART_BASE_MS = 1_000;
@@ -114,15 +115,25 @@ if (import.meta.main) {
     const root = findRoot(orgFlag());
     const catalog = await readConfig(root);
     const procs = roster(root, catalog.connections);
-    // ONE supervisor per org: a second would tail, fan out and dispatch the same log twice.
-    // The lock is taken after the catalog is read, so a manifest this run cannot serve
-    // refuses on its own terms instead of on a lock it went on to drop (stop.ts)
+    // ONE OF EACH ROLE (stop.ts). The locks are taken after the catalog is read, so a
+    // manifest this run cannot serve refuses on its own terms and not on a lock it went
+    // on to drop
     const dir = `${root}/data`;
     await Deno.mkdir(dir, { recursive: true });
-    const lock = claim(dir);
+    const lock = claim(dir, SUPERVISOR);
     if ("taken" in lock) {
       const who = lock.taken === null ? "" : ` as pid ${lock.taken}`;
       throw new Error(`${root} is already running${who} — \`liquen stop\` first`);
+    }
+    // the mind may already be up without a supervisor: an interface that found no daemon
+    // raised an ephemeral one. Main refuses the duplicate on its own lock either way — this
+    // is only so the sentence arrives before a single child is spawned
+    const mind = await holder(dir, MAIN);
+    if (mind !== null) {
+      throw new Error(
+        `a main already runs ${root} (pid ${mind}) — an interface raised it; ` +
+          `\`liquen stop\` first`,
+      );
     }
     const live = new Map<string, Deno.ChildProcess>();
     const refused: string[] = []; // gave up on purpose — the child said why, once

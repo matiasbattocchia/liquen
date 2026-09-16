@@ -2759,16 +2759,28 @@ loudly, the same law as an unknown config key.
   logged once and left down, because a port already held or a key the file got wrong will be
   held and wrong again a second later. The org keeps running with whatever is left, and
   `liquen start` refuses when nothing is.
-- **One supervisor per org, and the lock says so.** A run takes an exclusive lock on
-  `data/liquen.pid` for its whole life and writes its pid inside (src/stop.ts). The LOCK is
-  what answers "is this org running" — the kernel drops it the moment the holder dies,
-  however it dies, so no stale file is ever reasoned about — and the number inside only says
-  who to signal. `liquen stop` is one SIGTERM to that pid, then a wait for the lock to come
-  free: the run actually gone, not merely asked, which is what makes `liquen stop && liquen
-  start` safe to say in one breath. A run that will not go is named, never escalated —
-  SIGKILLing a wedged supervisor orphans children that still hold its ports. A second
-  `liquen start` refuses on the lock, after reading the catalog, so a manifest it could not
-  serve refuses on its own terms.
+- **A role is a lock.** Every process in an org's run takes an exclusive lock on
+  `data/run/<role>.pid` for its whole life and writes its pid inside (src/stop.ts):
+  `liquen` is the supervisor, `main` is the mind — the tail, the fan-out, the doors —
+  whoever raised it. The LOCK answers "is this role running", because the kernel drops it
+  the moment the holder dies, however it dies, so no stale file is ever reasoned about; the
+  number inside only says who to signal. Two rules fall out, and they are the same rule:
+  - **One of each role.** A main that finds `main` taken refuses rather than become the
+    second mind over one log — two tails, two fan-outs, and two mirrors of every line the
+    agent speaks, which is a duplicate message on someone's phone. An interface raises an
+    ephemeral main only when nothing answers its door, so the duplicate arrives the other
+    way round: `liquen start` over a mind a REPL already raised. That refuses too, before a
+    single child is spawned, and says which. The locks are taken after the catalog is read,
+    so a manifest the run cannot serve refuses on its own terms.
+  - **A stop is about the org.** `liquen stop` ends the run, not a process: the supervisor
+    first and alone — its SIGTERM fans out to the children it keeps alive, and a child
+    stopped ahead of its parent earns nothing but a restart — and then whatever is still
+    standing, which was nobody's child. An interface-raised main is stopped like the rest
+    and its REPL hangs up, because an explicit order is explicit. Each signal is followed by
+    a wait for that lock to come free — the process actually gone, not merely asked, which
+    is what makes `liquen stop && liquen start` safe to say in one breath. A holder that
+    will not go is named, never escalated: SIGKILLing a wedged supervisor orphans whatever
+    still holds its ports.
 - **`liquen update` is the org's version, not the harness's.** The org's `deno.jsonc` pins
   the package and its lock names the exact version every task runs, so updating is one
   `deno outdated --update --latest --min-dep-age 0 @liquen/liquen` against that manifest

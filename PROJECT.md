@@ -2992,3 +2992,27 @@ user id, which the profile leg names) and the `channel_rename` / `group_rename` 
 push the rest. The bot list gains `groups:read`, `im:read` and `mpim:read` for it, so an
 installed app is reinstalled to name private rooms and DMs; until then those calls answer
 `missing_scope`, the lookup stays uncached, and the room lists by its id.
+
+### A role is a lock (2026-09-16) — LANDED
+
+The off switch landed and was used the same hour, and the restart it performed sent the same
+WhatsApp message to the same phone twice. Both rows carried the same `extra.via` — one
+source event, mirrored once per main — because the REPL open since 12:53 had raised an
+ephemeral main of its own two hours earlier, and `liquen start` had just put a second one
+beside it. Neither was wrong about anything: the first was covering for an absent daemon,
+the second WAS the daemon. The lock was on the supervisor, and the thing that must be unique
+is the mind.
+
+So a role is a lock. Every process in a run holds `data/run/<role>.pid` while it lives —
+`liquen` the supervisor, `main` the mind — and there is one of each, whoever raised it. A
+main that finds `main` taken refuses; `liquen start` over a mind an interface already raised
+refuses too, before a single child is spawned, and says which. An interface raises a mind
+only when nothing answers its door, so those two orders are the only two ways a duplicate
+was ever reachable.
+
+And a stop became an order about the org rather than about a process, which is what the word
+means: the supervisor first and alone, since its own SIGTERM fans out and a child stopped
+ahead of its parent earns nothing but a restart, and then whatever is still standing —
+nobody's child, an ephemeral main under a REPL that hangs up when it goes. Each signal is
+followed by a wait for that lock to come free, so the shape the operator types,
+`liquen stop && liquen start`, is a fact and not a hope.

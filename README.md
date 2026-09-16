@@ -35,11 +35,14 @@ code of its own, so the package that runs is always the one the org's `deno.json
 deno install -g -A -n liquen jsr:@liquen/liquen/liquen
 ```
 
-An org runs under one supervisor, which holds `data/liquen.pid` for as long as it lives: the
-lock is how `liquen stop` finds a pid to signal, and why a second `liquen start` refuses
-instead of tailing and dispatching the same log twice. `liquen update` puts the org on the
-newest release of the package — the lock names the version every task runs, so the new code
-comes up at the next `liquen start`.
+A role is a lock: every process in a run holds `data/run/<role>.pid` while it lives —
+`liquen` the supervisor, `main` the mind. So there is one of each, whoever started it: a
+REPL that finds no daemon raises a mind of its own, and `liquen start` over it refuses
+rather than tail, fan out and mirror the same log twice. `liquen stop` ends the run, not a
+process — the supervisor first, then anything still standing, an interface-raised mind
+included — and waits for each lock to come free, so `liquen stop && liquen start` is safe to
+say in one breath. `liquen update` puts the org on the newest release of the package: the
+lock names the version every task runs, so the new code comes up at the next `liquen start`.
 
 `./data/` is seeded from the package's `src/seed/` templates by the command that declares:
 `liquen init` writes `data/system/` and `data/organizations/` — what every agent reads — and `liquen
