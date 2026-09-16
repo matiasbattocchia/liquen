@@ -2154,8 +2154,8 @@ const AROUND_MAX = 10;
  * neighbours form a STRETCH, a contiguous slice of the room; stretches that share a row
  * are one, and where two do not, lines lie between them that the page does not show —
  * which is what `adjacent` reports to the renderer, so it can say so. The bounds are the
- * hit's moment (strict): a row on the very same instant as a hit is neither before nor
- * after it and is left out, a loss the log's clock makes rare.
+ * hit's ID, the log's own order: a clock bound would lose a burst stamped on the hit's
+ * very second, on either side of it, with nothing on the page to say so.
  */
 async function surround(
   log: Pick<Reader, "read">,
@@ -2171,8 +2171,8 @@ async function surround(
       copies: false,
     };
     const [before, after] = await Promise.all([
-      log.read({ ...room, before: hit.ts, limit: n }) as Promise<MessageEvent[]>,
-      log.read({ ...room, after: hit.ts, first: n }) as Promise<MessageEvent[]>,
+      log.read({ ...room, beforeId: hit.id, limit: n }) as Promise<MessageEvent[]>,
+      log.read({ ...room, afterId: hit.id, first: n }) as Promise<MessageEvent[]>,
     ]);
     const stretch = [...before, hit, ...after];
     for (const e of stretch) rows.set(e.id, e);

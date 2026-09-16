@@ -162,6 +162,9 @@ Deno.test("first keeps the earliest N past a bound; copies:false drops mirror ro
       ["04", "05"],
     );
     await assertRejects(() => log.read({ limit: 1, first: 1 }), Error, "exclusive");
+    // id bounds: the log's own order, strict on a unique key — a row shares no bound
+    assertEquals((await log.read({ beforeId: "03", limit: 5 })).map((e) => e.id), ["01", "02"]);
+    assertEquals((await log.read({ afterId: "03", first: 1 })).map((e) => e.id), ["04"]);
     // a copy (`extra.via`) is the mirror's, not a line of its own
     await log.publish({ ...msg("06", "c1", "06"), extra: { via: { event: "05" } } });
     assertEquals((await log.read({ copies: false })).map((e) => e.id), [

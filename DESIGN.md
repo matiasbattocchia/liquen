@@ -1588,8 +1588,11 @@ reads the `n` lines either side of every match in its own room (under no filter 
 port's law and the mirror rule — context is what was said there, whatever the search was
 for): each match wears the bare `match` attribute after its stamp, stretches that share a
 row are one, and a `… lines between, not shown` line stands where two do not meet — the
-window's own elision voice. Capped at ten a side: context is for reading an exchange, and
-paging a room is `in` with a time bound.
+window's own elision voice. The neighbours are read by the log's own order (`beforeId` /
+`afterId`, strict on the unique id), not by the clock: a burst stamped on the hit's second
+would be neither before nor after it by time, and would vanish with nothing on the page to
+say so. Capped at ten a side: context is for reading an exchange, and paging a room is `in`
+with a time bound.
 
 - **Push-default / pull-escape**: nu pushes the agent its recent window at buildContext;
   `search` is the escape hatch to reach beyond — older history, other *public*

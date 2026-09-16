@@ -3195,3 +3195,10 @@ not shown` stands in the room, the window's own elision voice. Two store facts m
 possible: `first` (the EARLIEST N past a bound — `limit` after a hit would have handed back
 the room's tail) and `copies: false` (the mirror exclusion pushed into SQL beside
 `silenced`, where a filter would have walked rows to drop them). Capped at ten a side.
+
+The first cut bounded the context by the hit's timestamp, strict both ways — so a burst
+stamped on the hit's very second (WhatsApp stamps to the second; an import coalesces more)
+was neither before nor after it and vanished, with the stretch reading as contiguous. The
+bounds are now the log's own order: `beforeId` / `afterId` on `ReadQuery`, strict on the
+unique id, so nothing shares a bound. The integration test puts its first three rows on one
+second and fails on the clock bounds by exactly the two lost lines.

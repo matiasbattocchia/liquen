@@ -83,6 +83,12 @@ export interface ReadQuery {
   senderName?: string;
   after?: string; // events after this TIMESTAMP (event time — Slack-search semantics, §6)
   before?: string; // events before this TIMESTAMP
+  /** Bounds on the log's own order — `id` (UUIDv7, append order, §3) — strict, like the
+   *  time bounds, but on a unique key, so nothing shares the bound: the rows right beside
+   *  one row (`search around`), where a clock that ticks by the second would lose a burst
+   *  stamped on the same instant. */
+  afterId?: EventId;
+  beforeId?: EventId;
   text?: string; // case-insensitive substring over text parts
   types?: Event["type"][]; // restrict to these event types
   /** Rows whose lifecycle stands at this stage (`status.state`, indexed). A dispatcher
@@ -1131,6 +1137,8 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
   // a uuid would silently match everything or nothing (a real bug this replaced)
   if (q.after !== undefined) (where.push("timestamp > ?"), params.push(utcOf(q.after)));
   if (q.before !== undefined) (where.push("timestamp < ?"), params.push(utcOf(q.before)));
+  if (q.afterId !== undefined) (where.push("id > ?"), params.push(q.afterId));
+  if (q.beforeId !== undefined) (where.push("id < ?"), params.push(q.beforeId));
   if (q.types && q.types.length > 0) {
     where.push(`type IN (${q.types.map(() => "?").join(",")})`);
     params.push(...q.types);

@@ -1388,8 +1388,10 @@ Deno.test("search around: a match among its neighbours, stretches merged, the ga
   // eight lines in one room, two of them matches three lines apart: `around: 1` reads the
   // line either side of each. The two stretches do not touch, so a `…` line stands
   // between them; a third match next to the second shares its stretch and adds no gap.
+  // The first three rows share one SECOND — a burst as WhatsApp stamps it — and the context
+  // still finds the neighbours, because the bounds are the log's order, not the clock's.
   const row = (m: number, text: string): Draft<MessageEvent> => ({
-    ts: `2026-09-04T12:${String(m).padStart(2, "0")}:00Z`,
+    ts: `2026-09-04T12:${String(Math.max(m, 3)).padStart(2, "0")}:00Z`,
     type: "message",
     envelope: {
       service: "local",
