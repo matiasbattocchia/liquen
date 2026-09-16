@@ -397,9 +397,11 @@ Deno.test("contact: `who` resolves like a send, the write rides the person's own
   ]);
   const wrote: Record<string, unknown>[] = [];
   const contact = {
-    whatsapp: (req: Record<string, unknown>) => {
-      wrote.push(req);
-      return Promise.resolve(req.name ? { name: String(req.name) } : { name: "vero 🌻" });
+    whatsapp: {
+      write: (req: Record<string, unknown>) => {
+        wrote.push(req);
+        return Promise.resolve(req.name ? { name: String(req.name) } : { name: "vero 🌻" });
+      },
     },
   };
   const gated: { name: string; target?: { connection?: string } }[] = [];
@@ -471,6 +473,189 @@ Deno.test("contact: `who` resolves like a send, the write rides the person's own
   }
 });
 
+Deno.test("search `from` asks the address books too: someone saved and never heard from", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+    { service: "slack", address: "T1:U9", agentId: "a1" }, // keeps no book: never asked
+  ]);
+  const asked: Record<string, unknown>[] = [];
+  const contact = {
+    whatsapp: {
+      write: () => Promise.resolve({}),
+      lookup: (req: Record<string, unknown>) => {
+        asked.push(req);
+        return Promise.resolve(
+          String(req.query).toLowerCase().includes("ver")
+            ? [
+              { name: "Verónica Sesto", address: "5492616104507" },
+              { name: "Vera Halim", address: "5491133322211" },
+            ]
+            : [],
+        );
+      },
+    },
+  };
+  const { transport } = scripted([
+    ok([{ kind: "tool_use", name: "search", input: { from: "Verónica" } }], "tool_use"),
+    ok([{ kind: "tool_use", name: "search", input: { from: "Nadie" } }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, contact };
+  try {
+    // Verónica wrote once, back when nobody had named her: the row carries a number and
+    // no name, so the LOG cannot find her by name and the book is what reaches the row
+    await log.publish({
+      ts: new Date(Date.now() - 40 * 3_600_000).toISOString(),
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "5491100000000",
+        external_id: "whatsapp:wmw.v0",
+        conversation: { address: "5492616104507", kind: "direct" },
+        sender: { address: "5492616104507" },
+      },
+      parts: [{ type: "text", kind: "text", text: "hola, quiero info" }],
+    });
+    await log.publish(principalMsg("qué me dijo verónica"));
+    for (let i = 0; i < 12; i++) await xi(CONFIG, ports);
+
+    // one account keeps a book and one does not; only the one that does was asked
+    assertEquals(asked, [{ connection: "5491100000000", query: "Verónica" }, {
+      connection: "5491100000000",
+      query: "Nadie",
+    }]);
+
+    const results = await log.read({ types: ["tool_result"] });
+    const found = (results[0] as ToolResultEvent).parts[0].data.output as SearchResult;
+    // both saved Verónicas come back, each with the account whose book holds her
+    assertEquals(found.contacts, {
+      hits: [
+        { name: "Verónica Sesto", address: "5492616104507", connection: "5491100000000" },
+        { name: "Vera Halim", address: "5491133322211", connection: "5491100000000" },
+      ],
+    });
+    // and the book's address reached her one nameless row — a hit the log's own name
+    // lookup could never have found
+    assertEquals(found.messages.hits.length, 1);
+    assertEquals(found.messages.hits[0].address, "5492616104507");
+    assertStringIncludes(found.messages.hits[0].text, "quiero info");
+
+    // a name in neither place is still an error, and says both places were asked
+    assertStringIncludes(
+      JSON.stringify(results[1].parts),
+      "no address book of yours has them",
+    );
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("search: a book that cannot be reached is named, never mistaken for an empty one", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const contact = {
+    whatsapp: {
+      lookup: () => Promise.reject(new Error("cannot reach bridge.local — connection refused")),
+    },
+  };
+  const { transport } = scripted([
+    ok([{ kind: "tool_use", name: "search", input: { from: "vero 🌻" } }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, contact };
+  try {
+    await log.publish({
+      ts: new Date(Date.now() - 40 * 3_600_000).toISOString(),
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "5491100000000",
+        external_id: "whatsapp:wmw.v1",
+        conversation: { address: "5492616104507", kind: "direct", name: "vero 🌻" },
+        sender: { address: "5492616104507", name: "vero 🌻" },
+      },
+      parts: [{ type: "text", kind: "text", text: "hola, quiero info" }],
+    });
+    await log.publish(principalMsg("qué me dijo vero"));
+    for (let i = 0; i < 10; i++) await xi(CONFIG, ports);
+    // the log is the answer being asked for: a dead bridge does not fail the search
+    const found = ((await log.read({ types: ["tool_result"] }))[0] as ToolResultEvent)
+      .parts[0].data.output as SearchResult;
+    assertEquals(found.messages.hits.length, 1);
+    assertEquals(found.contacts, { hits: [], unreached: ["5491100000000"] });
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("search: a port is per service, a book is per ACCOUNT — every one of them answers", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  log.syncAgents([{ agentId: "a1", mind: "mind@a1", phone: "5491100000002" }]);
+  log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+    { service: "whatsapp", address: "5491100000001", agentId: "a1", extra: { name: "Clínica" } },
+    { service: "google", address: "sole@clinica.ar", agentId: "a1" },
+    // org-wide, and claimed by no handle of a1's: not an account of this agent, never asked
+    { service: "whatsapp", address: "5491100000009" },
+  ]);
+  const asked: string[] = [];
+  const contact = {
+    whatsapp: {
+      lookup: ({ connection }: { connection: string }) => {
+        asked.push(connection);
+        // the clinic's book is the one behind a bridge that is down
+        return connection === "5491100000001"
+          ? Promise.reject(new Error("cannot reach bridge.local — connection refused"))
+          : Promise.resolve([{ name: "Ana Vidal", address: "5491133322211" }]);
+      },
+    },
+    google: {
+      lookup: ({ connection }: { connection: string }) => {
+        asked.push(connection);
+        return Promise.resolve([{ name: "Ana V. (clínica)", address: "ana@vidal.ar" }]);
+      },
+    },
+  };
+  const { transport } = scripted([
+    ok([{ kind: "tool_use", name: "search", input: { from: "Vidal" } }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, contact };
+  try {
+    await log.publish(principalMsg("quién es vidal"));
+    for (let i = 0; i < 10; i++) await xi(CONFIG, ports);
+    // one call per ACCOUNT on a service that keeps a book — the port is shared, the
+    // connection is not — and the org's row, which no handle of a1's claims, is not one
+    assertEquals(asked.sort(), ["5491100000000", "5491100000001", "sole@clinica.ar"]);
+
+    const found = ((await log.read({ types: ["tool_result"] }))[0] as ToolResultEvent)
+      .parts[0].data.output as SearchResult;
+    // assembled in ACCOUNT order — the connections' own `service, address` — whatever
+    // order the books answered in, and the dead one hides neither its neighbours
+    assertEquals(found.contacts, {
+      hits: [
+        { name: "Ana V. (clínica)", address: "ana@vidal.ar", connection: "sole@clinica.ar" },
+        { name: "Ana Vidal", address: "5491133322211", connection: "5491100000000" },
+      ],
+      unreached: ["5491100000001"],
+    });
+    assertEquals(found.messages.hits, []); // neither Ana has ever written
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("contact: two accounts and a stranger — the model must say which book", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -482,9 +667,11 @@ Deno.test("contact: two accounts and a stranger — the model must say which boo
   ]);
   const wrote: Record<string, unknown>[] = [];
   const contact = {
-    whatsapp: (req: Record<string, unknown>) => {
-      wrote.push(req);
-      return Promise.resolve({});
+    whatsapp: {
+      write: (req: Record<string, unknown>) => {
+        wrote.push(req);
+        return Promise.resolve({});
+      },
     },
   };
   const gated: ({ connection?: string } | undefined)[] = [];
@@ -1208,8 +1395,8 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
       const [found, missed] = await read("tool_result");
 
       // matched case-insensitively, and the row hands back the address to point at
-      const { hits: rows } = (found as ToolResultEvent).parts[0].data.output as {
-        hits: { address: string; conversation: string; sender: string }[];
+      const { messages: { hits: rows } } = (found as ToolResultEvent).parts[0].data.output as {
+        messages: { hits: { address: string; conversation: string; sender: string }[] };
       };
       assertEquals(rows.length, 2);
       assertEquals(rows[0].address, "15613518605");
@@ -1255,8 +1442,8 @@ Deno.test("search bounds read the org's clock: a bare stamp means the wall the m
       await publish(principalMsg("qué dijo antes de las cinco"));
       await waitFor(async () => (await read("tool_result")).length === 1);
       const [found] = await read("tool_result");
-      const { hits } = (found as ToolResultEvent).parts[0].data.output as {
-        hits: { text: string }[];
+      const { messages: { hits } } = (found as ToolResultEvent).parts[0].data.output as {
+        messages: { hits: { text: string }[] };
       };
       assertEquals(hits.map((r) => r.text), ["antes"]);
     },
@@ -1301,7 +1488,7 @@ Deno.test("search hands back the line the window shows, and pages on the oldest 
       await publish(principalMsg("qué gastamos"));
       await waitFor(async () => (await read("tool_result")).length === 3);
       const [page, rest, named] = (await read("tool_result"))
-        .map((e) => (e as ToolResultEvent).parts[0].data.output as SearchResult);
+        .map((e) => ((e as ToolResultEvent).parts[0].data.output as SearchResult).messages);
       assertEquals(page.hits.map((h) => h.text), [
         '<image name="a.jpg" path="/media/a.jpg"/>',
         'nafta\n<image name="b.jpg" path="/media/b.jpg"/>',

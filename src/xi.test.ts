@@ -738,7 +738,7 @@ Deno.test("specsOf: `tools` names what the model sees — unset offers everythin
   // the address book is offered where an account keeps one, and only there
   const withBook = {
     exec: { bash },
-    contact: { whatsapp: () => Promise.resolve({}) },
+    contact: { whatsapp: { write: () => Promise.resolve({}) } },
   } as unknown as XiPorts;
   assertEquals(specsOf(withBook, { ...CONFIG, tools: undefined }).map((t) => t.name), [
     "send",

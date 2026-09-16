@@ -259,9 +259,9 @@ export async function start(
   // `agents/<id>`, where its docs and memories already are — with the org's binaries on
   // PATH; the shell on it is the session's, so where one session stands and what it left
   // running is never another's. Shells open on first contact and are reaped at teardown.
-  // the address book's write side (§9): one port per service that keeps one, wired where
-  // the connection is declared — whatsapp's rides the bridge the dispatcher already talks
-  // to, on the same token
+  // the address book (§9): one port per service that keeps one, wired where the connection
+  // is declared — whatsapp's rides the bridge the dispatcher already talks to, on the same
+  // token, and carries both legs: `contact` writes through it, `search` reads through it
   const bridge = config.catalog?.connections?.whatsapp;
   const contact: XiPorts["contact"] = bridge
     ? {

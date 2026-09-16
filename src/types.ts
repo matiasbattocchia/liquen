@@ -608,12 +608,22 @@ export type SearchHit = {
    *  per attachment — name and the `path` bash takes — then one element per data part. */
   text: string;
 };
-/** The page: the most recent matches, newest last. `more` stands only when the page cut
- *  older matches off — its `before` is the oldest hit's moment, the bound the next page
- *  passes back. */
+/** One address-book entry a `from` matched: who the account has saved, and where. `address`
+ *  is what `send(to:)` and `from` both take back, whether or not they have ever written. */
+export type ContactHit = {
+  name: string;
+  address: string;
+  connection: string; // the account whose book holds them
+};
+/** The answer, one leg per place a search looks. `messages` is the page: the most recent
+ *  matches, newest last; `more` stands only when the page cut older matches off — its
+ *  `before` is the oldest hit's moment, the bound the next page passes back. `contacts`
+ *  stands only when a `from` asked the accounts' address books: `hits` is whoever they
+ *  have saved under that name, and `unreached` names an account whose book could not be
+ *  asked, so an empty `hits` is never read as "nobody by that name". */
 export type SearchResult = {
-  hits: SearchHit[];
-  more?: { before: Timestamp };
+  messages: { hits: SearchHit[]; more?: { before: Timestamp } };
+  contacts?: { hits: ContactHit[]; unreached?: string[] };
 };
 
 /** `bash(cmd)` — the sandbox's one primitive; everything exec-y is bash + a skill (§9). */

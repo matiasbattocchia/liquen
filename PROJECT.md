@@ -3097,15 +3097,40 @@ right there reading the error — so it is bounded (30s, `timedFetch`), unqueued
 retry, which puts it beside `bash` rather than beside `send`. The rule this leaves: a tool
 takes a log row when something outlives its call for the row to carry.
 
-**Searching the book is therefore OPEN, and its shape follows from the same rule.** `search`
-reads the log, so it finds anyone who has spoken, under the saved name once they have —
-and nobody else. To reach a saved contact who never wrote, the place to ask is the service,
-because the service is where the book is: a READ leg on the same port (`lookup(connection,
-query)` → candidates), which the bridge can answer straight out of whatsmeow's contact
-store with no new state on either side. That keeps one path — the same port, the same gate,
-the same tool surface — and it is the alternative to every design that copies the book into
-`log.db` first and searches the copy. Unbuilt: `contact` writes today, and a name with no
-rows behind it is still "nobody named … has spoken here".
+**Searching the book: `search from:` asks the service, and the same rule picks the shape.**
+`search` reads the log, so on its own it finds anyone who has spoken and nobody else. A
+saved contact who never wrote is in the account's book, so that is where the question goes:
+`ContactPort` grew a second leg, `lookup(connection, query)` → entries, and the bridge
+answers it out of whatsmeow's own contact store — `GET /contacts/{address}?q=…`,
+no new state on either side. One path: the same port the write goes through, the same gate,
+the same tool, so the Mu door reaches a book exactly the way the model does.
+
+`from` is what consults a book, and that is not a preference — every other filter describes
+a MESSAGE (a conversation, a stretch of time, a phrase in the body) and an entry has none
+of those, while `from` names a person and a person is in two places. Both are asked at
+once, and the answer has a leg per place — `messages` for the rows, `contacts` for the
+entries, each tagged with the account that holds it. The entries' addresses ALSO narrow
+the row filter — so a contact saved before they ever wrote finds the lines they sent as a
+bare number, under a name nobody had typed yet, which the log's own name lookup could
+never reach. `search` widens on a person rather than refusing one (its own rule for two
+people named Ana), which is why the book is asked on every `from` and not only when the
+log comes up empty. A book that cannot be reached is named in `contacts.unreached` instead
+of failing the call: the log is the answer being asked for, and a dead bridge must not
+turn every `from` into an error, nor an unasked book into "nobody by that name".
+
+What the endpoint answers is the entries the ACCOUNT named — `pickName`'s saved half, the
+same line `sender_saved` draws — so somebody who only ever supplied a pushname is known to
+the wire and stays out of the book. A query matches a name case-insensitively on a
+substring, the way a person searches their own phone, and its digits match the address, so
+a number reaches whoever it is saved as, and an entry the store keys by LID is answered by
+the phone it maps to, once, in the namespace every other bridge address is in. A lookup
+needs a query (422 without one) and caps at 25: this is a lookup, never a dump of the
+address book.
+
+Left standing: the read rides `search`'s rule, which is usually `allow`, while the write is
+`ask`. That asymmetry is deliberate — reading a name the account already holds is not
+writing the principal's book in their name — but an org that wants the book unreadable has
+to say so on `search`, which also turns off the log.
 
 **The tool.** `contact(who, name?, connection?, action)` — `who` an address or the name
 they go by here, resolved as `search from:` resolves it, ambiguity refused; `name` what
