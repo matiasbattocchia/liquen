@@ -96,12 +96,21 @@ sweeper never re-offers it. See §9 in DESIGN.md.
 ### The address book: the service keeps it, the name carries it
 
 A service that keeps an address book — the phone's, behind WhatsApp; Google Contacts —
-keeps it, and what liquen holds of it is the names it already receives. A write goes out
-through the connector's port (`XiPorts.contact`, one per service that keeps a book), which
-answers within the call and keeps no queue behind it: the `contact` tool's own result is
-the whole outcome, and a failed call is the model's to make again. Saving someone is a
-naming act, and a name reaches rows from their next message on, the way every rename here
-does.
+keeps it, and what liquen holds of it is the names it already receives. The connector's
+port (`XiPorts.contact`, one per service that keeps a book) has both legs, and each
+answers within its call and keeps no queue behind it: the tool result is the whole
+outcome, and a failed call is the model's to make again.
+
+`write` is the `contact` tool's. Saving someone is a naming act, and a name reaches rows
+from their next message on, the way every rename here does. `lookup` is `search`'s: a
+`from` names a person, and a person is in two places — the rows they wrote and the books
+they are saved in — so both are asked and the page has a place for each: the entries first,
+as `<contact>` lines under the `<conn>` of the account holding them, then the rows. That is
+what makes somebody saved and never heard from findable, and it puts the read on the same
+port, the same gate and the same tool the write already goes through. A service may keep
+one leg and not the other; the `contact` tool is offered where `write` is, and `search`
+asks whichever accounts have `lookup`. A book that cannot be reached is named in a line of
+its own rather than failing the search, because the log is the answer being asked for.
 
 What the connector does report, on every message, is whose word the sender's name is:
 `sender.saved` when it came from the account's address book, absent when it is the
@@ -213,7 +222,8 @@ than a rewrite would reach in months:
   reactions · locations · vCards · replies (quote ↔ `re_message_id`) · edits · revokes ·
   delivery/read receipts in · read receipts + typing out · pushnames · the address book,
   both ways (`sender_saved` on every message it names, `POST /dispatch` `{type: "contact"}`
-  to write an entry — on a fork of whatsmeow carrying `tulir/whatsmeow#1247`)
+  to write an entry, `GET /contacts/{address}?q=…` to look one up — on a fork of
+  whatsmeow carrying `tulir/whatsmeow#1247`)
 - **QR *and* phone-code pairing** with rotation polling, logout, session-death notification
 - history sync import (chunked), group subjects → conversation names, **LID → phone
   canonicalization**

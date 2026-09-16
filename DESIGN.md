@@ -1249,14 +1249,16 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   cross-conversation interleaving is arrival noise, not meaning; within a conversation,
   event time stands. A message that IS one part — a lone data part or a bare attachment —
   hoists the envelope onto that part's own element and spends no `<msg>` wrapper.
-- **Open — the address book (outgoing first contact).** Everything above serves incoming
-  traffic and replies: the model learns addresses from `address=` attributes, and `search`
-  recovers off-window ones. What no surface provides is an address the log has never
-  seen — initiating (DM a colleague first, post to a channel the agent was never in) has
-  no directory: the prefix names the surfaces (§5) but not who is on them — memberships
-  are not rendered, no list tool exists, and the model cannot mint platform addresses. Outgoing matters as much as incoming; what the
-  directory surface is — a rendered index, a tool over the map tables, a connector
-  lookup — is the open.
+- **The address book, and what is still open beside it (outgoing first contact).**
+  Everything above serves incoming traffic and replies: the model learns addresses from
+  `address=` attributes, and `search` recovers off-window ones. An address the log has
+  never seen comes from the service that keeps one — `search from:` asks the accounts'
+  address books through the same port `contact` writes through (§9), so a person saved on
+  the account is reachable before they have ever written, and the book stays the service's.
+  **Open:** a directory that is not an address book — a colleague on a workspace nobody has
+  DM'd, a channel the agent was never in. Memberships are not rendered and the model cannot
+  mint platform addresses, so what that surface is — a rendered index, a tool over the map
+  tables, another leg on the connector — is undecided.
 
 ### Trailing vs closed (no turns anywhere — derived, not tracked)
 

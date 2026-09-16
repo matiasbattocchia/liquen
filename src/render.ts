@@ -936,6 +936,37 @@ function conversationEl(c: { conv: Conversation; lines: string[] }): string {
   return `<conv ${attrs.join(" ")}>\n${c.lines.join("\n")}\n</conv>`;
 }
 
+/** An account's address-book entries on a search page (§6): the account's own `<conn>`
+ *  element — the same one its traffic wears — holding one `<contact>` per entry, name and
+ *  the address `send(to:)` takes. `contact` is already the window's word for a saved
+ *  sender (`authorOf`); here it is the entry itself. Untrusted strings attribute-escaped. */
+export function bookEl(
+  account: { service: string; address: string; name?: string },
+  entries: { name: string; address: string }[],
+): string {
+  const attrs = [
+    `service="${escAttr(account.service)}"`,
+    ...(account.name ? [`name="${escAttr(account.name)}"`] : []),
+    `address="${escAttr(account.address)}"`,
+  ];
+  const lines = entries.map((e) =>
+    `<contact name="${escAttr(e.name)}" address="${escAttr(e.address)}"/>`
+  );
+  return `<conn ${attrs.join(" ")}>\n${lines.join("\n")}\n</conn>`;
+}
+
+/** A book that could not be asked, said in the harness's own voice — the account named
+ *  the way the window's `connections:` line names it, so "not asked" never reads as
+ *  "nobody by that name". */
+export function unreachedLine(
+  account: { service: string; address: string; name?: string },
+): string {
+  const name = account.name ? ` "${escText(account.name)}"` : "";
+  return `— ${escText(account.service)} ${
+    escText(account.address)
+  }${name}: address book not reached —`;
+}
+
 /**
  * A `search` page (§6), in the window's own grammar: the hits are world lines, grouped the
  * way the window groups them — one `<conn>` per account, one `<conv>` per room, rooms

@@ -29,6 +29,8 @@ import type {
   About,
   Action,
   AlarmEvent,
+  ContactHit,
+  Contacts,
   Draft,
   Emit,
   Envelope,
@@ -72,6 +74,7 @@ import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./st
 import type { FilePart } from "./types.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import {
+  bookEl,
   cancelled,
   hhmm,
   type HitsOpts,
@@ -85,6 +88,7 @@ import {
   shortId,
   silenced,
   textOf,
+  unreachedLine,
 } from "./render.ts"; // shared predicates: silenced never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
@@ -764,17 +768,31 @@ export interface ExecOutcome {
   files: string[];
 }
 
-/** One address-book write, on one account: save `address` as `name` — absent, the name
- *  the wire knows them by, or none — or take the entry out. Answers the name the wire
- *  took, once the service has the change. A port answers within the call and keeps no
- *  queue: the tool result is the outcome, and a throw fails the call for the model to
- *  make again. The book itself stays the service's. */
-export type ContactPort = (req: {
-  connection: string;
-  address: string;
-  name?: string;
-  remove?: boolean;
-}) => Promise<{ name?: string }>;
+/**
+ * A service's address book, both legs (§9). The book itself stays the service's: these
+ * ask it, and hold nothing. Each leg answers within its call and keeps no queue, so a
+ * tool result is the outcome and a throw is the failure the caller re-decides on.
+ *
+ * `write` saves `address` as `name` — absent, the name the wire knows them by, or none —
+ * or takes the entry out, and answers the name the wire took. `lookup` is the read: a
+ * query the way a person searches their own phone, answering the entries that match it.
+ * A service may keep one leg and not the other; a book nobody can write is still worth
+ * reading.
+ */
+export interface ContactPort {
+  write?: (req: {
+    connection: string;
+    address: string;
+    name?: string;
+    remove?: boolean;
+  }) => Promise<{ name?: string }>;
+  /** Entries matching `query` on one account. Answers names the ACCOUNT gave: the same
+   *  word `sender.saved` marks on a message. How many is the service's own cap. */
+  lookup?: (req: {
+    connection: string;
+    query: string;
+  }) => Promise<{ name: string; address: string }[]>;
+}
 
 /** An exec-plane tool: its API spec + its executor. Executors should throw on failure. */
 export interface ExecTool {
@@ -1520,6 +1538,52 @@ function accounts(self: { id: string }, ports: XiPorts): ConnectionRow[] {
   return me ? speaksThrough(me, rows) : rows;
 }
 
+/** The services whose address book this harness can WRITE — what the `contact` tool is
+ *  offered on, and which accounts may save somebody. */
+function writers(ports: XiPorts): string[] {
+  return Object.entries(ports.contact ?? {}).filter(([, p]) => p.write).map(([s]) => s);
+}
+
+/**
+ * The agent's accounts, asked for whoever `query` names (§6). A port is per SERVICE and an
+ * account is what holds a book, so every account on a service that keeps one is asked, and
+ * all of them at once. Entries come back tagged with the account holding them: the same
+ * person can be saved on one and unknown on another, under two different names, and which
+ * book they are in is what a later `send` or `contact` rides.
+ *
+ * The answers are assembled in ACCOUNT order — the connections' own, `service` then
+ * `address` — and never in arrival order, so the same query reads the same way twice.
+ *
+ * A book that cannot be reached is NOT the search's failure: the log is the answer being
+ * asked for, and a bridge that is down would otherwise turn every `from` into an error.
+ * The account is named in `unreached` instead, so an empty result reads as "not asked"
+ * rather than "nobody by that name" — and one dead service never hides another's answer.
+ *
+ * `undefined` when no account of the agent's keeps a book: then there was nothing to ask,
+ * which is a different fact from every book having been asked and none holding the name.
+ */
+async function booked(
+  self: { id: string },
+  ports: XiPorts,
+  query: string,
+): Promise<Contacts | undefined> {
+  const asked = accounts(self, ports).filter((c) => ports.contact?.[c.service]?.lookup);
+  if (asked.length === 0) return undefined;
+  const answers = await Promise.all(asked.map(async (c) => {
+    try {
+      const found = await ports.contact![c.service]!.lookup!({ connection: c.address, query });
+      return found.map((e) => ({ name: e.name, address: e.address, connection: c.address }));
+    } catch {
+      return c.address; // the account, standing in for the answer it could not give
+    }
+  }));
+  const unreached = answers.filter((a) => typeof a === "string");
+  return {
+    hits: answers.filter((a) => typeof a !== "string").flat(),
+    ...(unreached.length > 0 ? { unreached } : {}),
+  };
+}
+
 /** An account as the model names it — the string `<conn>` showed: its name (`extra.name`,
  *  matched case-insensitively on a substring, as every name here is) or its address (a
  *  phone as a phone). Only the agent's own accounts answer, and ambiguity is refused,
@@ -1934,9 +1998,7 @@ async function execute(
     // model's own to make again, where a `send` hands the log a work item and reads its
     // fate off that row later. The standing evidence of the entry is the next line from
     // them, which wears the name and reads `contact=`.
-    if (!ports.contact || Object.keys(ports.contact).length === 0) {
-      throw new Error("no account of yours keeps an address book");
-    }
+    if (!writers(ports).length) throw new Error("no account of yours keeps an address book");
     const who = String(args.who ?? "").trim();
     if (!who) throw new Error("say `who`: their address, or the name they go by here");
     const verb = args.action === undefined ? "save" : String(args.action);
@@ -1972,7 +2034,8 @@ async function execute(
     } else if (prior) {
       via = { service: prior.envelope.service, address: prior.envelope.connection_address };
     } else {
-      const mine = accounts(self, ports).filter((c) => ports.contact![c.service]);
+      const writable = writers(ports);
+      const mine = accounts(self, ports).filter((c) => writable.includes(c.service));
       if (mine.length !== 1) {
         throw new Error(
           mine.length === 0
@@ -1982,7 +2045,7 @@ async function execute(
       }
       via = mine[0];
     }
-    const port = ports.contact[via.service];
+    const port = ports.contact?.[via.service]?.write;
     if (!port) throw new Error(`${via.service} keeps no address book`);
     const wrote = await port({
       connection: via.address,
@@ -2000,7 +2063,8 @@ async function execute(
     const zone = config.timezone ?? DEFAULT_TIMEZONE;
     const bound = (v: Json | undefined) => v === undefined ? undefined : momentOf(String(v), zone);
     return await search(
-      ports.log,
+      ports,
+      self,
       { ...(args as SearchArgs), before: bound(args.before), after: bound(args.after) },
       {
         session: { id: config.sessionId, agentId: config.agentId },
@@ -2082,21 +2146,47 @@ interface SearchView {
  * copies (`extra.via`) are not hits — a copy's original is a row of its own and matches on
  * its own; the model never sees the same sentence twice. When older matches were cut, a
  * trailing harness line says so and names the bound the next page passes as `before`.
+ *
+ * A `from` names a PERSON, and a person is in two places: the rows they wrote, and the
+ * address books of the accounts that have them saved. Both are asked, and the books are
+ * asked through the port the `contact` tool writes through — the read rides the same gate
+ * as the rest of the search, so a script's door reaches a book exactly the way the model
+ * does. The other filters describe a message (a conversation, a stretch of time, a phrase
+ * in the body), which an entry in a book has none of, so `from` is what consults one. On
+ * the page a book's entries stand first — who they are, before what was said — under the
+ * account's `<conn>` as `<contact>` lines, and a book that could not be asked is said.
  */
 async function search(
-  log: Pick<Reader, "read">,
+  ports: XiPorts,
+  self: { id: string },
   args: SearchArgs,
   view: SearchView,
 ): Promise<string> {
+  const log = ports.log;
   const limit = args.limit ?? SEARCH_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) {
     throw new Error(`limit must be a positive integer, got ${JSON.stringify(args.limit)}`);
   }
   // the filters narrow by ADDRESS; a name is only ever a way to find one (§6)
-  const [conversations, senders] = await Promise.all([
+  const asked = args.from === undefined ? undefined : String(args.from);
+  const [conversations, spoke, contacts] = await Promise.all([
     rooms(log, args.in === undefined ? undefined : String(args.in)),
-    people(log, args.from === undefined ? undefined : String(args.from)),
+    people(log, asked),
+    asked === undefined ? undefined : booked(self, ports, asked),
   ]);
+  // the two places a person can be (§6): the rows they wrote, and the book they are saved
+  // in. Both narrow the same filter — so a contact the account saved before they ever
+  // wrote finds the lines they sent as a bare number, under a name nobody had typed yet.
+  const senders = asked === undefined
+    ? undefined
+    : [...new Set([...(spoke ?? []), ...(contacts?.hits ?? []).map((c) => c.address)])];
+  if (senders !== undefined && senders.length === 0) {
+    throw new Error(
+      contacts !== undefined
+        ? `nobody named "${asked}" has spoken here, and no address book of yours has them`
+        : `nobody named "${asked}" has spoken here`,
+    );
+  }
   // one row past the page: whether older matches exist is read off the rows, never
   // inferred from a page that happens to be full
   const rows = await log.read({
@@ -2119,7 +2209,6 @@ async function search(
     const rest = page.filter((e) => e.ts !== rows[0].ts);
     if (rest.length > 0) page = rest;
   }
-  if (page.length === 0) return "nothing matched";
   const around = args.around ?? 0;
   if (!Number.isInteger(around) || around < 0 || around > AROUND_MAX) {
     throw new Error(
@@ -2129,18 +2218,43 @@ async function search(
   const { lines, opts } = around > 0
     ? await surround(log, page, around)
     : { lines: page, opts: {} };
-  const rendered = renderHits(
-    lines,
-    view.session,
-    view.roster,
-    view.zone,
-    view.connections,
-    opts,
-  );
+  const books = contacts === undefined ? [] : bookLines(accounts(self, ports), contacts);
+  const lines_ = page.length === 0
+    ? []
+    : [renderHits(lines, view.session, view.roster, view.zone, view.connections, opts)];
   const older = more
-    ? `\n— older matches not shown — search again with before="${page[0].ts}" to read on —`
-    : "";
-  return `${rendered}${older}`;
+    ? [`— older matches not shown — search again with before="${page[0].ts}" to read on —`]
+    : [];
+  const out = [...books, ...lines_, ...older];
+  return out.length === 0 ? "nothing matched" : out.join("\n");
+}
+
+/** The address books' answer as page lines: one `<conn>` per account that holds an entry,
+ *  in the accounts' own order (the one `booked` assembled), its `<contact>` lines inside;
+ *  then one harness line per book that could not be asked, the account named as the
+ *  window names it. */
+function bookLines(mine: ConnectionRow[], contacts: Contacts): string[] {
+  const row = (address: string) => mine.find((c) => c.address === address);
+  const byAccount = new Map<string, ContactHit[]>();
+  for (const h of contacts.hits) {
+    let list = byAccount.get(h.connection);
+    if (!list) byAccount.set(h.connection, list = []);
+    list.push(h);
+  }
+  const out: string[] = [];
+  for (const [address, entries] of byAccount) {
+    const c = row(address);
+    out.push(bookEl({ service: c?.service ?? "?", address, name: nameOf(c) }, entries));
+  }
+  for (const address of contacts.unreached ?? []) {
+    const c = row(address);
+    out.push(unreachedLine({ service: c?.service ?? "?", address, name: nameOf(c) }));
+  }
+  return out;
+}
+
+function nameOf(c?: ConnectionRow): string | undefined {
+  return typeof c?.extra?.name === "string" && c.extra.name ? c.extra.name : undefined;
 }
 
 /** The most context a match may carry either side — enough to read an exchange, not a
@@ -2218,13 +2332,15 @@ async function rooms(log: Pick<Reader, "read">, handle?: string): Promise<string
   return found;
 }
 
+/** `from` → the addresses the LOG knows by that name (above). A person is also findable
+ *  in an account's book, which `search` asks in the same breath, so the two answers are
+ *  settled together there: whether a name reaches nobody at all is a question neither
+ *  source can answer alone. */
 async function people(log: Pick<Reader, "read">, handle?: string): Promise<string[] | undefined> {
   if (handle === undefined) return undefined;
   if ((await log.read({ from: handle, limit: 1 })).length > 0) return [handle];
   const named = await log.read({ senderName: handle, limit: NAME_REACH });
-  const found = [...new Set(named.map((e) => e.envelope.sender?.address).filter((a) => !!a))];
-  if (found.length === 0) throw new Error(`nobody named "${handle}" has spoken here`);
-  return found as string[];
+  return [...new Set(named.map((e) => e.envelope.sender?.address).filter((a) => !!a))] as string[];
 }
 
 export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
@@ -2289,7 +2405,11 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
         "`<conv>` around `<msg>` lines with the same ids, author marks, attachment markers " +
         "(with their `path`) and clock — every stamp with its year. When older matches were " +
         "cut, a closing line names the moment to pass as `before` for the next page. A " +
-        "`<conv address>` is what `in` and `send(to:)` both take back.",
+        "`<conv address>` is what `in` and `send(to:)` both take back. `from` also asks " +
+        "your accounts' address books: whoever is saved under that name stands first, as " +
+        "`<contact>` lines under the account's `<conn>`, with the `address` to write to — " +
+        "so someone you have saved and never heard from is findable too; a book that " +
+        "could not be asked is said in a line of its own.",
       input_schema: {
         type: "object",
         properties: {
@@ -2386,7 +2506,7 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
         required: ["id"],
       },
     },
-    ...(ports.contact && Object.keys(ports.contact).length > 0
+    ...(writers(ports).length > 0
       ? [
         {
           name: "contact",

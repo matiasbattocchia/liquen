@@ -603,6 +603,19 @@ export interface SearchArgs {
  *  clock as the window prints them, closed by a harness line naming the next page's
  *  `before` when older matches were cut. No result type: what is found reads as what is
  *  seen. */
+/** One address-book entry a `from` matched: who the account has saved, and where. `address`
+ *  is what `send(to:)` and `from` both take back, whether or not they have ever written. */
+export type ContactHit = {
+  name: string;
+  address: string;
+  connection: string; // the account whose book holds them
+};
+/** What the accounts' address books answered a `from` with: `hits` is whoever they have
+ *  saved under that name, and `unreached` names an account whose book could not be asked,
+ *  so an empty `hits` is never read as "nobody by that name". On the page, each book's
+ *  entries stand under their account's `<conn>` as `<contact>` lines, and an unreached
+ *  book is a harness line. */
+export type Contacts = { hits: ContactHit[]; unreached?: string[] };
 
 /** `bash(cmd)` — the sandbox's one primitive; everything exec-y is bash + a skill (§9). */
 export interface BashArgs {
