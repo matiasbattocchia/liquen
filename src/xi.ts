@@ -43,9 +43,9 @@ import type {
   PolicyAction,
   Rule,
   SearchArgs,
-  SearchResult,
   Service,
   Session,
+  SessionRef,
   ToolResultEvent,
   ToolUseEvent,
 } from "./types.ts";
@@ -72,7 +72,6 @@ import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./st
 import type { FilePart } from "./types.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import {
-  bodyOf,
   cancelled,
   hhmm,
   isCancelled,
@@ -80,6 +79,8 @@ import {
   ownSide,
   ownVoice,
   parseVerdict,
+  renderHits,
+  type Roster,
   shortId,
   silenced,
   textOf,
@@ -1997,11 +1998,27 @@ async function execute(
     // clock, the one every rendered line showed the model
     const zone = config.timezone ?? DEFAULT_TIMEZONE;
     const bound = (v: Json | undefined) => v === undefined ? undefined : momentOf(String(v), zone);
-    return await search(ports.log, {
-      ...(args as SearchArgs),
-      before: bound(args.before),
-      after: bound(args.after),
-    }, zone);
+    return await search(
+      ports.log,
+      { ...(args as SearchArgs), before: bound(args.before), after: bound(args.after) },
+      {
+        session: { id: config.sessionId, agentId: config.agentId },
+        // the window's own roster and account names (`think`), so a hit is authored and
+        // its `<conn>` named exactly as the window would — one vocabulary, both surfaces
+        roster: {
+          names: Object.fromEntries(
+            ports.log.agents().map((a) => [a.agentId, a.name ?? a.agentId]),
+          ),
+          principals: ports.log.principalsOf(config.agentId),
+        },
+        connections: Object.fromEntries(
+          surfacesOf(config, ports).flatMap((c) =>
+            typeof c.extra?.name === "string" && c.extra.name ? [[c.address, c.extra.name]] : []
+          ),
+        ),
+        zone,
+      },
+    );
   }
   const tool = ports.exec?.[name];
   if (!tool) throw new Error(`unknown tool: ${name}`);
@@ -2045,18 +2062,31 @@ async function referent(ports: XiPorts, conversation: string, re: string): Promi
  *  default-with-override shape bash's output caps have. */
 const SEARCH_LIMIT = 50;
 
+/** What a search page is rendered with: whose eyes (`session`), the roster's names, the
+ *  accounts' names (`<conn name>`), the org's clock — the window's own inputs. */
+interface SearchView {
+  session: SessionRef;
+  roster: Roster;
+  connections: Record<string, string>;
+  zone?: string;
+}
+
 /**
  * `search` (§6) — the tool's implementation, reached only through act: a script's door
  * search is a tool_use like any other (§9), so this runs for both under the same gate.
- * Visibility is the log handle's — the caller's scoped port answers, RLS-style. A hit's
- * `text` is render's `bodyOf` — the line the window would show, attachments as markers —
- * so what is found reads the same as what is seen, and a caption's photo comes with it.
+ * Visibility is the log handle's — the caller's scoped port answers, RLS-style. The page
+ * is a STRING in the window's grammar (`renderHits`): `<conn>`/`<conv>`-grouped `<msg>`
+ * lines with the same ids, author marks, markers and clock the window prints, so what is
+ * found reads the same as what is seen and a path read in a hit works in bash. Mirror
+ * copies (`extra.via`) are not hits — a copy's original is a row of its own and matches on
+ * its own; the model never sees the same sentence twice. When older matches were cut, a
+ * trailing harness line says so and names the bound the next page passes as `before`.
  */
 async function search(
   log: Pick<Reader, "read">,
   args: SearchArgs,
-  zone?: string,
-): Promise<SearchResult> {
+  view: SearchView,
+): Promise<string> {
   const limit = args.limit ?? SEARCH_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) {
     throw new Error(`limit must be a positive integer, got ${JSON.stringify(args.limit)}`);
@@ -2076,18 +2106,24 @@ async function search(
     text: args.text,
     types: ["message"],
     limit: limit + 1,
-  });
+    filter: (e) => e.extra?.via === undefined, // ANDed under the port's own law (§6)
+  }) as MessageEvent[];
   const more = rows.length > limit;
-  const page = more ? rows.slice(1) : rows;
-  const hits = page.map((e) => ({
-    id: e.id,
-    ts: e.ts,
-    conversation: e.envelope.conversation.name ?? e.envelope.conversation.address,
-    address: e.envelope.conversation.address, // what `in`/`send(to:)` take back
-    sender: e.envelope.sender?.name ?? e.envelope.sender?.address ?? "self",
-    text: bodyOf(e, zone),
-  }));
-  return { hits, ...(more ? { more: { before: page[0].ts } } : {}) };
+  let page = more ? rows.slice(1) : rows;
+  // `before` is strict, so the next page opens below the oldest hit's moment — which
+  // would lose a row that shares that moment and fell past the cut. When the dropped row
+  // sits on the same instant as the page's oldest, the whole instant moves to the next
+  // page (unless the page is nothing but that instant, where there is nothing to move).
+  if (more && rows[0].ts === page[0].ts) {
+    const rest = page.filter((e) => e.ts !== rows[0].ts);
+    if (rest.length > 0) page = rest;
+  }
+  if (page.length === 0) return "nothing matched";
+  const rendered = renderHits(page, view.session, view.roster, view.zone, view.connections);
+  const older = more
+    ? `\n— older matches not shown — search again with before="${page[0].ts}" to read on —`
+    : "";
+  return `${rendered}${older}`;
 }
 
 /** How deep a name lookup reads before giving up — the most recent rows that carry it. */
@@ -2188,10 +2224,11 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
         "Search the message log, including everything older than your window. Every filter " +
         "narrows, and none is required: `in` with `after`/`before` and no `text` reads a " +
         `stretch of a conversation as it happened. The most recent matches come back (${SEARCH_LIMIT} ` +
-        "unless you set `limit`), newest last, each as your window shows it: the words, then " +
-        "one marker per attachment with its `path`, then any data part. When older matches " +
-        "were cut, `more.before` is the moment to pass as `before` for the next page. Hits " +
-        "carry the conversation's `address`, which `in` and `send(to:)` both take back.",
+        "unless you set `limit`), newest last, in the same form as your window: `<conn>` and " +
+        "`<conv>` around `<msg>` lines with the same ids, author marks, attachment markers " +
+        "(with their `path`) and clock — every stamp with its year. When older matches were " +
+        "cut, a closing line names the moment to pass as `before` for the next page. A " +
+        "`<conv address>` is what `in` and `send(to:)` both take back.",
       input_schema: {
         type: "object",
         properties: {

@@ -5,6 +5,7 @@ import {
   cancelled,
   capRun,
   render,
+  renderHits,
   renderSystem,
   SILENCE,
   WUM_PER_CONVERSATION,
@@ -1991,4 +1992,78 @@ Deno.test("the roster names the marks (§4, §5): <principal name>, principal=, 
   // the wire's names for our own people never reach the line: "Sol R." is not a person
   // the model should meet, and "Sol" the roster's word is
   assertEquals(texts[1].includes("Sol R."), false);
+});
+
+Deno.test("renderHits (§6): a search page is the window's grammar — grouped, marked, dated, cross-referenced", () => {
+  const ventas = { id: "mind", agentId: "ventas" };
+  const roster = { names: { matias: "Matías", ventas: "Ventas" }, principals: ["matias"] };
+  const group = { address: "120364@g.us", kind: "group" as const, name: "Ventas" };
+  const dm = { address: "549116660002", kind: "direct" as const, name: "Mariana" };
+  const hits: MessageEvent[] = [
+    // out of order on purpose: the page sorts by time, then groups by room, rooms ordered
+    // by their latest hit (the window's own rule), and stays on one <conn> for one account
+    worldMsg(
+      "e3",
+      "2026-09-09T10:02:00Z",
+      group,
+      { address: "549116660002", name: "Mariana" },
+      "gracias!",
+    ),
+    {
+      ...worldMsg(
+        "e1",
+        "2025-12-24T09:00:00Z",
+        group,
+        { address: "549115550001", name: "Matías" },
+        "cerramos",
+      ),
+      agent: { id: "matias" },
+    },
+    {
+      ...worldMsg("e2", "2026-09-09T10:01:00Z", dm, null, "listo"),
+      agent: { id: "ventas", session_id: "mind" },
+      payload: { turn_id: "T1" },
+    },
+    // a reply whose referent is ON the page points at it by id; one whose referent is
+    // beyond the page says `?`, as in the window
+    {
+      ...worldMsg(
+        "e4",
+        "2026-09-09T10:03:00Z",
+        dm,
+        { address: "549116660002", name: "Mariana" },
+        "sí",
+      ),
+      payload: { ref_external_id: "wa:2" },
+    },
+    {
+      ...worldMsg(
+        "e5",
+        "2026-09-09T10:04:00Z",
+        dm,
+        { address: "549116660002", name: "Mariana" },
+        "ok",
+      ),
+      payload: { ref_external_id: "wa:9" },
+    },
+  ];
+  hits[2].envelope.external_id = "wa:2"; // e2 is what e4 answers
+  const page = renderHits(hits, ventas, roster, "UTC", { org: "Ventas SRL" });
+  assertEquals(
+    page,
+    [
+      '<conn service="whatsapp" name="Ventas SRL" address="org">',
+      '<conv kind="group" name="Ventas" address="120364@g.us">',
+      // dated: a search reaches into other years, and the roster names a principal
+      '<msg id="e1" principal="Matías" at="24 Dec 2025 9:00">cerramos</msg>',
+      '<msg id="e3" external="Mariana" address="549116660002" at="9 Sep 2026 10:02">gracias!</msg>',
+      "</conv>",
+      '<conv kind="direct" name="Mariana" address="549116660002">',
+      '<msg id="e2" self at="9 Sep 2026 10:01">listo</msg>',
+      '<msg id="e4" external="Mariana" address="549116660002" at="9 Sep 2026 10:03" re="e2">sí</msg>',
+      '<msg id="e5" external="Mariana" address="549116660002" at="9 Sep 2026 10:04" re="?">ok</msg>',
+      "</conv>",
+      "</conn>",
+    ].join("\n"),
+  );
 });

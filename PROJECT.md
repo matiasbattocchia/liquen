@@ -3160,3 +3160,25 @@ connection row still hears it from both sources (`extra.name`, once per name).
 The boundary, stated so it is not crossed again: the ingest records what the wire said,
 and a cache fills a blank the same way for everyone; who wrote a line is decided where the
 line is drawn, from the classifier's stamp, never by editing what the row holds.
+
+### `search` answers in the window's grammar (2026-09-16) — LANDED
+
+A search page was a JSON record that spelled everything differently from the window the
+model reads all day: a 36-character id where the window says `id="13791c"`, a UTC ISO stamp
+where the window says `at="16 Sep 17:03"` on the org's clock, `sender` as the wire's name or
+a bare phone number or the string `"self"` where the window says `principal="Laura"` / `self`
+/ `external="…" address="…"`, the room flattened to one string with no `kind` and no
+`<conn>`, the body's markers JSON-escaped, and a reaction, an edit or a delete reduced to a
+glyph or replacement text with nothing saying which. And the mind turn and its mirror into
+the principal's chat both matched, so the same sentence came back twice.
+
+The page is now `renderHits`: the window's own cluster path over the hits — `<conn>` per
+account, `<conv>` per room ordered by latest hit, `msgLine` for every line — so ids, author
+marks, hoisting, `re` and markers are the window's, and the roster reaches search for free
+(the vocabulary split noted two entries above closes with it). Two things a window never
+needs: every stamp carries its year (`hhmm(ts, zone, dated)`), and a mirror copy
+(`extra.via`) is filtered under the port's own law, so no sentence is a hit twice. The
+trailer is a harness sentence, the shape the window's own elisions use, naming the next
+page's `before`; the paging edge where a shared instant straddled a strict cut now moves the
+instant whole. The result type is gone: a page is a string, and what is found reads as what
+is seen.

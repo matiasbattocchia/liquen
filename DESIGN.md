@@ -1568,14 +1568,22 @@ vocabulary — nothing above the transport knows which provider answered.
 
 `send` writes to `(service, connection, conversation)`; **`search` reads by the same
 coordinates + text + time + sender** (Slack search: `in:`/`from:`/`before:` + FTS).
-Returns **messages only** (never tool/permission noise), each hit carrying the line render
-would show for it — `bodyOf`: the words, a marker per attachment with its `path`, an element
-per data part — so a photo found by its caption or filename comes back as the same `<image>`
-the window prints, and a path read in a result works in bash. A page is the most recent
-`limit` matches (xi's `SEARCH_LIMIT` when unset, the same default-with-override shape bash's
-output caps have); when older matches were cut, `more.before` hands back the oldest hit's
-moment, which the next call passes as `before`. No filter is required: `in` with a time
-bound and no `text` reads a stretch of a conversation as it happened.
+Returns **messages only** (never tool/permission noise), and returns them **as the window
+would print them** — `renderHits`, a string, not a record: `<conn>` per account (named as the
+window names it), `<conv>` per room (rooms ordered by their latest hit, so the freshest ends
+nearest the model), and inside them the same `msgLine` the window draws — the same short
+`id`, the same author attribute (`self` · `principal="…"` · `agent="…"` · `org` ·
+`external="…" address="…"`, from the roster and the classifier's stamp, never a wire name),
+a lone attachment hoisted onto its `<image>`/`<document>` element, a reply's `re` pointing at
+a hit on the same page (`?` beyond it), and every stamp with its year, since a search reaches
+where a bare `16 Sep` is ambiguous. A path read in a result works in bash. Nothing in a page
+is new to a model that reads its window; that is the point. A mirror copy (`extra.via`) is
+never a hit — its original is a row and matches on its own, so no sentence is shown twice.
+A page is the most recent `limit` matches (xi's `SEARCH_LIMIT` when unset, the same
+default-with-override shape bash's output caps have); when older matches were cut, a closing
+harness line says so and names the moment the next call passes as `before` (strict, so a
+shared instant at the cut moves whole to the next page). No filter is required: `in` with a
+time bound and no `text` reads a stretch of a conversation as it happened.
 
 - **Push-default / pull-escape**: nu pushes the agent its recent window at buildContext;
   `search` is the escape hatch to reach beyond — older history, other *public*
@@ -2005,7 +2013,7 @@ its SQL side (5 tools: `executeSql`/`getDbSchema`/`sampleTableRows`/`selectAsCsv
 | tool | plane | signature → returns |
 |---|---|---|
 | `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{sent, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — text beside it replies on the wire; `react` lands a glyph on it; `action` names the verb (`create` · `edit` · `delete` · `add` · `remove` — `create` and `add` are what a body and a glyph already mean, and the two mutating ones reach only the account's own messages). **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
-| `search` | control (dedicated) | `search({in?, from?, before?, after?, text?, limit?})` → `{hits, more?}`, RLS-scoped; a hit's text is the rendered line. Clean sugar over the control-plane log read (SELECT / ripgrep). |
+| `search` | control (dedicated) | `search({in?, from?, before?, after?, text?, limit?})` → the page as a string in the window's grammar (`<conn>`/`<conv>`/`<msg>`, dated), RLS-scoped, closed by the next page's `before` when cut. Clean sugar over the control-plane log read (SELECT / ripgrep). |
 | `bash` | exec + durable-on-files | `bash(cmd)` → `{stdout, stderr, exit}`. The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
 | `sql` | durable-on-db | `sql(query)` → rows, RLS-scoped. The **database** substrate's one primitive; present only on the db backend (the sandbox can't touch the DB, §9 invariant). Capability via **functions** — the "DB OS": `db_schema` · `docs_write` · `docs_edit` · plus `grep`/`glob`/`ls` counterparts (FTS/`LIKE` · pattern-list · introspection). |
 

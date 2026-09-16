@@ -936,6 +936,57 @@ function conversationEl(c: { conv: Conversation; lines: string[] }): string {
   return `<conv ${attrs.join(" ")}>\n${c.lines.join("\n")}\n</conv>`;
 }
 
+/**
+ * A `search` page (§6), in the window's own grammar: the hits are world lines, grouped the
+ * way the window groups them — one `<conn>` per account, one `<conv>` per room, rooms
+ * ordered by their latest hit so the freshest ends nearest the model — and each line is
+ * `msgLine`, so an author reads `self` / `principal="…"` / `external="…" address="…"`
+ * exactly as in the window, a lone attachment hoists onto its own element, and a reply's
+ * `re` points at a hit on the same page (`?` beyond it). Every stamp carries its year:
+ * search reaches where a bare `16 Sep` is ambiguous. Nothing here is new to a model that
+ * reads its window; that is the point. The session's own room renders as a room like any
+ * other — a hit there wears `self` or its principal's mark on a `<msg>`, not a
+ * `<principal>` element, because a search result is a list of lines, not a transcript.
+ */
+export function renderHits(
+  hits: MessageEvent[],
+  session: SessionRef,
+  roster: Roster,
+  zone?: string,
+  connections: Record<string, string> = {},
+): string {
+  const events = byConversation([...hits].sort(byTs)) as MessageEvent[];
+  const byExternal = new Map<string, Event>();
+  for (const e of events) if (e.envelope.external_id) byExternal.set(e.envelope.external_id, e);
+  const refOf = (e: Event): Ref => {
+    const id = e.payload?.ref_external_id;
+    if (!id) return { attr: "" };
+    const target = byExternal.get(id);
+    return { attr: ` re="${target ? shortId(target.id) : "?"}"`, target, shown: !!target };
+  };
+  const clusters: ConnectionCluster[] = [];
+  for (const e of events) {
+    const connection = e.envelope.connection_address;
+    let cluster = clusters.at(-1);
+    if (!cluster || cluster.service !== e.envelope.service || cluster.address !== connection) {
+      cluster = {
+        service: e.envelope.service,
+        address: connection,
+        ...(connections[connection] ? { name: connections[connection] } : {}),
+        convs: [],
+      };
+      clusters.push(cluster);
+    }
+    let run = cluster.convs.at(-1);
+    if (!run || run.conv.address !== e.envelope.conversation.address) {
+      run = { conv: e.envelope.conversation, lines: [] };
+      cluster.convs.push(run);
+    }
+    run.lines.push(msgLine(e, session, roster, zone, refOf(e), true));
+  }
+  return clusters.map(connectionEl).join("\n");
+}
+
 /** One world message line — the deviation marked (§3, §5): `<msg>` carries text
  *  (`action="edit"` = replacement content, `action="delete"` = the removed content),
  *  `<reaction>` carries the glyph (`action="remove"` = an un-react), `<transcript>` carries
@@ -1015,10 +1066,11 @@ function msgLine(
   roster: Roster,
   zone?: string,
   ref: Ref = { attr: "" },
+  dated = false,
 ): string {
   const re = ref.attr;
   const author = authorOf(e, session, roster);
-  const head = `id="${shortId(e.id)}"${author} at="${hhmm(e.ts, zone)}"`;
+  const head = `id="${shortId(e.id)}"${author} at="${hhmm(e.ts, zone, dated)}"`;
 
   const action = e.payload?.action;
   // the hoisting rule: a message that IS one data part wears the envelope on its own element
@@ -1027,7 +1079,7 @@ function msgLine(
       e.parts[0].kind !== "reaction" && action !== "add" && action !== "remove"
     ? e.parts[0]
     : undefined;
-  if (solo) return dataLine(solo, e, author, re, zone);
+  if (solo) return dataLine(solo, e, author, re, zone, dated);
   if (action === "edit") {
     return `<msg ${head}${re} action="edit">${escText(textOf(e))}</msg>`;
   }
@@ -1049,7 +1101,7 @@ function msgLine(
     const glyph = r ? (r.data.unicode ?? r.data.name ?? "") : textOf(e);
     const removed = action === "remove" ? ' action="remove"' : "";
     // no `id`: a reaction is a leaf — nothing in the vocabulary can point back at one
-    const react = `${author.slice(1)} at="${hhmm(e.ts, zone)}"`;
+    const react = `${author.slice(1)} at="${hhmm(e.ts, zone, dated)}"`;
     return `<reaction ${react}${re}${removed}>${escText(glyph)}</reaction>`;
   }
 
@@ -1113,6 +1165,7 @@ function dataLine(
   author: string,
   re: string,
   zone?: string,
+  dated = false,
 ): string {
   const action = e.payload?.action;
   const act = action === "edit" || action === "delete" ? ` action="${action}"` : "";
@@ -1120,7 +1173,9 @@ function dataLine(
     e.envelope.sender === undefined;
   const voice = voiceless ? "" : author;
   const id = action === "delete" ? "" : `id="${shortId(e.id)}" `;
-  const head = `${id}${voice ? voice.slice(1) + " " : ""}at="${hhmm(e.ts, zone)}"${re}${act}`;
+  const head = `${id}${voice ? voice.slice(1) + " " : ""}at="${
+    hhmm(e.ts, zone, dated)
+  }"${re}${act}`;
   return dataEl(p, head, zone);
 }
 
@@ -1465,10 +1520,11 @@ function clockOf(ts: string, zone?: string): Clock | null {
 /** A message's stamp: `12 Aug 9:50`. Absolute on every line — separators are gone, so the
  *  line itself has to say when, and a bare `HH:mm` under a `now:` anchor reads as today.
  *  Shared with xi's anchor lines, so one clock formats everything the model reads (§5). */
-export function hhmm(ts: string, zone?: string): string {
+export function hhmm(ts: string, zone?: string, dated = false): string {
   const c = clockOf(ts, zone);
   if (!c) return ts;
-  return `${c.day} ${MONTHS[c.month]} ${c.hour}:${pad(c.minute)}`;
+  const year = dated ? ` ${c.year}` : "";
+  return `${c.day} ${MONTHS[c.month]}${year} ${c.hour}:${pad(c.minute)}`;
 }
 
 /** The `now:` anchor, spelled out — the one place a full date is worth its width. */

@@ -4,7 +4,7 @@
  * else live — verdicts, lock, acts, gates, recovery. The log is the continuation engine.
  */
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { type AgentConfig, xi, type XiPorts } from "./xi.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { LOCK_TTL_MS } from "./store/lock.ts";
@@ -14,15 +14,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
 import { shortId } from "./render.ts";
-import type {
-  Draft,
-  Event,
-  Json,
-  MessageEvent,
-  SearchResult,
-  ToolResultEvent,
-  ToolUseEvent,
-} from "./types.ts";
+import type { Draft, Event, Json, MessageEvent, ToolResultEvent, ToolUseEvent } from "./types.ts";
 
 const CONFIG: AgentConfig = {
   agentId: "a1",
@@ -1207,14 +1199,15 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
       await waitFor(async () => (await read("tool_result")).length === 2);
       const [found, missed] = await read("tool_result");
 
-      // matched case-insensitively, and the row hands back the address to point at
-      const { hits: rows } = (found as ToolResultEvent).parts[0].data.output as {
-        hits: { address: string; conversation: string; sender: string }[];
-      };
-      assertEquals(rows.length, 2);
-      assertEquals(rows[0].address, "15613518605");
-      assertEquals(rows[0].conversation, "Gianvito"); // named, not numbered
-      assertEquals(rows[1].sender, "Gianvito");
+      // matched case-insensitively, and the page is the window's grammar: the room named
+      // AND addressed (the address is what `in`/`send(to:)` take back), each line authored
+      // the way the window authors it — sender-less is the account's own (`org`), the peer
+      // is `external` with their address
+      const page = (found as ToolResultEvent).parts[0].data.output as string;
+      assertStringIncludes(page, '<conv kind="direct" name="Gianvito" address="15613518605">');
+      assertEquals(page.match(/<msg /g)?.length, 2);
+      assertStringIncludes(page, ' org at="');
+      assertStringIncludes(page, 'external="Gianvito" address="15613518605" at="');
 
       // a name nobody wears is an ERROR, not an empty result: "I don't know who that is"
       // and "they never said that" are different answers
@@ -1255,10 +1248,9 @@ Deno.test("search bounds read the org's clock: a bare stamp means the wall the m
       await publish(principalMsg("qué dijo antes de las cinco"));
       await waitFor(async () => (await read("tool_result")).length === 1);
       const [found] = await read("tool_result");
-      const { hits } = (found as ToolResultEvent).parts[0].data.output as {
-        hits: { text: string }[];
-      };
-      assertEquals(hits.map((r) => r.text), ["antes"]);
+      const page = (found as ToolResultEvent).parts[0].data.output as string;
+      assertStringIncludes(page, ">antes</msg>");
+      assertEquals(page.includes("después"), false);
     },
     { timezone: "America/Argentina/Buenos_Aires" },
     [at("2026-09-01T19:59:00Z", "antes"), at("2026-09-01T20:01:00Z", "después")],
@@ -1266,9 +1258,11 @@ Deno.test("search bounds read the org's clock: a bare stamp means the wall the m
 });
 
 Deno.test("search hands back the line the window shows, and pages on the oldest hit", async () => {
-  // a receipt lands as a bare photo, another under a caption: the hit carries the marker
-  // with the path bash takes, so what is found reads as what is seen. `limit` cuts the page
-  // and `more.before` is the moment the next page opens on; a filename is searchable text.
+  // a receipt lands as a bare photo, another under a caption: the hit is the window's own
+  // line — the bare photo hoisted onto its `<image>` element, the captioned one a `<msg>`
+  // with the marker inside — with the path bash takes, so what is found reads as what is
+  // seen. `limit` cuts the page and the closing line names the moment the next page opens
+  // on; a filename is searchable text.
   const row = (iso: string, parts: MessageEvent["parts"]): Draft<MessageEvent> => ({
     ts: iso,
     type: "message",
@@ -1301,21 +1295,91 @@ Deno.test("search hands back the line the window shows, and pages on the oldest 
       await publish(principalMsg("qué gastamos"));
       await waitFor(async () => (await read("tool_result")).length === 3);
       const [page, rest, named] = (await read("tool_result"))
-        .map((e) => (e as ToolResultEvent).parts[0].data.output as SearchResult);
-      assertEquals(page.hits.map((h) => h.text), [
-        '<image name="a.jpg" path="/media/a.jpg"/>',
-        'nafta\n<image name="b.jpg" path="/media/b.jpg"/>',
-      ]);
-      assertEquals(page.more, { before: page.hits[0].ts });
-      assertEquals(rest.hits.map((h) => h.text), ["310.000"]);
-      assertEquals(rest.more, undefined);
-      assertEquals(named.hits.map((h) => h.text), ['<image name="a.jpg" path="/media/a.jpg"/>']);
+        .map((e) => (e as ToolResultEvent).parts[0].data.output as string);
+      assertStringIncludes(page, '<conv kind="group" name="Gira Norte" address="gira">');
+      assertMatch(
+        page,
+        /<image id="\w{6}" external="Germán" address="german" at="4 Sep 2026 12:01" name="a.jpg" path="\/media\/a.jpg"\/>/,
+      );
+      assertStringIncludes(page, '>nafta <image name="b.jpg" path="/media/b.jpg"/></msg>');
+      assertEquals(page.includes("310.000"), false);
+      // every stamp dated: a search reaches where a bare "4 Sep" is ambiguous
+      assertMatch(
+        page,
+        /— older matches not shown — search again with before="2026-09-04T12:01:00(\.000)?Z" to read on —$/,
+      );
+      assertStringIncludes(rest, ">310.000</msg>");
+      assertEquals(rest.includes("older matches"), false);
+      assertStringIncludes(named, 'name="a.jpg"');
+      assertEquals(named.includes("b.jpg"), false);
     },
     {},
     [
       row("2026-09-04T12:00:00Z", [{ type: "text", kind: "text", text: "310.000" }]),
       row("2026-09-04T12:01:00Z", [photo("a.jpg")]),
       row("2026-09-04T12:02:00Z", [photo("b.jpg", "nafta")]),
+    ],
+  );
+});
+
+Deno.test("search shows a sentence once: a mirror copy is not a hit, and a shared instant pages whole", async () => {
+  // the CC of a turn into the principal's chat carries `extra.via` — the same words as the
+  // mind row, on another surface. Search finds the original and stays quiet about the copy.
+  // Paging: `before` is strict, so when the row past the cut shares the oldest hit's
+  // instant, that instant moves whole to the next page rather than losing a row to the cut.
+  const row = (
+    id: string,
+    iso: string,
+    text: string,
+    conv = "gira",
+    extra?: Record<string, unknown>,
+  ): Draft<MessageEvent> => ({
+    ts: iso,
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: conv, kind: "group", name: "Gira Norte" },
+      sender: { address: "german", name: "Germán" },
+      external_id: id,
+    },
+    parts: [{ type: "text", kind: "text", text }],
+    ...(extra ? { extra } : {}),
+  });
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "search", input: { text: "nafta" } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { in: "gira", limit: 2 } }], "tool_use"),
+      ok([{
+        kind: "tool_use",
+        name: "search",
+        input: { in: "gira", before: "2026-09-04T12:02:00Z" },
+      }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("qué gastamos"));
+      await waitFor(async () => (await read("tool_result")).length === 3);
+      const [once, first, second] = (await read("tool_result"))
+        .map((e) => (e as ToolResultEvent).parts[0].data.output as string);
+      assertEquals(once.match(/nafta/g)?.length, 1); // the copy did not match beside its original
+      // three rows, two on one instant, a page of two: the page holds the one row that
+      // stands alone above the cut, and the next page opens on the whole shared instant
+      assertEquals(first.match(/<msg /g)?.length, 1);
+      assertStringIncludes(first, ">peaje</msg>");
+      assertMatch(first, /before="2026-09-04T12:02:00(\.000)?Z" to read on —$/);
+      assertEquals(second.match(/<msg /g)?.length, 2);
+      assertStringIncludes(second, ">nafta</msg>");
+      assertStringIncludes(second, ">aceite</msg>");
+    },
+    {},
+    [
+      row("w1", "2026-09-04T12:01:00Z", "nafta"),
+      row("w2", "2026-09-04T12:01:00Z", "aceite"),
+      row("w3", "2026-09-04T12:02:00Z", "peaje"),
+      row("w4", "2026-09-04T12:03:00Z", "nafta", "mind@agent", {
+        via: { event: "w1", service: "local", conversation: "gira" },
+      }),
     ],
   );
 });

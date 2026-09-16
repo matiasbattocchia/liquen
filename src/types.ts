@@ -595,26 +595,11 @@ export interface SearchArgs {
   text?: string; // one contiguous phrase, case-insensitive substring — no fuzz, no wildcards
   limit?: number; // the most recent N matches; xi's `SEARCH_LIMIT` when unset
 }
-/** One hit: the row's coordinates plus its body. `address` is what `in` and `send(to:)`
- *  both take back. A type alias, not an interface — a hit must stay assignable to `Json`
- *  (it rides in a tool_result). */
-export type SearchHit = {
-  id: EventId;
-  ts: Timestamp;
-  conversation: string; // display name, falling back to the address
-  address: string;
-  sender: string;
-  /** The message as the window shows it (render's `bodyOf`): its words, then one marker
-   *  per attachment — name and the `path` bash takes — then one element per data part. */
-  text: string;
-};
-/** The page: the most recent matches, newest last. `more` stands only when the page cut
- *  older matches off — its `before` is the oldest hit's moment, the bound the next page
- *  passes back. */
-export type SearchResult = {
-  hits: SearchHit[];
-  more?: { before: Timestamp };
-};
+/** The page `search` answers with is a STRING in the window's grammar (render's
+ *  `renderHits`, §6): `<conn>`/`<conv>`-grouped `<msg>` lines, ids, marks, markers and
+ *  clock as the window prints them, closed by a harness line naming the next page's
+ *  `before` when older matches were cut. No result type: what is found reads as what is
+ *  seen. */
 
 /** `bash(cmd)` — the sandbox's one primitive; everything exec-y is bash + a skill (§9). */
 export interface BashArgs {

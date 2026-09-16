@@ -31,7 +31,6 @@ import type {
   Json,
   MessageEvent,
   PermissionResponseEvent,
-  SearchResult,
   ToolResultEvent,
   ToolUseEvent,
 } from "./types.ts";
@@ -128,10 +127,13 @@ Deno.test({
       await act(dir, log);
       const [res] = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
       assertEquals(res.payload.ref_id, q.id);
-      const { hits } = res.parts[0].data.output as SearchResult;
-      assertEquals(hits.map((h) => [h.address, h.sender, h.text]), [
-        ["wa:+34600", "Juan", "la cita es mañana"],
-      ]);
+      // the page is the window's grammar: the room by address, the sender as the window
+      // marks them, the line as the window prints it
+      const page = res.parts[0].data.output as string;
+      assertStringIncludes(page, 'address="wa:+34600">');
+      assertStringIncludes(page, 'external="Juan"');
+      assertStringIncludes(page, ">la cita es mañana</msg>");
+      assertEquals(page.includes("otra cosa"), false);
     } finally {
       await down();
     }
@@ -160,10 +162,9 @@ Deno.test({
       await act(blind.dir, blind.slog);
       const [res] = await blind.log.read({ types: ["tool_result"] }) as ToolResultEvent[];
       assertEquals(res.payload.ref_id, q.id);
-      assertEquals(
-        (res.parts[0].data.output as SearchResult).hits.map((h) => h.text),
-        ["visible"],
-      );
+      const page = res.parts[0].data.output as string;
+      assertStringIncludes(page, ">visible</msg>");
+      assertEquals(page.includes("callado"), false);
     } finally {
       await blind.down();
     }
@@ -480,10 +481,7 @@ Deno.test({
       await act(dir, log);
       const results = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
       const found = results.find((r) => r.payload.ref_id === qs.id)!;
-      assertEquals(
-        (found.parts[0].data.output as SearchResult).hits.map((h) => h.text),
-        ["mañana a las 10"],
-      );
+      assertStringIncludes(found.parts[0].data.output as string, ">mañana a las 10</msg>");
     } finally {
       await down();
     }
