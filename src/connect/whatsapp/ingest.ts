@@ -218,10 +218,16 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
     for (const c of batch.contacts ?? []) {
       if (c.extra?.name) pushnames.set(c.address, c.extra.name);
     }
-    // the account's own entry in that feed names the ACCOUNT — a fact of the connection,
-    // not of any message: it lands on the row (`extra.name`, what `<conn name>` reads,
-    // §5) and never on a sender. Once per name: the row is the memory, not this loop.
-    const own = pushnames.get(connection);
+    // the account's own name is a fact of the CONNECTION, not of any message: it lands on
+    // the row (`extra.name`, what `<conn name>` reads, §5) and never on a sender. Two ways
+    // in, one fact — its entry in the contacts feed, and the name the bridge stamps on the
+    // account's own messages, which mapMessage drops because it names the account and not
+    // whoever typed. Both are read here because the feed is a first-sight courtesy that may
+    // not carry the account for hours, while its own messages arrive all day. Once per
+    // name: the row is the memory, not this loop.
+    const own = pushnames.get(connection) ??
+      (batch.messages ?? []).find((m) => m.sender_address === connection && m.sender_name)
+        ?.sender_name;
     if (
       own && own !== accountNames.get(connection) && deps.store?.connection(SERVICE, connection)
     ) {

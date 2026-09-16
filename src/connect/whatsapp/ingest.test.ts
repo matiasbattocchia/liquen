@@ -660,6 +660,30 @@ Deno.test("the account's own pushname names the CONNECTION, never its own lines 
   }]);
 });
 
+Deno.test("the account names itself on its own messages too — the row hears it either way", async () => {
+  const account = "5491100000000";
+  const { store, upserts } = fakeStore({ service: "whatsapp", address: account, agentId: "laura" });
+  const { handler, published } = harness({ store });
+  // no contacts feed at all: the courtesy that may not carry the account for hours
+  await handler(post(
+    "/whatsapp-web-webhook",
+    batch({
+      messages: [textMessage({
+        external_id: "wmw.own.1",
+        sender_address: account,
+        sender_name: "Dra. Suarez", // the bridge's stamp: the ACCOUNT's own name
+        conversation_address: "5491177777777",
+      })],
+    }),
+  ));
+  assertEquals((published[0] as MessageEvent).envelope.sender?.name, undefined); // not a line
+  assertEquals(upserts, [{ // a fact of the connection, and its row remembers
+    service: "whatsapp",
+    address: account,
+    extra: { name: "Dra. Suarez" },
+  }]);
+});
+
 Deno.test("an account the map does not know gets no row written for its name", async () => {
   const { store, upserts } = fakeStore(); // no grant row at all
   const { handler } = harness({ store });

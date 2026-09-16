@@ -3032,6 +3032,13 @@ which on a phone-typed line reads as the owner speaking when it was a principal 
 The ingest drops it whichever way it came in, and the docstring now says what the wire
 actually does rather than what it promised.
 
+Dropping it left the row with only the rare source, so the two now feed one fact: the
+account's entry in the contacts feed AND the name the bridge stamps on its own messages both
+reach `extra.name` on the connection row, written once per name. The feed is a first-sight
+courtesy that had not carried the account once in two hours of live traffic; the account's
+own messages arrive all day. So `<conn name>` fills on the next line the principal types,
+and the name that used to sign her lines now names the account she types from.
+
 Render never depended on this — an author hint comes from `agent_id`, not from a name the
 wire chose — which is why the window was already right. `search` did: it answers
 `sender: e.envelope.sender?.name ?? …`, so until now a hit on the principal's own message
