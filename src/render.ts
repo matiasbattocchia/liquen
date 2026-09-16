@@ -203,6 +203,11 @@ export interface RenderInput {
    *  session's agent. Absent ⇒ every member is named by their username and nobody is a
    *  principal but the agent itself. */
   roster?: Roster;
+  /** The account behind each connection, by address: the name the service shows for it
+   *  (`extra.name` on the connection row — an org account's pushname, a workspace's
+   *  title). Rides `<conn name>`, so the string the wire stamps on the account's own lines
+   *  reads as the account and never as a person in the room. Absent ⇒ the address alone. */
+  connections?: Record<string, string>;
 }
 
 export interface Roster {
@@ -520,10 +525,11 @@ export function parseVerdict(text: string): PermissionVerdict | undefined {
 const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 
 function renderMessages(
-  { events: window, session, now, zone, ambient, loadMedia, roster }: RenderInput,
+  { events: window, session, now, zone, ambient, loadMedia, roster, connections }: RenderInput,
 ): MessageParam[] {
   const me = session; // whose voice — the (agent, session) pair
   const who: Roster = roster ?? { names: {}, principals: [session.agentId] };
+  const accounts = connections ?? {};
   const here = session.conversation; // the session's own room — everything else is world
   const visible = applySummary(window.filter((e) => !silenced(e)));
   // the horizon is a LOG position (§5): what the boundary step consumed is what its read
@@ -597,14 +603,14 @@ function renderMessages(
     cur.content.push(...blocks);
   };
 
-  // world cluster (§5): consecutive same-conversation world messages render as ONE
-  // `<conv>` element. Any other emission closes the open element first — `place`
-  // is emit-with-that-guarantee, and every non-world site uses it.
-  let cluster: { service: string; connection: string; conv: Conversation; lines: string[] } | null =
-    null;
+  // world cluster (§5): consecutive same-connection world messages render as ONE `<conn>`
+  // element, each run of same-conversation lines inside it as one `<conv>`. Any other
+  // emission closes the open element first — `place` is emit-with-that-guarantee, and
+  // every non-world site uses it.
+  let cluster: ConnectionCluster | null = null;
   const closeCluster = () => {
     if (!cluster) return;
-    const el = conversationEl(cluster);
+    const el = connectionEl(cluster);
     cluster = null;
     emit("user", { type: "text", text: el });
   };
@@ -640,18 +646,26 @@ function renderMessages(
           `not shown — search to read them —`,
       });
     }
-    if (cluster && cluster.conv.address !== e.envelope.conversation.address) closeCluster();
+    const connection = e.envelope.connection_address;
+    if (cluster && (cluster.service !== e.envelope.service || cluster.address !== connection)) {
+      closeCluster();
+    }
     if (!cluster) {
       cluster = {
         service: e.envelope.service,
-        connection: e.envelope.connection_address,
-        conv: e.envelope.conversation,
-        lines: [],
+        address: connection,
+        ...(accounts[connection] ? { name: accounts[connection] } : {}),
+        convs: [],
       };
-      const earlier = elisions.earlier.get(e);
-      if (earlier) cluster.lines.push(`… ${earlier} earlier, not shown`);
     }
-    cluster.lines.push(msgLine(e, me, who, zone, refOf(e)));
+    let run = cluster.convs.at(-1);
+    if (!run || run.conv.address !== e.envelope.conversation.address) {
+      run = { conv: e.envelope.conversation, lines: [] };
+      cluster.convs.push(run);
+      const earlier = elisions.earlier.get(e);
+      if (earlier) run.lines.push(`… ${earlier} earlier, not shown`);
+    }
+    run.lines.push(msgLine(e, me, who, zone, refOf(e)));
   };
 
   // No separators (§5). They went through `place()`, so every date break and gap marker
@@ -884,18 +898,39 @@ function findLastIndex(events: Event[], pred: (e: Event) => boolean): number {
   return -1;
 }
 
-/** A world cluster → its `<conv>` element (§5). The attributes are the envelope
- *  facts the agent acts on: `id` is what `send` targets, `kind` is what tells a public
- *  channel from a DM. Untrusted strings (names, ids) are attribute-escaped. */
-function conversationEl(
-  c: { service: string; connection: string; conv: Conversation; lines: string[] },
-): string {
+/** A world cluster: one connection's run of traffic, each conversation's run within it. */
+interface ConnectionCluster {
+  service: string;
+  address: string;
+  name?: string;
+  convs: { conv: Conversation; lines: string[] }[];
+}
+
+/** A world cluster → its `<conn>` element (§5): the account the lines arrived through —
+ *  service, the name the service shows for it, address — wrapping one `<conv>` per run of
+ *  same-conversation lines. Said once per run of traffic instead of on every `<conv>`,
+ *  and NAMED: the account's own name is what the wire stamps on its own outbound lines,
+ *  and read here it is the account, not a person in the room. Untrusted strings (names,
+ *  ids) are attribute-escaped. */
+function connectionEl(c: ConnectionCluster): string {
   const attrs = [
     `service="${escAttr(c.service)}"`,
-    `connection="${escAttr(c.connection)}"`,
-    `address="${escAttr(c.conv.address)}"`,
+    ...(c.name ? [`name="${escAttr(c.name)}"`] : []),
+    `address="${escAttr(c.address)}"`,
+  ];
+  const convs = c.convs.map(conversationEl);
+  return `<conn ${attrs.join(" ")}>\n${convs.join("\n")}\n</conn>`;
+}
+
+/** One conversation's run → its `<conv>` element. The attributes are the envelope facts
+ *  the agent acts on: `kind` tells a public channel from a DM, `name` is the handle it
+ *  reads, `address` the one `send` takes back (and the stable one — a name is the
+ *  service's word, and a contact can change theirs). */
+function conversationEl(c: { conv: Conversation; lines: string[] }): string {
+  const attrs = [
     ...(c.conv.kind ? [`kind="${c.conv.kind}"`] : []),
     ...(c.conv.name ? [`name="${escAttr(c.conv.name)}"`] : []),
+    `address="${escAttr(c.conv.address)}"`,
     ...(c.conv.thread ? [`thread="${escAttr(c.conv.thread)}"`] : []),
   ];
   return `<conv ${attrs.join(" ")}>\n${c.lines.join("\n")}\n</conv>`;
@@ -909,8 +944,7 @@ function conversationEl(
  *  pruned object riding a `data` attribute as a TS literal; a message that IS one data part
  *  hoists the envelope attributes onto that element and spends no `<msg>` wrapper (`<reaction>`
  *  is this rule's oldest instance). Bare defaults: create and add wear no attribute.
- *  `from="self"` = the agent's own send (its author label inside a
- *  user turn); `status="failed"` = the dispatcher gave up on delivery (§5).
+ *  `status="failed"` = the dispatcher gave up on delivery (§5).
  *
  *  **References** (§5): every `<msg>` wears an `id` — the handle a reply, a reaction or a
  *  delete points back at with `re`, and the one `send` takes to author them. It is derived
@@ -918,43 +952,49 @@ function conversationEl(
  *  is outside this window. Nothing can point at a `<reaction>`, so reactions spend no id.
  *
  *  Body and sender name are attacker-controlled — escaped, so no message can close its own
- *  element; and who among us is speaking is an attribute of its own (`markOf`), which no
- *  name can spell. */
-/** `from` is the wire's word: the sender's name as the service shows it, their address
- *  when it shows none, and — when the row names no sender at all — the roster's word for
- *  whoever authored it (a wire's echo of our own send names the account, so this is the
- *  local service's case). The local service has one word for a
- *  session, its address (§4): a mind is the bare agent name, a named session
- *  `build@matias`. Composed by hand, not `sessionAddress`: render never throws on an odd
- *  stored name. */
-function fromOf(e: MessageEvent, session: SessionRef, roster: Roster): string {
-  const sender = e.envelope.sender;
-  if (sender) return sender.name ?? sender.address ?? "peer";
-  const id = e.agent?.id ?? session.agentId;
-  if (e.envelope.service === "local") {
-    const s = e.agent?.session_id ?? routedSession(e.envelope);
-    return s === MIND ? id : `${s}@${id}`;
-  }
-  return roster.names[id] ?? id;
-}
-
-/** Who among us (§5) — an identity, never a session (which conversation a line is in
- *  already says which hands are talking): ` self` = this agent's own voice, any session
- *  of it (authorship, §3: `turn_id`); ` principal` = a principal of this agent, whichever
- *  device they typed on (the classifier's `agent.id` stamp without a turn_id); ` agent` =
- *  any other roster member, human or alter-ego alike, one complex. The value is the
- *  roster's word for them, elided when it equals `from`. ` org` = the account itself
- *  spoke and nobody among us is stamped on it: an org-wide account has companion
- *  devices, and which member held one is a fact the wire never carries — so the org
- *  has spoken, and no member is invented for it. A customer's line wears nothing. */
-function markOf(e: MessageEvent, session: SessionRef, roster: Roster, from: string): string {
+ *  element; and who is speaking is the author attribute's KEY (`authorOf`), which no name
+ *  can spell. */
+/** The author attribute (§5): ONE attribute per line whose key says who among us wrote it
+ *  and whose value is their name — never a name in one slot and a role in another, which
+ *  read as two facts and let the louder one win (an org account's pushname on a
+ *  principal's phone-typed line read as the account's owner speaking, not the principal).
+ *
+ *    `self`             this agent's own voice, any session of it (authorship, §3: `turn_id`)
+ *    `principal="Ana"`  a principal of this agent, whichever device they typed on (the
+ *                       classifier's `agent.id` stamp without a turn_id)
+ *    `agent="Robo"`     any other roster member, human or alter-ego alike, one complex
+ *    `org`              the account itself spoke and nobody among us is stamped on it: an
+ *                       org-wide account has companion devices, and which member held one
+ *                       is a fact the wire never carries — so the org has spoken, and no
+ *                       member is invented for it
+ *    `external="Sol"`   nobody among us — the wire's word for them, then their `address`
+ *
+ *  The value is the ROSTER's word for one of us (an identity, never a session — which
+ *  conversation a line is in already says which hands are talking; on the local service
+ *  the session address, `build@matias`, composed by hand so render never throws on an odd
+ *  stored name); `self` and `org` carry none, the key is the whole fact. An external line
+ *  is the only one whose name is the sender's own to choose, so it is the only one that
+ *  also wears the address — the stable handle, and what `send` takes back. The key set is
+ *  closed and every line wears exactly one, so an unclassified sender lands on `external`:
+ *  unknown reads as untrusted, never as one of us. */
+function authorOf(e: MessageEvent, session: SessionRef, roster: Roster): string {
   const id = e.agent?.id;
-  if (id === undefined) return ownSide(e) ? " org" : "";
+  if (id === undefined) {
+    if (ownSide(e)) return " org";
+    const sender = e.envelope.sender!; // not own side ⇒ the wire named someone
+    const name = sender.name ? ` external="${escAttr(sender.name)}"` : " external";
+    const address = sender.address ? ` address="${escAttr(sender.address)}"` : "";
+    return `${name}${address}`;
+  }
   const voice = e.payload?.turn_id !== undefined || isSelf(e, session);
   if (voice && id === session.agentId) return " self";
-  const attr = !voice && roster.principals.includes(id) ? "principal" : "agent";
-  const value = roster.names[id] ?? id;
-  return value === from ? ` ${attr}` : ` ${attr}="${escAttr(value)}"`;
+  const key = !voice && roster.principals.includes(id) ? "principal" : "agent";
+  let value = roster.names[id] ?? id;
+  if (e.envelope.service === "local") {
+    const s = e.agent?.session_id ?? routedSession(e.envelope);
+    value = s === MIND ? id : `${s}@${id}`;
+  }
+  return ` ${key}="${escAttr(value)}"`;
 }
 
 /** The account itself is the sender: the wire named its own address as the author (the
@@ -972,9 +1012,8 @@ function msgLine(
   ref: Ref = { attr: "" },
 ): string {
   const re = ref.attr;
-  const from = fromOf(e, session, roster);
-  const mark = markOf(e, session, roster, from);
-  const head = `id="${shortId(e.id)}" from="${escAttr(from)}"${mark} at="${hhmm(e.ts, zone)}"`;
+  const author = authorOf(e, session, roster);
+  const head = `id="${shortId(e.id)}"${author} at="${hhmm(e.ts, zone)}"`;
 
   const action = e.payload?.action;
   // the hoisting rule: a message that IS one data part wears the envelope on its own element
@@ -983,7 +1022,7 @@ function msgLine(
       e.parts[0].kind !== "reaction" && action !== "add" && action !== "remove"
     ? e.parts[0]
     : undefined;
-  if (solo) return dataLine(solo, e, from, mark, re, zone);
+  if (solo) return dataLine(solo, e, author, re, zone);
   if (action === "edit") {
     return `<msg ${head}${re} action="edit">${escText(textOf(e))}</msg>`;
   }
@@ -1005,7 +1044,7 @@ function msgLine(
     const glyph = r ? (r.data.unicode ?? r.data.name ?? "") : textOf(e);
     const removed = action === "remove" ? ' action="remove"' : "";
     // no `id`: a reaction is a leaf — nothing in the vocabulary can point back at one
-    const react = `from="${escAttr(from)}"${mark} at="${hhmm(e.ts, zone)}"`;
+    const react = `${author.slice(1)} at="${hhmm(e.ts, zone)}"`;
     return `<reaction ${react}${re}${removed}>${escText(glyph)}</reaction>`;
   }
 
@@ -1055,18 +1094,18 @@ function dataEl(p: DataPart, head: string, zone?: string): string {
 }
 
 /** A hoisted data line: a message that is EXACTLY one data part spends no `<msg>` wrapper —
- *  the part's element wears the envelope attributes itself. A sender renders as `from` the
- *  usual way (a calendar event's creator, mapped to `envelope.sender` by the connector); a
- *  SENDERLESS line in a `broadcast` conversation wears none — fan-out is not a room anyone
- *  is in, so the account-spoke fallback must not mislabel a world fact (a cancellation
- *  tombstone has no creator). A delete spends no `id` (nothing points at one) and its `data`
- *  is whatever minimal handle the connector kept — e.g. a calendar tombstone's `{gid}`, the
- *  service-side id that stays actionable after the `re` referent scrolls out of the window. */
+ *  the part's element wears the envelope attributes itself. A sender wears the author
+ *  attribute the usual way (a calendar event's creator, mapped to `envelope.sender` by the
+ *  connector); a SENDERLESS line in a `broadcast` conversation wears none — fan-out is not
+ *  a room anyone is in, so the account-spoke fallback must not mislabel a world fact (a
+ *  cancellation tombstone has no creator). A delete spends no `id` (nothing points at one)
+ *  and its `data` is whatever minimal handle the connector kept — e.g. a calendar
+ *  tombstone's `{gid}`, the service-side id that stays actionable after the `re` referent
+ *  scrolls out of the window. */
 function dataLine(
   p: DataPart,
   e: MessageEvent,
-  from: string,
-  mark: string,
+  author: string,
   re: string,
   zone?: string,
 ): string {
@@ -1074,7 +1113,7 @@ function dataLine(
   const act = action === "edit" || action === "delete" ? ` action="${action}"` : "";
   const voiceless = e.envelope.conversation.kind === "broadcast" &&
     e.envelope.sender === undefined;
-  const voice = voiceless ? "" : ` from="${escAttr(from)}"${mark}`;
+  const voice = voiceless ? "" : author;
   const id = action === "delete" ? "" : `id="${shortId(e.id)}" `;
   const head = `${id}${voice ? voice.slice(1) + " " : ""}at="${hhmm(e.ts, zone)}"${re}${act}`;
   return dataEl(p, head, zone);

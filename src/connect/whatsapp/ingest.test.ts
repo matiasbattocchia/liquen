@@ -606,3 +606,59 @@ Deno.test("the classifier reads the roster too (§4): a declared phone is that m
   assertEquals((published[0] as MessageEvent).agent, { id: "sol" });
   assertEquals((published[1] as MessageEvent).agent, undefined);
 });
+
+Deno.test("the account's own pushname names the CONNECTION, never its own lines (§5)", async () => {
+  const account = "5491100000000"; // = organization_address: the account's own side
+  const { store, upserts } = fakeStore({ service: "whatsapp", address: account, agentId: "laura" });
+  const { handler, published } = harness({ store });
+  const feed = batch({
+    // the contacts feed carries the account itself, under its public name
+    contacts: [
+      { address: account, extra: { name: "Dra. Suarez" } },
+      { address: "5491177777777", extra: { name: "Ana" } },
+    ],
+    messages: [
+      // a companion-device line: the wire names the account as sender
+      textMessage({
+        external_id: "wmw.own.1",
+        sender_address: account,
+        conversation_address: "5491177777777",
+      }),
+      textMessage({
+        external_id: "wmw.ana.1",
+        sender_address: "5491177777777",
+        conversation_address: "5491177777777",
+      }),
+    ],
+  });
+  await handler(post("/whatsapp-web-webhook", feed));
+  await handler(post("/whatsapp-web-webhook", feed)); // the same feed again — a live bridge repeats itself
+  // the cache never names the account's own side: that name is the account's, and on a
+  // principal's phone-typed line it read as the owner speaking
+  const own = published.filter((e) => (e as MessageEvent).envelope.sender?.address === account);
+  assertEquals(own.length, 2);
+  for (const e of own) assertEquals((e as MessageEvent).envelope.sender?.name, undefined);
+  // a customer is still named off the feed
+  const ana = published.find((e) =>
+    (e as MessageEvent).envelope.sender?.address === "5491177777777"
+  );
+  assertEquals((ana as MessageEvent).envelope.sender?.name, "Ana");
+  // the name lands on the connection row instead — once, not per batch
+  assertEquals(upserts, [{
+    service: "whatsapp",
+    address: account,
+    extra: { name: "Dra. Suarez" },
+  }]);
+});
+
+Deno.test("an account the map does not know gets no row written for its name", async () => {
+  const { store, upserts } = fakeStore(); // no grant row at all
+  const { handler } = harness({ store });
+  await handler(
+    post(
+      "/whatsapp-web-webhook",
+      batch({ contacts: [{ address: "5491100000000", extra: { name: "Dra. Suarez" } }] }),
+    ),
+  );
+  assertEquals(upserts, []); // a name is not a grant — the row is the session route's to create
+});

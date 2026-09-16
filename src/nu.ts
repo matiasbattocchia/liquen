@@ -98,6 +98,9 @@ export interface TurnInput {
   loadMedia?: (uri: string) => { media_type: string; data: string } | null;
   /** Who is one of us (§4, §5): names and principals, read off the registry by xi. */
   roster?: Roster;
+  /** The account behind each surface, by address — the name the service shows for it,
+   *  read off the connection rows by xi; `<conn name>` (§5). */
+  connections?: Record<string, string>;
   /** The turn's interrupt (§2): fired by the principal's cancel while the call is in
    *  flight — the request is cut, and the turn closes on the `cancelled` row, unretried. */
   signal?: AbortSignal;
@@ -202,6 +205,7 @@ export async function nu(
     ambient: input.ambient,
     loadMedia: input.loadMedia,
     roster: input.roster,
+    connections: input.connections,
   });
 
   const res = await attempt({

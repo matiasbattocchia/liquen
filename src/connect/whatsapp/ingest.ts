@@ -186,6 +186,7 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
   const now = deps.now ?? (() => new Date().toISOString());
   const groupNames = new Map<string, string>(); // conversation address → subject
   const pushnames = new Map<string, string>(); // sender address → display name
+  const accountNames = new Map<string, string>(); // connection address → name written to its row
 
   return async (req) => {
     if (req.method !== "POST") return text(405, "method not allowed");
@@ -213,6 +214,20 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
     for (const g of batch.groups ?? []) if (g.name) groupNames.set(g.address, g.name);
     for (const c of batch.contacts ?? []) {
       if (c.extra?.name) pushnames.set(c.address, c.extra.name);
+    }
+    // the account's own entry in that feed names the ACCOUNT — a fact of the connection,
+    // not of any message: it lands on the row (`extra.name`, what `<conn name>` reads,
+    // §5) and never on a sender. Once per name: the row is the memory, not this loop.
+    const own = pushnames.get(connection);
+    if (
+      own && own !== accountNames.get(connection) && deps.store?.connection(SERVICE, connection)
+    ) {
+      accountNames.set(connection, own);
+      deps.store.upsertConnections([{
+        service: SERVICE,
+        address: connection,
+        extra: { name: own },
+      }]);
     }
 
     const drafts: Draft<MessageEvent>[] = [
@@ -373,7 +388,11 @@ function mapMessage(
   const sender = m.sender_address || undefined; // "" = the wire couldn't name the account side
   // sender.name is the SERVICE's display fact — what the account calls this person, nothing
   // of ours: identity resolution (who a grant binds) is the classifier's business (§3)
-  const who = m.sender_name || (sender ? pushnames.get(sender) : undefined);
+  // the cache never names the account's own side: its entry there is the ACCOUNT's name
+  // (recorded on the connection row above), and stamped on a companion-device line it
+  // read as the account's owner speaking — when it was a principal at the phone
+  const who = m.sender_name ||
+    (sender && sender !== connection ? pushnames.get(sender) : undefined);
   const state = m.status ? stateOf(m.status) : undefined;
   // the SERVICE-NEUTRAL silencing marks (§3 extra, §5): a consumer skipping history or a
   // muted chat reads the same keys across every connector

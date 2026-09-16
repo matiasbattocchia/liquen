@@ -1002,6 +1002,14 @@ async function think(
       tools: specsOf(ports, config),
       config,
       surfaces: surfaces.map(surfaceLine),
+      // the account behind each surface, as the service names it (`extra.name`, recorded
+      // by the connector) — `<conn name>`: the string the wire stamps on the account's own
+      // lines, read as the account and not as a person in the room (§5)
+      connections: Object.fromEntries(
+        surfaces.flatMap((c) =>
+          typeof c.extra?.name === "string" && c.extra.name ? [[c.address, c.extra.name]] : []
+        ),
+      ),
       processors: config.processors,
       ambient,
       // trailing-region media → real image/document blocks (§5); the store loads, render picks
@@ -1051,7 +1059,10 @@ function surfacesOf(config: AgentConfig, ports: XiPorts): ConnectionRow[] {
  *  account's URL where the address is an opaque id (Slack) — and whose voice it carries. */
 function surfaceLine(c: ConnectionRow): string {
   const shown = typeof c.extra?.url === "string" ? c.extra.url : c.address;
-  return `${c.service} ${shown} (${c.agentId ? "yours" : "org"})`;
+  // the account's own name beside its address — the same pair `<conn>` wears, so the env
+  // line and the window agree on what the account is called
+  const name = typeof c.extra?.name === "string" && c.extra.name ? ` "${c.extra.name}"` : "";
+  return `${c.service} ${shown}${name} (${c.agentId ? "yours" : "org"})`;
 }
 
 /** Surfaces that are down: a connector recorded a state other than `connected` on the
