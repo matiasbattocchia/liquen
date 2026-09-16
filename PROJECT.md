@@ -2951,3 +2951,41 @@ a version — and names a run in progress, because new code reaches it at the ne
 never before. A dev org that links a checkout is refused outright: it runs that folder's
 files whatever the lock resolved, and a version printed about it would name code nobody is
 running.
+
+### The phone's list, without the previews (2026-09-16) — LANDED
+
+A human on WhatsApp triages from the conversation list — name, who spoke last, how many,
+when — and opens a chat to read it. The agent had the second half (`search(in:)` reads a
+stretch as it happened) and none of the first: the WUM pushes what fits the caps and says
+`— 42 more messages in 7 other conversations —` about the rest, a count with no names, and
+one global `consumed` mark then reads those seven as seen. The list is now the last section
+of the trailing anchor, `unanswered — N conversations:`, one line per room whose last word
+is not ours, the room that spoke most recently first, with the run of their words since ours
+and how long they have waited, and `mentioned` on a group or channel whose run names one of
+our accounts.
+
+Three decisions shaped it. **It lives in the anchor, not the user turn**, for the reason the
+approvals already do: it is state that changes every step, and the anchor is the one block
+rewritten every step and paid for outside the cache — a list nailed into the stream would
+go stale behind the boundary and shift bytes as it moved. **It is structural, not
+horizon-based.** Measured against `consumed` it would empty the moment any turn closed,
+which is the reason the conversations table was killed (2026-08-27); measured as "the last
+word in the room is not ours" it holds until someone on our side speaks there, needs no
+per-room cursor, and self-corrects like an approval that gets answered. Ours is read the way
+the window marks a line — an unstamped row is the account's when the account sent it, a
+stamped row is this complex's when it is this complex — so a peer agent's DM and a
+colleague's word in a room count as theirs. **No bodies.** The anchor is the harness's
+voice, the non-spoofable channel, and a preview would put a peer's words in it; names and
+counts are envelope facts, the words stay in `<msg>` where they are escaped and marked.
+
+Broadcast rooms are excluded because they cannot be answered — the calendar would otherwise
+pin the top of the list forever. `mentioned` is not the wake class deleted on 2026-08-27: it
+ranks inside a read something else started and starts nothing. The approvals section is
+`waiting` now, so the two read as a pair by direction: we are waiting on someone; someone is
+unanswered by us. The list is a function of the window like everything else, so a room quiet
+past the window's reach is not on it; and it is capped at ten with the rest counted, because
+every line here is paid on every request.
+
+Open from here: the Slack connector stamps no `conversation.name` (`ingest.ts` builds
+`{address, kind}`), so a Slack room lists by its id until a `conversations.info` lookup
+lands beside `profileOf` — the list degrades to ugly there, not to broken.

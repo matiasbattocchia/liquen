@@ -76,6 +76,7 @@ import {
   hhmm,
   isCancelled,
   ownComplex,
+  ownSide,
   ownVoice,
   parseVerdict,
   shortId,
@@ -991,6 +992,12 @@ async function think(
     ...downOn(surfaces, config),
     ...armedOn(config, ports),
     ...waitingOn(events, config),
+    ...unansweredOn(
+      events,
+      { id: config.sessionId, agentId: config.agentId, conversation: home },
+      new Set(surfaces.map(accountOf)),
+      config.timezone,
+    ),
   ];
   // ONE turn per invocation, and nu decides what the turn IS: an over-budget window makes it
   // the checkpoint (the summary's insert wakes the think it displaced); a paced/truncated
@@ -1035,16 +1042,18 @@ async function think(
   );
 }
 
-/** The anchor's standing lists (§5): what of this session's is still in the air — background
- *  jobs, scheduled wakes, open approvals — three sections in one grammar, so the model reads
- *  them as one kind of fact. A section is present only while it has items:
+/** The anchor's standing lists (§5): what is still in the air — background jobs, surfaces
+ *  down, scheduled wakes, open approvals, unanswered conversations — one grammar, so the
+ *  model reads them as one kind of fact. A section is present only while it has items:
  *
  *    <section> — <n> <things>:
  *    · <what> — <when> · <handle>
  *
- *  `what` is the item in the model's own words (the command, the note, the call); `when` is
- *  a verb and a stamp on the org's clock (`fires`, `asked`) or a duration (`running`, for a
- *  job); `handle` is what acts on it — `id` for `cancel`, `pid` for `kill`. */
+ *  `what` is the item in the model's own words (the command, the note, the call, the
+ *  room's name); `when` is a verb and a stamp on the org's clock (`fires`, `asked`,
+ *  `since`) or a duration (`running`, for a job); `handle` is what acts on it — `id` for
+ *  `cancel`, `pid` for `kill`. A conversation's handle is its name, which `send` and
+ *  `search` both take, so its slot carries the one flag that changes whether to open it. */
 
 /** The surfaces this agent speaks through (§4, §6): the connections it OWNS — it speaks as
  *  its principal there — and the org's credentialed ones, where it speaks as the org. A
@@ -1067,7 +1076,9 @@ function surfaceLine(c: ConnectionRow): string {
 
 /** Surfaces that are down: a connector recorded a state other than `connected` on the
  *  row (`extra.state`, stamped `<state>_at`). Silence means every surface is up. No handle
- *  — nothing in the model's hands acts on it; the principal re-pairs or re-grants. */
+ *  — nothing in the model's hands acts on it; the principal re-pairs or re-grants. Named
+ *  the way every line is: the account's name, its address only when it has none — the
+ *  prefix's `connections:` line is where the address and whose voice it is are stated. */
 function downOn(surfaces: ConnectionRow[], config: AgentConfig): string[] {
   const down = surfaces.filter((c) =>
     typeof c.extra?.state === "string" && c.extra.state !== "connected"
@@ -1079,7 +1090,8 @@ function downOn(surfaces: ConnectionRow[], config: AgentConfig): string[] {
       const state = c.extra!.state as string;
       const since = c.extra![`${state}_at`];
       const when = typeof since === "string" ? ` since ${hhmm(since, config.timezone)}` : "";
-      return `· ${surfaceLine(c)} — ${state.replaceAll("_", " ")}${when}`;
+      const name = typeof c.extra?.name === "string" && c.extra.name ? c.extra.name : c.address;
+      return `· ${name} — ${c.service}, ${state.replaceAll("_", " ")}${when}`;
     }),
   ];
 }
@@ -1104,13 +1116,91 @@ function waitingOn(events: Event[], config: AgentConfig): string[] {
   const cards = openCards(events);
   if (cards.length === 0) return [];
   return [
-    `waiting on your principal — ${cards.length} approval${cards.length === 1 ? "" : "s"}:`,
+    `waiting — ${cards.length} approval${cards.length === 1 ? "" : "s"}:`,
     ...cards.map((c) => {
       const ask = c.parts[0].data;
       return `· ${ask.call ?? ask.tool} — asked ${hhmm(c.ts, config.timezone)} · id ${
         shortId(c.payload.ref_id)
       }`;
     }),
+  ];
+}
+
+/** Most conversations the anchor names as unanswered; past it, they are counted. The block
+ *  is rewritten every step, so every line here is paid on every request — a standing list
+ *  is furniture the moment it is long, and the rooms that just spoke are the ones worth
+ *  the width. */
+export const UNANSWERED_ROOMS = 10;
+
+/** The address a wire mention carries for one of our accounts: the connection's own, or
+ *  the user half of a `<team>:<user>` leg (the Slack anchor, `connect.ts`) — the workspace
+ *  is the connection, the account inside it is what a message can name. */
+function accountOf(c: ConnectionRow): string {
+  const i = c.address.indexOf(":");
+  return i === -1 ? c.address : c.address.slice(i + 1);
+}
+
+/** Words that can be owed an answer: a message, a reply, an edit, a forward. A reaction, a
+ *  delete or a derived transcript is a mark on a message, never a message. */
+function spoken(e: MessageEvent): boolean {
+  const a = e.payload?.action;
+  return a !== "add" && a !== "remove" && a !== "delete";
+}
+
+/** Unanswered conversations (§5): every room in the window whose last word is not our
+ *  side's — this complex (the agent, its principal on any device) or the account itself —
+ *  one line each, the room that spoke most recently first. Another roster member's word is
+ *  not ours: a peer agent's DM is a room waiting on us. The fact is STRUCTURAL: it holds
+ *  until someone on our side speaks there, whatever turns closed in between, which is what
+ *  lets it stand in the block that is rewritten every step. The count is the run of their
+ *  words since ours; `since` is the first of them — how long they have been waiting. A
+ *  `group`/`channel` line says `mentioned` when one of those words names an account of
+ *  ours; a `direct` room is a mention by construction and says nothing. No bodies: the
+ *  block is the harness's own voice, and a peer's words wear `<msg>` in the user turn or
+ *  nowhere. Broadcast rooms cannot be answered (replies land elsewhere, or nowhere), so
+ *  they are news for the window and never unanswered; the session's own room is the
+ *  console, answered on arrival. */
+export function unansweredOn(
+  events: Event[],
+  session: Session,
+  accounts: Set<string>,
+  zone?: string,
+  cap = UNANSWERED_ROOMS,
+): string[] {
+  const rooms = new Map<string, { last: MessageEvent; run: MessageEvent[] }>();
+  for (const e of events) {
+    if (e.type !== "message" || silenced(e) || !spoken(e)) continue;
+    const conv = e.envelope.conversation;
+    if (conv.address === session.conversation || conv.kind === "broadcast") continue;
+    const key = `${e.envelope.service}\u0000${conv.address}`;
+    const room = rooms.get(key) ?? { last: e, run: [] };
+    room.last = e;
+    // ours, read the way the window marks a line: an unstamped row is the wire's, and it is
+    // ours when the account sent it; a stamped row is one of us, and it is ours when it is
+    // this complex — another member's word (a peer agent's DM, a colleague in a room) is
+    // theirs, so the room is still waiting on us
+    const ours = e.agent === undefined ? ownSide(e) : ownComplex(e, session);
+    if (ours) room.run = [];
+    else room.run.push(e);
+    rooms.set(key, room);
+  }
+  const open = [...rooms.values()].filter((r) => r.run.length > 0)
+    .sort((a, b) => a.last.ts < b.last.ts ? 1 : a.last.ts > b.last.ts ? -1 : 0);
+  if (open.length === 0) return [];
+  const shown = open.slice(0, cap);
+  const rest = open.length - shown.length;
+  return [
+    `unanswered — ${open.length} conversation${open.length === 1 ? "" : "s"}:`,
+    ...shown.map(({ last, run }) => {
+      const conv = last.envelope.conversation;
+      const where = `${last.envelope.service}${conv.kind ? ` ${conv.kind}` : ""}`;
+      const named = (conv.kind === "group" || conv.kind === "channel") &&
+        run.some((m) => m.payload?.mentions?.some((x) => accounts.has(x.address)));
+      return `· ${conv.name ?? conv.address} — ${where}, ${run.length} since ${
+        hhmm(run[0].ts, zone)
+      }${named ? " · mentioned" : ""}`;
+    }),
+    ...(rest > 0 ? [`— ${rest} more`] : []),
   ];
 }
 

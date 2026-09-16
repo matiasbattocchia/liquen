@@ -998,8 +998,9 @@ function authorOf(e: MessageEvent, session: SessionRef, roster: Roster): string 
 }
 
 /** The account itself is the sender: the wire named its own address as the author (the
- *  echo of anything sent from any device), or named nobody at all. */
-function ownSide(e: MessageEvent): boolean {
+ *  echo of anything sent from any device), or named nobody at all. Shared with xi: a line
+ *  the account spoke is our side's word, whoever held the device. */
+export function ownSide(e: MessageEvent): boolean {
   const sender = e.envelope.sender;
   return sender === undefined || sender.address === e.envelope.connection_address;
 }

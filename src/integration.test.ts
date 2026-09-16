@@ -537,7 +537,7 @@ Deno.test("a pending ask lives in the ANCHOR — state, not transcript (§5)", a
     await xi(config, ports); // act: the card goes up, the call is answered
     await xi(config, ports); // the think that follows — this is the prompt we read
     const anchor = JSON.stringify(last?.messages.at(-1)?.content);
-    assertStringIncludes(anchor, "waiting on your principal — 1 approval");
+    assertStringIncludes(anchor, "waiting — 1 approval");
     assertStringIncludes(anchor, "send(to: wa:x, text: hola)");
     // and NOT in the transcript: what the model sees there is a closed call
     assertStringIncludes(JSON.stringify(last?.messages), "pending_approval");
@@ -565,11 +565,11 @@ Deno.test("the anchor states the approval state either way — silence is not a 
   try {
     await log.publish(principalMsg("mandale"));
     await xi(config, ports); // nothing has been asked yet: no section
-    assertEquals(anchor().includes("waiting on your principal"), false);
+    assertEquals(anchor().includes("waiting —"), false);
 
     await xi(config, ports); // act: the card goes up
     await xi(config, ports);
-    assertStringIncludes(anchor(), "waiting on your principal — 1 approval");
+    assertStringIncludes(anchor(), "waiting — 1 approval");
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -1634,7 +1634,7 @@ Deno.test("the surfaces: the prefix names them, the anchor lists the ones that a
     assert(!prefix.includes("other@x.io"), "another agent's grant is not this agent's surface");
     const anchor = JSON.stringify(last?.messages.at(-1)?.content);
     assertStringIncludes(anchor, "down — 1 connection:");
-    assertStringIncludes(anchor, "· whatsapp 549 (yours) — logged out since 7 Sep 14:02");
+    assertStringIncludes(anchor, "· 549 — whatsapp, logged out since 7 Sep 14:02");
     assert(!anchor.includes("slack"), "an up surface is not listed — silence means up");
   } finally {
     await log.close();

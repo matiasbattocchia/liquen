@@ -1422,18 +1422,38 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
 - **`now:` anchor + ambient env + open state** — the trailing system block before the model
   answers. Carries `now: <ts>`, **live environment lines** the exec plane composes (`cwd: …` ·
   `git: <branch> · N uncommitted` when the cwd is a repo), and the **standing lists** — what
-  of this session's is still in the air: surfaces that are down, background jobs, scheduled
-  wakes, open approvals (§9 — pending state, not history: the transcript already closed
-  those calls, so the only honest place for them is the block that is rewritten every
-  turn). Every list speaks one grammar, `<section> — N <things>:` and one
-  `· <what> — <when> · <handle>` line per item — the item in the agent's own words, a verb
-  with a stamp on the org's clock (or a duration, for a job), and the handle that acts on it
-  (`id` for `cancel`, `pid` for `kill`; a down surface has none — the principal re-pairs or
-  re-grants). A list is present only while it has items. A surface is down when its
+  is still in the air: surfaces that are down, background jobs, scheduled wakes, open
+  approvals (§9 — pending state, not history: the transcript already closed those calls,
+  so the only honest place for them is the block that is rewritten every turn), and the
+  **unanswered conversations**. Every list speaks one grammar, `<section> — N <things>:`
+  and one `· <what> — <when> · <handle>` line per item — the item in the agent's own
+  words, a verb with a stamp on the org's clock (or a duration, for a job), and the handle
+  that acts on it (`id` for `cancel`, `pid` for `kill`; a down surface has none — the
+  principal re-pairs or re-grants). A list is present only while it has items.
+  **Unanswered** is the phone's list without the previews: every room in the window whose
+  last word is not our side's — this complex on any device, or the account itself; another
+  roster member's word is theirs — `· <name> — <service> <kind>, N since <stamp>`, the
+  room that spoke most recently first, N their run of words since ours and `since` its
+  first. The fact is structural, so it survives every turn boundary and clears only when
+  someone on our side speaks there: what the WUM pushes is *news* and is paid once; what
+  can be owed an answer is *state* and stands here until it isn't. The name is the handle
+  (`send` and `search` both take one), so the handle slot carries the one flag that
+  changes whether to open the room — `mentioned`, on a `group`/`channel` whose run names
+  an account of ours (a `direct` is a mention by construction). It flags salience inside a
+  read that something else already started; it wakes nothing (§2: the world never pulls
+  the agent in without the principal). No bodies: a peer's words wear `<msg>` in the user
+  turn or nowhere — this block is the harness's own voice, and a preview here would put
+  world words in it. Broadcast rooms cannot be answered (a WA list's replies land in the
+  DMs, a calendar has nowhere), so they are never unanswered; reactions, deletes and
+  transcripts are marks on a message, not words. Capped (`UNANSWERED_ROOMS`) with the rest
+  counted: the block is paid on every request, and a long standing list is furniture.
+  A surface is down when its
   connector wrote a state other than `connected` on the row (`extra.state`, stamped
   `<state>_at`): the WhatsApp bridge posts `disconnected`/`logged_out`, the Google poll
   writes `failing` on the sweep that cannot read a grant and `connected` on the one that
-  reads again — transitions only, never a heartbeat. Better than Claude Code's session-start env snapshot: we re-render
+  reads again — transitions only, never a heartbeat. Its line is `· <name> — <service>,
+  <state> since <stamp>`: every item in the block is named the same way, by the name the
+  service shows and by the address only when there is none. Better than Claude Code's session-start env snapshot: we re-render
   every step, so it's *fresh*, not stale — and cache-free, since this block is already the
   only volatile one. Self-scoping: git appears only in a repo, jobs only when some run — so
   a conversational delegate sees a clean `cwd`+`now`, a coding/task agent sees the full set.

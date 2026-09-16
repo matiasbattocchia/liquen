@@ -8,6 +8,8 @@ import {
   parseVerdict,
   relevant,
   specsOf,
+  UNANSWERED_ROOMS,
+  unansweredOn,
   type Wake,
   type XiPorts,
 } from "./xi.ts";
@@ -796,4 +798,161 @@ Deno.test("aboutOf: answered news is not news — nothing to be about", () => {
   const asked = wireMsg("5492614694650", "2026-09-10T20:50:00.000Z");
   const answered = selfMsg();
   assertEquals(aboutOf([asked, answered], SESSION), []);
+});
+
+/* ── unanswered: the rooms whose last word is not ours (§5) ─────────────── */
+
+const ACCOUNT = "5491133585694";
+const ACCOUNTS = new Set([ACCOUNT]);
+/** A line in a wire room: a peer's by default (`sender` = the room, a DM), the account's
+ *  own when `sender` is the connection, one of us when `agent` is stamped. */
+const line = (
+  conv: string,
+  ts: string,
+  over: {
+    sender?: string;
+    agent?: Event["agent"];
+    kind?: "direct" | "group" | "channel" | "broadcast";
+    name?: string;
+    payload?: Record<string, unknown>;
+    parts?: Event["parts"];
+  } = {},
+): Event =>
+  ({
+    id: `e${String(++n).padStart(3, "0")}`,
+    ts,
+    type: "message",
+    ...(over.agent ? { agent: over.agent } : {}),
+    envelope: {
+      service: "whatsapp",
+      connection_address: ACCOUNT,
+      conversation: {
+        address: conv,
+        ...(over.kind ? { kind: over.kind } : {}),
+        ...(over.name ? { name: over.name } : {}),
+      },
+      sender: { address: over.sender ?? conv },
+    },
+    parts: over.parts ?? [{ type: "text", kind: "text", text: "hola" }],
+    ...(over.payload ? { payload: over.payload } : {}),
+  }) as Event;
+const T = (m: number) => `2026-09-16T14:${String(m).padStart(2, "0")}:00.000Z`;
+
+Deno.test("unansweredOn: a room whose last word is a peer's is listed, newest room first, counting their run", () => {
+  const lines = unansweredOn(
+    [
+      line("111", T(1), { name: "Ana", kind: "direct" }),
+      line("222", T(2), { name: "Obra", kind: "group", sender: "333" }),
+      line("111", T(3), { name: "Ana", kind: "direct" }),
+      line("222", T(4), { name: "Obra", kind: "group", sender: ACCOUNT }), // our echo answers Obra
+      line("111", T(5), { name: "Ana", kind: "direct" }),
+    ],
+    SESSION,
+    ACCOUNTS,
+    "UTC",
+  );
+  assertEquals(lines, [
+    "unanswered — 1 conversation:",
+    "· Ana — whatsapp direct, 3 since 16 Sep 14:01",
+  ]);
+});
+
+Deno.test("unansweredOn: the fact is structural — a closed turn changes nothing, our word there does", () => {
+  const asked = line("111", T(1), { name: "Ana", kind: "direct" });
+  const closed = looked(0); // a turn closed in the mind: the horizon moved, Ana did not
+  assertEquals(unansweredOn([asked, closed], SESSION, ACCOUNTS, "UTC").length, 2);
+  const answered = line("111", T(2), { name: "Ana", kind: "direct", sender: ACCOUNT });
+  assertEquals(unansweredOn([asked, closed, answered], SESSION, ACCOUNTS, "UTC"), []);
+});
+
+Deno.test("unansweredOn: our side is this complex or the account — a peer agent's word is theirs", () => {
+  const principal = { id: "a1" }; // the classifier's stamp: no session, no turn — their own phone
+  const peerAgent = { id: "a2", session_id: "mind" };
+  const rooms = [
+    line("111", T(1), { name: "Ana", kind: "direct" }),
+    line("111", T(2), { name: "Ana", kind: "direct", sender: "549000", agent: principal }),
+    line("222", T(3), { name: "Sol", kind: "direct" }),
+    line("222", T(4), { name: "Sol", kind: "direct", sender: "549111", agent: peerAgent }),
+  ];
+  assertEquals(unansweredOn(rooms, SESSION, ACCOUNTS, "UTC"), [
+    "unanswered — 1 conversation:",
+    "· Sol — whatsapp direct, 2 since 16 Sep 14:03",
+  ]);
+});
+
+Deno.test("unansweredOn: a local peer's DM carries no sender and is still theirs", () => {
+  const dm = ev(
+    "message",
+    {
+      conv: "dm:mind@a1|mind@a2",
+      ts: T(1),
+      agent: { id: "a2", session_id: "mind" },
+      parts: [{ type: "text", kind: "text", text: "can you take this one?" }],
+    } as Partial<Event> & { conv?: string },
+  );
+  assertEquals(unansweredOn([dm], SESSION, ACCOUNTS, "UTC"), [
+    "unanswered — 1 conversation:",
+    "· dm:mind@a1|mind@a2 — local, 1 since 16 Sep 14:01",
+  ]);
+  // and the agent's own reply there closes it
+  assertEquals(unansweredOn([dm, selfMsg("dm:mind@a1|mind@a2")], SESSION, ACCOUNTS, "UTC"), []);
+});
+
+Deno.test("unansweredOn: the session's own room and a broadcast are never unanswered", () => {
+  const rooms = [
+    ev(
+      "message",
+      { ts: T(1), envelope: { ...env(MIND), sender: { address: "matias" } } } as Partial<Event>,
+    ),
+    line("calendar:work", T(2), { kind: "broadcast" }),
+    line("status@broadcast", T(3), { kind: "broadcast" }),
+  ];
+  assertEquals(unansweredOn(rooms, SESSION, ACCOUNTS, "UTC"), []);
+});
+
+Deno.test("unansweredOn: a reaction or a delete is a mark on a message, not a word owed an answer", () => {
+  const rooms = [
+    line("111", T(1), { name: "Ana", kind: "direct", sender: ACCOUNT }),
+    line("111", T(2), {
+      name: "Ana",
+      kind: "direct",
+      payload: { action: "add" },
+      parts: [{ type: "data", kind: "reaction", data: { unicode: "👍" } }],
+    }),
+    line("111", T(3), { name: "Ana", kind: "direct", payload: { action: "delete" }, parts: [] }),
+  ];
+  assertEquals(unansweredOn(rooms, SESSION, ACCOUNTS, "UTC"), []);
+});
+
+Deno.test("unansweredOn: `mentioned` when a word of theirs names an account of ours — in a room, never in a direct", () => {
+  const named = { mentions: [{ address: ACCOUNT, name: "Estudio" }] };
+  const rooms = [
+    line("222", T(1), { name: "Obra", kind: "group", sender: "333" }),
+    line("222", T(2), { name: "Obra", kind: "group", sender: "444", payload: named }),
+    line("C07", T(3), {
+      name: "obras",
+      kind: "channel",
+      sender: "U1",
+      payload: { mentions: [{ address: "U9" }] },
+    }),
+    line("111", T(4), { name: "Ana", kind: "direct", payload: named }),
+  ];
+  assertEquals(unansweredOn(rooms, SESSION, ACCOUNTS, "UTC"), [
+    "unanswered — 3 conversations:",
+    "· Ana — whatsapp direct, 1 since 16 Sep 14:04",
+    "· obras — whatsapp channel, 1 since 16 Sep 14:03",
+    "· Obra — whatsapp group, 2 since 16 Sep 14:01 · mentioned",
+  ]);
+});
+
+Deno.test("unansweredOn: past the cap the rest are counted, and a nameless room shows its address", () => {
+  const rooms = Array.from({ length: UNANSWERED_ROOMS + 1 }, (_, i) => line(`r${i}`, T(i)));
+  const lines = unansweredOn(rooms, SESSION, ACCOUNTS, "UTC");
+  assertEquals(lines[0], `unanswered — ${UNANSWERED_ROOMS + 1} conversations:`);
+  assertEquals(
+    lines[1],
+    `· r${UNANSWERED_ROOMS} — whatsapp, 1 since 16 Sep 14:${UNANSWERED_ROOMS}`,
+  );
+  assertEquals(lines.length, UNANSWERED_ROOMS + 2);
+  assertEquals(lines.at(-1), "— 1 more");
 });
