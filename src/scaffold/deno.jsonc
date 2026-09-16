@@ -8,6 +8,8 @@
   },
   "tasks": {
     "start": "deno run -A --env-file=.env @liquen/liquen/start",
+    "stop": "deno run -A @liquen/liquen/stop",
+    "update": "deno run -A @liquen/liquen/update",
     "cli": "deno run -A --env-file=.env @liquen/liquen/cli",
     "repl": "deno run -A --env-file=.env @liquen/liquen/repl",
     "agent": "deno run -A @liquen/liquen/agent",

@@ -2736,6 +2736,26 @@ loudly, the same law as an unknown config key.
   logged once and left down, because a port already held or a key the file got wrong will be
   held and wrong again a second later. The org keeps running with whatever is left, and
   `liquen start` refuses when nothing is.
+- **One supervisor per org, and the lock says so.** A run takes an exclusive lock on
+  `data/liquen.pid` for its whole life and writes its pid inside (src/stop.ts). The LOCK is
+  what answers "is this org running" — the kernel drops it the moment the holder dies,
+  however it dies, so no stale file is ever reasoned about — and the number inside only says
+  who to signal. `liquen stop` is one SIGTERM to that pid, then a wait for the lock to come
+  free: the run actually gone, not merely asked, which is what makes `liquen stop && liquen
+  start` safe to say in one breath. A run that will not go is named, never escalated —
+  SIGKILLing a wedged supervisor orphans children that still hold its ports. A second
+  `liquen start` refuses on the lock, after reading the catalog, so a manifest it could not
+  serve refuses on its own terms.
+- **`liquen update` is the org's version, not the harness's.** The org's `deno.jsonc` pins
+  the package and its lock names the exact version every task runs, so updating is one
+  `deno outdated --update --latest --min-dep-age 0 @liquen/liquen` against that manifest
+  (src/update.ts) — `--latest` because the package IS the harness and an org follows it past
+  the range it was born with, `--min-dep-age 0` because the registry is ours and Deno's
+  default would resolve BACKWARDS past the release being asked for, and the package alone
+  because an org's own dependencies are its business. New code reaches a running org at its
+  next boot and never before, so the command says who is running — and an org that LINKS a
+  checkout is refused outright, because it runs that folder's files whatever the lock says,
+  and a version printed about it would not be the code it runs.
 - **Local dev keeps its inner loop.** `deno task cli` hosts main in-process behind the REPL,
   and `deno task run:<name>` runs one connection alone; `deno task start` is the same
   headless shape a deployment runs.

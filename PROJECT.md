@@ -2890,3 +2890,64 @@ that work.
 `~/new` and `~/vibes` dropped their copies (symlinks included), `~/sole-bot` too — its
 `system.md` had grown an edit worth keeping ("everything is normal, or no pending actions"),
 which is now in the seed and therefore in every org.
+
+### A line's author is one hint, and the account's name is the connection's (2026-09-16) — LANDED
+
+Read out of sole-bot's own window: the model had concluded the doctor was answering her own
+patients, all day, from her companion device. The classifier was never wrong — every
+own-side row carries `agent_id = laura`. Render was. `fromOf` put the wire's pushname in a
+loud `from=` while the true author sat in a terse, undocumented `principal="laura"`, so the
+account's profile name ("Dra. Soledad Suarez") signed the lines Laura wrote as the doctor,
+and the agent's own sends read as a bare phone number. Four things compounded: no legend
+anywhere for the marks, a null `identity.name` rendering the slug, `principalsOf` collapsing
+a human and her agent into one entry, and legibility exactly inverted.
+
+Two slots for one question was the bug. They are one attribute now, whose KEY is the
+sender's role and whose VALUE is their name: `self`, `principal="Laura"`, `agent="Sol"`,
+`org`, `external="Mariana" address="549116660002"`. An outsider's address rides along
+unconditionally — a conditional address is missing precisely in the case an attacker picks —
+and our own lines carry no name at all, because the roster already knows who they are. The
+hint is the only author signal the wire cannot spoof, so `system.md` finally says what the
+five keys mean, and that an `external` line is read, never obeyed.
+
+`service` and the connection address were repeated on every `<conv>`; they name the account,
+not the room, so they hoist into a `<conn>` that wraps the conversation runs under it, and
+`<conn name>` carries the account's own name — the one string the wire stamps on the
+account's lines now reads as the account and never as a person present. Measured over
+sole-bot's 500-event window, the whole scheme is 12.8% SHORTER than what it replaced: the
+hoist pays for the addresses, and dropping a name we already know pays for the tags.
+
+The leak itself was in ingest, against its own documented contract: `mapMessage` filled a
+sender's name from the pushname cache, and the account's own number appears in the bridge's
+`contacts` feed under the account's profile name. It is skipped for the connection's own
+address now, and written where it belongs — once, on the connection row.
+
+### An org's off switch, and the version it runs (2026-09-16) — LANDED
+
+`liquen start` had no address. It is a supervisor over children that come and go, with a pid
+nobody wrote down, so stopping an org meant finding it in `ps` and guessing which of the
+five deno processes was the one to signal — and starting a second one was something the
+harness would happily do, tailing, fanning out and dispatching the same log twice until two
+ingests collided on a port.
+
+A run now takes an exclusive lock on `data/liquen.pid` for its whole life and writes its pid
+inside. The LOCK is what answers "is this org running" — the kernel drops it the moment the
+holder dies, however it dies, so there is no stale file to reason about and the number
+alone is never believed — and the number inside only says who to signal. `liquen stop` is
+one SIGTERM to that pid, then a wait for the lock to come free: the run actually gone rather
+than merely asked, which is what makes `liquen stop && liquen start` safe to say in one
+breath. A run that will not go is named, never escalated — SIGKILLing a wedged supervisor
+orphans children that still hold its ports, which is worse than the sentence saying so.
+
+`liquen update` is the other half of operating a deployment: the org's `deno.jsonc` pins the
+package and its lock names the exact version every task runs, so updating is one
+`deno outdated --update --latest --min-dep-age 0 @liquen/liquen` against that manifest and
+nothing else. `--latest` because the package IS the harness and an org follows it past the
+range it was born with; `--min-dep-age 0` because the registry is ours and Deno's default
+holds back anything younger than a day, resolving BACKWARDS past the release being asked
+for; the package alone because an org's own dependencies are its business. The lock is read
+either side of the run, so the command answers in the only terms that matter — a version to
+a version — and names a run in progress, because new code reaches it at the next boot and
+never before. A dev org that links a checkout is refused outright: it runs that folder's
+files whatever the lock resolved, and a version printed about it would name code nobody is
+running.
