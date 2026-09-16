@@ -78,10 +78,11 @@ export type SlackMedia = (
   ctx: { team: string; conversation: string; users: string[] },
 ) => Promise<FilePart | null>;
 
-/** The name directory (§3): `sender.name` is the SERVICE's display fact, and Slack's
- *  events carry none — so the connector asks the service itself (`users.info`) and
- *  remembers the answer. The moral twin of WhatsApp's pushname: same fact, pulled
- *  instead of broadcast. Nothing of OURS — identity resolution stays the classifier's. */
+/** The name directory (§3): `sender.name` and `conversation.name` are the SERVICE's
+ *  display facts, and Slack's events carry neither — so the connector asks the service
+ *  itself (`users.info`, `conversations.info`) and remembers the answers. The moral twin
+ *  of WhatsApp's pushname and group subject: same facts, pulled instead of broadcast.
+ *  Nothing of OURS — identity resolution stays the classifier's. */
 export interface SlackNames {
   /** Display name for a user id — cached after the first hit; null = unresolvable right
    *  now (no token, API miss) and UNCACHED, so a later delivery retries. `via` = the
@@ -94,6 +95,13 @@ export interface SlackNames {
   emailOf(team: string, user: string, via?: string[]): Promise<string | null>;
   /** The push leg: `user_change` deliveries carry the fresh profile — no call needed. */
   learn(team: string, user: string, name: string): void;
+  /** Display name for a conversation id — a channel's or private group's subject, a
+   *  group DM's `mpdm-…` handle, and for a DM the person on the other end (a DM has no
+   *  subject of its own, §3). Cached after the first hit; null = unresolvable right now
+   *  and UNCACHED, so a later delivery retries. */
+  roomOf(team: string, channel: string, via?: string[]): Promise<string | null>;
+  /** The push leg: `channel_rename` / `group_rename` deliveries carry the new subject. */
+  learnRoom(team: string, channel: string, name: string): void;
 }
 
 /** Build the directory over a token source (same shape the media seam resolves with):
@@ -148,6 +156,43 @@ export function slackNames(
     inflight.set(key, p);
     return p;
   };
+  const rooms = new Map<string, string>();
+  const roomsInflight = new Map<string, Promise<string | null>>();
+  // one conversations.info per first sight; a DM's answer is the counterpart's user id,
+  // which the profile leg names — so a DM costs one call more, once
+  const roomOf = (team: string, channel: string, via: string[] = []): Promise<string | null> => {
+    const key = `${team}:${channel}`;
+    const hit = rooms.get(key);
+    if (hit !== undefined) return Promise.resolve(hit);
+    const going = roomsInflight.get(key);
+    if (going) return going;
+    const p = (async (): Promise<string | null> => {
+      try {
+        const token = await tokenFor(team, via);
+        if (!token) return null;
+        const res = await timedFetch(
+          `https://slack.com/api/conversations.info?channel=${channel}`,
+          { headers: { authorization: `Bearer ${token}` } },
+        );
+        const body = await res.json() as {
+          ok: boolean;
+          channel?: { name?: string; is_im?: boolean; user?: string };
+        };
+        const c = body.ok ? body.channel : undefined;
+        const found = c?.is_im
+          ? (c.user ? (await profileOf(team, c.user, via)).name : null)
+          : c?.name || null;
+        if (found) rooms.set(key, found);
+        return found;
+      } catch {
+        return null;
+      } finally {
+        roomsInflight.delete(key);
+      }
+    })();
+    roomsInflight.set(key, p);
+    return p;
+  };
   return {
     nameOf: async (team, user, via) => (await profileOf(team, user, via)).name,
     emailOf: async (team, user, via) => (await profileOf(team, user, via)).email,
@@ -155,6 +200,8 @@ export function slackNames(
       const key = `${team}:${user}`;
       cache.set(key, { name, email: cache.get(key)?.email ?? null });
     },
+    roomOf,
+    learnRoom: (team, channel, name) => rooms.set(`${team}:${channel}`, name),
   };
 }
 
@@ -172,7 +219,8 @@ export interface SlackWebhookDeps {
     & Partial<Pick<Registry, "agents">>;
   /** File attachments → the media store (absent ⇒ files are dropped, text still flows). */
   media?: SlackMedia;
-  /** The name directory (absent ⇒ senders ship bare ids, mentions decode to `@<id>`). */
+  /** The name directory (absent ⇒ senders and rooms ship bare ids, mentions decode to
+   *  `@<id>`). */
   names?: SlackNames;
   /** The apps' signing secrets. Set ⇒ `X-Slack-Signature` is REQUIRED and must verify
    *  under one of them (one server, every app the vault holds); absent ⇒ unsigned
@@ -263,6 +311,12 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       }).user;
       const name = u?.profile?.display_name || u?.profile?.real_name || u?.name;
       if (u?.id && name) deps.names?.learn(team, u.id, name);
+      return;
+    }
+    // the directory's other push leg: a room's new subject rides the rename event
+    if (e.type === "channel_rename" || e.type === "group_rename") {
+      const c = e.channel as { id?: string; name?: string } | undefined;
+      if (c?.id && c.name) deps.names?.learnRoom(team, c.id, c.name);
       return;
     }
     // the membership mirror, active leg (§4): joins/leaves move rows, nothing published
@@ -506,10 +560,12 @@ async function mapMessage(
       : {}),
     ...(mentions.length ? { mentions } : {}),
   };
-  // sender.name is the SERVICE's display fact — Slack's events carry none, so the name
-  // directory asks the service itself (users.info / user_change); still nothing of ours:
-  // identity resolution is the classifier's business (§3)
+  // sender.name and conversation.name are the SERVICE's display facts — Slack's events
+  // carry neither, so the name directory asks the service itself (users.info /
+  // conversations.info, the rename and profile events pushing updates); still nothing of
+  // ours: identity resolution is the classifier's business (§3)
   const who = m.user ? await names?.nameOf(team, m.user, via) : undefined;
+  const room = await names?.roomOf(team, conversation, via);
   // the classifier's authorship stamp (§3): a sender whose grant row or declared email
   // names a member is that member — `agent.id` alone (a Slack client is not the harness,
   // so no session_id); turn_id, never this stamp, marks the model's voice
@@ -526,7 +582,11 @@ async function mapMessage(
     envelope: {
       service: "slack",
       connection_address: anchor,
-      conversation: { address: conversation, ...(kind ? { kind } : {}) },
+      conversation: {
+        address: conversation,
+        ...(kind ? { kind } : {}),
+        ...(room ? { name: room } : {}),
+      },
       sender: m.user ? { address: m.user, ...(who ? { name: who } : {}) } : undefined,
       // the upsert/merge key: Slack's ts is the per-channel message id (§3, §4) — for an
       // edit, the change delivery's own ts

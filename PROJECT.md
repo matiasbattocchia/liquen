@@ -2986,6 +2986,9 @@ unanswered by us. The list is a function of the window like everything else, so 
 past the window's reach is not on it; and it is capped at ten with the rest counted, because
 every line here is paid on every request.
 
-Open from here: the Slack connector stamps no `conversation.name` (`ingest.ts` builds
-`{address, kind}`), so a Slack room lists by its id until a `conversations.info` lookup
-lands beside `profileOf` — the list degrades to ugly there, not to broken.
+A Slack room is named the way a Slack user is: the events carry no subject, so the name
+directory asks `conversations.info` once per room (a DM answers with the counterpart's
+user id, which the profile leg names) and the `channel_rename` / `group_rename` events
+push the rest. The bot list gains `groups:read`, `im:read` and `mpim:read` for it, so an
+installed app is reinstalled to name private rooms and DMs; until then those calls answer
+`missing_scope`, the lookup stays uncached, and the room lists by its id.

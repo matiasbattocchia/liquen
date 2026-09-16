@@ -957,7 +957,10 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
   recorded by the ingest on the bot's own row (`extra.dms`, member → channel) the first
   time that member writes there, since the channel id is opaque; which member a Slack
   user is comes from the email on their profile (`users.info`, the `users:read.email`
-  scope) scanned against the roster, never from a Slack user id — and which agent speaks
+  scope) scanned against the roster, never from a Slack user id; what a Slack user or
+  room is CALLED comes from the same directory (`users.info`, `conversations.info`, the
+  profile and rename events pushing changes), a display fact the row keeps — and which
+  agent speaks
   through the bot, an account with no handle at all, is recorded at the paste
   (`liquen connect slack bot --agent`, `extra.agent`); local, native.
   The agent must never treat any of its principals as a peer/customer.

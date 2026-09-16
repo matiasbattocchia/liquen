@@ -43,9 +43,10 @@ async function sign(ts: string, body: string): Promise<string> {
   return `v0=${[...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** The name directory in miniature: a seeded map, learns recorded. */
+/** The name directory in miniature: seeded maps (users and rooms share the `${team}:${id}`
+ *  key space — Slack ids never collide across the two), learns recorded. */
 function fakeNames(seed: Record<string, string> = {}, emails: Record<string, string> = {}) {
-  const known = new Map(Object.entries(seed)); // key: `${team}:${user}`
+  const known = new Map(Object.entries(seed));
   const learned: string[] = [];
   const names: NonNullable<SlackWebhookDeps["names"]> = {
     nameOf: (team, user) => Promise.resolve(known.get(`${team}:${user}`) ?? null),
@@ -53,6 +54,11 @@ function fakeNames(seed: Record<string, string> = {}, emails: Record<string, str
     learn: (team, user, name) => {
       known.set(`${team}:${user}`, name);
       learned.push(`${team}:${user}=${name}`);
+    },
+    roomOf: (team, channel) => Promise.resolve(known.get(`${team}:${channel}`) ?? null),
+    learnRoom: (team, channel, name) => {
+      known.set(`${team}:${channel}`, name);
+      learned.push(`${team}:${channel}=${name}`);
     },
   };
   return { names, learned };
@@ -606,6 +612,35 @@ Deno.test("slack: user_change is the directory's push leg — learned, nothing p
   assertEquals((published[0] as MessageEvent).envelope.sender?.name, "Rocío");
 });
 
+Deno.test("slack: the room's name rides every message's conversation, from the directory", async () => {
+  const { names } = fakeNames({ "T1:C1": "general" });
+  const { handler, published } = harness(SECRET, undefined, undefined, names);
+  await handler(await signedReq(messageEvent()));
+  assertEquals((published[0] as MessageEvent).envelope.conversation, {
+    address: "C1",
+    kind: "channel",
+    name: "general",
+  });
+});
+
+Deno.test("slack: channel_rename is the directory's push leg for rooms — learned, nothing published", async () => {
+  const { names, learned } = fakeNames({ "T1:C1": "general" });
+  const { handler, published } = harness(SECRET, undefined, undefined, names);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "channel_rename",
+        channel: { id: "C1", name: "anuncios", name_normalized: "anuncios", created: 1 },
+        event_ts: "9.9",
+      },
+    })),
+  );
+  assertEquals(published.length, 0);
+  assertEquals(learned, ["T1:C1=anuncios"]);
+  await handler(await signedReq(messageEvent()));
+  assertEquals((published[0] as MessageEvent).envelope.conversation.name, "anuncios");
+});
+
 Deno.test("slack: no directory ⇒ bare ids — sender unnamed, mentions decode to @<id>", async () => {
   const { handler, published } = harness(SECRET);
   await handler(
@@ -647,6 +682,42 @@ Deno.test("slack: the name directory's users.info call carries a timeout signal"
   }
   assertEquals(stub.seen.length, 1);
   assert(stub.seen[0].signal instanceof AbortSignal, "the call is bounded");
+});
+
+Deno.test("slack: the directory names a room by conversations.info, a DM by its counterpart", async () => {
+  const answers: Record<string, unknown> = {
+    "conversations.info?channel=C1": { ok: true, channel: { id: "C1", name: "general" } },
+    "conversations.info?channel=D1": { ok: true, channel: { id: "D1", is_im: true, user: "U1" } },
+    "users.info?user=U1": {
+      ok: true,
+      user: { profile: { display_name: "Ana", email: "ana@acme.co" } },
+    },
+  };
+  const calls: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = ((i: RequestInfo | URL) => {
+    const q = String(i).replace("https://slack.com/api/", "");
+    calls.push(q);
+    return Promise.resolve(Response.json(answers[q] ?? { ok: false }));
+  }) as typeof fetch;
+  try {
+    const names = slackNames(() => Promise.resolve("xoxb-t"));
+    assertEquals(await names.roomOf("T1", "C1"), "general");
+    assertEquals(await names.roomOf("T1", "C1"), "general"); // cached: one call
+    assertEquals(await names.roomOf("T1", "D1"), "Ana"); // the DM wears the other end's name
+    assertEquals(await names.nameOf("T1", "U1"), "Ana"); // and that profile is already known
+    assertEquals(await names.roomOf("T1", "C9"), null); // unresolvable stays uncached
+    assertEquals(await names.roomOf("T1", "C9"), null);
+  } finally {
+    globalThis.fetch = real;
+  }
+  assertEquals(calls, [
+    "conversations.info?channel=C1",
+    "conversations.info?channel=D1",
+    "users.info?user=U1",
+    "conversations.info?channel=C9",
+    "conversations.info?channel=C9",
+  ]);
 });
 
 Deno.test("slack: an event POST is acked 200 before its processing settles", async () => {

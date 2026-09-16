@@ -18,7 +18,9 @@
         "message.im",
         "message.mpim",
         "member_joined_channel",
-        "member_left_channel"
+        "member_left_channel",
+        "channel_rename",
+        "group_rename"
       ],
       "user_events": [
         "message.channels",
@@ -26,7 +28,9 @@
         "message.im",
         "message.mpim",
         "member_joined_channel",
-        "member_left_channel"
+        "member_left_channel",
+        "channel_rename",
+        "group_rename"
       ]
     },
     "socket_mode_enabled": true,
