@@ -20,19 +20,8 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
     const byName = new Map(docs.map((d) => [d.header.name, d]));
     assert(byName.get("instructions/system")!.body); // always ⇒ inlined, whatever it says
     assertEquals(byName.get("memories/example")!.body, undefined); // lazy → pointer
-    // the checkpoint prompt is the harness's own business: it carries no frontmatter, so it
-    // is no doc — never indexed, never offered — and is still read by name when one is due
-    assert(
-      (await Deno.stat(`${root}/system/seed/instructions/compaction.md`)).isFile,
-    );
-    assertStringIncludes(
-      (await openFileDocs(root).read({ agent: "alter" }, {
-        scope: "system",
-        kind: "instruction",
-        name: "instructions/compaction",
-      }))!,
-      "The conversation above is being archived.",
-    );
+    // the system half is the package's — seeding leaves the data root without a word of it
+    assertEquals(await Deno.stat(`${root}/system`).catch(() => null), null);
     // the agent doc is the role alone: who and where is the env line (§5)
     assertStringIncludes(byName.get("instructions/agent")!.body!, "The role");
     assert(
@@ -74,49 +63,6 @@ Deno.test("a deleted doc stays deleted — the folder is what says the org has t
       await Deno.stat(`${root}/agents/alter/memories/example.md`).catch(() => null),
       null,
     );
-  } finally {
-    await Deno.remove(root, { recursive: true });
-  }
-});
-
-Deno.test("the system scope is laid, not seeded: an upgrade's words reach a live org", async () => {
-  const root = await Deno.makeTempDir();
-  try {
-    await seedOrg(root);
-    const path = `${root}/system/seed/instructions/system.md`;
-    const shipped = await Deno.readTextFile(path);
-    await Deno.writeTextFile(path, "---\nkind: instruction\nload: always\n---\nSTALE");
-    await seedOrg(root); // the next boot, on a newer version
-    assertEquals(await Deno.readTextFile(path), shipped);
-    // and nothing of the harness's lands in the tree the org edits
-    assertEquals(await Deno.stat(`${root}/system/instructions`).catch(() => null), null);
-  } finally {
-    await Deno.remove(root, { recursive: true });
-  }
-});
-
-Deno.test("the org answers a system name by writing one — a doc replaces it, a bare file refuses it", async () => {
-  const root = await Deno.makeTempDir();
-  try {
-    await seedOrg(root);
-    await Deno.mkdir(`${root}/system/instructions`, { recursive: true });
-    await Deno.mkdir(`${root}/system/skills`, { recursive: true });
-    // this org's own legend, and no workflows skill at all
-    await Deno.writeTextFile(
-      `${root}/system/instructions/system.md`,
-      "---\nkind: instruction\nload: always\n---\nOURS",
-    );
-    await Deno.writeTextFile(`${root}/system/skills/workflows.md`, "");
-    await seedOrg(root); // a later boot never argues with either
-    const docs = await openFileDocs(root).list({ agent: "alter" });
-    const byName = new Map(docs.map((d) => [d.header.name, d]));
-    assertEquals(byName.get("instructions/system")!.body, "OURS");
-    assertEquals(
-      byName.get("instructions/system")!.header.path,
-      `${root}/system/instructions/system.md`,
-    );
-    assertEquals(byName.has("skills/workflows"), false);
-    assert(byName.has("skills/transcribe-audio")); // the rest of the harness's set stands
   } finally {
     await Deno.remove(root, { recursive: true });
   }

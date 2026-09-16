@@ -2868,13 +2868,18 @@ are not the deployment's words to edit, they are the harness's own; write-if-abs
 edit to `src/seed/system.md` reached exactly nobody, and a released org could never be told
 anything new without a hand-copy.
 
-Now `system/` has two layers. Every boot lays the package's set under `system/seed/` —
-overwriting, on purpose — and whatever the org writes directly under `system/` answers for
-that name instead: a real doc replaces it, a file with no frontmatter says the org wants
-none. `read` follows the same order, so a name resolves the same way whether it is listed or
-pulled. An org that writes nothing tracks the package: a checkout at once, a released org at
-its next version. The org and agent scopes keep the old rule — they are the deployment's own
-words, and no boot may rewrite them.
+Now `system/` has two layers and only one of them is on the org's disk. The package's set is
+read where the package is — a checkout's files, the registry's URLs, the `fetch` the seeds
+were always copied with — and whatever the org writes under `system/` answers for that name
+instead: a real doc replaces it, a file with no frontmatter says the org wants none. Nothing
+is laid, nothing is refreshed, nothing can go stale. The org and agent scopes keep the old
+rule — they are the deployment's own words, and no boot may rewrite them.
+
+That makes a doc's `path` the package's address, which is a URL in an installed org, and the
+path IS the handle the model is told to `aread`. So `aread` takes a URL as well as a file,
+and `layShims` gives the read shim `--allow-net` for the package's host alone. The set is
+read once per process and held: a doc that renders every turn must not be a request every
+turn, nor something a registry outage can take away mid-run.
 
 The compaction prompt lost its frontmatter in the same pass. It is the only doc the harness
 sends *as itself*, never something the agent reads, and it was costing a line in every

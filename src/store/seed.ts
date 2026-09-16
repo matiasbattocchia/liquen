@@ -14,12 +14,11 @@
  * by hand; `install`'s rule is what makes all three the same call.
  *
  * The SYSTEM scope is the exception, and it is not seeded at all: those are the harness's
- * own words (§8 `system/` — the harness's docs), so they are LAID, fresh, under
- * `system/seed/` on every pass, and the org's editable tree starts empty of them. An
- * upgrade's wording then reaches a live org the way a code change does, and an org that
- * wants other words writes its own file one level up — `system/instructions/system.md`
- * shadows `system/seed/instructions/system.md` by name (docs.ts), and a file with no
- * frontmatter there is how an org says it wants none.
+ * own words (§8 `system/` — the harness's docs), so they never reach the data root. They are
+ * READ where the package is — `systemDocs()` — and an upgrade's wording therefore reaches a
+ * live org the way a code change does, with the version. An org that wants other words
+ * writes its own file into `system/`, which answers for that name instead (docs.ts); a file
+ * with no frontmatter there is how it says it wants none.
  *
  * The templates are FLAT — `<scope>-<name>.md` — and the tree they install into is not:
  * the tables below are the whole mapping, one line per doc, which is the point of the flat
@@ -28,6 +27,8 @@
  *
  * `deno compile` note: embed the templates with `--include src/seed`.
  */
+
+import { fileURLToPath } from "node:url";
 
 const TEMPLATES = new URL("../seed/", import.meta.url);
 
@@ -59,28 +60,46 @@ async function install(root: string, files: [string, string][]): Promise<void> {
   }
 }
 
-/** Where under the system scope a boot lays the package's own docs — harness-owned, never
- *  edited in place: what an org writes goes one level up and shadows it by name. */
-export const SEED_DIR = "seed";
-
-/** The harness's own words, laid (not seeded) under `system/${SEED_DIR}/`. */
-const SYSTEM: [string, string][] = [
-  ["instructions/system.md", "system.md"],
-  ["instructions/compaction.md", "system-compaction.md"],
-  ["skills/workflows.md", "system-skills-workflows.md"],
-  ["skills/transcribe-audio.md", "system-skills-transcribe-audio.md"],
-];
-
-/** The org's half: the words this deployment writes, plus a fresh copy of the harness's. */
-export async function seedOrg(root: string): Promise<void> {
-  for (const [rel, template] of SYSTEM) {
-    const path = `${root}/system/${SEED_DIR}/${rel}`;
-    await Deno.mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
-    await Deno.writeTextFile(path, await read(template)); // overwritten every pass, on purpose
-  }
-  await install(root, [
+/** The org's half: the words this deployment writes. The system scope is not here — it is
+ *  the harness's, and it stays with the package (`systemDocs`). */
+export function seedOrg(root: string): Promise<void> {
+  return install(root, [
     ["organizations/instructions/organization.md", "organization.md"],
   ]);
+}
+
+/** One of the harness's own docs, as the cascade meets it: `name` is what an org overrides
+ *  by, `path` its address — a plain file path in a checkout, the registry's URL in an
+ *  installed org — which is also the handle render hands the model. */
+export interface SystemDoc {
+  name: string;
+  path: string;
+  text: string;
+}
+
+/** Cascade name ← template, for the docs the harness speaks with. */
+const SYSTEM: [string, string][] = [
+  ["instructions/system", "system.md"],
+  ["instructions/compaction", "system-compaction.md"],
+  ["skills/workflows", "system-skills-workflows.md"],
+  ["skills/transcribe-audio", "system-skills-transcribe-audio.md"],
+];
+
+let loaded: Promise<SystemDoc[]> | undefined;
+
+/** The system scope, read from the package. Once per process and then held: the package
+ *  cannot change under a running org, and docs that render every turn must not be a request
+ *  every turn — nor a thing an outage can take away mid-run. */
+export function systemDocs(): Promise<SystemDoc[]> {
+  return loaded ??= Promise.all(SYSTEM.map(async ([name, template]) => {
+    const url = new URL(template, TEMPLATES);
+    return {
+      name,
+      // the agent reads it at this address too, so a checkout's is a path, not a file: URL
+      path: url.protocol === "file:" ? fileURLToPath(url) : url.href,
+      text: await read(template),
+    };
+  }));
 }
 
 /** One agent's half: the home itself — its workspace, so it exists empty — the persona to

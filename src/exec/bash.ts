@@ -422,7 +422,8 @@ function denoDir(): Promise<string> {
  *  A shim runs as the agent's uid, which has no module cache of its own and no way to fill
  *  one (the egress proxy does not front the registry, §9), so it reads THIS process's cache
  *  — `DENO_DIR` pinned in the shim line, `--cached-only` so an agent's `aread` never reaches
- *  for the network — and every boot warms that cache first (`deno cache` of the module by
+ *  for a MODULE (its only net is the package's own host, and only to read a doc that lives
+ *  there) — and every boot warms that cache first (`deno cache` of the module by
  *  its URL: a no-op once it is there; a fetch the harness, not the agent, makes). The pin
  *  lives in the shim, not the agent's environment: a script the agent writes runs on the
  *  agent's own deno, with its own cache and the proxy's network. Returns the directory. */
@@ -439,11 +440,17 @@ async function layShims(dir: string): Promise<string> {
       `cannot cache ${afs} for the file shims: ${new TextDecoder().decode(warm.stderr).trim()}`,
     );
   }
+  // the harness's own docs live where the package does (§8), so in an installed org their
+  // address is a URL and `aread` must be able to open it — that host and no other, and only
+  // for the command that reads
+  const host = new URL(afs).protocol === "file:" ? "" : ` --allow-net=${new URL(afs).host}`;
   for (const [name, verb] of [["aread", "read"], ["awrite", "write"], ["aedit", "edit"]]) {
     const path = `${bin}/${name}`;
     await Deno.writeTextFile(
       path,
-      `#!/bin/sh\nexec env DENO_DIR='${cache}' deno run --cached-only --allow-read --allow-write '${afs}' ${verb} "$@"\n`,
+      `#!/bin/sh\nexec env DENO_DIR='${cache}' deno run --cached-only --allow-read --allow-write${
+        verb === "read" ? host : ""
+      } '${afs}' ${verb} "$@"\n`,
     );
     await Deno.chmod(path, 0o755);
   }

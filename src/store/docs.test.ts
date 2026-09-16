@@ -20,8 +20,12 @@ async function withRoot(fn: (root: string) => Promise<void>): Promise<void> {
   }
 }
 
-const ref = (docs: DocEntry[]) =>
-  docs.map((d) => `${d.header.scope}/${d.header.kind}/${d.header.name}`);
+/** What this ROOT holds. The package's own system docs stand in every cascade (§8) and are
+ *  nobody's temp dir, so the path is what tells them apart; the two-layer test below is
+ *  where they are asserted on purpose. */
+const ref = (docs: DocEntry[], root: string) =>
+  docs.filter((d) => d.header.path.startsWith(root))
+    .map((d) => `${d.header.scope}/${d.header.kind}/${d.header.name}`);
 
 Deno.test("list returns every doc's header across the cascade (§8 layout)", async () => {
   await withRoot(async (root) => {
@@ -31,7 +35,7 @@ Deno.test("list returns every doc's header across the cascade (§8 layout)", asy
     await put(root, "organizations/skills/refunds", doc("skill", "how to refund"));
 
     const docs = await openFileDocs(root).list({ agent: "a1" });
-    assertEquals(ref(docs).sort(), [
+    assertEquals(ref(docs, root).sort(), [
       "agent/instruction/instructions/persona",
       "organization/instruction/instructions/policy",
       "organization/skill/skills/refunds",
@@ -47,7 +51,7 @@ Deno.test("a doc declares itself: no frontmatter ⇒ not a doc (workspace files 
     await put(root, "agents/a1/repo/docs/guide", "plain markdown from a cloned repo");
 
     const docs = await openFileDocs(root).list({ agent: "a1" });
-    assertEquals(ref(docs), ["agent/memory/memories/real"]);
+    assertEquals(ref(docs, root), ["agent/memory/memories/real"]);
   });
 });
 
@@ -74,7 +78,7 @@ Deno.test("workspace noise dirs are never scanned (.git · node_modules · .out)
     await put(root, "agents/a1/ok", doc("memory", "x"));
 
     const docs = await openFileDocs(root).list({ agent: "a1" });
-    assertEquals(ref(docs), ["agent/memory/ok"]);
+    assertEquals(ref(docs, root), ["agent/memory/ok"]);
   });
 });
 
@@ -102,7 +106,8 @@ Deno.test("header carries parsed YAML frontmatter (quotes and colons handled)", 
       "organizations/skills/x",
       '---\nkind: skill\ndescription: "ratio a:b, quoted"\n---\nbody',
     );
-    const [d] = await openFileDocs(root).list({ agent: "a1" });
+    const docs = await openFileDocs(root).list({ agent: "a1" });
+    const d = docs.find((e) => e.header.name === "skills/x")!;
     assertEquals(d.header.frontmatter, { kind: "skill", description: "ratio a:b, quoted" });
   });
 });
@@ -125,9 +130,9 @@ Deno.test("conversation scope is listed only when requested", async () => {
     await put(root, "conversations/c9/state", doc("memory", "working state"));
     const docs = openFileDocs(root);
 
-    assertEquals(ref(await docs.list({ agent: "a1" })), ["agent/instruction/persona"]);
+    assertEquals(ref(await docs.list({ agent: "a1" }), root), ["agent/instruction/persona"]);
     assertEquals(
-      ref(await docs.list({ agent: "a1", conversation: "c9" })).sort(),
+      ref(await docs.list({ agent: "a1", conversation: "c9" }), root).sort(),
       ["agent/instruction/persona", "conversation/memory/state"],
     );
   });
@@ -142,11 +147,11 @@ Deno.test("non-.md files are ignored; a missing scope lists empty; missing read 
     );
 
     const docs = openFileDocs(root);
-    assertEquals(ref(await docs.list({ agent: "a1" })), [
+    assertEquals(ref(await docs.list({ agent: "a1" }), root), [
       "organization/instruction/instructions/x",
     ]);
     // an agent with no folder still sees the cascade above it — just nothing of its own
-    assertEquals(ref(await docs.list({ agent: "nobody" })), [
+    assertEquals(ref(await docs.list({ agent: "nobody" }), root), [
       "organization/instruction/instructions/x",
     ]);
     assertEquals(
@@ -154,9 +159,8 @@ Deno.test("non-.md files are ignored; a missing scope lists empty; missing read 
       null,
     );
     assert(
-      (await docs.list({ agent: "a1" }))[0].header.path.endsWith(
-        "/organizations/instructions/x.md",
-      ),
+      (await docs.list({ agent: "a1" })).find((d) => d.header.name === "instructions/x")!
+        .header.path.endsWith("/organizations/instructions/x.md"),
     );
   });
 });
@@ -176,7 +180,7 @@ Deno.test("a linked doc is a doc, a linked folder is a folder, a dangling link i
       await Deno.symlink(`${outside}/gone.md`, `${root}/system/instructions/gone.md`);
 
       const docs = await openFileDocs(root).list({ agent: "a1" });
-      assertEquals(ref(docs).sort(), [
+      assertEquals(ref(docs, root).sort(), [
         "organization/skill/skills/playbook",
         "system/instruction/instructions/system",
       ]);
@@ -188,32 +192,51 @@ Deno.test("a linked doc is a doc, a linked folder is a folder, a dangling link i
   });
 });
 
-// §8: the system scope is the only one with two layers — the package's own set under
-// `system/seed/`, and whatever this org put in its place
-Deno.test("system: the org's file answers for a name, the package's stands for the rest", async () => {
+// §8: the system scope is the only one with two layers — the package's own set, read where
+// the package lives and never copied here, and whatever this org put in its place
+Deno.test("system: an empty root already has the package's docs, at the package's address", async () => {
   await withRoot(async (root) => {
-    await put(
-      root,
-      "system/seed/instructions/system",
-      doc("instruction", "shipped", "load: always\n"),
+    const docs = openFileDocs(root);
+    const byName = new Map((await docs.list({ agent: "a1" })).map((d) => [d.header.name, d]));
+    assertEquals([...byName.keys()].sort(), [
+      "instructions/system",
+      "skills/transcribe-audio",
+      "skills/workflows",
+    ]);
+    // a checkout's package is files, so the address is one; an installed org's is its URL
+    const at = byName.get("skills/workflows")!.header.path;
+    assert(at.endsWith("/src/seed/system-skills-workflows.md"), at);
+    assertEquals(at.startsWith(root), false); // never the data root, on any run
+    assert(byName.get("instructions/system")!.body); // always ⇒ inlined
+    assertEquals(byName.get("skills/workflows")!.body, undefined); // lazy → a pointer to `at`
+    // the checkpoint prompt is no doc (no frontmatter) and still reads by name
+    assertEquals(byName.has("instructions/compaction"), false);
+    const ref = { scope: "system", kind: "instruction" } as const;
+    assert(
+      (await docs.read({ agent: "a1" }, { ...ref, name: "instructions/compaction" }))!
+        .startsWith("The conversation above is being archived."),
     );
-    await put(root, "system/seed/skills/workflows", doc("skill", "shipped skill"));
-    await put(root, "system/seed/instructions/compaction", "no frontmatter — the harness's own");
+    assertEquals(await docs.read({ agent: "a1" }, { ...ref, name: "instructions/ghost" }), null);
+  });
+});
+
+Deno.test("system: what the org writes answers for that name — a doc replaces, a bare file refuses", async () => {
+  await withRoot(async (root) => {
     await put(root, "system/instructions/system", doc("instruction", "ours", "load: always\n"));
-    await put(root, "system/skills/workflows", ""); // this org wants no such skill
+    await put(root, "system/skills/workflows", ""); // this org wants none
 
     const docs = openFileDocs(root);
-    const listed = await docs.list({ agent: "a1" });
-    // the seed layer is never a name of its own: `instructions/system`, not `seed/…`
-    assertEquals(ref(listed).sort(), ["system/instruction/instructions/system"]);
-    assertEquals(listed[0].body, "ours");
-    assertEquals(listed[0].header.path, `${root}/system/instructions/system.md`);
+    const byName = new Map((await docs.list({ agent: "a1" })).map((d) => [d.header.name, d]));
+    assertEquals([...byName.keys()].sort(), ["instructions/system", "skills/transcribe-audio"]);
+    assertEquals(byName.get("instructions/system")!.body, "ours");
+    assertEquals(
+      byName.get("instructions/system")!.header.path,
+      `${root}/system/instructions/system.md`,
+    );
     // read follows the same order, and reaches a file that is no doc at all
     const at = (name: string) =>
       docs.read({ agent: "a1" }, { scope: "system", kind: "instruction", name });
     assertEquals(await at("instructions/system"), "ours");
     assertEquals(await at("skills/workflows"), "");
-    assertEquals(await at("instructions/compaction"), "no frontmatter — the harness's own");
-    assertEquals(await at("instructions/ghost"), null);
   });
 });

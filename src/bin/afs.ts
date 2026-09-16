@@ -62,6 +62,14 @@ async function read(
   limit?: number,
   maxBytes?: number,
 ): Promise<string> {
+  // a doc that lives where the PACKAGE does is read at its address (§8): an installed org's
+  // system docs are URLs, and the handle the model is given has to be the one that opens
+  // them. Text always — nothing the harness ships is media, and there is nothing to stat.
+  if (/^https?:\/\//.test(path)) {
+    const res = await fetch(path);
+    if (!res.ok) throw new Error(`${path}: ${res.status} ${res.statusText}`);
+    return window(path, await res.text(), offset, limit, maxBytes);
+  }
   // bytes files (§5 media): no useful text form — hand back a media mark instead of
   // mojibake; bash peels it and the file rides the tool_result as an attachment.
   // Classification cascade: extension → magic bytes → the NUL heuristic → text.
@@ -78,7 +86,17 @@ async function read(
     const size = (await Deno.stat(path)).size;
     return `[media ${mime} · ${size} bytes]\n${MEDIA_MARK}${resolve(path)}`;
   }
-  const content = await Deno.readTextFile(path);
+  return window(path, await Deno.readTextFile(path), offset, limit, maxBytes);
+}
+
+/** The requested slice of a text, head-truncated, with the footer that continues it. */
+function window(
+  path: string,
+  content: string,
+  offset?: number,
+  limit?: number,
+  maxBytes?: number,
+): string {
   const lines = content.split("\n");
   if (content.endsWith("\n")) lines.pop();
   const start = offset ? Math.max(0, offset - 1) : 0;

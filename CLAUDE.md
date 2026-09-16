@@ -36,11 +36,11 @@ Write the positive property. If the rejected design is genuinely worth recording
 - `PROJECT.md` — dated entries: what landed, what an incident showed, what is still open.
   Connector minutiae and incident reports live here, never in `DESIGN.md`.
 - Agent-facing instructions are the templates in `src/seed/`. The system ones are the
-  harness's own: every boot lays them under `data/system/seed/`, so editing the template IS
-  editing what every org reads (a checkout at once, a released org at its next version).
-  What an org writes under `data/system/` itself answers for that name instead. The org and
-  agent templates are still seeded write-if-absent, so a template edit reaches an existing
-  org only through its live copy; verify the two agree with `diff -q`.
+  harness's own and are never copied into an org: they are read where the package is, so
+  editing the template IS editing what every org reads (a checkout at once, a released org
+  at its next version). What an org writes under `data/system/` answers for that name
+  instead. The org and agent templates are still seeded write-if-absent, so a template edit
+  reaches an existing org only through its live copy; verify the two agree with `diff -q`.
 
 ## Configuration
 

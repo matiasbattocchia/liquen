@@ -26,11 +26,13 @@
  *     agent via the substrate read, or by render via `read()`.
  *
  * The **system** scope alone has two layers, because those words are the harness's and an
- * upgrade must be able to change them (§8): `system/seed/` is the package's own, laid fresh
- * every boot (store/seed.ts), and anything the org writes directly under `system/` answers
- * for that name instead — a real doc replaces it, a file with no frontmatter says the org
- * wants none. So an org that writes nothing tracks the package, and one that writes is
- * never argued with.
+ * upgrade must be able to change them (§8): the package's own set never reaches the data
+ * root — it is read where the package lives (`systemDocs`, store/seed.ts) — and anything the
+ * org writes under `system/` answers for that name instead: a real doc replaces it, a file
+ * with no frontmatter says the org wants none. So an org that writes nothing tracks the
+ * package, and one that writes is never argued with. Such a doc's `path` is the package's
+ * address, which is a plain path in a checkout and a URL in an installed org; `aread` takes
+ * either (bin/afs.ts).
  *
  * Files adapter, rooted at the DATA ROOT (the §9 layout):
  *   <root>/system/**  ·  <root>/organizations/**  ·  <root>/agents/<agentId>/**
@@ -42,7 +44,7 @@
 
 import { parse as parseYaml } from "@std/yaml";
 import type { AgentId } from "../types.ts";
-import { SEED_DIR } from "./seed.ts";
+import { systemDocs } from "./seed.ts";
 
 export type DocScope = "system" | "organization" | "agent" | "conversation";
 export type DocKind = "instruction" | "skill" | "memory" | "tool";
@@ -92,17 +94,28 @@ export function openFileDocs(root: string): Docs {
     async list(ctx: DocContext): Promise<DocEntry[]> {
       const out: DocEntry[] = [];
       for (const [scope, dir] of scopeDirs(root, ctx)) {
-        // the org's own, whatever stands in the scope — minus the harness's own folder
-        const own = (await markdownUnder(dir)).filter((n) =>
-          scope !== "system" || !n.startsWith(`${SEED_DIR}/`)
-        );
-        for (const name of own) out.push(...await entryOf(scope, name, `${dir}/${name}.md`));
+        const own = await markdownUnder(dir); // whatever this org stands in the scope
+        for (const name of own) {
+          const path = `${dir}/${name}.md`;
+          const frontmatter = await readFrontmatter(path);
+          if (frontmatter === null) continue; // no frontmatter ⇒ not a doc (workspace file)
+          const entry = entryOf(scope, name, path, frontmatter);
+          if (frontmatter.load === "always") {
+            entry.body = stripFrontmatter(await Deno.readTextFile(path));
+          }
+          out.push(entry);
+        }
         if (scope !== "system") continue;
-        // and the harness's own, for every name the org did not answer itself
-        const answered = new Set(own); // a name, not a doc: a frontmatter-less file says "none"
-        for (const name of await markdownUnder(`${dir}/${SEED_DIR}`)) {
-          if (answered.has(name)) continue;
-          out.push(...await entryOf(scope, name, `${dir}/${SEED_DIR}/${name}.md`));
+        // and the package's own, for every name the org did not answer itself — a NAME, not
+        // a doc: a file with no frontmatter is how an org says it wants none
+        const answered = new Set(own);
+        for (const doc of await systemDocs()) {
+          if (answered.has(doc.name)) continue;
+          const frontmatter = frontmatterOf(doc.text);
+          if (frontmatter === null) continue; // the harness's to send, not the agent's to read
+          const entry = entryOf(scope, doc.name, doc.path, frontmatter);
+          if (frontmatter.load === "always") entry.body = stripFrontmatter(doc.text);
+          out.push(entry);
         }
       }
       return out;
@@ -111,32 +124,27 @@ export function openFileDocs(root: string): Docs {
     async read(ctx: DocContext, ref: DocRef): Promise<string | null> {
       const dir = scopeDir(root, ref.scope, ctx);
       if (dir === null) return null;
-      // same order as `list`: the org's file if it stands there, else the harness's copy
-      const paths = ref.scope === "system"
-        ? [`${dir}/${ref.name}.md`, `${dir}/${SEED_DIR}/${ref.name}.md`]
-        : [`${dir}/${ref.name}.md`];
-      for (const path of paths) {
-        try {
-          return stripFrontmatter(await Deno.readTextFile(path));
-        } catch (err) {
-          if (!(err instanceof Deno.errors.NotFound)) throw err;
-        }
+      try {
+        return stripFrontmatter(await Deno.readTextFile(`${dir}/${ref.name}.md`));
+      } catch (err) {
+        if (!(err instanceof Deno.errors.NotFound)) throw err;
       }
-      return null;
+      if (ref.scope !== "system") return null;
+      // same order as `list`: the org's file if it stands there, else the package's own
+      const doc = (await systemDocs()).find((d) => d.name === ref.name);
+      return doc ? stripFrontmatter(doc.text) : null;
     },
   };
 }
 
-/** One file's entry — none at all when it carries no frontmatter (⇒ not a doc), the body
- *  inlined when it asks to load always. */
-async function entryOf(scope: DocScope, name: string, path: string): Promise<DocEntry[]> {
-  const frontmatter = await readFrontmatter(path);
-  if (frontmatter === null) return []; // no frontmatter ⇒ not a doc (workspace file)
-  const entry: DocEntry = {
-    header: { scope, kind: kindOf(frontmatter), name, frontmatter, path },
-  };
-  if (frontmatter.load === "always") entry.body = stripFrontmatter(await Deno.readTextFile(path));
-  return [entry];
+/** A doc's header, wherever it was found — the org's tree or the package's own. */
+function entryOf(
+  scope: DocScope,
+  name: string,
+  path: string,
+  frontmatter: Record<string, unknown>,
+): DocEntry {
+  return { header: { scope, kind: kindOf(frontmatter), name, frontmatter, path } };
 }
 
 /** `kind` is frontmatter metadata, never path: unknown/absent falls back to `memory`. */
@@ -204,7 +212,17 @@ async function targetOf(path: string): Promise<{ isFile: boolean; isDirectory: b
 /** Parse a doc's YAML frontmatter, reading only up to the closing `---`.
  *  `null` when the file has NO frontmatter block (⇒ not a doc); `{}` when malformed. */
 async function readFrontmatter(path: string): Promise<Record<string, unknown> | null> {
-  const block = await readHead(path);
+  return parseBlock(await readHead(path));
+}
+
+/** The same, for a doc already in hand (the package's own — store/seed.ts). */
+function frontmatterOf(text: string): Record<string, unknown> | null {
+  if (!text.startsWith("---\n") && !text.startsWith("---\r\n")) return null;
+  const end = text.indexOf("\n---", 3);
+  return parseBlock(end === -1 ? null : text.slice(4, end));
+}
+
+function parseBlock(block: string | null): Record<string, unknown> | null {
   if (block === null) return null;
   try {
     const doc = parseYaml(block);
