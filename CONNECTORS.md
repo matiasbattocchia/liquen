@@ -93,6 +93,24 @@ service's echo of the send merges into the committed row by `external_id` the wa
 echo does. The CC is marked `extra.delta`, and the one thing that mark means is that the
 sweeper never re-offers it. See §9 in DESIGN.md.
 
+### The address book: the service keeps it, the name carries it
+
+A service that keeps an address book — the phone's, behind WhatsApp; Google Contacts —
+keeps it. The log takes no copy: no table, no row per entry, nothing standing in for a
+directory. A write goes out through the connector's port (`XiPorts.contact`, one per
+service that keeps a book) and the call settles when the service has the change, so the
+`contact` tool's own result is the whole outcome. Saving someone is a naming act, and a
+name reaches rows from their next message on, the way every rename here does.
+
+What the connector does report, on every message, is whose word the sender's name is:
+`sender.saved` when it came from the account's address book, absent when it is the
+sender's own (a pushname, a storefront). The line's hint reads it — `contact="…"` against
+`external="…"`, the same outsider — and `contact(who, name)` is what moves a person from
+one to the other. That hint is also how a change made elsewhere arrives: a save typed on
+the phone shows up as the name and the hint on the next line from them. A service with no
+address book stamps nothing: every outsider wears `external`, and the tool is not offered
+on its accounts.
+
 ### Outbound media: the pull leg, signed and relative
 
 Most services take a file by **push** — Slack's `files.uploadV2`, Gmail's MIME body: liquen
@@ -192,7 +210,9 @@ than a rewrite would reach in months:
 
 - text · media (image/audio/video/document/sticker, encrypt+upload / fetch+decrypt) ·
   reactions · locations · vCards · replies (quote ↔ `re_message_id`) · edits · revokes ·
-  delivery/read receipts in · read receipts + typing out · pushnames
+  delivery/read receipts in · read receipts + typing out · pushnames · the address book,
+  both ways (`sender_saved` on every message, a contact fact per entry, `POST /dispatch`
+  `{type: "contact"}` to write one — on a fork of whatsmeow carrying `tulir/whatsmeow#1247`)
 - **QR *and* phone-code pairing** with rotation polling, logout, session-death notification
 - history sync import (chunked), group subjects → conversation names, **LID → phone
   canonicalization**

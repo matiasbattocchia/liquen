@@ -48,6 +48,8 @@ import {
   transports,
 } from "./transport/mod.ts";
 import { type ExecGround, type ExecPlane, installExecGround } from "./exec/bash.ts";
+import { whatsappContact } from "./connect/whatsapp/contact.ts";
+import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
 import { entry } from "./entry.ts";
 import { claim, MAIN } from "./stop.ts";
 import { openCredentials } from "./store/credentials.ts";
@@ -257,6 +259,18 @@ export async function start(
   // `agents/<id>`, where its docs and memories already are — with the org's binaries on
   // PATH; the shell on it is the session's, so where one session stands and what it left
   // running is never another's. Shells open on first contact and are reaped at teardown.
+  // the address book's write side (§9): one port per service that keeps one, wired where
+  // the connection is declared — whatsapp's rides the bridge the dispatcher already talks
+  // to, on the same token
+  const bridge = config.catalog?.connections?.whatsapp;
+  const contact: XiPorts["contact"] = bridge
+    ? {
+      whatsapp: whatsappContact(
+        typeof bridge.bridgeUrl === "string" ? bridge.bridgeUrl : DEFAULT_BRIDGE_URL,
+        Deno.env.get("WA_BRIDGE_TOKEN") ?? "",
+      ),
+    }
+    : undefined;
   const grounds = new Map<string, ExecGround>();
   const shells = new Map<string, ExecPlane>();
   const shellOf = (agentId: string, sessionId: string): ExecPlane => {
@@ -348,6 +362,7 @@ export async function start(
         // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in
         transport: metered(transportFor(agent), (row) => log.meter(row), agent.agentId),
         exec: shellOf(agent.agentId, agent.sessionId).exec,
+        ...(contact ? { contact } : {}),
         files: filesOf(agent.agentId),
         onDelta: (d) => cast(agent.agentId, agent.sessionId, d),
         onDecision: (v, cursor, about) =>

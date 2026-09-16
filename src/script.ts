@@ -26,7 +26,7 @@
  * repo's import map, so this module must resolve with nothing but itself.
  */
 
-import type { SearchArgs, SendArgs } from "./types.ts";
+import type { ContactArgs, SearchArgs, SendArgs } from "./types.ts";
 
 /** A queued ask: the tool_use is in the log; the gate has not spoken yet. */
 export interface Queued {
@@ -39,6 +39,8 @@ export interface Mu {
   send(args: SendArgs): Promise<Queued>;
   /** Queue the model's search (§6) the same way — the hits land in the log, next turn. */
   search(args?: SearchArgs): Promise<Queued>;
+  /** Queue an address-book write (§9) the same way — gated like a send, in your name. */
+  contact(args: ContactArgs): Promise<Queued>;
 }
 
 /** Bind a client to the agent folder holding `door.sock` — a script passes its own
@@ -87,5 +89,6 @@ export function bind(home: string): Mu {
   return {
     send: (args) => call("send", args),
     search: (args = {}) => call("search", args),
+    contact: (args) => call("contact", args),
   };
 }

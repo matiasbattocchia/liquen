@@ -735,6 +735,21 @@ Deno.test("specsOf: `tools` names what the model sees — unset offers everythin
     "bash",
   ]);
   assertEquals(names([]), []); // an empty list is a model with no tools at all
+  // the address book is offered where an account keeps one, and only there
+  const withBook = {
+    exec: { bash },
+    contact: { whatsapp: () => Promise.resolve({}) },
+  } as unknown as XiPorts;
+  assertEquals(specsOf(withBook, { ...CONFIG, tools: undefined }).map((t) => t.name), [
+    "send",
+    "search",
+    "schedule",
+    "cancel",
+    "contact",
+    "bash",
+  ]);
+  const send = specsOf(ports, { ...CONFIG, tools: undefined }).find((t) => t.name === "send")!;
+  assert("connection" in (send.input_schema.properties as Record<string, unknown>));
 });
 
 Deno.test("anchored: a late-stamped row inside the window is kept — position sets the floor", () => {

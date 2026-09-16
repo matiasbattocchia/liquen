@@ -206,10 +206,13 @@ export interface Conversation {
   kind?: "direct" | "group" | "channel" | "broadcast";
 }
 
-/** External identity on the wire. */
+/** External identity on the wire. `name` is the service's display fact; `saved` says whose
+ *  word it is — the account's, from its address book — where absent it is the sender's own
+ *  (a pushname, a storefront). The line's hint reads it: `contact` against `external`. */
 export interface Sender {
   address: string;
   name?: string;
+  saved?: boolean;
 }
 
 export interface Envelope {
@@ -551,6 +554,10 @@ export interface Tool {
  *  vocabulary for both callers: the model's tool call and a script's door ask. */
 export interface SendArgs {
   to: string; // conversation address, or a peer agent's name (canonicalizes to their DM)
+  /** Which account it rides (§4): a connection's name or address, as `<conn>` shows them.
+   *  A conversation the log holds says for itself; a new address is the one case only the
+   *  model can place. */
+  connection?: string;
   text?: string;
   files?: string[]; // workspace or media-store paths
   re?: string; // the referenced message's short id
@@ -567,6 +574,17 @@ export interface SendResult {
   sent: boolean;
   event_id: EventId;
 }
+
+/** `contact({...})` — the address book's write side (§9): one person, on one account. */
+export interface ContactArgs {
+  who: string; // their address, or the name they go by here
+  name?: string; // what they are saved as; absent ⇒ the name the wire knows, or none
+  connection?: string; // which account saves them; derived from their rows when they have any
+  action?: "save" | "forget";
+}
+export type ContactResult =
+  | { saved: string; connection: string; as?: string }
+  | { forgot: string; connection: string };
 
 /** `search({...})` — message rows, RLS-scoped; Slack-search semantics (§6). */
 export interface SearchArgs {

@@ -53,6 +53,7 @@ export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + t
 export const DEFAULT_TOOLS = ["search", "schedule", "cancel", "bash"];
 export const DEFAULT_RULES: Rule[] = [
   { tool: "send", action: "ask" }, // dispatch leaves the org, in the principal's name
+  { tool: "contact", action: "ask" }, // writes the principal's own address book
   { tool: "*", action: "allow" },
 ];
 // attention (§2). The baseline is that every message deserves a reaction; these four knobs
@@ -281,13 +282,15 @@ const AGENT: Entry[] = [
     value: DEFAULT_TOOLS,
     doc: "the tools offered to the model, by name — built-ins and exec tools (bash, MCP) " +
       'alike; null ⇒ every tool the deployment has. Add "send" where the agent has peers ' +
-      "or a world to write to — a reply to its own principal is its plain answer, never a call",
+      "or a world to write to — a reply to its own principal is its plain answer, never a " +
+      'call — and "contact" where an account keeps an address book the agent may write',
   },
   {
     key: "rules",
     value: DEFAULT_RULES,
     doc: "permission policy: first match decides (allow|ask|deny); * matches any tool; " +
-      "connection/conversation pin a rule to where a send lands",
+      "connection/conversation pin a rule to where a send lands, connection to whose " +
+      "address book a contact is written in",
   },
   {
     key: "engagedMinutes",

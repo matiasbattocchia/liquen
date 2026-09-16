@@ -87,13 +87,14 @@ export interface WAMessage {
   // own account too; absent/empty only where the platform can't name its own side
   /** WHO those addresses are, denormalized per message: the account's own name for the
    *  author (address book first, pushname otherwise) and for the room (a group's subject,
-   *  or the peer, since a DM is its peer). Absent on anyone nobody has ever named — and not
-   *  to be believed about the account's own side: the contract says absent there, the live
-   *  bridge sends the account's own name, and the ingest drops it either way, because one
-   *  identity cannot say which of its humans typed. This is where names come from — the
-   *  batch feeds below are a first-sight courtesy, and a name only they carry is lost on
-   *  restart. */
+   *  or the peer, since a DM is its peer). Absent on anyone nobody has ever named. The
+   *  contract says absent on the account's own messages too; the live bridge stamps the
+   *  account's own name there, and the row keeps it — a name is a name, not a claim about
+   *  which of the identity's humans typed. This is where names come from — the batch feeds
+   *  below are a first-sight courtesy, and a name only they carry is lost on restart. */
   sender_name?: string;
+  /** `sender_name` is the account's word — its address book — not the sender's own. */
+  sender_saved?: boolean;
   conversation_name?: string;
   content: WAContent;
   status?: Record<string, unknown>; // explicit on echoes/history; absent on live inbound
@@ -117,6 +118,8 @@ export interface WABatch {
     conversation_address: string;
     status: Record<string, unknown>;
   }[];
+  /** A pushname courtesy: `address` + `extra.name`, a cache hint the messages' own names
+   *  have made a fallback. */
   contacts?: { address: string; extra?: { name?: string } }[];
   groups?: { address: string; name?: string }[];
   edits?: {
@@ -215,16 +218,15 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
     // caches BEFORE messages: a first-sight group subject or pushname arrives in the same
     // batch as the message it should stamp
     for (const g of batch.groups ?? []) if (g.name) groupNames.set(g.address, g.name);
-    for (const c of batch.contacts ?? []) {
-      if (c.extra?.name) pushnames.set(c.address, c.extra.name);
-    }
-    // the account's own name is a fact of the CONNECTION, not of any message: it lands on
-    // the row (`extra.name`, what `<conn name>` reads, §5) and never on a sender. Two ways
-    // in, one fact — its entry in the contacts feed, and the name the bridge stamps on the
-    // account's own messages, which mapMessage drops because it names the account and not
-    // whoever typed. Both are read here because the feed is a first-sight courtesy that may
-    // not carry the account for hours, while its own messages arrive all day. Once per
-    // name: the row is the memory, not this loop.
+    for (const c of batch.contacts ?? []) if (c.extra?.name) pushnames.set(c.address, c.extra.name);
+    // the account's own name is a fact of the CONNECTION: it lands on the row
+    // (`extra.name`, what `<conn name>` reads, §5). Two ways in, one fact — its entry in
+    // the contacts feed, and the name the bridge stamps on the account's own messages.
+    // Both are read here because the feed is a first-sight courtesy that may not carry the
+    // account for hours, while its own messages arrive all day. The messages keep that
+    // name too — it is what the wire said — but it names the ACCOUNT, never whoever typed,
+    // and the window spends `agent_id` instead (§5). Once per name: the row is the memory,
+    // not this loop.
     const own = pushnames.get(connection) ??
       (batch.messages ?? []).find((m) => m.sender_address === connection && m.sender_name)
         ?.sender_name;
@@ -397,17 +399,18 @@ function mapMessage(
   const sender = m.sender_address || undefined; // "" = the wire couldn't name the account side
   // sender.name is the SERVICE's display fact — what the account calls this person, nothing
   // of ours: identity resolution (who a grant binds) is the classifier's business (§3).
-  // THE ACCOUNT'S OWN SIDE IS NEVER NAMED, from either source. One WhatsApp identity covers
-  // every device and every human behind it, so the wire cannot say who typed — the
-  // classifier answers that (`agent_id`) and the line wears it as its author hint (§5).
-  // Both sources offer the same wrong answer, the ACCOUNT's own name: the contacts feed
-  // carries the account's entry like any other, and the bridge stamps `sender_name` on the
-  // account's own messages despite its contract saying it does not. That name is a fact of
-  // the connection — it is recorded on its row above — and on a companion-device line it
-  // reads as the account's owner speaking, when it was a principal at the phone.
-  const who = sender === undefined || sender === connection
-    ? undefined
-    : m.sender_name || pushnames.get(sender);
+  // The row KEEPS whatever the wire said, the account's own side included: the bridge
+  // stamps `sender_name` there too, and that is the account's own name — a true thing the
+  // log should hold, searchable like any other. It is not an authorship claim: one
+  // WhatsApp identity covers every device and every human behind it, so the wire cannot
+  // say who typed. WHO is the classifier's answer (`agent_id`) and only render spends it —
+  // an own-side line wears `org` or its principal's mark and shows no sender at all (§5),
+  // which is why a name here was never the window's problem to solve.
+  // The CACHE is the one thing that does not reach across: its entry for the account is
+  // the contacts feed naming the account to itself, a first-sight courtesy and no fact of
+  // this message, so it fills in nobody's own side.
+  const who = m.sender_name ||
+    (sender && sender !== connection ? pushnames.get(sender) : undefined);
   const state = m.status ? stateOf(m.status) : undefined;
   // the SERVICE-NEUTRAL silencing marks (§3 extra, §5): a consumer skipping history or a
   // muted chat reads the same keys across every connector
@@ -428,7 +431,15 @@ function mapMessage(
         kind: kindOf(address),
         ...(name ? { name } : {}),
       },
-      ...(sender ? { sender: { address: sender, ...(who ? { name: who } : {}) } } : {}),
+      ...(sender
+        ? {
+          sender: {
+            address: sender,
+            ...(who ? { name: who } : {}),
+            ...(who && m.sender_saved && who === m.sender_name ? { saved: true } : {}),
+          },
+        }
+        : {}),
       external_id: externalId(m.external_id),
       ...(state ? { status: state } : {}),
     },

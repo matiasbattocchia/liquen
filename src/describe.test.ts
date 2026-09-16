@@ -38,6 +38,19 @@ Deno.test("describeCall: send says WHO — the name, with the address as the fal
   assertEquals(describeCall(call), "send(to: 5492604586396, text: ya salgo)");
 });
 
+Deno.test("describeCall: contact says WHO is being saved — `who` is an address too", () => {
+  const call = { name: "contact", input: { who: "5492604586396", name: "Vivian Rossi" } };
+  const vivian = (a: string) => a === "5492604586396" ? { name: "vivi 🌸", address: a } : undefined;
+  assertEquals(
+    describeCall(call, { resolve: (a) => vivian(a) }),
+    "contact(who: vivi 🌸, name: Vivian Rossi)",
+  );
+  assertEquals(
+    describeCall(call, { resolve: (a) => vivian(a), full: true }),
+    "contact(who: vivi 🌸 (5492604586396), name: Vivian Rossi)",
+  );
+});
+
 Deno.test("describeCall: search says WHERE and WHO — `in`/`from` are addresses too", () => {
   const names: Record<string, string> = {
     "120363429869958481@g.us": "Sprinters Friends",

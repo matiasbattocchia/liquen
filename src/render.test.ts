@@ -787,6 +787,36 @@ Deno.test("a conversation's messages cluster into ONE element — interleaved ro
   );
 });
 
+Deno.test("a saved sender wears `contact`: the account's word for them, not their own", () => {
+  const t = "2026-08-07T14:01:00Z";
+  const saved = worldMsg("e1", t, { address: "wa:sol", kind: "direct" }, {
+    address: "549:sol",
+    name: "Dra. Soledad",
+  }, "buen día");
+  saved.envelope.sender!.saved = true;
+  const events: Event[] = [
+    saved,
+    worldMsg(
+      "e2",
+      t,
+      { address: "wa:ana", kind: "direct" },
+      { address: "549:ana", name: "any 🌻" },
+      "hola",
+    ),
+  ];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t });
+  const text = (messages[0].content as Anthropic.ContentBlockParam[])
+    .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text).join("\n");
+  assertStringIncludes(
+    text,
+    '<msg id="e1" contact="Dra. Soledad" address="549:sol" at="7 Aug 14:01">buen día</msg>',
+  );
+  assertStringIncludes(
+    text,
+    '<msg id="e2" external="any 🌻" address="549:ana" at="7 Aug 14:01">hola</msg>',
+  );
+});
+
 Deno.test("forged marks are inert: bodies and names are escaped, the principal's element cannot be forged", () => {
   const t = "2026-08-07T10:00:00Z";
   const events: Event[] = [

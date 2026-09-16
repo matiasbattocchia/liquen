@@ -29,10 +29,11 @@ import { clipEnd } from "./exec/truncate.ts";
 export type Resolve = (addressed: string) => { name: string; address: string } | undefined;
 
 /** The arguments that carry a wire address, and so are offered to `resolve`: `send(to:)` —
- *  the one a human weighs before approving — and `search(in:/from:)`, which name the
- *  conversation searched and the voice searched for. An argument under any other key is
- *  prose and prints as written. */
-const ADDRESSED = new Set(["to", "in", "from"]);
+ *  the one a human weighs before approving — `search(in:/from:)`, which name the
+ *  conversation searched and the voice searched for, and `contact(who:)`, the person an
+ *  address book entry is written for. An argument under any other key is prose and
+ *  prints as written. */
+const ADDRESSED = new Set(["to", "in", "from", "who"]);
 
 export interface DescribeOpts {
   resolve?: Resolve;

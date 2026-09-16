@@ -175,6 +175,30 @@ Deno.test("sender.name is the SERVICE's display fact: the pushname, never a look
   assertEquals((published[1] as MessageEvent).envelope.sender?.name, "Ana"); // pushname
 });
 
+Deno.test("sender.saved rides the row: the address book's word is marked as the account's", async () => {
+  const { handler, published } = harness();
+  await handler(
+    post(
+      "/whatsapp-web-webhook",
+      batch({
+        messages: [
+          textMessage({ sender_name: "Gianvito", sender_saved: true }),
+          textMessage({ external_id: "wmw.x.y.z.2", sender_name: "gv 🇮🇹" }),
+        ],
+      }),
+    ),
+  );
+  assertEquals((published[0] as MessageEvent).envelope.sender, {
+    address: "5491199999999",
+    name: "Gianvito",
+    saved: true,
+  });
+  assertEquals((published[1] as MessageEvent).envelope.sender, {
+    address: "5491199999999",
+    name: "gv 🇮🇹",
+  });
+});
+
 Deno.test("the message's own names win: a row names its people without any cache", async () => {
   const { handler, published } = harness();
   const group = "123-456@g.us";
@@ -607,7 +631,7 @@ Deno.test("the classifier reads the roster too (§4): a declared phone is that m
   assertEquals((published[1] as MessageEvent).agent, undefined);
 });
 
-Deno.test("the account's own pushname names the CONNECTION, never its own lines (§5)", async () => {
+Deno.test("the contacts feed never names the account's own lines — the wire may (§5)", async () => {
   const account = "5491100000000"; // = organization_address: the account's own side
   const { store, upserts } = fakeStore({ service: "whatsapp", address: account, agentId: "laura" });
   const { handler, published } = harness({ store });
@@ -625,8 +649,8 @@ Deno.test("the account's own pushname names the CONNECTION, never its own lines 
         conversation_address: "5491177777777",
       }),
       // the same line with the bridge's own stamp on it — live behaviour, against the
-      // contract ("absent on the account's own messages"): the same wrong name, the other
-      // way in
+      // contract ("absent on the account's own messages"): what the wire said, which the
+      // row keeps
       textMessage({
         external_id: "wmw.own.2",
         sender_address: account,
@@ -642,11 +666,13 @@ Deno.test("the account's own pushname names the CONNECTION, never its own lines 
   });
   await handler(post("/whatsapp-web-webhook", feed));
   await handler(post("/whatsapp-web-webhook", feed)); // the same feed again — a live bridge repeats itself
-  // NEITHER source names the account's own side: that name is the account's, and on a
-  // principal's phone-typed line it read as the owner speaking
+  // the CACHE does not reach the account's own side — its entry there is the feed naming
+  // the account to itself, no fact of any message — but the wire's own stamp is kept: the
+  // log records what was said, and the window is where an author is decided (§5)
   const own = published.filter((e) => (e as MessageEvent).envelope.sender?.address === account);
   assertEquals(own.length, 4); // two lines, and a live bridge repeats its batch
-  for (const e of own) assertEquals((e as MessageEvent).envelope.sender?.name, undefined);
+  const named = own.map((e) => (e as MessageEvent).envelope.sender?.name);
+  assertEquals(named, [undefined, "Dra. Suarez", undefined, "Dra. Suarez"]);
   // a customer is still named off the feed
   const ana = published.find((e) =>
     (e as MessageEvent).envelope.sender?.address === "5491177777777"
@@ -660,7 +686,7 @@ Deno.test("the account's own pushname names the CONNECTION, never its own lines 
   }]);
 });
 
-Deno.test("the account names itself on its own messages too — the row hears it either way", async () => {
+Deno.test("the account's own name on its own message reaches the row and the connection", async () => {
   const account = "5491100000000";
   const { store, upserts } = fakeStore({ service: "whatsapp", address: account, agentId: "laura" });
   const { handler, published } = harness({ store });
@@ -676,8 +702,8 @@ Deno.test("the account names itself on its own messages too — the row hears it
       })],
     }),
   ));
-  assertEquals((published[0] as MessageEvent).envelope.sender?.name, undefined); // not a line
-  assertEquals(upserts, [{ // a fact of the connection, and its row remembers
+  assertEquals((published[0] as MessageEvent).envelope.sender?.name, "Dra. Suarez"); // said
+  assertEquals(upserts, [{ // and a fact of the connection, whose row remembers it
     service: "whatsapp",
     address: account,
     extra: { name: "Dra. Suarez" },

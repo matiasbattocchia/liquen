@@ -967,14 +967,17 @@ function conversationEl(c: { conv: Conversation; lines: string[] }): string {
  *                       org-wide account has companion devices, and which member held one
  *                       is a fact the wire never carries — so the org has spoken, and no
  *                       member is invented for it
+ *    `contact="Sol"`    nobody among us, saved: the ACCOUNT's word for them, then their
+ *                       `address`
  *    `external="Sol"`   nobody among us — the wire's word for them, then their `address`
  *
  *  The value is the ROSTER's word for one of us (an identity, never a session — which
  *  conversation a line is in already says which hands are talking; on the local service
  *  the session address, `build@matias`, composed by hand so render never throws on an odd
- *  stored name); `self` and `org` carry none, the key is the whole fact. An external line
- *  is the only one whose name is the sender's own to choose, so it is the only one that
- *  also wears the address — the stable handle, and what `send` takes back. The key set is
+ *  stored name); `self` and `org` carry none, the key is the whole fact. An outsider's
+ *  line is the only one whose name is not the roster's — the principal's, when they saved
+ *  it (`sender.saved`), else the sender's own to choose — so it is the only one that also
+ *  wears the address: the stable handle, and what `send` takes back. The key set is
  *  closed and every line wears exactly one, so an unclassified sender lands on `external`:
  *  unknown reads as untrusted, never as one of us. */
 function authorOf(e: MessageEvent, session: SessionRef, roster: Roster): string {
@@ -982,7 +985,8 @@ function authorOf(e: MessageEvent, session: SessionRef, roster: Roster): string 
   if (id === undefined) {
     if (ownSide(e)) return " org";
     const sender = e.envelope.sender!; // not own side ⇒ the wire named someone
-    const name = sender.name ? ` external="${escAttr(sender.name)}"` : " external";
+    const key = sender.saved && sender.name ? "contact" : "external";
+    const name = sender.name ? ` ${key}="${escAttr(sender.name)}"` : " external";
     const address = sender.address ? ` address="${escAttr(sender.address)}"` : "";
     return `${name}${address}`;
   }

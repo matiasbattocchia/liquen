@@ -3045,3 +3045,86 @@ wire chose — which is why the window was already right. `search` did: it answe
 named the doctor. It now answers with the account's address, which is honest but not yet the
 word the window uses; the two surfaces still spell the same author differently, and sharing
 one decision between them is the next thing.
+
+### The address book: `contact`, the `contact` hint, and `send`'s account (2026-09-16) — LANDED
+
+Asked whether whatsmeow could manage the phone's contacts. It reads them fully and writes
+nothing: the machinery is generic (`SendAppState` over any `PatchInfo`), the proto has the
+fields WhatsApp Web uses (`ContactAction{FullName, SaveOnPrimaryAddressbook, …}`), and the
+one thing missing was the builder — which two open PRs supply, `tulir/whatsmeow#749` (Feb
+2025, maintainer-approved twice, never merged) and `#1247` (Sep 2026, the same with the
+dispatch side fixed: a REMOVE no longer falls into the mute branch, a full sync no longer
+folds removals into `PutAllContactNames`, `events.Contact` says `Removed`). The bridge now
+builds against a fork carrying `#1247`'s two commits on the exact pinned upstream commit —
+`matiasbattocchia/whatsmeow`, branch `contacts`, a `replace` in `go.mod` — four files,
++177/−6, most of it a test, no store or schema change. Every whatsmeow bump is a rebase of
+that branch until it merges.
+
+**The wire.** `POST /dispatch` gained a third type beside `message` and `status`:
+`{type: "contact", record: {organization_address, conversation_address}, contact: {name,
+remove}}` → `{status: "sent", name}`. The chat is the person; a save that names nobody is
+saved under the wire's own word for them (pushname, else storefront), so an entry is never
+an anonymous number when a name was there; a group is refused as permanent. The call is
+SYNCHRONOUS — it answers once WhatsApp has the patch, carrying the name it settled on —
+which is what lets the log keep nothing (below). And `pickName` now says whose word it
+picked: `sender_saved` rides every message whose name came from the address book, live and
+in the import alike.
+
+**The log keeps nothing.** No contacts table, as decided on 08-18 — and no row per entry
+either, which took two tries to get right. The first build echoed each address-book change
+back as a `message` row with a `contact` data part in the person's chat, meaning to give
+the agent a readback and to make a saved-but-silent contact findable. Two objections killed
+it. The element collides with `contacts`, the vCard attachment kind the Cloud API's
+vocabulary already owns, one letter apart and both about a person's details. And an event
+is MATERIAL IN ITS CONVERSATION: a `message` row claims someone spoke in that chat, and a
+save never crossed the wire to them. The honest accounting is that the address book is the
+service's state. What liquen holds is the agent's own act, in its tool traffic, answered
+synchronously; and a naming act shows up the way every rename here does, on the person's
+next line, which carries the saved name and reads `contact=` where it read `external=`.
+That covers a change typed on the phone just as well, since the wire stamps the name
+either way. The price, accepted: a contact saved who never speaks leaves no trace the
+agent can see. If that trace is ever wanted it is narration, not a message — the shape the
+renderer already uses for a deferred gate outcome — never a line in someone's chat.
+
+**Searching the book is therefore OPEN, and its shape follows from the same rule.** `search`
+reads the log, so it finds anyone who has spoken, under the saved name once they have —
+and nobody else. To reach a saved contact who never wrote, the place to ask is the service,
+because the service is where the book is: a READ leg on the same port (`lookup(connection,
+query)` → candidates), which the bridge can answer straight out of whatsmeow's contact
+store with no new state on either side. That keeps one path — the same port, the same gate,
+the same tool surface — and it is the alternative to every design that copies the book into
+`log.db` first and searches the copy. Unbuilt: `contact` writes today, and a name with no
+rows behind it is still "nobody named … has spoken here".
+
+**The tool.** `contact(who, name?, connection?, action)` — `who` an address or the name
+they go by here, resolved as `search from:` resolves it, ambiguity refused; `name` what
+they are saved as, absent ⇒ the wire's word; `forget` takes the entry out. The account
+is the person's own rows' when they have any, the one whatsapp account otherwise, and
+`connection` — a `<conn>` name or address, only the agent's own, ambiguity refused — when
+there is more than one. Built into xi beside `send`, so the gate sees its target: a rule
+pinned to a connection matches. The wire leg is a port per service (`XiPorts.contact`),
+main wiring whatsapp's where `connections.whatsapp` is declared, on the dispatcher's own
+bridge and token. `ask` by default: it writes the principal's own address book in their
+name. **The default reaches no live org** — `rules` heals into each `config.jsonc`, so
+sole-bot, vibes and new got the row by hand, and any other org must too, or `contact`
+lands in `*: allow`. The Mu door offers it as a verb, one path.
+
+**`send` gained `connection` too**, and for a reason older than this: a never-seen address
+fell to `service: local`, so first contact to a new number could not reach WhatsApp at all
+— the conversation's own record settled the envelope, and a new number has none. A named
+account overrides the connection and settles the service; a peer's DM refuses it.
+
+**The hint.** `authorOf`'s own docstring drew the line the address book cuts across — "an
+external line is the only one whose name is the sender's own to choose" — false for a
+saved contact since 08-18, when `pickName` put the account's word first. So an outsider's
+line now wears `contact="…"` when `sender.saved`, `external="…"` otherwise: the same
+outsider, whose word the name is. The key set stays closed, every line wears one, and
+`contact(who)` is exactly the act that turns one hint into the other from the next line on;
+the 1,050 already-saved wear it from the first render. Slack and GitHub keep no address
+book and never say `contact`; Google Contacts is the same shape for later, behind the same
+consent-scope decision as `profile`.
+
+Untested against a live phone: whether a LID-keyed save (a hidden-number group member)
+lands. The index accepts one — the bridge's own store holds 1,601 LID-keyed entries the
+phone synced through it, 19 with address-book names — so nothing refuses it; whether the
+phone honours `SaveOnPrimaryAddressbook` for one is the wire's to show.

@@ -44,6 +44,7 @@ import type {
   Rule,
   SearchArgs,
   SearchResult,
+  Service,
   Session,
   ToolResultEvent,
   ToolUseEvent,
@@ -65,7 +66,7 @@ import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { ConnectionRow, Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
-import { sameHandle } from "./store/roster.ts";
+import { sameHandle, speaksThrough } from "./store/roster.ts";
 import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
 import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import type { FilePart } from "./types.ts";
@@ -761,6 +762,17 @@ export interface ExecOutcome {
   files: string[];
 }
 
+/** One address-book write, on one account: save `address` as `name` — absent, the name
+ *  the wire knows them by, or none — or take the entry out. Answers the name the wire
+ *  took, once the service has the change: the port settles the call, and the book itself
+ *  stays the service's. Throws to fail the call. */
+export type ContactPort = (req: {
+  connection: string;
+  address: string;
+  name?: string;
+  remove?: boolean;
+}) => Promise<{ name?: string }>;
+
 /** An exec-plane tool: its API spec + its executor. Executors should throw on failure. */
 export interface ExecTool {
   spec: Anthropic.Tool;
@@ -798,6 +810,10 @@ export interface XiPorts {
    *  — the transport is where another provider adapts in, so nothing above it changes. */
   transport: ModelTransport;
   exec?: Record<string, ExecTool>; // bash + MCP; send/search are built-in
+  /** The address book's write side (§9), one port per service that keeps one — main wires
+   *  whatsapp's where the connection is declared. The `contact` tool is offered when any
+   *  is here and refuses an account whose service has none. */
+  contact?: Record<string, ContactPort>;
   /** Where this agent's file references may point (§9): `send({files})` and a tool's
    *  attachments resolve through it — its own folder, the org floor, the system docs, the
    *  media store. Absent (an edge port, a test): whatever the process can read. */
@@ -1492,17 +1508,65 @@ async function namesTo(
     : { address: to, candidates: found };
 }
 
-/** Where a send LANDS (§9): the destination's own envelope — the same anchoring read,
- *  name resolution and peer-name canonicalization `execute` does, so a scoped rule matches
- *  the conversation the log will record. Tools that dispatch nowhere have no target. */
+/** The accounts this agent speaks through (§4): the connections that name it as owner and
+ *  the org's that its handles claim — `speaksThrough` over the live map. An agent the
+ *  registry does not know (an explicit principal, a test) speaks through every row. */
+function accounts(self: { id: string }, ports: XiPorts): ConnectionRow[] {
+  const rows = ports.log.connections();
+  const me = ports.log.agents().find((a) => a.agentId === self.id);
+  return me ? speaksThrough(me, rows) : rows;
+}
+
+/** An account as the model names it — the string `<conn>` showed: its name (`extra.name`,
+ *  matched case-insensitively on a substring, as every name here is) or its address (a
+ *  phone as a phone). Only the agent's own accounts answer, and ambiguity is refused,
+ *  never picked: the account is whose name a send goes out in. */
+function accountNamed(handle: string, self: { id: string }, ports: XiPorts): ConnectionRow {
+  const mine = accounts(self, ports);
+  const wanted = handle.trim().toLowerCase();
+  const label = (c: ConnectionRow) =>
+    typeof c.extra?.name === "string" ? `${c.extra.name} (${c.address})` : c.address;
+  const hit = mine.filter((c) =>
+    c.address === handle || sameHandle(c.address, handle) ||
+    (typeof c.extra?.name === "string" && c.extra.name.toLowerCase().includes(wanted))
+  );
+  if (hit.length === 1) return hit[0];
+  if (hit.length === 0) {
+    throw new Error(
+      `no account of yours is called "${handle}"` +
+        (mine.length ? ` — yours: ${mine.map(label).join(", ")}` : " — you have none"),
+    );
+  }
+  throw new Error(
+    `"${handle}" names ${hit.length} of your accounts — say which: ${hit.map(label).join(", ")}`,
+  );
+}
+
+/** Where a call LANDS (§9): a send's destination — the same anchoring read, name
+ *  resolution and peer-name canonicalization `execute` does, so a scoped rule matches the
+ *  conversation the log will record — and a contact write's account. Tools that dispatch
+ *  nowhere have no target. */
 async function targetOf(
   use: ToolUseEvent,
   self: { id: string; session_id: string },
   ports: XiPorts,
 ): Promise<Target | undefined> {
   const { name, input } = use.parts[0].data;
+  const args = (input ?? {}) as { to?: unknown; connection?: unknown };
+  // a named account is the target's connection wherever the call goes; a name nobody
+  // wears is the call's own error to raise, so here it is simply no scope
+  const named = typeof args.connection === "string" && args.connection !== ""
+    ? (() => {
+      try {
+        return accountNamed(args.connection as string, self, ports).address;
+      } catch {
+        return undefined;
+      }
+    })()
+    : undefined;
+  if (name === "contact") return named === undefined ? undefined : { connection: named };
   if (name !== "send") return undefined;
-  const raw = (input as { to?: unknown } | null)?.to;
+  const raw = args.to;
   if (typeof raw !== "string" || raw === "") return undefined;
   let to = raw;
   const target = sessionTarget(to, ports.log.agents());
@@ -1511,9 +1575,8 @@ async function targetOf(
   }
   to = (await namesTo(to, ports)).address;
   const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
-  return prior
-    ? { connection: prior.envelope.connection_address, conversation: to }
-    : { conversation: to };
+  const connection = named ?? prior?.envelope.connection_address;
+  return connection !== undefined ? { connection, conversation: to } : { conversation: to };
 }
 
 /**
@@ -1727,7 +1790,13 @@ async function execute(
     // SESSIONS they are: membership is what makes it visible to exactly them
     // (upsert-only and live, so the scoped publish below already passes WITH CHECK)
     const peer = sessionTarget(to, ports.log.agents());
+    // the account it rides (§4): named by the model, else the conversation's own record
+    // below. A peer's DM rides no account — it is the local channel by construction.
+    const via = args.connection === undefined || args.connection === ""
+      ? undefined
+      : accountNamed(String(args.connection), self, ports);
     if (peer && !(peer.agentId === self.id && peer.sessionId === self.session_id)) {
+      if (via) throw new Error(`${to} is a peer — a DM between us rides no account`);
       to = sessionDm(self, peer);
       ports.log.upsertMemberships([
         {
@@ -1762,19 +1831,22 @@ async function execute(
     // The tool gave us an address; the envelope is ours to write (§2). The conversation's
     // events ARE its record: complete service · connection · kind from the latest visible
     // one, so a reply carries the envelope its conversation always had — and the SCOPED
-    // read bounds anchoring by visibility. No events ⇒ the local channel (a never-seen
-    // address is first contact — the §5 address-book open).
+    // read bounds anchoring by visibility. A named account overrides the connection and
+    // settles the service where there is no record: first contact on a wire is the one
+    // send only the model can place. No events and no account ⇒ the local channel.
     const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
-    const envelope = prior
+    const kind = prior?.envelope.conversation.kind;
+    const envelope = via
+      ? {
+        service: via.service as Service,
+        connection_address: via.address,
+        conversation: { address: to, ...(kind !== undefined ? { kind } : {}) },
+      }
+      : prior
       ? {
         service: prior.envelope.service,
         connection_address: prior.envelope.connection_address,
-        conversation: {
-          address: to,
-          ...(prior.envelope.conversation.kind !== undefined
-            ? { kind: prior.envelope.conversation.kind }
-            : {}),
-        },
+        conversation: { address: to, ...(kind !== undefined ? { kind } : {}) },
       }
       : {
         service: "local" as const,
@@ -1850,6 +1922,72 @@ async function execute(
     };
     const sent = await ports.log.publish(msg);
     return { sent: true, event_id: sent!.id }; // a full draft (parts present) always stores
+  }
+  if (name === "contact") {
+    // the address book (§9): `who` points at a person the way `send(to:)` points at a
+    // conversation — an address, or the name they go by here — and the write rides the
+    // account their traffic already does, or the one the model names. The call returns
+    // when the wire has the patch, so this result is the whole answer; the standing
+    // evidence is the next line from them, which wears the name and reads `contact=`.
+    if (!ports.contact || Object.keys(ports.contact).length === 0) {
+      throw new Error("no account of yours keeps an address book");
+    }
+    const who = String(args.who ?? "").trim();
+    if (!who) throw new Error("say `who`: their address, or the name they go by here");
+    const verb = args.action === undefined ? "save" : String(args.action);
+    if (verb !== "save" && verb !== "forget") {
+      throw new Error(`unknown action "${verb}" — save or forget`);
+    }
+    const name = args.name === undefined ? undefined : String(args.name).trim() || undefined;
+    if (verb === "forget" && name !== undefined) {
+      throw new Error("`forget` takes no `name` — it removes the entry");
+    }
+    // the person: their own rows first (an address that has spoken answers itself, a name
+    // is looked up the way `search from:` looks it up), else a bare address — a number
+    // the model has and nobody has heard from yet is exactly what saving is for
+    const spoken = (await ports.log.read({ from: who, limit: 1 }))[0] ??
+      (await ports.log.read({ conversation: who, limit: 1 }))[0];
+    let address = who;
+    if (!spoken) {
+      const named = await ports.log.read({ senderName: who, limit: NAME_REACH });
+      const found = [...new Set(named.map((e) => e.envelope.sender?.address).filter(Boolean))];
+      if (found.length > 1) {
+        throw new Error(`"${who}" names ${found.length} people — say which: ${found.join(", ")}`);
+      }
+      if (found.length === 1) address = found[0] as string;
+      else if (!/^[+\d][\d\s().-]*$/.test(who)) {
+        throw new Error(`nobody named "${who}" has spoken here — give their address`);
+      } else address = who.replace(/\D/g, "");
+    }
+    const prior = spoken ?? (await ports.log.read({ conversation: address, limit: 1 }))[0] ??
+      (await ports.log.read({ from: address, limit: 1 }))[0];
+    let via: { service: string; address: string };
+    if (args.connection !== undefined && args.connection !== "") {
+      via = accountNamed(String(args.connection), self, ports);
+    } else if (prior) {
+      via = { service: prior.envelope.service, address: prior.envelope.connection_address };
+    } else {
+      const mine = accounts(self, ports).filter((c) => ports.contact![c.service]);
+      if (mine.length !== 1) {
+        throw new Error(
+          mine.length === 0
+            ? "no account of yours keeps an address book"
+            : `${address} is new here — say \`connection\`: which of your accounts saves them`,
+        );
+      }
+      via = mine[0];
+    }
+    const port = ports.contact[via.service];
+    if (!port) throw new Error(`${via.service} keeps no address book`);
+    const wrote = await port({
+      connection: via.address,
+      address,
+      ...(name !== undefined ? { name } : {}),
+      ...(verb === "forget" ? { remove: true } : {}),
+    });
+    return verb === "forget"
+      ? { forgot: address, connection: via.address }
+      : { saved: address, connection: via.address, ...(wrote.name ? { as: wrote.name } : {}) };
   }
   if (name === "search") {
     // the bounds are read the way `schedule.at` is (§10): a bare stamp means the org's wall
@@ -2001,6 +2139,12 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
         type: "object",
         properties: {
           to: { type: "string", description: "target <conv> `name` or `address`" },
+          connection: {
+            type: "string",
+            description:
+              "which of your accounts it rides — a <conn> `name` or `address`. Needed only " +
+              "when `to` is an address nobody here has written to yet",
+          },
           text: {
             type: "string",
             description:
@@ -2134,6 +2278,39 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
         required: ["id"],
       },
     },
+    ...(ports.contact && Object.keys(ports.contact).length > 0
+      ? [
+        {
+          name: "contact",
+          description:
+            "Save someone in your account's address book — from then on their lines wear " +
+            "`contact` with that name instead of `external`, and the account's other devices " +
+            "see it too. `who` is who: an <conv> `address`, or the name they go by here. " +
+            "`name` is what they are saved as; omit it and they are saved under the name " +
+            "they go by, or under none. `forget` takes the entry out. The call returns once " +
+            "the wire has it; the entry itself arrives as a <contact> line in their chat.",
+          input_schema: {
+            type: "object",
+            properties: {
+              who: { type: "string", description: "their `address`, or the name they go by here" },
+              name: { type: "string", description: "what to save them as (save only)" },
+              connection: {
+                type: "string",
+                description:
+                  "which of your accounts saves them — a <conn> `name` or `address`. Needed " +
+                  "only when `who` is new here and you have more than one",
+              },
+              action: {
+                type: "string",
+                enum: ["save", "forget"],
+                description: "save (default) | forget",
+              },
+            },
+            required: ["who"],
+          },
+        } satisfies Anthropic.Tool,
+      ]
+      : []),
     ...Object.values(ports.exec ?? {}).map((t) => t.spec),
   ];
   // the offer is config's to shape (§9): `agent.tools` names what the model sees
