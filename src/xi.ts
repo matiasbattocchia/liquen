@@ -764,8 +764,9 @@ export interface ExecOutcome {
 
 /** One address-book write, on one account: save `address` as `name` — absent, the name
  *  the wire knows them by, or none — or take the entry out. Answers the name the wire
- *  took, once the service has the change: the port settles the call, and the book itself
- *  stays the service's. Throws to fail the call. */
+ *  took, once the service has the change. A port answers within the call and keeps no
+ *  queue: the tool result is the outcome, and a throw fails the call for the model to
+ *  make again. The book itself stays the service's. */
 export type ContactPort = (req: {
   connection: string;
   address: string;
@@ -1926,9 +1927,11 @@ async function execute(
   if (name === "contact") {
     // the address book (§9): `who` points at a person the way `send(to:)` points at a
     // conversation — an address, or the name they go by here — and the write rides the
-    // account their traffic already does, or the one the model names. The call returns
-    // when the wire has the patch, so this result is the whole answer; the standing
-    // evidence is the next line from them, which wears the name and reads `contact=`.
+    // account their traffic already does, or the one the model names. One bounded call
+    // with nothing pending behind it: the result IS the outcome and a failed one is the
+    // model's own to make again, where a `send` hands the log a work item and reads its
+    // fate off that row later. The standing evidence of the entry is the next line from
+    // them, which wears the name and reads `contact=`.
     if (!ports.contact || Object.keys(ports.contact).length === 0) {
       throw new Error("no account of yours keeps an address book");
     }
@@ -2287,8 +2290,9 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
             "`contact` with that name instead of `external`, and the account's other devices " +
             "see it too. `who` is who: an <conv> `address`, or the name they go by here. " +
             "`name` is what they are saved as; omit it and they are saved under the name " +
-            "they go by, or under none. `forget` takes the entry out. The call returns once " +
-            "the wire has it; the entry itself arrives as a <contact> line in their chat.",
+            "they go by, or under none. `forget` takes the entry out. The call answers once " +
+            "the wire has it, and that answer is the whole of it: nothing of the entry lands " +
+            "in this log, and a call that fails is yours to make again.",
           input_schema: {
             type: "object",
             properties: {

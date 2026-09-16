@@ -3065,8 +3065,8 @@ that branch until it merges.
 remove}}` → `{status: "sent", name}`. The chat is the person; a save that names nobody is
 saved under the wire's own word for them (pushname, else storefront), so an entry is never
 an anonymous number when a name was there; a group is refused as permanent. The call is
-SYNCHRONOUS — it answers once WhatsApp has the patch, carrying the name it settled on —
-which is what lets the log keep nothing (below). And `pickName` now says whose word it
+BOUNDED AND UNQUEUED — it answers once WhatsApp has the patch, carrying the name it settled
+on — which is what lets the log keep nothing (below). And `pickName` now says whose word it
 picked: `sender_saved` rides every message whose name came from the address book, live and
 in the import alike.
 
@@ -3079,12 +3079,23 @@ vocabulary already owns, one letter apart and both about a person's details. And
 is MATERIAL IN ITS CONVERSATION: a `message` row claims someone spoke in that chat, and a
 save never crossed the wire to them. The honest accounting is that the address book is the
 service's state. What liquen holds is the agent's own act, in its tool traffic, answered
-synchronously; and a naming act shows up the way every rename here does, on the person's
-next line, which carries the saved name and reads `contact=` where it read `external=`.
+in the call itself; and a naming act shows up the way every rename here does, on the
+person's next line, which carries the saved name and reads `contact=` where it read
+`external=`.
 That covers a change typed on the phone just as well, since the wire stamps the name
 either way. The price, accepted: a contact saved who never speaks leaves no trace the
 agent can see. If that trace is ever wanted it is narration, not a message — the shape the
 renderer already uses for a deferred gate outcome — never a line in someone's chat.
+
+**Which side of the tool split that is.** A row is not a readback, it is a WORK ITEM: `send`
+writes `queued` and returns a receipt, the wire is touched by a dispatcher afterwards, the
+outcome is stamped on that same row, and `sweep.ts` re-offers a transient failure up a
+day-long ladder with no model in the loop. A message earns all of that because words someone
+was owed must survive a shut laptop. `contact` earns none of it: the book is WhatsApp's, the
+patch is idempotent, and a save that failed costs one more call from a model that is sitting
+right there reading the error — so it is bounded (30s, `timedFetch`), unqueued, and its own
+retry, which puts it beside `bash` rather than beside `send`. The rule this leaves: a tool
+takes a log row when something outlives its call for the row to carry.
 
 **Searching the book is therefore OPEN, and its shape follows from the same rule.** `search`
 reads the log, so it finds anyone who has spoken, under the saved name once they have —

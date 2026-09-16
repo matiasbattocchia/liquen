@@ -96,11 +96,12 @@ sweeper never re-offers it. See §9 in DESIGN.md.
 ### The address book: the service keeps it, the name carries it
 
 A service that keeps an address book — the phone's, behind WhatsApp; Google Contacts —
-keeps it. The log takes no copy: no table, no row per entry, nothing standing in for a
-directory. A write goes out through the connector's port (`XiPorts.contact`, one per
-service that keeps a book) and the call settles when the service has the change, so the
-`contact` tool's own result is the whole outcome. Saving someone is a naming act, and a
-name reaches rows from their next message on, the way every rename here does.
+keeps it, and what liquen holds of it is the names it already receives. A write goes out
+through the connector's port (`XiPorts.contact`, one per service that keeps a book), which
+answers within the call and keeps no queue behind it: the `contact` tool's own result is
+the whole outcome, and a failed call is the model's to make again. Saving someone is a
+naming act, and a name reaches rows from their next message on, the way every rename here
+does.
 
 What the connector does report, on every message, is whose word the sender's name is:
 `sender.saved` when it came from the account's address book, absent when it is the
@@ -211,8 +212,8 @@ than a rewrite would reach in months:
 - text · media (image/audio/video/document/sticker, encrypt+upload / fetch+decrypt) ·
   reactions · locations · vCards · replies (quote ↔ `re_message_id`) · edits · revokes ·
   delivery/read receipts in · read receipts + typing out · pushnames · the address book,
-  both ways (`sender_saved` on every message, a contact fact per entry, `POST /dispatch`
-  `{type: "contact"}` to write one — on a fork of whatsmeow carrying `tulir/whatsmeow#1247`)
+  both ways (`sender_saved` on every message it names, `POST /dispatch` `{type: "contact"}`
+  to write an entry — on a fork of whatsmeow carrying `tulir/whatsmeow#1247`)
 - **QR *and* phone-code pairing** with rotation polling, logout, session-death notification
 - history sync import (chunked), group subjects → conversation names, **LID → phone
   canonicalization**

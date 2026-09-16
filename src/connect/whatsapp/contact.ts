@@ -4,10 +4,14 @@
  * The `contact` tool's wire leg: one `POST /dispatch` of type `contact` at the bridge,
  * which writes the account's address book with the same app-state patch a linked WhatsApp
  * Web writes. The call answers once WhatsApp has the patch, with the name it carried —
- * the model's own, or the wire's word for the person when the model named nobody — so
- * the tool result IS the outcome and the log keeps no entry of its own. The book stays
- * WhatsApp's; what the log sees of it is `sender_saved` on the person's next line, which
- * renders `contact="…"` where it read `external="…"` before.
+ * the model's own, or the wire's word for the person when the model named nobody.
+ *
+ * It is bounded (`timedFetch`) and unqueued, so the tool result IS the outcome and the
+ * model is its own retry. That is affordable where a message's is not: the book is
+ * WhatsApp's, the patch is idempotent, and a save that never landed costs a second call —
+ * so nothing outlives the call for the log to track. The book stays WhatsApp's; what the
+ * log sees of it is `sender_saved` on the person's next line, which renders `contact="…"`
+ * where it read `external="…"` before.
  *
  * The bridge's error contract is the dispatch's: 4xx permanent, 5xx transient. Either is
  * the tool's failure here — an errored `tool_result` the model reads and re-decides.
