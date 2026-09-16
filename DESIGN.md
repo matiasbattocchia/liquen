@@ -1583,7 +1583,13 @@ A page is the most recent `limit` matches (xi's `SEARCH_LIMIT` when unset, the s
 default-with-override shape bash's output caps have); when older matches were cut, a closing
 harness line says so and names the moment the next call passes as `before` (strict, so a
 shared instant at the cut moves whole to the next page). No filter is required: `in` with a
-time bound and no `text` reads a stretch of a conversation as it happened.
+time bound and no `text` reads a stretch of a conversation as it happened. **`around: n`**
+reads the `n` lines either side of every match in its own room (under no filter but the
+port's law and the mirror rule — context is what was said there, whatever the search was
+for): each match wears the bare `match` attribute after its stamp, stretches that share a
+row are one, and a `… lines between, not shown` line stands where two do not meet — the
+window's own elision voice. Capped at ten a side: context is for reading an exchange, and
+paging a room is `in` with a time bound.
 
 - **Push-default / pull-escape**: nu pushes the agent its recent window at buildContext;
   `search` is the escape hatch to reach beyond — older history, other *public*

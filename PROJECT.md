@@ -3182,3 +3182,16 @@ trailer is a harness sentence, the shape the window's own elisions use, naming t
 page's `before`; the paging edge where a shared instant straddled a strict cut now moves the
 instant whole. The result type is gone: a page is a string, and what is found reads as what
 is seen.
+
+### `search around`: a match among its neighbours (2026-09-16) — LANDED
+
+A hit like `Se podrá?` is useless alone, and until now every one of them cost the model a
+second search (`in` + `before`/`after`) to read what it answered. `around: n` reads the `n`
+lines either side of each match in its own room — under the port's law and the mirror rule
+only, since context is what was said there whatever the search was for — and renders them
+through the same `renderHits`: the matches wear a bare `match` after their stamp (`LineOpts`
+gained `mark`), stretches that share a row merge, and where two do not, `… lines between,
+not shown` stands in the room, the window's own elision voice. Two store facts made it
+possible: `first` (the EARLIEST N past a bound — `limit` after a hit would have handed back
+the room's tail) and `copies: false` (the mirror exclusion pushed into SQL beside
+`silenced`, where a filter would have walked rows to drop them). Capped at ten a side.

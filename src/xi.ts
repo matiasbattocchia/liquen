@@ -74,6 +74,7 @@ import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import {
   cancelled,
   hhmm,
+  type HitsOpts,
   isCancelled,
   ownComplex,
   ownSide,
@@ -2106,7 +2107,7 @@ async function search(
     text: args.text,
     types: ["message"],
     limit: limit + 1,
-    filter: (e) => e.extra?.via === undefined, // ANDed under the port's own law (§6)
+    copies: false, // a mirror copy is not a hit — its original is
   }) as MessageEvent[];
   const more = rows.length > limit;
   let page = more ? rows.slice(1) : rows;
@@ -2119,11 +2120,71 @@ async function search(
     if (rest.length > 0) page = rest;
   }
   if (page.length === 0) return "nothing matched";
-  const rendered = renderHits(page, view.session, view.roster, view.zone, view.connections);
+  const around = args.around ?? 0;
+  if (!Number.isInteger(around) || around < 0 || around > AROUND_MAX) {
+    throw new Error(
+      `around must be an integer from 0 to ${AROUND_MAX}, got ${JSON.stringify(args.around)}`,
+    );
+  }
+  const { lines, opts } = around > 0
+    ? await surround(log, page, around)
+    : { lines: page, opts: {} };
+  const rendered = renderHits(
+    lines,
+    view.session,
+    view.roster,
+    view.zone,
+    view.connections,
+    opts,
+  );
   const older = more
     ? `\n— older matches not shown — search again with before="${page[0].ts}" to read on —`
     : "";
   return `${rendered}${older}`;
+}
+
+/** The most context a match may carry either side — enough to read an exchange, not a
+ *  way to page a conversation (that is `in` with a time bound). */
+const AROUND_MAX = 10;
+
+/**
+ * The lines around each hit (`search around`, §6): `n` before and `n` after, in the hit's
+ * own room, under no filter but the port's law and the mirror rule — context is what was
+ * said there, whoever said it and whatever the search was for. Each hit and its
+ * neighbours form a STRETCH, a contiguous slice of the room; stretches that share a row
+ * are one, and where two do not, lines lie between them that the page does not show —
+ * which is what `adjacent` reports to the renderer, so it can say so. The bounds are the
+ * hit's moment (strict): a row on the very same instant as a hit is neither before nor
+ * after it and is left out, a loss the log's clock makes rare.
+ */
+async function surround(
+  log: Pick<Reader, "read">,
+  hits: MessageEvent[],
+  n: number,
+): Promise<{ lines: MessageEvent[]; opts: HitsOpts }> {
+  const rows = new Map<string, MessageEvent>();
+  const next = new Set<string>(); // "a|b": b follows a directly in the log
+  for (const hit of hits) {
+    const room = {
+      conversation: hit.envelope.conversation.address,
+      types: ["message" as const],
+      copies: false,
+    };
+    const [before, after] = await Promise.all([
+      log.read({ ...room, before: hit.ts, limit: n }) as Promise<MessageEvent[]>,
+      log.read({ ...room, after: hit.ts, first: n }) as Promise<MessageEvent[]>,
+    ]);
+    const stretch = [...before, hit, ...after];
+    for (const e of stretch) rows.set(e.id, e);
+    for (let i = 1; i < stretch.length; i++) next.add(`${stretch[i - 1].id}|${stretch[i].id}`);
+  }
+  return {
+    lines: [...rows.values()],
+    opts: {
+      match: new Set(hits.map((h) => h.id)),
+      adjacent: (a, b) => next.has(`${a.id}|${b.id}`),
+    },
+  };
 }
 
 /** How deep a name lookup reads before giving up — the most recent rows that carry it. */
@@ -2263,6 +2324,13 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
             type: "integer",
             description:
               `how many of the most recent matches to return (optional; default ${SEARCH_LIMIT})`,
+          },
+          around: {
+            type: "integer",
+            description:
+              `lines of the conversation to show either side of each match (0–${AROUND_MAX}; ` +
+              "optional, default 0). With it, each match wears `match` after its stamp, and " +
+              "a `…` line stands where lines between two stretches are not shown",
           },
         },
       },

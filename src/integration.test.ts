@@ -1384,6 +1384,65 @@ Deno.test("search shows a sentence once: a mirror copy is not a hit, and a share
   );
 });
 
+Deno.test("search around: a match among its neighbours, stretches merged, the gap between them said", async () => {
+  // eight lines in one room, two of them matches three lines apart: `around: 1` reads the
+  // line either side of each. The two stretches do not touch, so a `…` line stands
+  // between them; a third match next to the second shares its stretch and adds no gap.
+  const row = (m: number, text: string): Draft<MessageEvent> => ({
+    ts: `2026-09-04T12:${String(m).padStart(2, "0")}:00Z`,
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "gira", kind: "group", name: "Gira Norte" },
+      sender: { address: "german", name: "Germán" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "search", input: { text: "nafta", around: 1 } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { text: "nafta", around: 99 } }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("qué gastamos"));
+      await waitFor(async () => (await read("tool_result")).length === 2);
+      const [page, refused] = (await read("tool_result")).map((e) => e as ToolResultEvent);
+      const text = page.parts[0].data.output as string;
+      const shown = [...text.matchAll(/<msg [^>]*>([^<]*)<\/msg>|^(… .*)$/gm)]
+        .map((m) => m[1] ?? m[2]);
+      assertEquals(shown, [
+        "salida",
+        "nafta",
+        "peaje",
+        "… lines between, not shown",
+        "vuelta",
+        "nafta de nuevo",
+        "aceite y nafta",
+        "fin",
+      ]);
+      // the matches, and only they, wear the mark
+      assertEquals(
+        [...text.matchAll(/<msg [^>]* match>([^<]*)</g)].map((m) => m[1]),
+        ["nafta", "nafta de nuevo", "aceite y nafta"],
+      );
+      assertStringIncludes(JSON.stringify(refused.parts), "around must be an integer from 0 to");
+    },
+    {},
+    [
+      row(1, "salida"),
+      row(2, "nafta"),
+      row(3, "peaje"),
+      row(4, "mate"),
+      row(5, "vuelta"),
+      row(6, "nafta de nuevo"),
+      row(7, "aceite y nafta"),
+      row(8, "fin"),
+    ],
+  );
+});
+
 Deno.test("the gate answers from a surface: the principal's own /y and /n settle it", async () => {
   // the approval card crosses to wherever the principal is (mirror), and their reply comes
   // back as an ordinary message — so the verdict has to be readable from their own words,

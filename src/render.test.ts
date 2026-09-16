@@ -4,6 +4,7 @@ import {
   CANCELLED,
   cancelled,
   capRun,
+  GAP,
   render,
   renderHits,
   renderSystem,
@@ -2066,4 +2067,48 @@ Deno.test("renderHits (§6): a search page is the window's grammar — grouped, 
       "</conn>",
     ].join("\n"),
   );
+});
+
+Deno.test("renderHits with context: a match wears `match`, and a `…` line stands where stretches do not meet", () => {
+  const ventas = { id: "mind", agentId: "ventas" };
+  const roster = { names: {}, principals: [] };
+  const dm = { address: "549116660002", kind: "direct" as const, name: "Mariana" };
+  const at = (m: number) => `2026-09-09T10:${String(m).padStart(2, "0")}:00Z`;
+  const line = (id: string, m: number, text: string) =>
+    worldMsg(id, at(m), dm, { address: "549116660002", name: "Mariana" }, text);
+  // two stretches of one room: e1–e3 around the hit e2, e7–e9 around the hit e8; e4–e6 lie
+  // between and are not on the page. A lone hit's own line hoists as usual.
+  const lines = [
+    line("e1", 1, "hola"),
+    line("e2", 2, "nafta?"),
+    line("e3", 3, "sí"),
+    line("e7", 7, "y"),
+    line("e8", 8, "nafta otra vez"),
+    line("e9", 9, "ok"),
+  ];
+  const adjacent = (a: MessageEvent, b: MessageEvent) =>
+    Number(a.id.slice(1)) + 1 === Number(b.id.slice(1));
+  const page = renderHits(lines, ventas, roster, "UTC", {}, {
+    match: new Set(["e2", "e8"]),
+    adjacent,
+  });
+  const ext = 'external="Mariana" address="549116660002"';
+  assertEquals(
+    page,
+    [
+      '<conn service="whatsapp" address="org">',
+      '<conv kind="direct" name="Mariana" address="549116660002">',
+      `<msg id="e1" ${ext} at="9 Sep 2026 10:01">hola</msg>`,
+      `<msg id="e2" ${ext} at="9 Sep 2026 10:02" match>nafta?</msg>`,
+      `<msg id="e3" ${ext} at="9 Sep 2026 10:03">sí</msg>`,
+      GAP,
+      `<msg id="e7" ${ext} at="9 Sep 2026 10:07">y</msg>`,
+      `<msg id="e8" ${ext} at="9 Sep 2026 10:08" match>nafta otra vez</msg>`,
+      `<msg id="e9" ${ext} at="9 Sep 2026 10:09">ok</msg>`,
+      "</conv>",
+      "</conn>",
+    ].join("\n"),
+  );
+  // no `adjacent` ⇒ no claim about what lies between: plain hits draw no gap line
+  assertEquals(renderHits(lines, ventas, roster, "UTC").includes(GAP), false);
 });

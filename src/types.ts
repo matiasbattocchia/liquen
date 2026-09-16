@@ -594,6 +594,9 @@ export interface SearchArgs {
   after?: Timestamp;
   text?: string; // one contiguous phrase, case-insensitive substring — no fuzz, no wildcards
   limit?: number; // the most recent N matches; xi's `SEARCH_LIMIT` when unset
+  /** N lines of its conversation either side of every match, the matches marked `match`,
+   *  a `…` line where two stretches do not meet. 0 (the default) is the matches alone. */
+  around?: number;
 }
 /** The page `search` answers with is a STRING in the window's grammar (render's
  *  `renderHits`, §6): `<conn>`/`<conv>`-grouped `<msg>` lines, ids, marks, markers and

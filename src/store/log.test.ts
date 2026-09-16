@@ -148,6 +148,33 @@ Deno.test("after/before bound the id range; limit keeps the most recent N", asyn
   });
 });
 
+Deno.test("first keeps the earliest N past a bound; copies:false drops mirror rows (§6)", async () => {
+  await withLog(async (log) => {
+    for (const id of ["01", "02", "03", "04", "05"]) await log.publish(msg(id, "c1", id));
+    // `limit` after a bound is the room's TAIL; `first` is what came right after it —
+    // the lines around a hit, not the newest lines of its conversation
+    const after = { after: "2026-07-16T00:00:02Z" };
+    assertEquals((await log.read({ ...after, limit: 2 })).map((e) => e.id), ["04", "05"]);
+    assertEquals((await log.read({ ...after, first: 2 })).map((e) => e.id), ["03", "04"]);
+    // under a filter too: the cursor walks forward and stops when N VISIBLE rows are in
+    assertEquals(
+      (await log.read({ ...after, first: 2, filter: (e) => e.id !== "03" })).map((e) => e.id),
+      ["04", "05"],
+    );
+    await assertRejects(() => log.read({ limit: 1, first: 1 }), Error, "exclusive");
+    // a copy (`extra.via`) is the mirror's, not a line of its own
+    await log.publish({ ...msg("06", "c1", "06"), extra: { via: { event: "05" } } });
+    assertEquals((await log.read({ copies: false })).map((e) => e.id), [
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+    ]);
+    assertEquals((await log.read({})).length, 6);
+  });
+});
+
 Deno.test("concurrent cross-process publishes serialize (SQLite WAL + busy_timeout)", async () => {
   const dir = await Deno.makeTempDir();
   try {

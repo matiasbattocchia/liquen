@@ -665,7 +665,7 @@ function renderMessages(
       const earlier = elisions.earlier.get(e);
       if (earlier) run.lines.push(`… ${earlier} earlier, not shown`);
     }
-    run.lines.push(msgLine(e, me, who, zone, refOf(e)));
+    run.lines.push(msgLine(e, me, who, zone, { ref: refOf(e) }));
   };
 
   // No separators (§5). They went through `place()`, so every date break and gap marker
@@ -947,13 +947,26 @@ function conversationEl(c: { conv: Conversation; lines: string[] }): string {
  * reads its window; that is the point. The session's own room renders as a room like any
  * other — a hit there wears `self` or its principal's mark on a `<msg>`, not a
  * `<principal>` element, because a search result is a list of lines, not a transcript.
+ *
+ * With context (`search around`): `match` names the hits among the lines around them,
+ * each wearing the bare `match` attribute after its stamp, and `adjacent` says whether two
+ * consecutive lines of a room stand side by side in the log — where they do not, a `…`
+ * line says lines were left out, the way the window's own elisions do.
  */
+export interface HitsOpts {
+  match?: Set<EventId>;
+  adjacent?: (a: MessageEvent, b: MessageEvent) => boolean;
+}
+
+export const GAP = "… lines between, not shown";
+
 export function renderHits(
   hits: MessageEvent[],
   session: SessionRef,
   roster: Roster,
   zone?: string,
   connections: Record<string, string> = {},
+  { match, adjacent }: HitsOpts = {},
 ): string {
   const events = byConversation([...hits].sort(byTs)) as MessageEvent[];
   const byExternal = new Map<string, Event>();
@@ -965,6 +978,7 @@ export function renderHits(
     return { attr: ` re="${target ? shortId(target.id) : "?"}"`, target, shown: !!target };
   };
   const clusters: ConnectionCluster[] = [];
+  let last: MessageEvent | undefined;
   for (const e of events) {
     const connection = e.envelope.connection_address;
     let cluster = clusters.at(-1);
@@ -981,8 +995,10 @@ export function renderHits(
     if (!run || run.conv.address !== e.envelope.conversation.address) {
       run = { conv: e.envelope.conversation, lines: [] };
       cluster.convs.push(run);
-    }
-    run.lines.push(msgLine(e, session, roster, zone, refOf(e), true));
+    } else if (adjacent && last && !adjacent(last, e)) run.lines.push(GAP);
+    const mark = match?.has(e.id) ? "match" : undefined;
+    run.lines.push(msgLine(e, session, roster, zone, { ref: refOf(e), dated: true, mark }));
+    last = e;
   }
   return clusters.map(connectionEl).join("\n");
 }
@@ -1060,17 +1076,26 @@ export function ownSide(e: MessageEvent): boolean {
   return sender === undefined || sender.address === e.envelope.connection_address;
 }
 
+/** How a line is drawn beyond its own facts: `ref` is the window's resolution of its
+ *  `re`; `dated` puts the year on the stamp (a search page); `mark` is a bare attribute the
+ *  line wears after its stamp — `match`, on a search hit shown among its context. */
+interface LineOpts {
+  ref?: Ref;
+  dated?: boolean;
+  mark?: string;
+}
+
 function msgLine(
   e: MessageEvent,
   session: SessionRef,
   roster: Roster,
   zone?: string,
-  ref: Ref = { attr: "" },
-  dated = false,
+  { ref = { attr: "" }, dated = false, mark }: LineOpts = {},
 ): string {
   const re = ref.attr;
   const author = authorOf(e, session, roster);
-  const head = `id="${shortId(e.id)}"${author} at="${hhmm(e.ts, zone, dated)}"`;
+  const flag = mark ? ` ${mark}` : "";
+  const head = `id="${shortId(e.id)}"${author} at="${hhmm(e.ts, zone, dated)}"${flag}`;
 
   const action = e.payload?.action;
   // the hoisting rule: a message that IS one data part wears the envelope on its own element
@@ -1079,7 +1104,7 @@ function msgLine(
       e.parts[0].kind !== "reaction" && action !== "add" && action !== "remove"
     ? e.parts[0]
     : undefined;
-  if (solo) return dataLine(solo, e, author, re, zone, dated);
+  if (solo) return dataLine(solo, e, author, re, zone, dated, flag);
   if (action === "edit") {
     return `<msg ${head}${re} action="edit">${escText(textOf(e))}</msg>`;
   }
@@ -1101,7 +1126,7 @@ function msgLine(
     const glyph = r ? (r.data.unicode ?? r.data.name ?? "") : textOf(e);
     const removed = action === "remove" ? ' action="remove"' : "";
     // no `id`: a reaction is a leaf — nothing in the vocabulary can point back at one
-    const react = `${author.slice(1)} at="${hhmm(e.ts, zone, dated)}"`;
+    const react = `${author.slice(1)} at="${hhmm(e.ts, zone, dated)}"${flag}`;
     return `<reaction ${react}${re}${removed}>${escText(glyph)}</reaction>`;
   }
 
@@ -1166,6 +1191,7 @@ function dataLine(
   re: string,
   zone?: string,
   dated = false,
+  flag = "",
 ): string {
   const action = e.payload?.action;
   const act = action === "edit" || action === "delete" ? ` action="${action}"` : "";
@@ -1175,7 +1201,7 @@ function dataLine(
   const id = action === "delete" ? "" : `id="${shortId(e.id)}" `;
   const head = `${id}${voice ? voice.slice(1) + " " : ""}at="${
     hhmm(e.ts, zone, dated)
-  }"${re}${act}`;
+  }"${flag}${re}${act}`;
   return dataEl(p, head, zone);
 }
 

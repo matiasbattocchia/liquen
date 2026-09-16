@@ -98,6 +98,13 @@ export interface ReadQuery {
    *  finds the row a `re` points at. */
   externalId?: string;
   limit?: number; // keep only the most recent N (still returned in append order)
+  /** Keep only the EARLIEST N — the lines right after a bound, where `limit` would hand back
+   *  the conversation's tail instead (`search around`, §6). Exclusive with `limit`. */
+  first?: number;
+  /** `false` ⇒ drop rows that are copies of another (`extra.via`: the mirror's CC of a turn
+   *  onto a surface, or of a surface line into the mind). `search` passes it: a copy's
+   *  original is a row of its own and matches on its own, so no sentence is a hit twice. */
+  copies?: boolean;
   /** Row-level predicate applied BEFORE `limit` — RLS `USING` semantics: the window fills
    *  with N *visible* events, never N-minus-the-private-ones. `scoped()` (§6) pins it; on
    *  Postgres the engine does this and the field disappears. */
@@ -547,7 +554,13 @@ export async function openLog(
     // (the casts above serve the overload pairs; commit itself is honest about null)
 
     read(query: ReadQuery = {}): Promise<Event[]> {
-      const { sql, params } = build(query);
+      let built: ReturnType<typeof build>;
+      try {
+        built = build(query); // a malformed query rejects — it never throws through a promise
+      } catch (err) {
+        return Promise.reject(err);
+      }
+      const { sql, params } = built;
       if (query.filter === undefined) {
         const rows = db.prepare(sql).all(...params) as unknown as Row[];
         if (query.limit !== undefined) rows.reverse(); // built as DESC LIMIT — restore order
@@ -558,11 +571,12 @@ export async function openLog(
       // order. The walk is a cursor, not a materialized result: it stops — and the engine
       // stops — as soon as the window is full. Postgres does all of this inside the engine.
       const out: Event[] = [];
+      const cap = query.limit ?? query.first;
       for (const r of db.prepare(sql).iterate(...params) as Iterable<Row>) {
         const e = eventOf(r);
         if (!query.filter(e)) continue;
         out.push(e);
-        if (query.limit !== undefined && out.length >= query.limit) break;
+        if (cap !== undefined && out.length >= cap) break;
       }
       return Promise.resolve(query.limit !== undefined ? out.reverse() : out);
     },
@@ -1133,18 +1147,25 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
       "json_extract(extra, '$.backfill') IS NOT 1 AND json_extract(extra, '$.muted') IS NOT 1 AND json_extract(extra, '$.archived') IS NOT 1",
     );
   }
+  if (q.copies === false) where.push("json_extract(extra, '$.via') IS NULL");
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   // append order = `id` (store-minted UUIDv7 — lexical order is mint order, §3).
-  // limit ⇒ the most recent N: fetch DESC and reverse in read(); else natural append order.
-  // limit + filter ⇒ DESC with NO SQL limit: read() cuts AFTER the predicate (RLS-before-
-  // LIMIT), so the SQL can't know how deep the N visible rows reach.
-  if (q.limit !== undefined) {
+  // limit ⇒ the most recent N: fetch DESC and reverse in read(); first ⇒ the earliest N,
+  // fetched ASC as they stand; else natural append order.
+  // a cap + filter ⇒ NO SQL limit: read() cuts AFTER the predicate (RLS-before-LIMIT), so
+  // the SQL can't know how deep the N visible rows reach.
+  if (q.limit !== undefined && q.first !== undefined) {
+    throw new Error("read: `limit` and `first` are exclusive");
+  }
+  const cap = q.limit ?? q.first;
+  const order = q.first !== undefined ? "ASC" : "DESC";
+  if (cap !== undefined) {
     if (q.filter !== undefined) {
-      return { sql: `SELECT * FROM events ${clause} ORDER BY id DESC`, params };
+      return { sql: `SELECT * FROM events ${clause} ORDER BY id ${order}`, params };
     }
     return {
-      sql: `SELECT * FROM events ${clause} ORDER BY id DESC LIMIT ?`,
-      params: [...params, q.limit],
+      sql: `SELECT * FROM events ${clause} ORDER BY id ${order} LIMIT ?`,
+      params: [...params, cap],
     };
   }
   return { sql: `SELECT * FROM events ${clause} ORDER BY id ASC`, params };
