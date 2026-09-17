@@ -1387,21 +1387,30 @@ group last**
 
 ### The system prompt (cacheable prefix)
 
-Built by render from `docs.list()` (§8), led by the **env block** — one line of the facts
-config owns about who and where the agent is, `agent · name · email · phone · home ·
-timezone · locale`, and one `connections:` line naming the surfaces it speaks through (the
-connections it owns, where it speaks as its principal, and the org's credentialed ones,
-where it speaks as the org — a stub row is nobody's voice), and, when the org configured
-one, a `processors:` line naming the media kinds made readable on their own, so the model
-waits for the `<transcript>` instead of opening the file — harness-authored, so no doc
-edit can lose them, and stable between grants, so the prefix stays cached. Then
-**instructions** = the bodies of `load:always` docs
-(system → org → agent), inlined; **skill / memory index** = pointers (path + description) for
-the rest, which the agent pulls via `aread` on demand; **cron / projections** = always-on.
-Ordered most-stable → most-volatile, with a cache breakpoint at the end — the first of the
-two the request carries; the second closes the collapsed history (above). An hour's TTL,
-not the default five minutes: docs change when a human edits one, so an agent that wakes
-every twenty minutes was paying to re-write this block on every wake.
+Built by render from `docs.list()` (§8) as three `---`-ruled sections, one block each.
+**Instructions** lead = the bodies of `load:always` docs (system → org → agent), inlined,
+each under the `[handle]` that is also the argument reading it takes. **`# On-demand docs`**
+= one pointer per lazy doc, `- [handle] description`, which the agent pulls via `aread`;
+**cron / projections** = always-on. **`# Environment`** closes = the facts config owns, one `##`
+listing each. Two lines lead: who the agent is (`self · name · email · phone`, the id being
+the word its own `self` mark wears) and where it stands (`home · timezone · locale`).
+**`## Principals`** and **`## Agents`** are the roster split by who steers this agent (§4),
+each member listed once, in the same `id · name: · email: · phone:` register as the `self:`
+line — so the section doubles as the legend for the marks a `<conv>` line wears, and a
+message from a declared handle is that member speaking. **`## Connections`** names the
+surfaces it speaks through, `service · name · shown (yours|org)`: the connections it owns,
+where it speaks as its principal, and the org's credentialed ones, where it speaks as the
+org — a stub row is nobody's voice, and the voice is stated on every line because neither
+is the quiet default. **`## Processors`**, when the org configured one, says once that media
+of the listed kinds is made readable on its own, so the model waits for the `<transcript>`
+instead of opening the file. A listing with nothing in it is absent, the way the anchor's
+sections are. Harness-authored, so no doc edit can lose any of it, and stable between
+grants, so the prefix stays cached. One cache breakpoint at the end — the
+first of the two the request carries; the second closes the collapsed history (above) — so
+the whole prefix is a single region and the section order is the model's reading order,
+words before the facts they are spent on. An hour's TTL, not the default five minutes: docs
+change when a human edits one, so an agent that wakes every twenty minutes was paying to
+re-write this block on every wake.
 
 ### Inline system blocks (the narrator)
 

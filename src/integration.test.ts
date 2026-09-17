@@ -2123,6 +2123,33 @@ Deno.test("schedule: a bare `at` reads the org's clock — 17:00 Buenos Aires is
   }
 });
 
+Deno.test("the roster: the prefix splits it into who steers this agent and everyone else", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
+  const transport: ModelTransport = (params) => {
+    last = params;
+    return Promise.resolve(ok([{ kind: "assistant", text: "ok" }], "end_turn"));
+  };
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  try {
+    log.syncAgents([
+      { agentId: "a1", mind: "mind@a1", principals: ["matias"] },
+      // the one who steers: a person alone, no session of their own (§4)
+      { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "+549", runs: false },
+      { agentId: "sol", mind: "mind@sol", name: "Sol", email: "sol@x.io" },
+    ]);
+    await log.publish(principalMsg("hola"));
+    await xi(CONFIG, ports);
+    const env = (last!.system as { text: string }[]).at(-1)!.text;
+    assertStringIncludes(env, "## Principals\n\n- matias · name: Matías · phone: +549");
+    assertStringIncludes(env, "## Agents\n\n- sol · name: Sol · email: sol@x.io");
+    assertEquals(env.includes("- a1"), false, "self is the `self:` line, not a member of either");
+  } finally {
+    log.close();
+  }
+});
+
 Deno.test("the surfaces: the prefix names them, the anchor lists the ones that are down", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -2154,10 +2181,13 @@ Deno.test("the surfaces: the prefix names them, the anchor lists the ones that a
     ]);
     await log.publish(principalMsg("hola"));
     await xi(config, ports);
-    const prefix = (last!.system as { text: string }[])[0].text;
-    assertStringIncludes(prefix, "connections: slack acme.slack.com (org) · whatsapp 549 (yours)");
-    assert(!prefix.includes("T1 ("), "the stub is not a surface");
-    assert(!prefix.includes("other@x.io"), "another agent's grant is not this agent's surface");
+    const env = (last!.system as { text: string }[]).at(-1)!.text; // the closing section
+    assertStringIncludes(
+      env,
+      "## Connections\n\n- slack · acme.slack.com (org)\n- whatsapp · 549 (yours)",
+    );
+    assert(!env.includes("T1 ("), "the stub is not a surface");
+    assert(!env.includes("other@x.io"), "another agent's grant is not this agent's surface");
     const anchor = JSON.stringify(last?.messages.at(-1)?.content);
     assertStringIncludes(anchor, "down — 1 connection:");
     assertStringIncludes(anchor, "· 549 — whatsapp, logged out since 7 Sep 14:02");

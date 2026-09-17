@@ -63,7 +63,7 @@ import {
 import { type Describe, describeCall, nameResolver } from "./describe.ts";
 import { PROCESSOR_TIMEOUT_MS } from "./processors.ts";
 import type { Appender, Reader } from "./store/log.ts";
-import type { Registry } from "./store/agents.ts";
+import type { AgentRow, Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { ConnectionRow, Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
@@ -79,6 +79,7 @@ import {
   hhmm,
   type HitsOpts,
   isCancelled,
+  type Member,
   ownComplex,
   ownSide,
   ownVoice,
@@ -87,6 +88,7 @@ import {
   type Roster,
   shortId,
   silenced,
+  type Surface,
   textOf,
   unreachedLine,
 } from "./render.ts"; // shared predicates: silenced never wakes;
@@ -1024,6 +1026,7 @@ async function think(
   // `pending_approval`, so the only place they belong is the block that is rewritten every
   // turn. It also self-corrects: an ask that gets answered simply stops being listed.
   const surfaces = surfacesOf(config, ports);
+  const org = company(config, ports);
   const ambient = [
     ...(ports.ambient ? await ports.ambient() : []),
     ...downOn(surfaces, config),
@@ -1045,7 +1048,9 @@ async function think(
       docs,
       tools: specsOf(ports, config),
       config,
-      surfaces: surfaces.map(surfaceLine),
+      surfaces: surfaces.map(surfaceOf),
+      principals: org.principals,
+      members: org.rest,
       // the account behind each surface, as the service names it (`extra.name`, recorded
       // by the connector) — `<conn name>`: the string the wire stamps on the account's own
       // lines, read as the account and not as a person in the room (§5)
@@ -1101,14 +1106,37 @@ function surfacesOf(config: AgentConfig, ports: XiPorts): ConnectionRow[] {
   );
 }
 
-/** A surface, named for the model: the service and the address it was shown — or the
- *  account's URL where the address is an opaque id (Slack) — and whose voice it carries. */
-function surfaceLine(c: ConnectionRow): string {
-  const shown = typeof c.extra?.url === "string" ? c.extra.url : c.address;
-  // the account's own name beside its address — the same pair `<conn>` wears, so the env
-  // line and the window agree on what the account is called
-  const name = typeof c.extra?.name === "string" && c.extra.name ? ` "${c.extra.name}"` : "";
-  return `${c.service} ${shown}${name} (${c.agentId ? "yours" : "org"})`;
+/** A surface as the env states it: the service, the address it was shown — or the account's
+ *  URL where the address is an opaque id (Slack) — the account's own name beside it, which
+ *  is the name `<conn>` wears in the window, and whose voice it carries. */
+function surfaceOf(c: ConnectionRow): Surface {
+  const name = typeof c.extra?.name === "string" ? c.extra.name : "";
+  return {
+    service: c.service,
+    shown: typeof c.extra?.url === "string" ? c.extra.url : c.address,
+    ...(name ? { name } : {}),
+    own: !!c.agentId,
+  };
+}
+
+/** The org around this agent, as the env lists it (§4, §5): who steers it, and everyone
+ *  else on the roster. Each member appears once — a principal is not repeated below — and
+ *  self is in neither list, being the `self:` line itself. The derived case names the whole
+ *  roster as an org agent's principals, including the agent, which is why self comes out. */
+function company(config: AgentConfig, ports: XiPorts): { principals: Member[]; rest: Member[] } {
+  const steers = new Set(ports.log.principalsOf(config.agentId));
+  steers.delete(config.agentId);
+  const rows = ports.log.agents().filter((a) => a.agentId !== config.agentId);
+  const member = (a: AgentRow): Member => ({
+    id: a.agentId,
+    ...(a.name ? { name: a.name } : {}),
+    ...(a.email ? { email: a.email } : {}),
+    ...(a.phone ? { phone: a.phone } : {}),
+  });
+  return {
+    principals: rows.filter((a) => steers.has(a.agentId)).map(member),
+    rest: rows.filter((a) => !steers.has(a.agentId)).map(member),
+  };
 }
 
 /** Surfaces that are down: a connector recorded a state other than `connected` on the

@@ -28,7 +28,7 @@ import type { DocEntry } from "./store/docs.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
-import { cancelled, render, type Roster, SILENCE } from "./render.ts";
+import { cancelled, type Member, render, type Roster, SILENCE, type Surface } from "./render.ts";
 import { type Effort, type ModelTransport, mu, type StepInput, type StepResult } from "./mu.ts";
 
 /** Re-exported so the layer above talks to nu, not past it (main → xi → nu → mu). */
@@ -58,18 +58,18 @@ export interface TurnConfig {
   /** IANA timezone every rendered stamp formats through (org config; §5). Unset ⇒ the
    *  deployment's own zone. Stored `ts` stays UTC — that one is a sort key (§3). */
   timezone?: string;
-  /** The org's locale — stated to the model in the prefix's env line (§5); render itself
+  /** The org's locale — stated to the model in the prefix's env section (§5); render itself
    *  is English. */
   locale?: string;
   /** The name the agent goes by — the principal's own, declared in `agents.<id>.identity`.
-   *  Stated in the env line beside the id. */
+   *  Stated in the env section beside the id. */
   name?: string;
   /** The principal's handles, from the same declaration — a message from one is the
    *  principal's word, and a `send` at one is refused. */
   email?: string;
   phone?: string;
   /** The agent's own folder, absolute — the shell's starting cwd, the root a relative
-   *  attachment resolves from, the tree its docs live in (§9). Stated in the env line. */
+   *  attachment resolves from, the tree its docs live in (§9). Stated in the env section. */
   home?: string;
   /** Slow OUTER retries for mu failures — `RETRY_DELAYS_MS` unless a caller says otherwise
    *  (a test runs them at zero). */
@@ -83,10 +83,14 @@ export interface TurnInput {
   docs: DocEntry[]; // the cascade xi listed
   tools: Anthropic.Tool[]; // the registry's specs
   config: TurnConfig;
-  /** The surfaces the agent speaks through, named — the prefix's `connections:` line (§5).
-   *  Stable between grants, so it sits with the cached prefix; xi reads the map. */
-  surfaces?: string[];
-  /** The media kinds a processor makes readable — the prefix's `processors:` line (§5),
+  /** The surfaces the agent speaks through — the prefix's `## Connections` (§5). Stable
+   *  between grants, so it sits with the cached prefix; xi reads the map. */
+  surfaces?: Surface[];
+  /** The org around this agent, split by who steers it — the prefix's `## Principals` and
+   *  `## Agents` (§5). xi reads the registry. */
+  principals?: Member[];
+  members?: Member[];
+  /** The media kinds a processor makes readable — the prefix's `## Processors` (§5),
    *  which tells the model to wait for the words rather than open the file. */
   processors?: string[];
   ambient?: string[]; // volatile env lines for the anchor block (§5) — xi composes them
@@ -192,13 +196,15 @@ export async function nu(
     now: ts(),
     zone: config.timezone,
     env: {
-      agent: config.agentId,
+      self: config.agentId,
       name: config.name,
       email: config.email,
       phone: config.phone,
       home: config.home,
       timezone: config.timezone,
       locale: config.locale,
+      principals: input.principals,
+      agents: input.members,
       connections: input.surfaces,
       processors: input.processors,
     },

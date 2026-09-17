@@ -53,72 +53,132 @@ const SCOPE_ORDER: DocScope[] = ["system", "organization", "agent", "conversatio
 /**
  * Docs → the top-level `system` prefix (§5, §8).
  *
- * Ordered by kind, cascade within kind (system → org → agent → conversation). Docs whose body
- * was loaded (`load: always`) are **inlined**; the rest become an **index** the agent pulls
- * from with `aread`. One cache breakpoint at the end — the whole prefix is the stable region.
+ * Three ruled sections: the bodies that were loaded (`load: always`) **inlined**, each under
+ * its own `[handle]`; `# On-demand docs`, the index the agent pulls the rest from with
+ * `aread`; and `# Environment`, the facts config owns — the agent, the roster, the surfaces,
+ * the processors. Docs are ordered by kind, cascade
+ * within kind (system → org → agent → conversation). One cache breakpoint at the end — the
+ * whole prefix is one region, so the section order is reading order and nothing else.
  */
+/** One member of the org as the environment names them: the id its `principal=`/`agent=`
+ *  marks wear, and the handles the roster declares — a line from one of those addresses is
+ *  that member speaking, which is what makes the handles worth stating. */
+export interface Member {
+  id: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+}
+
+/** A surface the agent speaks through: the service, the account as it is SHOWN (its URL
+ *  where the address is an opaque id), the name the service gives it, and whose voice it
+ *  carries — the agent's own when it holds the grant, the org's when the org's credential
+ *  is what opens it. */
+export interface Surface {
+  service: string;
+  shown: string;
+  name?: string;
+  own: boolean;
+}
+
 /** The facts the harness owns about who and where the agent is (§5): its id — the roster
  *  entry, the unix user, the folder — the name it goes by and the handles its principal is
- *  known by, its home, the org's clock and locale (all from `config.jsonc`), and the
- *  surfaces it speaks through (from the connections map). Harness-authored — not a doc, so
- *  no edit can lose them. Every stamp the model sees is already on this clock; naming the
- *  zone is what lets it convert a contact's "5pm my time". */
+ *  known by, its home, the org's clock and locale (all from `config.jsonc`), the rest of
+ *  the roster split by who steers it, and the surfaces it speaks through (from the
+ *  connections map). Harness-authored — not a doc, so no edit can lose them. Every stamp
+ *  the model sees is already on this clock; naming the zone is what lets it convert a
+ *  contact's "5pm my time". */
 export interface Env {
-  agent?: string;
+  self?: string;
   name?: string;
   email?: string;
   phone?: string;
   home?: string;
   timezone?: string;
   locale?: string;
-  /** Each surface named — `whatsapp 549… (yours)`, `slack acme.slack.com (org)`. */
-  connections?: string[];
+  /** Who steers this agent — their word is an instruction, and their lines wear
+   *  `principal`. */
+  principals?: Member[];
+  /** The rest of the roster, each listed once: a principal is not repeated here. */
+  agents?: Member[];
+  connections?: Surface[];
   /** The media kinds a processor makes readable (`audio`): the model is told the words
    *  follow on their own, so it waits for the `<transcript>` instead of opening the file. */
   processors?: string[];
 }
 
-/** What a configured processor means to the model, said once beside the kinds. */
-const PROCESSORS_NOTE = "media of these kinds is made readable for you automatically, as a " +
-  "<transcript> that follows the message; it can take a couple of minutes to arrive";
+/** What a configured processor means to the model, said once above the kinds. */
+const PROCESSORS_NOTE = "Media of these kinds is made readable for you automatically, as a " +
+  "<transcript> that follows the message; it can take a couple of minutes to arrive.";
 
-function envLine(env: Env): string | undefined {
-  const facts = [
-    env.agent && `agent: ${env.agent}`,
+const facts = (fields: (string | undefined | false)[]): string =>
+  fields.filter((f): f is string => !!f).join(" · ");
+
+/** A member's line: the id bare — the word its mark wears — then the declared handles.
+ *  `self` and every member read the same way, so the section is one register. */
+const memberLine = (m: Member): string =>
+  facts([
+    m.id,
+    m.name && `name: ${m.name}`,
+    m.email && `email: ${m.email}`,
+    m.phone && `phone: ${m.phone}`,
+  ]);
+
+/** A surface's line: the service, what the account is called and shown as, and whose voice
+ *  it is — stated on every line, because speaking as the org and speaking as oneself are
+ *  different acts and neither is the quiet default. */
+const surfaceLine = (c: Surface): string =>
+  `${facts([c.service, c.name, c.shown])} (${c.own ? "yours" : "org"})`;
+
+const listing = (title: string, lines: string[]): string =>
+  `## ${title}\n\n${lines.map((l) => `- ${l}`).join("\n")}`;
+
+/** The `# Environment` body: the agent's own two lines — who it is, where it stands — then
+ *  a listing per company it keeps. A section with nothing in it is absent. */
+function envBody(env: Env): string | undefined {
+  const who = facts([
+    env.self && `self: ${env.self}`,
     env.name && `name: ${env.name}`,
     env.email && `email: ${env.email}`,
     env.phone && `phone: ${env.phone}`,
+  ]);
+  const where = facts([
     env.home && `home: ${env.home}`,
     env.timezone && `timezone: ${env.timezone}`,
     env.locale && `locale: ${env.locale}`,
-  ].filter((f): f is string => !!f);
-  const lines = [
-    facts.length ? facts.join(" · ") : undefined,
-    env.connections?.length ? `connections: ${env.connections.join(" · ")}` : undefined,
-    env.processors?.length
-      ? `processors: ${env.processors.join(" · ")} (${PROCESSORS_NOTE})`
-      : undefined,
-  ].filter((l): l is string => !!l);
-  return lines.length ? lines.join("\n") : undefined;
+  ]);
+  const sections = [
+    [who, where].filter(Boolean).join("\n"),
+    env.principals?.length && listing("Principals", env.principals.map(memberLine)),
+    env.agents?.length && listing("Agents", env.agents.map(memberLine)),
+    env.connections?.length && listing("Connections", env.connections.map(surfaceLine)),
+    env.processors?.length &&
+    `## Processors\n\n${PROCESSORS_NOTE}\n\n${env.processors.map((k) => `- ${k}`).join("\n")}`,
+  ].filter((s): s is string => !!s);
+  return sections.length ? sections.join("\n\n") : undefined;
 }
+
+/** The rule that opens every section after the first. The blank line above it is
+ *  load-bearing: a `---` under a line of text is a setext heading, not a rule — and each
+ *  section is its own block, so a section closes its text tight and the next one spaces
+ *  itself. */
+const RULE = "\n\n---\n\n";
 
 export function renderSystem(docs: DocEntry[], env: Env = {}): TextBlockParam[] {
   const ordered = [...docs].sort(byCascade);
   const blocks: TextBlockParam[] = [];
-
-  // the env line leads: the most stable fact of all, set once per deployment
-  const line = envLine(env);
-  if (line) blocks.push({ type: "text", text: line });
+  const add = (text: string) =>
+    blocks.push({ type: "text", text: (blocks.length ? RULE : "") + text.trimEnd() });
 
   const bodies = ordered.filter((d) => d.body !== undefined);
-  if (bodies.length > 0) {
-    blocks.push({ type: "text", text: bodies.map((d) => section(d, env.home)).join("\n\n") });
-  }
+  if (bodies.length > 0) add(bodies.map((d) => section(d, env.home)).join("\n\n"));
 
   const pointers = ordered.filter((d) => d.body === undefined);
-  if (pointers.length > 0) {
-    blocks.push({ type: "text", text: renderIndex(pointers, env.home) });
-  }
+  if (pointers.length > 0) add(`# On-demand docs\n\n${renderIndex(pointers, env.home)}`);
+
+  // the facts close the prefix, under the words that spend them
+  const body = envBody(env);
+  if (body) add(`# Environment\n\n${body}`);
 
   const last = blocks.at(-1);
   // caches tools + the full system prefix. The hour TTL, not the default five minutes: docs
@@ -136,11 +196,11 @@ function byCascade(a: DocEntry, b: DocEntry): number {
     (a.header.name < b.header.name ? -1 : a.header.name > b.header.name ? 1 : 0);
 }
 
-/** A doc's rendered handle: the way to it from the agent's workspace, which is where its
+/** A doc's rendered handle: the way to it from the agent's home, which is where its
  *  shell stands — `instructions/agent.md` for its own, `../../system/instructions/base.md`
  *  for a scope above. One handle, and it is also the argument that opens the file: nothing
  *  to translate between what a doc is called and how it is read. The substrate path stands
- *  in when there is no workspace to count from (an env line without `home`), and when the
+ *  in when there is no home to count from (an env line without `home`), and when the
  *  doc lives where the PACKAGE does (§8): a URL is an address, not a way, and `aread` takes
  *  it whole. */
 function ref(d: DocEntry, home?: string): string {
@@ -161,17 +221,16 @@ function section(d: DocEntry, home?: string): string {
   return `[${ref(d, home)}]\n${d.body ?? ""}`;
 }
 
-/** The pull-index: one pointer line per lazy doc — its handle, which is its path, and its
- *  description when it has one. */
+/** The pull-index: one pointer line per lazy doc — its handle in the brackets an inlined
+ *  doc wears, and its description when it has one. */
 function renderIndex(pointers: DocEntry[], home?: string): string {
   const lines = pointers.map((d) => {
     const desc = d.header.frontmatter.description;
-    const tail = typeof desc === "string" && desc.length > 0 ? ` — ${desc}` : "";
-    return `- ${ref(d, home)}${tail}`;
+    const tail = typeof desc === "string" && desc.length > 0 ? ` ${desc}` : "";
+    return `- [${ref(d, home)}]${tail}`;
   });
-  return "Your on-demand docs — this index is COMPLETE (nothing else exists; never search " +
-    "the docs tree). The path is the doc's own, from your workspace; `aread` one to read " +
-    `it:\n${lines.join("\n")}`;
+  return "The path is the doc's own, from your home; `aread` one to read it:\n\n" +
+    lines.join("\n");
 }
 
 /* ─────────────────────── (b) the messages tail (§5) ─────────────────────── */
@@ -184,7 +243,7 @@ export interface RenderInput {
   events: Event[]; // the log window — render derives what's closed vs trailing itself
   docs: DocEntry[];
   session: Session; // whose output is whose, and which conversation is the session's own
-  env?: Env; // the prefix's leading line — agent · name · email · phone · home · timezone · locale
+  env?: Env; // the prefix's closing section — who the agent is, and the company it keeps
   now: string; // ISO — the `now:` anchor
   /** IANA timezone for every rendered stamp (`at=`, `now:`) — org config's `timezone`.
    *  Unset ⇒ the deployment's own zone. Stored `ts` is UTC either way (§3). */

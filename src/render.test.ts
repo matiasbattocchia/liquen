@@ -60,7 +60,7 @@ function clinicDocs(): DocEntry[] {
 // A doc is named by the way to it from where the agent stands: its own docs by a bare
 // path, a scope above by the climb. One handle for reading it and for saying which it is.
 Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index", () => {
-  const [, prefix, index] = renderSystem(clinicDocs(), { home: HOME });
+  const [prefix, index] = renderSystem(clinicDocs(), { home: HOME });
 
   assertEquals(
     prefix.text,
@@ -68,16 +68,17 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
       "[../../organizations/clinic.md]\nClínica Sur · 9–18h L–V.\n\n" +
       "[persona.md]\nHablás como Ana: cálida, breve.",
   );
+  // the rule opens the section, and a pointer wears the handle an inlined doc wears
   assertEquals(
     index.text,
-    "Your on-demand docs — this index is COMPLETE (nothing else exists; never search " +
-      "the docs tree). The path is the doc's own, from your workspace; `aread` one to read it:\n" +
-      "- ../../organizations/reschedule.md — reprogramar un turno\n" +
-      "- ../../organizations/patients.md — notas de pacientes",
+    "\n\n---\n\n# On-demand docs\n\n" +
+      "The path is the doc's own, from your home; `aread` one to read it:\n\n" +
+      "- [../../organizations/reschedule.md] reprogramar un turno\n" +
+      "- [../../organizations/patients.md] notas de pacientes",
   );
 });
 
-Deno.test("no workspace to count from ⇒ the substrate path stands in as the handle", () => {
+Deno.test("no home to count from ⇒ the substrate path stands in as the handle", () => {
   const [prefix] = renderSystem([doc("agent", "instruction", "persona", { load: "always" }, "x")]);
   assertEquals(prefix.text, "[/data/agents/a1/persona.md]\nx");
 });
@@ -106,22 +107,22 @@ Deno.test("only-bodies ⇒ single block (cached); only-pointers ⇒ single index
 
   const pointersOnly = renderSystem([doc("organization", "skill", "x", { description: "d" })]);
   assertEquals(pointersOnly.length, 1);
-  assert(pointersOnly[0].text.startsWith("Your on-demand docs"));
+  assert(pointersOnly[0].text.startsWith("# On-demand docs"), "the first section opens bare");
   assertEquals(pointersOnly[0].cache_control, { type: "ephemeral", ttl: "1h" });
 });
 
-Deno.test("a pointer with no description is its path alone", () => {
-  const [, index] = renderSystem([doc("organization", "skill", "bare", {})], { home: HOME });
-  assertEquals(index.text.endsWith("- ../../organizations/bare.md"), true);
+Deno.test("a pointer with no description is its handle alone", () => {
+  const [index] = renderSystem([doc("organization", "skill", "bare", {})], { home: HOME });
+  assertEquals(index.text.endsWith("- [../../organizations/bare.md]"), true);
 });
 
 Deno.test("empty docs ⇒ empty system", () => {
   assertEquals(renderSystem([]), []);
 });
 
-Deno.test("the env line leads the prefix: home · timezone · locale, only the facts that are set", () => {
-  const [lead] = renderSystem([doc("organization", "instruction", "x", {}, "body")], {
-    agent: "a1",
+Deno.test("the env section: who the agent is on one line, where it stands on the next", () => {
+  const blocks = renderSystem([doc("organization", "instruction", "x", {}, "body")], {
+    self: "a1",
     name: "Ana",
     email: "ana@x.io",
     phone: "+549",
@@ -130,29 +131,46 @@ Deno.test("the env line leads the prefix: home · timezone · locale, only the f
     locale: "es_AR.UTF-8",
   });
   assertEquals(
-    lead.text,
-    "agent: a1 · name: Ana · email: ana@x.io · phone: +549 · home: /data/agents/a1 · timezone: America/Argentina/Buenos_Aires · locale: es_AR.UTF-8",
+    blocks.at(-1)!.text,
+    "\n\n---\n\n# Environment\n\n" +
+      "self: a1 · name: Ana · email: ana@x.io · phone: +549\n" +
+      "home: /data/agents/a1 · timezone: America/Argentina/Buenos_Aires · locale: es_AR.UTF-8",
   );
-  const [partial] = renderSystem([], { timezone: "UTC" });
-  assertEquals(partial.text, "timezone: UTC");
-  // the surfaces are their own line under the facts; none ⇒ no line
-  const [withSurfaces] = renderSystem([], {
-    agent: "a1",
-    connections: ["whatsapp 549 (yours)", "slack acme.slack.com (org)"],
+  const [partial] = renderSystem([], { timezone: "UTC" }); // only the facts that are set
+  assertEquals(partial.text, "# Environment\n\ntimezone: UTC");
+  assertEquals(partial.cache_control, { type: "ephemeral", ttl: "1h" }); // still the prefix
+});
+
+Deno.test("the env section lists the company: principals, the rest of the roster, surfaces", () => {
+  const [env] = renderSystem([], {
+    self: "a1",
+    principals: [{ id: "matias", name: "Matías", phone: "+549" }],
+    agents: [{ id: "sol", name: "Sol", email: "sol@x.io" }, { id: "bot" }],
+    connections: [
+      { service: "whatsapp", shown: "549", name: "Clínica Sur", own: true },
+      { service: "slack", shown: "acme.slack.com", own: false },
+    ],
   });
   assertEquals(
-    withSurfaces.text,
-    "agent: a1\nconnections: whatsapp 549 (yours) · slack acme.slack.com (org)",
+    env.text,
+    "# Environment\n\nself: a1\n\n" +
+      "## Principals\n\n- matias · name: Matías · phone: +549\n\n" +
+      "## Agents\n\n- sol · name: Sol · email: sol@x.io\n- bot\n\n" +
+      "## Connections\n\n- whatsapp · Clínica Sur · 549 (yours)\n- slack · acme.slack.com (org)",
   );
-  // a configured processor is a line of its own, and says what it means for the model
-  const [withProcessors] = renderSystem([], { agent: "a1", processors: ["audio"] });
+  // an empty listing is absent, the way the anchor's sections are
+  const [none] = renderSystem([], { self: "a1", principals: [], connections: [] });
+  assertEquals(none.text, "# Environment\n\nself: a1");
+});
+
+Deno.test("processors: the note is said once, above the kinds it is about", () => {
+  const [env] = renderSystem([], { self: "a1", processors: ["audio", "image"] });
   assertEquals(
-    withProcessors.text,
-    "agent: a1\nprocessors: audio (media of these kinds is made readable for you " +
-      "automatically, as a <transcript> that follows the message; it can take a couple of " +
-      "minutes to arrive)",
+    env.text,
+    "# Environment\n\nself: a1\n\n## Processors\n\n" +
+      "Media of these kinds is made readable for you automatically, as a <transcript> that " +
+      "follows the message; it can take a couple of minutes to arrive.\n\n- audio\n- image",
   );
-  assertEquals(partial.cache_control, { type: "ephemeral", ttl: "1h" }); // still the prefix
 });
 
 /* ── renderMessages: the clinic scenario is the artifact's right column ── */
