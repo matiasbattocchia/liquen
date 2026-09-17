@@ -20,8 +20,16 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
     const byName = new Map(docs.map((d) => [d.header.name, d]));
     assert(byName.get("instructions/system")!.body); // always ⇒ inlined, whatever it says
     assertEquals(byName.get("memories/example")!.body, undefined); // lazy → pointer
-    // the system half is the package's — seeding leaves the data root without a word of it
-    assertEquals(await Deno.stat(`${root}/system`).catch(() => null), null);
+    // the compaction prompt has no frontmatter: never in the index, still read by name
+    assertEquals(byName.has("instructions/compaction"), false);
+    assertStringIncludes(
+      (await openFileDocs(root).read({ agent: "alter" }, {
+        scope: "system",
+        kind: "instruction",
+        name: "instructions/compaction",
+      }))!,
+      "archived",
+    );
     // the agent doc is the role alone: who and where is the env line (§5)
     assertStringIncludes(byName.get("instructions/agent")!.body!, "The role");
     assert(
@@ -36,7 +44,7 @@ Deno.test("seeding never overwrites an edited doc", async () => {
   const root = await Deno.makeTempDir();
   try {
     await seedOrg(root);
-    const path = `${root}/organizations/instructions/organization.md`;
+    const path = `${root}/organization/instructions/organization.md`;
     await Deno.writeTextFile(path, "---\nkind: instruction\nload: always\n---\nEDITED");
     await seedOrg(root); // idempotent boot
     assertStringIncludes(await Deno.readTextFile(path), "EDITED");
@@ -51,18 +59,24 @@ Deno.test("a deleted doc stays deleted — the folder is what says the org has t
     await seedOrg(root);
     await seedAgent(root, "alter");
     // an org that wants no org-wide instruction, and an agent that keeps no memories
-    await Deno.remove(`${root}/organizations/instructions/organization.md`);
+    await Deno.remove(`${root}/organization/instructions/organization.md`);
     await Deno.remove(`${root}/agents/alter/memories/example.md`);
+    // and one that wants the scope gone altogether
+    await Deno.remove(`${root}/system/skills`, { recursive: true });
     await seedOrg(root); // every later boot
     await seedAgent(root, "alter");
     assertEquals(
-      await Deno.stat(`${root}/organizations/instructions/organization.md`).catch(() => null),
+      await Deno.stat(`${root}/organization/instructions/organization.md`).catch(() => null),
       null,
     );
     assertEquals(
       await Deno.stat(`${root}/agents/alter/memories/example.md`).catch(() => null),
       null,
     );
+    // the emptied folder is the org's too — but removing it asks for the set again
+    assert((await Deno.stat(`${root}/system/skills/workflows.md`)).isFile);
+    // the two docs that share system/instructions/ both land, on the same first pass
+    assert((await Deno.stat(`${root}/system/instructions/compaction.md`)).isFile);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

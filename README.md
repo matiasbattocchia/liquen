@@ -45,7 +45,7 @@ say in one breath. `liquen update` puts the org on the newest release of the pac
 lock names the version every task runs, so the new code comes up at the next `liquen start`.
 
 `./data/` is seeded from the package's `src/seed/` templates by the command that declares:
-`liquen init` writes `data/system/` and `data/organizations/` — what every agent reads — and `liquen
+`liquen init` writes `data/system/` and `data/organization/` — what every agent reads — and `liquen
 agent <name>` writes that agent's workspace, `data/agents/<name>/`, with the instruction
 file that says who they are and a memory to write the next by. So the words are on disk to
 edit before anything runs. A first run adds what only a run can make (the log, the CA and

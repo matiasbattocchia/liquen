@@ -35,10 +35,10 @@ const RESULT_CHARS = 500;
 
 /** The checkpoint instruction (task + format + the fold-a-previous-summary rule in one — the
  *  prompt itself branches on <previous-summary>, so the code doesn't). The LIVE copy is a
- *  file in the system scope — `system/seed/instructions/compaction.md`, relaid every boot,
- *  overridable like any system doc (§8) — so it's readable and editable, not hidden in code;
- *  it carries no frontmatter, so it is the harness's to send and never the agent's to read.
- *  This constant is the fallback when the file is absent (unseeded stores). */
+ *  file in the system scope — `system/instructions/compaction.md`, seeded like any system
+ *  doc (§8) — so it's readable and editable, not hidden in code; it carries no frontmatter,
+ *  so it is the harness's to send and never the agent's to read. This constant is the
+ *  fallback when the file is absent (unseeded stores). */
 export const DEFAULT_PROMPT =
   `The conversation above is being archived. Write a structured checkpoint summary that a later step of the same agent will rely on to continue seamlessly.
 
@@ -70,7 +70,7 @@ export interface CompactInput {
   session: Session; // whose window it is, and where it speaks (§4)
   model: string;
   effort?: StepInput["effort"];
-  /** Lazy source for the checkpoint instruction (the `harness/instruction/compaction` doc).
+  /** Lazy source for the checkpoint instruction (`system/instructions/compaction.md`).
    *  Called only when a compaction actually runs; null/absent ⇒ `DEFAULT_PROMPT`. */
   prompt?: () => Promise<string | null>;
   compactAt?: number;

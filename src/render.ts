@@ -200,11 +200,9 @@ function byCascade(a: DocEntry, b: DocEntry): number {
  *  shell stands — `instructions/agent.md` for its own, `../../system/instructions/base.md`
  *  for a scope above. One handle, and it is also the argument that opens the file: nothing
  *  to translate between what a doc is called and how it is read. The substrate path stands
- *  in when there is no home to count from (an env line without `home`), and when the
- *  doc lives where the PACKAGE does (§8): a URL is an address, not a way, and `aread` takes
- *  it whole. */
+ *  in when there is no home to count from (an env line without `home`). */
 function ref(d: DocEntry, home?: string): string {
-  return home && d.header.path.startsWith("/") ? from(home, d.header.path) : d.header.path;
+  return home ? from(home, d.header.path) : d.header.path;
 }
 
 /** The path to `to` as walked from `from` — the shell's own arithmetic, no dependency. */

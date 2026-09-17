@@ -2860,36 +2860,22 @@ screen uses. A card already answered reads as history, dim and without its hint;
 open is painted live and handed to `onGate`, so the pile survives a restart. The recall
 width went from 25 to 60: the page counts rows now, not turns.
 
-### The system scope is the harness's, not the org's copy of it (2026-09-15) — LANDED
+### The compaction prompt is the harness's, not a skill (2026-09-15) — LANDED
 
-Three orgs, three copies of the same four files, and one of them was already a symlink back
-into `src/seed/` — the tell that seeding the system scope was the wrong shape. Those docs
-are not the deployment's words to edit, they are the harness's own; write-if-absent meant an
-edit to `src/seed/system.md` reached exactly nobody, and a released org could never be told
-anything new without a hand-copy.
-
-Now `system/` has two layers and only one of them is on the org's disk. The package's set is
-read where the package is — a checkout's files, the registry's URLs, the `fetch` the seeds
-were always copied with — and whatever the org writes under `system/` answers for that name
-instead: a real doc replaces it, a file with no frontmatter says the org wants none. Nothing
-is laid, nothing is refreshed, nothing can go stale. The org and agent scopes keep the old
-rule — they are the deployment's own words, and no boot may rewrite them.
-
-That makes a doc's `path` the package's address, which is a URL in an installed org, and the
-path IS the handle the model is told to `aread`. So `aread` takes a URL as well as a file,
-and `layShims` gives the read shim `--allow-net` for the package's host alone. The set is
-read once per process and held: a doc that renders every turn must not be a request every
-turn, nor something a registry outage can take away mid-run.
-
-The compaction prompt lost its frontmatter in the same pass. It is the only doc the harness
+`system/instructions/compaction.md` lost its frontmatter. It is the only doc the harness
 sends *as itself*, never something the agent reads, and it was costing a line in every
-pull-index for a skill nobody can use. No frontmatter ⇒ no doc: it is still read by name
-when a checkpoint is due, and `docs.read` reaching a file that is not a doc is what makes
-that work.
+pull-index for a skill nobody can use. No frontmatter ⇒ no doc: still seeded, still read by
+name when a checkpoint is due, never listed.
 
-`~/new` and `~/vibes` dropped their copies (symlinks included), `~/sole-bot` too — its
-`system.md` had grown an edit worth keeping ("everything is normal, or no pending actions"),
-which is now in the seed and therefore in every org.
+### The system templates sit in their own tree, and `org/` is `organization/` (2026-09-16) — LANDED
+
+The system seeds moved from flat names to `src/seed/system/<kind>/<name>.md`, the tree they
+install into, so an org on the same machine can symlink `data/system/instructions/` and
+`data/system/skills/` at the checkout and read the harness's words live — a file added to
+the seed is in every linked org at once, with no copy to go stale. Seeding sees a linked
+folder as present and leaves it alone. `~/new`, `~/sole-bot` and `~/vibes` are linked. The
+org scope's folder is `data/organization/`, singular, the way the scope is named everywhere
+else.
 
 ### A line's author is one hint, and the account's name is the connection's (2026-09-16) — LANDED
 

@@ -34,12 +34,12 @@ done
 #   log/    root only — the substrate is the system's, no agent reads it directly
 #   org/    the shared floor — group-writable, setgid + default ACL keep it shared
 #   system/ the harness's docs — readable by all, writable by none
-mkdir -p /data/log /data/organizations /data/system
+mkdir -p /data/log /data/organization /data/system
 chown -R root:root /data/log
 chmod 700 /data/log
-chown -R root:agents /data/organizations
-chmod -R 2775 /data/organizations
-setfacl -R -d -m g:agents:rwX /data/organizations
+chown -R root:agents /data/organization
+chmod -R 2775 /data/organization
+setfacl -R -d -m g:agents:rwX /data/organization
 chmod -R a-w,a+rX /data/system
 
 exec deno task start

@@ -22,7 +22,7 @@
       ".github",
       "**/*.test.ts",
       "!README.md",
-      "!src/seed/*.md"
+      "!src/seed/**/*.md"
     ]
   },
   "exclude": [

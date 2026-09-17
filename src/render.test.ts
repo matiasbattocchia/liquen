@@ -25,7 +25,7 @@ import type {
 const HOME = "/data/agents/a1";
 const SCOPE_DIR: Record<DocScope, string> = {
   system: "/data/system",
-  organization: "/data/organizations",
+  organization: "/data/organization",
   agent: HOME,
   conversation: "/data/conversations/c1",
 };
@@ -65,7 +65,7 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
   assertEquals(
     prefix.text,
     "[../../system/base.md]\nSos el alter-ego de Ana.\n\n" +
-      "[../../organizations/clinic.md]\nClínica Sur · 9–18h L–V.\n\n" +
+      "[../../organization/clinic.md]\nClínica Sur · 9–18h L–V.\n\n" +
       "[persona.md]\nHablás como Ana: cálida, breve.",
   );
   // the rule opens the section, and a pointer wears the handle an inlined doc wears
@@ -73,8 +73,8 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
     index.text,
     "\n\n---\n\n# On-demand docs\n\n" +
       "The path is the doc's own, from your home; `aread` one to read it:\n\n" +
-      "- [../../organizations/reschedule.md] reprogramar un turno\n" +
-      "- [../../organizations/patients.md] notas de pacientes",
+      "- [../../organization/reschedule.md] reprogramar un turno\n" +
+      "- [../../organization/patients.md] notas de pacientes",
   );
 });
 
@@ -113,7 +113,7 @@ Deno.test("only-bodies ⇒ single block (cached); only-pointers ⇒ single index
 
 Deno.test("a pointer with no description is its handle alone", () => {
   const [index] = renderSystem([doc("organization", "skill", "bare", {})], { home: HOME });
-  assertEquals(index.text.endsWith("- [../../organizations/bare.md]"), true);
+  assertEquals(index.text.endsWith("- [../../organization/bare.md]"), true);
 });
 
 Deno.test("empty docs ⇒ empty system", () => {

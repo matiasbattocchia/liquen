@@ -298,7 +298,7 @@ export async function start(
   // naming a path elsewhere is refused broker-side, before any byte is read.
   const filesOf = (agentId: string) => {
     const home = `${dir}/agents/${agentId}`;
-    return { home, roots: [home, `${dir}/organizations`, `${dir}/system`, `${dir}/conversations`] };
+    return { home, roots: [home, `${dir}/organization`, `${dir}/system`, `${dir}/conversations`] };
   };
 
   let stopped = false;

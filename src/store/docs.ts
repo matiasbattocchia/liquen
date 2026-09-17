@@ -25,17 +25,8 @@
  *   • otherwise      → `{ header }` only, a pointer; the body is pulled on demand — by the
  *     agent via the substrate read, or by render via `read()`.
  *
- * The **system** scope alone has two layers, because those words are the harness's and an
- * upgrade must be able to change them (§8): the package's own set never reaches the data
- * root — it is read where the package lives (`systemDocs`, store/seed.ts) — and anything the
- * org writes under `system/` answers for that name instead: a real doc replaces it, a file
- * with no frontmatter says the org wants none. So an org that writes nothing tracks the
- * package, and one that writes is never argued with. Such a doc's `path` is the package's
- * address, which is a plain path in a checkout and a URL in an installed org; `aread` takes
- * either (bin/afs.ts).
- *
  * Files adapter, rooted at the DATA ROOT (the §9 layout):
- *   <root>/system/**  ·  <root>/organizations/**  ·  <root>/agents/<agentId>/**
+ *   <root>/system/**  ·  <root>/organization/**  ·  <root>/agents/<agentId>/**
  *   <root>/conversations/<convId>/**
  * A doc's `name` is its path relative to the scope dir, minus `.md` (so the conventional
  * `instructions/compaction`). Reads are fresh from disk (multi-process, like the log). On db
@@ -44,7 +35,6 @@
 
 import { parse as parseYaml } from "@std/yaml";
 import type { AgentId } from "../types.ts";
-import { systemDocs } from "./seed.ts";
 
 export type DocScope = "system" | "organization" | "agent" | "conversation";
 export type DocKind = "instruction" | "skill" | "memory" | "tool";
@@ -94,27 +84,16 @@ export function openFileDocs(root: string): Docs {
     async list(ctx: DocContext): Promise<DocEntry[]> {
       const out: DocEntry[] = [];
       for (const [scope, dir] of scopeDirs(root, ctx)) {
-        const own = await markdownUnder(dir); // whatever this org stands in the scope
-        for (const name of own) {
+        for (const name of await markdownUnder(dir)) {
           const path = `${dir}/${name}.md`;
           const frontmatter = await readFrontmatter(path);
           if (frontmatter === null) continue; // no frontmatter ⇒ not a doc (workspace file)
-          const entry = entryOf(scope, name, path, frontmatter);
+          const entry: DocEntry = {
+            header: { scope, kind: kindOf(frontmatter), name, frontmatter, path },
+          };
           if (frontmatter.load === "always") {
             entry.body = stripFrontmatter(await Deno.readTextFile(path));
           }
-          out.push(entry);
-        }
-        if (scope !== "system") continue;
-        // and the package's own, for every name the org did not answer itself — a NAME, not
-        // a doc: a file with no frontmatter is how an org says it wants none
-        const answered = new Set(own);
-        for (const doc of await systemDocs()) {
-          if (answered.has(doc.name)) continue;
-          const frontmatter = frontmatterOf(doc.text);
-          if (frontmatter === null) continue; // the harness's to send, not the agent's to read
-          const entry = entryOf(scope, doc.name, doc.path, frontmatter);
-          if (frontmatter.load === "always") entry.body = stripFrontmatter(doc.text);
           out.push(entry);
         }
       }
@@ -127,24 +106,11 @@ export function openFileDocs(root: string): Docs {
       try {
         return stripFrontmatter(await Deno.readTextFile(`${dir}/${ref.name}.md`));
       } catch (err) {
-        if (!(err instanceof Deno.errors.NotFound)) throw err;
+        if (err instanceof Deno.errors.NotFound) return null;
+        throw err;
       }
-      if (ref.scope !== "system") return null;
-      // same order as `list`: the org's file if it stands there, else the package's own
-      const doc = (await systemDocs()).find((d) => d.name === ref.name);
-      return doc ? stripFrontmatter(doc.text) : null;
     },
   };
-}
-
-/** A doc's header, wherever it was found — the org's tree or the package's own. */
-function entryOf(
-  scope: DocScope,
-  name: string,
-  path: string,
-  frontmatter: Record<string, unknown>,
-): DocEntry {
-  return { header: { scope, kind: kindOf(frontmatter), name, frontmatter, path } };
 }
 
 /** `kind` is frontmatter metadata, never path: unknown/absent falls back to `memory`. */
@@ -168,7 +134,7 @@ function scopeDir(root: string, scope: DocScope, ctx: DocContext): string | null
     case "system":
       return `${root}/system`;
     case "organization":
-      return `${root}/organizations`;
+      return `${root}/organization`;
     case "agent":
       return `${root}/agents/${ctx.agent}`;
     case "conversation":
@@ -212,17 +178,7 @@ async function targetOf(path: string): Promise<{ isFile: boolean; isDirectory: b
 /** Parse a doc's YAML frontmatter, reading only up to the closing `---`.
  *  `null` when the file has NO frontmatter block (⇒ not a doc); `{}` when malformed. */
 async function readFrontmatter(path: string): Promise<Record<string, unknown> | null> {
-  return parseBlock(await readHead(path));
-}
-
-/** The same, for a doc already in hand (the package's own — store/seed.ts). */
-function frontmatterOf(text: string): Record<string, unknown> | null {
-  if (!text.startsWith("---\n") && !text.startsWith("---\r\n")) return null;
-  const end = text.indexOf("\n---", 3);
-  return parseBlock(end === -1 ? null : text.slice(4, end));
-}
-
-function parseBlock(block: string | null): Record<string, unknown> | null {
+  const block = await readHead(path);
   if (block === null) return null;
   try {
     const doc = parseYaml(block);
