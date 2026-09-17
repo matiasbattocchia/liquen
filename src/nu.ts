@@ -94,9 +94,10 @@ export interface TurnInput {
    *  which tells the model to wait for the words rather than open the file. */
   processors?: string[];
   ambient?: string[]; // volatile env lines for the anchor block (§5) — xi composes them
-  /** Lazy source for the checkpoint instruction (the `harness/instruction/compaction` doc) —
-   *  xi resolves the I/O, nu only calls it when a checkpoint actually runs (§5). */
-  compactPrompt?: () => Promise<string | null>;
+  /** Lazy source for the checkpoint instruction (the `system/instructions/compaction` doc) —
+   *  xi resolves the I/O, nu only calls it when a checkpoint actually runs (§5). Null ⇒ the
+   *  doc is gone, and the checkpoint fails as one that could not be written. */
+  compactPrompt: () => Promise<string | null>;
   /** Media resolver for the trailing-region blocks (§5) — xi injects
    *  `store/media.loadMediaBlock`; render decides which uris to resolve. */
   loadMedia?: (uri: string) => { media_type: string; data: string } | null;

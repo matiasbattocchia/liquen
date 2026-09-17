@@ -3222,3 +3222,31 @@ was neither before nor after it and vanished, with the stretch reading as contig
 bounds are now the log's own order: `beforeId` / `afterId` on `ReadQuery`, strict on the
 unique id, so nothing shares a bound. The integration test puts its first three rows on one
 second and fails on the clock bounds by exactly the two lost lines.
+
+### The seeded docs, read as an agent reads them (2026-09-17) — LANDED
+
+The scaffold an org boots on is now six docs and four empty folders. `system.md` opens with
+`# System` like the org and agent docs open with theirs, and names the six author hints as
+a list: `contact` and `external` are the address book's two answers, in or not in it, and
+that is the whole of what the words say. `organization.md` and `agent.md` are one
+parenthesised line each, the questions the operator answers. The example memory is gone;
+`seedOrg` and `seedAgent` lay `skills/` and `memories/` empty instead, every boot, because
+an empty folder holds no doc and so says nothing about the org's wishes, and the on-demand
+index already has the two skills to pull from. The seeded docs carry no em dashes; a
+semicolon or a second sentence stands where one stood.
+
+`workflows.md` was teaching a path that resolves in no org: `../../../src/script.ts` from
+an agent's folder lands on the org root, which has no `src/`, and `./script` was not among
+the package's exports at all. It is now (`@liquen/liquen/script`), the org's `deno.jsonc`
+resolves it from anywhere under the org, and the skill teaches that line, names all three
+verbs (`contact` had been left out) and runs the script `--no-lock`, since the org's
+lockfile is not the agent's to write. `transcribe-audio.md` no longer names qwen-asr: the
+org's audio processor is whatever `processors/<name>/transcribe.sh` it has, bytes on stdin.
+
+The checkpoint instruction has one source: `data/system/instructions/compaction.md`. The
+literal that stood in for it in `compact.ts` when the doc was missing is gone, and a missing
+doc is a checkpoint that cannot be written, on the error path the cut and the empty
+checkpoint already take. The instruction itself is rewritten for the mind it serves: it
+addresses the later step as the reader, keys the `## Conversations` section by the name and
+address the window shows, drops empty sections instead of writing `(none)` under them, and
+forbids filling a gap with a guess.

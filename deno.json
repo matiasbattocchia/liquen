@@ -5,6 +5,7 @@
   "exports": {
     ".": "./src/mod.ts",
     "./connector": "./src/connector.ts",
+    "./script": "./src/script.ts",
     "./start": "./src/start.ts",
     "./stop": "./src/stop.ts",
     "./update": "./src/update.ts",

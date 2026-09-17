@@ -16,6 +16,11 @@ import { canned, stepping } from "./testing.ts";
 let n = 0;
 const SESSION = { id: "s1", agentId: "a1", conversation: "mind@a1" };
 
+// the checkpoint instruction as seeded: the template itself, read like the doc would be
+const PROMPT = () =>
+  Deno.readTextFile(new URL("./seed/system/instructions/compaction.md", import.meta.url))
+    .then((t) => t as string | null);
+
 const msg = (text: string, self: boolean, conv = "mind@a1"): MessageEvent => ({
   id: `e${String(++n).padStart(3, "0")}`,
   ts: "2026-07-20T10:00:00Z",
@@ -90,6 +95,7 @@ Deno.test("buildSummary: mints a summary event; the checkpoint prompt carries th
     model: "claude-x",
     compactAt: 1,
     keepRecent: 0,
+    prompt: PROMPT,
   }, stepping(transport));
   assert(out !== null && out.type === "summary");
   assertEquals(out.payload.covers[0], events[0].id);
@@ -120,11 +126,12 @@ Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", asyn
     model: "claude-x",
     compactAt: 1,
     keepRecent: 0,
+    prompt: PROMPT,
   }, stepping(transport));
   assert(out !== null && out.type === "summary");
   const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
   assertStringIncludes(prompt, "<previous-summary>\n## Ongoing threads\n- viejo hilo");
-  assertStringIncludes(prompt, "PRESERVE everything still relevant");
+  assertStringIncludes(prompt, "If a <previous-summary> block is present, fold it in");
   assertEquals(out.payload.covers[0], old.payload.covers[0]); // chains from the previous summary's start
 });
 
@@ -136,6 +143,7 @@ Deno.test("buildSummary: a call that never completes is an error, not a silent r
     model: "claude-x",
     compactAt: 1,
     keepRecent: 0,
+    prompt: PROMPT,
   }, stepping(() => Promise.reject(new Error("overloaded"))));
   assert(out !== null && out.type === "error");
   assertStringIncludes(out.parts[0].data.error as string, "checkpoint failed: overloaded");
@@ -288,6 +296,7 @@ Deno.test("buildSummary: an open loop's checkpoint carries the tool traffic — 
       model: "claude-x",
       compactAt: 1,
       keepRecent: 400,
+      prompt: PROMPT,
     },
     stepping((p) => {
       seen.push(p);
@@ -311,6 +320,7 @@ Deno.test("buildSummary: a cut checkpoint is an error, not a record", async () =
       model: "claude-x",
       compactAt: 1,
       keepRecent: 0,
+      prompt: PROMPT,
     },
     stepping(() =>
       Promise.resolve(
@@ -330,9 +340,32 @@ Deno.test("buildSummary: an empty checkpoint is an error — not a silent retry 
     model: "claude-x",
     compactAt: 1,
     keepRecent: 0,
+    prompt: PROMPT,
   }, stepping(() => Promise.resolve(canned([{ kind: "assistant", text: " \n" }]))));
   assert(out !== null);
   assertEquals(out.type, "error");
+});
+
+Deno.test("buildSummary: a missing instruction doc is an error — the checkpoint has no other source", async () => {
+  const events = [msg("hola", false), msg("¡hola!", true)];
+  let calls = 0;
+  const out = await buildSummary(
+    {
+      events,
+      session: SESSION,
+      model: "claude-x",
+      compactAt: 1,
+      keepRecent: 0,
+      prompt: () => Promise.resolve(null),
+    },
+    stepping(() => {
+      calls++;
+      return Promise.resolve(canned([{ kind: "assistant", text: "## Conversations" }]));
+    }),
+  );
+  assertEquals(calls, 0); // nothing to send: no call is made
+  assert(out !== null && out.type === "error");
+  assertStringIncludes(JSON.stringify(out.parts[0].data), "compaction.md is missing");
 });
 
 Deno.test("estTokens weighs what renders — the wire sidecar never reaches the prompt", () => {

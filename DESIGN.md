@@ -1538,13 +1538,15 @@ compaction proper is only pi's **checkpoint layer**:
   (§9) — what to show and what to keep folded is the client's call, and the `summary` event
   itself gives even a folded surface one line saying the window was checkpointed.
 - **The prompt is a FILE** — `system/instructions/compaction.md` (seeded): readable and
-  editable like any instruction, never hidden in code (the embedded constant is only the
-  fallback for unseeded stores). It carries no frontmatter, so it is never indexed: the
-  harness sends it as itself, and reads it by name. One unified instruction covers first-checkpoint and fold
+  editable like any instruction, never hidden in code, and its only source. It carries no
+  frontmatter, so it is never indexed: the harness sends it as itself, and reads it by
+  name; a doc that is gone is a checkpoint that cannot be written, on the error path a cut
+  or empty one already takes. One unified instruction covers first-checkpoint and fold
   (it branches on `<previous-summary>` itself, so the code doesn't).
 - **Prompt shape** = pi's structured checkpoint, adapted from task-scoped to conversational:
-  ongoing threads · constraints & preferences · commitments · key facts & decisions ·
-  critical context (exact names/ids/figures preserved). **Iterative merge**: a later
+  conversations (each by the name and address the window shows) · commitments · facts to
+  keep · how things are done here, a heading with nothing under it left out, and names,
+  addresses, paths and figures kept verbatim. **Iterative merge**: a later
   compaction folds the previous summary in (`<previous-summary>` + new span → merged);
   `covers` chains from the previous summary's start, so survivors get re-covered (pi's
   rule); `covers[1]` is the newest event folded in, so the range is always ordered.
@@ -2220,9 +2222,10 @@ freshest unanswered conversation is inside the minute, read across every service
 the mind is one; and never while no surface is bound, since a fact nobody can hear is not
 worth a row.
 
-**Discovery is a skill, not a file.** The agent is taught two lines — import `src/script.ts`
-and `bind` it to `new URL(".", import.meta.url).pathname` — and writes them into the script
-it was writing anyway. The script's location is the whole of its addressing: it needs no
+**Discovery is a skill, not a file.** The agent is taught two lines — import `bind` from
+`@liquen/liquen/script` (the package export of `src/script.ts`, which the org's `deno.jsonc`
+resolves from anywhere under it) and `bind` it to `new URL(".", import.meta.url).pathname` —
+and writes them into the script it was writing anyway. The script's location is the whole of its addressing: it needs no
 configuration to find the socket, and it can only ever find its own. A stub generated into
 the folder instead would be one more artifact to keep in sync, and it read as furniture the
 agent walks past rather than a capability it reaches for — nothing announced it. What

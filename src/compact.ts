@@ -33,36 +33,6 @@ export const SUMMARY_MAX_TOKENS = 16_384;
 /** How much of one tool outcome the checkpoint transcript carries. */
 const RESULT_CHARS = 500;
 
-/** The checkpoint instruction (task + format + the fold-a-previous-summary rule in one — the
- *  prompt itself branches on <previous-summary>, so the code doesn't). The LIVE copy is a
- *  file in the system scope — `system/instructions/compaction.md`, seeded like any system
- *  doc (§8) — so it's readable and editable, not hidden in code; it carries no frontmatter,
- *  so it is the harness's to send and never the agent's to read. This constant is the
- *  fallback when the file is absent (unseeded stores). */
-export const DEFAULT_PROMPT =
-  `The conversation above is being archived. Write a structured checkpoint summary that a later step of the same agent will rely on to continue seamlessly.
-
-If a <previous-summary> block is present, fold it in: PRESERVE everything still relevant from it, ADD the new threads/facts/commitments, UPDATE state that moved on, and drop only what is clearly obsolete.
-
-Use this EXACT format:
-
-## Ongoing threads
-[Per conversation: who it is, what is being discussed, current state]
-
-## Constraints & preferences
-- [How the principal wants things done — or "(none)"]
-
-## Commitments
-- [Things promised or pending, with owner and any deadline — or "(none)"]
-
-## Key facts & decisions
-- **[Fact/decision]**: [brief context]
-
-## Critical context
-- [Exact names, ids, paths, and figures needed to continue — or "(none)"]
-
-Keep each section concise. Preserve exact names, paths and figures.`;
-
 export interface CompactInput {
   /** The turn's interrupt (§2) — a cut checkpoint call is the cut turn's. */
   signal?: AbortSignal;
@@ -70,9 +40,11 @@ export interface CompactInput {
   session: Session; // whose window it is, and where it speaks (§4)
   model: string;
   effort?: StepInput["effort"];
-  /** Lazy source for the checkpoint instruction (`system/instructions/compaction.md`).
-   *  Called only when a compaction actually runs; null/absent ⇒ `DEFAULT_PROMPT`. */
-  prompt?: () => Promise<string | null>;
+  /** Lazy source for the checkpoint instruction: the `system/instructions/compaction.md`
+   *  doc, read from the data root. Called only when a compaction actually runs; it carries
+   *  no frontmatter, so it is the harness's to send and never the agent's to read. A null
+   *  read is a checkpoint that cannot be written. */
+  prompt: () => Promise<string | null>;
   compactAt?: number;
   keepRecent?: number;
   /** The invocation's turn (nu mints it): the checkpoint call's spend is metered under it,
@@ -215,12 +187,6 @@ export async function buildSummary(
   if (!span) return null;
   const { text, previous } = transcript(span.covered, input.session);
 
-  let prompt = `<conversation>\n${text}\n</conversation>\n\n`;
-  if (previous) prompt += `<previous-summary>\n${previous}\n</previous-summary>\n\n`;
-  // the instruction comes from the docs cascade when available (fetched lazily — only a
-  // window that actually compacts pays the read); the embedded default otherwise
-  prompt += (await input.prompt?.()) ?? DEFAULT_PROMPT;
-
   const failed = (why: string): Draft<ErrorEvent> => ({
     ts: new Date().toISOString(),
     type: "error",
@@ -231,6 +197,13 @@ export async function buildSummary(
     }, // harness-authored: no `agent` (§3)
     parts: [{ type: "data", kind: "error", data: { error: `checkpoint failed: ${why}` } }],
   });
+
+  // the instruction is read lazily: only a window that actually compacts pays the read
+  const instruction = await input.prompt();
+  if (instruction === null) return failed("system/instructions/compaction.md is missing");
+  let prompt = `<conversation>\n${text}\n</conversation>\n\n`;
+  if (previous) prompt += `<previous-summary>\n${previous}\n</previous-summary>\n\n`;
+  prompt += instruction;
 
   const res = await call({
     system: [],

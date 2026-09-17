@@ -10,6 +10,7 @@ import { type Log, openLog } from "./store/log.ts";
 import { LOCK_TTL_MS } from "./store/lock.ts";
 import type { AgentRow } from "./store/agents.ts";
 import { openFileDocs } from "./store/docs.ts";
+import { seedOrg } from "./store/seed.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
@@ -110,6 +111,7 @@ async function scenario(
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
+  await seedOrg(`${dir}/docs`); // the docs root as every org boots on it: the checkpoint instruction included
   if (roster.length > 0) log.syncAgents(roster);
   const preloaded: Event[] = [];
   for (const e of preload) preloaded.push((await log.publish(e))!);

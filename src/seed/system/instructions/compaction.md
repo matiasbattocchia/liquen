@@ -1,23 +1,23 @@
-The conversation above is being archived. Write a structured checkpoint summary that a
-later step of the same agent will rely on to continue seamlessly.
+The conversation above is being archived. Write a checkpoint that a later step of the same
+agent reads in its place; nothing else will be left of the window.
 
-If a <previous-summary> block is present, fold it in: PRESERVE everything still relevant
-from it, ADD the new threads/facts/commitments, UPDATE state that moved on, and drop only
-what is clearly obsolete.
+If a <previous-summary> block is present, fold it in: keep what still holds, add what is
+new, update what moved, drop only what is settled.
 
-## Ongoing threads
-[Per conversation: who it is, what is being discussed, current state]
+Use these headings; omit a heading with nothing under it.
 
-## Constraints & preferences
-- [How the principal wants things done — or "(none)"]
+## Conversations
+- [who, by the name and address the window shows: what it is about, where it stands, whose
+  move it is]
 
 ## Commitments
-- [Things promised or pending, with owner and any deadline — or "(none)"]
+- [what was promised, by whom, by when]
 
-## Key facts & decisions
-- **[Fact/decision]**: [brief context]
+## Facts to keep
+- [names, addresses, ids, paths, amounts, dates; verbatim]
 
-## Critical context
-- [Exact names, ids, paths, and figures needed to continue — or "(none)"]
+## How things are done here
+- [a preference or a boundary a principal stated]
 
-Keep each section concise. Preserve exact names, paths and figures.
+Write only what the conversation shows; never fill a gap with a guess. Keep every name,
+address, path and figure exactly as it appears.

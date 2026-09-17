@@ -2,7 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { seedAgent, seedOrg } from "./seed.ts";
 import { openFileDocs } from "./docs.ts";
 
-Deno.test("seed installs the cascade; list inlines the always-layers and indexes the memory", async () => {
+Deno.test("seed installs the cascade; list inlines the always-layers and indexes the skills", async () => {
   const root = await Deno.makeTempDir();
   try {
     await seedOrg(root);
@@ -11,7 +11,6 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
     const refs = docs.map((d) => `${d.header.scope}/${d.header.kind}/${d.header.name}`).sort();
     assertEquals(refs, [
       "agent/instruction/instructions/agent",
-      "agent/memory/memories/example",
       "organization/instruction/instructions/organization",
       "system/instruction/instructions/system",
       "system/skill/skills/transcribe-audio",
@@ -19,7 +18,7 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
     ]);
     const byName = new Map(docs.map((d) => [d.header.name, d]));
     assert(byName.get("instructions/system")!.body); // always ⇒ inlined, whatever it says
-    assertEquals(byName.get("memories/example")!.body, undefined); // lazy → pointer
+    assertEquals(byName.get("skills/workflows")!.body, undefined); // lazy → pointer
     // the compaction prompt has no frontmatter: never in the index, still read by name
     assertEquals(byName.has("instructions/compaction"), false);
     assertStringIncludes(
@@ -31,10 +30,22 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
       "archived",
     );
     // the agent doc is the role alone: who and where is the env line (§5)
-    assertStringIncludes(byName.get("instructions/agent")!.body!, "The role");
+    assertStringIncludes(byName.get("instructions/agent")!.body!, "What this agent is for");
     assert(
-      byName.get("memories/example")!.header.path.endsWith("/agents/alter/memories/example.md"),
+      byName.get("instructions/agent")!.header.path.endsWith("/agents/alter/instructions/agent.md"),
     );
+    // the kind folders that carry no template stand empty, where a skill or a memory goes
+    for (
+      const dir of [
+        "organization/skills",
+        "organization/memories",
+        "agents/alter/skills",
+        "agents/alter/memories",
+      ]
+    ) {
+      assert((await Deno.stat(`${root}/${dir}`)).isDirectory);
+      assertEquals((await Array.fromAsync(Deno.readDir(`${root}/${dir}`))).length, 0);
+    }
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -58,19 +69,14 @@ Deno.test("a deleted doc stays deleted — the folder is what says the org has t
   try {
     await seedOrg(root);
     await seedAgent(root, "alter");
-    // an org that wants no org-wide instruction, and an agent that keeps no memories
+    // an org that wants no org-wide instruction
     await Deno.remove(`${root}/organization/instructions/organization.md`);
-    await Deno.remove(`${root}/agents/alter/memories/example.md`);
     // and one that wants the scope gone altogether
     await Deno.remove(`${root}/system/skills`, { recursive: true });
     await seedOrg(root); // every later boot
     await seedAgent(root, "alter");
     assertEquals(
       await Deno.stat(`${root}/organization/instructions/organization.md`).catch(() => null),
-      null,
-    );
-    assertEquals(
-      await Deno.stat(`${root}/agents/alter/memories/example.md`).catch(() => null),
       null,
     );
     // the emptied folder is the org's too — but removing it asks for the set again
@@ -91,7 +97,7 @@ Deno.test("the halves are the doors': org alone leaves no agent, and a home is a
     assert((await Deno.stat(`${root}/agents/alter`)).isDirectory); // the workspace itself
     assertStringIncludes(
       await Deno.readTextFile(`${root}/agents/alter/instructions/agent.md`),
-      "The role",
+      "What this agent is for",
     );
   } finally {
     await Deno.remove(root, { recursive: true });

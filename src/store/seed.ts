@@ -3,9 +3,9 @@
  *
  * The templates are REAL files in `src/seed/` — readable and editable by the developer
  * before any deployment, shadcn-style; this module only copies them into the org's data
- * root (§9 layout: `system/` · `org/` · `agents/<name>/`). Placeholders are meant to be
- * EDITED per deployment — seeding never overwrites, and never returns to a folder that
- * exists. Memory hygiene lives in the template text, not in code (the Claude-Code lesson).
+ * root (§9 layout: `system/` · `organization/` · `agents/<name>/`). Placeholders are meant
+ * to be EDITED per deployment — seeding never overwrites, and never returns to a folder
+ * that exists. Memory hygiene lives in the template text, not in code.
  *
  * The cascade comes in the two halves the setup doors are cut along: `seedOrg` is what
  * `liquen init` lays with the catalog, `seedAgent` what `liquen agent` lays with the
@@ -17,9 +17,11 @@
  * an org may symlink `system/instructions/` or `system/skills/` at the checkout's folder and
  * read the harness's words live, new files included. The org and agent templates are flat,
  * `<scope>-<name>.md`: their home has an id segment no template can name. The tables below
- * are the whole mapping, one line per doc. Plural kind folders (`instructions/`, `memories/`)
- * are convention only in the data root — discovery is recursive there and kind rides in
- * frontmatter (§8).
+ * are the whole mapping, one line per doc. Plural kind folders (`instructions/`, `skills/`,
+ * `memories/`) are convention only in the data root — discovery is recursive there and kind
+ * rides in frontmatter (§8). The kind folders that carry no template are laid empty, every
+ * boot: an empty folder holds no doc, so it says nothing about the org's wishes, and it
+ * shows the operator where a skill or a memory goes.
  *
  * `deno compile` note: embed the templates with `--include src/seed`.
  */
@@ -33,10 +35,10 @@ const read = (rel: string) => fetch(new URL(rel, TEMPLATES)).then((r) => r.text(
 /** Copy templates into the data root — a template only where its FOLDER does not exist.
  *
  *  The folder, not the file, because an absent doc is an answer: a deployment that deleted
- *  `organization/instructions/organization.md`, or emptied `system/skills/`, said it wants none, and
- *  the next boot must not argue. What that costs is a template added to a folder an org
- *  already has: it reaches new orgs and no existing one. Deleting the folder is how an org
- *  asks for the set again. */
+ *  `organization/instructions/organization.md`, or emptied `system/skills/`, said it wants
+ *  none, and the next boot must not argue. What that costs is a template added to a folder
+ *  an org already has: it reaches new orgs and no existing one. Deleting the folder is how
+ *  an org asks for the set again. */
 async function install(root: string, files: [string, string][]): Promise<void> {
   // asked once per folder, before any of them is written: a folder two templates share is
   // absent for both or for neither, whichever this call found
@@ -54,24 +56,31 @@ async function install(root: string, files: [string, string][]): Promise<void> {
   }
 }
 
+/** The kind folders a scope keeps beside its instructions, laid empty. */
+async function kinds(scope: string): Promise<void> {
+  for (const kind of ["skills", "memories"]) {
+    await Deno.mkdir(`${scope}/${kind}`, { recursive: true });
+  }
+}
+
 /** The org's half: what every agent in this deployment reads. */
-export function seedOrg(root: string): Promise<void> {
-  return install(root, [
+export async function seedOrg(root: string): Promise<void> {
+  await install(root, [
     ["system/instructions/system.md", "system/instructions/system.md"],
     ["system/instructions/compaction.md", "system/instructions/compaction.md"],
     ["system/skills/workflows.md", "system/skills/workflows.md"],
     ["system/skills/transcribe-audio.md", "system/skills/transcribe-audio.md"],
     ["organization/instructions/organization.md", "organization.md"],
   ]);
+  await kinds(`${root}/organization`);
 }
 
 /** One agent's half: the home itself — its workspace, so it exists empty — the persona to
- *  write, and one memory to write the next by. A person alone (§4) has no home and gets
- *  none of this. */
+ *  write, and the folders its skills and memories go in. A person alone (§4) has no home
+ *  and gets none of this. */
 export async function seedAgent(root: string, agentId: string): Promise<void> {
-  await Deno.mkdir(`${root}/agents/${agentId}`, { recursive: true });
-  await install(root, [
-    [`agents/${agentId}/instructions/agent.md`, "agent.md"],
-    [`agents/${agentId}/memories/example.md`, "agent-memory-example.md"],
-  ]);
+  const home = `${root}/agents/${agentId}`;
+  await Deno.mkdir(home, { recursive: true });
+  await install(root, [[`agents/${agentId}/instructions/agent.md`, "agent.md"]]);
+  await kinds(home);
 }

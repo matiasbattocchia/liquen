@@ -6,6 +6,9 @@ import { canned } from "./testing.ts";
 import { SILENCE } from "./render.ts";
 import type { Delta, Event, MessageEvent, ThinkingEvent, ToolUseEvent } from "./types.ts";
 
+// the checkpoint instruction every turn here reads: what a compacting window sends
+const PROMPT = () => Promise.resolve("Write a checkpoint.");
+
 const CONFIG: TurnConfig = {
   agentId: "a1",
   sessionId: "mind",
@@ -19,7 +22,7 @@ const once = (emissions: Emission[], stop: Anthropic.StopReason = "end_turn") =>
 
 Deno.test("nu stamps emissions: one session, one place — all of them carry the turn", async () => {
   const out = await nu(
-    { events: [], docs: [], tools: [], config: CONFIG },
+    { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([
       { kind: "thinking", thinking: "hm", signature: "sig" },
       { kind: "assistant", text: "hola" },
@@ -41,7 +44,7 @@ Deno.test("nu stamps emissions: one session, one place — all of them carry the
 Deno.test("nu: persistent step failure → a single harness-authored error event", async () => {
   let calls = 0;
   const out = await nu(
-    { events: [], docs: [], tools: [], config: CONFIG },
+    { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     () => {
       calls++;
       return Promise.reject(new Error("overloaded"));
@@ -58,7 +61,7 @@ Deno.test("nu: persistent step failure → a single harness-authored error event
 
 Deno.test("nu: refusal surfaces as an error event alongside the emissions", async () => {
   const out = await nu(
-    { events: [], docs: [], tools: [], config: CONFIG },
+    { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "assistant", text: "no puedo" }], "refusal"),
   );
   assertEquals(out.length, 2);
@@ -80,7 +83,7 @@ Deno.test("nu renders the window it was handed (events reach liquen)", async () 
     parts: [{ type: "text", kind: "text", text: "¿todo bien?" }],
   };
   await nu(
-    { events: [principal], docs: [], tools: [], config: CONFIG },
+    { events: [principal], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     (params) => {
       seen.push(JSON.stringify(params.messages));
       return Promise.resolve(canned([{ kind: "assistant", text: "sí" }]));
@@ -98,7 +101,7 @@ Deno.test("nu: the sentinel is SILENCE wherever it lands — the word governs th
     parts: [{ type: "text", kind: "text", text: "algo" }],
   };
   const [quiet] = await nu(
-    { events: [world], docs: [], tools: [], config: CONFIG },
+    { events: [world], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "assistant", text: `\n${SILENCE}\n` }]), // alone, whitespace and all
   ) as [MessageEvent];
   assertEquals(quiet.extra?.silence, true);
@@ -107,13 +110,13 @@ Deno.test("nu: the sentinel is SILENCE wherever it lands — the word governs th
   // the word GOVERNS: a model that explains itself before saying it still said it, and the
   // explanation was addressed to nobody — it goes nowhere with the rest
   const [hedged] = await nu(
-    { events: [world], docs: [], tools: [], config: CONFIG },
+    { events: [world], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "assistant", text: `Nada de esto necesita respuesta.\n\n${SILENCE}` }]),
   ) as [MessageEvent];
   assertEquals(hedged.extra?.silence, true);
 
   const [spoken] = await nu(
-    { events: [world], docs: [], tools: [], config: CONFIG },
+    { events: [world], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "assistant", text: "listo, ya le contesté" }]),
   ) as [MessageEvent];
   assertEquals(spoken.extra?.silence, undefined);
@@ -143,7 +146,10 @@ const failing = (status?: number) => {
 Deno.test("nu: a deterministic failure is not retried — one call, one error", async () => {
   for (const status of [400, 401, 403, 404]) {
     const f = failing(status);
-    const out = await nu({ events: [], docs: [], tools: [], config: CONFIG }, f.transport);
+    const out = await nu(
+      { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
+      f.transport,
+    );
     assertEquals(f.calls(), 1, `status ${status}`);
     assertEquals(out.length, 1);
     assert(out[0].type === "error");
@@ -153,14 +159,17 @@ Deno.test("nu: a deterministic failure is not retried — one call, one error", 
 Deno.test("nu: weather is retried — 429, 5xx and a connection failure get the slow retries", async () => {
   for (const status of [408, 429, 500, 529, undefined]) {
     const f = failing(status);
-    await nu({ events: [], docs: [], tools: [], config: CONFIG }, f.transport);
+    await nu(
+      { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
+      f.transport,
+    );
     assertEquals(f.calls(), 3, `status ${status}`);
   }
 });
 
 Deno.test("nu: a whitespace-only reply says nothing — silence, and it still closes", async () => {
   const [quiet] = await nu(
-    { events: [WORLD], docs: [], tools: [], config: CONFIG },
+    { events: [WORLD], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "assistant", text: "  \n\n\t" }]),
   ) as [MessageEvent];
   assertEquals(quiet.type, "message");
@@ -169,7 +178,13 @@ Deno.test("nu: a whitespace-only reply says nothing — silence, and it still cl
 });
 
 Deno.test("nu: a step with no content still closes the turn — a silent message carries the horizon", async () => {
-  const out = await nu({ events: [WORLD], docs: [], tools: [], config: CONFIG }, once([]));
+  const out = await nu({
+    events: [WORLD],
+    docs: [],
+    tools: [],
+    compactPrompt: PROMPT,
+    config: CONFIG,
+  }, once([]));
   assertEquals(out.length, 1);
   const [quiet] = out as [MessageEvent];
   assertEquals(quiet.type, "message");
@@ -180,7 +195,7 @@ Deno.test("nu: a step with no content still closes the turn — a silent message
 
 Deno.test("nu: a max_tokens cut inside a tool_use drops the half-written call — the continuation re-issues it", async () => {
   const out = await nu(
-    { events: [], docs: [], tools: [], config: CONFIG },
+    { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([
       { kind: "assistant", text: "voy a limpiar" },
       { kind: "tool_use", name: "bash", input: { command: "rm -rf /tm" } },
@@ -192,7 +207,7 @@ Deno.test("nu: a max_tokens cut inside a tool_use drops the half-written call �
 
   // a tool_use that closed BEFORE the cut is whole, and stays
   const whole = await nu(
-    { events: [], docs: [], tools: [], config: CONFIG },
+    { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([
       { kind: "tool_use", name: "bash", input: { command: "ls" } },
       { kind: "assistant", text: "y después" },
@@ -203,7 +218,7 @@ Deno.test("nu: a max_tokens cut inside a tool_use drops the half-written call �
 
 Deno.test("nu stamps a redacted thinking block as a thinking event — replayed as it came", async () => {
   const out = await nu(
-    { events: [], docs: [], tools: [], config: CONFIG },
+    { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "redacted_thinking", data: "EmUCAQ" }, { kind: "assistant", text: "ok" }]),
   );
   const [th] = out as [ThinkingEvent];
@@ -242,7 +257,13 @@ Deno.test("nu: a checkpoint cut at max_tokens is an error, not a record — and 
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   let calls = 0;
   const out = await nu(
-    { events, docs: [], tools: [], config: { ...CONFIG, compactAt: 1, keepRecent: 0 } },
+    {
+      events,
+      docs: [],
+      tools: [],
+      compactPrompt: PROMPT,
+      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+    },
     () => {
       calls++;
       return Promise.resolve(
@@ -261,7 +282,13 @@ Deno.test("nu: a checkpoint streams as its own kind, and its spend says what it 
   const kinds: (string | undefined)[] = [];
   const deltas: Delta[] = [];
   const out = await nu(
-    { events, docs: [], tools: [], config: { ...CONFIG, compactAt: 1, keepRecent: 0 } },
+    {
+      events,
+      docs: [],
+      tools: [],
+      compactPrompt: PROMPT,
+      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+    },
     (_p, emit, meta) => {
       kinds.push(meta?.kind);
       emit?.({ kind: "text", text: "## Ongoing threads" });
@@ -279,7 +306,7 @@ Deno.test("nu: a think's text streams as text — the kind belongs to the checkp
   const kinds: (string | undefined)[] = [];
   const deltas: Delta[] = [];
   await nu(
-    { events: [], docs: [], tools: [], config: CONFIG },
+    { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     (_p, emit, meta) => {
       kinds.push(meta?.kind);
       emit?.({ kind: "text", text: "hola" });
@@ -295,7 +322,13 @@ Deno.test("nu: a checkpoint call rides the ladder, and what outlasts it is an er
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   let calls = 0;
   const out = await nu(
-    { events, docs: [], tools: [], config: { ...CONFIG, compactAt: 1, keepRecent: 0 } },
+    {
+      events,
+      docs: [],
+      tools: [],
+      compactPrompt: PROMPT,
+      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+    },
     () => {
       calls++;
       return Promise.reject(Object.assign(new Error("overloaded"), { status: 529 }));
@@ -311,7 +344,13 @@ Deno.test("nu: an empty checkpoint is an error too — not a full re-run on ever
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   let calls = 0;
   const out = await nu(
-    { events, docs: [], tools: [], config: { ...CONFIG, compactAt: 1, keepRecent: 0 } },
+    {
+      events,
+      docs: [],
+      tools: [],
+      compactPrompt: PROMPT,
+      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+    },
     () => {
       calls++;
       return Promise.resolve(canned([{ kind: "assistant", text: "  \n" }]));
@@ -326,7 +365,7 @@ Deno.test("an aborted step is the principal's cancel: one closing row, no retry"
   let calls = 0;
   const ctl = new AbortController();
   const out = await nu(
-    { events: [], docs: [], tools: [], config: CONFIG, signal: ctl.signal },
+    { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG, signal: ctl.signal },
     () => {
       calls++;
       ctl.abort();
