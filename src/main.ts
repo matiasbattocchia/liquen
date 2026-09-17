@@ -60,7 +60,7 @@ import { createMirror } from "./connect/mirror.ts";
 import { createPresence } from "./connect/presence.ts";
 import { createTranscriber } from "./processors.ts";
 import { type DoorAgent, installDoors, type Status } from "./door.ts";
-import type { About, AlarmEvent, Delta, Draft, Event } from "./types.ts";
+import type { About, AlarmEvent, Delta, Draft, Event, PermissionResponseEvent } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
   findRoot,
@@ -635,8 +635,17 @@ export async function start(
   // re-offers a transiently failed send by moving it back to `queued` — a state move on the
   // row, delivered to the dispatcher by the log's update stream. Nothing here posts; where
   // the log is a database with its own clock, this pass is that clock's statement.
+  // one lapse pass at a time, like the wakes: a tick that lands mid-pass joins it
+  let lapsing: Promise<number> | undefined;
+  const lapse = (): Promise<number> =>
+    lapsing ??= lapseGates(
+      log,
+      (agentId) => agents.find((a) => a.config.agentId === agentId)?.config.gateHours,
+    ).finally(() => lapsing = undefined);
+
   const ticker = setInterval(() => {
     fireDue().catch((err) => console.error("firing scheduled wakes failed:", err));
+    lapse().catch((err) => console.error("lapsing unanswered asks failed:", err));
     try {
       log.sweep(new Date().toISOString());
     } catch (err) {
@@ -735,6 +744,8 @@ async function compileRoster(
       digestMinutes: cfg.digestMinutes ?? org.digestMinutes,
       // null survives the funnel: it means "never sleeps", not "unset" (Wake, §2)
       sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.sleepHours,
+      // null survives too: an ask that stands until answered
+      gateHours: cfg.gateHours !== undefined ? cfg.gateHours : org.gateHours,
       processors,
       // the system half funnels too — org-wide, no per-agent seat (harness machinery)
       windowLimit: catalog.system.windowLimit,
@@ -804,4 +815,49 @@ if (import.meta.main) {
       }, REAP_POLL_MS);
     }
   });
+}
+
+/** An ask nobody answered lapses (§9): past its agent's `gateHours` the harness settles the
+ *  card with a deny that says `lapsed` — a row like any verdict, so the anchor drops the
+ *  line, a late `/y` is told the card was answered, and the outcome reaches the model by
+ *  the errand every ruling takes (`act`), telling it the call did not run. Read off the
+ *  store, not a window: a card stands open however much traffic has passed it. `hoursOf`
+ *  is the agent's knob — null or unknown (a paused agent) ⇒ its cards stand. */
+export async function lapseGates(
+  log: Pick<Log, "gates" | "publish">,
+  hoursOf: (agentId: string) => number | null | undefined,
+  now: number = Date.now(),
+): Promise<number> {
+  let settled = 0;
+  for (const card of log.gates()) {
+    const hours = card.agent ? hoursOf(card.agent.id) : undefined;
+    if (hours == null || Date.parse(card.ts) > now - hours * 3_600_000) continue;
+    await log.publish(
+      {
+        ts: new Date(now).toISOString(),
+        type: "permission_response", // harness-authored: no `agent`, no turn_id (§3)
+        payload: { ref_id: card.payload.ref_id },
+        // the card's coordinates, rebuilt — its stored envelope carries an external_id,
+        // and reusing that would upsert-merge this settlement INTO the card's row
+        envelope: {
+          service: card.envelope.service,
+          connection_address: card.envelope.connection_address,
+          conversation: { address: card.envelope.conversation.address },
+        },
+        parts: [{
+          type: "data",
+          kind: "permission_response",
+          data: {
+            behavior: "deny",
+            scope: "once",
+            lapsed: true,
+            reason: `unanswered for ${hours}h`,
+          },
+          text: card.parts[0].data.call, // the card's own rendering — what the notice names
+        }],
+      } satisfies Draft<PermissionResponseEvent>,
+    );
+    settled++;
+  }
+  return settled;
 }

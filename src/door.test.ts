@@ -30,6 +30,7 @@ import type {
   Event,
   Json,
   MessageEvent,
+  PermissionRequestEvent,
   PermissionResponseEvent,
   ToolResultEvent,
   ToolUseEvent,
@@ -628,6 +629,67 @@ Deno.test({
       await doors.close();
       await log.close();
       await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a tail names the asks still open — standing state, past any recall",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { dir, log, down } = await up();
+    try {
+      await log.publish(
+        {
+          ts: new Date().toISOString(),
+          type: "permission_request",
+          payload: { ref_id: "u1" as Event["id"] },
+          agent: { id: "ana", session_id: "mind" },
+          envelope: {
+            service: "local",
+            connection_address: "agent",
+            conversation: { address: "mind@ana" },
+          },
+          parts: [{
+            type: "data",
+            kind: "permission_request",
+            data: { tool: "send", call: "send(to: x)", detail: "send(to: x, text: hi)" },
+          }],
+        } satisfies Draft<PermissionRequestEvent>,
+      );
+      const client = await rawClient(dir);
+      for (const t of ["uno", "dos", "tres"]) {
+        await client.request({ op: "message", text: t, sender: { address: "matias" } });
+      }
+      // a recall of one reaches none of the card; the pile still opens on it
+      const next = await rawClient(dir);
+      const opened = await next.request({ op: "tail", recall: 1 });
+      assertEquals(opened.open, ["u1"]);
+      assertEquals(((opened.recalled ?? []) as Event[]).map(textOf), ["tres"]);
+      // answered, it is no longer open — and a tail says nothing about asks
+      await log.publish(
+        {
+          ts: new Date().toISOString(),
+          type: "permission_response",
+          payload: { ref_id: "u1" as Event["id"] },
+          envelope: {
+            service: "local",
+            connection_address: "agent",
+            conversation: { address: "mind@ana" },
+          },
+          parts: [{
+            type: "data",
+            kind: "permission_response",
+            data: { behavior: "deny", scope: "once" },
+          }],
+        } satisfies Draft<PermissionResponseEvent>,
+      );
+      const later = await rawClient(dir);
+      assertEquals(await later.request({ op: "tail" }), { ok: true, status: "tailing" });
+      for (const c of [client, next, later]) c.conn.close();
+    } finally {
+      await down();
     }
   },
 });

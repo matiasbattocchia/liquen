@@ -64,6 +64,7 @@ import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
 import { type Connections, CONNECTIONS_DDL, createConnections } from "./connections.ts";
 import { createTimers, type Timers, TIMERS_DDL } from "./timers.ts";
+import { createGates, type Gates, GATES_DDL } from "./gates.ts";
 import { createSweeper, type Sweeper } from "./sweep.ts";
 import { dmAliases, principalsOf } from "./roster.ts";
 
@@ -195,6 +196,7 @@ export type Log =
   & Standing
   & Connections
   & Timers
+  & Gates
   & Sweeper
   & {
     /** Record one model call's spend. Fire-and-forget telemetry — never read on the hot path. */
@@ -301,7 +303,8 @@ export async function openLog(
      ${AGENTS_DDL}
      ${RULES_DDL}
      ${CONNECTIONS_DDL}
-     ${TIMERS_DDL}`,
+     ${TIMERS_DDL}
+     ${GATES_DDL}`,
   );
   migrate(db); // schema versions below the current one are rewritten in place, exactly once
   const connections = createConnections(db); // the gate below reads its table
@@ -539,6 +542,7 @@ export async function openLog(
     //                    a turn's last writes and its release (`publishAndRelease`, §2)
     ...registry, // the agent registry (§9): folders declare, this table mirrors
     ...createTimers(db), // armed wakes (§10): the one non-log fact about the future
+    ...createGates(db, eventOf as (row: unknown) => Event), // open asks (§9): standing state, off the whole log
     ...createSweeper(db), // the harness-led retry (§5): a failed send re-offered as a state move
     ...createStanding(db), // remembered policies (§9): standing verdicts land here
     ...connections, // connections + memberships (§4, §6): what policy reads, live

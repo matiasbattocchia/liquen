@@ -3250,3 +3250,24 @@ checkpoint already take. The instruction itself is rewritten for the mind it ser
 addresses the later step as the reader, keys the `## Conversations` section by the name and
 address the window shows, drops empty sections instead of writing `(none)` under them, and
 forbids filling a gap with a guess.
+
+### An open ask is standing state, and one nobody answers lapses (2026-09-17) — LANDED
+
+Every gate path — the anchor's `waiting` list, `gateVerdict`, `cancel`, the errand `decide`
+and `act` run on a ruling — read the open asks off the turn's window, and the window is a
+cost-bounded projection (`windowLimit` plus the anchor's slack). A card older than that
+vanished from every list while its `tool_use` stood on `pending_approval` forever: `cancel`
+answered "nothing of yours is called that", a `/y` found no card, the REPL's sixty-row pile
+never held it, and a wider window resurrected it. Live: the clinic's queue read four where
+eight stood, the four missing ones between 636 and 718 rows deep, and the agent's own
+prose counted six.
+
+The store now answers `gates(scope?)` and `owed(agent, session)` — two anti-joins over the
+whole log on a `(type, payload.ref_id)` index — and every path reads those; the door's
+`tail` returns `open` so a surface's pile opens on every standing card. `openCards` and
+`owedOf` stay in xi as the derivations, exported, and `gates.test.ts` holds the SQL to them.
+
+Expiry is a knob, not a side effect of prompt sizing: `gateHours` (24; null ⇒ an ask stands
+until answered). Main's tick settles an older card with a harness-authored deny marked
+`lapsed`, and `act` words the outcome so the model knows the call did not run and may ask
+again. The four stuck sends settle by the same pass on the first boot that carries it.

@@ -73,6 +73,11 @@ export const DEFAULT_DIGEST_MINUTES = 15;
 // the world waits until morning and arrives as one digest. What still wakes is what always
 // did — the mind alias, and a conversation the agent is holding the floor in.
 export const DEFAULT_SLEEP_HOURS = "23-8";
+// An ask nobody answers is not open forever: past this many hours the harness settles it
+// as lapsed (§9), so a stale approval never runs yesterday's call, and the model is told
+// to ask again if the moment is still right. A day: the span a principal's phone is
+// away from them, at most, before the question itself has gone cold.
+export const DEFAULT_GATE_HOURS = 24;
 
 // system — harness machinery
 // The shutdown grace: how long a stop that was ASKED FOR waits for work already running —
@@ -125,6 +130,7 @@ export interface AgentDefaults {
   provider: ProviderName | null; // the transport seam; null ⇒ anthropic
   tools: string[] | null; // the tools offered to the model, by name; null ⇒ all of them
   rules: Rule[]; // permission policy as data (§9)
+  gateHours: number | null; // an unanswered ask lapses after this; null ⇒ stands until answered
   engagedMinutes: number; // attention (§2): how long the agent's own last word keeps
   digestAfterMessages: number; //   a conversation hot · the ambient pile that forces a
   digestMinutes: number; //   wake · the ambient look interval
@@ -291,6 +297,12 @@ const AGENT: Entry[] = [
     doc: "permission policy: first match decides (allow|ask|deny); * matches any tool; " +
       "connection/conversation pin a rule to where a send lands, connection to whose " +
       "address book a contact is written in",
+  },
+  {
+    key: "gateHours",
+    value: DEFAULT_GATE_HOURS,
+    doc: "an ask nobody answers lapses after this many hours — settled as a refusal that " +
+      "says so, and the agent may ask again; null ⇒ it stands until someone answers",
   },
   {
     key: "engagedMinutes",
@@ -826,6 +838,7 @@ function validateAgent(a: Partial<AgentDefaults>, path: string): void {
       ["engagedMinutes", a.engagedMinutes],
       ["digestAfterMessages", a.digestAfterMessages],
       ["digestMinutes", a.digestMinutes],
+      ["gateHours", a.gateHours],
     ] as const
   ) {
     if (v != null && !(v > 0)) {

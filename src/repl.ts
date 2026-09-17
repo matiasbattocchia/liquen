@@ -130,6 +130,8 @@ await entry(async () => {
     Deno.exit(1);
   }
   recalled = t.recalled ?? [];
+  // the pile opens on every ask still standing, recalled or not
+  for (const ref of t.open ?? []) if (!pending.includes(ref)) pending.push(ref);
 
   // the banner names what is about to run: the build you are speaking to, the room, and
   // the model with the effort it will think at

@@ -70,6 +70,7 @@ import type { Docs } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { sameHandle, speaksThrough } from "./store/roster.ts";
 import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
+import type { Gates, Owed } from "./store/gates.ts";
 import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import type { FilePart } from "./types.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
@@ -168,6 +169,7 @@ export function decide(
   session: Session,
   wake: Wake,
   now: number = Date.now(),
+  owed: Owed[] = owedOf(events, session),
 ): Decision {
   // A gate never wedges the mind. Every use gets an answer in the turn it was made — a
   // gated one gets `pending_approval` — so the chain always closes and the conversation
@@ -176,7 +178,7 @@ export function decide(
   // ignore everything, principal included. Answering the call removes the reason.)
   if (pendingOf(events, session).length > 0) return "act";
   // …and a verdict that has since landed is work of its own: run the call, report back.
-  if (owedOf(events, session).length > 0) return "act";
+  if (owed.length > 0) return "act";
   if (cutOff(events)) return "think"; // a paced/truncated turn CONTINUES
   if (justFailed(events)) return "ignore"; // idle-after-error
   if (justCancelled(events)) return "ignore"; // the principal cut it: idle until they speak
@@ -487,9 +489,11 @@ function pendingOf(events: Event[], session: Session): ToolUseEvent[] {
   );
 }
 
-/** The asks nobody has answered yet: the anchor's list, and what a verdict lands on. Request
- *  and response both point `ref_id` at the USE — a star, not a chain (§3). */
-function openCards(events: Event[]): PermissionRequestEvent[] {
+/** The asks nobody has answered yet, over an event list. Request and response both point
+ *  `ref_id` at the USE — a star, not a chain (§3). Open is a fact about the WHOLE log, so
+ *  the turn reads it off the store (`ports.log.gates`, §9); this is the derivation that
+ *  read implements, and the default a caller with only a window falls back to. */
+export function openCards(events: Event[]): PermissionRequestEvent[] {
   const answered = new Set(
     events.filter((e) => e.type === "permission_response").map((e) => e.payload?.ref_id),
   );
@@ -508,13 +512,9 @@ function verdictOf(events: Event[], use: EventId): PermissionVerdict | undefined
 /** An answered ask whose OUTCOME is still owed: the model already holds its
  *  `pending_approval` result, the principal has since ruled, and nothing has run or
  *  reported back. This is the second half of a non-blocking gate — the call the harness
- *  makes on the model's behalf, long after the turn that asked for it ended. */
-interface Owed {
-  use: ToolUseEvent;
-  verdict: PermissionVerdict;
-}
-
-function owedOf(events: Event[], session: Session): Owed[] {
+ *  makes on the model's behalf, long after the turn that asked for it ended. Like
+ *  `openCards`, the derivation over a list; the turn reads it off the store (`ports.log.owed`). */
+export function owedOf(events: Event[], session: Session): Owed[] {
   const reported = new Set<EventId | undefined>();
   const answered = new Set<EventId | undefined>();
   for (const e of events) {
@@ -582,14 +582,19 @@ function gateVerdict(
   events: Event[],
   session: Session,
   hereEnv: Envelope,
+  live: PermissionRequestEvent[] = openCards(events),
 ): (Draft<PermissionResponseEvent> | Draft<ErrorEvent>)[] {
-  const live = openCards(events);
   if (live.length === 0) return [];
   const open = live.map((c) => c.payload.ref_id);
   // resolution reads EVERY card in the window, not just the open ones: a quote that lands on
   // a card already settled is a mistake worth naming (their phone shows the whole history,
   // and after a re-issue two identical-looking cards sit there, only one of them live).
-  const cards = events.filter((e) => e.type === "permission_request");
+  // The open ones may stand deeper than the window reaches — they are cards all the same.
+  const inWindow = new Set(events.map((e) => e.id));
+  const cards = [
+    ...events.filter((e) => e.type === "permission_request"),
+    ...live.filter((c) => !inWindow.has(c.id)),
+  ];
   const last = live.at(-1);
   if (!last) return [];
   /** One card settled, exactly as they typed it. */
@@ -626,7 +631,7 @@ function gateVerdict(
       : undefined) ??
       (live.length === 1 ? last : AMBIGUOUS);
     if (quoted === AMBIGUOUS) return spoken ? [] : [ambiguity(live.length, hereEnv)];
-    if (!quoted || events.indexOf(quoted) > i) break; // answered before it was ever asked
+    if (!quoted || quoted.id > e.id) break; // answered before it was ever asked (ids are append order, §3)
     // the card they pointed at has already been answered — say so, with what is still open
     if (!open.includes(quoted.payload?.ref_id as EventId)) {
       return spoken ? [] : [settled(live.length, hereEnv)];
@@ -762,6 +767,9 @@ export interface AgentConfig extends TurnConfig, Wake {
    *  when a pile of unanswered messages is history rather than a mandate; from then on the
    *  count cap is what bounds the prompt. Older rows stay readable through `search` (§6). */
   since?: string;
+  /** How long an ask stands unanswered before it lapses (§9): main's sweep settles an older
+   *  card with a `lapsed` deny. null ⇒ an ask stands until someone answers it. */
+  gateHours?: number | null;
 }
 
 /** A tool outcome carrying ATTACHMENTS (§5 media): `files` are local paths the result
@@ -829,7 +837,8 @@ export interface XiPorts {
     & { principalsOf(agentId: string): string[] }
     & Pick<Standing, "remember" | "remembered">
     & Pick<Connections, "upsertMemberships" | "aliases" | "connections">
-    & Pick<Timers, "arm" | "timers" | "disarm">;
+    & Pick<Timers, "arm" | "timers" | "disarm">
+    & Pick<Gates, "gates" | "owed">;
   docs: Docs;
   /** The model edge. main picks it (Anthropic today) and it travels down the chain unchanged
    *  — the transport is where another provider adapts in, so nothing above it changes. */
@@ -952,11 +961,20 @@ export async function xi(
   };
   // a `/y all` answers several cards at once, so this is a list — published together, in the
   // order they were asked, before the verdict is read
-  for (const answer of gateVerdict(events, session, hereEnv)) {
+  // the open asks and the rulings still owed are STANDING state, read off the store (§9):
+  // a card asked before the window's floor is as open as one asked a minute ago
+  const gates = () => ports.log.gates({ agentId: session.agentId, sessionId: session.id });
+  for (const answer of gateVerdict(events, session, hereEnv, gates())) {
     const settled = await ports.log.publish(answer);
     if (settled) events.push(settled);
   }
-  const v = decide(events, session, config);
+  const v = decide(
+    events,
+    session,
+    config,
+    Date.now(),
+    ports.log.owed(session.agentId, session.id),
+  );
   ports.onDecision?.(v, events.at(-1)?.id, aboutOf(events, session));
   if (v === "ignore") {
     disarm();
@@ -1033,7 +1051,7 @@ async function think(
     ...(ports.ambient ? await ports.ambient() : []),
     ...downOn(surfaces, config),
     ...armedOn(config, ports),
-    ...waitingOn(events, config),
+    ...waitingOn(ports.log.gates({ agentId: config.agentId, sessionId: config.sessionId }), config),
     ...unansweredOn(
       events,
       { id: config.sessionId, agentId: config.agentId, conversation: home },
@@ -1179,8 +1197,7 @@ function armedOn(config: AgentConfig, ports: XiPorts): string[] {
 }
 
 /** Open approvals (§9): one per ask nobody has answered, named the way the card named it. */
-function waitingOn(events: Event[], config: AgentConfig): string[] {
-  const cards = openCards(events);
+function waitingOn(cards: PermissionRequestEvent[], config: AgentConfig): string[] {
   if (cards.length === 0) return [];
   return [
     `waiting — ${cards.length} approval${cards.length === 1 ? "" : "s"}:`,
@@ -1340,14 +1357,17 @@ async function act(
   };
 
   const refused = (v: PermissionVerdict) =>
-    `refused by your principal${v.reason ? `: ${v.reason}` : ""}`;
+    v.lapsed
+      ? `lapsed — nobody answered${v.reason ? ` (${v.reason})` : ""}; the call did NOT run. ` +
+        "Make it again if it is still worth doing."
+      : `refused by your principal${v.reason ? `: ${v.reason}` : ""}`;
 
   // every write this act produces is collected and committed ONCE, with the lease release
   // (§2) — the barrier completes atomically, and no half-batch can wake anyone
   const out: Draft<Event>[] = [];
   const runnable: { use: ToolUseEvent; call?: string }[] = [];
   const pending = pendingOf(events, session);
-  const owed = owedOf(events, session);
+  const owed = ports.log.owed(session.agentId, session.id);
   // one rendering for every call this act touches — the card, the anchor and the deferred
   // report all read it, and resolving addresses to names takes the log (§9)
   const describers = describersOf(ports);
@@ -1833,11 +1853,12 @@ async function execute(
     // withdraw an open ask (§9): the one settlement invariant does all the work — a
     // permission_response ref'ing the use closes the card, so the anchor line drops and a
     // late verdict from the principal gets gateVerdict's already-answered reply. The
-    // window is the act's own read: the lock serializes the mind, so nothing settles
-    // between that read and this publish.
+    // open asks are the store's (§9), read under the lock: it serializes the mind, so
+    // nothing settles between this read and the publish.
     const id = String(args.id ?? "");
     const byId = (ref: EventId) => ref === id || shortId(ref) === id;
-    const card = openCards(events).find((c) => byId(c.payload.ref_id));
+    const card = ports.log.gates({ agentId: self.id, sessionId: self.session_id })
+      .find((c) => byId(c.payload.ref_id));
     if (!card) {
       // the same verb unsets a scheduled wake (§10): one "withdraw by id" the model can
       // reach for without knowing which list the id came from
@@ -1846,11 +1867,9 @@ async function execute(
         ports.log.disarm(timer.id, self.id, self.session_id);
         return { disarmed: shortId(timer.id), note: timer.note };
       }
-      const ever = events.some((e) => e.type === "permission_request" && byId(e.payload.ref_id));
       throw new Error(
-        ever
-          ? `"${id}" was already answered — the outcome is on its way`
-          : `nothing of yours is called "${id}" — your pending and scheduled lists name them`,
+        `"${id}" is not an open ask of yours — it was answered, or lapsed, or the id is not ` +
+          "one your pending and scheduled lists name",
       );
     }
     const call = card.parts[0].data.call;

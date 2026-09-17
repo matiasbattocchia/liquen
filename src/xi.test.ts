@@ -13,7 +13,7 @@ import {
   type Wake,
   type XiPorts,
 } from "./xi.ts";
-import type { Envelope, Event, Session } from "./types.ts";
+import type { Envelope, Event, Session, ToolUseEvent } from "./types.ts";
 
 const MIND = "mind@a1"; // the session's own conversation (§4)
 const SESSION: Session = { id: "mind", agentId: "a1", conversation: MIND };
@@ -369,6 +369,17 @@ Deno.test("decide: a trailing harness error ⇒ nothing owed (idle-after-error, 
   assertEquals(decide([peerMsg(), err], SESSION, WAKE), "ignore");
   // the next real event retries — an incoming message lands after the error
   assertEquals(decide([peerMsg(), err, peerMsg()], SESSION, WAKE), "think");
+});
+
+Deno.test("decide: the errand is the store's word — a ruling the window never saw still wakes act", () => {
+  // the window holds nothing owed; the store hands in a ruling on a use older than it
+  const u = use("u0");
+  const owed = [{
+    use: u as ToolUseEvent,
+    verdict: { behavior: "allow" as const, scope: "once" as const },
+  }];
+  assertEquals(decide([peerMsg(), selfMsg()], SESSION, WAKE, Date.now(), owed), "act");
+  assertEquals(decide([peerMsg(), selfMsg()], SESSION, WAKE, Date.now(), []), "ignore");
 });
 
 Deno.test("decide: a waiting gate never mutes the mind — the principal is still answered", () => {

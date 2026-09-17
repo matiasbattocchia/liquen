@@ -79,7 +79,7 @@ export interface DoorAgent {
   sessionId: string;
   /** A SESSION's scoped port (§6): the door reads and writes as the session the request
    *  named, never wider. Asking for a session is what births it (main's runner). */
-  port(sessionId: string): Pick<Log, "publish" | "subscribe" | "read">;
+  port(sessionId: string): Pick<Log, "publish" | "subscribe" | "read" | "gates">;
   /** No session runs for this agent (`mind: false`, §4). The door still opens — a tail
    *  reads the rooms, a search answers — and REFUSES an order: a message, a call, a
    *  verdict, a control. Nobody would take it, and a row nobody takes reads as ignored. */
@@ -405,8 +405,17 @@ async function handle(
     }
     // read the past before opening on the present, so the two never name the same row
     const recalled = req.recall === undefined ? undefined : await recap(port, address, req.recall);
+    // the asks still open, by id (§9): standing state off the store, so a surface answers
+    // a card asked before anything its recall reaches
+    const open = port.gates({ agentId: agent.agentId, sessionId: session })
+      .map((c) => c.payload.ref_id);
     tail(session, typeof req.from === "string" ? req.from : undefined);
-    return { ok: true, status: "tailing", ...(recalled ? { recalled } : {}) };
+    return {
+      ok: true,
+      status: "tailing",
+      ...(open.length ? { open } : {}),
+      ...(recalled ? { recalled } : {}),
+    };
   }
   throw new Error(
     `unknown op "${String(req.op)}" — the door speaks call, message, control, ` +

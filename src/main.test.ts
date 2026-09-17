@@ -5,11 +5,18 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { TextLineStream } from "@std/streams";
-import { start } from "./main.ts";
+import { lapseGates, start } from "./main.ts";
 import { openLog } from "./store/log.ts";
 import type { AgentConfig } from "./xi.ts";
 import type { Policy } from "./policy.ts";
-import type { ControlEvent, Draft, Event, MessageEvent, ToolResultEvent } from "./types.ts";
+import type {
+  ControlEvent,
+  Draft,
+  Event,
+  MessageEvent,
+  PermissionRequestEvent,
+  ToolResultEvent,
+} from "./types.ts";
 import { isCancelled } from "./render.ts";
 import type { ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
@@ -756,4 +763,45 @@ Deno.test({
       await Deno.remove(dir, { recursive: true });
     }
   },
+});
+
+Deno.test("an ask nobody answers lapses (§9): past gateHours the harness settles it as lapsed", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(`${dir}/log`);
+  try {
+    const at = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
+    const card = (ref: string, ts: string, agent = "a1"): Draft<PermissionRequestEvent> => ({
+      ts,
+      type: "permission_request",
+      payload: { ref_id: ref as Event["id"] },
+      agent: { id: agent, session_id: "mind" },
+      envelope: {
+        service: "local",
+        connection_address: "agent",
+        conversation: { address: `mind@${agent}` },
+      },
+      parts: [{
+        type: "data",
+        kind: "permission_request",
+        data: { tool: "send", call: "send(to: x)", detail: "send(to: x, text: hi)" },
+      }],
+    });
+    await log.publish([card("old", at(30)), card("fresh", at(1)), card("stands", at(30), "a2")]);
+    const hours = (id: string) => id === "a1" ? 24 : null; // a2's asks stand until answered
+    assertEquals(await lapseGates(log, hours), 1);
+    assertEquals(log.gates().map((c) => c.payload.ref_id), ["fresh", "stands"]);
+    const settled = (await log.read({ types: ["permission_response"] })).at(-1)!;
+    assertEquals(settled.payload?.ref_id, "old");
+    assertEquals(settled.agent, undefined); // the harness's own word (§3)
+    assertEquals(settled.parts?.[0].type === "data" && settled.parts[0].data, {
+      behavior: "deny",
+      scope: "once",
+      lapsed: true,
+      reason: "unanswered for 24h",
+    });
+    assertEquals(await lapseGates(log, hours), 0); // settled once
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
 });

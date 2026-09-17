@@ -96,6 +96,8 @@ export interface Reply {
   status?: string;
   /** A tail that asked to `recall`: the session room's last messages, oldest first. */
   recalled?: Event[];
+  /** `tail`: the asks still open in the session, by the id a verdict names (§9). */
+  open?: string[];
 }
 
 export interface Wire {

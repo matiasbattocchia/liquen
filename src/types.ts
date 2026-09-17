@@ -375,6 +375,10 @@ export interface PermissionVerdict {
   behavior: PermissionBehavior;
   scope: PermissionScope;
   reason?: string; // on deny
+  /** The harness's own settlement (§9): nobody answered within the agent's `gateHours`,
+   *  so the ask lapsed — a deny that says so, and the outcome the model reads tells it the
+   *  call did not run and may be asked again. */
+  lapsed?: true;
   /** `/y all` · `/n all`: this verdict settles EVERY open card, not just the one pointed
    *  at (§9). Orthogonal to `scope`, which is how long a verdict lasts; this is how many
    *  cards it answers now. Each card gets its own response event. */

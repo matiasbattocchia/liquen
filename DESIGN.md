@@ -706,7 +706,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `<system kind="outcome">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
-| `permission_response` | nu (auto) · xi (the principal's `/y`·`/n`, any surface) · the REPL | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?}) · payload{ref_id→tool_use} |
+| `permission_response` | nu (auto) · xi (the principal's `/y`·`/n`, any surface) · the REPL · main (a lapsed ask) | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?,lapsed?}) · payload{ref_id→tool_use} |
 | `summary` | nu (the checkpoint IS the turn, §5) | leading text block (§5) | **think** (it displaced one) | parts(text) · payload{covers} |
 | `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `<system kind="wake">` carrying the note | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
 | `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
@@ -768,6 +768,21 @@ Every inbound passes through ingest, which does identity resolution **and** may 
     is state, not history — the transcript already closed those calls. The anchor is
     rewritten every turn, so an ask that gets answered simply stops being listed, and the
     model reads its own open business without anything having to be edited out of history.
+  - **An open ask is STANDING state, read off the store** (`log.gates`, `log.owed`), the way
+    an armed wake is read off the timers table (§10). Open is the absence of a
+    `permission_response` for the use, and absence is a fact about the whole log, never
+    about a window: the anchor's list, the card `cancel` withdraws, the one a surface `/y`
+    lands on and the ruling `act` still owes an outcome to all read the same set, so a card
+    asked before the window's floor is as open as one asked a minute ago, and the REPL's
+    pile opens on it past any recall. `openCards`/`owedOf` in xi are the derivations the
+    store's SQL implements; the store test holds the two to one answer.
+  - **An ask nobody answers lapses** (`gateHours`, per agent; null ⇒ it stands). Past it,
+    main's tick settles the card with the harness's own deny, marked `lapsed` and carrying
+    the hours — a row like any verdict, so the anchor drops the line, a late `/y` is told
+    the card was answered, and the outcome reaches the model by the errand every ruling
+    takes, worded so it knows the call did not run and may be made again if the moment is
+    still right. A stale approval never runs yesterday's call, for the reason a wake stores
+    words and not a call (§10).
 - **Policy is a table, not a branch** (§9): `Rule[] = [{tool, ask}]`, first match wins, `*`
   the catch-all. There are no special tools — `bash` runs unasked because the default table
   says so, not because bash is bash. The ask being *inside* execution is what lets a rule be
