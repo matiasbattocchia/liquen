@@ -111,9 +111,11 @@ export function renderMarkdown(text: string): string {
 }
 
 /** Can a marker at `i` open a span? At the start of the text or after a space or an
- *  opening bracket, and followed by something that is not a space. */
+ *  opening bracket, and followed by something that is not a space. A marker that ends the
+ *  text so far could open once the next character arrives, so it opens for now: held
+ *  rather than shown, and `end` lets a marker nothing followed out as it is. */
 const opens = (s: string, i: number, len: number): boolean =>
-  (i === 0 || /[\s(\[]/.test(s[i - 1])) && i + len < s.length && !/\s/.test(s[i + len]);
+  (i === 0 || /[\s(\[]/.test(s[i - 1])) && (i + len >= s.length || !/\s/.test(s[i + len]));
 /** Can a marker at `i` close a span? Preceded by something that is not a space, and
  *  followed by the end, a space, or punctuation. */
 const closes = (s: string, i: number, len: number): boolean =>

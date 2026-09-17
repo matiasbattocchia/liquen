@@ -65,6 +65,19 @@ Deno.test("stream: a span is held from its opener and shown whole when it closes
   assertEquals(m.end(), "");
 });
 
+Deno.test("stream: a marker that ends a delta is held until the next one says what it is", () => {
+  const m = markdown();
+  assertEquals(m.feed("**"), ""); // could open a span once something follows it
+  assertEquals(m.feed("1"), "");
+  assertEquals(m.feed(". Usé el calendario.**"), `${BOLD}1. Usé el calendario.${BOLD_OFF}`);
+  assertEquals(m.feed(" y *"), " y ");
+  assertEquals(m.feed("eso* fue todo"), `${ITALIC}eso${ITALIC_OFF} fue todo`);
+  // a marker nothing ever follows is let out as it is
+  const n = markdown();
+  assertEquals(n.feed("fin **"), "fin ");
+  assertEquals(n.end(), "**");
+});
+
 Deno.test("stream: a span the line ends on is let go unstyled — the text is never lost", () => {
   const m = markdown();
   assertEquals(m.feed("a **b"), "a ");
