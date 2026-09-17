@@ -840,6 +840,11 @@ export interface XiPorts {
     & Pick<Timers, "arm" | "timers" | "disarm">
     & Pick<Gates, "gates" | "owed">;
   docs: Docs;
+  /** The agent's history (§6): the log as the AGENT reads it, whichever of its sessions is
+   *  asking — what `search` reads. The window stays the session's own view (`log`); this
+   *  reaches every room of the agent's, its siblings' included. Read-only, and main lifts
+   *  it off the same connections map. Absent (an edge port, a test): `log` answers. */
+  history?: Pick<Reader, "read">;
   /** The model edge. main picks it (Anthropic today) and it travels down the chain unchanged
    *  — the transport is where another provider adapts in, so nothing above it changes. */
   transport: ModelTransport;
@@ -1495,7 +1500,7 @@ async function act(
       try {
         return resultOf(
           use,
-          await execute(use, events, signal, self, config, ports),
+          await execute(use, signal, self, config, ports),
           undefined,
           call,
         );
@@ -1796,7 +1801,6 @@ function describersOf(ports: XiPorts): Record<string, Describe> {
 
 async function execute(
   use: ToolUseEvent,
-  events: Event[],
   signal: AbortSignal,
   self: { id: string; session_id: string },
   config: AgentConfig,
@@ -2212,7 +2216,9 @@ async function search(
   args: SearchArgs,
   view: SearchView,
 ): Promise<string> {
-  const log = ports.log;
+  // the agent's whole past, not the session's window (§6): a sibling session searches the
+  // same log the mind does
+  const log = ports.history ?? ports.log;
   const limit = args.limit ?? SEARCH_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) {
     throw new Error(`limit must be a positive integer, got ${JSON.stringify(args.limit)}`);
@@ -2448,7 +2454,8 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
     {
       name: "search",
       description:
-        "Search the message log, including everything older than your window. Every filter " +
+        "Search the message log: every conversation your agent can read, whichever session " +
+        "you are, including everything older than your window. Every filter " +
         "narrows, and none is required: `in` with `after`/`before` and no `text` reads a " +
         `stretch of a conversation as it happened. The most recent matches come back (${SEARCH_LIMIT} ` +
         "unless you set `limit`), newest last, in the same form as your window: `<conn>` and " +

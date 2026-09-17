@@ -9,8 +9,8 @@
 
 import { TextLineStream } from "@std/streams";
 import { userInfo } from "node:os";
-import { findRoot, readConfig } from "./config.ts";
-import type { Status } from "./door.ts";
+import { EFFORTS, findRoot, PROVIDERS, readConfig } from "./config.ts";
+import type { Status, Tune } from "./door.ts";
 import type { Delta, Effort, Event } from "./types.ts";
 
 // A raised daemon owes the client a bound socket within this window — seeding, the exec
@@ -23,10 +23,36 @@ export interface Attached {
   dir: string; // the org's data root: `${root}/data`
   target: string; // the agent this client fronts
   username: string; // the trusted-localhost principal (§9): the OS username
-  model: string; // resolved the roster's own way, so a banner names what will run
+  model: string; // what will run: the flags' word where one was given, else the roster's
   effort: Effort | null; // how hard that model is asked to think; null ⇒ the model decides
+  /** The flags' model settings, as the tail carries them (§9) — the session thinks with
+   *  these while this client is attached. Empty when none was given. */
+  tune: Tune;
   timezone: string; // the org's clock (§5) — the one a recalled stamp is read in
   paused: boolean; // no session runs (mind: false, §4): the door reads, it takes no orders
+}
+
+/** `--model <name>` · `--effort <level>` · `--provider <name>`: a session choice, like the
+ *  session itself, so flags and never config. Spliced OUT of `args`, so a surface's own
+ *  parsing sees only its own words; a level or a provider the harness has no word for
+ *  fails here, before anything attaches — the daemon judges the model's name against the
+ *  provider once the tail asks. */
+export function tuneFlags(args: string[]): Tune {
+  const tune: Tune = {};
+  for (const key of ["model", "effort", "provider"] as const) {
+    const i = args.indexOf(`--${key}`);
+    if (i < 0) continue;
+    const [, v] = args.splice(i, 2);
+    if (v === undefined || v === "" || v.startsWith("-")) throw new Error(`--${key} needs a word`);
+    if (key === "effort" && !(EFFORTS as readonly string[]).includes(v)) {
+      throw new Error(`--effort ${v}: one of ${EFFORTS.join(", ")}`);
+    }
+    if (key === "provider" && !(PROVIDERS as readonly string[]).includes(v)) {
+      throw new Error(`--provider ${v}: one of ${PROVIDERS.join(", ")}`);
+    }
+    tune[key] = v as Effort;
+  }
+  return tune;
 }
 
 /** The org lives where you run liquen: the nearest config.jsonc up from cwd is the project
@@ -34,7 +60,11 @@ export interface Attached {
  *  config does not declare cannot run. When the agent folder shares the OS username, no
  *  identity map exists at all (principal name = agent name); an explicit argument talks
  *  to another agent — a session choice, so an argument, not config. */
-export async function resolveAgent(explicit?: string, dir?: string): Promise<Attached> {
+export async function resolveAgent(
+  explicit?: string,
+  dir?: string,
+  tune: Tune = {},
+): Promise<Attached> {
   const root = findRoot({ dir });
   const catalog = await readConfig(root);
   const username = (() => {
@@ -54,10 +84,11 @@ export async function resolveAgent(explicit?: string, dir?: string): Promise<Att
   // a paused agent (mind: false, §4) is still attached to: what landed in its rooms reads,
   // and the door — not this client — refuses an order with the sentence that says why
   const paused = (catalog.agents[target].mind ?? catalog.organization.agents.mind) === false;
-  const model = catalog.agents[target].model ?? catalog.organization.agents.model;
-  const effort = catalog.agents[target].effort ?? catalog.organization.agents.effort;
+  const model = tune.model ?? catalog.agents[target].model ?? catalog.organization.agents.model;
+  const effort = tune.effort ?? catalog.agents[target].effort ??
+    catalog.organization.agents.effort;
   const timezone = catalog.organization.timezone;
-  return { root, dir: `${root}/data`, target, username, model, effort, timezone, paused };
+  return { root, dir: `${root}/data`, target, username, model, effort, tune, timezone, paused };
 }
 
 /** Attach to the agent's door. A refusal means no daemon — raise an ephemeral one and

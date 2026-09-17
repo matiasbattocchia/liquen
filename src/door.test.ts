@@ -16,7 +16,7 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
-import { installDoors, MAX_PENDING_LINES, type Status } from "./door.ts";
+import { installDoors, MAX_PENDING_LINES, type Status, type Tune } from "./door.ts";
 import { bind, type Mu } from "./script.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { openFileDocs } from "./store/docs.ts";
@@ -551,6 +551,58 @@ Deno.test({
       other.conn.close();
       await other.settle(() => seen.length === 4);
       assertEquals(seen[3], ["build", undefined]);
+    } finally {
+      await doors.close();
+      await log.close();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a tail names what the session thinks with, and the hang-up restores the roster's",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
+    const log = await openLog(`${dir}/log`);
+    const seen: [string, Tune | undefined][] = [];
+    const doors = await installDoors(dir, [{
+      ...AGENT,
+      port: () => log,
+      tune: (session, t) => {
+        if (t?.provider === "acme") throw new Error(`unknown provider "${t.provider}"`);
+        seen.push([session, t]);
+      },
+    }]);
+    try {
+      const client = await rawClient(dir);
+      // the flags ride the tail, and only the ones given: the roster's values stand for the rest
+      const r = await client.request({ op: "tail", session: "build", model: "claude-y" });
+      assertEquals(r.ok, true);
+      assertEquals(seen, [["build", { model: "claude-y" }]]);
+      // a tail that names none asks nothing of the session
+      const plain = await rawClient(dir);
+      assertEquals((await plain.request({ op: "tail" })).ok, true);
+      assertEquals(seen.length, 1);
+      // a level the harness has no word for, or a provider the daemon refuses, refuses the
+      // attach itself — nothing is tailing, and the session is as it was
+      const bad = await rawClient(dir);
+      const level = await bad.request({ op: "tail", effort: "extreme" });
+      assertEquals(level.ok, false);
+      assertMatch(String(level.error), /effort must be one of/);
+      const refused = await bad.request({ op: "tail", provider: "acme" });
+      assertEquals(refused.ok, false);
+      assertMatch(String(refused.error), /unknown provider/);
+      assertEquals(seen.length, 1);
+      // the client leaves: the session it tuned goes back to the roster's, the other's untouched
+      client.conn.close();
+      await client.settle(() => seen.length === 2);
+      assertEquals(seen[1], ["build", undefined]);
+      plain.conn.close();
+      bad.conn.close();
+      await plain.settle(() => false, 100);
+      assertEquals(seen.length, 2);
     } finally {
       await doors.close();
       await log.close();

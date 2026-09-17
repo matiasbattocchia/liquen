@@ -31,7 +31,8 @@
  *                                                          already classified: `cancel`
  *                                                          cuts the session's running turn
  *                                                          (§2) → {ok, id}
- *   tail          {op, from?, session?, cwd?, recall?} → {ok, recalled?} — then the
+ *   tail          {op, from?, session?, cwd?, recall?,
+ *                  model?, effort?, provider?}   → {ok, recalled?} — then the
  *                                                  connection also PUSHES: {event} per row
  *                                                  of that session's scoped view (from the
  *                                                  cursor), {delta} per model delta,
@@ -43,6 +44,10 @@
  *                                                  last N messages of this session's own
  *                                                  room, oldest first — the past a surface
  *                                                  opens on before the present arrives (§9).
+ *                                                  `model` · `effort` · `provider` are the
+ *                                                  session's for as long as the connection
+ *                                                  lives — checked before the tail opens,
+ *                                                  and the hang-up puts the roster's back.
  *
  * One synthetic turn key per connection (`job:<id>`): a `call` run is a turn no session
  * ever held, so its uses read as fresh work to act, its results weld to their uses in the
@@ -54,11 +59,13 @@
  */
 
 import { agentUser, own } from "./exec/user.ts";
+import { EFFORTS } from "./config.ts";
 import type {
   ControlEvent,
   ControlKind,
   Delta,
   Draft,
+  Effort,
   Event,
   Json,
   MessageEvent,
@@ -88,6 +95,18 @@ export interface DoorAgent {
    *  the workspace (`undefined`) once it hangs up. Rejects a place the agent cannot stand
    *  in, and the tail is refused with it. */
   stand?(sessionId: string, path: string | undefined): Promise<void>;
+  /** What a SESSION thinks with (§9): the tail's `model` · `effort` · `provider` while its
+   *  connection lives, the roster's (`undefined`) once it hangs up. Rejects a provider
+   *  that cannot run the model at that effort, and the tail is refused with it. */
+  tune?(sessionId: string, settings: Tune | undefined): void | Promise<void>;
+}
+
+/** A session's model settings as an attachment names them — each one optional, the
+ *  roster's value standing where none is given. */
+export interface Tune {
+  model?: string;
+  effort?: Effort;
+  provider?: string;
 }
 
 /** A turn's edges, volunteered on the tail (§2): the verdict `decide` reached under the
@@ -237,6 +256,11 @@ async function serve(conn: Deno.Conn, agent: DoorAgent, cast: Set<Tailer>) {
     await agent.stand?.(session, path);
     stood.add(session);
   };
+  const tuned = new Set<string>(); // …and the ones it set a model on: the hang-up restores them
+  const tune = async (session: string, settings: Tune) => {
+    await agent.tune?.(session, settings);
+    tuned.add(session);
+  };
   const tail = (session: string, from?: string) => {
     if (untail) throw new Error("already tailing");
     const t: Tailer = { push, session, seen: newId() };
@@ -275,7 +299,7 @@ async function serve(conn: Deno.Conn, agent: DoorAgent, cast: Set<Tailer>) {
       buffered = buffered.slice(nl + 1);
       if (!line.trim()) continue;
       try {
-        await write(await handle(JSON.parse(line), agent, turnId, tail, stand));
+        await write(await handle(JSON.parse(line), agent, turnId, tail, stand, tune));
       } catch (err) {
         await write({ ok: false, error: err instanceof Error ? err.message : String(err) });
       }
@@ -284,6 +308,7 @@ async function serve(conn: Deno.Conn, agent: DoorAgent, cast: Set<Tailer>) {
     untail?.();
     if (tailer) cast.delete(tailer);
     for (const session of stood) await agent.stand?.(session, undefined);
+    for (const session of tuned) await agent.tune?.(session, undefined);
   }
 }
 
@@ -296,6 +321,7 @@ async function handle(
   turnId: string,
   tail: (session: string, from?: string) => void,
   stand: (session: string, path: string) => Promise<void>,
+  tune: (session: string, settings: Tune) => Promise<void>,
 ): Promise<Record<string, unknown>> {
   // every verb the door speaks lands in a session's own room (§4): the socket decided
   // WHOSE, the request's `session` decides which — absent, the mind. A malformed name
@@ -403,6 +429,10 @@ async function handle(
       }
       await stand(session, req.cwd);
     }
+    // what the session thinks with, likewise tried before the tail opens: a provider that
+    // cannot run the model at that effort refuses the attach, never a turn
+    const settings = tuneOf(req);
+    if (settings) await tune(session, settings);
     // read the past before opening on the present, so the two never name the same row
     const recalled = req.recall === undefined ? undefined : await recap(port, address, req.recall);
     // the asks still open, by id (§9): standing state off the store, so a surface answers
@@ -424,6 +454,21 @@ async function handle(
 }
 
 const CONTROLS: readonly ControlKind[] = ["stop", "cancel"];
+
+/** The tail's model settings, each a string when given; `undefined` when it names none. */
+function tuneOf(req: Record<string, unknown>): Tune | undefined {
+  const out: Tune = {};
+  for (const key of ["model", "effort", "provider"] as const) {
+    const v = req[key];
+    if (v === undefined) continue;
+    if (typeof v !== "string" || v === "") throw new Error(`tail ${key} must be a word`);
+    if (key === "effort" && !(EFFORTS as readonly string[]).includes(v)) {
+      throw new Error(`tail effort must be one of ${EFFORTS.join(", ")}`);
+    }
+    out[key] = v as Effort;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 /** The most a `recall` may ask for: a ring to reach back through, not a transcript. */
 export const MAX_RECALL = 500;

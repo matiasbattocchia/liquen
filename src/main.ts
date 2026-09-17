@@ -35,7 +35,7 @@
 import { type AgentConfig, type Decision, relevant, xi, type XiPorts } from "./xi.ts";
 import { isCancelled, ownComplex } from "./render.ts";
 import { MIND, parseSession, sessionAddress } from "./session.ts";
-import { type Policy, policyFor, scoped } from "./policy.ts";
+import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
 import { type Log, openLog } from "./store/log.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import { openFileDocs } from "./store/docs.ts";
@@ -59,7 +59,7 @@ import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
 import { createPresence } from "./connect/presence.ts";
 import { createTranscriber } from "./processors.ts";
-import { type DoorAgent, installDoors, type Status } from "./door.ts";
+import { type DoorAgent, installDoors, type Status, type Tune } from "./door.ts";
 import type { About, AlarmEvent, Delta, Draft, Event, PermissionResponseEvent } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
@@ -344,6 +344,13 @@ export async function start(
       };
     };
   };
+  // metered per agent: every model call this agent makes lands in the usage table
+  // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in.
+  // The roster's transport is the STOCK one: what every session of the agent thinks
+  // through unless an attachment asks for another (`tune`, below)
+  const meter = (agentId: string, t: ModelTransport) =>
+    metered(t, (row) => log.meter(row), agentId);
+  const stock = new Map(principals.map((p) => [p.agentId, meter(p.agentId, transportFor(p))]));
   const agents = principals.map(({ readable, writable, ...agent }) => {
     // the agent's VIEW of the log (§6): reads, writes, and the tail below all go through it.
     // Folder-declared agents get the connections-map policy (live read-through lookups);
@@ -357,10 +364,11 @@ export async function start(
       log: slog,
       ports: {
         log: slog,
+        // the agent's history (§6): what `search` reads, from any of its sessions — the
+        // same map, keyed on the agent. Explicit principals search their own view
+        ...(derived ? { history: scoped(log, historyFor(agent.agentId, log)) } : {}),
         docs,
-        // metered per agent: every model call this agent makes lands in the usage table
-        // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in
-        transport: metered(transportFor(agent), (row) => log.meter(row), agent.agentId),
+        transport: stock.get(agent.agentId)!,
         exec: shellOf(agent.agentId, agent.sessionId).exec,
         ...(contact ? { contact } : {}),
         files: filesOf(agent.agentId),
@@ -452,8 +460,9 @@ export async function start(
       log: slog,
       ports: {
         log: slog,
+        ...(base.ports.history ? { history: base.ports.history } : {}),
         docs,
-        transport: base.ports.transport,
+        transport: stock.get(agentId)!,
         exec: shell.exec,
         files: base.ports.files,
         onDelta: (d: Delta) => cast(agentId, sessionId, d),
@@ -465,6 +474,29 @@ export async function start(
     };
     named.set(key, r);
     return r;
+  };
+
+  // what a session thinks with, as an attachment asked (§9): the tail's `model` · `effort`
+  // · `provider` hold while the connection lives, and the hang-up (`undefined`) puts the
+  // roster's back — the same lifetime the tail's `cwd` has. Checked the way boot checks
+  // the roster, so a provider that cannot run the model at that effort refuses the attach,
+  // never a turn. The runner's config and transport are read at every invocation, so the
+  // next turn thinks with the new ones; a turn already running finishes as it began.
+  const tune = (agentId: string, sessionId: string, t: Tune | undefined) => {
+    const p = principals.find((x) => x.agentId === agentId);
+    const r = sessionId === MIND
+      ? agents.find((a) => a.config.agentId === agentId)
+      : runnerOf(agentId, sessionId);
+    if (!p || !r) return;
+    const provider = t?.provider ?? p.provider;
+    const model = t?.model ?? p.model;
+    const effort = t?.effort ?? p.effort;
+    checkProvider({ agentId, provider, model, effort });
+    r.config.model = model;
+    r.config.effort = effort;
+    r.ports.transport = provider === p.provider
+      ? stock.get(agentId)!
+      : meter(agentId, overrides.transport ?? transportOf(providerOf(provider)));
   };
 
   // the door (§9): a script's syscalls, as gated tool_use events in the caller's name. The
@@ -484,6 +516,7 @@ export async function start(
             sessionId === a.config.sessionId ? a.log : runnerOf(a.config.agentId, sessionId)!.log,
           // where the principal stands is where the session's shell starts (§9)
           stand: (session, path) => shellOf(a.config.agentId, session).stand(path),
+          tune: (session, settings) => tune(a.config.agentId, session, settings),
         };
       }
       // a PAUSED agent (`mind: false`, §4): the door still opens on its rooms — a tail reads

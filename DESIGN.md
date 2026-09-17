@@ -1658,6 +1658,13 @@ with a time bound.
   through** prepared statements — live like the Postgres RLS join they emulate: a
   mid-run bind is visible on the next event, no reload, no restart. Applied to folder-declared agents;
   explicit `principals` (tests) stay allow-all unless they pass their own.
+  **The history is the agent's** (`historyFor(agent, map)`): the same three branches keyed
+  on the AGENT — a room any of its sessions is enrolled in, its connections whatever
+  session their traffic routes to, the alias rule as ever — read-only, and it is what
+  `search` reads from any session (`XiPorts.history`). The window is a session's context;
+  the log is the agent's memory (§7): a named session's view stays its own rooms, so its
+  prompt holds only its work, while its `search` reaches what the mind reads, the mind's
+  own room included.
   **Local is a team chat**: a local conversation is visible iff you're a member; `send`
   to a peer agent's NAME canonicalizes to `dm:` + the sorted pair of session addresses
   and enrolls both ends
@@ -1692,7 +1699,9 @@ with a time bound.
   with general workspace knowledge **and** in-context answers — a human-like alter-ego
   (one mind per principal, not a fragmented tree). Named sessions hold only the rooms
   they are ENROLLED in — their own room and the `dm:` rooms they are an end of — which
-  is the whole enforcement (§6 memberships on the pair).
+  is the whole enforcement (§6 memberships on the pair). That is the window and the
+  writes; the past is the agent's, one for all its sessions — `search` from any of them
+  reads the agent's history (§6), the mind's room and the world routed to it included.
 - **Sessions reach each other the way two agents do**: a `dm:` room both are in
   (`dm:<sorted session addresses>`), so agent-to-agent contact is a case of one rule. No
   tree, no spawn, no inter-session message-passing beyond `send(→envelope)`.
@@ -2169,7 +2178,12 @@ as long as the connection lives — tried as the agent's uid before the tail ope
 the agent cannot stand in refuses the attach itself; its `recall` asks the reply to carry the
 last N messages of that session's room — both halves of every complex, read off the scoped
 view like anything else — which is how a surface that only ever holds the present opens
-knowing what was said through it). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
+knowing what was said through it; its `model` · `effort` · `provider` are what the session
+thinks with for as long as the connection lives — `liquen repl --model … --effort …
+--provider …`, the CLI alike — checked as boot checks the roster, so a provider that cannot
+run the model at that effort refuses the attach, and the hang-up puts the roster's values
+back, the lifetime `cwd` has; `config.jsonc` stays what the daemon thinks with on its
+own). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
 begins, `{status: "idle", after}` when `decide` answers `ignore` — the one fact an attach
 client cannot compute, since only the deciding read runs under the lease. `after` is the
 last event that read saw, so a client that wrote id M knows its line was weighed once

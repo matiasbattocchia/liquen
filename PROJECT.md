@@ -3271,3 +3271,33 @@ Expiry is a knob, not a side effect of prompt sizing: `gateHours` (24; null ⇒ 
 until answered). Main's tick settles an older card with a harness-authored deny marked
 `lapsed`, and `act` words the outcome so the model knows the call did not run and may ask
 again. The four stuck sends settle by the same pass on the first boot that carries it.
+
+### A sibling session searches the agent's past, and an attachment names its model (2026-09-17) — LANDED
+
+A REPL opened on `laura --session calendar` was asked what the mind had been shown about
+the calendars the day before. Eleven searches came back empty or "no conversation named":
+`in: "mind@laura"`, `text: "calendar"` over the right hour, `from: "soledad"`. The one
+that hit found only the calendar session's own transcript — and the model then explained
+to its principal that `search` indexes only connected accounts and `mind` is not one,
+which it had no way to know and was not true.
+
+The predicate was doing exactly what §6 said: a named session reads where the (agent,
+session) pair is enrolled, and a connection's traffic opens the routed session only. The
+`calendar` session's whole world was `calendar@laura`. The rule is right for the WINDOW —
+a named session exists so its prompt holds only its work — and wrong for `search`: one
+agent has one past, and its sessions are not a secrecy boundary between themselves (the
+same shell reads the same folder). Two predicates now, keyed differently: the window, the
+wake and every write stay the session's (`policyFor`); `search` reads the agent's history
+(`historyFor` — any session's membership, the agent's connections whatever session they
+route to, the alias rule as ever, read-only), lifted by main onto `XiPorts.history` from
+the same map. A named session still cannot `send` into the world, and the mind's window
+is unchanged. The tool's description says so, so the model stops guessing.
+
+The same REPL wanted to run on a different model than the roster's. `liquen repl` and
+`liquen cli` take `--model` · `--effort` · `--provider`; the tail carries them, the door
+hands them to main's `tune`, which checks them as boot checks the roster (a provider that
+cannot run the model at that effort refuses the attach, never a turn) and sets the
+session's config and transport for the next invocation. The hang-up restores the roster's
+values — the lifetime the tail's `cwd` already has — so `config.jsonc` remains what the
+daemon thinks with on its own. The roster's metered transports are a per-agent stock, and
+a tuned provider gets a metered one of its own attributed to the same agent.

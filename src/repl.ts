@@ -30,7 +30,7 @@
  */
 
 import meta from "../deno.json" with { type: "json" };
-import { attach, resolveAgent, wire } from "./attach.ts";
+import { attach, resolveAgent, tuneFlags, wire } from "./attach.ts";
 import { createScreen } from "./line.ts";
 import { orgFlag } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
@@ -41,7 +41,8 @@ import { parseVerdict } from "./xi.ts";
 import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
 
-export const USAGE = "usage: liquen repl [--dir <org>] [agent] [--session <name>]";
+export const USAGE = "usage: liquen repl [--dir <org>] [agent] [--session <name>] " +
+  "[--model <name>] [--effort <level>] [--provider <name>]";
 
 /** How much of the room the REPL opens on: the last N messages, read off the log the door
  *  already keeps. They are the screen's first paint and the up arrow's reach both — one
@@ -59,11 +60,14 @@ await entry(async () => {
   helpFlag(args, USAGE);
   const si = args.indexOf("--session");
   const session = si >= 0 ? args.splice(si, 2)[1] ?? "" : MIND;
+  // what the session thinks with is a session choice too (§9): the flags hold while this
+  // REPL is attached, and the roster's values come back when it leaves
+  const tune = tuneFlags(args);
   // a flag is never an agent name: `--typo` would otherwise be looked up in the roster and
   // reported as a missing agent, which sends the reader to the wrong file
   const stray = args.find((x) => x.startsWith("-"));
   if (stray) throw new Error(`unknown flag ${stray}\n${USAGE}`);
-  const a = await resolveAgent(args[0], org.dir);
+  const a = await resolveAgent(args[0], org.dir, tune);
   const home = sessionAddress(a.target, session); // refuses a malformed session name
 
   const conn = await attach(a);
@@ -122,7 +126,7 @@ await entry(async () => {
   // live: the tail opens on the present, and carries the room's last messages back with
   // it. The agent's shell stands where its principal does — a place it cannot stand in
   // ends the REPL before a word is typed.
-  const t = await w.request({ op: "tail", session, cwd: Deno.cwd(), recall: RECALL });
+  const t = await w.request({ op: "tail", session, cwd: Deno.cwd(), recall: RECALL, ...a.tune });
   if (!t.ok) {
     write(`${RED}${t.error}${RESET}\n`);
     leaving = true;
@@ -134,9 +138,11 @@ await entry(async () => {
   for (const ref of t.open ?? []) if (!pending.includes(ref)) pending.push(ref);
 
   // the banner names what is about to run: the build you are speaking to, the room, and
-  // the model with the effort it will think at
+  // the model with the effort it will think at — under its provider when the flags named one
   write(
-    `${DIM}liquen v${meta.version} — ${home} · ${a.model}${a.effort ? ` (${a.effort})` : ""}${
+    `${DIM}liquen v${meta.version} — ${home} · ${
+      a.tune.provider ? `${a.tune.provider}:` : ""
+    }${a.model}${a.effort ? ` (${a.effort})` : ""}${
       a.paused ? " · PAUSED (mind: false — reads only)" : ""
     } · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n`,
   );

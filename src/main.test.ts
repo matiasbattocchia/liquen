@@ -805,3 +805,140 @@ Deno.test("an ask nobody answers lapses (§9): past gateHours the harness settle
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/** An attach client on an agent's door, by hand: newline-JSON requests answered in order. */
+async function door(dir: string, agent: string) {
+  const conn = await Deno.connect({ transport: "unix", path: `${dir}/agents/${agent}/door.sock` });
+  const replies: ((r: Record<string, unknown>) => void)[] = [];
+  (async () => {
+    const lines = conn.readable.pipeThrough(new TextDecoderStream())
+      .pipeThrough(new TextLineStream());
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+      const msg = JSON.parse(line) as Record<string, unknown>;
+      if (msg.ok !== undefined) replies.shift()?.(msg);
+    }
+  })().catch(() => {/* hang-up */});
+  const request = async (req: Record<string, unknown>) => {
+    const reply = new Promise<Record<string, unknown>>((resolve) => replies.push(resolve));
+    await conn.write(new TextEncoder().encode(JSON.stringify(req) + "\n"));
+    return await reply;
+  };
+  return { conn, request };
+}
+
+Deno.test({
+  name: "a named session searches the agent's past: the mind's room and the world alike (§6)",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { root, dir, catalog } = await orgDir({ a1: {} });
+    const { transport } = scripted([]);
+    const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+      transport,
+    });
+    try {
+      main.log.upsertConnections([{
+        service: "whatsapp",
+        address: "5491133585694",
+        agentId: "a1",
+      }]);
+      // history, not news: an imported row wakes nobody (§5), and `search` is its door
+      await main.log.publish([
+        { ...principalMsg("mind@a1", "el paciente pidió turno"), extra: { backfill: true } },
+        {
+          ts: new Date().toISOString(),
+          type: "message",
+          envelope: {
+            service: "whatsapp",
+            connection_address: "5491133585694",
+            conversation: { address: "5492610000001" },
+            sender: { address: "5492610000001", name: "Juan" },
+          },
+          parts: [{ type: "text", kind: "text", text: "hola, quería un turno" }],
+          extra: { backfill: true },
+        } as Draft<MessageEvent>,
+      ]);
+      const client = await door(dir, "a1");
+      const page = async (ref: unknown) =>
+        (await main.log.read({
+          conversation: "build@a1",
+          types: ["tool_result"],
+        }) as ToolResultEvent[])
+          .find((e) => e.payload.ref_id === ref)?.parts[0].data.output as string | undefined;
+      // the session's window is its own room; its search is the agent's whole log — the
+      // mind's room is a sibling's, and still the same past
+      const q1 = await client.request(
+        { op: "call", tool: "search", input: { in: "mind@a1" }, session: "build" },
+      );
+      await waitFor(async () => (await page(q1.id)) !== undefined);
+      assert((await page(q1.id))!.includes("el paciente pidió turno"));
+      // …and so is the world routed to the mind
+      const q2 = await client.request(
+        { op: "call", tool: "search", input: { text: "turno" }, session: "build" },
+      );
+      await waitFor(async () => (await page(q2.id)) !== undefined);
+      const hits = (await page(q2.id))!;
+      assert(hits.includes("el paciente pidió turno"));
+      assert(hits.includes("hola, quería un turno"));
+      client.conn.close();
+    } finally {
+      await main.stop();
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "a tail's model settings hold while the client is attached, and the hang-up restores the roster's (§9)",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir();
+    const models: string[] = [];
+    const { transport: base } = scripted([reply("dale"), reply("dale"), reply("dale")]);
+    const transport: ModelTransport = (params, emit, meta, signal) => {
+      models.push(params.model);
+      return base(params, emit, meta, signal);
+    };
+    // the mind's view is pinned to its own room, so every model call here is the named
+    // session's — the sequence of models is the sequence of its turns
+    const main = await start({
+      dir,
+      debounceMs: 0,
+      principals: [agent("1", { readable: (e) => e.envelope.conversation.address === "mind@a1" })],
+    }, { transport });
+    try {
+      const said = async () =>
+        (await main.log.read({ conversation: "build@a1", types: ["message"] }))
+          .filter((e) => e.agent?.session_id === "build" && e.payload?.turn_id !== undefined);
+      // a provider that cannot run the model refuses the attach, before anything is tailing
+      const client = await door(dir, "a1");
+      const refused = await client.request(
+        { op: "tail", session: "build", provider: "google", model: "claude-y" },
+      );
+      assertEquals(refused.ok, false);
+      assertEquals(String(refused.error).includes("not a google model"), true);
+      // the tail names the model: the session's next turn thinks with it
+      const t = await client.request(
+        { op: "tail", session: "build", model: "claude-y", effort: "high" },
+      );
+      assertEquals(t.ok, true);
+      await client.request({ op: "message", text: "hola", session: "build" });
+      await waitFor(async () => (await said()).length === 1);
+      assertEquals(models.at(-1), "claude-y");
+      // the client leaves: the roster's model is back for the next turn
+      client.conn.close();
+      const again = await door(dir, "a1");
+      assertEquals((await again.request({ op: "tail", session: "build" })).ok, true);
+      await again.request({ op: "message", text: "seguí", session: "build" });
+      await waitFor(async () => (await said()).length === 2);
+      assertEquals(models, ["claude-y", "claude-x"]);
+      again.conn.close();
+    } finally {
+      await main.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

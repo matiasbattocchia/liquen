@@ -18,7 +18,7 @@
  * the timeout; 2 = usage.
  */
 
-import { attach, resolveAgent, wire } from "./attach.ts";
+import { attach, resolveAgent, tuneFlags, wire } from "./attach.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { painter } from "./paint.ts";
 import { tailOf } from "./line.ts";
@@ -27,11 +27,14 @@ import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
 
 export const USAGE = "usage: liquen cli [--dir <org>] [--agent <name>] [--session <name>] " +
-  "[--timeout <seconds>] <instruction…>";
+  "[--model <name>] [--effort <level>] [--provider <name>] [--timeout <seconds>] <instruction…>";
 
 await entry(async () => {
   const org = orgFlag();
   helpFlag(org.args, USAGE);
+  // what the session thinks with, for this one instruction (§9): the flags hold while the
+  // CLI is attached, and the roster's values come back when it exits
+  const tune = tuneFlags(org.args);
   const flags: { agent?: string; session?: string; timeout?: number } = {};
   const words: string[] = [];
   for (let i = 0; i < org.args.length; i++) {
@@ -47,7 +50,7 @@ await entry(async () => {
     Deno.exit(2);
   }
 
-  const a = await resolveAgent(flags.agent, org.dir);
+  const a = await resolveAgent(flags.agent, org.dir, tune);
   const session = flags.session ?? MIND;
   sessionAddress(a.target, session); // refuses a malformed session name before attaching
   const conn = await attach(a);
@@ -102,7 +105,7 @@ await entry(async () => {
 
   // live: the transcript starts at our instruction. The agent's shell stands where its
   // principal does — a place it cannot stand in is the failure, before anything is sent.
-  const t = await w.request({ op: "tail", session, cwd: Deno.cwd() });
+  const t = await w.request({ op: "tail", session, cwd: Deno.cwd(), ...a.tune });
   if (!t.ok) {
     console.error(String(t.error));
     leaving = true;

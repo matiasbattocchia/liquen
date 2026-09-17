@@ -6,7 +6,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { type Log, openLog } from "./store/log.ts";
-import { policyFor, scoped } from "./policy.ts";
+import { historyFor, policyFor, scoped } from "./policy.ts";
 import type { Draft, Event, MessageEvent } from "./types.ts";
 
 function msg(id: string, conversation: string, text: string): MessageEvent {
@@ -311,5 +311,69 @@ Deno.test("policyFor: an alias conversation is invisible to EVERY agent, not onl
     const bo = policyFor({ agentId: "bo", id: "mind" }, log);
     assert(!bo.readable!(at("slack", "T1", "D1")));
     assert(bo.readable!(at("slack", "T1", "C7")));
+  });
+});
+
+/* ── historyFor: the agent's history, what search reads (§6) ───────────── */
+
+Deno.test("historyFor: every session of an agent reads the same past — the agent's, no wider (§6)", async () => {
+  await withLog((log) => {
+    log.upsertMemberships([
+      {
+        service: "local",
+        connection: "agent",
+        conversation: "mind@ana",
+        agentId: "ana",
+        sessionId: "mind",
+      },
+      {
+        service: "local",
+        connection: "agent",
+        conversation: "build@ana",
+        agentId: "ana",
+        sessionId: "build",
+      },
+      {
+        service: "local",
+        connection: "agent",
+        conversation: "mind@bo",
+        agentId: "bo",
+        sessionId: "mind",
+      },
+    ]);
+    log.upsertConnections([
+      { service: "whatsapp", address: "+549", credentialKey: "whatsapp:+549:org" }, // the org's
+      { service: "email", address: "ana@org", agentId: "ana" }, // ana's own
+      { service: "email", address: "bo@org", agentId: "bo" }, // bo's own
+      { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
+    ]);
+    const history = historyFor("ana", log);
+
+    // a sibling's room is the agent's past too: the window is the session's, the log is not
+    assert(history.readable!(at("local", "agent", "mind@ana")));
+    assert(history.readable!(at("local", "agent", "build@ana")));
+    assert(!history.readable!(at("local", "agent", "mind@bo")));
+    // the agent's connections, whatever session their traffic routes to
+    assert(history.readable!(at("whatsapp", "+549", "wa:cust1")));
+    assert(history.readable!(at("email", "ana@org", "thread-7")));
+    assert(!history.readable!(at("email", "bo@org", "thread-9")));
+    // the alias rule holds: the mind copies are the surface's readable record
+    assert(!history.readable!(at("slack", "T1:U1", "D1")));
+    assert(history.readable!(at("slack", "T1:U1", "C7")));
+    // and the handle writes nothing, wherever it looks
+    assert(!history.writable!(at("local", "agent", "build@ana") as Draft));
+    assert(!history.writable!(at("whatsapp", "+549", "wa:cust1") as Draft));
+    // a membership's lifetime rules here as it does for the session (§4)
+    log.deleteMemberships([
+      {
+        service: "local",
+        connection: "agent",
+        conversation: "build@ana",
+        agentId: "ana",
+        sessionId: "build",
+      },
+    ]);
+    assert(history.readable!(at("local", "agent", "build@ana", "2020-01-01T00:00:00Z")));
+    assert(!history.readable!(at("local", "agent", "build@ana", "2999-01-01T00:00:00Z")));
   });
 });

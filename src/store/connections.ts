@@ -130,6 +130,16 @@ export interface Connections {
     sessionId: string,
     ts?: string,
   ): boolean;
+  /** The same question for the AGENT: is any session of theirs a member. The agent's
+   *  history (§6) reads on it — every session of one agent reads the rooms every other
+   *  one is enrolled in, under the same lifetime rule. */
+  isAgentMember(
+    service: string,
+    connection: string,
+    conversation: string,
+    agentId: string,
+    ts?: string,
+  ): boolean;
   /** The distinct (agent, session) pairs enrolled anywhere — boot's backlog scan (§4):
    *  a session with rooms owes them a look when the org comes up, and the enrollments
    *  are the only record a named session leaves. */
@@ -218,6 +228,11 @@ export function createConnections(db: DatabaseSync): Connections {
      WHERE service = ? AND connection_address = ? AND conversation_address = ? AND agent_id = ?
        AND session_id = ? AND (deleted_at IS NULL OR ? <= deleted_at)`,
   );
+  const getA = db.prepare(
+    `SELECT 1 AS x FROM memberships
+     WHERE service = ? AND connection_address = ? AND conversation_address = ? AND agent_id = ?
+       AND (deleted_at IS NULL OR ? <= deleted_at)`,
+  );
   const delM = db.prepare(
     `UPDATE memberships SET deleted_at = ?
      WHERE service = ? AND connection_address = ? AND conversation_address = ? AND agent_id = ?
@@ -302,6 +317,16 @@ export function createConnections(db: DatabaseSync): Connections {
     ): boolean {
       return getM.get(service, connection, conversation, agentId, sessionId, ts ?? null) !==
         undefined;
+    },
+
+    isAgentMember(
+      service: string,
+      connection: string,
+      conversation: string,
+      agentId: string,
+      ts?: string,
+    ): boolean {
+      return getA.get(service, connection, conversation, agentId, ts ?? null) !== undefined;
     },
 
     enrolled(): { agentId: string; sessionId: string }[] {

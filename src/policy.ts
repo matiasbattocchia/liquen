@@ -21,7 +21,7 @@
  * the place policy will stand.
  */
 
-import type { Draft, Envelope, Event, SessionRef } from "./types.ts";
+import type { AgentId, Draft, Envelope, Event, SessionRef } from "./types.ts";
 import type { Appender, Filter, Log } from "./store/log.ts";
 import type { Lease } from "./store/lock.ts";
 import { routedSession } from "./session.ts";
@@ -98,6 +98,33 @@ export function policyFor(
       (conn.agentId === undefined && conn.credentialKey !== undefined);
   };
   return { readable: visible, writable: visible };
+}
+
+/**
+ * An agent's HISTORY (§6): what `search` reads, whichever of the agent's sessions asks. The
+ * window is a session's context; the log is the agent's memory — one agent, one memory
+ * (§7) — so this is the same three-branch predicate keyed on the AGENT: a room any of its
+ * sessions is enrolled in (branch 3, under the same lifetime rule), and its connections
+ * whatever session their traffic routes to (branches 1–2). Another agent's rows stay as
+ * invisible as ever, and the alias rule holds: the mind copies are a surface's readable
+ * record. Read-only by law — the handle refuses every draft.
+ */
+export function historyFor(
+  agentId: AgentId,
+  map: Pick<Connections, "connection" | "isAgentMember" | "aliases">,
+): Policy {
+  const readable = (e: { ts?: string; envelope: Envelope }): boolean => {
+    const { service, connection_address: connection, conversation } = e.envelope;
+    if (aliasOf(map.aliases(), service, connection, conversation.address) !== undefined) {
+      return false;
+    }
+    if (map.isAgentMember(service, connection, conversation.address, agentId, e.ts)) return true;
+    const conn = map.connection(service, connection);
+    if (conn === null) return false;
+    return conn.agentId === agentId ||
+      (conn.agentId === undefined && conn.credentialKey !== undefined);
+  };
+  return { readable, writable: () => false };
 }
 
 /** The same `Log`, seen through an agent's policy — the local stand-in for connecting as a
