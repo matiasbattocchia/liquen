@@ -190,7 +190,7 @@ export const externalId = (wmwId: string): string => `whatsapp:${wmwId}`;
  *  is per-message; a restart re-learns them from traffic). */
 export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler {
   const now = deps.now ?? (() => new Date().toISOString());
-  const groupNames = new Map<string, string>(); // conversation address → subject
+  const groupNames = new Map<string, string>(); // conversation address → name (subject, peer)
   const pushnames = new Map<string, string>(); // sender address → display name
   const accountNames = new Map<string, string>(); // connection address → name written to its row
 
@@ -219,6 +219,15 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
     // batch as the message it should stamp
     for (const g of batch.groups ?? []) if (g.name) groupNames.set(g.address, g.name);
     for (const c of batch.contacts ?? []) if (c.extra?.name) pushnames.set(c.address, c.extra.name);
+    // a message that names its room feeds the cache too: the groups feed is a first-sight
+    // courtesy, and after a restart it may never come — so a room's name used to survive
+    // only on the rows the bridge happened to stamp, and the anchor's newest row for that
+    // room read bare. Same rule as the account's own name above: two ways in, one fact.
+    for (const m of batch.messages ?? []) {
+      if (m.conversation_address && m.conversation_name) {
+        groupNames.set(m.conversation_address, m.conversation_name);
+      }
+    }
     // the account's own name is a fact of the CONNECTION: it lands on the row
     // (`extra.name`, what `<conn name>` reads, §5). Two ways in, one fact — its entry in
     // the contacts feed, and the name the bridge stamps on the account's own messages.

@@ -807,6 +807,24 @@ Deno.test("a conversation's messages cluster into ONE element — interleaved ro
   );
 });
 
+Deno.test("a room is named by the best row in the window, not by the row that opens its run", () => {
+  const t = (m: string) => `2026-08-07T14:0${m}:00Z`;
+  const named = { address: "wa:g1", kind: "group" as const, name: "Obra" };
+  const bare = { address: "wa:g1", kind: "group" as const }; // the bridge skipped the name
+  const dm = { address: "wa:ana", kind: "direct" as const };
+  const events: Event[] = [
+    worldMsg("e1", t("1"), named, { address: "549:caro", name: "Caro" }, "arrancamos?"),
+    worldMsg("e2", t("2"), dm, { address: "549:ana", name: "Ana" }, "tenés el presupuesto?"),
+    worldMsg("e3", t("3"), bare, { address: "549:dani", name: "Dani" }, "yo estoy"),
+  ];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t("4") });
+  const texts = (messages[0].content as Anthropic.ContentBlockParam[])
+    .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text);
+  // the group's run opens on e3, which carries no name — the window's e1 supplies it
+  assertStringIncludes(texts[0], '<conv kind="group" name="Obra" address="wa:g1">');
+  assertEquals(texts[0].includes('<conv kind="group" address="wa:g1">'), false);
+});
+
 Deno.test("a saved sender wears `contact`: the account's word for them, not their own", () => {
   const t = "2026-08-07T14:01:00Z";
   const saved = worldMsg("e1", t, { address: "wa:sol", kind: "direct" }, {

@@ -80,11 +80,13 @@ import {
   type HitsOpts,
   isCancelled,
   type Member,
+  namedRoom,
   ownComplex,
   ownSide,
   ownVoice,
   parseVerdict,
   renderHits,
+  roomNames,
   type Roster,
   shortId,
   silenced,
@@ -1233,6 +1235,7 @@ export function unansweredOn(
   cap = UNANSWERED_ROOMS,
 ): string[] {
   const rooms = new Map<string, { last: MessageEvent; run: MessageEvent[] }>();
+  const names = roomNames(events);
   for (const e of events) {
     if (e.type !== "message" || silenced(e) || !spoken(e)) continue;
     const conv = e.envelope.conversation;
@@ -1257,7 +1260,7 @@ export function unansweredOn(
   return [
     `unanswered — ${open.length} conversation${open.length === 1 ? "" : "s"}:`,
     ...shown.map(({ last, run }) => {
-      const conv = last.envelope.conversation;
+      const conv = namedRoom(last, names); // the room's best name, not one row's luck
       const where = `${last.envelope.service}${conv.kind ? ` ${conv.kind}` : ""}`;
       const named = (conv.kind === "group" || conv.kind === "channel") &&
         run.some((m) => m.payload?.mentions?.some((x) => accounts.has(x.address)));

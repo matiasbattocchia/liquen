@@ -880,6 +880,22 @@ Deno.test("unansweredOn: the fact is structural — a closed turn changes nothin
   assertEquals(unansweredOn([asked, closed, answered], SESSION, ACCOUNTS, "UTC"), []);
 });
 
+Deno.test("unansweredOn: a room whose newest row lacks a name still wears the one the window knows", () => {
+  const lines = unansweredOn(
+    [
+      line("222", T(1), { name: "Obra", kind: "group", sender: "333" }),
+      line("222", T(2), { kind: "group", sender: "333" }), // the bridge stamped no name here
+    ],
+    SESSION,
+    ACCOUNTS,
+    "UTC",
+  );
+  assertEquals(lines, [
+    "unanswered — 1 conversation:",
+    "· Obra — whatsapp group, 2 since 16 Sep 14:01",
+  ]);
+});
+
 Deno.test("unansweredOn: our side is this complex or the account — a peer agent's word is theirs", () => {
   const principal = { id: "a1" }; // the classifier's stamp: no session, no turn — their own phone
   const peerAgent = { id: "a2", session_id: "mind" };

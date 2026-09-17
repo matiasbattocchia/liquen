@@ -262,6 +262,36 @@ Deno.test("group subject denormalizes onto messages (same batch and later ones)"
   }
 });
 
+Deno.test("a message that names its room feeds the cache: the next bare one is named too", async () => {
+  const { handler, published } = harness();
+  const group = "123-456@g.us";
+  // no groups feed at all — the way a restarted process sees a room it already knew
+  await handler(
+    post(
+      "/whatsapp-web-webhook",
+      batch({
+        messages: [
+          textMessage({
+            conversation_address: group,
+            conversation_name: "Asado",
+            external_id: "wmw.f.e.d.1",
+          }),
+        ],
+      }),
+    ),
+  );
+  await handler(
+    post(
+      "/whatsapp-web-webhook",
+      batch({
+        messages: [textMessage({ conversation_address: group, external_id: "wmw.f.e.d.2" })],
+      }),
+    ),
+  );
+  assertEquals(published.length, 2);
+  for (const e of published as MessageEvent[]) assertEquals(e.envelope.conversation.name, "Asado");
+});
+
 Deno.test("file content maps to a FilePart with caption; data to a DataPart", async () => {
   const { handler, published } = harness();
   await handler(

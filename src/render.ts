@@ -594,6 +594,9 @@ function renderMessages(
   // reorders the runs, and travels by identity
   const deferred = deferredInput(visible, me, closingBoundary(visible, session));
   const { events, elisions } = byEventTime(visible, me, here);
+  // room names from the WHOLE window, silenced rows included — a name is a fact about the
+  // room, and the row that carried it need not be one the model reads
+  const names = roomNames(window);
   const out: MessageParam[] = [];
 
   // ref resolution (§5): the WHOLE window, silenced rows included — a delete or a reply often
@@ -717,7 +720,7 @@ function renderMessages(
     }
     let run = cluster.convs.at(-1);
     if (!run || run.conv.address !== e.envelope.conversation.address) {
-      run = { conv: e.envelope.conversation, lines: [] };
+      run = { conv: namedRoom(e, names), lines: [] };
       cluster.convs.push(run);
       const earlier = elisions.earlier.get(e);
       if (earlier) run.lines.push(`… ${earlier} earlier, not shown`);
@@ -979,6 +982,33 @@ function connectionEl(c: ConnectionCluster): string {
   return `<conn ${attrs.join(" ")}>\n${convs.join("\n")}\n</conn>`;
 }
 
+/** The best name the window knows for each room (§5): `conversation.name` is a per-row
+ *  fact — what the wire stamped on THAT message — and a row can lack it (a bridge restart,
+ *  a feed that never came) while its neighbours carry it. Read per row, one room printed
+ *  both named and bare in the same prompt, and the anchor's newest-row sample went bare
+ *  most often of all. Keyed service + address; the LATEST named row wins, since a contact
+ *  can change theirs. */
+export function roomNames(events: Event[]): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const e of events) {
+    if (e.type !== "message") continue;
+    const conv = e.envelope.conversation;
+    if (conv.name) names.set(`${e.envelope.service}\u0000${conv.address}`, conv.name);
+  }
+  return names;
+}
+
+/** A conversation as the window names it: the row's own name, else the best one seen. */
+export function namedRoom(
+  e: MessageEvent,
+  names: Map<string, string>,
+): Conversation {
+  const conv = e.envelope.conversation;
+  if (conv.name) return conv;
+  const name = names.get(`${e.envelope.service}\u0000${conv.address}`);
+  return name ? { ...conv, name } : conv;
+}
+
 /** One conversation's run → its `<conv>` element. The attributes are the envelope facts
  *  the agent acts on: `kind` tells a public channel from a DM, `name` is the handle it
  *  reads, `address` the one `send` takes back (and the stable one — a name is the
@@ -1057,6 +1087,7 @@ export function renderHits(
   { match, adjacent }: HitsOpts = {},
 ): string {
   const events = byConversation([...hits].sort(byTs)) as MessageEvent[];
+  const names = roomNames(events);
   const byExternal = new Map<string, Event>();
   for (const e of events) if (e.envelope.external_id) byExternal.set(e.envelope.external_id, e);
   const refOf = (e: Event): Ref => {
@@ -1081,7 +1112,7 @@ export function renderHits(
     }
     let run = cluster.convs.at(-1);
     if (!run || run.conv.address !== e.envelope.conversation.address) {
-      run = { conv: e.envelope.conversation, lines: [] };
+      run = { conv: namedRoom(e, names), lines: [] };
       cluster.convs.push(run);
     } else if (adjacent && last && !adjacent(last, e)) run.lines.push(GAP);
     const mark = match?.has(e.id) ? "match" : undefined;
