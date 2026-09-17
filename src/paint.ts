@@ -12,16 +12,23 @@
  * Who is speaking is a mark, never a name: `❯` opens the principal's lines (the screen's
  * own head, and the recap's), `•` opens the agent's — each block of its text, so a reply
  * that pauses for a tool starts again with its mark. A blank line stands between blocks.
+ *
+ * A call says itself as it is made (`⚙`), in full: the arguments are what tell a reader
+ * WHICH call this was, and a clipped one leaves them running it by hand to find out. That
+ * row is the whole of the call — an outcome the row above already describes would be a
+ * second row saying nothing — so only a failure speaks again: `✗` and the reason the tool
+ * gave, whole, because that is the row a principal acts on.
+ *
  * Every message line says when, dim, in the org's clock: a recalled row by the clock that
- * wrote it, a live block by the surface's clock as it opens — the deltas inside it need
- * no time of their own. The agent's text is markdown, and it is shown as styles as it
- * streams (`md.ts`). A turn that says nothing paints nothing — not even a line's end.
+ * wrote it, a live block by the surface's clock as it opens — the deltas inside it need no
+ * time of their own. The agent's text is markdown, and it is shown as styles as it streams
+ * (`md.ts`). A turn that says nothing paints nothing — not even a line's end.
  */
 
 import { hhmm, isCancelled, outcomeLine, ownVoice, SILENCE, silent, textOf } from "./render.ts";
 import { describeCall } from "./describe.ts";
 import { markdown, renderMarkdown } from "./md.ts";
-import type { Delta, Event, SessionRef } from "./types.ts";
+import type { Delta, Event, SessionRef, ToolResultEvent } from "./types.ts";
 import { tailOf } from "./line.ts";
 
 export const DIM = "\x1b[2m";
@@ -158,21 +165,22 @@ export function painter(s: Surface): Painter {
         settle();
         if (inBlock) s.prompt();
         else s.gap();
-        s.write(`${DIM}⚙ ${describeCall(e.parts[0].data)}${RESET}\n`);
+        s.write(`${DIM}⚙ ${describeCall(e.parts[0].data, { full: true })}${RESET}\n`);
         return;
       }
       case "tool_result": {
         // a deferred outcome is the harness reporting on a call the principal approved —
-        // it reads as a sentence, not a checkmark, because nothing on screen expects it
+        // it stands as a block of its own and reads as a sentence, because it lands long
+        // after the row it answers scrolled by
         if (e.payload.deferred) {
           settle();
           s.gap();
-          s.write(`${YELLOW}${outcomeLine(e, 160)}${RESET}`);
+          s.write(`${YELLOW}${outcomeLine(e)}${RESET}`);
           s.prompt();
           return;
         }
-        const { is_error } = e.parts[0].data;
-        s.write(is_error ? `${RED}✗ tool failed${RESET}\n` : `${DIM}✓${RESET}\n`);
+        if (!e.parts[0].data.is_error) return; // it did what the line above says it did
+        s.write(`${RED}✗ ${failure(e)}${RESET}\n`);
         return;
       }
       case "permission_request": {
@@ -259,7 +267,7 @@ export function painter(s: Surface): Painter {
         }
         case "tool_use": {
           gap();
-          put(`${DIM}⚙ ${describeCall(e.parts[0].data)}${RESET}`);
+          put(`${DIM}⚙ ${describeCall(e.parts[0].data, { full: true })}${RESET}`);
           continue;
         }
         case "tool_result": {
@@ -267,11 +275,12 @@ export function painter(s: Surface): Painter {
           // does live. An ordinary one belongs to the call right above it.
           if (e.payload.deferred) {
             gap();
-            put(`${YELLOW}${outcomeLine(e, 160)}${RESET}`);
+            put(`${YELLOW}${outcomeLine(e)}${RESET}`);
             continue;
           }
+          if (!e.parts[0].data.is_error) continue;
           row();
-          put(e.parts[0].data.is_error ? `${RED}✗ tool failed${RESET}` : `${DIM}✓${RESET}`);
+          put(`${RED}✗ ${failure(e)}${RESET}`);
           continue;
         }
         case "permission_request": {
@@ -310,4 +319,14 @@ export function painter(s: Surface): Painter {
   };
 
   return { delta, event, recap };
+}
+
+/** Why a call failed: the tool's own words, whole and as it wrote them — rows and all. A
+ *  failure is the one outcome a principal has to act on, and the reason is already bounded
+ *  where output is bounded (`exec/truncate.ts`); a screen that clipped it again would put
+ *  the reader back in the terminal, running the call by hand to see what it had said. */
+function failure(e: ToolResultEvent): string {
+  const { output } = e.parts[0].data;
+  const said = (typeof output === "string" ? output : JSON.stringify(output) ?? "").trimEnd();
+  return said === "" ? "failed, saying nothing" : said;
 }

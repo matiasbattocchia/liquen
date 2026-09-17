@@ -237,7 +237,51 @@ Deno.test("live: blocks stand one blank row apart, however the turn goes", () =>
   const out = plain(screen());
   assertEquals(out.includes("\n\n\n"), false, `a column of blank lines:\n${JSON.stringify(out)}`);
   assertEquals(out.includes("mando\n⚙ send"), true); // the call sits under the words
-  assertEquals(out.includes("✓\n\n11 Sep 11:14 • listo"), true); // the next block, one row down
+  assertEquals(out.includes("send(...)\n\n11 Sep 11:14 • listo"), true); // the next block, one row down
+  // a call that did what it says adds no row of its own: the second one closes the screen
+  assertEquals(out.endsWith("⚙ send(to: )\n"), true, JSON.stringify(out));
+});
+
+// A failure is the one outcome a reader has to act on, so it arrives with the reason
+// already in hand: what the tool said, as it said it, under a call printed whole.
+Deno.test("live: a call that failed says why, in the tool's own words", () => {
+  const { p, screen } = surface();
+  const use = {
+    id: "u1",
+    ts: "2026-09-11T14:14:00Z",
+    type: "tool_use",
+    payload: { turn_id: "t1" },
+    agent: { id: AGENT, session_id: "mind" },
+    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    parts: [{
+      type: "data",
+      kind: "tool_use",
+      data: { name: "read", input: { path: "data/media/agenda de la clínica" } },
+    }],
+  } as unknown as Event;
+  const broke = {
+    ...use,
+    id: "r1",
+    type: "tool_result",
+    parts: [{
+      type: "data",
+      kind: "tool_result",
+      data: {
+        is_error: true,
+        output: "No such file or directory (os error 2):\n  data/media/agenda de la clínica\n",
+      },
+    }],
+  } as unknown as Event;
+
+  p.event(use);
+  p.event(broke);
+
+  const out = plain(screen());
+  assertEquals(
+    out,
+    "⚙ read(data/media/agenda de la clínica)\n" +
+      "✗ No such file or directory (os error 2):\n  data/media/agenda de la clínica\n",
+  );
 });
 
 // Reopening a surface must not rewrite history into a mind that only ever talked: the
@@ -276,7 +320,7 @@ Deno.test("recap: the work shows, not just the words — and an open card is sti
 
   const out = plain(screen());
   assertEquals(out.includes("⚙ send"), true); // the call it made
-  assertEquals(out.includes("✓"), true); // and how it went
+  assertEquals(out.includes("✓"), false); // which went fine, and so says nothing else
   assertEquals(out.includes("? approve send(to: Verónica)"), true);
   assertEquals(out.includes("? approve send(to: Sofía) — answered"), true); // history, not a card
   assertEquals(gates, ["u1"]); // only the open one joins the pile `/y` answers

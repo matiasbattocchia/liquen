@@ -14,9 +14,12 @@
  * appears in this file's logic; `send` is the one built-in with a rendering of its own,
  * and what it adds is a NAME where the wire has an address.
  *
- * Two verbosities, because the consumers genuinely differ: the LINE form (truncated — a
- * pending entry, a tool trace) and the FULL form (the card: approving is judging exactly
- * what will be said, and a 200-character JSON slice is the wrong thing to judge).
+ * Two verbosities, because the consumers genuinely differ. The FULL form is for a reader
+ * who is acting on the call itself — the approval card (approving is judging exactly what
+ * will be said, and a 200-character JSON slice is the wrong thing to judge), the
+ * principal's transcript, the compacted trace of what the agent did. The LINE form is for
+ * the places a call stands among others inside one message, where every entry has to fit:
+ * the anchor's pending list, the mirror's tool line.
  */
 
 import type { Event, Json, ToolCall } from "./types.ts";
@@ -37,7 +40,8 @@ const ADDRESSED = new Set(["to", "in", "from", "who"]);
 
 export interface DescribeOpts {
   resolve?: Resolve;
-  /** Judgment form: no truncation, no elision — the card's. Default: one line. */
+  /** Judgment form: no truncation, no elision — the card's and the transcript's. Default:
+   *  one line. */
   full?: boolean;
   /** Renderings the tools themselves supplied (`ExecTool.describe`), by tool name. */
   tools?: Record<string, Describe>;
