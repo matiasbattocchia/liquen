@@ -26,8 +26,13 @@ import { ingestUp } from "./serve.ts";
  *  bind itself, since a port is taken by a RUNNING process, not by a config file. So a
  *  sibling org that is merely installed does not move this one, and its own boot will
  *  find whichever of the two started first; the answer is only as true as the moment.
- *  0 is already "any free port", and 64 tries in means giving up and letting boot say so. */
-function freePort(want: number): number {
+ *  0 is already "any free port", and 64 tries in means giving up and letting boot say so.
+ *
+ *  Exported for the one case the doors cannot leave to `pickPorts`: a port that becomes an
+ *  address the moment it is PRINTED (google's loopback callback) has to be picked before
+ *  anything is said, and declared as the number that was said. Call it once, then pass it
+ *  as `decided` — never again for the same knob. */
+export function freePort(want: number): number {
   if (want === 0) return 0;
   for (let port = want; port < want + 64 && port < 65536; port++) {
     try {
@@ -41,15 +46,31 @@ function freePort(want: number): number {
 }
 
 /** What the connector's catalog says is a port: `checkPort` is the whole declaration —
- *  a knob validated as a port IS one, so a new connector gets this by writing its spec. */
+ *  a knob validated as a port IS one, so a new connector gets this by writing its spec.
+ *
+ *  Only a DEFAULT is ever moved: a knob in `decided` is skipped, and `declared` never
+ *  reaches a section the file already has. So the walk runs once per org, before anyone was
+ *  told a number — after that the file is the address, and a port taken out from under it
+ *  is a bind that refuses out loud, which is the honest answer. */
 export function pickPorts(
   spec: ConnectorSpec,
   decided: Record<string, unknown> = {},
 ): Record<string, number> {
   const moved: Record<string, number> = {};
+  // a bind test knows about processes, not about the knob picked one line up: adjacent
+  // defaults (slack's 8789/8790) would otherwise land on one number the moment the first
+  // is stepped over, so what this walk and the door already gave out is taken too
+  const taken = new Set<number>();
+  for (const e of spec.entries) {
+    if (e.check === checkPort && e.key in decided && typeof decided[e.key] === "number") {
+      taken.add(decided[e.key] as number);
+    }
+  }
   for (const e of spec.entries) {
     if (e.check !== checkPort || typeof e.value !== "number" || e.key in decided) continue;
-    const free = freePort(e.value);
+    let free = freePort(e.value);
+    while (free !== 0 && taken.has(free)) free = freePort(free + 1);
+    taken.add(free);
     if (free !== e.value) moved[e.key] = free; // silence is the default: only a move is news
   }
   return moved;

@@ -22,14 +22,18 @@
  *
  * The app door prints the loopback URI before it asks for anything, so the console's
  * "Authorized redirect URIs" field can be filled while the client is still being created.
+ * Printing it is what fixes the port: it is picked free of this machine on the run that has
+ * nothing declared yet, written to config.jsonc beside the app row, and from then on read —
+ * never picked again. A registered URI is a promise to a third party, and the only way to
+ * keep it is to let a port that someone else took be a refusal instead of a new number.
  *
  * Removal is not a door yet: deleting an app or a grant is a deliberate SQL act (§9).
  */
 
 import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
-import { findRoot, orgFlag } from "../../config.ts";
-import { declared } from "../declare.ts";
+import { findRoot, orgFlag, readConfig } from "../../config.ts";
+import { declared, freePort } from "../declare.ts";
 import { type DoorAddress, doorAddress, oneShot, openBrowser } from "../door.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
@@ -128,7 +132,13 @@ if (import.meta.main) {
     try {
       if (verb === "app") {
         const { googleConfig } = await import("./config.ts");
-        const { oauthPort } = await googleConfig(root);
+        const { oauthPort: fromCatalog } = await googleConfig(root);
+        // The loopback callback is the whole of this door's addressing, and the line below
+        // hands it to a human who registers it with Google. So the port is picked HERE, once:
+        // free of whatever else is up on this machine while the file has nothing to say, and
+        // then never again — a declared port is the operator's, printed as it stands.
+        const alreadyDeclared = "google" in (await readConfig(root)).connections;
+        const oauthPort = alreadyDeclared ? fromCatalog : freePort(fromCatalog);
         const local = localCallback(oauthPort);
         console.error(
           `Create the client at https://console.cloud.google.com/auth/clients — type "Web ` +
@@ -160,6 +170,9 @@ if (import.meta.main) {
         }
         const key = await connectGoogleApp({ clientId, clientSecret, redirectUri }, creds);
         console.error(`✓ app stored: ${key} (callback: ${redirectUri ?? local})`);
+        // the number that was just printed, in the file, before any sign-in reads it back —
+        // and only now, because a door that wrote nothing promised nothing
+        if (!alreadyDeclared) await declared(root, SPEC, { oauthPort });
       } else if (verb === "account") {
         const { createGoogleOAuth } = await import("./oauth.ts");
         const { openLog } = await import("../../store/log.ts");
@@ -203,7 +216,22 @@ if (import.meta.main) {
           store: log,
           onGrant: (g) => (shortfall = g.missing),
         }));
-        const server = Deno.serve({ port: door.port, onListen: () => {} }, handler);
+        // the port is registered with Google now, so a taken one is a conflict a human has to
+        // settle — the door cannot step over it without invalidating the URI it must send
+        let server: Deno.HttpServer;
+        try {
+          server = Deno.serve({ port: door.port, onListen: () => {} }, handler);
+        } catch (e) {
+          if (!(e instanceof Deno.errors.AddrInUse)) throw e;
+          console.error(
+            `port ${door.port} is already in use, and it is the port ${door.callback} is ` +
+              `registered on — stop whatever holds it (another org's door, \`deno task ` +
+              `status\`), or register a callback on a free port and set ` +
+              `connections.google.oauthPort to match.`,
+          );
+          await log.close();
+          Deno.exit(2);
+        }
         const start = new URL(door.start);
         if (agent) start.searchParams.set("agent", agent);
         console.error(
@@ -238,7 +266,9 @@ if (import.meta.main) {
               `consent is incremental, so it merges into this grant.`
             : "\n✓ connected (deno task status shows the map)",
         );
-        await declared(root, SPEC);
+        // what this door SERVED, not what a second bind test thinks is free now: the URI is
+        // registered with Google, so the port is a fact by the time we get here
+        await declared(root, SPEC, { oauthPort: door.port });
       } else {
         console.error(USAGE);
         Deno.exit(2);

@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { declared, pickPorts, requireIngest } from "./declare.ts";
+import { declared, freePort, pickPorts, requireIngest } from "./declare.ts";
 import { checkPort, type ConnectorSpec, materialize, starterConfig } from "../config.ts";
 
 const spec = (port: number): ConnectorSpec => ({
@@ -42,6 +42,27 @@ Deno.test("pickPorts: what the door already decided is the door's", async () => 
   });
 });
 
+Deno.test("pickPorts: two knobs are never handed one number — the walk counts its own picks", async () => {
+  const two = (a: number, b: number): ConnectorSpec => ({
+    name: "acme",
+    doc: "acme — two addresses, adjacent defaults",
+    entries: [
+      { key: "ingestPort", value: a, doc: "inbound", check: checkPort },
+      { key: "oauthPort", value: b, doc: "the door", check: checkPort },
+    ],
+  });
+  await held(async (port) => {
+    // ingest's default is held, so it steps onto oauth's default — which oauth then leaves
+    assertEquals(pickPorts(two(port, port + 1)), { ingestPort: port + 1, oauthPort: port + 2 });
+    // and a number the door already decided is taken before the walk starts
+    assertEquals(
+      pickPorts(two(port, port + 1), { oauthPort: port + 1 }),
+      { ingestPort: port + 2 },
+    );
+    await Promise.resolve();
+  });
+});
+
 Deno.test("pickPorts: 0 is already any free port", () => {
   assertEquals(pickPorts(spec(0)), {});
 });
@@ -61,6 +82,42 @@ Deno.test("declared: the free port lands in config.jsonc with what the door earn
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test("declared: a section the file already has keeps its port — a busy one is not news", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(`${root}/config.jsonc`, materialize(starterConfig()));
+    await held(async (port) => {
+      // the org declared this port when it was picked; it is in use because the org's own
+      // process (or the door that earned it) is holding it
+      await declared(root, spec(port), { ingestPort: port });
+      assertStringIncludes(
+        await Deno.readTextFile(`${root}/config.jsonc`),
+        `"ingestPort":${port}`,
+      );
+      // a second run, port still held: the declaration stands, the number does not move —
+      // this is what a registered address depends on
+      await declared(root, spec(port));
+      const raw = await Deno.readTextFile(`${root}/config.jsonc`);
+      assertStringIncludes(raw, `"ingestPort":${port}`);
+      assertEquals(raw.includes(`"ingestPort":${port + 1}`), false);
+    });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("freePort: the door's own pick, for a port that is an address the moment it is printed", async () => {
+  const probe = Deno.listen({ port: 0 });
+  const free = (probe.addr as Deno.NetAddr).port;
+  probe.close();
+  assertEquals(freePort(free), free); // nothing there: the default is the answer
+  await held(async (port) => {
+    assertEquals(freePort(port), port + 1);
+    await Promise.resolve();
+  });
+  assertEquals(freePort(0), 0);
 });
 
 /** A fresh org: the catalog materialized, nothing declared. */
