@@ -102,6 +102,19 @@ function named(key: string, v: Json, opts: DescribeOpts): Json {
   return opts.full ? `${who.name} (${who.address})` : who.name;
 }
 
+/** Where a call LANDS: each addressed argument that resolved, as `Name (address)` — the
+ *  one fact the model's own words cannot carry, since it wrote a name and the wire takes an
+ *  address. A surface that has already shown the call as written needs only this. */
+export function landings(call: ToolCall, resolve: Resolve): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(argsOf(call.input))) {
+    if (!ADDRESSED.has(k) || typeof v !== "string") continue;
+    const who = resolve(v);
+    if (who) out.push(`${who.name} (${who.address})`);
+  }
+  return out;
+}
+
 /** How far back a name is looked for — a conversation names itself within a page or two. */
 const NAME_REACH = 200;
 

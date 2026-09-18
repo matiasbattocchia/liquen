@@ -369,6 +369,10 @@ export interface PermissionAsk {
   /** The same call in FULL — approving is judging what will actually be said or run, so the
    *  card carries the arguments themselves, not a preview of them. */
   detail: string;
+  /** Where it lands: each addressed argument resolved to `Name (address)` (§9
+   *  `landings`). A surface that already shows the call as the model wrote it prints
+   *  this alone — the address is what the model's own words could not say. */
+  lands?: string[];
 }
 
 export interface PermissionVerdict {

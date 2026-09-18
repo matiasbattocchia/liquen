@@ -275,8 +275,10 @@ export function tailOf() {
 }
 
 export interface ScreenOptions {
-  /** What stands at the head of the line. */
-  head?: string;
+  /** What stands at the head of the line — asked for at every draw, so a surface can
+   *  show there what is true only now (what is waiting to be answered). Columns only:
+   *  the head is measured to place the cursor, and an escape would be counted. */
+  head?: string | (() => string);
   /** How a sent line stands in the transcript once entered — the surface's chance to
    *  date and mark it. Default: the head and the line, as they were typed. */
   sent?: (line: string) => string;
@@ -289,9 +291,10 @@ export interface ScreenOptions {
 /** A screen over stdin and stdout: the editor when a terminal is there to edit on, whole
  *  lines when it is not. */
 export function createScreen(opts: ScreenOptions = {}): Screen {
-  const head = opts.head ?? "> ";
+  const given = opts.head ?? "> ";
+  const head = typeof given === "function" ? given : () => given;
   const recalled = opts.recalled ?? (() => []);
-  const sent = opts.sent ?? ((line: string) => head + line);
+  const sent = opts.sent ?? ((line: string) => head() + line);
   return Deno.stdin.isTerminal() ? editor(head, recalled, sent) : plain(head);
 }
 
@@ -305,7 +308,7 @@ const out = (s: string) => {
 
 /** No terminal: the kernel's lines are the principal's lines, and the transcript is
  *  whatever we print. */
-function plain(head: string): Screen {
+function plain(head: () => string): Screen {
   const tail = tailOf();
   const say = (s: string) => {
     tail.note(s);
@@ -316,14 +319,14 @@ function plain(head: string): Screen {
       const stream = Deno.stdin.readable
         .pipeThrough(new TextDecoderStream())
         .pipeThrough(new TextLineStream());
-      say(head);
+      say(head());
       for await (const line of stream) {
         yield line;
-        say(head);
+        say(head());
       }
     },
     write: say,
-    prompt: () => say(tail.owed(1) + head),
+    prompt: () => say(tail.owed(1) + head()),
     gap: () => say(tail.owed(2)),
     close: () => {},
   };
@@ -338,7 +341,7 @@ function plain(head: string): Screen {
  * stopped — mid-row if the transcript stopped mid-row, so a streamed sentence continues
  * where it left off. */
 function editor(
-  head: string,
+  head: () => string,
   recalled: () => readonly string[],
   sent: (line: string) => string,
 ): Screen {
@@ -371,7 +374,7 @@ function editor(
     if (broke) out("\n");
     const width = cols();
     out(`${DIM}${"─".repeat(width)}${RESET}\n`);
-    const line = head + e.text;
+    const line = head() + e.text;
     const len = [...line].length;
     out(line);
     rows = Math.floor(Math.max(0, len - 1) / width) + 1;
@@ -379,7 +382,7 @@ function editor(
       out("\n\r"); // the text filled the last row exactly: open the one the cursor needs
       rows++;
     }
-    const pos = [...head].length + e.at;
+    const pos = [...head()].length + e.at;
     row = Math.floor(pos / width);
     const up = rows - 1 - row;
     if (up > 0) out(`\x1b[${up}A`);

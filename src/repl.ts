@@ -35,7 +35,7 @@ import { createScreen } from "./line.ts";
 import { orgFlag } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { DIM, painter, RED, RESET, YOU } from "./paint.ts";
-import { hhmm, ownVoice, textOf } from "./render.ts";
+import { hhmm, ownVoice, shortId, textOf } from "./render.ts";
 import type { Event } from "./types.ts";
 import { parseVerdict } from "./xi.ts";
 import { entry } from "./entry.ts";
@@ -78,18 +78,21 @@ await entry(async () => {
   // words, the only ones the up arrow is for
   let recalled: Event[] = [];
   const me = { agentId: a.target, id: session }; // the pair — bare names collide (§4)
+  // every approval card still waiting, oldest first, by the tool_use it asks about. What
+  // is waiting is true only now, so it stands on the input line — the one line that may
+  // change — never in the transcript: `(waiting cca9a2 ee63f4) ❯`. A bare `/y` answers
+  // the newest, `/y cca9a2` the one named, `/y all` the whole pile.
+  const pending: string[] = [];
+  const waiting = () => pending.length ? `(waiting ${pending.map(shortId).join(" ")}) ` : "";
   const screen = createScreen({
-    head: `${YOU} `, // the line wears the principal's mark, as its recalled lines do
+    // the line wears the principal's mark, as its recalled lines do
+    head: () => `${waiting()}${YOU} `,
     // and once sent it stands as a recalled line would: the time, the mark, the words
     sent: (line) => `${DIM}${hhmm(new Date().toISOString(), a.timezone)}${RESET} ${YOU} ${line}`,
     recalled: () => recalled.filter((e) => e.type === "message" && !ownVoice(e, me)).map(textOf),
   });
   const write = (s: string) => screen.write(s);
   const prompt = () => screen.prompt();
-
-  // every approval card still waiting, oldest first. A bare `/y` answers the newest (the
-  // one just painted); `/y all` answers the whole pile, which is the point of the list.
-  const pending: string[] = [];
 
   const p = painter({
     session: me,
@@ -104,7 +107,6 @@ await entry(async () => {
     prompt,
     gap: () => screen.gap(),
     thinking: true,
-    gateHint: "  /{y,n} [once|conv|conn|always|all] [reason]",
     onGate: (ref) => {
       if (!pending.includes(ref)) pending.push(ref);
     },
@@ -144,7 +146,7 @@ await entry(async () => {
       a.tune.provider ? `${a.tune.provider}:` : ""
     }${a.model}${a.effort ? ` (${a.effort})` : ""}${
       a.paused ? " · PAUSED (mind: false — reads only)" : ""
-    } · /y[once|conv|conn|always|all] /n /cancel /quit${RESET}\n`,
+    } · /y[once|conv|conn|always|all] [handle] /n /cancel /quit${RESET}\n`,
   );
   p.recap(recalled);
 
@@ -157,15 +159,27 @@ await entry(async () => {
       write(r.ok ? `${DIM}cancel sent${RESET}\n` : `\n${RED}! ${r.error}${RESET}\n`);
       continue;
     }
-    const verdict = text.startsWith("/y") || text.startsWith("/n") ? parseVerdict(text) : undefined;
-    if (verdict) {
+    if (text.startsWith("/y") || text.startsWith("/n")) {
       if (pending.length === 0) {
         write(`${DIM}nothing pending${RESET}\n`);
         continue;
       }
-      // `all` takes the pile in the order it was asked; a bare word takes the newest card,
-      // the one whose text is still on screen
-      const answered = verdict.every ? pending.splice(0) : [pending.pop()!];
+      // a card named by its handle is answered wherever it stands in the pile; the handle
+      // is lifted out of the line before the verdict is read, so it is not taken for a
+      // reason. `all` takes the pile in the order it was asked; a bare word takes the
+      // newest card, the one whose row is still on screen
+      const words = text.split(/\s+/);
+      const named = pending.find((ref) => words.includes(shortId(ref)));
+      const verdict = parseVerdict(words.filter((w) => !named || w !== shortId(named)).join(" "));
+      if (!verdict) {
+        write(`${DIM}not a verdict — /y[once|conv|conn|always|all] [handle] [reason]${RESET}\n`);
+        continue;
+      }
+      const answered = verdict.every
+        ? pending.splice(0)
+        : named
+        ? pending.splice(pending.indexOf(named), 1)
+        : [pending.pop()!];
       for (const ref of answered) {
         const r = await w.request({ op: "permission_response", ref_id: ref, verdict, session });
         if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n`);

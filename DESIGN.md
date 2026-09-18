@@ -2197,10 +2197,22 @@ above it, under a rule that keeps the transcript's last `❯` and the line's emp
 apart. That surface opens on the tail's recall twice over: the room as it stands, and,
 under the arrows, the principal's half of the messages in it. **The recall is what
 HAPPENED, not only what was said**: the calls the agent made, how they went, the cards it
-raised and the verdicts on them ride back with the words, and a card nobody answered is
-painted live and joins the surface's pile, so `/y` after a reopen answers what was asked
-before it. A recall of messages alone hands back a mind that only ever talked, and drops
-the approval still waiting at the moment its principal reopened the surface to look for it. Recalled and live read the
+raised and the verdicts on them ride back with the words, and a card nobody answered
+joins the surface's pile, so `/y` after a reopen answers what was asked before it. A
+recall of messages alone hands back a mind that only ever talked, and drops the approval
+still waiting at the moment its principal reopened the surface to look for it. **The
+transcript is append-only**: a row written is a fact about what happened and is never
+rewritten, so only the row being written may still change, and a recall of a window prints
+exactly the rows the live screen printed for it (`paint.test.ts` holds the two to one
+string). An approval is therefore two rows, each bought by its own event — the ask, and
+later the answer — and never a mark added to the ask once it is settled; whatever is true
+only for now, which cards are open and what answers them, is the surface's to show on the
+input line, the one line allowed to move. The ask is named by the call's handle (the
+`shortId` the anchor lists it under and `cancel(id)` takes), so the agent's own sentence
+about a card and the row on screen point at the same thing, and the REPL's `/y <handle>`
+is its way of quoting the card it means. A call the surface has already printed is not
+printed again on its card: the card adds where it lands, the address the model's words
+could not carry. Recalled and live read the
 same: every message line is dated in the org's clock — a recalled row by the clock that
 wrote it, a live block by the clock it opens on; the deltas inside need none — and who
 spoke is a mark and never a name: `❯` heads the principal's line, `•` each block of the

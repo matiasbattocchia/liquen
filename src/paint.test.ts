@@ -1,6 +1,7 @@
 import { assertEquals } from "@std/assert";
 import { painter, type Surface } from "./paint.ts";
 import { tailOf } from "./line.ts";
+import { ownVoice, textOf } from "./render.ts";
 import type { Event, Json, MessageEvent } from "./types.ts";
 
 const AGENT = "laura";
@@ -237,7 +238,8 @@ Deno.test("live: blocks stand one blank row apart, however the turn goes", () =>
   const out = plain(screen());
   assertEquals(out.includes("\n\n\n"), false, `a column of blank lines:\n${JSON.stringify(out)}`);
   assertEquals(out.includes("mando\n⚙ send"), true); // the call sits under the words
-  assertEquals(out.includes("send(...)\n\n11 Sep 11:14 • listo"), true); // the next block, one row down
+  // the card stands under the call it asks about, in its block; the words are the next block
+  assertEquals(out.includes("⚙ send(to: )\n? approve u1\n\n11 Sep 11:14 • listo"), true);
   // a call that did what it says adds no row of its own: the second one closes the screen
   assertEquals(out.endsWith("⚙ send(to: )\n"), true, JSON.stringify(out));
 });
@@ -321,8 +323,83 @@ Deno.test("recap: the work shows, not just the words — and an open card is sti
   const out = plain(screen());
   assertEquals(out.includes("⚙ send"), true); // the call it made
   assertEquals(out.includes("✓"), false); // which went fine, and so says nothing else
-  assertEquals(out.includes("? approve send(to: Verónica)"), true);
-  assertEquals(out.includes("? approve send(to: Sofía) — answered"), true); // history, not a card
+  // a card under a call the page shows is the ask and its handle, nothing repeated; one
+  // whose call the page never showed names it whole
+  assertEquals(out.includes("⚙ send(to: )\n? approve u1\n"), true);
+  assertEquals(out.includes("? approve u2 send(to: Sofía)\n— u2 allowed once"), true);
+  assertEquals(out.includes("answered"), false); // the answer is a row, not a mark on the ask
   assertEquals(gates, ["u1"]); // only the open one joins the pile `/y` answers
   assertEquals(out.includes("\n\n\n"), false);
+});
+
+// The transcript is append-only: a row written is never rewritten, so what a reopened
+// surface prints for a window is exactly what the live screen printed as it happened —
+// the ask, the answer, the outcome each on the row its own event bought.
+Deno.test("a recap prints exactly what the live screen printed", () => {
+  const TS = "2026-09-11T14:14:00Z";
+  const at = (id: string, type: string, data: Json, payload: Record<string, Json> = {}): Event => ({
+    id,
+    ts: TS,
+    type,
+    payload: { turn_id: "t1", ...payload },
+    agent: { id: AGENT, session_id: "mind" },
+    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    parts: [{ type: "data", kind: type, data }],
+  } as unknown as Event);
+  // the principal's own lines are the screen's to echo, not the painter's: they stand
+  // outside the comparison, as does the blank row a live screen stands ready on
+  const history: Event[] = [
+    at("u1", "tool_use", { name: "send", input: { to: "Roxi", text: "Terrada 1439" } }),
+    at("g1", "permission_request", {
+      tool: "send",
+      call: "send(to: Roxi)",
+      detail: "send(to: Roxana Casol (5492616510433), text: Terrada 1439)",
+      lands: ["Roxana Casol (5492616510433)"],
+    }, { ref_id: "u1" }),
+    at("r1", "tool_result", { is_error: false, output: { status: "pending_approval" } }, {
+      ref_id: "u1",
+    }),
+    at("p1", "permission_response", { behavior: "allow", scope: "conversation" }, { ref_id: "u1" }),
+    {
+      ...at("r2", "tool_result", { is_error: false, output: "sent" }, {
+        ref_id: "u1",
+        deferred: true,
+      }),
+      parts: [{
+        type: "data",
+        kind: "tool_result",
+        text: "send(to: Roxi)",
+        data: { is_error: false, output: "sent" },
+      }],
+    } as unknown as Event,
+    at("u2", "tool_use", { name: "bash", input: { command: "date" } }),
+    at("r3", "tool_result", { is_error: true, output: "Command exited with code 1" }, {
+      ref_id: "u2",
+    }),
+    answered(TS, "listo, enviada"),
+  ];
+
+  const live = surface();
+  for (const e of history) {
+    if (e.type === "message" && ownVoice(e, SESSION)) {
+      live.p.delta({ kind: "text", text: textOf(e) });
+    }
+    live.p.event(e);
+  }
+  const again = surface();
+  again.p.recap(history);
+
+  const seen = plain(live.screen());
+  assertEquals(plain(again.screen()).trimEnd(), seen.trimEnd());
+  assertEquals(
+    seen.includes(
+      "⚙ send(to: Roxi, text: Terrada 1439)\n" +
+        "? approve u1 → Roxana Casol (5492616510433)\n" +
+        "— u1 allowed for this conversation\n\n" +
+        "send(to: Roxi) → sent\n\n" +
+        "⚙ bash(date)\n✗ Command exited with code 1\n",
+    ),
+    true,
+    JSON.stringify(seen),
+  );
 });

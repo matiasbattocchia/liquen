@@ -19,16 +19,40 @@
  * second row saying nothing — so only a failure speaks again: `✗` and the reason the tool
  * gave, whole, because that is the row a principal acts on.
  *
+ * The transcript is append-only: a row, once written, is a fact about what happened, and
+ * only the row being written may still change. So an approval is two rows, each written
+ * when its event arrives — the ask (`?`, named by the handle the agent and `cancel(id)`
+ * use) and, later, the answer (`—`) — and a recap of a window prints exactly the rows the
+ * live screen printed for it. Whatever is true only for now — which cards are open, what
+ * can be typed to answer them — is the surface's to show on its own line, never a row.
+ *
  * Every message line says when, dim, in the org's clock: a recalled row by the clock that
  * wrote it, a live block by the surface's clock as it opens — the deltas inside it need no
  * time of their own. The agent's text is markdown, and it is shown as styles as it streams
  * (`md.ts`). A turn that says nothing paints nothing — not even a line's end.
  */
 
-import { hhmm, isCancelled, outcomeLine, ownVoice, SILENCE, silent, textOf } from "./render.ts";
+import {
+  hhmm,
+  isCancelled,
+  outcomeLine,
+  ownVoice,
+  shortId,
+  SILENCE,
+  silent,
+  textOf,
+} from "./render.ts";
 import { describeCall } from "./describe.ts";
 import { markdown, renderMarkdown } from "./md.ts";
-import type { Delta, Event, SessionRef, ToolResultEvent } from "./types.ts";
+import type {
+  Delta,
+  Event,
+  EventId,
+  PermissionRequestEvent,
+  PermissionResponseEvent,
+  SessionRef,
+  ToolResultEvent,
+} from "./types.ts";
 import { tailOf } from "./line.ts";
 
 export const DIM = "\x1b[2m";
@@ -59,7 +83,6 @@ export interface Surface {
   thinking: boolean; // stream thinking deltas (dim) or drop them
   zone?: string; // the org's clock, the one every stamp is read in (§5)
   clock?: () => Date; // now, for the stamp a live block opens with; tests hand a fixed one
-  gateHint?: string; // the answer vocabulary printed under an approval card
   onGate?(ref: string): void;
   onGateSettled?(ref: string): void;
 }
@@ -73,6 +96,7 @@ export interface Painter {
 
 export function painter(s: Surface): Painter {
   let held = "";
+  const shown = new Set<EventId>(); // the calls this surface has printed, by tool_use id
   let checkpointing = false; // a checkpoint is under way: its first delta announced it
   let md = markdown();
   let block: "none" | "text" | "thinking" = "none"; // what the transcript last streamed
@@ -166,6 +190,7 @@ export function painter(s: Surface): Painter {
         if (inBlock) s.prompt();
         else s.gap();
         s.write(`${DIM}⚙ ${describeCall(e.parts[0].data, { full: true })}${RESET}\n`);
+        shown.add(e.id);
         return;
       }
       case "tool_result": {
@@ -184,18 +209,22 @@ export function painter(s: Surface): Painter {
         return;
       }
       case "permission_request": {
-        const { detail } = e.parts[0].data;
-        const ref = e.payload?.ref_id;
-        if (typeof ref === "string") s.onGate?.(ref);
-        s.gap();
-        s.write(`${YELLOW}? approve ${detail}${RESET}${s.gateHint ? `\n${s.gateHint}` : ""}`);
-        s.prompt();
+        s.onGate?.(e.payload.ref_id);
+        // a card raised mid-sentence stands under the call it asks about, in that block
+        const inBlock = block !== "none";
+        settle();
+        if (inBlock || shown.has(e.payload.ref_id)) s.prompt();
+        else s.gap();
+        s.write(`${YELLOW}${card(e, shown)}${RESET}\n`);
         return;
       }
       case "permission_response": {
-        // settled elsewhere (the agent withdrew it, a surface answered it) — it is no
-        // longer this surface's to answer
-        if (typeof e.payload?.ref_id === "string") s.onGateSettled?.(e.payload.ref_id);
+        // the card is answered — by this surface, another, the agent withdrawing it, or
+        // the clock — and the answer is a row of its own, under whatever stands
+        s.onGateSettled?.(e.payload.ref_id);
+        settle();
+        s.prompt();
+        s.write(`${DIM}${verdictRow(e)}${RESET}\n`);
         return;
       }
       case "summary": {
@@ -234,8 +263,9 @@ export function painter(s: Surface): Painter {
    * every tool it ran and every approval it is still waiting on would vanish the moment
    * the surface was reopened, which is also the moment a principal most needs to see them.
    *
-   * A card nobody answered is still a card: it is painted live, with its hint, and handed
-   * to the surface's pile, so `/y` after a restart answers what was asked before it.
+   * A card nobody answered is still a card: it is handed to the surface's pile, so `/y`
+   * after a restart answers what was asked before it. It is not painted differently for
+   * it — its answer, when one comes, is the next row.
    */
   const recap = (events: Event[]): void => {
     // the page keeps its own tail: one blank row between blocks, as the live screen has
@@ -268,6 +298,7 @@ export function painter(s: Surface): Painter {
         case "tool_use": {
           gap();
           put(`${DIM}⚙ ${describeCall(e.parts[0].data, { full: true })}${RESET}`);
+          shown.add(e.id);
           continue;
         }
         case "tool_result": {
@@ -284,16 +315,16 @@ export function painter(s: Surface): Painter {
           continue;
         }
         case "permission_request": {
-          const ref = e.payload?.ref_id;
-          const open = typeof ref === "string" && !settled.has(ref);
-          if (open && typeof ref === "string") s.onGate?.(ref); // still ours to answer
-          gap();
-          const { detail } = e.parts[0].data;
-          // an answered card is history, and reads as history: no hint under it, since
-          // there is nothing left to type
-          if (open) {
-            put(`${YELLOW}? approve ${detail}${RESET}${s.gateHint ? `\n${s.gateHint}` : ""}`);
-          } else put(`${DIM}? approve ${detail} — answered${RESET}`);
+          const ref = e.payload.ref_id;
+          if (!settled.has(ref)) s.onGate?.(ref); // still ours to answer
+          if (shown.has(ref)) row();
+          else gap();
+          put(`${YELLOW}${card(e, shown)}${RESET}`);
+          continue;
+        }
+        case "permission_response": {
+          row();
+          put(`${DIM}${verdictRow(e)}${RESET}`);
           continue;
         }
         case "summary": {
@@ -329,4 +360,28 @@ function failure(e: ToolResultEvent): string {
   const { output } = e.parts[0].data;
   const said = (typeof output === "string" ? output : JSON.stringify(output) ?? "").trimEnd();
   return said === "" ? "failed, saying nothing" : said;
+}
+
+/** The ask, named by the handle the agent's own words and `cancel(id)` use, so `/y cca9a2`
+ *  and "cancelo el duplicado cca9a2" point at the same row. A call this surface has already
+ *  printed is not printed again: the card adds only where it lands, the address the
+ *  model's words could not carry. A call it has not — the window opened after it — is
+ *  named whole, since the ask would otherwise be about nothing on screen. */
+function card(e: PermissionRequestEvent, shown: Set<EventId>): string {
+  const { detail, lands } = e.parts[0].data;
+  const handle = shortId(e.payload.ref_id);
+  if (!shown.has(e.payload.ref_id)) return `? approve ${handle} ${detail}`;
+  return lands?.length ? `? approve ${handle} → ${lands.join(", ")}` : `? approve ${handle}`;
+}
+
+/** The answer, as a row of its own: what was decided and how far it reaches, in the
+ *  principal's vocabulary. The clock's settlement says so. */
+function verdictRow(e: PermissionResponseEvent): string {
+  const { behavior, scope, reason, lapsed } = e.parts[0].data;
+  const handle = shortId(e.payload.ref_id);
+  if (lapsed) return `— ${handle} lapsed, nobody answered${reason ? ` (${reason})` : ""}`;
+  const reach = scope === "once" ? "once" : scope === "always" ? "always" : `for this ${scope}`;
+  return `— ${handle} ${behavior === "allow" ? "allowed" : "refused"} ${reach}${
+    reason ? `: ${reason}` : ""
+  }`;
 }

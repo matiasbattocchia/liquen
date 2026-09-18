@@ -60,7 +60,7 @@ import {
   DEFAULT_TIMEZONE,
   DEFAULT_WINDOW_LIMIT,
 } from "./config.ts";
-import { type Describe, describeCall, nameResolver } from "./describe.ts";
+import { type Describe, describeCall, landings, nameResolver } from "./describe.ts";
 import { PROCESSOR_TIMEOUT_MS } from "./processors.ts";
 import type { Appender, Reader } from "./store/log.ts";
 import type { AgentRow, Registry } from "./store/agents.ts";
@@ -1453,7 +1453,12 @@ async function act(
             parts: [{
               type: "data",
               kind: "permission_request",
-              data: { tool: name, call: describe(use), detail: describe(use, true) },
+              data: {
+                tool: name,
+                call: describe(use),
+                detail: describe(use, true),
+                lands: landings(use.parts[0].data, resolve),
+              },
             }],
           } satisfies Draft<PermissionRequestEvent>,
         );
