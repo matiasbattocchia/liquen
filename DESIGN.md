@@ -1373,7 +1373,9 @@ it — so the original row stays sealed, past WUMs stay invariant (§3), and the
 as a later `<transcript re=…>` line whose wake IS the feature: the agent reads the note
 when its words arrive (the instructions say to wait for them). Sender-less and agent-less
 (the harness derived it — which is exactly what keeps it off dispatch's outbound predicate
-and out of the mirror's absorb guard), `external_id = transcript:<audio external_id>` (the
+and out of the mirror's absorb guard); render puts the AUDIO's author on the line, since the
+words are the only part of the pair that reads as speech and the marker they point at may
+be a turn behind or past the WUM caps. `external_id = transcript:<audio external_id>` (the
 upsert makes one audio message exactly one transcript), and a `<hash>.txt` sidecar beside
 the media file caches the work — the same bytes forwarded again publish from the cache.
 Serial, one note at a time: transcription is CPU-bound and a burst of forwarded notes is

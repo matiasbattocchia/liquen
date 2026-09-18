@@ -1441,9 +1441,73 @@ Deno.test("a transcript add-event renders as <transcript re=…>, not as a react
     now: t,
   });
   const dump = JSON.stringify(messages);
-  // no id (nothing points at a transcript), no from (nobody spoke — the harness derived it)
-  assertStringIncludes(dump, '<transcript re=\\"e1\\">hola, ¿viste el set?</transcript>');
+  // no id (nothing points at a transcript); the author is the audio's, worn on the line
+  // that carries the words
+  assertStringIncludes(
+    dump,
+    '<transcript external=\\"sol\\" address=\\"549\\" re=\\"e1\\">hola, ¿viste el set?</transcript>',
+  );
   assert(!dump.includes("<reaction"));
+});
+
+Deno.test("a transcript wears its audio's author even when the marker is capped out or a turn away (§5)", () => {
+  const t = "2026-08-16T12:00:00Z";
+  const conv = { address: "wa:sol", kind: "direct" as const };
+  const sol = { address: "549", name: "sol" };
+  // the principal's own voice note into Sol's room: a `principal=` marker
+  const voice: MessageEvent = {
+    ...worldMsg("e1", t, conv, { address: "org", name: "Org" }, ""),
+    agent: { id: "a1" },
+  };
+  voice.envelope.external_id = "whatsapp:wmw.x.note";
+  voice.parts = [{
+    type: "file",
+    kind: "audio",
+    file: { mime_type: "audio/ogg", uri: "file:///tmp/n.ogg" },
+  }];
+  // nine of Sol's replies land before the transcript does: the per-room cap drops the marker
+  const chatter = Array.from(
+    { length: 9 },
+    (_, i) => worldMsg(`c${i}`, `2026-08-16T12:0${Math.min(i, 9)}:00Z`, conv, sol, `línea ${i}`),
+  );
+  const transcript: MessageEvent = {
+    ...worldMsg("e2", "2026-08-16T12:10:00Z", conv, null, ""),
+    parts: [{ type: "text", kind: "transcript", text: "hoy duerme conmigo" }],
+    payload: { action: "add", ref_external_id: "whatsapp:wmw.x.note" },
+  };
+  const { messages } = render({
+    events: [voice, ...chatter, transcript],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t,
+    roster: { names: { a1: "Matías" }, principals: ["a1"] },
+  });
+  const dump = JSON.stringify(messages);
+  assert(!dump.includes('<audio id=\\"e1\\"')); // the marker fell to the cap…
+  // …and the words still say who spoke: the referent resolves against the whole window
+  assertStringIncludes(
+    dump,
+    '<transcript principal=\\"Matías\\" re=\\"?\\">hoy duerme conmigo</transcript>',
+  );
+});
+
+Deno.test("a transcript whose audio is outside the window wears no author (§5)", () => {
+  const t = "2026-08-16T12:00:00Z";
+  const conv = { address: "wa:sol", kind: "direct" as const };
+  const transcript: MessageEvent = {
+    ...worldMsg("e2", t, conv, null, ""),
+    parts: [{ type: "text", kind: "transcript", text: "hola" }],
+    payload: { action: "add", ref_external_id: "whatsapp:wmw.gone" },
+  };
+  const { messages } = render({
+    events: [transcript],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t,
+  });
+  assertStringIncludes(JSON.stringify(messages), '<transcript re=\\"?\\">hola</transcript>');
 });
 
 Deno.test("calendar changes render hoisted: <calendar data=…>, ISO values as clocks (§5)", () => {

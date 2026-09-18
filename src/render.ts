@@ -1125,7 +1125,8 @@ export function renderHits(
 /** One world message line — the deviation marked (§3, §5): `<msg>` carries text
  *  (`action="edit"` = replacement content, `action="delete"` = the removed content),
  *  `<reaction>` carries the glyph (`action="remove"` = an un-react), `<transcript>` carries
- *  the derived words of the audio its `re` points at. A DATA part renders as its kind's own
+ *  the derived words of the audio its `re` points at, in that audio's author's name. A DATA
+ *  part renders as its kind's own
  *  element — `<location>`, `<contacts>`, `<calendar>`, whatever a connector ships — the
  *  pruned object riding a `data` attribute as a TS literal; a message that IS one data part
  *  hoists the envelope attributes onto that element and spends no `<msg>` wrapper (`<reaction>`
@@ -1236,9 +1237,16 @@ function msgLine(
   if (action === "add" || action === "remove") {
     // agnostic over WHAT was added — the part names itself (§3). A transcript is the
     // harness's derived words for the audio its `re` points at: no `id` (nothing in the
-    // vocabulary points at one) and no `from` (nobody spoke — the referent's sender did).
+    // vocabulary points at one), and it wears the AUTHOR OF THAT AUDIO — the words are the
+    // only line of the two that reads as speech, so the speaker must be on this line, not
+    // on a marker that may sit a turn away or outside the caps. The transcript row itself
+    // names no sender (the harness wrote it), so the referent's author is the only one there
+    // is: unresolved, the line wears none.
     const t = e.parts.find((p): p is TextPart => p.type === "text" && p.kind === "transcript");
-    if (t) return `<transcript${re}>${escText(t.text)}</transcript>`;
+    if (t) {
+      const spoke = ref.target?.type === "message" ? authorOf(ref.target, session, roster) : "";
+      return `<transcript${spoke}${re}>${escText(t.text)}</transcript>`;
+    }
     const r = e.parts.find((p): p is ReactionPart => p.type === "data" && p.kind === "reaction");
     // `?? ""`: a glyphless reaction (a removal) renders empty — one malformed event must
     // never kill the window render
