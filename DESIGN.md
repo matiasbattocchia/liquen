@@ -2508,7 +2508,9 @@ true for exec (kernel handles it), false for control (only harness/human authori
      swap is a substitution over header values (the handle is the marker, not any
      particular header), so a new tool costs no proxy change — its connect door declares
      the placeholder's env var and the grant's hosts on the vault row (`extra.env`,
-     `extra.hosts`), main fronts what's declared PER AGENT — the org's row, or the
+     `extra.hosts`; for a service with no connector, the shipped `token` door writes the
+     row from a paste — the tool column of the §4 grid, one row and nothing else), main
+     fronts what's declared PER AGENT — the org's row, or the
      agent's own, never a peer's (`frontedFor`), so the handle in a pocket names a grant
      its holder has and the audit's agent is the caller — and the swap refuses any dial outside
      the declaration (so a handle can't be aimed at an echo endpoint to read the token

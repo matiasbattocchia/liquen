@@ -135,8 +135,17 @@ truncation, a status outside 2xx as a failure — and the credential never enter
 space: a vault row declaring `extra.env` and `extra.hosts` is fronted as a `mu-grant-…`
 handle under that name in the agent's environment, and the egress proxy swaps it for the
 live token on the way out, toward those hosts only. `fetch -H "Authorization: Bearer
-$GH_TOKEN" https://api.github.com/user` is the whole of it; the GitHub doors above write
-that row, and a connector of the org's own writes one for its service the same way.
+$GH_TOKEN" https://api.github.com/user` is the whole of it. The GitHub doors above write
+that row for GitHub; for any other API the `token` door writes one from a paste:
+
+```sh
+deno task connect token crm --env CRM_TOKEN --hosts api.crm.io,*.crm.io   # the org's
+deno task connect token crm --env CRM_TOKEN --hosts api.crm.io --agent ana # one agent's own
+```
+
+`--probe <url>` spends the token once before writing, so a bad paste is refused rather
+than stored; the grant is picked up at the next `deno task start`. A connector of the org's
+own writes the same row for its service from its own door.
 
 ## Development
 

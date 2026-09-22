@@ -12,9 +12,10 @@
 import { findRoot, orgFlag } from "../config.ts";
 import { entry, report } from "../entry.ts";
 
-/** The services that ship with the package — each `src/connect/<name>/` a connect door and
- *  a run.ts. A name, not a stat: where the package is may be a URL. */
-export const SHIPPED = ["slack", "google", "whatsapp", "github"];
+/** The services that ship with the package — each `src/connect/<name>/` a connect door,
+ *  and a run.ts where the service delivers (`token` grants a credential and runs nothing).
+ *  A name, not a stat: where the package is may be a URL. */
+export const SHIPPED = ["slack", "google", "whatsapp", "github", "token"];
 
 /** The connect door for `name`, as something `deno run` takes: a shipped door by its URL
  *  beside this module (a checkout's `file:`, the registry's `https:`), the org's own by
@@ -58,7 +59,7 @@ const USAGE = `usage: liquen connect
 
   Connect a service to the org; bare, the map of what is connected. --help on any door.
 
-  <service>     a shipped door: ${SHIPPED.join(" · ")}
+  <service>     a shipped door: ${SHIPPED.join(" · ")} — token is any API's bearer
   <path>        a door by module path (anything with a slash) — the org's own live under
                 <org>/connectors/<name>/connect.ts and are named like the shipped ones
   --dir <org>   the org, when run from elsewhere`;

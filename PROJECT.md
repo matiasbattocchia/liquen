@@ -3318,3 +3318,18 @@ one, and the bash description teaches it beside the file helpers. `bash.test.ts`
 through a shell against a loopback origin; `fetch.test.ts` holds the rendering and the
 exit rule.
 
+### A token door for any API (2026-09-22) — LANDED
+
+With `fetch` on the PATH, the only thing between an agent and an API with no connector
+was the vault row that fronts its credential — and only a shipped door or an org's own
+`connectors/<name>/connect.ts` could write one. `liquen connect token <name> --env <VAR>
+--hosts <list> [--agent <id> | --org] [--probe <url>]` (`src/connect/token/connect.ts`)
+writes that row from a paste: `token:<name>` for the org, `token:<name>:<agent>` for one
+agent, `value.token` static, `extra.env` + `extra.hosts` for the proxy. It writes nothing
+else — a tool credential is capability, not identity, so no connection, membership, or
+event, and no ingest has to be listening. `--probe` spends the token once before writing
+and refuses a bad paste; the door reads the roster off the catalog (a door runs before any
+start), and says what `frontedFor` will do with the var when another row already claims
+it. `token` joins `SHIPPED` without a run.ts: `start` looks one up only for a declared
+connection. The turtle sonar migration files its per-tenant bearers through this door.
+

@@ -60,8 +60,12 @@ reads: `GH_TOKEN`, `GOOGLE_WORKSPACE_CLI_TOKEN`), and `extra.hosts`, the only or
 token may be spent toward (exact hostnames or `*.suffix`). main fronts every row that
 declares an env var (the org's own row wins; several contenders for one var → none is
 fronted), and the proxy substitutes the handle wherever it appears in a header value —
-no proxy or main change per tool. A handle a tool base64s or signs over (Basic, SigV4)
-can't ride this path; such schemes belong broker-side.
+no proxy or main change per tool. A service with no connector at all takes the same row
+from the shipped `token` door (`liquen connect token <name> --env <VAR> --hosts <list>`,
+`src/connect/token/connect.ts`): a pasted bearer under `token:<name>` (the org's) or
+`token:<name>:<agent>` (an agent's own), and nothing else — no connection, no membership,
+no event, because a tool credential is capability, not identity. A handle a tool base64s
+or signs over (Basic, SigV4) can't ride this path; such schemes belong broker-side.
 
 A connector's subsection holds what is **that service's**: the addresses of its wire, the
 scopes it asks for, the events it maps, the tenant it files the org under. A value that is
