@@ -3301,3 +3301,20 @@ session's config and transport for the next invocation. The hang-up restores the
 values — the lifetime the tail's `cwd` already has — so `config.jsonc` remains what the
 daemon thinks with on its own. The roster's metered transports are a per-agent stock, and
 a tuned provider gets a metered one of its own attributed to the same agent.
+
+### HTTP is a binary, not a tool (2026-09-22) — LANDED
+
+An org whose agents keep a CRM true through its API asked what the call should be — a
+tool that injects the bearer, as the pi harness it replaces had, or a binary. The design
+already answered: a tool exists where a call needs main's authority, and an HTTP call
+needs none of it, because the credential boundary is the egress proxy. What was missing
+was the binary. `curl` exits 0 on a 500, prints an unbounded body into the turn, and knows
+nothing of `aread`'s footer — so `fetch` (`src/bin/fetch.ts`) is laid as a fourth shim
+beside the file binaries: curl's flags, a non-2xx as the command failing with the body,
+head truncation with `aread`'s overrides, `-o` for the whole response, JSON pretty, bytes
+named rather than dumped, transport failures said as sentences through `connect/http.ts`.
+The shim grants net and env, names the org's trust bundle as `DENO_CERT` where main wrote
+one, and the bash description teaches it beside the file helpers. `bash.test.ts` runs it
+through a shell against a loopback origin; `fetch.test.ts` holds the rendering and the
+exit rule.
+

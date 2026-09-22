@@ -128,6 +128,16 @@ Every door closes by naming what the org still owes, and `--help` explains each 
    The ingest is one webhook function either way — Socket Mode is just the local carrier;
    an edge deploy serves the same function at the app's Events API request URL.
 
+### Any HTTP API
+
+An agent reaches an API with the `fetch` binary on its PATH — curl's flags, `aread`'s
+truncation, a status outside 2xx as a failure — and the credential never enters user
+space: a vault row declaring `extra.env` and `extra.hosts` is fronted as a `mu-grant-…`
+handle under that name in the agent's environment, and the egress proxy swaps it for the
+live token on the way out, toward those hosts only. `fetch -H "Authorization: Bearer
+$GH_TOKEN" https://api.github.com/user` is the whole of it; the GitHub doors above write
+that row, and a connector of the org's own writes one for its service the same way.
+
 ## Development
 
 This repo is the package. An org runs a checkout instead of the registry by naming it in

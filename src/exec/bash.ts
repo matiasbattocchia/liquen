@@ -126,7 +126,11 @@ export function bashTool(opts: BashOptions): ExecTool {
         "File helpers on PATH: aread <path> [offset] [limit] [maxBytes]; on an image or PDF it " +
         "attaches the file itself, so you see it · " +
         "awrite <path> (content on stdin/heredoc) · " +
-        "aedit <path> (conflict-marker blocks on stdin: <<<<<<< old ======= new >>>>>>>). " +
+        "aedit <path> (conflict-marker blocks on stdin: <<<<<<< old ======= new >>>>>>>) · " +
+        "fetch [-X METHOD] [-H 'k: v'] [-d BODY|@-] [-i] [-o PATH] URL [limit] [maxBytes] for HTTP: " +
+        "a status outside 2xx fails, JSON prints pretty, the body is head-truncated like aread " +
+        "(-o saves it whole); an API's credential is the $VAR the environment holds, sent as a " +
+        'header (-H "Authorization: Bearer $VAR"). ' +
         "rg and fd are available for search when installed.",
       input_schema: {
         type: "object",
@@ -416,8 +420,8 @@ function denoDir(): Promise<string> {
 
 /** The harness's own tools, on disk where a shell can exec them: `aread`/`awrite`/`aedit`
  *  under `<dir>/system/bin`, each a shim running `bin/afs.ts` by the URL this package
- *  resolves it at. Laid on every boot — the shims are the package's, not the org's, and a
- *  package upgrade must reach them.
+ *  resolves it at, and `fetch` running `bin/fetch.ts` the same way. Laid on every boot —
+ *  the shims are the package's, not the org's, and a package upgrade must reach them.
  *
  *  A shim runs as the agent's uid, which has no module cache of its own and no way to fill
  *  one (the egress proxy does not front the registry, §9), so it reads THIS process's cache
@@ -425,28 +429,43 @@ function denoDir(): Promise<string> {
  *  for the network — and every boot warms that cache first (`deno cache` of the module by
  *  its URL: a no-op once it is there; a fetch the harness, not the agent, makes). The pin
  *  lives in the shim, not the agent's environment: a script the agent writes runs on the
- *  agent's own deno, with its own cache and the proxy's network. Returns the directory. */
+ *  agent's own deno, with its own cache and the proxy's network. `fetch` dials the world
+ *  through the proxy the environment names, and trusts what the org's trust bundle holds
+ *  (`system/ca-bundle.pem`, main's — the system's roots and the liquen CA): the shim
+ *  names it as `DENO_CERT` when it is there, and a ground without a proxy runs on the
+ *  system's roots alone. Returns the directory. */
 async function layShims(dir: string): Promise<string> {
   const bin = `${dir}/system/bin`;
   await Deno.mkdir(bin, { recursive: true });
   const afs = import.meta.resolve("../bin/afs.ts");
-  const [cache, warm] = await Promise.all([
-    denoDir(),
-    new Deno.Command("deno", { args: ["cache", afs], stdout: "null", stderr: "piped" }).output(),
-  ]);
-  if (!warm.success) {
-    throw new Error(
-      `cannot cache ${afs} for the file shims: ${new TextDecoder().decode(warm.stderr).trim()}`,
-    );
-  }
-  for (const [name, verb] of [["aread", "read"], ["awrite", "write"], ["aedit", "edit"]]) {
+  const http = import.meta.resolve("../bin/fetch.ts");
+  const warmed = (url: string) =>
+    new Deno.Command("deno", { args: ["cache", url], stdout: "null", stderr: "piped" }).output()
+      .then((o) => {
+        if (!o.success) {
+          throw new Error(
+            `cannot cache ${url} for the shims: ${new TextDecoder().decode(o.stderr).trim()}`,
+          );
+        }
+      });
+  const [cache] = await Promise.all([denoDir(), warmed(afs), warmed(http)]);
+  const shim = async (name: string, line: string) => {
     const path = `${bin}/${name}`;
-    await Deno.writeTextFile(
-      path,
-      `#!/bin/sh\nexec env DENO_DIR='${cache}' deno run --cached-only --allow-read --allow-write '${afs}' ${verb} "$@"\n`,
-    );
+    await Deno.writeTextFile(path, `#!/bin/sh\n${line}\n`);
     await Deno.chmod(path, 0o755);
+  };
+  for (const [name, verb] of [["aread", "read"], ["awrite", "write"], ["aedit", "edit"]]) {
+    await shim(
+      name,
+      `exec env DENO_DIR='${cache}' deno run --cached-only --allow-read --allow-write '${afs}' ${verb} "$@"`,
+    );
   }
+  const bundle = `${dir}/system/ca-bundle.pem`;
+  await shim(
+    "fetch",
+    `[ -f '${bundle}' ] && export DENO_CERT='${bundle}'\n` +
+      `exec env DENO_DIR='${cache}' deno run --cached-only --allow-net --allow-env --allow-read --allow-write '${http}' "$@"`,
+  );
   return bin;
 }
 
@@ -459,11 +478,12 @@ async function layShims(dir: string): Promise<string> {
  *  already stands, so writing one is `awrite memories/x.md`, not a path it must be told.
  *  PATH is the doc cascade in binary form — the same widening scopes, narrowest FIRST so
  *  nothing below can shadow a contract the layer above must keep:
- *    `<dir>/system/bin`       the harness's own — `aread`/`awrite`/`aedit`, shims every
- *                             boot lays, each running the package's `bin/afs.ts` where the
- *                             package is (a checkout's file, the registry's URL) out of
- *                             the harness's own module cache, so the tool answers for the
- *                             version that booted and never fetches from an agent's uid.
+ *    `<dir>/system/bin`       the harness's own — `aread`/`awrite`/`aedit`/`fetch`, shims
+ *                             every boot lays, each running the package's `bin/afs.ts` or
+ *                             `bin/fetch.ts` where the package is (a checkout's file, the
+ *                             registry's URL) out of the harness's own module cache, so the
+ *                             tool answers for the version that booted and never fetches
+ *                             its own code from an agent's uid.
  *    `<dir>/organization/bin`          what the org installs for all its agents (`gws`).
  *    `<dir>/agents/<id>/bin`  what THIS agent installed for itself — its own folder, so a
  *                             binary it fetched is as private as its notes.

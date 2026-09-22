@@ -2111,6 +2111,20 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   `awrite` commit via **temp + fsync + rename** — crash/disconnect-atomic, mode-preserving.
   Cross-turn concurrency needs no lock: the conflict-block match IS the optimistic guard (a
   colleague's change → no match → re-read).
+- **`fetch [-X METHOD] [-H 'k: v']… [-d BODY|@-|@FILE] [-i] [-o PATH] URL [limit] [maxBytes]`**
+  — HTTP as a binary, credential-blind: the credential boundary is the egress proxy
+  (below), so the call needs nothing of main's, and an agent reaches an API by sending the
+  `$VAR` handle its environment holds as a header. What it adds over a raw client is the
+  read discipline: a status outside 2xx is a **failure** — status and body on stdout,
+  exit 1, the same `is_error` path as any command, so a 500 is the model's
+  self-correction and never a silent success; the body is **head**-truncated under
+  `aread`'s rule (a response is a read; its beginning is the useful end) with `aread`'s
+  two overrides in `aread`'s order, and `-o` saves the whole response for `aread` to
+  page; JSON prints pretty; bytes the model cannot read are named, never dumped; `-d`
+  implies POST and a JSON content-type unless a header says otherwise. Transport
+  failures are sentences (`cannot reach <host> — …`). The shim trusts the org's bundle
+  (`system/ca-bundle.pem`) and dials through the proxy the environment names, so a
+  fronted grant's handle is swapped on the way out like any other client's.
 - **No `agrep`/`aglob`/`als`** — pi itself shells out to ripgrep/fd; bespoke binaries
   only earn their existence where semantics differ from stock tools. The image ships
   `rg` + `fd`, and the bash tool description points at them.
@@ -2118,8 +2132,8 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   Gates are for outward effects (`send`, §9 gating); the workspace is the agent's own.
   (Both references promote file-ops to dedicated tools chiefly to gate/schedule them —
   a need we've explicitly declined for the exec plane.)
-- Shims: every boot lays `aread`/`awrite`/`aedit` under `{dir}/system/bin` as `deno run`
-  shims of the package's `bin/afs.ts`, addressed where the package is — a checkout's file or
+- Shims: every boot lays `aread`/`awrite`/`aedit` and `fetch` under `{dir}/system/bin` as
+  `deno run` shims of the package's `bin/afs.ts` and `bin/fetch.ts`, addressed where the package is — a checkout's file or
   the registry's URL — so the tool an agent runs answers for the version that booted. A shim
   runs as the agent's uid out of the harness's own module cache (`DENO_DIR` pinned in the
   shim line, `--cached-only`, the cache warmed at boot): the agent's uid has no cache of its
@@ -2141,6 +2155,12 @@ beats a bespoke tool):
   render reads them the privileged way — the in-process `Docs` port, not the agent's tool.
 - **reply / spawn / handoff / ask-principal** = `send` (+ routing). **soft-stop** = stop
   emitting + `bash` kill. **doc-read** = the substrate read.
+- **HTTP** = `bash` + the `fetch` binary. A tool exists where a call needs main's
+  authority — the log, the agent's identity, the gate, the scoped port — and an HTTP call
+  needs none of it: the credential boundary is the egress proxy, which fronts a grant as
+  a handle in the agent's environment and swaps it on the wire whatever client sent it.
+  A tool that injected the bearer itself would stand a second boundary beside the one
+  that already holds, and could not be piped, looped over, or run from a script.
 - **MCP domain tools** (calendar, CRM…) = **dynamic per agent** (from tool-docs), credentials
   injected by nu (§8) — real tools, but wired at runtime, not part of the core surface.
 

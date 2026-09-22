@@ -50,6 +50,10 @@ Deno.test("bash: PATH widens by scope — the agent's own bin cannot shadow the 
     const shim = await Deno.readTextFile(`${dir}/system/bin/aread`);
     assertStringIncludes(shim, "env DENO_DIR='");
     assertStringIncludes(shim, "--cached-only");
+    // fetch is laid the same way, and trusts the org's bundle only where main wrote one
+    const http = await Deno.readTextFile(`${dir}/system/bin/fetch`);
+    assertStringIncludes(http, `[ -f '${dir}/system/ca-bundle.pem' ] && export DENO_CERT=`);
+    assertStringIncludes(http, "--cached-only --allow-net");
     const path = (await run("echo $PATH")).split(":");
     assert(
       path.indexOf(`${dir}/organization/bin`) < path.indexOf(`${wsOf(dir)}/bin`),
@@ -268,6 +272,30 @@ Deno.test("bash: the model can override the truncation limits", async () => {
     assert(!wide.includes("full output:")); // nothing truncated, nothing persisted
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("binaries: fetch through bash — a loopback answer, pretty, and a 404 as an error", async () => {
+  const server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen() {} }, (req) => {
+    if (new URL(req.url).pathname === "/ok") {
+      return Response.json({ got: req.headers.get("authorization"), method: req.method });
+    }
+    return new Response("nothing here", { status: 404 });
+  });
+  const base = `http://127.0.0.1:${server.addr.port}`;
+  try {
+    await withPlane(async ({ run }) => {
+      // the header rides as written: a $VAR the environment holds is the proxy's to swap
+      const out = await run(
+        `export TOK=mu-grant-x; fetch -H "Authorization: Bearer $TOK" ${base}/ok`,
+      );
+      assertStringIncludes(out, '"got": "Bearer mu-grant-x"');
+      assertStringIncludes(out, '"method": "GET"');
+      // a status outside 2xx is the command failing: the is_error path, body included
+      await assertRejects(() => run(`fetch ${base}/miss`), Error, "HTTP 404\nnothing here");
+    });
+  } finally {
+    await server.shutdown();
   }
 });
 
