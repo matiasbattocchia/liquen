@@ -1236,12 +1236,27 @@ function spoken(e: MessageEvent): boolean {
   return a !== "add" && a !== "remove" && a !== "delete";
 }
 
+/** The answer that is not words (§5): a reaction OUR side put on their line. A room whose
+ *  last word is a courtesy — "gracias", "igualmente", a thumbs-up — is closed by the ❤️
+ *  that acknowledges it, and nobody is ever going to type into that room again; counting
+ *  words alone left those rooms standing for the whole uptime, so the block filled with
+ *  conversations that were over. `add` is not itself the fact: a voice note's transcript
+ *  rides the same action and carries no sender (so it reads as our side), and closing a
+ *  room because THEY sent an audio is the silent version of the same bug — the part has to
+ *  BE the reaction. `remove` takes an acknowledgment back and answers nothing. */
+function acked(e: MessageEvent): boolean {
+  return e.payload?.action === "add" &&
+    (e.parts ?? []).some((p) => p.type === "data" && p.kind === "reaction");
+}
+
 /** Unanswered conversations (§5): every room in the window whose last word is not our
  *  side's — this complex (the agent, its principal on any device) or the account itself —
  *  one line each, the room that spoke most recently first. Another roster member's word is
  *  not ours: a peer agent's DM is a room waiting on us. The fact is STRUCTURAL: it holds
  *  until someone on our side speaks there, whatever turns closed in between, which is what
- *  lets it stand in the block that is rewritten every step. The count is the run of their
+ *  lets it stand in the block that is rewritten every step — and a reaction of ours on
+ *  their line closes it as our word would (`acked`), because acknowledging a courtesy IS
+ *  answering it. The count is the run of their
  *  words since ours; `since` is the first of them — how long they have been waiting. A
  *  `group`/`channel` line says `mentioned` when one of those words names an account of
  *  ours; a `direct` room is a mention by construction and says nothing. No bodies: the
@@ -1259,17 +1274,21 @@ export function unansweredOn(
   const rooms = new Map<string, { last: MessageEvent; run: MessageEvent[] }>();
   const names = roomNames(events);
   for (const e of events) {
-    if (e.type !== "message" || silenced(e) || !spoken(e)) continue;
+    if (e.type !== "message" || silenced(e)) continue;
     const conv = e.envelope.conversation;
     if (conv.address === session.conversation || conv.kind === "broadcast") continue;
-    const key = `${e.envelope.service}\u0000${conv.address}`;
-    const room = rooms.get(key) ?? { last: e, run: [] };
-    room.last = e;
     // ours, read the way the window marks a line: an unstamped row is the wire's, and it is
     // ours when the account sent it; a stamped row is one of us, and it is ours when it is
     // this complex — another member's word (a peer agent's DM, a colleague in a room) is
     // theirs, so the room is still waiting on us
     const ours = e.agent === undefined ? ownSide(e) : ownComplex(e, session);
+    // a mark on a message is not a word — except our own reaction, which is how our side
+    // says "seen" without speaking. Theirs stays a mark: a thumbs-up on our line owes us
+    // nothing, and letting it open a room would be the same error the other way round.
+    if (!spoken(e) && !(ours && acked(e))) continue;
+    const key = `${e.envelope.service}\u0000${conv.address}`;
+    const room = rooms.get(key) ?? { last: e, run: [] };
+    if (spoken(e)) room.last = e; // the room's name and its place in the list come from words
     if (ours) room.run = [];
     else room.run.push(e);
     rooms.set(key, room);

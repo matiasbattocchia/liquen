@@ -966,6 +966,56 @@ Deno.test("unansweredOn: a reaction or a delete is a mark on a message, not a wo
   assertEquals(unansweredOn(rooms, SESSION, ACCOUNTS, "UTC"), []);
 });
 
+Deno.test("unansweredOn: our reaction on their last line closes the room — theirs does not", () => {
+  const react = (over: Record<string, unknown>) => ({
+    name: "Ana",
+    kind: "direct" as const,
+    payload: { action: "add" },
+    parts: [{ type: "data", kind: "reaction", data: { unicode: "❤️" } }] as Event["parts"],
+    ...over,
+  });
+  // the shape the block was filling with: we answer, they close with a courtesy, and the
+  // only thing our side has left to say is a reaction
+  const closed = [
+    line("111", T(1), { name: "Ana", kind: "direct", sender: ACCOUNT }),
+    line("111", T(2), { name: "Ana", kind: "direct" }), // "gracias!!"
+    line("111", T(3), react({ sender: ACCOUNT })), // the ❤️ from the phone
+  ];
+  assertEquals(unansweredOn(closed, SESSION, ACCOUNTS, "UTC"), []);
+  // stamped by the agent rather than echoed by the account: the same close
+  const byAgent = [closed[0], closed[1], line("111", T(3), react({ agent: { id: "a1" } }))];
+  assertEquals(unansweredOn(byAgent, SESSION, ACCOUNTS, "UTC"), []);
+  // theirs is still a mark: a thumbs-up on our word owes us nothing, and it must not open
+  // the room either
+  const theirs = [closed[0], line("111", T(2), react({}))];
+  assertEquals(unansweredOn(theirs, SESSION, ACCOUNTS, "UTC"), []);
+  // and it never answers FOR them: their words still stand after their own reaction
+  const still = [line("111", T(1), { name: "Ana", kind: "direct" }), line("111", T(2), react({}))];
+  assertEquals(unansweredOn(still, SESSION, ACCOUNTS, "UTC"), [
+    "unanswered — 1 conversation:",
+    "· Ana — whatsapp direct, 1 since 16 Sep 14:01",
+  ]);
+});
+
+Deno.test("unansweredOn: a transcript rides `add` and carries no sender — it never closes a room", () => {
+  const audio = line("111", T(1), { name: "Ana", kind: "direct" });
+  // the derived words of THEIR voice note: action `add`, and no sender at all, so the
+  // account-echo rule would read it as ours — the part is what tells them apart
+  const transcript = {
+    ...line("111", T(2), {
+      name: "Ana",
+      kind: "direct",
+      payload: { action: "add" },
+      parts: [{ type: "text", kind: "transcript", text: "hola, te consulto por un turno" }],
+    }),
+    envelope: { ...audio.envelope, sender: undefined },
+  } as Event;
+  assertEquals(unansweredOn([audio, transcript], SESSION, ACCOUNTS, "UTC"), [
+    "unanswered — 1 conversation:",
+    "· Ana — whatsapp direct, 1 since 16 Sep 14:01",
+  ]);
+});
+
 Deno.test("unansweredOn: `mentioned` when a word of theirs names an account of ours — in a room, never in a direct", () => {
   const named = { mentions: [{ address: ACCOUNT, name: "Estudio" }] };
   const rooms = [
