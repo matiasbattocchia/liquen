@@ -43,6 +43,11 @@ export interface TimerRow {
   cron?: string;
   /** What the agent wakes to — its own words, read cold. */
   note: string;
+  /** An operator's handle on a STANDING wake (§10): the org armed this one from the CLI,
+   *  and arming the same name again replaces it, so a deployment that runs at every boot
+   *  keeps one row instead of a pile. The agent's own wakes are named by nothing but the
+   *  note they carry. */
+  name?: string;
   /** Where the alarm lands: the session's own conversation. */
   conversation: string;
   /** Provenance (§10): the scheduling `tool_use`'s id — the alarm carries it back as
@@ -84,11 +89,14 @@ export const TIMERS_DDL = `CREATE TABLE IF NOT EXISTS timers (
   fire_at      TEXT NOT NULL,
   cron         TEXT,
   note         TEXT NOT NULL,
+  name         TEXT,
   conversation TEXT NOT NULL,
   ref_id       TEXT,
   created_at   TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS timers_due ON timers (fire_at);`;
+CREATE INDEX IF NOT EXISTS timers_due ON timers (fire_at);
+CREATE UNIQUE INDEX IF NOT EXISTS timers_named
+  ON timers (agent_id, session_id, name) WHERE name IS NOT NULL;`;
 
 type Raw = Record<string, string | null>;
 
@@ -99,6 +107,7 @@ const rowOf = (r: Raw): TimerRow => ({
   fireAt: r.fire_at!,
   ...(r.cron ? { cron: r.cron } : {}),
   note: r.note!,
+  ...(r.name ? { name: r.name } : {}),
   conversation: r.conversation!,
   ...(r.ref_id ? { refId: r.ref_id } : {}),
   ...(r.created_at ? { armedAt: r.created_at } : {}),
@@ -106,10 +115,13 @@ const rowOf = (r: Raw): TimerRow => ({
 
 /** Bind the timers to an open DB (the `createLocker`/`createRegistry` pattern — openLog composes). */
 export function createTimers(db: DatabaseSync): Timers {
+  // OR REPLACE is the named row's whole idempotence: `timers_named` makes (agent, session,
+  // name) unique, so re-arming a standing wake swaps the row in one statement. An unnamed
+  // row conflicts with nothing — the index skips nulls and the id is minted fresh.
   const put = db.prepare(
-    `INSERT INTO timers
-       (id, agent_id, session_id, fire_at, cron, note, conversation, ref_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO timers
+       (id, agent_id, session_id, fire_at, cron, note, name, conversation, ref_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const ripe = db.prepare("SELECT * FROM timers WHERE fire_at <= ? ORDER BY fire_at, id");
   // the predicate is the whole claim: the winner's write makes it false for everyone else
@@ -136,6 +148,7 @@ export function createTimers(db: DatabaseSync): Timers {
         armed.fireAt,
         armed.cron ?? null,
         armed.note,
+        armed.name ?? null,
         armed.conversation,
         armed.refId ?? null,
         armed.armedAt!,
@@ -284,4 +297,86 @@ export function nextFire(cron: string, fromIso: string, tz = "UTC"): string {
     }
   }
   throw new Error(`cron "${cron}" never fires`);
+}
+
+/* ── when ──────────────────────────────────────────────────────────────── */
+
+/** The schedule horizon (§10): a wake fires within a year. Leap-tolerant by a day, so "this
+ *  date next year" always fits. */
+const YEAR_MS = 366 * 864e5;
+
+/** `20m` · `3h` · `2d` · `90s` · `1w` → milliseconds. The units a person says out loud. */
+function durationMs(spec: string): number {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(s|m|h|d|w)\s*$/i.exec(spec);
+  if (!m) throw new Error(`"${spec}" is not a delay — say it like \`20m\`, \`3h\`, \`2d\``);
+  const unit = { s: 1e3, m: 6e4, h: 36e5, d: 864e5, w: 6048e5 }[m[2].toLowerCase()]!;
+  const ms = Number(m[1]) * unit;
+  if (ms <= 0) throw new Error("a delay has to be in the future");
+  return ms;
+}
+
+/**
+ * An `at` moment → UTC ISO. A stamp carrying its own offset (or `Z`) is absolute and passes
+ * through; a bare one (`2026-09-01T17:00`) means the ORG's wall clock — the clock every
+ * stamp is rendered in, so it is the one whoever typed this was reading. `zonedTime` does
+ * the zone math (§10), DST included.
+ */
+export function momentOf(spec: string, tz: string): string {
+  const raw = spec.trim();
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) {
+    const t = Date.parse(raw);
+    if (Number.isNaN(t)) throw new Error(`"${spec}" is not a moment I can read`);
+    return new Date(t).toISOString();
+  }
+  // anchored: a stamp with trailing garbage is refused, not silently truncated to its date;
+  // seconds are tolerated and dropped — the clock that fires it reads minutes (§10)
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?)?$/.exec(raw);
+  if (!m) throw new Error(`"${spec}" is not a moment — try \`2026-09-01T17:00\``);
+  const [year, month, day, hour, minute] = m.slice(1).map((x) => (x === undefined ? 0 : Number(x)));
+  try {
+    // a reading that names no real date (31 February, hour 25) is refused there, not slid
+    return new Date(zonedTime({ year, month, day, hour, minute }, tz)).toISOString();
+  } catch {
+    throw new Error(`"${spec}" is not a moment — try \`2026-09-01T17:00\``);
+  }
+}
+
+/** The three ways a wake's moment is said. Exactly one of them, whoever is asking. */
+export interface When {
+  at?: string;
+  in?: string;
+  cron?: string;
+}
+
+/**
+ * WHEN a wake fires, as UTC ISO — the one reading of `at` · `in` · `cron`, shared by the
+ * agent's `schedule` tool and the operator's door, so both refuse the same things in the
+ * same words. A cron is validated as it is computed.
+ *
+ * The horizon (§10): a wake fires in the future and within a year. Past that the fact
+ * belongs in a file, not a row — nothing keeps a year-old note honest.
+ */
+export function fireAtOf(when: When, tz: string, now = Date.now()): string {
+  const said = (["at", "in", "cron"] as const).filter((k) =>
+    when[k] !== undefined && when[k] !== ""
+  );
+  if (said.length !== 1) {
+    throw new Error(
+      said.length === 0
+        ? "say when: `at` a moment, `in` a delay, or `cron` to repeat"
+        : `pick one: ${said.join(", ")} — a wake fires one way`,
+    );
+  }
+  const fireAt = said[0] === "cron"
+    ? nextFire(when.cron!, new Date(now).toISOString(), tz)
+    : said[0] === "in"
+    ? new Date(now + durationMs(when.in!)).toISOString()
+    : momentOf(when.at!, tz);
+  if (Date.parse(fireAt) <= now) {
+    throw new Error(`${fireAt} already passed — a wake fires in the future`);
+  }
+  if (Date.parse(fireAt) > now + YEAR_MS) {
+    throw new Error(`${fireAt} is more than a year out — write it down instead`);
+  }
+  return fireAt;
 }

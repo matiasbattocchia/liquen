@@ -678,6 +678,21 @@ function migrate(db: DatabaseSync) {
   if (v < 6) migrateV6(db);
   if (v < 7) migrateV7(db);
   if (v < 8) migrateV8(db);
+  if (v < 9) migrateV9(db);
+}
+
+/** v9 — a standing wake carries the operator's handle (§10): the name `liquen schedule`
+ *  re-arms by, unique per session so a redeploy replaces its row instead of stacking one.
+ *  Every row already there is an agent's own, which is named by nothing. */
+function migrateV9(db: DatabaseSync) {
+  const cols = new Set(
+    (db.prepare("SELECT name FROM pragma_table_info('timers')").all() as { name: string }[])
+      .map((c) => c.name),
+  );
+  if (!cols.has("name")) db.exec("ALTER TABLE timers ADD COLUMN name TEXT");
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS timers_named
+    ON timers (agent_id, session_id, name) WHERE name IS NOT NULL`);
+  db.exec("PRAGMA user_version = 9");
 }
 
 /** v8 — spend says what it paid for (§5): a turn, or the checkpoint that displaced one.

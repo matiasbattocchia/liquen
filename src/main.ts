@@ -648,6 +648,7 @@ export async function start(
                 id: t.id,
                 session_id: t.sessionId,
                 ...(t.cron ? { cron: t.cron } : {}),
+                ...(t.name ? { name: t.name } : {}),
                 ...(t.armedAt ? { armed_at: t.armedAt } : {}),
               },
             },

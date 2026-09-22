@@ -69,7 +69,7 @@ import type { ConnectionRow, Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { sameHandle, speaksThrough } from "./store/roster.ts";
-import { nextFire, type Timers, zonedTime } from "./store/timers.ts";
+import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import type { FilePart } from "./types.ts";
@@ -1187,7 +1187,9 @@ function downOn(surfaces: ConnectionRow[], config: AgentConfig): string[] {
 }
 
 /** Scheduled wakes: this session's only (§4) — an id the anchor shows is one it can cancel.
- *  A cron carries its expression so the model knows the wake comes back. */
+ *  A cron carries its expression so the model knows the wake comes back, and a handle says
+ *  the org armed that one (§10): the note is an instruction, not a thing this session
+ *  chose, and cancelling it is a decision about the org's standing work. */
 function armedOn(config: AgentConfig, ports: XiPorts): string[] {
   const rows = ports.log.timers(config.agentId, config.sessionId);
   if (rows.length === 0) return [];
@@ -1196,7 +1198,7 @@ function armedOn(config: AgentConfig, ports: XiPorts): string[] {
     ...rows.map((t) =>
       `· ${t.note} — fires ${hhmm(t.fireAt, config.timezone)}${
         t.cron ? `, repeats \`${t.cron}\`` : ""
-      } · id ${shortId(t.id)}`
+      } · id ${shortId(t.id)}${t.name ? ` · the org's \`${t.name}\`` : ""}`
     ),
   ];
 }
@@ -1774,46 +1776,6 @@ function selfSend(
     "turn closes.";
 }
 
-/** The schedule horizon (§10): a wake fires within a year. Leap-tolerant by a day, so "this
- *  date next year" always fits. */
-const YEAR_MS = 366 * 864e5;
-
-/** `20m` · `3h` · `2d` · `90s` · `1w` → milliseconds. The units a person says out loud. */
-function durationMs(spec: string): number {
-  const m = /^\s*(\d+(?:\.\d+)?)\s*(s|m|h|d|w)\s*$/i.exec(spec);
-  if (!m) throw new Error(`"${spec}" is not a delay — say it like \`20m\`, \`3h\`, \`2d\``);
-  const unit = { s: 1e3, m: 6e4, h: 36e5, d: 864e5, w: 6048e5 }[m[2].toLowerCase()]!;
-  const ms = Number(m[1]) * unit;
-  if (ms <= 0) throw new Error("a delay has to be in the future");
-  return ms;
-}
-
-/**
- * An `at` moment → UTC ISO. A stamp carrying its own offset (or `Z`) is absolute and passes
- * through; a bare one (`2026-09-01T17:00`) means the ORG's wall clock — which is the clock
- * the model is reading, since every stamp it was shown was rendered in that zone. `zonedTime`
- * does the zone math (§10), DST included.
- */
-function momentOf(spec: string, tz: string): string {
-  const raw = spec.trim();
-  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) {
-    const t = Date.parse(raw);
-    if (Number.isNaN(t)) throw new Error(`"${spec}" is not a moment I can read`);
-    return new Date(t).toISOString();
-  }
-  // anchored: a stamp with trailing garbage is refused, not silently truncated to its date;
-  // seconds are tolerated and dropped — the clock that fires it reads minutes (§10)
-  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?)?$/.exec(raw);
-  if (!m) throw new Error(`"${spec}" is not a moment — try \`2026-09-01T17:00\``);
-  const [year, month, day, hour, minute] = m.slice(1).map((x) => (x === undefined ? 0 : Number(x)));
-  try {
-    // a reading that names no real date (31 February, hour 25) is refused there, not slid
-    return new Date(zonedTime({ year, month, day, hour, minute }, tz)).toISOString();
-  } catch {
-    throw new Error(`"${spec}" is not a moment — try \`2026-09-01T17:00\``);
-  }
-}
-
 /** Tool-supplied renderings, by name (§9) — the built-ins' live in `describe.ts`. */
 function describersOf(ports: XiPorts): Record<string, Describe> {
   const out: Record<string, Describe> = {};
@@ -1840,29 +1802,12 @@ async function execute(
     // time with today's window in front of it, which is also what keeps the gate meaningful.
     const note = String(args.note ?? "").trim();
     if (!note) throw new Error("a wake needs a note — it is what you will read when it fires");
-    const when = ["at", "in", "cron"].filter((k) => args[k] !== undefined && args[k] !== "");
-    if (when.length !== 1) {
-      throw new Error(
-        when.length === 0
-          ? "say when: `at` a moment, `in` a delay, or `cron` to repeat"
-          : `pick one: ${when.join(", ")} — a wake fires one way`,
-      );
-    }
-    const cron = args.cron === undefined ? undefined : String(args.cron);
+    const said = (k: "at" | "in" | "cron") =>
+      args[k] === undefined || args[k] === "" ? undefined : String(args[k]);
+    const cron = said("cron");
     const zone = config.timezone ?? DEFAULT_TIMEZONE;
-    const fireAt = cron !== undefined
-      ? nextFire(cron, new Date().toISOString(), zone) // validates as it computes
-      : args.in !== undefined
-      ? new Date(Date.now() + durationMs(String(args.in))).toISOString()
-      : momentOf(String(args.at), zone);
-    // the horizon (§10): a wake fires in the future, and within a year — past that, the
-    // fact belongs in a file, not a timer
-    if (Date.parse(fireAt) <= Date.now()) {
-      throw new Error(`${fireAt} already passed — a wake fires in the future`);
-    }
-    if (Date.parse(fireAt) > Date.now() + YEAR_MS) {
-      throw new Error(`${fireAt} is more than a year out — write it down instead`);
-    }
+    // one reading of when, shared with `liquen schedule` (§10) — horizon and all
+    const fireAt = fireAtOf({ at: said("at"), in: said("in"), cron }, zone);
     // a wake belongs to the SESSION that armed it (§4): that session lists it, cancels it,
     // and is the one woken — so the row carries the session and the conversation it speaks
     // in, and firing needs no guess about where the note goes.

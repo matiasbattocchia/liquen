@@ -1,7 +1,7 @@
 /**
  * connect/status.ts — connection management, read side: what the machinery holds (§4).
  *
- *   deno task status             # agents · connections · memberships · vault (REDACTED)
+ *   deno task status             # agents · connections · memberships · wakes · vault (REDACTED)
  *
  * The setup flows (`liquen connect <service>`: pastes, pairing, a sign-in) WRITE the map;
  * this prints it — the first thing a live smoke checks ("did the grant land?"). Secrets
@@ -49,6 +49,18 @@ if (import.meta.main) {
       console.log(
         `  ${m.service}:${m.connection_address} ${m.conversation_address}  ∋ ${m.agent_id}`,
       );
+    }
+
+    // armed wakes (§10): the one non-log fact about the future, so the only way to read it
+    // is the table. A handle means the org armed it from `liquen schedule`; the rest the
+    // agent chose for itself, and a cron says the wake comes back.
+    console.log("\narmed wakes (the future — handle = the org's, §10):");
+    for (const t of rows("SELECT * FROM timers ORDER BY fire_at, id")) {
+      const who = `${t.agent_id}/${t.session_id}`;
+      const repeats = t.cron ? `  repeats=${t.cron}` : "";
+      const handle = t.name ? `  ${t.name}` : "";
+      console.log(`  ${t.fire_at}  ${who}${handle}${repeats}  id=${t.id}`);
+      console.log(`    ${t.note}`);
     }
 
     // the vault shares log.db (§4) — list keys and value FIELD NAMES only, never secrets

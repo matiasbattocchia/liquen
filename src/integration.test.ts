@@ -2257,6 +2257,7 @@ Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the ope
       fireAt: "2030-03-04T09:30:00.000Z",
       cron: "30 9 * * *",
       note: "mandar los recordatorios",
+      name: "recordatorios",
       conversation: "mind@a1",
     });
     // another session's wake: armed on the same agent, and none of this session's business
@@ -2276,6 +2277,8 @@ Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the ope
     assertStringIncludes(anchor, "repeats `30 9 * * *`"); // and that it comes back
     assertStringIncludes(anchor, "mandar los recordatorios");
     assertStringIncludes(anchor, shortId(armed.id)); // the handle `cancel` takes
+    // a wake the ORG armed says so, so the note reads as an instruction (§10)
+    assertStringIncludes(anchor, "the org's `recordatorios`");
     assertStringIncludes(anchor, "cwd: /work"); // the other state facts still stand
   } finally {
     await log.close();

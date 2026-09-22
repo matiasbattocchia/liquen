@@ -3333,3 +3333,28 @@ start), and says what `frontedFor` will do with the var when another row already
 it. `token` joins `SHIPPED` without a run.ts: `start` looks one up only for a declared
 connection. The turtle sonar migration files its per-tenant bearers through this door.
 
+### The operator arms a standing wake (2026-09-22) — LANDED
+
+`timers` was the one piece of live state with no operator path: a row could only be
+written by an agent calling `schedule`, and only be read by that agent looking at its own
+anchor. A deployment that exists to run a poll had to be told to arm it, by a model, once,
+with nothing stopping a second run from stacking a second row. `liquen schedule`
+(`src/schedule.ts`) is the door: `--name <handle>` (required), one of `--cron` · `--at` ·
+`--in`, the note, `--agent` off the catalog roster, `--cancel <handle|id>`. The row lands
+in the agent's mind session, so the agent sees it and may cancel it — the alternative was
+a wake it could not name.
+
+The handle is a `name` column with a partial unique index on (agent_id, session_id, name),
+and `arm` became `INSERT OR REPLACE`: re-arming a handle swaps the row in one statement,
+which is the whole of the idempotence an entrypoint needs. It rides onto the alarm as
+`extra.timer.name` and onto the session's anchor line as "the org's `<handle>`". Reading
+the table joined `status`, beside the roster and the vault.
+
+`at` · `in` · `cron` are read in one place now (`fireAtOf` in `store/timers.ts`, with
+`durationMs` and `momentOf` moved beside `nextFire`), so the tool and the door refuse the
+same things in the same words, horizon included.
+
+The turtle sonar migration is what asked for it: one liquen org per tenant, each arming
+`*/15 8-21 * * 1-5` against its own bearer, the agent pulling sonar's digest under the
+note and filing what it shows. The cost is a turn per fire, empty digest or not — accepted
+deliberately over a connector, which would have put every sonar event in the log.

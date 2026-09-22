@@ -62,6 +62,25 @@ Every knob lives in `config.jsonc` at the project root (the catalog — init
 materializes it, the system never writes it; comments document each key). Env is for
 secrets only. The org is where you run liquen; `--dir <path>` names it from anywhere else.
 
+## Standing wakes
+
+An agent wakes itself with its own `schedule` tool. The work a *deployment* owns is armed
+from outside — a poll the org exists to run, standing before anybody has said a word to
+the agent:
+
+```sh
+deno task schedule --agent ana --name sonar-digest --cron '*/15 8-21 * * 1-5' \
+  "pull the sonar digest since your last cursor and file what it shows"
+```
+
+At each fire the note arrives as an alarm in that agent's session and the agent decides
+then what to do about it — nothing is executed for it, so the note is written as
+instructions to be read cold. `--name` is the handle: arming it again replaces the row, so
+an entrypoint that runs at every boot keeps one wake instead of stacking one per restart,
+and `--cancel <handle>` unsets it. Cron is five fields on the org's clock; `--at` and
+`--in` arm a single wake instead. Nothing restarts — the clock's next sweep reads the
+table, and `deno task status` lists what is armed.
+
 ## Connections
 
 A connect door refuses a grant nobody is listening for: a granted service delivers from

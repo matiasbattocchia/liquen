@@ -10,9 +10,11 @@ import { openLog } from "./log.ts";
 import {
   CLAIM_LEASE_MS,
   createTimers,
+  fireAtOf,
   nextFire,
   type TimerRow,
   TIMERS_DDL,
+  type When,
   zonedTime,
 } from "./timers.ts";
 
@@ -245,4 +247,52 @@ Deno.test("nextFire: a malformed expression is refused, not silently never-fired
   assertThrows(() => nextFire("99 * * * *", "2026-09-01T00:00:00.000Z"), Error, "out of range");
   assertThrows(() => nextFire("0 9 * * *", "not a time"), Error, "bad timestamp");
   assertThrows(() => nextFire("0 0 30 2 *", "2026-09-01T00:00:00.000Z"), Error, "never fires");
+});
+
+Deno.test("timers: a named wake is the operator's handle — arming it again replaces the row", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  try {
+    const first = log.arm(wake({ name: "sonar-digest", cron: "*/15 8-21 * * 1-5" }));
+    const second = log.arm(
+      wake({ name: "sonar-digest", note: "pull the digest", fireAt: "2026-09-02T11:00:00.000Z" }),
+    );
+    const held = log.timers("ana", "mind");
+    assertEquals(held.map((t) => t.id), [second.id]); // one row, not two
+    assertEquals(held[0].name, "sonar-digest");
+    assertEquals(held[0].note, "pull the digest");
+    assertEquals(held[0].cron, undefined); // the new row IS the wake, not a patch of the old
+    assert(first.id !== second.id);
+    // the name is per (agent, session): another agent's handle of the same name is its own
+    const bo = log.arm(wake({ agentId: "bo", conversation: "mind@bo", name: "sonar-digest" }));
+    assertEquals(log.timers("bo", "mind").map((t) => t.id), [bo.id]);
+    assertEquals(log.timers("ana", "mind").map((t) => t.id), [second.id]);
+    // an unnamed wake collides with nothing, however many are armed
+    log.arm(wake());
+    log.arm(wake());
+    assertEquals(log.timers("ana", "mind").length, 3);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("fireAtOf: one way of saying when, inside the horizon", () => {
+  const now = Date.parse("2026-09-01T12:00:00.000Z");
+  const tz = "America/Argentina/Buenos_Aires";
+  assertEquals(fireAtOf({ in: "20m" }, tz, now), "2026-09-01T12:20:00.000Z");
+  assertEquals(fireAtOf({ at: "2026-09-01T17:00" }, tz, now), "2026-09-01T20:00:00.000Z");
+  assertEquals(fireAtOf({ at: "2026-09-01T17:00Z" }, tz, now), "2026-09-01T17:00:00.000Z");
+  // a cron's first fire is the next one strictly after now, on the org's clock
+  assertEquals(fireAtOf({ cron: "*/15 8-21 * * 1-5" }, tz, now), "2026-09-01T12:15:00.000Z");
+  const bad = (when: When, word: string) => {
+    const err = assertThrows(() => fireAtOf(when, tz, now), Error);
+    assert(err.message.includes(word), `${err.message} should mention ${word}`);
+  };
+  bad({}, "say when");
+  bad({ in: "20m", cron: "0 9 * * *" }, "pick one");
+  bad({ in: "nope" }, "not a delay");
+  bad({ at: "tomorrow" }, "not a moment");
+  bad({ at: "2020-01-01T09:00" }, "already passed");
+  bad({ in: "99w" }, "more than a year out");
 });

@@ -537,6 +537,17 @@ which is where the ids come from — that session alone can cancel it, and the a
 `session.conversation`, where it speaks. Not in the conversation the `tool_use` carries:
 that is the plane every call is stamped on, which names a plane, not a session.
 
+**A standing wake is the operator's**, `liquen schedule`: the same row armed from outside
+any mind, for work a DEPLOYMENT owns rather than work an agent chose — the quarter-hour
+poll a tenant's org exists to run, armed before anybody has said a word to the agent. Its
+`name` is the handle it is re-armed by, unique per (agent, session), so an entrypoint that
+runs at every boot keeps ONE row instead of stacking one per restart. The handle rides on
+the alarm (`extra.timer.name`) and on the session's own list of what is armed, so a wake
+the agent did not choose says so — and it lands in the mind session like any other, which
+means the agent can cancel it: a wake reaching an agent that cannot name it is worse than
+one it may unset. Reading the table is `liquen status`, beside the vault and the roster;
+arming needs no restart, because the next sweep of the clock is what reads it.
+
 The `timers` table is the one non-log fact about the future — the log records what
 happened, and this hasn't. Rows outlive the process, so recovery is nothing: the first tick
 after a restart fires whatever came due while it was down. Firing consumes the row in the
