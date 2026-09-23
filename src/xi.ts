@@ -69,6 +69,7 @@ import type { ConnectionRow, Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { sameHandle, speaksThrough } from "./store/roster.ts";
+import { preferProper } from "./store/names.ts";
 import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./store/media.ts";
@@ -1633,7 +1634,8 @@ async function namesTo(
   // stranger wearing the name is worse than one asked again later
   const saved = await booked(self, ports, to);
   for (const h of saved?.hits ?? []) if (!people.has(h.address)) people.set(h.address, h);
-  const found = [...people.values()];
+  // `Isabel (Mamá De Yañez Marcos)` answers to YAÑEZ MARCOS too: the name proper wins
+  const found = preferProper(to, [...people.values()]);
   if (found.length === 1) {
     const [one] = found;
     return {
@@ -2132,15 +2134,17 @@ async function execute(
         );
       }
       for (const h of saved?.hits ?? []) if (!people.has(h.address)) people.set(h.address, h.name);
-      if (people.size > 1) {
+      // the name proper wins over a relation's parenthesis (`store/names.ts`)
+      const picked = preferProper(who, [...people].map(([address, name]) => ({ address, name })));
+      if (picked.length > 1) {
         throw new Error(
-          `"${who}" names ${people.size} people — say which: ${
-            [...people].map(([at, n]) => `${n ?? "?"} (${at})`).join(", ")
+          `"${who}" names ${picked.length} people — say which: ${
+            picked.map(({ address: at, name: n }) => `${n ?? "?"} (${at})`).join(", ")
           }`,
         );
       }
-      if (people.size === 1) {
-        address = [...people.keys()][0];
+      if (picked.length === 1) {
+        address = picked[0].address;
         entry = saved?.hits.find((h) => h.address === address);
       } else if (!/^[+\d][\d\s().-]*$/.test(who)) {
         throw new Error(

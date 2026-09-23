@@ -3461,3 +3461,10 @@ whose book holds them. A full name (one with a space) nobody answers to is an er
 before, it became a local room wearing the name, which nobody reads. The gate's scoping
 (`targetOf`) resolves the same way, so a book is asked twice per send; cheap, and one
 authority.
+
+Same day, from the first live batch: a book also says who people are to each other —
+`Isabel (Mamá De Yañez Marcos)` sits next to `Marcos Alberto Yañez`, and both answer to
+`YAÑEZ MARCOS`. Where one person has to be picked (`send`, `contact`), the hits whose name
+PROPER carries the query stand and the parenthesis steps aside (`preferProper`); when no
+proper name has it, every hit stands and the call says it is ambiguous. Search keeps
+every hit.

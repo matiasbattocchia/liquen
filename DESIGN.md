@@ -1290,8 +1290,10 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   written, and the book stays the service's. One name rule everywhere a name is looked up
   (`store/names.ts`, and the same three lines in the whatsmeow bridge's lookup): case and
   accents folded, every word of the query found in the name in any order — the calendar's
-  `REVECO EDGARDO` is the phone's `Edgardo Reveco`. A full name nobody answers to is a
-  send's error, never first contact with a stranger wearing it (landed 2026-09-23).
+  `REVECO EDGARDO` is the phone's `Edgardo Reveco`, and where one person must be picked
+  the name proper beats a relation's parenthesis (`Isabel (Mamá De Yañez Marcos)`). A full
+  name nobody answers to is a send's error, never first contact with a stranger wearing it
+  (landed 2026-09-23).
   **Open:** a directory that is not an address book — a colleague on a workspace nobody has
   DM'd, a channel the agent was never in. Memberships are not rendered and the model cannot
   mint platform addresses, so what that surface is — a rendered index, a tool over the map

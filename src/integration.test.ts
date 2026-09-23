@@ -378,6 +378,31 @@ Deno.test("send: a name the log never saw is asked of the address books, and rid
   );
 });
 
+Deno.test("send: the name proper wins over a relation's parenthesis", async () => {
+  await scenario(
+    [
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "YAÑEZ MARCOS", text: "recordatorio" } }],
+        "tool_use",
+      ),
+      ok([{ kind: "assistant", text: "le escribí" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(
+        namedChat("5492604306049", "Isabel (Mamá De Yañez Marcos)", "hola, soy la mamá"),
+      );
+      await publish(namedChat("5492604383998", "Marcos Alberto Yañez", "buenas"));
+      await publish(principalMsg("recordale el turno a marcos"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+
+      const directed = (await read("message")).filter((e) =>
+        JSON.stringify(e.parts).includes('"text":"recordatorio"')
+      );
+      assertEquals(directed.map((e) => e.envelope.conversation.address), ["5492604383998"]);
+    },
+  );
+});
+
 Deno.test("send: a name two conversations answer to is handed back, never guessed", async () => {
   await scenario(
     [
