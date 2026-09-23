@@ -2051,21 +2051,50 @@ async function execute(
     if (verb === "forget" && name !== undefined) {
       throw new Error("`forget` takes no `name` — it removes the entry");
     }
-    // the person: their own rows first (an address that has spoken answers itself, a name
-    // is looked up the way `search from:` looks it up), else a bare address — a number
-    // the model has and nobody has heard from yet is exactly what saving is for
+    // the person: an address that has spoken answers itself. A name is looked up the way
+    // `search from:` looks it up — a person is in two places, the rows they wrote and the
+    // books of the accounts that have them saved, and both are asked, because a name that
+    // one place answers once and the other answers with somebody else names two people.
+    // Neither holding it leaves a bare address — a number the model has and nobody has
+    // heard from yet is exactly what saving is for.
     const spoken = (await ports.log.read({ from: who, limit: 1 }))[0] ??
       (await ports.log.read({ conversation: who, limit: 1 }))[0];
     let address = who;
+    let entry: ContactHit | undefined; // the book that has them, when a book answered
     if (!spoken) {
+      const people = new Map<string, string | undefined>(); // address → the name it wears
       const named = await ports.log.read({ senderName: who, limit: NAME_REACH });
-      const found = [...new Set(named.map((e) => e.envelope.sender?.address).filter(Boolean))];
-      if (found.length > 1) {
-        throw new Error(`"${who}" names ${found.length} people — say which: ${found.join(", ")}`);
+      for (const e of named) {
+        const at = e.envelope.sender?.address;
+        if (at && !people.has(at)) people.set(at, e.envelope.sender?.name);
       }
-      if (found.length === 1) address = found[0] as string;
-      else if (!/^[+\d][\d\s().-]*$/.test(who)) {
-        throw new Error(`nobody named "${who}" has spoken here — give their address`);
+      // a book that could not be asked is a search's footnote and a write's stop: this
+      // call is about to save or remove somebody, and "nobody by that name" is not a
+      // fact while a book has not said so
+      const saved = await booked(self, ports, who);
+      if (saved?.unreached?.length) {
+        throw new Error(
+          `cannot tell who "${who}" is — address book not reached on ${
+            saved.unreached.join(", ")
+          }; give their address, or try again`,
+        );
+      }
+      for (const h of saved?.hits ?? []) if (!people.has(h.address)) people.set(h.address, h.name);
+      if (people.size > 1) {
+        throw new Error(
+          `"${who}" names ${people.size} people — say which: ${
+            [...people].map(([at, n]) => `${n ?? "?"} (${at})`).join(", ")
+          }`,
+        );
+      }
+      if (people.size === 1) {
+        address = [...people.keys()][0];
+        entry = saved?.hits.find((h) => h.address === address);
+      } else if (!/^[+\d][\d\s().-]*$/.test(who)) {
+        throw new Error(
+          `nobody named "${who}" has spoken here and no address book of yours has them — ` +
+            "give their address",
+        );
       } else address = who.replace(/\D/g, "");
     }
     const prior = spoken ?? (await ports.log.read({ conversation: address, limit: 1 }))[0] ??
@@ -2075,6 +2104,9 @@ async function execute(
       via = accountNamed(String(args.connection), self, ports);
     } else if (prior) {
       via = { service: prior.envelope.service, address: prior.envelope.connection_address };
+    } else if (entry) {
+      // the book that holds them is the account that keeps them
+      via = accounts(self, ports).find((c) => c.address === entry!.connection)!;
     } else {
       const writable = writers(ports);
       const mine = accounts(self, ports).filter((c) => writable.includes(c.service));

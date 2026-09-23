@@ -3424,3 +3424,22 @@ the reaction's `action` beside the ref it translates to the card event, so `said
 (the one predicate the gate and the window share) takes a thumb on the card as a verdict
 and a thumb on any other row as conversation. An un-react (`remove`) says nothing. The
 hint under the card names the two glyphs.
+
+### `contact(who:)` asks both places a person is in (2026-09-23) — LANDED
+
+`search from:` resolves a name against the rows a person wrote AND the address books of
+the accounts that have them saved, through the port `contact` writes through — so a
+person saved on the account is reachable before they have ever written. `contact` itself
+asked only the rows: someone saved under a name and never heard from could not be
+forgotten by that name, and two people wearing one name were only caught when both had
+spoken — a saved "Juan Pérez" beside a writing "Juan Pérez" passed as one.
+
+`who` now resolves the way `from` does: both places, the candidates unioned by address,
+and more than one refused with each named as `send` names its candidates — `name
+(address)`, since a common name is exactly the case where a bare address list cannot be
+told apart. A book that answers settles the account too: the one that holds them is the
+one that saves or forgets them, so no `connection` is needed for somebody already in a
+book. A book that cannot be reached is search's footnote and a write's stop — the call is
+about to save or remove somebody, and "nobody by that name" is not a fact a silent book
+has stated. Names are never keys: two people saved under one name both land, and the
+window tells them apart by the `address` every outsider's line wears.

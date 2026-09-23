@@ -835,6 +835,85 @@ Deno.test("contact: two accounts and a stranger — the model must say which boo
   }
 });
 
+Deno.test("contact: a person is in two places — a name saved on the book is reachable, a name two people wear is refused", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+    { service: "whatsapp", address: "5491100000001", agentId: "a1", extra: { name: "Clínica" } },
+  ]);
+  const wrote: Record<string, unknown>[] = [];
+  const contact = {
+    whatsapp: {
+      write: (req: Record<string, unknown>) => {
+        wrote.push(req);
+        return Promise.resolve({});
+      },
+      lookup: ({ connection, query }: { connection: string; query: string }) => {
+        const q = query.toLowerCase();
+        if (q === "ramona") return Promise.reject(new Error("cannot reach bridge.local"));
+        // only the clinic's book holds Juan the plumber; Sole's holds a Juana
+        if (connection === "5491100000001" && "juan pérez".includes(q)) {
+          return Promise.resolve([{ name: "Juan Pérez", address: "5491155555555" }]);
+        }
+        if (connection === "5491100000000" && "juana".includes(q)) {
+          return Promise.resolve([{ name: "Juana", address: "5491166666666" }]);
+        }
+        return Promise.resolve([]);
+      },
+    },
+  };
+  const { transport } = scripted([
+    // saved on the clinic's book, never wrote: found there, and the clinic saves him —
+    // no `connection` needed although two accounts keep a book
+    ok(
+      [{ kind: "tool_use", name: "contact", input: { who: "juan pérez", action: "forget" } }],
+      "tool_use",
+    ),
+    // "juan" is worn by the saved Juan Pérez, the saved Juana, and the Juan who wrote:
+    // three people, named and addressed
+    ok([{ kind: "tool_use", name: "contact", input: { who: "juan", name: "Juan" } }], "tool_use"),
+    // a book that cannot be asked stops a write
+    ok(
+      [{ kind: "tool_use", name: "contact", input: { who: "Ramona", name: "R" } }],
+      "tool_use",
+    ),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, contact };
+  try {
+    await log.publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "5491100000000",
+        external_id: "whatsapp:wmw.v1",
+        conversation: { address: "5491177777777", kind: "direct", name: "Juan" },
+        sender: { address: "5491177777777", name: "Juan" },
+      },
+      parts: [{ type: "text", kind: "text", text: "hola" }],
+    });
+    await log.publish(principalMsg("agendá a juan"));
+    for (let i = 0; i < 12; i++) await xi(CONFIG, ports);
+    const results = (await log.read({ types: ["tool_result"] })).map((e) =>
+      JSON.stringify(e.parts)
+    );
+    assertStringIncludes(results[0], '"forgot":"5491155555555"');
+    assertStringIncludes(results[0], '"connection":"5491100000001"');
+    assertStringIncludes(results[1], '\\"juan\\" names 3 people');
+    assertStringIncludes(results[1], "Juan (5491177777777)");
+    assertStringIncludes(results[1], "Juan Pérez (5491155555555)");
+    assertStringIncludes(results[1], "Juana (5491166666666)");
+    assertStringIncludes(results[2], "address book not reached");
+    assertEquals(wrote, [{ connection: "5491100000001", address: "5491155555555", remove: true }]);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("send at the principal lands nowhere — refused before it is ever gated", async () => {
   // gating ON, so the test also proves no card is raised: the whole point is that the
   // principal is not asked to approve a message they were already going to receive
