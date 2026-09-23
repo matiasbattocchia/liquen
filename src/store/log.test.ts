@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { type Log, openLog } from "./log.ts";
 import type { Draft, Event, MessageEvent } from "../types.ts";
 
@@ -603,6 +603,34 @@ Deno.test("migrate v6: a pre-sessions log settles on the pair vocabulary (ยง4, ย
     assertEquals(e.envelope.conversation.address, "mind@ana");
   } finally {
     await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate v9: a log from before named wakes opens, and its timers take a handle", async () => {
+  const dir = await Deno.makeTempDir();
+  const first = await openLog(dir);
+  await first.close();
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(`${dir}/log.db`);
+  db.exec(
+    `DROP INDEX timers_named;
+     ALTER TABLE timers DROP COLUMN name;
+     PRAGMA user_version = 8;`,
+  );
+  db.close();
+
+  const log = await openLog(dir); // reopening IS the migration
+  await log.close();
+  const again = new DatabaseSync(`${dir}/log.db`);
+  try {
+    const cols = (again.prepare("SELECT name FROM pragma_table_info('timers')").all() as {
+      name: string;
+    }[]).map((c) => c.name);
+    assert(cols.includes("name"));
+    assert(again.prepare("SELECT 1 FROM sqlite_master WHERE name = 'timers_named'").get());
+  } finally {
+    again.close();
     await Deno.remove(dir, { recursive: true });
   }
 });

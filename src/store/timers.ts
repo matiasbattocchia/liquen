@@ -94,9 +94,7 @@ export const TIMERS_DDL = `CREATE TABLE IF NOT EXISTS timers (
   ref_id       TEXT,
   created_at   TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS timers_due ON timers (fire_at);
-CREATE UNIQUE INDEX IF NOT EXISTS timers_named
-  ON timers (agent_id, session_id, name) WHERE name IS NOT NULL;`;
+CREATE INDEX IF NOT EXISTS timers_due ON timers (fire_at);`;
 
 type Raw = Record<string, string | null>;
 
