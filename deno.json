@@ -1,6 +1,6 @@
 {
   "name": "@liquen/liquen",
-  "version": "0.1.47",
+  "version": "0.1.48",
   "license": "Unlicense",
   "exports": {
     ".": "./src/mod.ts",
