@@ -1531,7 +1531,7 @@ compaction proper is only pi's **checkpoint layer**:
   RAW events — roughly 1.8x the prompt they render to, since the estimate counts ids,
   envelopes and the tool traffic the closed region drops; our checkpoint is non-destructive,
   the log keeps everything and `search` reads it back), the turn nu produces is not a think
-  but **the checkpoint itself** — one bare model call (no tools) over the closed region,
+  but **the checkpoint itself** — one model call (no tools) over the closed region,
   keeping the most recent `keepRecent` (~20K) uncovered. The summary commits as the batch
   (publishAndRelease), and **its own insert wakes the think it displaced** — the log as
   continuation engine, applied to maintenance. This keeps the invariant *one invocation =
@@ -1571,10 +1571,17 @@ compaction proper is only pi's **checkpoint layer**:
   name; a doc that is gone is a checkpoint that cannot be written, on the error path a cut
   or empty one already takes. One unified instruction covers first-checkpoint and fold
   (it branches on `<previous-summary>` itself, so the code doesn't).
-- **Prompt shape** = pi's structured checkpoint, adapted from task-scoped to conversational:
-  conversations (each by the name and address the window shows) · commitments · facts to
-  keep · how things are done here, a heading with nothing under it left out, and names,
-  addresses, paths and figures kept verbatim. **Iterative merge**: a later
+- **Written under the agent's own prefix.** The checkpoint call carries the system prefix
+  the think would read — instructions, memories, environment — so the model can see what
+  already stands in the agent's prompt and leave it out of the record. The same prefix also
+  means the same cache entry.
+- **Prompt shape** = open ends, not a record: what is still open (each by the name and
+  address the window shows, whose move it is, with the figures that move needs) · what a
+  principal said here that the prefix does not already say. Closed threads, standing facts
+  of the org, threads that only wait on the other side and did not move, and second
+  mentions of anyone stay out — the log keeps all of it and `search` reads it back. A
+  heading with nothing under it is left out, and names, addresses, paths and figures are
+  kept verbatim. **Iterative merge**: a later
   compaction folds the previous summary in (`<previous-summary>` + new span → merged);
   `covers` chains from the previous summary's start, so survivors get re-covered (pi's
   rule); `covers[1]` is the newest event folded in, so the range is always ordered.

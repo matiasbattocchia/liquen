@@ -2,8 +2,9 @@
  * compact.ts — the checkpoint layer (DESIGN §5 "Compaction", from pi).
  *
  * Pruning is already render's closed-region collapse; this is the other layer: when the
- * window outgrows `compactAt`, one bare mu call (no tools) writes a structured checkpoint
- * over the older CLOSED events, published as a `summary` event with `covers: [from, to]`.
+ * window outgrows `compactAt`, one mu call (no tools, under the agent's own system prefix)
+ * writes a structured checkpoint over the older CLOSED events, published as a `summary`
+ * event with `covers: [from, to]`.
  * Iterative: a later compaction folds the previous summary in (pi's update rule), and
  * `covers` chains from the previous summary's start so survivors get re-covered.
  *
@@ -16,6 +17,7 @@
 import type { Draft, ErrorEvent, Event, Session, SummaryEvent } from "./types.ts";
 import { applySummary, closingBoundary, deferredInput, outcomeLine, ownVoice } from "./render.ts";
 import type { StepCall, StepInput } from "./mu.ts";
+import type Anthropic from "@anthropic-ai/sdk";
 import { describeCall } from "./describe.ts";
 
 import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT } from "./config.ts";
@@ -36,6 +38,9 @@ const RESULT_CHARS = 500;
 export interface CompactInput {
   /** The turn's interrupt (§2) — a cut checkpoint call is the cut turn's. */
   signal?: AbortSignal;
+  /** The prefix the agent's think reads (its instructions, memories, environment): the
+   *  checkpoint is written against it, so what the prefix already says is not carried. */
+  system?: Anthropic.TextBlockParam[];
   events: Event[]; // the window, log order
   session: Session; // whose window it is, and where it speaks (§4)
   model: string;
@@ -206,7 +211,7 @@ export async function buildSummary(
   prompt += instruction;
 
   const res = await call({
-    system: [],
+    system: input.system ?? [],
     messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
     model: input.model,
     effort: input.effort,

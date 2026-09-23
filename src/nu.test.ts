@@ -302,6 +302,37 @@ Deno.test("nu: a checkpoint streams as its own kind, and its spend says what it 
   assertEquals(deltas, [{ kind: "checkpoint", text: "## Ongoing threads" }]);
 });
 
+Deno.test("nu: a checkpoint is written under the agent's own prefix — what it says stays out", async () => {
+  const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
+  const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const out = await nu(
+    {
+      events,
+      docs: [{
+        header: {
+          scope: "organization",
+          kind: "instruction",
+          name: "organization",
+          frontmatter: {},
+          path: "/data/organization/instructions/organization.md",
+        },
+        body: "La consulta cuesta $40.000.",
+      }],
+      tools: [],
+      compactPrompt: PROMPT,
+      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+    },
+    (p) => {
+      seen.push(p);
+      return Promise.resolve(canned([{ kind: "assistant", text: "## Open" }]));
+    },
+  );
+  assert(out[0].type === "summary");
+  const system = (seen[0].system as { text: string }[]).map((b) => b.text).join("");
+  assert(system.includes("La consulta cuesta $40.000."));
+  assertEquals(seen[0].tools?.length ?? 0, 0);
+});
+
 Deno.test("nu: a think's text streams as text — the kind belongs to the checkpoint alone", async () => {
   const kinds: (string | undefined)[] = [];
   const deltas: Delta[] = [];

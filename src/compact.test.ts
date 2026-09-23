@@ -131,7 +131,7 @@ Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", asyn
   assert(out !== null && out.type === "summary");
   const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
   assertStringIncludes(prompt, "<previous-summary>\n## Ongoing threads\n- viejo hilo");
-  assertStringIncludes(prompt, "If a <previous-summary> block is present, fold it in");
+  assertStringIncludes(prompt, "If a <previous-summary> block is present, rewrite it");
   assertEquals(out.payload.covers[0], old.payload.covers[0]); // chains from the previous summary's start
 });
 

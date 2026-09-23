@@ -28,7 +28,16 @@ import type { DocEntry } from "./store/docs.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
-import { cancelled, type Member, render, type Roster, SILENCE, type Surface } from "./render.ts";
+import {
+  cancelled,
+  type Env,
+  type Member,
+  render,
+  renderSystem,
+  type Roster,
+  SILENCE,
+  type Surface,
+} from "./render.ts";
 import { type Effort, type ModelTransport, mu, type StepInput, type StepResult } from "./mu.ts";
 
 /** Re-exported so the layer above talks to nu, not past it (main → xi → nu → mu). */
@@ -163,6 +172,22 @@ export async function nu(
     return res;
   };
 
+  // the prefix the think would read: the checkpoint writes against it, so what the agent's
+  // instructions and memories already say stays out of the record
+  const env: Env = {
+    self: config.agentId,
+    name: config.name,
+    email: config.email,
+    phone: config.phone,
+    home: config.home,
+    timezone: config.timezone,
+    locale: config.locale,
+    principals: input.principals,
+    agents: input.members,
+    connections: input.surfaces,
+    processors: input.processors,
+  };
+
   // Maintenance first — and nu is where it belongs: nu is the layer that formats the window,
   // so it's the one that knows what the turn will actually weigh. When the VISIBLE window
   // outgrows the budget, THIS turn is the checkpoint: one model call either way (the
@@ -173,6 +198,7 @@ export async function nu(
   // checkpoint is neither the model reasoning nor the model answering, and a surface can
   // only fold away what it can name.
   const summary = await buildSummary({
+    system: renderSystem(input.docs, env),
     events: input.events,
     session,
     model: config.model,
@@ -196,19 +222,7 @@ export async function nu(
     session,
     now: ts(),
     zone: config.timezone,
-    env: {
-      self: config.agentId,
-      name: config.name,
-      email: config.email,
-      phone: config.phone,
-      home: config.home,
-      timezone: config.timezone,
-      locale: config.locale,
-      principals: input.principals,
-      agents: input.members,
-      connections: input.surfaces,
-      processors: input.processors,
-    },
+    env,
     ambient: input.ambient,
     loadMedia: input.loadMedia,
     roster: input.roster,

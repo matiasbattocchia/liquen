@@ -3358,3 +3358,23 @@ The turtle sonar migration is what asked for it: one liquen org per tenant, each
 `*/15 8-21 * * 1-5` against its own bearer, the agent pulling sonar's digest under the
 note and filing what it shows. The cost is a turn per fire, empty digest or not — accepted
 deliberately over a connector, which would have put every sonar event in the log.
+
+### A checkpoint is open ends, written under the agent's prefix (2026-09-23) — LANDED
+
+Laura's 34 checkpoints in sole-bot's log ran 3.5–11 KB each and spent 121K output tokens
+against 164K for every think together: maintenance was costing nearly what the work did,
+and the record it produced was re-read on every turn after it. Three things made it heavy.
+Closed conversations stayed in ("cerrado" 16 times in one checkpoint), because the fold
+rule only dropped what was settled and a thread waiting on a patient never settles. The
+same person appeared under two or three headings — conversations, commitments, facts to
+keep — often with the same figures copied whole. And the org's standing facts (address,
+payment details, the doctor's number, prices, the cancellation policy) were copied into
+nearly every one, because the checkpoint call ran with an empty system prompt and could
+not see that the agent's instructions already carried them.
+
+The call now runs under the same system prefix the think reads (`renderSystem` over the
+turn's docs and env, built once in `nu` and handed to `buildSummary`), which also lets it
+share the think's cache entry. The seeded `compaction.md` asks for two headings — what is
+open, and what a principal said here that the prefix does not — and names what stays out:
+closed threads, the prefix's own facts, threads that only wait on the other side and did
+not move, second mentions of anyone. The log keeps all of it; `search` reads it back.
