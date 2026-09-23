@@ -17,8 +17,9 @@
  * through as-is. The token and the files stay broker-side (§9).
  *
  * One event, N parts → N bridge calls (the bridge takes ONE content each): the first
- * file carries the text as caption; the FIRST response's id backfills `external_id` —
- * later parts' echoes land as their own rows (they ARE their own WhatsApp messages).
+ * file carries the text as caption, a location is a content of its own after them; the
+ * FIRST response's id backfills `external_id` — later parts' echoes land as their own
+ * rows (they ARE their own WhatsApp messages).
  *
  * The bridge's error contract: 4xx = permanent, 5xx = transient. A failure stamps `failed`
  * with `error_code` = the HTTP status; the sweeper (`store/sweep.ts`) reads the class off
@@ -29,7 +30,14 @@ import { isExternal } from "../../store/media.ts";
 import { DispatchError } from "../errors.ts";
 import { createDispatcher } from "../dispatcher.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
-import type { EventId, FilePart, MessageEvent, ReactionPart, TextPart } from "../../types.ts";
+import type {
+  EventId,
+  FilePart,
+  LocationPart,
+  MessageEvent,
+  ReactionPart,
+  TextPart,
+} from "../../types.ts";
 import { externalId, SERVICE, type WAContent } from "./ingest.ts";
 import { type Directory, whatsappMentions } from "../mentions.ts";
 import { toWhatsApp } from "../flavor.ts";
@@ -121,7 +129,8 @@ interface Outbound {
 
 /** liquen parts → the bridge's one-content-per-call shape. Text joins into one; a reaction
  *  is its own content (kind + re_message_id); the first file carries the text as its
- *  caption, later files go bare. `re` travels in `extra.whatsapp.re` (the ingest's
+ *  caption, later files go bare; a location is the last content, and takes `re` only
+ *  when nothing before it did. `re` travels in `extra.whatsapp.re` (the ingest's
  *  convention) with the `whatsapp:` prefix stripped back to the raw wmw id. */
 function outbound(event: MessageEvent): Outbound | null {
   if (!event.envelope.connection_address || !event.envelope.conversation.address) return null;
@@ -135,6 +144,9 @@ function outbound(event: MessageEvent): Outbound | null {
     p.type === "data" && p.kind === "reaction"
   );
   const reactText = texts.find((p) => p.kind === "reaction");
+  const location = event.parts.find((p): p is LocationPart =>
+    p.type === "data" && p.kind === "location"
+  );
   // common markdown → the wire's dialect, here at the frontier (flavor.ts)
   const text = toWhatsApp(
     texts.filter((p) => p.kind !== "reaction").map((p) => p.text).join("\n"),
@@ -199,6 +211,17 @@ function outbound(event: MessageEvent): Outbound | null {
         kind: "text",
         text,
         ...(re ? { re_message_id: re } : {}),
+      },
+    });
+  }
+  if (location) {
+    contents.push({
+      content: {
+        version: "1",
+        type: "data",
+        kind: "location",
+        data: location.data,
+        ...(re && !contents.length ? { re_message_id: re } : {}),
       },
     });
   }

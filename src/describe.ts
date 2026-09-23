@@ -74,6 +74,13 @@ const BUILTIN: Record<string, Describe> = {
     if (typeof a.text === "string" && a.text !== "") bits.push(`text: ${value(a.text, opts)}`);
     const files = Array.isArray(a.files) ? a.files.length : 0;
     if (files > 0) bits.push(`files: ${files}`);
+    // the pin, as the approver would say it: its label when it has one, else the degrees
+    const loc = a.location;
+    if (loc && typeof loc === "object" && !Array.isArray(loc)) {
+      const l = loc as Record<string, Json>;
+      const label = typeof l.name === "string" && l.name ? l.name : `${l.latitude}, ${l.longitude}`;
+      bits.push(`location: ${value(label, opts)}`);
+    }
     return bits.join(", ");
   },
 };

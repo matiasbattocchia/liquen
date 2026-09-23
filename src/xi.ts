@@ -72,7 +72,7 @@ import { sameHandle, speaksThrough } from "./store/roster.ts";
 import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./store/media.ts";
-import type { FilePart } from "./types.ts";
+import type { FilePart, LocationPart } from "./types.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import {
   bookEl,
@@ -1950,6 +1950,11 @@ async function execute(
       : [];
     const body = args.text === undefined ? "" : String(args.text);
     const glyph = args.react === undefined ? "" : String(args.react);
+    // a pin rides the wire as a message of its own kind (§5 parts): only WhatsApp has one
+    const location = args.location === undefined ? undefined : locationPartOf(args.location);
+    if (location && envelope.service !== "whatsapp") {
+      throw new Error(`a location rides WhatsApp only — ${to} is on ${envelope.service}`);
+    }
     // the reference (§5): the model points with the `id` its window showed. Resolving it
     // to the referent — and the referent to the name the WIRE knows it by — is the whole
     // job; a miss throws, and the tool_result sends the model back to its window rather
@@ -1965,7 +1970,10 @@ async function execute(
     }
     if (named === "add" && !glyph) throw new Error("`add` needs `react`: the glyph it adds");
     if (named === "create" && glyph) {
-      throw new Error("`create` sends text or files — a reaction is `add`");
+      throw new Error("`create` sends text, files or a location — a reaction is `add`");
+    }
+    if (location && (glyph || named === "edit" || named === "delete")) {
+      throw new Error("a location is sent, not edited or reacted with — drop `location`");
     }
     const action = named === "create" || named === "add" ? undefined : named;
     if (action && !target) throw new Error(`\`${action}\` needs \`re\`: the message it acts on`);
@@ -1980,7 +1988,9 @@ async function execute(
     }
     if (action === "edit" && !body) throw new Error("`edit` needs the replacement text");
     if (action === "remove" && !glyph) throw new Error("`remove` needs the reaction it lifts");
-    if (!action && !glyph && !body && files.length === 0) throw new Error("nothing to send");
+    if (!action && !glyph && !body && files.length === 0 && !location) {
+      throw new Error("nothing to send");
+    }
     const msg: Draft<MessageEvent> = {
       ts: new Date().toISOString(),
       type: "message",
@@ -2008,7 +2018,11 @@ async function execute(
         ? [{ type: "data", kind: "reaction", data: { name: glyph, unicode: glyph } } as const]
         : action === "delete"
         ? []
-        : [...(body ? [{ type: "text", kind: "text", text: body } as const] : []), ...files],
+        : [
+          ...(body ? [{ type: "text", kind: "text", text: body } as const] : []),
+          ...files,
+          ...(location ? [location] : []),
+        ],
     };
     const sent = await ports.log.publish(msg);
     return { sent: true, event_id: sent!.id }; // a full draft (parts present) always stores
@@ -2131,6 +2145,27 @@ const REF_REACH = 500;
  * guessing), and a referent that has no wire name yet — our own send still in flight,
  * which no platform can be asked to quote.
  */
+/** `send(location:)` → the part: degrees within the globe, labels as given. A shape the
+ *  wire would refuse is refused here, where the tool_result can say why. */
+function locationPartOf(raw: unknown): LocationPart {
+  const o = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const latitude = Number(o.latitude);
+  const longitude = Number(o.longitude);
+  if (!Number.isFinite(latitude) || Math.abs(latitude) > 90) {
+    throw new Error("`location.latitude` is degrees, -90 to 90");
+  }
+  if (!Number.isFinite(longitude) || Math.abs(longitude) > 180) {
+    throw new Error("`location.longitude` is degrees, -180 to 180");
+  }
+  const name = typeof o.name === "string" && o.name.trim() ? o.name.trim() : undefined;
+  const address = typeof o.address === "string" && o.address.trim() ? o.address.trim() : undefined;
+  return {
+    type: "data",
+    kind: "location",
+    data: { latitude, longitude, ...(name ? { name } : {}), ...(address ? { address } : {}) },
+  };
+}
+
 async function referent(ports: XiPorts, conversation: string, re: string): Promise<Event> {
   const matches = await ports.log.read({
     conversation,
@@ -2415,6 +2450,18 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
             description:
               "file paths to attach. A relative path resolves from your home, never from your " +
               "shell's cwd, which may have moved",
+          },
+          location: {
+            type: "object",
+            properties: {
+              latitude: { type: "number" },
+              longitude: { type: "number" },
+              name: { type: "string", description: "the label the pin shows" },
+              address: { type: "string", description: "the line under the label" },
+            },
+            required: ["latitude", "longitude"],
+            description: "a map pin, sent as its own message after any text or files. WhatsApp " +
+              "conversations only",
           },
         },
         required: ["to"],

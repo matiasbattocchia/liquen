@@ -203,6 +203,40 @@ Deno.test("a reaction maps to its own content with the raw wmw re_message_id", a
   assertEquals(records[1].content.data, { action: "removed" });
 });
 
+Deno.test("a location is its own content, last, and the pin's data goes verbatim", async () => {
+  const records: WADispatchRecord[] = [];
+  let n = 0;
+  const { log } = harness((r) => {
+    records.push(r);
+    return Promise.resolve(`wmw.out.${++n}`);
+  });
+  const pin = { latitude: -32.946186, longitude: -68.823082, name: "Consultorio" };
+  // text first, then the pin — two WhatsApp messages, the first id backfills
+  log.push(outboundMessage({
+    parts: [
+      { type: "text", kind: "text", text: "acá estamos" },
+      { type: "data", kind: "location", data: pin },
+    ],
+  }));
+  // a pin alone, as a reply: the reference lands on it, since nothing stands before it
+  log.push(outboundMessage({
+    parts: [{ type: "data", kind: "location", data: pin }],
+    payload: { action: "reply", ref_external_id: externalId("wmw.orig.7") },
+  }));
+  await settle();
+  assertEquals(records.length, 3);
+  assertEquals(records[0].content.type, "text");
+  assertEquals(records[1].content, { version: "1", type: "data", kind: "location", data: pin });
+  assertEquals(log.patches[0].patch.external_id, externalId("wmw.out.1"));
+  assertEquals(records[2].content, {
+    version: "1",
+    type: "data",
+    kind: "location",
+    data: pin,
+    re_message_id: "wmw.orig.7",
+  });
+});
+
 Deno.test("edit and delete act on the referent: one content, no body of their own", async () => {
   const records: WADispatchRecord[] = [];
   const { log } = harness((r) => {

@@ -125,6 +125,15 @@ export type SharePart = DataPart<"share", {
  *  was added or removed is the EVENT's `payload.action`, not the part's business. */
 export type ReactionPart = DataPart<"reaction", { name: string; unicode?: string }>;
 
+/** A place (the Cloud API location object, which the WhatsApp bridge takes both ways):
+ *  degrees, and the label a map pin shows when the sender gave one. */
+export type LocationPart = DataPart<"location", {
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+}>;
+
 /** A calendar event — the CANONICAL shape every calendar connector prunes its wire resource
  *  to (iCalendar is the shared standard underneath; Google today, Outlook next — the
  *  service's ~40-field resource stops at the connector, THIS crosses). `gid` is the

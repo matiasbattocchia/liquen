@@ -382,6 +382,58 @@ Deno.test("send `connection`: a named account places first contact on its wire",
   }
 });
 
+Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere else", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const pin = { latitude: -32.946186, longitude: -68.823082, name: "Consultorio" };
+  const { transport } = scripted([
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "5491199999999", connection: "sole", text: "acá estamos", location: pin },
+    }], "tool_use"),
+    // a conversation on the local channel has no pin to send
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "5491188888888", location: pin },
+    }], "tool_use"),
+    // degrees off the globe are refused where the result can say so
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "5491199999999", location: { latitude: 91, longitude: 0 } },
+    }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("mandale la ubicación"));
+    for (let i = 0; i < 12; i++) await xi(CONFIG, ports);
+    const sent = (await log.read({ types: ["message"] })).filter((e) =>
+      e.agent && e.payload?.turn_id
+    );
+    const placed = sent.find((e) => e.envelope.conversation.address === "5491199999999");
+    assertEquals(placed?.parts, [
+      { type: "text", kind: "text", text: "acá estamos" },
+      { type: "data", kind: "location", data: pin },
+    ]);
+    assertEquals(sent.some((e) => e.envelope.conversation.address === "5491188888888"), false);
+    const results = await log.read({ types: ["tool_result"] });
+    const outputOf = (i: number) =>
+      String((results[i].parts[0] as { data: { output: string } }).data.output);
+    assertStringIncludes(outputOf(1), "a location rides WhatsApp only");
+    assertStringIncludes(outputOf(2), "`location.latitude` is degrees");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("contact: `who` resolves like a send, the write rides the person's own account", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);

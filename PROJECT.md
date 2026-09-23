@@ -3378,3 +3378,18 @@ share the think's cache entry. The seeded `compaction.md` asks for two headings 
 open, and what a principal said here that the prefix does not — and names what stays out:
 closed threads, the prefix's own facts, threads that only wait on the other side and did
 not move, second mentions of anyone. The log keeps all of it; `search` reads it back.
+
+### A pin is a message of its own kind (2026-09-23) — LANDED
+
+Sole-bot's secretary closes every booking with the address, and a WhatsApp location
+message beside it — 108 of the 134 sends of that text in the log carry the same pin. The
+agent could read those pins (the ingest has shipped `location` DataParts since the bridge
+did) but not send one: `send` took text and files, and a maps link is not what the patient
+taps on.
+
+`send` now takes `location` — `latitude`, `longitude`, and the `name`/`address` a pin
+shows — and the message carries it as a `LocationPart` after any text and files. The
+WhatsApp dispatch maps it to the bridge's `data/location` content, last in the event's
+calls, taking `re` only when nothing before it did. The part is refused at the tool where
+the wire has nothing to make of it: a conversation off WhatsApp, or degrees off the globe.
+The permission card names the pin by its label, or by its degrees when it has none.

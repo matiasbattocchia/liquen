@@ -22,6 +22,23 @@ Deno.test("describeCall: empty arguments are not shown — a call reads as what 
   );
 });
 
+Deno.test("describeCall: a pin reads by its label, or by its degrees when it has none", () => {
+  assertEquals(
+    describeCall({
+      name: "send",
+      input: { to: "wa:x", location: { latitude: -32.9, longitude: -68.8, name: "Consultorio" } },
+    }),
+    "send(to: wa:x, location: Consultorio)",
+  );
+  assertEquals(
+    describeCall({
+      name: "send",
+      input: { to: "wa:x", location: { latitude: -32.9, longitude: -68.8 } },
+    }),
+    "send(to: wa:x, location: -32.9, -68.8)",
+  );
+});
+
 Deno.test("describeCall: send says WHO — the name, with the address as the fallback", () => {
   const call = { name: "send", input: { to: "5492604586396", text: "ya salgo" } };
   const vivian = (a: string) => a === "5492604586396" ? { name: "Vivian", address: a } : undefined;
