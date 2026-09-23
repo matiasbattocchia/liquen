@@ -54,7 +54,7 @@
 import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { MIND, parseSession, sessionAddress } from "../session.ts";
 import { outcomeLine, silenced, silent } from "../render.ts";
-import { describeCall, nameResolver } from "../describe.ts";
+import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
 import { type Words, words } from "../i18n.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type {
@@ -355,11 +355,17 @@ async function ccParts(
     // just the tool: approving is judging what will be said, and this chat is the
     // principal's own. The reply syntax rides along — the surface has no key bindings.
     const ask = (e as PermissionRequestEvent).parts[0].data;
+    // a send is laid out in rows — where, what it answers, what it says — because the
+    // judgment is over the words as the other end will read them; any other call is its
+    // one line in full
+    const body = ask.send
+      ? `**${ask.tool}**\n\n${describeSendCard(ask.send, w.card)}`
+      : boldName(ask.detail);
     return [{
       type: "text",
       kind: "text",
       // a blank row between them: the legend reads apart from the call it is about
-      text: `\`[${w.asks}]\` ${w.approve} ${boldName(ask.detail)}\n\n\`${w.hint}\``,
+      text: `\`[${w.asks}]\` ${w.approve} ${body}\n\n\`${w.hint}\``,
     }];
   }
   if (e.type === "permission_response" && e.payload?.turn_id !== undefined) {

@@ -60,7 +60,7 @@ import {
   DEFAULT_TIMEZONE,
   DEFAULT_WINDOW_LIMIT,
 } from "./config.ts";
-import { type Describe, describeCall, landings, nameResolver } from "./describe.ts";
+import { type Describe, describeCall, landings, nameResolver, type Resolve } from "./describe.ts";
 import { PROCESSOR_TIMEOUT_MS } from "./processors.ts";
 import type { Appender, Reader } from "./store/log.ts";
 import type { AgentRow, Registry } from "./store/agents.ts";
@@ -72,7 +72,7 @@ import { sameHandle, speaksThrough } from "./store/roster.ts";
 import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./store/media.ts";
-import type { FilePart, LocationPart } from "./types.ts";
+import type { FilePart, LocationPart, SendPreview } from "./types.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import {
   bookEl,
@@ -1479,6 +1479,9 @@ async function act(
                 call: describe(use),
                 detail: describe(use, true),
                 lands: landings(use.parts[0].data, resolve),
+                ...(name === "send"
+                  ? { send: await sendPreviewOf(use, resolve, ports, session, config.timezone) }
+                  : {}),
               },
             }],
           } satisfies Draft<PermissionRequestEvent>,
@@ -2145,6 +2148,55 @@ const REF_REACH = 500;
  * guessing), and a referent that has no wire name yet — our own send still in flight,
  * which no platform can be asked to quote.
  */
+/** What a pending `send` will do, for its card (§9). The conversation is where the call
+ *  LANDS (the resolver's address, or the argument as typed when nothing answers to it);
+ *  the line it answers is the referent when it replies, else the other side's last word
+ *  there — the agent's own rows and the account's own hand are not the other side. Best
+ *  effort throughout: a referent that cannot be found leaves the row out, since the send
+ *  itself will say so when it runs. */
+async function sendPreviewOf(
+  use: ToolUseEvent,
+  resolve: Resolve,
+  ports: XiPorts,
+  session: SessionRef,
+  zone?: string,
+): Promise<SendPreview> {
+  const input = use.parts[0].data.input;
+  const a = input && typeof input === "object" && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : {};
+  const to = a.to === undefined ? "" : String(a.to);
+  const who = resolve(to);
+  const address = who?.address ?? to;
+  let answered: Event | undefined;
+  if (a.re !== undefined) {
+    answered = await referent(ports, address, String(a.re)).catch(() => undefined);
+  } else {
+    const recent = await ports.log.read({ conversation: address, types: ["message"], limit: 50 });
+    answered = recent.findLast((e) =>
+      !ownVoice(e, session) && e.envelope.sender?.address !== e.envelope.connection_address
+    );
+  }
+  const lastText = answered ? textOf(answered) : "";
+  const files = Array.isArray(a.files) ? a.files.length : 0;
+  const loc = a.location && typeof a.location === "object" && !Array.isArray(a.location)
+    ? a.location as Record<string, unknown>
+    : undefined;
+  return {
+    conversation: { ...(who ? { name: who.name } : {}), address },
+    ...(answered && lastText ? { last: { text: lastText, at: hhmm(answered.ts, zone) } } : {}),
+    ...(typeof a.text === "string" && a.text ? { text: a.text } : {}),
+    files,
+    ...(loc
+      ? {
+        location: typeof loc.name === "string" && loc.name
+          ? loc.name
+          : `${loc.latitude}, ${loc.longitude}`,
+      }
+      : {}),
+  };
+}
+
 /** `send(location:)` → the part: degrees within the globe, labels as given. A shape the
  *  wire would refuse is refused here, where the tool_result can say why. */
 function locationPartOf(raw: unknown): LocationPart {

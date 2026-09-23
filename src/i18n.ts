@@ -24,6 +24,14 @@ const TONGUES = {
     approve: "approve",
     hint: "reply /y to approve · /n <reason> to refuse",
     withdrawn: "withdrawn",
+    // the send card's rows (§9): the labels a person reads the call under
+    card: {
+      conversation: "Conversation",
+      last: "Last message",
+      reply: "Reply",
+      files: "Attachments",
+      location: "Location",
+    },
     via: (who: string, where: string) => `${who} via ${where}`,
     // the word a presence line carries for each delta (§9): the surface's, not the log's
     presence: { thinking: "agent thinking...", checkpoint: "agent compacting..." } as Record<
@@ -40,6 +48,13 @@ const TONGUES = {
     approve: "aprobar",
     hint: "responder /y para aprobar · /n <motivo> para rechazar",
     withdrawn: "retirado",
+    card: {
+      conversation: "Conversación",
+      last: "Último mensaje",
+      reply: "Respuesta",
+      files: "Adjuntos",
+      location: "Ubicación",
+    },
     via: (who: string, where: string) => `${who} por ${where}`,
     presence: { thinking: "agente pensando...", checkpoint: "agente compactando..." },
   },

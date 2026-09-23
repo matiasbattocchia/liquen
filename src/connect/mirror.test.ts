@@ -252,6 +252,47 @@ Deno.test("mirror fan-out: a tool line names the addresses it points at, off the
   });
 });
 
+Deno.test("mirror fan-out: a send's card is laid out in rows, in the surface's tongue", async () => {
+  await withMirror(async ({ publish, inConv, waitFor }) => {
+    await publish({
+      ts: new Date().toISOString(),
+      type: "permission_request",
+      payload: { ref_id: "01a0-use" },
+      agent: { id: "ana", session_id: "mind" },
+      envelope: {
+        service: "local",
+        connection_address: "agent",
+        conversation: { address: "mind@ana" },
+      },
+      parts: [{
+        type: "data",
+        kind: "permission_request",
+        data: {
+          tool: "send",
+          call: "send(to: Vivian)",
+          detail: "send(to: Vivian, text: hola! nos vemos)",
+          send: {
+            conversation: { name: "Vivian", address: "5492604586396" },
+            last: { text: "llegás?", at: "23 Sep 16:42" },
+            text: "hola!\nnos vemos",
+            files: 1,
+          },
+        },
+      }],
+    } as Draft<Event>);
+    await waitFor(async () => (await inConv("D1")).length === 1);
+    assertEquals(
+      textOf((await inConv("D1"))[0]),
+      "`[agent asks]` approve **send**\n\n" +
+        "**Conversation**: Vivian <5492604586396>\n\n" +
+        "**Last message** (23 Sep 16:42):\nllegás?\n\n" +
+        "**Reply**:\nhola!\nnos vemos\n\n" +
+        "**Attachments**: 1\n\n" +
+        "`reply /y to approve · /n <reason> to refuse`",
+    );
+  });
+});
+
 Deno.test("mirror fan-out: the approval card crosses, arguments and reply syntax included", async () => {
   await withMirror(async ({ publish, inConv, waitFor }) => {
     // a gate is only a gate if the approver can see it: on a surface there are no key

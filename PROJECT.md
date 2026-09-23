@@ -3393,3 +3393,21 @@ WhatsApp dispatch maps it to the bridge's `data/location` content, last in the e
 calls, taking `re` only when nothing before it did. The part is refused at the tool where
 the wire has nothing to make of it: a conversation off WhatsApp, or degrees off the globe.
 The permission card names the pin by its label, or by its degrees when it has none.
+
+### The send card is rows, not a line (2026-09-23) — LANDED
+
+The approval card rendered every call the same way: the one-line `describeCall` in full,
+which collapses whitespace even in its full form. For a `send` that made the card the
+worst place to judge the message — sole-bot's payment block is twelve rows of alias, CBU
+and CUIT, and the card handed Laura one row with all of it run together, while the
+patient would receive the rows. And the card said nothing of what the message answered.
+
+A gated `send` now carries a `SendPreview` on its ask (`PermissionAsk.send`): the
+conversation it lands on, resolved to `Name <address>`; the line it answers — the
+referent when it replies, else the other side's last word there, on the org's clock (the
+agent's own rows and the account's own hand are not the other side); the text with its
+line breaks; and the attachments and the pin counted apart, so a card never reads as
+text alone when files ride along. The mirror lays it out under labels in the surface's
+tongue (`Words.card`); a call of any other tool keeps its one line in full. The tool
+trace (`[agent tool]`) and the deferred result line stay short on purpose: they record
+that something happened, and are not where anything is decided.

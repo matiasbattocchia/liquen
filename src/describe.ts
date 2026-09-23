@@ -22,7 +22,7 @@
  * the anchor's pending list, the mirror's tool line.
  */
 
-import type { Event, Json, ToolCall } from "./types.ts";
+import type { Event, Json, SendPreview, ToolCall } from "./types.ts";
 import type { Reader } from "./store/log.ts";
 import { clipEnd } from "./exec/truncate.ts";
 
@@ -84,6 +84,34 @@ const BUILTIN: Record<string, Describe> = {
     return bits.join(", ");
   },
 };
+
+/** The send CARD (§9): the one-line form says what was typed; this says what the person
+ *  on the other end will get. The text keeps its line breaks — a payment block is twelve
+ *  rows, and the judgment is over those rows — and what is not text is counted beside
+ *  it, so a card never reads as text alone when files or a pin ride along. Labels are
+ *  the surface's tongue; the values are the call's. */
+export function describeSendCard(p: SendPreview, labels: SendCardLabels): string {
+  const who = p.conversation.name
+    ? `${p.conversation.name} <${p.conversation.address}>`
+    : p.conversation.address;
+  const rows = [`**${labels.conversation}**: ${who}`];
+  if (p.last) rows.push(`**${labels.last}** (${p.last.at}):\n${p.last.text}`);
+  if (p.text) rows.push(`**${labels.reply}**:\n${p.text}`);
+  const extras = [
+    ...(p.files > 0 ? [`**${labels.files}**: ${p.files}`] : []),
+    ...(p.location ? [`**${labels.location}**: ${p.location}`] : []),
+  ];
+  if (extras.length) rows.push(extras.join(" · "));
+  return rows.join("\n\n");
+}
+
+export interface SendCardLabels {
+  conversation: string;
+  last: string;
+  reply: string;
+  files: string;
+  location: string;
+}
 
 /** `k: v, k: v` over the arguments that carry something — except when there is exactly one
  *  string argument, which prints bare: for a one-argument tool the value IS the call, and

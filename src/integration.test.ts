@@ -382,6 +382,66 @@ Deno.test("send `connection`: a named account places first contact on its wire",
   }
 });
 
+Deno.test("a gated send carries its preview: where it lands, the other side's last word, the text", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const { transport } = scripted([
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: {
+        to: "Carlos",
+        text: "hola Carlos!\n\nlunes o miércoles",
+        files: ["fachada.jpg", "portero.jpg"],
+        location: { latitude: -32.9, longitude: -68.8, name: "Consultorio" },
+      },
+    }], "tool_use"),
+    ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
+  ]);
+  const config: AgentConfig = {
+    ...CONFIG,
+    gate: (name) => name === "send" ? "ask" : "allow",
+    timezone: "America/Argentina/Mendoza",
+  };
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const patient = (text: string, ts: string, own = false): Draft<MessageEvent> => ({
+    ts,
+    type: "message",
+    envelope: {
+      service: "whatsapp",
+      connection_address: "5491100000000",
+      conversation: { address: "5492616560401", kind: "direct", name: "Carlos" },
+      sender: own
+        ? { address: "5491100000000", name: "Sole" }
+        : { address: "5492616560401", name: "Carlos" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  try {
+    await log.publish(patient("hola, tienen turno?", "2026-09-23T19:42:00Z"));
+    // the account's own hand, typed on the phone after — not the other side
+    await log.publish(patient("un momento", "2026-09-23T19:50:00Z", true));
+    await log.publish(principalMsg("contestale a Carlos"));
+    for (let i = 0; i < 6; i++) await xi(config, ports);
+    const [req] = await log.read({ types: ["permission_request"] });
+    assert(req.type === "permission_request");
+    assertEquals(req.parts[0].data.send, {
+      conversation: { name: "Carlos", address: "5492616560401" },
+      last: { text: "hola, tienen turno?", at: "23 Sep 16:42" },
+      text: "hola Carlos!\n\nlunes o miércoles",
+      files: 2,
+      location: "Consultorio",
+    });
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere else", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);

@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { describeCall, nameResolver } from "./describe.ts";
+import { describeCall, describeSendCard, nameResolver } from "./describe.ts";
 import type { Event } from "./types.ts";
 
 Deno.test("describeCall: one string argument prints bare — the argument IS the call", () => {
@@ -174,4 +174,36 @@ Deno.test("nameResolver: the directory shows both halves — who, and which", as
     { name: "send", input: { to: "5491122334455" } },
   ]);
   assertEquals(stranger("5491122334455"), undefined);
+});
+
+Deno.test("describeSendCard: rows a person judges — where, what it answers, what it says", () => {
+  const labels = {
+    conversation: "Conversación",
+    last: "Último mensaje",
+    reply: "Respuesta",
+    files: "Adjuntos",
+    location: "Ubicación",
+  };
+  assertEquals(
+    describeSendCard({
+      conversation: { name: "Carlos Maglione", address: "5492616560401" },
+      last: { text: "Hola, ¿tienen turno esta semana?", at: "23 Sep 16:42" },
+      text: "Hola Carlos!\n\nLa doctora atiende **lunes y miércoles**.",
+      files: 4,
+      location: "Dra. Soledad Suarez",
+    }, labels),
+    "**Conversación**: Carlos Maglione <5492616560401>\n\n" +
+      "**Último mensaje** (23 Sep 16:42):\nHola, ¿tienen turno esta semana?\n\n" +
+      // the reply keeps its rows: the judgment is over them as they will arrive
+      "**Respuesta**:\nHola Carlos!\n\nLa doctora atiende **lunes y miércoles**.\n\n" +
+      "**Adjuntos**: 4 · **Ubicación**: Dra. Soledad Suarez",
+  );
+  // nothing known but the address, and nothing but text: the card says only that
+  assertEquals(
+    describeSendCard(
+      { conversation: { address: "5491100000000" }, text: "hola", files: 0 },
+      labels,
+    ),
+    "**Conversación**: 5491100000000\n\n**Respuesta**:\nhola",
+  );
 });

@@ -382,6 +382,20 @@ export interface PermissionAsk {
    *  `landings`). A surface that already shows the call as the model wrote it prints
    *  this alone — the address is what the model's own words could not say. */
   lands?: string[];
+  /** A `send`, laid out for the person judging it (§9): where it lands, the line it
+   *  answers, and what it will say — the text with its line breaks, the attachments and
+   *  the pin counted apart. */
+  send?: SendPreview;
+}
+
+export interface SendPreview {
+  conversation: { name?: string; address: string };
+  /** The line the send answers: the referent when it replies, else the other side's
+   *  last word in that conversation. `at` is already on the org's clock. */
+  last?: { text: string; at: string };
+  text?: string;
+  files: number;
+  location?: string;
 }
 
 export interface PermissionVerdict {
