@@ -762,7 +762,13 @@ Every inbound passes through ingest, which does identity resolution **and** may 
   it names the ambiguity ("N waiting, quote the one you mean") or the mistake ("that one was
   already answered") itself, rather than spending a model turn on plumbing. Once per line:
   the same latest line is re-read on every wake, and a line is spent once a verdict or a
-  harness word followed it.
+  harness word followed it. **A reaction on the card is a verdict too** (landed
+  2026-09-23): 👍 or ❤️ reads as `/y`, 👎 or 😮 as `/n` — the bar a phone offers on a long
+  press, and Slack's names for the same glyphs (`reactionVerdict`, spelling normalised:
+  no skin tone, no variation selector). Always `once`: a reaction has no words for a
+  scope or a reason. It counts ONLY on a card — the mirror's copy carries the reaction's
+  `add` and its ref translated to the card event, and `saidVerdict` reads a glyph off any
+  other row (a thumb on the agent's line) as conversation, an un-react as nothing.
 - **A gate never blocks the mind** (landed 2026-08-18). The ask happens *inside* the call:
   `act` publishes the `permission_request` AND answers the `tool_use` in the same batch,
   with `{status: pending_approval}`. So the chain closes, the model keeps its voice while

@@ -356,12 +356,13 @@ function byEventTime(
 ): { events: Event[]; elisions: Elisions } {
   const out = [...events];
   const elisions: Elisions = { earlier: new Map(), rest: new Map() };
+  const isCard = cardsIn(events);
   const member = (e: Event) => e.type === "message" && !ownVoice(e, session);
   const transparent = (e: Event) =>
     e.type === "permission_request" || e.type === "permission_response" ||
     (e.type === "control" && !isCancelled(e)) ||
     (e.type === "message" && !ownVoice(e, session) &&
-      e.envelope.conversation.address === here && parseVerdict(textOf(e)) !== undefined);
+      e.envelope.conversation.address === here && saidVerdict(e, isCard) !== undefined);
   for (let i = 0; i < out.length; i++) {
     if (!member(out[i])) continue;
     let j = i;
@@ -579,6 +580,63 @@ export function parseVerdict(text: string): PermissionVerdict | undefined {
     ...(every ? { every: true } : {}),
   };
 }
+
+/** The verdict a REACTION spells (§9): a thumb or a heart on the card is `/y`, a thumb
+ *  down or a gasp is `/n` — WhatsApp's quick-reaction bar, plus Slack's names for the same
+ *  glyphs. Always `once`: a reaction has no words for a scope or a reason. */
+const REACTIONS: Record<string, PermissionVerdict["behavior"]> = {
+  "👍": "allow",
+  "❤": "allow",
+  "+1": "allow",
+  "thumbsup": "allow",
+  "heart": "allow",
+  "👎": "deny",
+  "😮": "deny",
+  "-1": "deny",
+  "thumbsdown": "deny",
+  "open_mouth": "deny",
+};
+
+/** A glyph as the table keys it: no variation selector (`❤️` is `❤` + VS16), no skin tone
+ *  (`👍🏻` is `👍` + a modifier) — the phone's spelling of the same reaction. */
+export function reactionVerdict(glyph: string): PermissionVerdict | undefined {
+  const bare = glyph.replace(/[\u{FE0F}\u{1F3FB}-\u{1F3FF}]/gu, "").trim();
+  const behavior = REACTIONS[bare];
+  return behavior ? { behavior, scope: "once" } : undefined;
+}
+
+/** What a principal's row says as a verdict, if anything: a `/y` line, or a reaction ON A
+ *  CARD from the table above. A reaction elsewhere (a thumb on the agent's own line) is
+ *  conversation, not steering — `isCard` says what the row points at; an un-react says
+ *  nothing. One predicate for the gate (xi) and for the window (a verdict draws no block). */
+export function saidVerdict(
+  e: Event,
+  isCard: (ref: EventId | undefined) => boolean,
+): PermissionVerdict | undefined {
+  if (e.type !== "message") return undefined;
+  const glyph = reactionOf(e);
+  if (glyph === undefined) return parseVerdict(textOf(e));
+  if (e.payload?.action === "remove" || !isCard(e.payload?.ref_id)) return undefined;
+  return reactionVerdict(glyph);
+}
+
+/** The cards in a window, as the predicate `saidVerdict` asks for: is this ref one of them? */
+export function cardsIn(events: Event[]): (ref: EventId | undefined) => boolean {
+  const cards = new Set<EventId>();
+  for (const e of events) if (e.type === "permission_request") cards.add(e.id);
+  return (ref) => ref !== undefined && cards.has(ref);
+}
+
+/** The glyph a reaction carries, on either wire shape (data: open-bsp · text: legacy). */
+function reactionOf(e: MessageEvent): string | undefined {
+  const p = e.parts.find((p) => p.kind === "reaction");
+  if (!p) return undefined;
+  if (p.type === "data") {
+    const d = p.data as { unicode?: string; name?: string } | null;
+    return d?.unicode ?? d?.name ?? "";
+  }
+  return p.type === "text" ? p.text : "";
+}
 const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 
 function renderMessages(
@@ -593,6 +651,7 @@ function renderMessages(
   // returned, in append order — so the unconsumed set is taken here, before event time
   // reorders the runs, and travels by identity
   const deferred = deferredInput(visible, me, closingBoundary(visible, session));
+  const isCard = cardsIn(window);
   const { events, elisions } = byEventTime(visible, me, here);
   // room names from the WHOLE window, silenced rows included — a name is a fact about the
   // room, and the row that carried it need not be one the model reads
@@ -810,7 +869,7 @@ function renderMessages(
     if (e.envelope.conversation.address === here) {
       if (isSelf(e, me)) {
         placeOwn(bodyOf(e, zone)); // bare: the agent's own voice
-      } else if (parseVerdict(textOf(e)) === undefined) {
+      } else if (saidVerdict(e, isCard) === undefined) {
         place("user", { type: "text", text: principalEl(e, who, zone) }); // a verdict line is
         // steering, not conversation — the gate consumed it, so it draws no block
       }

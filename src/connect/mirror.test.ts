@@ -288,7 +288,7 @@ Deno.test("mirror fan-out: a send's card is laid out in rows, in the surface's t
         "**Last message** (23 Sep 16:42):\nllegás?\n\n" +
         "**Reply**:\nhola!\nnos vemos\n\n" +
         "**Attachments**: 1\n\n" +
-        "`reply /y to approve · /n <reason> to refuse`",
+        "`reply /y to approve · /n <reason> to refuse · or react 👍 / 👎`",
     );
   });
 });
@@ -364,7 +364,7 @@ Deno.test("mirror fan-out: under a Spanish locale the harness speaks Spanish —
       assertStringIncludes(
         card,
         "`[agente pregunta]` aprobar **send**(to: Vivian, text: hola)\n\n" +
-          "`responder /y para aprobar · /n <motivo> para rechazar`",
+          "`responder /y para aprobar · /n <motivo> para rechazar · o reaccionar 👍 / 👎`",
       );
       assertEquals(parseVerdict("/y"), { behavior: "allow", scope: "once" });
       assertEquals(presence, "`[agente pensando...]`");
@@ -424,6 +424,18 @@ Deno.test("mirror fan-in: a quoted CC is TRANSLATED — the copy's ref_id names 
     // …while the unquoted /y keeps plain provenance
     const bare = (await inConv("mind@ana")).find((e) => !e.payload?.ref_external_id)!;
     assertEquals(bare.payload?.ref_id, reply.id);
+
+    // a reaction on the card is the same join with its action kept: an `add` naming the
+    // card is what the gate reads as a thumb ON the card (§9), an un-react is a `remove`
+    await publish({
+      ...aliasInbound("", { external_id: "slack:T1:D1:999.9" }),
+      payload: { ref_external_id: "slack:T1:D1:666.6", action: "add" },
+      parts: [{ type: "data", kind: "reaction", data: { name: "+1" } }],
+    } as Draft<Event>);
+    await waitFor(async () => (await inConv("mind@ana")).some((e) => e.payload?.action === "add"));
+    const thumb = (await inConv("mind@ana")).find((e) => e.payload?.action === "add")!;
+    assertEquals(thumb.payload?.ref_id, (cc.extra?.via as { event: string }).event);
+    assertEquals(thumb.parts, [{ type: "data", kind: "reaction", data: { name: "+1" } }]);
   });
 });
 

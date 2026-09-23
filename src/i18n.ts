@@ -22,7 +22,7 @@ const TONGUES = {
     asks: "agent asks",
     system: "system",
     approve: "approve",
-    hint: "reply /y to approve · /n <reason> to refuse",
+    hint: "reply /y to approve · /n <reason> to refuse · or react 👍 / 👎",
     withdrawn: "withdrawn",
     // the send card's rows (§9): the labels a person reads the call under
     card: {
@@ -46,7 +46,7 @@ const TONGUES = {
     asks: "agente pregunta",
     system: "sistema",
     approve: "aprobar",
-    hint: "responder /y para aprobar · /n <motivo> para rechazar",
+    hint: "responder /y para aprobar · /n <motivo> para rechazar · o reaccionar 👍 / 👎",
     withdrawn: "retirado",
     card: {
       conversation: "Conversación",

@@ -1923,6 +1923,95 @@ Deno.test("two cards open: a bare /y settles nothing, the quoted one settles its
   );
 });
 
+Deno.test("the gate answers to a reaction: a thumb ON the card is /y, a thumb down is /n (§9)", async () => {
+  // a reaction arrives as the mirror copies it: an `add` whose `ref_id` is already the card
+  // event, the glyph riding a reaction part. A verdict without a keyboard — the bar a phone
+  // offers on a long press.
+  const reacts = (
+    glyph: string,
+    on: string,
+    action: "add" | "remove" = "add",
+  ): Draft<MessageEvent> => ({
+    ts: new Date().toISOString(),
+    type: "message",
+    agent: { id: "a1", session_id: "mind" },
+    payload: { ref_id: on, ref_external_id: `wa:${on}`, action },
+    extra: { via: { conversation: "wa:self" } },
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "mind@a1" },
+      sender: { address: "matias", name: "Matías" },
+    },
+    parts: [{ type: "data", kind: "reaction", data: { name: glyph, unicode: glyph } }],
+  });
+  const says = (text: string): Draft<MessageEvent> => ({
+    ts: new Date().toISOString(),
+    type: "message",
+    agent: { id: "a1", session_id: "mind" },
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "mind@a1" },
+      sender: { address: "matias", name: "Matías" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  const ask = { gate: (name: string) => name === "send" ? "ask" as const : "allow" as const };
+  const gated = () => [
+    ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+    ok([], "end_turn"),
+  ];
+
+  // 👍🏻 on the card — the phone's spelling, skin tone and all — and the send goes out
+  await scenario(gated(), async ({ publish, read }) => {
+    await publish(says("mandale"));
+    await waitFor(async () => (await read("permission_request")).length === 1);
+    const [card] = await read("permission_request");
+    await publish(reacts("👍🏻", card.id));
+    await waitFor(async () =>
+      (await read("message")).some((e) => e.envelope.conversation.address === "wa:x")
+    );
+    const [verdict] = await read("permission_response");
+    assert(verdict.type === "permission_response");
+    assertEquals(verdict.parts[0].data, { behavior: "allow", scope: "once" });
+  }, ask);
+
+  // 👎 on the card — refused, nothing sent
+  await scenario(gated(), async ({ publish, read }) => {
+    await publish(says("mandale"));
+    await waitFor(async () => (await read("permission_request")).length === 1);
+    const [card] = await read("permission_request");
+    await publish(reacts("👎", card.id));
+    await waitFor(async () => (await read("tool_result")).some((e) => e.payload?.deferred));
+    const res = (await read("tool_result")).find((e) => e.payload?.deferred);
+    assert(res?.type === "tool_result");
+    assertEquals(res.parts[0].data.is_error, true);
+    assertEquals(
+      (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
+      0,
+    );
+  }, ask);
+
+  // a thumb on some OTHER row (their own earlier line) is conversation, not a verdict; so
+  // is a glyph off the table on the card, and so is taking a thumb back — the gate waits
+  await scenario(gated(), async ({ publish, read }) => {
+    const line = await publish(says("mandale"));
+    await waitFor(async () => (await read("permission_request")).length === 1);
+    const [card] = await read("permission_request");
+    await publish(reacts("👍", line.id));
+    await publish(reacts("😂", card.id));
+    await publish(reacts("👍", card.id, "remove"));
+    await new Promise((r) => setTimeout(r, 250));
+    assertEquals((await read("permission_response")).length, 0);
+    assertEquals((await read("error")).length, 0);
+    assertEquals(
+      (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
+      0,
+    );
+  }, ask);
+});
+
 Deno.test("two cards open: `/y all` settles the whole pile in one line (§9)", async () => {
   const says = (text: string): Draft<MessageEvent> => ({
     ts: new Date().toISOString(),

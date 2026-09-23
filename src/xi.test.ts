@@ -6,6 +6,7 @@ import {
   decide,
   gateOf,
   parseVerdict,
+  reactionVerdict,
   relevant,
   specsOf,
   UNANSWERED_ROOMS,
@@ -84,6 +85,23 @@ Deno.test("gateOf: scoped rules — where a send lands decides, most specific fi
   assertEquals(gate("send", {}, { conversation: "mind@a1" }), "ask"); // local: the bare rule
   assertEquals(gate("send", {}), "ask"); // no target ⇒ scoped rules never match
   assertEquals(gate("bash", {}), "allow"); // a placed rule never leaks onto placeless tools
+});
+
+Deno.test("reactionVerdict: a thumb or a heart is /y, a thumb down or a gasp is /n — always once (§9)", () => {
+  assertEquals(reactionVerdict("👍"), { behavior: "allow", scope: "once" });
+  assertEquals(reactionVerdict("❤️"), { behavior: "allow", scope: "once" });
+  assertEquals(reactionVerdict("👎"), { behavior: "deny", scope: "once" });
+  assertEquals(reactionVerdict("😮"), { behavior: "deny", scope: "once" });
+  // the phone's spelling: a skin tone or a variation selector is the same reaction
+  assertEquals(reactionVerdict("👍🏻"), { behavior: "allow", scope: "once" });
+  assertEquals(reactionVerdict("❤"), { behavior: "allow", scope: "once" });
+  // Slack names its reactions
+  assertEquals(reactionVerdict("+1"), { behavior: "allow", scope: "once" });
+  assertEquals(reactionVerdict("-1"), { behavior: "deny", scope: "once" });
+  // the rest of the bar says nothing
+  assertEquals(reactionVerdict("😂"), undefined);
+  assertEquals(reactionVerdict("🙏"), undefined);
+  assertEquals(reactionVerdict(""), undefined);
 });
 
 Deno.test("parseVerdict: /{y,n} [once|conv|conn|always] [reason] — one syntax, every door (§9)", () => {

@@ -85,10 +85,10 @@ import {
   ownComplex,
   ownSide,
   ownVoice,
-  parseVerdict,
   renderHits,
   roomNames,
   type Roster,
+  saidVerdict,
   shortId,
   silenced,
   type Surface,
@@ -554,8 +554,8 @@ export function owedOf(events: Event[], session: Session): Owed[] {
  *  `always` is the widest SCOPE precisely so `all` can mean all of them: a bare `/y` reads
  *  as `/y once`, which makes `/y always` the natural opposite and leaves `all` free for
  *  what it plainly says. One syntax, every door: gateVerdict here, the REPL's own line. */
-export { parseVerdict } from "./render.ts"; // the steering vocabulary lives with the
-// predicate that hides it from the window — one parser, both doors
+export { parseVerdict, reactionVerdict } from "./render.ts"; // the steering vocabulary
+// lives with the predicate that hides it from the window — one parser, both doors
 
 /**
  * A gate answered from wherever the principal is (§9). The approval card crosses to their
@@ -597,6 +597,7 @@ function gateVerdict(
   ];
   const last = live.at(-1);
   if (!last) return [];
+  const isCard = (ref: EventId | undefined) => cards.some((c) => c.id === ref);
   /** One card settled, exactly as they typed it. */
   const response = (card: Event): Draft<PermissionResponseEvent> => ({
     ts: new Date().toISOString(),
@@ -613,7 +614,8 @@ function gateVerdict(
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type !== "message" || !ownComplex(e, session) || ownVoice(e, session)) continue;
-    said = parseVerdict(textOf(e));
+    // their line, or their reaction ON a card: a thumb on some other row is not a verdict
+    said = saidVerdict(e, isCard);
     if (!said) break; // their latest word is not a verdict — they said something else
     // Answered already? While a gate waits, EVERY event re-reads this same latest line —
     // and a line stays latest long after it did its work. Two ways it is spent: a verdict

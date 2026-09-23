@@ -184,9 +184,12 @@ async function fanIn(
     type: "message",
     // `ref_external_id` still rides along as the mark that they quoted AT ALL — a quote
     // that resolves to nothing falls back to provenance, not to silence
+    // …and the action rides too: a reaction on the card is an `add` naming it, which is
+    // how a thumb on the card reads as a verdict in the mind (§9) and an un-react does not
     payload: {
       ref_id: origin ?? e.id,
       ...(e.payload?.ref_external_id ? { ref_external_id: e.payload.ref_external_id } : {}),
+      ...(e.payload?.action ? { action: e.payload.action } : {}),
     },
     // the principal's stamp (§3): whose mind + entered through the harness — a surface is
     // the mind's face, so the copy is the MIND session's row. No turn_id: input, not

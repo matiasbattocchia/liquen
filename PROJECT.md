@@ -3411,3 +3411,16 @@ text alone when files ride along. The mirror lays it out under labels in the sur
 tongue (`Words.card`); a call of any other tool keeps its one line in full. The tool
 trace (`[agent tool]`) and the deferred result line stay short on purpose: they record
 that something happened, and are not where anything is decided.
+
+### A reaction on the card is a verdict (2026-09-23) — LANDED
+
+On a phone, `/y` is four keystrokes and a reaction is a long press. The gate now reads
+the quick-reaction bar: 👍 or ❤️ on the card is `/y`, 👎 or 😮 is `/n`, always `once`
+(a reaction carries no scope and no reason). Slack's names for the same glyphs count
+too, and the phone's spelling — a skin tone, a variation selector — is the same glyph.
+
+Only ON the card: a reaction always names its target, and the mirror's copy now keeps
+the reaction's `action` beside the ref it translates to the card event, so `saidVerdict`
+(the one predicate the gate and the window share) takes a thumb on the card as a verdict
+and a thumb on any other row as conversation. An un-react (`remove`) says nothing. The
+hint under the card names the two glyphs.
