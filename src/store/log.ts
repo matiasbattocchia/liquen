@@ -681,43 +681,63 @@ function migrate(db: DatabaseSync) {
   if (v < 9) migrateV9(db);
 }
 
+/** A column migration under the write lock: every process an org boots opens the log at
+ *  once, and a check-then-ALTER outside the lock lets two of them both see the column
+ *  missing. Under it, the second waits, then finds the column there. */
+function writing(db: DatabaseSync, body: () => void) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    body();
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
 /** v9 — a standing wake carries the operator's handle (§10): the name `liquen schedule`
  *  re-arms by, unique per session so a redeploy replaces its row instead of stacking one.
  *  Every row already there is an agent's own, which is named by nothing. */
 function migrateV9(db: DatabaseSync) {
-  const cols = new Set(
-    (db.prepare("SELECT name FROM pragma_table_info('timers')").all() as { name: string }[])
-      .map((c) => c.name),
-  );
-  if (!cols.has("name")) db.exec("ALTER TABLE timers ADD COLUMN name TEXT");
-  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS timers_named
-    ON timers (agent_id, session_id, name) WHERE name IS NOT NULL`);
-  db.exec("PRAGMA user_version = 9");
+  writing(db, () => {
+    const cols = new Set(
+      (db.prepare("SELECT name FROM pragma_table_info('timers')").all() as { name: string }[])
+        .map((c) => c.name),
+    );
+    if (!cols.has("name")) db.exec("ALTER TABLE timers ADD COLUMN name TEXT");
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS timers_named
+      ON timers (agent_id, session_id, name) WHERE name IS NOT NULL`);
+    db.exec("PRAGMA user_version = 9");
+  });
 }
 
 /** v8 — spend says what it paid for (§5): a turn, or the checkpoint that displaced one.
  *  Rows written before the kind existed keep a null: what they cost is known, what kind of
  *  call it was is not. */
 function migrateV8(db: DatabaseSync) {
-  const cols = db.prepare("SELECT name FROM pragma_table_info('usage')").all() as {
-    name: string;
-  }[];
-  if (!cols.some((c) => c.name === "kind")) db.exec("ALTER TABLE usage ADD COLUMN kind TEXT");
-  db.exec("PRAGMA user_version = 8");
+  writing(db, () => {
+    const cols = db.prepare("SELECT name FROM pragma_table_info('usage')").all() as {
+      name: string;
+    }[];
+    if (!cols.some((c) => c.name === "kind")) db.exec("ALTER TABLE usage ADD COLUMN kind TEXT");
+    db.exec("PRAGMA user_version = 8");
+  });
 }
 
 /** v7 — the registry carries the roster's word for each member (`name`), who steers
  *  (`principals`) and whether a session runs (`runs`), §4. A projection re-synced at every
  *  boot: the columns need existing, not backfilling. */
 function migrateV7(db: DatabaseSync) {
-  const cols = new Set(
-    (db.prepare("SELECT name FROM pragma_table_info('agents')").all() as { name: string }[])
-      .map((c) => c.name),
-  );
-  if (!cols.has("name")) db.exec("ALTER TABLE agents ADD COLUMN name TEXT");
-  if (!cols.has("principals")) db.exec("ALTER TABLE agents ADD COLUMN principals TEXT");
-  if (!cols.has("runs")) db.exec("ALTER TABLE agents ADD COLUMN runs INTEGER NOT NULL DEFAULT 1");
-  db.exec("PRAGMA user_version = 7");
+  writing(db, () => {
+    const cols = new Set(
+      (db.prepare("SELECT name FROM pragma_table_info('agents')").all() as { name: string }[])
+        .map((c) => c.name),
+    );
+    if (!cols.has("name")) db.exec("ALTER TABLE agents ADD COLUMN name TEXT");
+    if (!cols.has("principals")) db.exec("ALTER TABLE agents ADD COLUMN principals TEXT");
+    if (!cols.has("runs")) db.exec("ALTER TABLE agents ADD COLUMN runs INTEGER NOT NULL DEFAULT 1");
+    db.exec("PRAGMA user_version = 7");
+  });
 }
 
 function migrateV1(db: DatabaseSync) {
