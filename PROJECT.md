@@ -3443,3 +3443,21 @@ book. A book that cannot be reached is search's footnote and a write's stop — 
 about to save or remove somebody, and "nobody by that name" is not a fact a silent book
 has stated. Names are never keys: two people saved under one name both land, and the
 window tells them apart by the `address` every outsider's line wears.
+
+### One name rule, and `send(to:)` asks the books (2026-09-23) — LANDED
+
+A person is named loosely — the calendar says `REVECO EDGARDO`, the phone saved `Edgardo
+Reveco`, a pushname carries `Álvaro` where the book has `Alvaro` — so one rule now matches
+a name wherever one is looked up (`store/names.ts`): case and accents folded, every word
+of the query found in the name, in any order. The log's name columns filter through it in
+the engine (a bound `fold` SQL function, one `LIKE` per word), which is what `search
+from:`/`in:`, `contact(who:)`, `send(to:)` and the describers all read through; the
+whatsmeow bridge's `GET /contacts?q=` applies the same three lines in Go, so a book
+answers a name the same way the log does.
+
+`send(to:)` now asks the address books too, the way `contact` and `search from:` do: a
+person the account saved is writable before they have ever written, and rides the account
+whose book holds them. A full name (one with a space) nobody answers to is an error —
+before, it became a local room wearing the name, which nobody reads. The gate's scoping
+(`targetOf`) resolves the same way, so a book is asked twice per send; cheap, and one
+authority.

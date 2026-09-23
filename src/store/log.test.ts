@@ -86,6 +86,32 @@ Deno.test("read filters by conversation, sender, and case-insensitive text (§6)
   });
 });
 
+Deno.test("read by a name follows the name rule: case, accents and word order aside (§6)", async () => {
+  await withLog(async (log) => {
+    const named = (id: string, address: string, name: string): MessageEvent => ({
+      ...msg(id, address, "hola", address),
+      envelope: {
+        service: "local",
+        connection_address: "org",
+        conversation: { address, kind: "direct", name },
+        sender: { address, name },
+      },
+    });
+    await log.publish(named("01", "5492616104507", "Verónica Sesto"));
+    await log.publish(named("02", "5491155512345", "Verónica Paz"));
+    await log.publish(named("03", "5492615550000", "Álvaro Manzur"));
+
+    const rooms = async (conversationName: string) =>
+      (await log.read({ conversationName })).map((e) => e.id);
+    assertEquals(await rooms("SESTO VERONICA"), ["01"]); // the calendar's order, uppercase
+    assertEquals(await rooms("verónica"), ["01", "02"]); // one word: every Verónica
+    assertEquals(await rooms("ALVARO"), ["03"]); // the accent the query has not
+    assertEquals(await rooms("Verónica Paz"), ["02"]);
+    assertEquals(await rooms(" - "), []); // no word names nobody
+    assertEquals((await log.read({ senderName: "manzur alvaro" })).map((e) => e.id), ["03"]);
+  });
+});
+
 Deno.test("the search column is every part's words: text, a file's name+caption, a data part's leaves+text (§6)", async () => {
   await withLog(async (log) => {
     const parted = (id: string, parts: MessageEvent["parts"]): MessageEvent => ({

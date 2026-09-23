@@ -1590,30 +1590,74 @@ function sessionDm(self: { id: string; session_id: string }, target: {
  *  name reaches once, and a name that reaches more than a handful is ambiguous anyway. */
 const NAME_SCAN = 50;
 
+/** Somebody a name reached: where they are, what they are called there, and — when a
+ *  book answered — the account whose book holds them. */
+interface Named {
+  address: string;
+  name?: string;
+  connection?: string;
+}
+
 /** What a `to` names. The tool takes a name or an address, and only the wire's addresses
  *  are conversations: `search` hands the model both, and the card prints the name, so a
  *  name is what a model reaches for. A `to` no conversation answers to is looked up as one
- *  before it is taken for a stranger — and a name several conversations answer to comes
- *  back as `candidates` rather than a guess, because the wrong recipient is the one send
- *  that cannot be taken back. Resolution reads through the SCOPED log, so a name only ever
- *  reaches conversations the agent can already see. */
+ *  before it is taken for a stranger — in the log, by the name rule (`store/names.ts`),
+ *  and in the address books of the agent's accounts, the way `search from:` and `contact`
+ *  ask them: a person the account saved is reachable before they have ever written, and
+ *  the calendar's `REVECO EDGARDO` reaches the phone's `Edgardo Reveco`. A name several
+ *  people answer to comes back as `candidates` rather than a guess, because the wrong
+ *  recipient is the one send that cannot be taken back. Resolution reads through the
+ *  SCOPED log, so a name only ever reaches conversations the agent can already see.
+ *
+ *  A name nobody answers to is not an address: `Edgardo Reveco` unknown everywhere is an
+ *  error to raise, where a bare handle (`5491100000000`, `wa:x`) is first contact (§5). The
+ *  line between them is the space — no address has one. */
 async function namesTo(
   to: string,
+  self: { id: string },
   ports: XiPorts,
-): Promise<{ address: string; candidates: Event[] }> {
+): Promise<{ address: string; candidates: Named[]; book?: string }> {
   if ((await ports.log.read({ conversation: to, limit: 1 })).length > 0) {
     return { address: to, candidates: [] };
   }
   const named = await ports.log.read({ conversationName: to, limit: NAME_SCAN });
-  const first = new Map<string, Event>();
+  const people = new Map<string, Named>();
   for (const e of named) {
     const at = e.envelope.conversation.address;
-    if (at !== undefined && !first.has(at)) first.set(at, e);
+    if (at !== undefined && !people.has(at)) {
+      people.set(at, { address: at, name: e.envelope.conversation.name });
+    }
   }
-  const found = [...first.values()];
-  return found.length === 1
-    ? { address: found[0].envelope.conversation.address!, candidates: [] }
-    : { address: to, candidates: found };
+  // the book answers a name the log has only ever seen as a number — or never at all. A
+  // book that could not be asked is a send's stop while the log has nobody: a send to a
+  // stranger wearing the name is worse than one asked again later
+  const saved = await booked(self, ports, to);
+  for (const h of saved?.hits ?? []) if (!people.has(h.address)) people.set(h.address, h);
+  const found = [...people.values()];
+  if (found.length === 1) {
+    const [one] = found;
+    return {
+      address: one.address,
+      candidates: [],
+      ...(one.connection !== undefined ? { book: one.connection } : {}),
+    };
+  }
+  if (found.length === 0) {
+    if (saved?.unreached?.length) {
+      throw new Error(
+        `cannot tell who "${to}" is — address book not reached on ${
+          saved.unreached.join(", ")
+        }; give their address, or try again`,
+      );
+    }
+    if (/\s/.test(to.trim())) {
+      throw new Error(
+        `nobody named "${to}" has spoken here and no address book of yours has them — ` +
+          "give their address",
+      );
+    }
+  }
+  return { address: to, candidates: found };
 }
 
 /** The accounts this agent speaks through (§4): the connections that name it as owner and
@@ -1727,7 +1771,12 @@ async function targetOf(
   if (target && !(target.agentId === self.id && target.sessionId === self.session_id)) {
     to = sessionDm(self, target);
   }
-  to = (await namesTo(to, ports)).address;
+  // a name nobody answers to is the call's own error to raise; here it is simply no scope
+  try {
+    to = (await namesTo(to, self, ports)).address;
+  } catch {
+    return undefined;
+  }
   const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
   const connection = named ?? prior?.envelope.connection_address;
   return connection !== undefined ? { connection, conversation: to } : { conversation: to };
@@ -1887,7 +1936,7 @@ async function execute(
     const peer = sessionTarget(to, ports.log.agents());
     // the account it rides (§4): named by the model, else the conversation's own record
     // below. A peer's DM rides no account — it is the local channel by construction.
-    const via = args.connection === undefined || args.connection === ""
+    let via = args.connection === undefined || args.connection === ""
       ? undefined
       : accountNamed(String(args.connection), self, ports);
     if (peer && !(peer.agentId === self.id && peer.sessionId === self.session_id)) {
@@ -1912,17 +1961,20 @@ async function execute(
     }
     // A name is as good as an address (§5) — and `targetOf` resolved the same way, so the
     // rule that judged this call named the conversation the log is about to record.
-    const aimed = await namesTo(to, ports);
+    const aimed = await namesTo(to, self, ports);
     if (aimed.candidates.length > 0) {
       throw new Error(
         `"${to}" names ${aimed.candidates.length} conversations — say which: ${
-          aimed.candidates.map((e) =>
-            `${e.envelope.conversation.name ?? "?"} (${e.envelope.conversation.address})`
-          ).join(", ")
+          aimed.candidates.map((c) => `${c.name ?? "?"} (${c.address})`).join(", ")
         }`,
       );
     }
     to = aimed.address;
+    // somebody only a book knows is written to through the account that keeps them, the
+    // way `contact` saves them there: the book that holds them is the account they are on
+    if (!via && aimed.book !== undefined) {
+      via = accounts(self, ports).find((c) => c.address === aimed.book);
+    }
     // The tool gave us an address; the envelope is ours to write (§2). The conversation's
     // events ARE its record: complete service · connection · kind from the latest visible
     // one, so a reply carries the envelope its conversation always had — and the SCOPED

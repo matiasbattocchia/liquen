@@ -108,11 +108,13 @@ async function scenario(
   preload: Draft<Event>[] = [], // events in the log before the fan-out starts (recovery)
   ports: Partial<XiPorts> = {}, // what a scenario adds to the agent's ports (a tool, a scope)
   roster: AgentRow[] = [], // the registry as the org declared it — handles included
+  connections: Parameters<Log["upsertConnections"]>[0] = [], // the accounts the roster speaks through
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   await seedOrg(`${dir}/docs`); // the docs root as every org boots on it: the checkpoint instruction included
   if (roster.length > 0) log.syncAgents(roster);
+  if (connections.length > 0) log.upsertConnections(connections);
   const preloaded: Event[] = [];
   for (const e of preload) preloaded.push((await log.publish(e))!);
   const { transport, calls } = scripted(script);
@@ -293,6 +295,86 @@ Deno.test("send: a name no conversation is addressed by lands on the one it name
       );
       assertEquals(directed.length, 1); // the NAME reached the address, not a stranger
     },
+  );
+});
+
+Deno.test("send: a name reaches its conversation by the name rule — case, accents and word order aside", async () => {
+  await scenario(
+    [
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "SESTO VERONICA", text: "hola!" } }],
+        "tool_use",
+      ),
+      ok([{ kind: "assistant", text: "le escribí" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(namedChat("5492616104507", "Verónica Sesto", "¡Hola! Quiero más información"));
+      await publish(principalMsg("recordale el turno a verónica"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+
+      const directed = (await read("message")).filter((e) =>
+        e.envelope.conversation.address === "5492616104507" &&
+        JSON.stringify(e.parts).includes("hola!")
+      );
+      assertEquals(directed.length, 1); // the calendar's `APELLIDO NOMBRE` reached the phone's `Nombre Apellido`
+    },
+  );
+});
+
+Deno.test("send: a name the log never saw is asked of the address books, and rides the account that keeps them", async () => {
+  const asked: string[] = [];
+  const contact = {
+    whatsapp: {
+      write: () => Promise.resolve({}),
+      lookup: ({ query }: { query: string }) => {
+        asked.push(query);
+        return Promise.resolve(
+          query.toLowerCase().includes("reveco")
+            ? [{ name: "Edgardo Reveco", address: "5492615550000" }]
+            : [],
+        );
+      },
+    },
+  };
+  await scenario(
+    [
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "REVECO EDGARDO", text: "recordatorio" } }],
+        "tool_use",
+      ),
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "Nadie Conocido", text: "hola" } }],
+        "tool_use",
+      ),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("mandá los recordatorios"));
+      await waitFor(async () => (await read("tool_result")).length === 2);
+
+      // the gate scoped the call and the act resolved it: each asked the book once
+      assertEquals([...new Set(asked)], ["REVECO EDGARDO", "Nadie Conocido"]);
+      // the book's entry became the address, on the account whose book holds him — never
+      // a local room wearing his name
+      const [sent] = (await read("message")).filter((e) =>
+        JSON.stringify(e.parts).includes('"text":"recordatorio"')
+      );
+      assertEquals(sent.envelope.conversation.address, "5492615550000");
+      assertEquals(sent.envelope.service, "whatsapp");
+      assertEquals(sent.envelope.connection_address, "5491100000000");
+      // a full name nobody answers to is an error, not first contact with a stranger
+      const [, miss] = await read("tool_result");
+      assertStringIncludes(JSON.stringify(miss.parts), 'nobody named \\"Nadie Conocido\\"');
+      const strayed = (await read("message")).filter((e) =>
+        JSON.stringify(e.parts).includes('"hola"')
+      );
+      assertEquals(strayed.length, 0);
+    },
+    {},
+    [],
+    { contact },
+    [{ agentId: "a1", mind: "mind@a1" }],
+    [{ service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } }],
   );
 });
 

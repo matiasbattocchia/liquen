@@ -67,6 +67,7 @@ import { createTimers, type Timers, TIMERS_DDL } from "./timers.ts";
 import { createGates, type Gates, GATES_DDL } from "./gates.ts";
 import { createSweeper, type Sweeper } from "./sweep.ts";
 import { dmAliases, principalsOf } from "./roster.ts";
+import { foldName, nameWords } from "./names.ts";
 
 /** A bounded, filtered read over the log. Fields AND-combine (the `search` half, §6). */
 export interface ReadQuery {
@@ -76,10 +77,11 @@ export interface ReadQuery {
   conversations?: string[]; // restrict to this set (RLS-parity: a principal's readable scope, §6)
   from?: string; // sender address
   senders?: string[]; // restrict to this set of sender addresses (the `from` filter, widened)
-  /** LIKE over the names a row denormalizes (§3): what it calls its room and its author.
-   *  `search` uses these to turn the handle the model was SHOWN — a name — into the
-   *  addresses the log keys on, which is the only reason a name is ever matched: the
-   *  filters themselves stay exact, over addresses. */
+  /** The name rule (`store/names.ts`) over the names a row denormalizes (§3): what it
+   *  calls its room and its author — case and accents folded, every word of the query in
+   *  any order. `search` and `send` use these to turn the handle the model was SHOWN — a
+   *  name — into the addresses the log keys on, which is the only reason a name is ever
+   *  matched: the filters themselves stay exact, over addresses. */
   conversationName?: string;
   senderName?: string;
   after?: string; // events after this TIMESTAMP (event time — Slack-search semantics, §6)
@@ -231,6 +233,9 @@ export async function openLog(
   // the store's id authority: Postgres writes `DEFAULT uuidv7()`, SQLite needs the function
   // bound first — same DDL, same guarantee (evaluated at INSERT, under the write lock).
   db.function("uuidv7", () => newId());
+  // the name rule (`store/names.ts`), bound so the name columns are filtered in the engine:
+  // case and accents folded, so `Álvaro` and `ALVARO` are one needle
+  db.function("fold", { deterministic: true }, (s) => (s == null ? null : foldName(String(s))));
   // A log that cannot be read must say so once, in a sentence naming itself. Every child
   // of the org opens this file, so a corrupt one otherwise arrives as four stack traces
   // every few seconds, none of them saying which file or what to do about it — and the
@@ -1164,10 +1169,20 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
     where.push(`sender_address IN (${q.senders.map(() => "?").join(",")})`);
     params.push(...q.senders);
   }
+  // a name column answers to the name rule (`store/names.ts`): every word of the query, in
+  // any order, folded — `REVECO EDGARDO` reaches the row that says `Edgardo Reveco`. A
+  // query with no word at all names nobody.
   const like = (column: string, value?: string) => {
     if (value === undefined) return;
-    where.push(`${column} IS NOT NULL AND lower(${column}) LIKE '%' || lower(?) || '%'`);
-    params.push(value);
+    const words = nameWords(value);
+    if (words.length === 0) {
+      where.push("0");
+      return;
+    }
+    for (const w of words) {
+      where.push(`${column} IS NOT NULL AND fold(${column}) LIKE '%' || ? || '%'`);
+      params.push(w);
+    }
   };
   like("conversation_name", q.conversationName);
   like("sender_name", q.senderName);
