@@ -43,7 +43,14 @@ export function serveIngest(
   announce: (boundPort: number) => void,
 ): Deno.HttpServer<Deno.NetAddr> {
   try {
-    return Deno.serve({ port, onListen: ({ port: bound }) => announce(bound) }, handler);
+    // "::" is every interface of BOTH families: the door is registered with a service as
+    // `http://localhost:<port>`, and `localhost` is ::1 as much as 127.0.0.1 — a client
+    // that resolves it to ::1 first (Go's pure resolver does, some of the time) would be
+    // refused by an IPv4-only listener and lose the batch.
+    return Deno.serve(
+      { hostname: "::", port, onListen: ({ port: bound }) => announce(bound) },
+      handler,
+    );
   } catch (err) {
     if (err instanceof Deno.errors.AddrInUse) {
       throw new Error(`port ${port} in use — another org running? set ${configKey}`);

@@ -3468,3 +3468,13 @@ Same day, from the first live batch: a book also says who people are to each oth
 PROPER carries the query stand and the parenthesis steps aside (`preferProper`); when no
 proper name has it, every hit stands and the call says it is ambiguous. Search keeps
 every hit.
+
+### The ingest door answers on both loopbacks (2026-09-23) — LANDED
+
+The door is registered with a service as `http://localhost:<port>`, and `localhost` is
+`::1` as much as `127.0.0.1`. `serveIngest` bound `0.0.0.0` — IPv4 only — so a client that
+resolves `localhost` to `::1` first was refused. The whatsmeow bridge built without cgo
+(Go's pure resolver) does that about a quarter of the time: an afternoon of it lost 30
+inbound messages, each a `dial tcp [::1]:8794: connection refused` in the bridge's log,
+while the rest arrived and nothing looked down. The listener is now `::`, every interface
+of both families, and the serve test fetches over each loopback.

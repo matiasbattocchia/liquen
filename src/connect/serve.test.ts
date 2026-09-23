@@ -11,8 +11,12 @@ Deno.test("serveIngest: 0 binds a free port and announces it; a taken port names
   );
   assertEquals(bound, (srv.addr as Deno.NetAddr).port);
   assert(bound > 0);
-  const res = await fetch(`http://localhost:${bound}/`);
-  assertEquals(await res.text(), "ok");
+  // `localhost` is both loopbacks: a service that resolves it to ::1 first (Go's pure
+  // resolver does, some of the time) has to be answered too, or its batch is lost
+  for (const host of ["127.0.0.1", "[::1]"]) {
+    const res = await fetch(`http://${host}:${bound}/`);
+    assertEquals(await res.text(), "ok", host);
+  }
   assertThrows(
     () => serveIngest("connections.x.ingestPort", bound, () => new Response(null), () => {}),
     Error,
