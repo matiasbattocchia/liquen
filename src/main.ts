@@ -97,7 +97,9 @@ const SYSTEM_CA_BUNDLES = [
 ];
 
 /** The trust file user space is handed: the system's roots followed by the liquen CA, written
- *  under the org at boot. Without a system bundle the liquen CA stands alone. */
+ *  under the org at boot. It replaces the roots of every tool that reads it, so a machine
+ *  with no system bundle refuses to start: the liquen CA alone would leave curl, git and
+ *  python trusting nothing but the fronted hosts. */
 async function writeTrustBundle(dir: string, caPath: string): Promise<string> {
   let system = "";
   for (const path of SYSTEM_CA_BUNDLES) {
@@ -105,6 +107,12 @@ async function writeTrustBundle(dir: string, caPath: string): Promise<string> {
       system = await Deno.readTextFile(path);
       break;
     } catch { /* not this distribution */ }
+  }
+  if (!system) {
+    throw new Error(
+      `no system CA bundle at ${SYSTEM_CA_BUNDLES.join(", ")}: the agents' tools would trust ` +
+        `nothing but the fronted hosts. Install ca-certificates.`,
+    );
   }
   const out = `${dir}/system/ca-bundle.pem`;
   await Deno.mkdir(`${dir}/system`, { recursive: true });
@@ -130,6 +138,7 @@ async function installProxy(dir: string): Promise<ProxyHandle> {
     REQUESTS_CA_BUNDLE: bundle, // python requests, and pip through it
     PIP_CERT: bundle,
     NODE_EXTRA_CA_CERTS: proxy.caPath, // node adds to its own roots — the CA alone suffices
+    DENO_CERT: proxy.caPath, // so does deno
   };
   const pockets = new Map<string, Record<string, string>>();
   console.error(`egress proxy on :${proxy.port}`);

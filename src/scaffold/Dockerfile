@@ -8,7 +8,7 @@
 FROM denoland/deno:latest
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git curl jq acl && \
+    apt-get install -y --no-install-recommends ca-certificates git curl jq acl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

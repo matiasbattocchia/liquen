@@ -3629,3 +3629,15 @@ between-steps cut applies. **Known gap**: the count cap still binds on a running
 events are light — past `windowLimit` events its first ones fall off the window, the input
 that started it included. Reading from the latest summary rather than a count closes both
 this and the entry above's gap.
+
+### Deno trusts the proxy from the environment, and a box without roots refuses (2026-09-24) — LANDED
+
+Deno reads none of the trust variables user space was handed, so a Deno program the agent
+ran against a fronted host refused the proxy's leaf; only the `fetch` shim, which named the
+bundle as `DENO_CERT` itself, got through (a Sonar org's `sonar` CLI carried the same line).
+`DENO_CERT` now rides the environment with the CA alone, as `NODE_EXTRA_CA_CERTS` does —
+deno adds it to its own roots — and the shim's own line is gone. Building the Sonar image
+showed the other half: `denoland/deno` ships no `ca-certificates`, so the trust bundle was
+the liquen CA alone and every tool reading `SSL_CERT_FILE` trusted nothing else, the
+proxy's own dials included. The scaffold image installs them, and `start` refuses a box with
+no system bundle rather than hand out a file that trusts nothing.

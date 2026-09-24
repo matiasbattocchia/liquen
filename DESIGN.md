@@ -2531,7 +2531,8 @@ true for exec (kernel handles it), false for control (only harness/human authori
      (`src/proxy/ca.pem` + `ca.key`): nothing trusts it but the children we hand it to, so
      it is plumbing that makes a tool accept our proxy, not a credential. The file is
      handed under every name the common clients read a bundle by (`SSL_CERT_FILE`,
-     `REQUESTS_CA_BUNDLE`, `PIP_CERT`; `NODE_EXTRA_CA_CERTS` gets the CA alone) + a
+     `REQUESTS_CA_BUNDLE`, `PIP_CERT`; `NODE_EXTRA_CA_CERTS` and `DENO_CERT` get the CA
+     alone, each runtime adding it to its own roots) + a
      `mu-grant-…` placeholder standing for the vault grant. The proxy terminates ONLY
      the authorities a fronted grant binds — where a placeholder can ride and the swap
      has to see plaintext — with a per-host leaf (`ca.ts`), swaps the placeholder for a

@@ -50,9 +50,8 @@ Deno.test("bash: PATH widens by scope — the agent's own bin cannot shadow the 
     const shim = await Deno.readTextFile(`${dir}/system/bin/aread`);
     assertStringIncludes(shim, "env DENO_DIR='");
     assertStringIncludes(shim, "--cached-only");
-    // fetch is laid the same way, and trusts the org's bundle only where main wrote one
+    // fetch is laid the same way; the liquen CA it trusts rides the environment
     const http = await Deno.readTextFile(`${dir}/system/bin/fetch`);
-    assertStringIncludes(http, `[ -f '${dir}/system/ca-bundle.pem' ] && export DENO_CERT=`);
     assertStringIncludes(http, "--cached-only --allow-net");
     const path = (await run("echo $PATH")).split(":");
     assert(

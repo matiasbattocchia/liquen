@@ -430,10 +430,8 @@ function denoDir(): Promise<string> {
  *  its URL: a no-op once it is there; a fetch the harness, not the agent, makes). The pin
  *  lives in the shim, not the agent's environment: a script the agent writes runs on the
  *  agent's own deno, with its own cache and the proxy's network. `fetch` dials the world
- *  through the proxy the environment names, and trusts what the org's trust bundle holds
- *  (`system/ca-bundle.pem`, main's — the system's roots and the liquen CA): the shim
- *  names it as `DENO_CERT` when it is there, and a ground without a proxy runs on the
- *  system's roots alone. Returns the directory. */
+ *  through the proxy the environment names, trusting the liquen CA the same environment
+ *  names as `DENO_CERT`. Returns the directory. */
 async function layShims(dir: string): Promise<string> {
   const bin = `${dir}/system/bin`;
   await Deno.mkdir(bin, { recursive: true });
@@ -460,11 +458,9 @@ async function layShims(dir: string): Promise<string> {
       `exec env DENO_DIR='${cache}' deno run --cached-only --allow-read --allow-write '${afs}' ${verb} "$@"`,
     );
   }
-  const bundle = `${dir}/system/ca-bundle.pem`;
   await shim(
     "fetch",
-    `[ -f '${bundle}' ] && export DENO_CERT='${bundle}'\n` +
-      `exec env DENO_DIR='${cache}' deno run --cached-only --allow-net --allow-env --allow-read --allow-write '${http}' "$@"`,
+    `exec env DENO_DIR='${cache}' deno run --cached-only --allow-net --allow-env --allow-read --allow-write '${http}' "$@"`,
   );
   return bin;
 }
