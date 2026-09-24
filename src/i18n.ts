@@ -28,6 +28,7 @@ const TONGUES = {
     card: {
       conversation: "Conversation",
       last: "Last message",
+      subject: "Subject",
       reply: "Reply",
       files: "Attachments",
       location: "Location",
@@ -51,6 +52,7 @@ const TONGUES = {
     card: {
       conversation: "Conversación",
       last: "Último mensaje",
+      subject: "Asunto",
       reply: "Respuesta",
       files: "Adjuntos",
       location: "Ubicación",

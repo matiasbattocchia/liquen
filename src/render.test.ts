@@ -922,6 +922,42 @@ Deno.test("envelope.status failed renders on the line — the agent sees the del
   assertStringIncludes(dump, '<conv kind=\\"direct\\" address=\\"wa:ana\\" thread=\\"169.42\\">');
 });
 
+Deno.test("a run is one conversation, one thread — a mailbox's subjects print as their own <conv>", () => {
+  const t = "2026-09-23T11:00:00Z";
+  const ana = { address: "ana@x.com", name: "Ana" };
+  const events: Event[] = [
+    worldMsg("e1", t, { address: "ana@x.com", kind: "direct", thread: "Invoice 42" }, ana, "pay"),
+    worldMsg(
+      "e2",
+      "2026-09-23T11:01:00Z",
+      { address: "ana@x.com", kind: "direct", thread: "Invoice 42" },
+      ana,
+      "please",
+    ),
+    worldMsg(
+      "e3",
+      "2026-09-23T11:02:00Z",
+      { address: "ana@x.com", kind: "direct", thread: "Lunch" },
+      ana,
+      "friday?",
+    ),
+  ];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t });
+  const dump = JSON.stringify(messages);
+  assertEquals(
+    dump.split('<conv kind=\\"direct\\" address=\\"ana@x.com\\" thread=\\"Invoice 42\\">').length,
+    2,
+  );
+  assertEquals(
+    dump.split('<conv kind=\\"direct\\" address=\\"ana@x.com\\" thread=\\"Lunch\\">').length,
+    2,
+  );
+  assert(
+    dump.indexOf("pay") < dump.indexOf("please") &&
+      dump.indexOf("please") < dump.indexOf("friday?"),
+  );
+});
+
 Deno.test("ambient env lines join the trailing anchor block after now:", () => {
   const t = "2026-07-21T10:00:00Z";
   const events: Event[] = [mindMsg("e1", t, "hola", false)];

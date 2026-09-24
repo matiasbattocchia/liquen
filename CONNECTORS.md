@@ -3,7 +3,8 @@
 *Companion to [DESIGN.md](DESIGN.md) (§3 ingest-as-classifier, §4 identity/credentials, §9
 deployment tiers) and [PROJECT.md](PROJECT.md) (the arc). This file is the per-service map:
 what each connector costs, what it reuses, and where it breaks the mould. Status
-2026-08-06. Landed: GitHub (v0.1 preview), Slack (live smoke passed 2026-08-12).*
+2026-09-23. Landed: GitHub (v0.1 preview), Slack (live smoke passed
+2026-08-12), Google (calendar poll + `gws` grant), Microsoft (the door + the Graph skill).*
 
 Services of interest, in scope: **WhatsApp** · **Slack** (done) · **Gmail** ·
 **Google Calendar** · **Microsoft Teams** · **Outlook mail** · **Outlook Calendar**.
@@ -153,8 +154,9 @@ who minted a path, never that the path is innocent.
 Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispatch.ts` ·
 `oauth.ts` · `connect.ts`):
 
-- **Shipped** — `src/connect/<service>/` (slack, google, whatsapp, github). Cross-service
-  helpers (`flavor.ts`, `mentions.ts`, `mirror.ts`, `errors.ts`, `status.ts`) live at
+- **Shipped** — `src/connect/<service>/` (slack, google, whatsapp, github, microsoft).
+  Cross-service helpers (`flavor.ts`, `mentions.ts`, `mirror.ts`, `errors.ts`, `status.ts`)
+  and the grammars a kind of connector shares (`poll.ts`, `calendar.ts`, `mail.ts`) live at
   `src/connect/` root.
 - **Custom** — `<org>/connectors/<name>/`, beside the org's `config.jsonc`. Connectors are
   code and ship with the org's image (`data/` is the volume — state only); an org's
@@ -289,29 +291,46 @@ Live smoke passed 2026-08-12 (paste door, alter-ego dispatch, echo merge). Remai
   per vaulted app token. Still open: `--agent <name>` / `--shared` — per-agent apps for
   per-agent bots (one bot per app × workspace).
 
-## 5. Gmail — the cursor connector, and it has a "Socket Mode"
+## 5. Gmail — the mail connector, polled
 
-Email is a **service, not a tool** (§4) and it is genuinely conversation-shaped: thread =
-conversation, message = event, attachments = FileParts, `kind: direct|group` from the
-recipient set. It lands in the log honestly.
+Email is a **service, not a tool** (§4) and it is genuinely conversation-shaped, so it lands
+in the log as one. The rows ride the GRANT — `service: google`, the account's connection —
+the way calendar rows do, so one connection row and one process carry an account whole.
+The conversation is the **other parties**: every address on From/To/Cc but the account's
+own, lower-cased, sorted, comma-joined (`ana@x.com`; `a@x.com,b@y.com` for a group),
+`kind: direct` — member-defined, the mpim rule — with the subject, its `Re:`/`Fwd:`
+prefixes off, as `conversation.thread`; render breaks a run on a thread change, so each
+subject prints as its own `<conv … thread="…">`. `external_id` is `mail:<Message-ID>`, the
+one name a message has on every wire; an inbound `In-Reply-To` is the row's `reply`
+reference. The body is the plain text with its quoted history cut (`stripQuotes`: the
+`On … wrote:` attribution, Outlook's separator, a forwarded header block, a trailing `>`
+block); an HTML-only body is read as words. Attachments are file parts on the media shelf;
+inline images are not attachments. All of that is `src/connect/mail.ts`, shared with
+Outlook: a mail connector is its wire, nothing more.
 
-- **Ingest**: Pub/Sub notification → `history.list` since the cursor → map → `publish`.
-- **Dispatch**: `messages.send` with `threadId`; `external_id` = the RFC822 `Message-ID`
-  (stable across the loopback — our own sends come back through history and MERGE).
-- **The local tier has a pull carrier.** Pub/Sub **pull** subscriptions are Gmail's exact
-  analogue of Slack's Socket Mode: push-quality latency with **zero public surface**. The
-  edge tier swaps to a push subscription hitting the same handler. One pipeline, two
-  transports — the §9 story unchanged.
-- **Cursor**: `historyId`, in `subscriptions`. Renewal: `watch` daily (7-day ceiling).
-- **Shared inbox** (`hi@org`) = a shared connection every agent reads; personal = that
+- **Ingest**: a poll on the mailbox's `historyId` (`history.list`, `messageAdded` records,
+  a message in INBOX or SENT and not DRAFT), each listed message read in full; a first run
+  takes the profile's id and publishes nothing; a `404` on the start id drops the cursor.
+  Gmail's history is mailbox-wide, so a grant has one cursor. Pub/Sub **pull** is the edge
+  tier's carrier for the same map/publish — a wake, not a payload (§2).
+- **Dispatch**: `messages.send` with a MIME the harness authors (`raw`), its `Message-ID`
+  minted in the account's domain, so the send stamps its own `external_id` and the SENT
+  copy comes back through the poll as the echo that MERGES (§4). A reply carries
+  `In-Reply-To`/`References` and the referent's `threadId` (`extra.google.thread`); a new
+  thread is `send(subject:)`. Mail has no edit, delete or reaction: those sends fail with
+  a 400 rather than vanish.
+- **Scopes**: `gmail.readonly` + `gmail.send` in the defaults; the poll runs only on a grant
+  whose recorded consent carries a read scope, so a grant from before mail keeps its
+  calendar and takes mail on re-consent.
+- **Shared inbox** (`hi@org`) = an ownerless grant every agent reads; personal = that
   principal's. Double-answer coordination is left to coexistence-yield (§4) until observed
   to fail.
 
-**Cost/gating**: a GCP project + a Pub/Sub topic per deployment. `gmail.modify` is a
-**restricted** scope — a *public* app faces Google verification plus an annual CASA security
-assessment. **The BYO-app-per-org pattern dodges this**: an org-internal app in the org's own
-GCP project needs no verification — the same shape as the Slack manifest prefill link
-(§4, "BYO-app per org"). Confirm the current exemption wording before the org tier.
+**Cost/gating**: `gmail.readonly` is a **restricted** scope — a *public* app faces Google
+verification plus an annual CASA security assessment. **The BYO-app-per-org pattern dodges
+this**: an org-internal app in the org's own GCP project needs no verification — the same
+shape as the Slack manifest prefill link (§4, "BYO-app per org"). Confirm the current
+exemption wording before the org tier.
 
 ## 6. Google Calendar — a tool with an event STREAM, not a conversation
 
@@ -341,46 +360,129 @@ two sides: "meeting in 10 min" is precisely the open question there — *"what e
 carries a wake that must INFORM, since an alarm only re-derives what's owed"*. Build them
 together.
 
-## 7. Microsoft — one OAuth, three surfaces, one of them metered
+## 7. Microsoft — one Entra app, one Graph token, three surfaces
 
-Do the trio as one unit: one Entra app registration, one delegated-OAuth door, three
-consumers.
+Google's shape at Microsoft's wire (`src/connect/microsoft/`): the `app` door pastes an
+Entra app registration (client id, secret, the tenant it lives in) into the vault; the
+`account` door serves one delegated sign-in at `login.microsoftonline.com/<tenant>` and
+writes the grant — `microsoft:<upn>`, `refresh_token` + `access_token`, fronted to agent
+bash as `MICROSOFT_GRAPH_TOKEN` toward `graph.microsoft.com` alone. The broker refreshes at
+the tenant's token endpoint and keeps the rotated refresh token. The declared section
+runs no process (`RUNNING` in `connect/connect.ts`): until an ingest exists, the connection
+is a credential.
 
-### Outlook mail + Outlook Calendar — cheap, and they reuse everything
+**The agent's tool is `fetch` and a skill** (`src/seed/system/skills/microsoft-graph.md`,
+laid into `data/system/skills/` by `liquen connect microsoft app`, so an org carries it iff it
+connected Microsoft).
+Nothing from Microsoft plays `gws`'s part: the Graph CLI `mgc` is retired (2026-08-28);
+the PnP `m365` CLI has no token-from-env mode — its only route through the proxy is a
+seeded token cache, at ~360 MB of `node_modules` and a second of startup, and its escape
+hatch `m365 request` is `fetch` again; Work IQ mints tokens for its own service, not Graph,
+and is licensed apart. Graph is plain REST whose paging and delta hand back complete URLs,
+so the discovery a CLI would add is a page of paths the skill carries. A `graph` shim
+beside `fetch` is the upgrade if paging proves clumsy for the model.
 
-Graph subscriptions on `/me/messages` and `/me/events` (also
-`/mailFolders('inbox')/messages`), ~7-day lifetime, basic notifications + `delta` queries.
-Identical cursor machinery to §5/§6, different API surface. Latency: message <1 min avg
-(3 min max), calendar <1 min (3 min max). Ceiling: 1,000 active subscriptions per mailbox
-across all apps — irrelevant at our scale. Stay on **basic** notifications: rich would cut
-the lifetime to a day and drag in payload-encryption certs, buying only a round trip.
+**One token, one audience.** A Graph token is spendable at Graph only; SharePoint and
+Exchange Web Services would each be another token from the same sign-in, and a grant row
+fronts one. Everything below stays inside Graph.
 
-### Teams — v0 is bot-only, and the reason is billing, not capability
+**Consent.** Per-permission and cumulative: a later ask for `Mail.Send` adds to a grant
+that began as calendar. `Chat.ReadWrite`, `ChatMessage.Send`, `ChannelMessage.Send`,
+`Mail.*`, `Calendars.*` need no admin in Graph's own table, but Microsoft's managed
+default consent policy withholds most of them from a member's own consent, so a BYO app
+per org should expect its admin to grant them on the registration once.
+`ChannelMessage.Read.All` is admin-only outright. Personal accounts (outlook.com) reach
+mail and calendar, never Teams, and only through a registration whose audience includes
+them.
 
-§4's call ("Teams v0: bot scope only; agents degrade to signed-bot mode") is **confirmed
-correct**:
+### Outlook mail + Outlook Calendar — the cursor connector, Graph flavour
 
-- **The free door** is a Bot Framework / Azure Bot registration whose messaging endpoint
-  receives Activities. A bot sees only what it is in, and there is **no alter-ego leg** —
-  delegated posting *as the principal* needs Graph.
-- **The Graph door** — change notifications on `chatMessage` (`/chats/{id}/messages`,
-  `/teams/{id}/channels/{id}/messages`, `/users/{id}/chats/getAllMessages`) — is a
-  **metered / protected API**: it requires the Teams Protected API registration form
-  associating the Graph app id with an **active Azure subscription for billing**, and is
-  charged per notification.
-- Ceilings: 4,320 min (3-day) lifetime, 1 subscription per app × chat, 10 per user for
-  all-chats subscriptions, and a **shared per-tenant cap of 10,000 across ALL Teams
-  resources** (chats, messages, channels, members, transcripts — one quota; exceeding it
-  is a hard `403`).
+Delta queries and polling are within Outlook's terms. **Mail** is `/me/mailFolders/<folder>
+/messages/delta` on Inbox and Sent Items — the two sides of every conversation — one
+deltaLink per folder on the grant, asked for ids alone and each id read back in full with
+`internetMessageHeaders` (the `In-Reply-To` a reply threads by comes only on a single
+message's read) and the body as text (`Prefer: outlook.body-content-type`); a first run
+asks `$filter=receivedDateTime ge now` and publishes nothing; an `@removed` is a message
+leaving the folder, not one unsaid, and publishes nothing; attachments come with their
+bytes in the folder's `attachments` listing, `isInline` ones left out. Sending is `POST
+/me/sendMail` with the MIME itself as the base64 body: Exchange threads by the `References`
+header and keeps its copy in Sent Items, where the poll finds it under the Message-ID the
+MIME already wore. The mapping is `src/connect/mail.ts`, shared with Gmail (§5).
 
-So Teams is the single connector where the alter-ego model degrades to *signed bot*.
-Everything else in the design survives: the bot is a connection credential, the signature
-is the agent's identity, the frontier holds.
+For the **calendar** the feed is the events delta — `/beta/me/calendar/events/delta
+?startDateTime=now`, the one Graph feed that runs from a point forward, unbounded, and
+lists series masters and single events, which is Google's `syncToken` shape. Its rows carry
+only `id`/`type`/`start`/`end`, so each change is one `GET /v1.0/me/events/<id>` for its
+content, asked in UTC as text; a removal is `{id, "@removed"}` and needs none. The `/beta`
+prefix is the feed's address; the resource read back is v1.0's. (v1.0's own
+`/me/calendarView/delta` is bound to a fixed window for the life of its token, expands
+series into instances, and reports an event created *outside* the window as `@removed` —
+a create indistinguishable from a delete.) The cursor is the `@odata.deltaLink`, kept on
+the grant; a `410` re-bootstraps. The mapping is shared with Google in
+`src/connect/calendar.ts` — the row grammar — over the poller both kinds share
+(`src/connect/poll.ts`: the cursor, the sweep, the resident loop), so a connector is its
+wire and its pruning, nothing more. Push (subscriptions on `/me/messages`, `/me/events`,
+~7-day lifetime, basic notifications) is the edge tier's carrier for the same map/publish.
+Ceilings: 10,000 requests per 10 minutes and 4 concurrent per mailbox.
 
-`conversation.kind`: 1:1 chat → `direct`, group chat → `direct` (member-defined, like
-Slack's mpim), channel → `channel`.
+### Teams — delegated Graph, pushed
 
----
+The member's own leg, on the same grant as mail and the calendar (`src/connect/microsoft/
+teams.ts`): a delegated subscription reads what the member sees and the member's token
+posts as them. The Teams APIs are unmetered (no Azure billing, no payment model, nothing to
+register beyond the app), and their terms allow a poll **once a day**, so the ingest is a
+Graph **change notification** or nothing.
+
+**The subscriptions.** One per grant over every chat the member is in
+(`/users/<oid>/chats/getAllMessages`, `Chat.ReadWrite`) and one per channel of every team
+they are in (`/teams/<team>/channels/<channel>/messages`, `ChannelMessage.Read.All` — a
+permission a tenant's admin grants on the registration). A channel subscription is one per
+channel for the whole app: the first grant to reach it holds it, the others meet a 409 and
+leave it. Each lives 4,320 minutes at most; the shared sweep (`connect/poll.ts`) creates
+the missing ones, renews those inside their last day, lists teams and channels again once
+an hour for new ones, and records each on the grant (`extra.teams_sub`, by resource path:
+id, expiry, and the `clientState` secret its notices must echo). Lifecycle notices ride
+the same endpoint: `reauthorizationRequired` renews, `subscriptionRemoved` drops the record
+so the sweep recreates, `missed` is said on stderr.
+
+**The carrier.** Graph pushes to a public HTTPS endpoint only — it validates it at
+subscription time (`POST ?validationToken=…`, answered plain within ten seconds) and
+expects a 2xx within three seconds on every notice. So `connections.microsoft.notificationUrl`
+is where Graph dials — the org's tunnel (cloudflared, Tailscale Funnel) or its edge — and
+the ingest serves `ingestPort` behind it: a webhook `(Request) => Response` that echoes
+the handshake, checks each notice's `clientState` against the record, acks 202 and reads
+the message back behind the ack. No URL declared ⇒ nothing is subscribed, the dispatch
+still sends, and the boot says so once. Event Grid is not this carrier: its delivery has
+no `created` change type, and it needs an Azure subscription and a second token audience.
+
+**The rows.** A notice carries the resource path and nothing else (the rich form needs a
+certificate and shortens the lifetime), so each is one `GET` of the message. A chat is a
+conversation addressed by its id — `direct` when Teams calls it oneOnOne or group, `group`
+when it is a meeting's — named for the other member, the topic, or the other members; a
+channel is `<team id>/<channel id>`, `channel`, named `Team / Channel`. A channel reply is
+a `reply` to its root; a chat is flat, and a quoted reply there (`messageReference`) names
+the message it answers. `external_id = teams:<address>:<id>`, so the same message reaching
+two members' subscriptions merges, as does the member's own send with its echo. An edit is
+its own event keyed by the edit's time, a delete marks the row and adds a delete event, a
+reaction (an `updated` that edited nothing) is one `add` per reactor keyed by who and
+what — a notice repeated lands once. The sender is the Teams user id; one that is a grant's
+`oid` is that member (`agent.id`), and the member whose subscription delivered a chat is a
+member of it. The body is HTML: `<at>` becomes `@Name` and `payload.mentions`, `<emoji>`
+its glyph, a hosted image (a pasted screenshot) its bytes on the media shelf, a `reference`
+attachment its bytes through `/shares/<encoded url>/driveItem/content` (`Files.ReadWrite`),
+or a link in the words when the grant cannot read it.
+
+**The dispatch.** Common markdown becomes Teams' HTML (`<b>`, `<i>`, `<s>`, `<code>`,
+`<pre>`, `<a>`, `<br>`), a claimed `@Name` an `<at id>` with its `mentions` entry. A channel
+reply posts under the referent's root; an edit is a `PATCH`, a delete a `softDelete`, a
+reaction `setReaction`/`unsetReaction` with the glyph. A local file is uploaded first — to
+the channel's own folder (`filesFolder`), or to the account's OneDrive under `liquen/` with
+an organization view link — and rides as a `reference` attachment whose id is the item's
+eTag GUID; an external link joins the words. The response's `id` and `from.user.id` stamp
+the row.
+
+Ceilings: reading is 1 rps per chat or channel; 10,000 Teams subscriptions per tenant
+across all apps.
 
 ## 8. Order of work
 
@@ -388,12 +490,13 @@ Slack's mpim), channel → `channel`.
    steering-from-anywhere story (PROJECT v0.2 #10). Pure ports work.
 2. **Scheduler / alarms** — PROJECT #10, promoted: a prerequisite for everything below,
    not a peer item. Its first job stays the liveness floor (§2).
-3. **Gmail** — introduces `subscriptions` (the cursor) and the pull carrier. Email is
-   already a first-class service in the design.
+3. **Gmail** — landed as a poll on `historyId` with the send as an authored MIME; the
+   pull carrier remains the edge tier's.
 4. **Google Calendar** — reuses (3)'s cursor; adds the tool-plus-stream shape and the
    poll-vs-watch tier asymmetry; converges with (2).
-5. **Microsoft trio** — one door; Outlook mail/calendar reuse (3)+(4) wholesale; Teams
-   lands bot-only.
+5. **Microsoft trio** — the door, the Graph skill, the Outlook calendar poll and Outlook
+   mail landed on the grammars (3) and (4) share; Teams landed on delegated Graph, pushed
+   to a declared public URL and kept alive by the same sweep.
 
 ## 9. Sources (checked 2026-08-06)
 
@@ -402,4 +505,8 @@ Slack's mpim), channel → `channel`.
 - Microsoft Graph change notifications (supported resources, lifetimes, latency) —
   https://learn.microsoft.com/en-us/graph/change-notifications-overview
 - Teams API payment models and licensing — https://learn.microsoft.com/en-us/graph/teams-licenses
+- Graph permissions reference — https://learn.microsoft.com/en-us/graph/permissions-reference
+- Graph CLI retirement — https://devblogs.microsoft.com/microsoft365dev/microsoft-graph-cli-retirement/
+- CLI for Microsoft 365 — https://github.com/pnp/cli-microsoft365 (`src/Auth.ts`, `src/request.ts`)
+- Graph notifications via Event Grid — https://learn.microsoft.com/en-us/azure/event-grid/subscribe-to-graph-api-events
 - `open-bsp-whatsmeow` README + source (`~/open-bsp-whatsmeow`)

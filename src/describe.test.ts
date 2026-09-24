@@ -180,6 +180,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   const labels = {
     conversation: "Conversación",
     last: "Último mensaje",
+    subject: "Asunto",
     reply: "Respuesta",
     files: "Adjuntos",
     location: "Ubicación",
@@ -205,5 +206,14 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
       labels,
     ),
     "**Conversación**: 5491100000000\n\n**Respuesta**:\nhola",
+  );
+  // a mail opening a thread: the subject is a row of its own, above the words
+  assertEquals(
+    describeSendCard(
+      { conversation: { address: "ana@x.com" }, subject: "Factura 42", text: "Hola Ana", files: 1 },
+      labels,
+    ),
+    "**Conversación**: ana@x.com\n\n**Asunto**: Factura 42\n\n**Respuesta**:\nHola Ana\n\n" +
+      "**Adjuntos**: 1",
   );
 });

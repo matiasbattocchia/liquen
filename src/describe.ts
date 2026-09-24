@@ -96,6 +96,7 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
     : p.conversation.address;
   const rows = [`**${labels.conversation}**: ${who}`];
   if (p.last) rows.push(`**${labels.last}** (${p.last.at}):\n${p.last.text}`);
+  if (p.subject) rows.push(`**${labels.subject}**: ${p.subject}`);
   if (p.text) rows.push(`**${labels.reply}**:\n${p.text}`);
   const extras = [
     ...(p.files > 0 ? [`**${labels.files}**: ${p.files}`] : []),
@@ -108,6 +109,7 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
 export interface SendCardLabels {
   conversation: string;
   last: string;
+  subject: string;
   reply: string;
   files: string;
   location: string;

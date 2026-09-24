@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { seedAgent, seedOrg } from "./seed.ts";
+import { seedAgent, seedOrg, seedSkill } from "./seed.ts";
 import { openFileDocs } from "./docs.ts";
 
 Deno.test("seed installs the cascade; list inlines the always-layers and indexes the skills", async () => {
@@ -99,6 +99,24 @@ Deno.test("the halves are the doors': org alone leaves no agent, and a home is a
       await Deno.readTextFile(`${root}/agents/alter/instructions/agent.md`),
       "What this agent is for",
     );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a connector's skill is laid by its door, by file — the skills folder already exists", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await seedOrg(root); // system/skills/ is here now, with the harness's own skills
+    assertEquals(await seedSkill(root, "microsoft-graph"), true);
+    const path = `${root}/system/skills/microsoft-graph.md`;
+    assertStringIncludes(await Deno.readTextFile(path), "MICROSOFT_GRAPH_TOKEN");
+    const docs = await openFileDocs(root).list({ agent: "alter" });
+    assert(docs.some((d) => d.header.name === "skills/microsoft-graph"));
+    // a second door run keeps the org's edit
+    await Deno.writeTextFile(path, "---\nkind: skill\ndescription: x\n---\nEDITED");
+    assertEquals(await seedSkill(root, "microsoft-graph"), false);
+    assertStringIncludes(await Deno.readTextFile(path), "EDITED");
   } finally {
     await Deno.remove(root, { recursive: true });
   }

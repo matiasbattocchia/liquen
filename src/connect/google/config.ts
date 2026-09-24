@@ -8,10 +8,15 @@ import { checkPort, checkStrings, connectorConfig, type ConnectorSpec } from "..
 
 export const DEFAULT_CALENDARS = ["primary"];
 export const DEFAULT_OAUTH_PORT = 8791;
+/** Identity, the calendar, and the mailbox read and sent: the product. The mail poll runs
+ *  only on a grant whose consent carries a mail read scope (`mail.ts`), so a grant made
+ *  before mail joined keeps its calendar and takes mail on re-consent. */
 export const DEFAULT_SCOPES = [
   "openid",
   "email",
   "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.send",
 ];
 /** The grant's proxy declaration (§9), written onto every vault row this connector mints:
  *  the env var main fronts the placeholder under, and the only hosts the token may be
@@ -27,7 +32,7 @@ export interface GoogleConfig {
 
 export const SPEC: ConnectorSpec = {
   name: "google",
-  doc: "google — the oauth door and the calendar poll",
+  doc: "google — the oauth door, the calendar poll, and Gmail in and out",
   entries: [
     {
       key: "calendars",

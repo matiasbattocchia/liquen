@@ -12,10 +12,12 @@
 import { findRoot, orgFlag } from "../config.ts";
 import { entry, report } from "../entry.ts";
 
-/** The services that ship with the package — each `src/connect/<name>/` a connect door,
- *  and a run.ts where the service delivers (`token` grants a credential and runs nothing).
+/** The services that ship with the package — each `src/connect/<name>/` a connect door.
  *  A name, not a stat: where the package is may be a URL. */
-export const SHIPPED = ["slack", "google", "whatsapp", "github", "token"];
+export const SHIPPED = ["slack", "google", "whatsapp", "github", "microsoft", "token"];
+/** The shipped services with a run.ts — the ones that ingest or deliver, so `liquen start`
+ *  runs one process each. `token` grants a bearer and runs nothing. */
+export const RUNNING = ["slack", "google", "whatsapp", "github", "microsoft"];
 
 /** The connect door for `name`, as something `deno run` takes: a shipped door by its URL
  *  beside this module (a checkout's `file:`, the registry's `https:`), the org's own by

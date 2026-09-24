@@ -778,7 +778,12 @@ function renderMessages(
       };
     }
     let run = cluster.convs.at(-1);
-    if (!run || run.conv.address !== e.envelope.conversation.address) {
+    // a run is one conversation, one thread: a room's threads (a mailbox's subjects)
+    // print each under its own `<conv thread="…">`
+    if (
+      !run || run.conv.address !== e.envelope.conversation.address ||
+      (run.conv.thread ?? "") !== (e.envelope.conversation.thread ?? "")
+    ) {
       run = { conv: namedRoom(e, names), lines: [] };
       cluster.convs.push(run);
       const earlier = elisions.earlier.get(e);
@@ -1170,7 +1175,10 @@ export function renderHits(
       clusters.push(cluster);
     }
     let run = cluster.convs.at(-1);
-    if (!run || run.conv.address !== e.envelope.conversation.address) {
+    if (
+      !run || run.conv.address !== e.envelope.conversation.address ||
+      (run.conv.thread ?? "") !== (e.envelope.conversation.thread ?? "")
+    ) {
       run = { conv: namedRoom(e, names), lines: [] };
       cluster.convs.push(run);
     } else if (adjacent && last && !adjacent(last, e)) run.lines.push(GAP);

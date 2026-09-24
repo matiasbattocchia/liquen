@@ -174,7 +174,8 @@ export type Service =
   | "email"
   | "teams"
   | "github"
-  | "google";
+  | "google"
+  | "microsoft";
 
 /** Delivery bookkeeping — a mutable field, not events (§3). Render marks `failed` only. */
 export type DeliveryStatus = "queued" | "dispatched" | "failed" | "delivered" | "read" | "deleted";
@@ -393,6 +394,8 @@ export interface SendPreview {
   /** The line the send answers: the referent when it replies, else the other side's
    *  last word in that conversation. `at` is already on the org's clock. */
   last?: { text: string; at: string };
+  /** The thread the send opens (`send(subject:)`) — a mail's Subject line. */
+  subject?: string;
   text?: string;
   files: number;
   location?: string;

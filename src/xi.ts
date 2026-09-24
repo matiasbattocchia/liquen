@@ -1985,23 +1985,26 @@ async function execute(
     // send only the model can place. No events and no account ⇒ the local channel.
     const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
     const kind = prior?.envelope.conversation.kind;
+    // the thread (§3 `conversation.thread`): a mail's subject — the one named, else the
+    // referent's, so a reply lands under the thread it answers and the wire's Re: is
+    // the dispatcher's to spell
+    const subject = args.subject === undefined ? "" : String(args.subject).trim();
+    const target = args.re === undefined ? undefined : await referent(ports, to, String(args.re));
+    const thread = subject || target?.envelope.conversation.thread;
+    const conversation = {
+      address: to,
+      ...(kind !== undefined ? { kind } : {}),
+      ...(thread ? { thread } : {}),
+    };
     const envelope = via
-      ? {
-        service: via.service as Service,
-        connection_address: via.address,
-        conversation: { address: to, ...(kind !== undefined ? { kind } : {}) },
-      }
+      ? { service: via.service as Service, connection_address: via.address, conversation }
       : prior
       ? {
         service: prior.envelope.service,
         connection_address: prior.envelope.connection_address,
-        conversation: { address: to, ...(kind !== undefined ? { kind } : {}) },
+        conversation,
       }
-      : {
-        service: "local" as const,
-        connection_address: "agent",
-        conversation: { address: to },
-      };
+      : { service: "local" as const, connection_address: "agent", conversation };
     // attachments (§5 media): paths → FileParts, statted and classified broker-side; a
     // missing path throws here and the tool_result carries the error back to the model
     const files = Array.isArray(args.files)
@@ -2018,7 +2021,6 @@ async function execute(
     // to the referent — and the referent to the name the WIRE knows it by — is the whole
     // job; a miss throws, and the tool_result sends the model back to its window rather
     // than letting it answer the wrong message.
-    const target = args.re === undefined ? undefined : await referent(ports, to, String(args.re));
     // what the send DOES to its referent (§3, §5): the vocabulary the window renders, in
     // reverse — the model writes back the action it reads. `create` and `add` are the
     // defaults spelled out: what a body and a glyph already mean, so the send stands as
@@ -2275,6 +2277,7 @@ async function sendPreviewOf(
   return {
     conversation: { ...(who ? { name: who.name } : {}), address },
     ...(answered && lastText ? { last: { text: lastText, at: hhmm(answered.ts, zone) } } : {}),
+    ...(typeof a.subject === "string" && a.subject ? { subject: a.subject } : {}),
     ...(typeof a.text === "string" && a.text ? { text: a.text } : {}),
     files,
     ...(loc
@@ -2574,6 +2577,13 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
             description:
               "target message `id`. REQUIRED with `react`. OPTIONAL with `text` and/or " +
               "`files` (depends on the `action`)",
+          },
+          subject: {
+            type: "string",
+            description:
+              "the thread this message opens — a mail's Subject line. Mail conversations " +
+              "only, and only for a message that is not a reply: a reply inherits the " +
+              "thread of the message it answers",
           },
           react: { type: "string", description: "an emoji to land on the `re` message" },
           action: {

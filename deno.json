@@ -54,7 +54,9 @@
     "run:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp/run.ts",
     "connect:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp/connect.ts",
     "run:github": "deno run -A --env-file=.env src/connect/github/run.ts",
-    "connect:github": "deno run -A --env-file=.env src/connect/github/connect.ts"
+    "connect:github": "deno run -A --env-file=.env src/connect/github/connect.ts",
+    "run:microsoft": "deno run -A --env-file=.env src/connect/microsoft/run.ts",
+    "connect:microsoft": "deno run -A --env-file=.env src/connect/microsoft/connect.ts"
   },
   "fmt": {
     "lineWidth": 100

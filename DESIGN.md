@@ -812,13 +812,18 @@ Every inbound passes through ingest, which does identity resolution **and** may 
 
 ## 4. Identity, services & the loopback problem
 
-**Email is a service, not a tool** — org email lives in the EventLog like any channel:
+**Email is a service, not a tool** — org email lives in the EventLog like any channel,
+riding the grant that reads it (`google`, `microsoft`) on the account's connection:
 ```
-service: "email" · connection: "hi@org" | "matias@org" · conversation: {id: <thread-id>}
-sender: {id: "customer@x.com"} · parts: [text, file(attachments)] · Gmail/IMAP adapter
+service: "google" · connection: "hi@org" | "matias@org"
+conversation: {address: "customer@x.com", kind: "direct", thread: <subject>}
+sender: {address: "customer@x.com"} · parts: [text, file(attachments)] · external_id: mail:<Message-ID>
 ```
-Shared inbox (`hi@org`) = a `public` connection **every agent reads**; personal = that
-principal's. Sending = `send` with `service: email`. One more service in the enum.
+The conversation is the other parties (every address but the account's, sorted), so a
+first send to a stranger is `send(to: <address>, connection: <account>, subject:)` and a
+reply is `send(re:)` — the thread is the subject, inherited. The mapping is one module for
+every mail wire (`connect/mail.ts`). Shared inbox (`hi@org`) = an ownerless grant **every
+agent reads**; personal = that principal's.
 Shared-inbox coordination is left to **coexistence-yield** (an agent that sees another
 already replied stays quiet) — observe whether they self-coordinate; patch (assignment/
 ownership) only if double-answers show up.
@@ -924,7 +929,7 @@ slack:  self-DM (an alter-ego posts via its owner's xoxp — notes-to-self)
         a principal's DM with the agent's bot
 wa:     self-chat ("Message Yourself") on the owner's own paired number
         a principal's DM with the agent's own number (an org-paired connection)
-teams:  later — the 1:1 bot chat is the DM shape, needs the bot to be the agent's own
+teams:  later — a principal's oneOnOne chat with the agent's own account, once it has one
 email:  not a mind surface
 cli/ui: native local conversations, through the door (§9) — the socket proves the
         speaker may, `sender` says which principal they are
@@ -1012,15 +1017,14 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
 | | read as principal | speak as principal | plumbing |
 |---|---|---|---|
 | Slack | `xoxp` per agent | `xoxp` per agent | `xoxb` + `xapp`, one per org |
-| Teams v0 | bot scope only | bot identity + agent signature | one bot registration |
-| Teams later | Graph delegated per principal | Graph delegated per principal | same bot |
+| Teams | Graph delegated per principal | Graph delegated per principal | one Entra app registration |
 | WhatsApp | org number webhook | org number (agent = account owner) | Cloud API creds |
 
 - Slack has no all-seeing token: **the dollhouse is the union of per-principal `xoxp`
   views** (one app, N OAuth grants) — the alter-ego permission model as infrastructure:
   an agent sees exactly what its principal sees.
 - Org container holds one plumbing credential per service + one identity credential per
-  agent; where identity creds don't exist yet (Teams v0), agents degrade to signed-bot mode.
+  agent; where identity creds don't exist yet, agents degrade to signed-bot mode.
 - **WhatsApp pairing (whatsmeow, unofficial) — the connect walk-through** (2026-08-04):
   linking needs the companion device in hand — scan a QR, or type a pairing code into the
   phone. *Local*: the dev pairs (device in hand, or relaying for the principal) and

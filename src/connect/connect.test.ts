@@ -53,6 +53,14 @@ Deno.test("an unknown name fails listing every door that exists", async () => {
 
 Deno.test("available = shipped + custom doors, doorless connectors excluded", async () => {
   await withOrg((org) => {
-    assertEquals(available(org), ["slack", "google", "whatsapp", "github", "token", "acme"]);
+    assertEquals(available(org), [
+      "slack",
+      "google",
+      "whatsapp",
+      "github",
+      "microsoft",
+      "token",
+      "acme",
+    ]);
   });
 });

@@ -601,6 +601,64 @@ Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere 
   }
 });
 
+Deno.test("send `subject`: a mail's thread rides the envelope; a reply inherits the referent's", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  log.upsertConnections([
+    { service: "google", address: "me@org.com", agentId: "a1", extra: { name: "Me" } },
+  ]);
+  // a mail from Ana already in the log: the wire's row, its thread and its id
+  const theirs = await log.publish({
+    ts: "2026-09-23T10:00:00Z",
+    type: "message",
+    envelope: {
+      service: "google",
+      connection_address: "me@org.com",
+      conversation: { address: "ana@x.com", kind: "direct", name: "Ana", thread: "Invoice 42" },
+      sender: { address: "ana@x.com", name: "Ana" },
+      external_id: "mail:m1@x.com",
+    },
+    parts: [{ type: "text", kind: "text", text: "please pay" }],
+  });
+  const { transport } = scripted([
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "bob@y.com", connection: "me@org.com", subject: "Lunch", text: "Friday?" },
+    }], "tool_use"),
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "ana@x.com", text: "paid", re: shortId(theirs!.id) },
+    }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("mandá los mails"));
+    for (let i = 0; i < 12; i++) await xi(CONFIG, ports);
+    const sent = (await log.read({ types: ["message"] })).filter((e) =>
+      e.agent && e.payload?.turn_id
+    );
+    const fresh = sent.find((e) => e.envelope.conversation.address === "bob@y.com");
+    assertEquals(fresh?.envelope.service, "google");
+    assertEquals(fresh?.envelope.connection_address, "me@org.com");
+    assertEquals(fresh?.envelope.conversation, { address: "bob@y.com", thread: "Lunch" });
+    const reply = sent.find((e) => e.envelope.conversation.address === "ana@x.com");
+    assertEquals(reply?.envelope.conversation, {
+      address: "ana@x.com",
+      kind: "direct",
+      thread: "Invoice 42",
+    });
+    assertEquals(reply?.payload?.action, "reply");
+    assertEquals(reply?.payload?.ref_external_id, "mail:m1@x.com");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("contact: `who` resolves like a send, the write rides the person's own account", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);

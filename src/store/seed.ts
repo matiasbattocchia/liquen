@@ -15,7 +15,9 @@
  *
  * The system templates sit in the tree they install into — `system/<kind>/<name>.md` — so
  * an org may symlink `system/instructions/` or `system/skills/` at the checkout's folder and
- * read the harness's words live, new files included. The org and agent templates are flat,
+ * read the harness's words live, new files included. A skill that teaches one connector's
+ * service sits there too, and is laid by that connector's door (`seedSkill`), not by boot:
+ * an org has it iff it connected the service. The org and agent templates are flat,
  * `<scope>-<name>.md`: their home has an id segment no template can name. The tables below
  * are the whole mapping, one line per doc. Plural kind folders (`instructions/`, `skills/`,
  * `memories/`) are convention only in the data root — discovery is recursive there and kind
@@ -73,6 +75,18 @@ export async function seedOrg(root: string): Promise<void> {
     ["organization/instructions/organization.md", "organization.md"],
   ]);
   await kinds(`${root}/organization`);
+}
+
+/** A connector's skill, laid by the connector's own door (`liquen connect <service>`), so
+ *  it reaches exactly the orgs that connect the service. The rule is the file, not the
+ *  folder: `system/skills/` exists in every org that has booted, and the door is a
+ *  deliberate act. An edited skill is kept. Answers whether it wrote. */
+export async function seedSkill(root: string, name: string): Promise<boolean> {
+  const path = `${root}/system/skills/${name}.md`;
+  if (await Deno.lstat(path).then(() => true, () => false)) return false;
+  await Deno.mkdir(`${root}/system/skills`, { recursive: true });
+  await Deno.writeTextFile(path, await read(`system/skills/${name}.md`));
+  return true;
 }
 
 /** One agent's half: the home itself — its workspace, so it exists empty — the persona to

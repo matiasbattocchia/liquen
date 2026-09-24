@@ -22,7 +22,8 @@ const TOKENS: GoogleTokens = {
   access_token: "ya29.short",
   refresh_token: "1//long",
   expires_in: 3599,
-  scope: "openid email https://www.googleapis.com/auth/calendar",
+  scope: "openid email https://www.googleapis.com/auth/calendar " +
+    "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send",
   id_token: jwt({ email: "ana@example.com", sub: "108" }),
 };
 
@@ -226,7 +227,12 @@ Deno.test("callback: a grant that dropped a scope says so — page, event, hook"
     }]);
     assertStringIncludes(t.published[0].parts[0].text!, "NOT granted: ");
     assert((await t.creds.get("google:ana@example.com")) !== undefined);
-  }, { ...TOKENS, scope: "openid email" }); // the member left calendar unticked
+  }, {
+    ...TOKENS,
+    // the member left calendar unticked
+    scope: "openid email https://www.googleapis.com/auth/gmail.readonly " +
+      "https://www.googleapis.com/auth/gmail.send",
+  });
 });
 
 Deno.test("callback: the default exchange's token call carries a timeout signal", async () => {

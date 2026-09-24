@@ -22,8 +22,11 @@
  * app's RS256 JWT with the private key in `github:app:<app_id>` and mints an hourly
  * installation token; a bare `app_id` names the same app's USER leg (the device flow's
  * grant) — refresh_token + that app's client secret, rotated on every use; `client_id`
- * names a Google OAuth app — refresh_token + the secret in `google:app:<client_id>`.
- * The refresh_token and the private key never leave this module.
+ * names an OAuth app — refresh_token + the secret in `<service>:app:<client_id>`, where
+ * the service is the grant key's own namespace: `google:…` refreshes at Google's token
+ * endpoint, `microsoft:…` at the tenant's (the app row says which). Microsoft rotates the
+ * refresh token on every use, so the answer's is stored back. The refresh_token and the
+ * private key never leave this module.
  * Concurrent calls for one grant share a single in-flight re-issue (no double-spend of the
  * one-time nonce, but also no redundant round-trips).
  */
@@ -54,8 +57,9 @@ export interface GrantBroker {
 
 export interface BrokerDeps {
   creds: Pick<Credentials, "get" | "put">;
-  /** Google's token endpoint — injectable for tests; default POSTs oauth2.googleapis.com. */
-  refresh?: (body: URLSearchParams) => Promise<TokenResponse>;
+  /** An OAuth token endpoint spent with a refresh grant — injectable for tests; default
+   *  POSTs `url` form-encoded. */
+  refresh?: (url: string, body: URLSearchParams) => Promise<TokenResponse>;
   /** GitHub's installation-token endpoint — injectable for tests; default POSTs
    *  api.github.com with the app's JWT. */
   installationToken?: (jwt: string, installationId: string) => Promise<InstallationToken>;
@@ -68,7 +72,8 @@ export interface BrokerDeps {
 export interface TokenResponse {
   access_token?: string;
   expires_in?: number; // seconds
-  /** GitHub rotates it on every use; Google's never changes and never rides the answer. */
+  /** GitHub and Microsoft rotate it on every use; Google's never changes and never rides
+   *  the answer. */
   refresh_token?: string;
   error?: string;
   error_description?: string;
@@ -159,6 +164,7 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
     if (!clientSecret) return null;
 
     const tok = await refresh(
+      GOOGLE_TOKEN_URL,
       new URLSearchParams({
         grant_type: "refresh_token",
         refresh_token: refreshToken,
@@ -178,12 +184,47 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
     return tok.access_token;
   };
 
+  // microsoft: the same spend at the app's tenant, and the rotated refresh_token kept
+  const refreshMicrosoft = async (key: string, row: CredentialRow): Promise<string | null> => {
+    const refreshToken = row.value.refresh_token;
+    const clientId = typeof row.extra?.client_id === "string" ? row.extra.client_id : undefined;
+    if (!refreshToken || !clientId) return null;
+    const app = await deps.creds.get(`microsoft:app:${clientId}`);
+    const clientSecret = app?.value.client_secret;
+    const tenant = app?.extra?.tenant;
+    if (!clientSecret || typeof tenant !== "string") return null;
+
+    const tok = await refresh(
+      `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
+      new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+    );
+    if (!tok.access_token) return null;
+
+    await deps.creds.put({
+      key,
+      value: {
+        access_token: tok.access_token,
+        ...(tok.refresh_token ? { refresh_token: tok.refresh_token } : {}),
+      },
+      ...(tok.expires_in
+        ? { extra: { expiry: new Date(now() + tok.expires_in * 1000).toISOString() } }
+        : {}),
+    });
+    return tok.access_token;
+  };
+
   const doRefresh = async (key: string): Promise<string | null> => {
     const row = await deps.creds.get(key);
     if (!row) return null;
     // the row itself says which issuer re-issues it (see header)
     if (row.extra?.installation_id !== undefined) return refreshGithub(key, row);
     if (row.extra?.app_id !== undefined) return refreshGithubUser(key, row);
+    if (key.startsWith("microsoft:")) return refreshMicrosoft(key, row);
     return refreshGoogle(key, row);
   };
 
@@ -264,8 +305,10 @@ export function hostAllowed(hosts: unknown, authority: string): boolean {
   );
 }
 
-async function defaultRefresh(body: URLSearchParams): Promise<TokenResponse> {
-  const res = await fetch("https://oauth2.googleapis.com/token", {
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+
+async function defaultRefresh(url: string, body: URLSearchParams): Promise<TokenResponse> {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body,

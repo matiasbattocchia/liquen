@@ -69,7 +69,7 @@ Deno.test("accessTokenFor: an expired token refreshes, and the new one is writte
     const bodies: URLSearchParams[] = [];
     const broker = createGrantBroker({
       creds,
-      refresh: (body) => {
+      refresh: (_url, body) => {
         bodies.push(body);
         return Promise.resolve({ access_token: "ya29.new", expires_in: 3599 });
       },
@@ -373,5 +373,45 @@ Deno.test("accessTokenFor: the org's pasted token is static — nothing is minte
     assertEquals(await broker.accessTokenFor(h, "api.github.com"), "ghp_machine");
     assertEquals(await broker.accessTokenFor(h, "evil.example"), null); // the hosts still bind
     assertEquals(minted, 0);
+  });
+});
+
+Deno.test("accessTokenFor: a microsoft grant refreshes at its app's tenant, and the rotated refresh_token is kept", async () => {
+  await withVault(async (creds) => {
+    await creds.put({
+      key: "microsoft:app:mcid",
+      value: { client_id: "mcid", client_secret: "msec" },
+      extra: { tenant: "contoso.onmicrosoft.com" },
+    });
+    await creds.put({
+      key: "microsoft:ana@contoso.com",
+      value: { access_token: "eyJ.old", refresh_token: "0.AAA.old" },
+      extra: { client_id: "mcid" },
+    });
+    const calls: [string, URLSearchParams][] = [];
+    const broker = createGrantBroker({
+      creds,
+      refresh: (url, body) => {
+        calls.push([url, body]);
+        return Promise.resolve({
+          access_token: "eyJ.new",
+          refresh_token: "0.AAA.new",
+          expires_in: 3599,
+        });
+      },
+    });
+    const h = broker.issue("microsoft:ana@contoso.com");
+    assertEquals(await broker.accessTokenFor(h), "eyJ.new");
+    assertEquals(
+      calls[0][0],
+      "https://login.microsoftonline.com/contoso.onmicrosoft.com/oauth2/v2.0/token",
+    );
+    assertEquals(calls[0][1].get("refresh_token"), "0.AAA.old");
+    assertEquals(calls[0][1].get("client_secret"), "msec");
+    const row = (await creds.get("microsoft:ana@contoso.com"))!;
+    assertEquals(row.value.refresh_token, "0.AAA.new");
+    assertEquals(row.extra?.client_id, "mcid"); // the merge keeps the sidecar
+    assertEquals(await broker.accessTokenFor(h), "eyJ.new"); // fresh now: no second spend
+    assertEquals(calls.length, 1);
   });
 });

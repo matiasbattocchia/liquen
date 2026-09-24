@@ -33,7 +33,7 @@ import { TextLineStream } from "@std/streams";
 import { findRoot, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
 import { entry, REFUSAL } from "./entry.ts";
 import { claim, holder, MAIN, SUPERVISOR } from "./stop.ts";
-import { SHIPPED } from "./connect/connect.ts";
+import { RUNNING, SHIPPED } from "./connect/connect.ts";
 
 const RESTART_BASE_MS = 1_000;
 const RESTART_CAP_MS = 60_000;
@@ -83,8 +83,9 @@ async function pump(stream: ReadableStream<Uint8Array>, name: string, err: boole
 
 /** name → entry module for everything the catalog says this org runs. A connection is
  *  ONE process, its folder's `run.ts`: `src/connect/<name>/` ships with core,
- *  `<root>/connectors/<name>/` is the org's own. A declared connection with no run.ts
- *  is a boot error, same law as an unknown config key. */
+ *  `<root>/connectors/<name>/` is the org's own. A shipped service that only grants a
+ *  credential is declared for its knobs and runs nothing; a custom connection with no
+ *  run.ts is a boot error, same law as an unknown config key. */
 export function roster(root: string, connections: Record<string, unknown>): [string, string][] {
   const has = (p: string | URL) => {
     try {
@@ -98,7 +99,8 @@ export function roster(root: string, connections: Record<string, unknown>): [str
   for (const name of Object.keys(connections)) {
     const bundled = new URL(`./connect/${name}/run.ts`, import.meta.url);
     const local = `${root}/connectors/${name}/run.ts`;
-    if (SHIPPED.includes(name)) procs.push([name, bundled.href]);
+    if (RUNNING.includes(name)) procs.push([name, bundled.href]);
+    else if (SHIPPED.includes(name)) continue;
     else if (has(local)) procs.push([name, local]);
     else {
       throw new Error(

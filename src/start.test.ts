@@ -7,7 +7,8 @@ Deno.test("roster: main first, bundled connections resolve, org-local ones probe
   try {
     Deno.mkdirSync(`${tmp}/connectors/acme`, { recursive: true });
     Deno.writeTextFileSync(`${tmp}/connectors/acme/run.ts`, "");
-    const procs = roster(tmp, { slack: {}, acme: {} });
+    // token is a shipped door with nothing to run: declared, it is no process and no error
+    const procs = roster(tmp, { slack: {}, token: {}, acme: {} });
     assertEquals(procs.map(([n]) => n), ["main", "slack", "acme"]);
     assert(procs[1][1].endsWith("/connect/slack/run.ts"));
     assertEquals(procs[2][1], `${tmp}/connectors/acme/run.ts`);

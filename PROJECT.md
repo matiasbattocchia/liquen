@@ -3478,3 +3478,141 @@ resolves `localhost` to `::1` first was refused. The whatsmeow bridge built with
 inbound messages, each a `dial tcp [::1]:8794: connection refused` in the bridge's log,
 while the rest arrived and nothing looked down. The listener is now `::`, every interface
 of both families, and the serve test fetches over each loopback.
+
+### Microsoft is a door and a skill, not a CLI (2026-09-23) — LANDED
+
+`liquen connect microsoft app|account` (`src/connect/microsoft/`): Google's door at
+Entra's wire. The app row carries its tenant, because a registration lives in one
+directory and its endpoints are that directory's; the grant `microsoft:<upn>` is fronted
+as `MICROSOFT_GRAPH_TOKEN` toward `graph.microsoft.com`, and the broker refreshes it at the
+tenant's token endpoint by the key's namespace — `microsoft:…` rows are Microsoft's the way
+`google:…` rows are Google's — keeping the refresh token Entra rotates on every spend. The
+`refresh` seam takes the token URL, so both services share one. `SHIPPED` split into the
+doors and `RUNNING`, the ones with a process, so `liquen start` no longer demands a run.ts
+of a service that only grants (`token`).
+
+The agent's tool is `fetch` with a skill (`system/skills/microsoft-graph.md`), decided
+after a survey of what could stand in for `gws`: Microsoft's own Graph CLI retired
+2026-08-28; the PnP `m365` CLI acquires tokens itself and reaches the proxy only through a
+hand-seeded token cache (verified on 11.11.0 — a placeholder JWT with a far expiry is sent
+as-is), at ~360 MB installed and a second per call, with no mail reply and no event
+create; Work IQ's tokens are for its own service and its licensing is unsettled;
+softeria's MCP server takes a bearer from env but liquen has no MCP client. Graph's paging
+and delta return whole URLs, so the skill is a page of paths and a `graph` shim beside
+`fetch` is the upgrade if the model needs one.
+
+Two facts moved CONNECTORS §7: Teams API metering ended 2025-08-25, so the bot-only v0
+has no reason left, and Teams resources may be polled once a day under the API terms, so
+the Teams ingest is a change notification or nothing — Event Grid → Storage Queue is the
+local tier's pull carrier, unverified for delegated subscriptions. Not yet live-tested
+against a tenant: the shape of `scope` in Entra's token answer (the door compares both
+spellings of a Graph permission as one) and whether the tenant's default consent policy
+lets a member grant `Calendars.ReadWrite` alone.
+
+### The Outlook calendar poll rides the beta events delta (2026-09-23) — LANDED
+
+`src/connect/microsoft/calendar.ts` + `run.ts`; `microsoft` joins `RUNNING`;
+`connections.microsoft.calendars` heals in. Graph offered three change feeds and none was
+Google's `syncToken`: v1.0's `calendarView/delta` is bound to a fixed window for the life
+of its token, expands series into instances, and reports an event created *outside* the
+window under `@removed` — a create the poller could not tell from a delete; `/me/events
+?$filter=lastModifiedDateTime ge …` is one plain call with no token to age but a hard
+delete simply stops appearing; the beta `events/delta` runs from `startDateTime` forward
+unbounded, lists masters and singles, and marks removals — Google's semantics — at the
+cost of a second `GET /v1.0/me/events/<id>` per change (the feed lists only
+id/type/start/end) and of a `/beta` prefix Microsoft calls unsupported for production.
+Chosen: the beta feed, the read-back on v1.0; if the feed moves, the wire is the one file
+that changes.
+
+The service-agnostic half of Google's poller moved to `src/connect/calendar.ts` — the
+create/edit/delete row grammar, `createOrEdit` off the two stamps, the cursor on the
+grant's `extra.calendar_sync`, the sweep with its failing/connected marking and tick-join,
+and the resident loop with its wedge exit — so both connectors are their wire and pruning
+only; Google's tests pass unchanged. Not yet live-tested: the beta feed's `@removed`
+shape on a real mailbox and whether `Prefer: outlook.timezone` is honoured on the
+detail read the way the doc states.
+
+### Mail in and out on both grants, one grammar (2026-09-23) — LANDED
+
+`src/connect/mail.ts` + `google/mail.ts` + `microsoft/mail.ts`; both `run.ts` now run
+the calendar poll, the mail poll and the mail dispatch as one process. The decisions, each
+taken over its alternative: the rows ride the grant's service (`google`, `microsoft`)
+rather than an `email` service of their own, so one connection row and one dispatcher
+carry an account; the conversation is the participants set — From/To/Cc minus the
+account, sorted, comma-joined, `kind: direct` — rather than the wire's thread id, because a
+fresh send has no thread id yet and would land apart from its answer, while an address is
+exactly what `send(to:)` takes; the subject is `conversation.thread` with its `Re:`/`Fwd:`
+off, `send` gained a `subject` argument that writes it and a reply inherits the referent's,
+and render breaks a run on a thread change so each subject prints under its own `<conv>`;
+`external_id` is `mail:<Message-ID>`, minted by the harness on a send, so both wires
+thread by `In-Reply-To`/`References` and the Sent copy merges as the echo; quoted history
+is cut by one heuristic on both wires (attribution lines in four languages, Outlook's
+separator, a forwarded header block, a trailing `>` block) rather than Graph's
+`uniqueBody` on one; mail scopes joined both `DEFAULT_SCOPES` and the poll runs only on a
+grant whose recorded consent carries a read scope, so older grants keep working and take
+mail on re-consent.
+
+Gmail polls the mailbox-wide `historyId` (INBOX or SENT, no drafts) and sends `raw` with
+the referent's `threadId` from `extra.google.thread`; Outlook polls a deltaLink per folder
+(Inbox, Sent Items), ids only, each read back with `internetMessageHeaders` and a text
+body, and sends the MIME base64 to `sendMail`. The sweep, the cursor and the resident loop
+moved from `connect/calendar.ts` to `connect/poll.ts` with a `watches` gate and a cursor
+namespace, so the calendar module is its row grammar alone; the Graph skill now points
+mail at the log and `send` instead of `sendMail`. Not yet live-tested: Gmail's `history`
+and `format=full` shapes against a real mailbox, whether Graph keeps the `$filter` and
+`$select` of the first request in the deltaLink it hands back, whether Sent Items carry
+`internetMessageHeaders` on the read, and how the two clients thread a reply that arrives
+as an authored MIME.
+
+
+### Teams pushed in and sent out on the delegated grant (2026-09-23) — LANDED
+
+`src/connect/microsoft/teams.ts`; `run.ts` now runs the Teams webhook with its
+subscription keeper and the Teams dispatch beside the calendar and mail halves. The
+decisions, each over its alternative: the carrier is a **declared public URL**
+(`connections.microsoft.notificationUrl`, the org's tunnel or edge in front of
+`ingestPort`) rather than Event Grid → Storage Queue, because Event Grid delivery has no
+`created` change type, needs the org's Azure subscription and a second token audience,
+and a daily poll — the one poll the terms allow — would make a chat with a day's latency;
+**chats and channels both** in this phase, channels under the admin-granted
+`ChannelMessage.Read.All`, one subscription per channel for the whole app with the first
+grant holding it and a 409 telling the others; **files whole through OneDrive** — a
+shared file's bytes through `/shares/<encoded url>/driveItem/content`, a pasted image's
+through `hostedContents/$value`, an outbound file uploaded to the channel's `filesFolder`
+or to the account's OneDrive under `liquen/` with an organization view link and attached
+by reference — rather than links only, at the cost of `Files.ReadWrite` on the consent;
+and the subscriptions are **kept by the shared sweep** (`connect/poll.ts`, once a minute
+per grant: create when absent, renew inside the last day, relist teams and channels once
+an hour) rather than a timer per subscription, so one mechanism already tested carries
+the lifetime and the lifecycle notices only clear or renew a record.
+
+Taken and stated: a chat is addressed by its id and a channel by `<team>/<channel>`, both
+on the grant's `microsoft` service and connection, so `isTeamsAddress` is what tells the
+Teams dispatch's rows from mail's; `external_id = teams:<address>:<id>` so two members'
+subscriptions and the member's own echo converge; an edit is its own event keyed by its
+time, a delete a marked row plus a delete event, a reaction an `add` per reactor keyed by
+who and what (an `updated` that edited nothing), so a repeated notice lands once; a chat
+is flat (a reply there is a plain message, a quoted `messageReference` names its referent)
+and a channel reply threads under the referent's root; the sender's `oid` on a grant is the
+classifier's stamp; the member whose subscription delivered a chat is a member of it; the
+body's HTML reads through the mail grammar's `htmlToText` after `<at>`, `<emoji>`,
+`<attachment>` and hosted `<img>` are taken out. Seven Graph scopes joined
+`DEFAULT_SCOPES`; the keeper runs only on grants whose consent carries `Chat.*`, the
+channel leg only with `ChannelMessage.Read.All`. The Graph skill now points Teams at the
+log and `send` too. Not yet live-tested: the validation handshake and three-second ack
+against Graph, whether a `/users/<oid>/chats/getAllMessages` subscription is accepted on
+v1.0 with delegated consent (the reference's example uses `/beta`), whether the default
+consent policy lets a member grant `Chat.ReadWrite` and `Files.ReadWrite` alone, whether a
+`reference` attachment on a OneDrive item with an organization link opens for the chat's
+members, and the `eTag` GUID and `webDavUrl`/`webUrl` the upload answers with.
+
+### A connector's skill rides its door (2026-09-23) — LANDED
+
+The Graph skill left the boot cascade: `liquen connect microsoft app` lays
+`data/system/skills/microsoft-graph.md` (`seedSkill`, write-if-absent by file), so an org has
+the skill iff it connected Microsoft. Boot seeding is per folder, and every booted org already
+has `system/skills/`, so a skill added to the boot table reached new orgs only — the three orgs
+on this machine never received it — while every org without Microsoft would have carried a
+skill about a token it never sets. The app door is the first Microsoft act in an org and a
+rare one, so it is the one place. The template stays in `src/seed/system/skills/`, where an
+org that symlinks the folder reads it live.
