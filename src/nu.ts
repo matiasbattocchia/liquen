@@ -83,8 +83,9 @@ export interface TurnConfig {
   /** Slow OUTER retries for mu failures — `RETRY_DELAYS_MS` unless a caller says otherwise
    *  (a test runs them at zero). */
   retryDelaysMs?: number[];
-  compactAt?: number; // est. tokens before a checkpoint displaces the turn (§5; default 150K)
+  compactAt?: number; // est. tokens before a checkpoint displaces the turn (§5; default 50K)
   keepRecent?: number; // est. tokens left uncovered by a checkpoint (default ~20K)
+  compactTurnAt?: number; // est. tokens the running turn weighs before a checkpoint cuts it
 }
 
 export interface TurnInput {
@@ -205,6 +206,7 @@ export async function nu(
     effort: config.effort,
     compactAt: config.compactAt,
     keepRecent: config.keepRecent,
+    compactTurnAt: config.compactTurnAt,
     prompt: input.compactPrompt,
     turnId,
     signal: input.signal,

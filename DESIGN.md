@@ -1560,9 +1560,12 @@ compaction proper is only pi's **checkpoint layer**:
   VISIBLE window matters: the raw window stays heavy after a checkpoint (the read is
   windowLimit-capped), so a raw estimate would re-fire on the next invocation — a
   compact-forever livelock. The cut falls where no tool step straddles it: anywhere in the
-  closed region, and — when the weight is a long open tool loop — between two of its
-  steps, after a tool outcome, never after unanswered input. That is pi's
-  never-cut-a-tool-result rule, structurally: a step (the events sharing a call's
+  closed region, and — when the running turn alone outweighs `compactTurnAt` (default
+  150K) — between two of its steps, after a tool outcome, never after unanswered input.
+  Under that ceiling the running turn is left whole: what its tools answered is what it is
+  working from, and a checkpoint over a result it has not finished with sends it to fetch
+  that result again. The checkpoint then covers closed turns only, or none, and waits for
+  the turn to close. The step rule is pi's never-cut-a-tool-result rule, structurally: a step (the events sharing a call's
   `turn_id`) replays as one API turn, and stays whole on either side of the cut. The
   transcript the checkpoint works from carries the tool calls and their outcomes for the
   same reason — inside a loop they ARE the content. A checkpoint that cannot be written is
@@ -2720,7 +2723,7 @@ homes, everything else funneled to the deepest function that needs it (main → 
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
 log.db tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
 tuning, every deployment works on the defaults: bashTimeoutMs ·
-compactAt · keepRecent · windowLimit · debounceMs), `organization`
+compactAt · keepRecent · compactTurnAt · windowLimit · debounceMs), `organization`
 (this deployment's identity: timezone · locale ·
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
 `organization.agents`, the defaults every agent inherits: model · effort · maxTokens · provider ·

@@ -20,7 +20,7 @@ import type { StepCall, StepInput } from "./mu.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import { describeCall } from "./describe.ts";
 
-import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT } from "./config.ts";
+import { DEFAULT_COMPACT_AT, DEFAULT_COMPACT_TURN_AT, DEFAULT_KEEP_RECENT } from "./config.ts";
 
 /** chars/4 over what renders — crude but monotone; both thresholds are order-of-magnitude
  *  knobs. The wire sidecar (`extra`, where a connector keeps the raw delivery) never reaches
@@ -52,6 +52,7 @@ export interface CompactInput {
   prompt: () => Promise<string | null>;
   compactAt?: number;
   keepRecent?: number;
+  compactTurnAt?: number;
   /** The invocation's turn (nu mints it): the checkpoint call's spend is metered under it,
    *  and the summary carries it — a checkpoint is a model turn like any other. */
   turnId?: string;
@@ -98,6 +99,7 @@ export function compactionSpan(
   session: Session,
   compactAt = DEFAULT_COMPACT_AT,
   keepRecent = DEFAULT_KEEP_RECENT,
+  compactTurnAt = DEFAULT_COMPACT_TURN_AT,
 ): { covered: Event[]; covers: [string, string] } | null {
   // measure and span the VISIBLE window (latest summary applied): the raw window stays heavy
   // after a checkpoint (the read is windowLimit-capped, not from-the-summary), so a raw
@@ -123,13 +125,18 @@ export function compactionSpan(
   // the open chain beyond it, only after a tool outcome — a world message there is INPUT
   // the agent has not answered, and a checkpoint is a record, not an answer. Input the
   // closing never consumed sits BEFORE the boundary and is input all the same: `covers` is
-  // an id range, so the cut stays below the first such message, or the range would hide it
+  // an id range, so the cut stays below the first such message, or the range would hide it.
+  // The open chain is the turn still running, and what its tools answered is what it is
+  // working from: a summary of a result it has not finished with is a result it has to
+  // fetch again. So the chain is cut only once it alone outweighs `compactTurnAt`; below
+  // that the checkpoint covers closed turns, or waits for this one to close.
   const safe = cutPoints(events);
   const firstDeferred = events.findIndex((e) => deferred.has(e));
   const ceiling = firstDeferred === -1 ? kept : Math.min(kept, firstDeferred);
+  const intoTurn = estTokens(events.slice(boundary + 1)) > compactTurnAt;
   let cut = -1;
   for (let c = ceiling - 1; c >= 0; c--) {
-    if (safe.has(c) && (c <= boundary || events[c].type === "tool_result")) {
+    if (safe.has(c) && (c <= boundary || (intoTurn && events[c].type === "tool_result"))) {
       cut = c;
       break;
     }
@@ -188,6 +195,7 @@ export async function buildSummary(
     input.session,
     input.compactAt,
     input.keepRecent,
+    input.compactTurnAt,
   );
   if (!span) return null;
   const { text, previous } = transcript(span.covered, input.session);

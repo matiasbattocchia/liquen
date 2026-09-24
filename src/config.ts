@@ -104,6 +104,11 @@ export const DEFAULT_BASH_TIMEOUT_MS = 120_000; // a bash call's cap unless the 
 // comes out flat. What moves it is less world traffic reaching the window at all.
 export const DEFAULT_COMPACT_AT = 50_000;
 export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves uncovered
+// est. tokens the RUNNING turn may weigh before a checkpoint cuts into it. Under it the
+// checkpoint covers closed turns only, so a turn keeps every result it is working from; it
+// sits well past `compactAt` because a turn is bounded by the task that started it, while
+// history grows without end.
+export const DEFAULT_COMPACT_TURN_AT = 150_000;
 export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard (§5)
 export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for its burst (§2)
 // The tick is not a knob. It is the RESOLUTION of the attention rules, not one of them:
@@ -170,6 +175,7 @@ export interface OrgConfig {
     bashTimeoutMs: number;
     compactAt: number;
     keepRecent: number;
+    compactTurnAt: number;
     windowLimit: number;
     debounceMs: number;
   };
@@ -238,6 +244,12 @@ const SYSTEM: Entry[] = [
     key: "keepRecent",
     value: DEFAULT_KEEP_RECENT,
     doc: "est. tokens a checkpoint leaves uncovered",
+  },
+  {
+    key: "compactTurnAt",
+    value: DEFAULT_COMPACT_TURN_AT,
+    doc: "est. tokens the running turn may weigh before a checkpoint cuts into it; under " +
+      "it, a checkpoint covers closed turns only",
   },
   {
     key: "windowLimit",

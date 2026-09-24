@@ -3616,3 +3616,16 @@ on this machine never received it — while every org without Microsoft would ha
 skill about a token it never sets. The app door is the first Microsoft act in an org and a
 rare one, so it is the one place. The template stays in `src/seed/system/skills/`, where an
 org that symlinks the folder reads it live.
+
+### A checkpoint leaves the running turn whole (2026-09-24) — LANDED
+
+A checkpoint cuts as late as `keepRecent` allows, so a turn heavier than that was cut through
+its own steps whenever the window crossed `compactAt`, even with closed history enough to
+cover. On a Sonar org (one turn = one batch of CRM events worked through `sonar api` reads)
+the batch the turn was working from went under a summary halfway through the turn, and the agent
+fetched it again. `compactTurnAt` (default 150K est.) is the running turn's own ceiling: under
+it a checkpoint covers closed turns only, or waits for the turn to close; past it the old
+between-steps cut applies. **Known gap**: the count cap still binds on a running turn whose
+events are light — past `windowLimit` events its first ones fall off the window, the input
+that started it included. Reading from the latest summary rather than a count closes both
+this and the entry above's gap.

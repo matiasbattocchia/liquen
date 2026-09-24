@@ -273,7 +273,7 @@ Deno.test("span: a second checkpoint chains from the first's start, and its rang
 Deno.test("span: an open tool loop is cut between steps — never inside one", () => {
   const events: Event[] = [msg("hacé el informe", false)];
   for (let k = 1; k <= 8; k++) events.push(...step(k));
-  const span = compactionSpan(events, SESSION, 1, 400);
+  const span = compactionSpan(events, SESSION, 1, 400, 1);
   assert(span !== null);
   const last = span.covered.at(-1)!;
   assertEquals(last.type, "tool_result"); // a step's end
@@ -283,6 +283,20 @@ Deno.test("span: an open tool loop is cut between steps — never inside one", (
   const coveredTurns = new Set(span.covered.map((e) => e.payload?.turn_id));
   assert(kept.every((e) => !coveredTurns.has(e.payload?.turn_id))); // no step straddles the cut
   assertEquals(span.covers[1], last.id);
+});
+
+Deno.test("span: a running turn under compactTurnAt is left whole — closed turns are covered", () => {
+  const events: Event[] = [
+    msg("uno", false),
+    msg("respuesta uno", true),
+    msg("hacé el informe", false),
+  ];
+  for (let k = 1; k <= 8; k++) events.push(...step(k));
+  const span = compactionSpan(events, SESSION, 1, 0, 1_000_000);
+  assert(span !== null);
+  assertEquals(span.covered, events.slice(0, 2)); // up to the closing, not a step past it
+  // and a turn with nothing closed before it waits for its own closing
+  assertEquals(compactionSpan(events.slice(2), SESSION, 1, 0, 1_000_000), null);
 });
 
 Deno.test("buildSummary: an open loop's checkpoint carries the tool traffic — that IS the content", async () => {
@@ -296,6 +310,7 @@ Deno.test("buildSummary: an open loop's checkpoint carries the tool traffic — 
       model: "claude-x",
       compactAt: 1,
       keepRecent: 400,
+      compactTurnAt: 1,
       prompt: PROMPT,
     },
     stepping((p) => {

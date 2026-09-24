@@ -785,6 +785,7 @@ async function compileRoster(
       windowLimit: catalog.system.windowLimit,
       compactAt: catalog.system.compactAt,
       keepRecent: catalog.system.keepRecent,
+      compactTurnAt: catalog.system.compactTurnAt,
       provider: cfg.provider ?? org.provider ?? undefined,
       name: identity.name ?? undefined,
       email: identity.email ?? undefined,
