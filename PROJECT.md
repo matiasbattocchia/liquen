@@ -4011,3 +4011,24 @@ policy on `docs` is the boundary and a bug in an editor's splicing cannot write 
 An edge function calling through the platform's own gateway with the agent's token meets
 the same policy. A role belongs to the cluster, not to a schema, so the tests share the
 one name; it is created if absent and never dropped.
+
+### The docs table, its policy and the three functions (2026-09-25) — LANDED
+
+`docs` (schema version 2) is a row per doc, keyed `(scope, owner, name)`, holding the
+whole text a file would — frontmatter included — so `kind`, `description` and `load` are
+projected by the same parser on both substrates (`columnsOf`, `frontmatterOf` in
+`store/docs.ts`). `openPgDocs` (`store/pg/docs.ts`) is the read port over it, and `as(ctx)`
+is the agent's reach: `read · write · edit` by handle, `scope/name`, each one transaction
+under `liquen_agent` with `liquen.agent` and `liquen.conversation` set for the policies.
+The policy is the container's rule: read the two org scopes, the agent's own and its
+conversation's; write the last two. `docs_read`, `docs_write` and `docs_edit` are
+`bin/afs.ts` in PL/pgSQL — the head truncation with its footer, the blind overwrite, the
+conflict-marker engine with its trailing-whitespace fallback mapped back to the original,
+BOM and CRLF kept — and the Postgres suite runs `exec/edit.ts`'s cases through both,
+past the BMP included, plus the read's windows against `aread`'s answers. A row an agent
+may see but not edit says "not yours to edit"; one it may not write is refused by the
+policy in the engine's words. `aread` of an empty file prints nothing, as the function does.
+
+Open: the tool that offers the three calls to the model where the docs live in the
+table, the switch that says so, seeding into the table, and the prompt's index line
+naming the call.

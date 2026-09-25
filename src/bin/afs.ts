@@ -79,7 +79,7 @@ async function read(
     return `[media ${mime} · ${size} bytes]\n${MEDIA_MARK}${resolve(path)}`;
   }
   const content = await Deno.readTextFile(path);
-  const lines = content.split("\n");
+  const lines = content === "" ? [] : content.split("\n");
   if (content.endsWith("\n")) lines.pop();
   const start = offset ? Math.max(0, offset - 1) : 0;
   if (lines.length > 0 && start >= lines.length) {

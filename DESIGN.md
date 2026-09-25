@@ -1883,7 +1883,7 @@ Registers (same substrate, different rules):
 - **Load policy (v0): progressive disclosure** (the `MEMORY.md`/CLAUDE.md lazy-load model).
   nu pushes an **always-loaded index** — every doc's `path + description` — plus the
   **bodies of `load:"always"` docs** (persona, core instructions). `load:"lazy"` docs appear
-  as index pointers only; **mu pulls a body on demand via the substrate read** (`aread`/`sql`
+  as index pointers only; **mu pulls a body on demand via the substrate read** (`aread`/`read`
   — "doc-read = the substrate read", §9). **A doc is named by the way to it from the agent's
   workspace**, which is where its shell stands: `instructions/agent.md` for its own,
   `../../organization/instructions/x.md` for a scope above. One handle — the provenance
@@ -1905,23 +1905,30 @@ Registers (same substrate, different rules):
 ```ts
 docs {
   scope:  "system" | "organization" | "agent" | "conversation"        // (subagent worker-overlay deferred)
-  kind:   "instruction" | "skill" | "memory" | "tool"        // tool = MCP config (nu-consumed)
-  name, description, body
-  load:   "always" | "lazy"
+  owner:  ""  |  the agent's id  |  the conversation's address       // the two org scopes have none
+  name                                                                // the scope-relative path
+  text                                                                // what a file holds, frontmatter included
   updated_at
-}
+}                                                                     // key: (scope, owner, name)
 ```
 
+A row is a doc as a file is: its `text` is the whole document, and `kind`
+(`instruction · skill · memory · tool`, `tool` = MCP config), `description` and `load`
+(`always · lazy`) are its frontmatter, projected by the reader — one parser, both
+substrates. The handle is `scope/name`; the owner is whoever is asking, so an agent
+names its own doc and its session's conversation doc the way it names a system one.
+
 Who may write a row is the substrate's rule — RLS on the table, unix ownership on files
-(§9) — never a column of the row. An edit is safe against a concurrent one the way
-`aedit` is: it names the text it replaces, and text that is no longer there matches
-nothing.
+(§9) — never a column of the row. On the table it is one policy, the container's rule
+restated: the agent role reads the two org scopes, its own and its conversation's, and
+writes the last two. An edit is safe against a concurrent one the way `aedit` is: it
+names the text it replaces, and text that is no longer there matches nothing.
 
 - **No "memory subsystem"**: docs (all kinds) *and* cron are just rows/files managed via
-  the generic substrate tool (SQL-client/RLS on DB, bash/Unix on files), bounded by the
-  engine — full model in §9. Optional `docs.write`-style **RPC wrappers** are ergonomic
-  sugar (literal params → no escaping bugs) and the home for atomic ops (send-executor,
-  hard-stop, schedule_wake) — never the security boundary.
+  the generic substrate tool (the doc calls under RLS on DB, bash/Unix on files), bounded
+  by the engine — full model in §9. The table's functions (`docs_read · docs_write ·
+  docs_edit`) are the binaries' contracts restated, `SECURITY INVOKER`: ergonomic (literal
+  params → no escaping bugs), and never the security boundary — the policy is.
 
 ### Domain tools (MCP) & credentials
 
@@ -2091,20 +2098,20 @@ nothing.
   can't publish to a log). Permission-relay UX worth copying from CC channels (request_id
   5 letters no 'l', first-answer-wins).
 
-### Tools — `send` · `search` · one substrate primitive (`bash` / `sql`)
+### Tools — `send` · `search` · one substrate primitive (`bash` / the doc calls)
 
 The exec/durable primitive is **one tool per substrate** — never a bag of capability-tools.
 Capability lives in **helpers** the one tool invokes: **binaries** in the sandbox PATH
 (filesystem) or **functions** in the database (db). This is the move openbsp *didn't* make on
 its SQL side (5 tools: `executeSql`/`getDbSchema`/`sampleTableRows`/`selectAsCsv`/`bulkInsert`)
-— we collapse it to `sql` + a helper library.
+— we collapse it to the three doc calls over a helper library.
 
 | tool | plane | signature → returns |
 |---|---|---|
 | `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{sent, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — text beside it replies on the wire; `react` lands a glyph on it; `action` names the verb (`create` · `edit` · `delete` · `add` · `remove` — `create` and `add` are what a body and a glyph already mean, and the two mutating ones reach only the account's own messages). **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
 | `search` | control (dedicated) | `search({in?, from?, before?, after?, text?, limit?})` → the page as a string in the window's grammar (`<conn>`/`<conv>`/`<msg>`, dated), RLS-scoped, closed by the next page's `before` when cut. Clean sugar over the control-plane log read (SELECT / ripgrep). |
 | `bash` | exec + durable-on-files | `bash(cmd)` → `{stdout, stderr, exit}`. The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
-| `sql` | durable-on-db | `sql(query)` → rows, RLS-scoped. The **database** substrate's one primitive; present only on the db backend (the sandbox can't touch the DB, §9 invariant). Capability via **functions** — the "DB OS": `db_schema` · `docs_write` · `docs_edit` · plus `grep`/`glob`/`ls` counterparts (FTS/`LIKE` · pattern-list · introspection). |
+| `read` · `write` · `edit` | durable-on-db | The **database** substrate's primitive, by handle: `read(handle, offset?, limit?)` → the text head-truncated with `aread`'s footer · `write(handle, content)` · `edit(handle, spec)` with `aedit`'s conflict-marker spec. Present only where the docs live in the table (the sandbox can't touch the DB, §9 invariant). The model writes no SQL: each call is a function of the store (`docs_read · docs_write · docs_edit`, the binaries' contracts in PL/pgSQL) that the harness calls with bound parameters under the agent role, so one `NOLOGIN` role serves every agent and the row-level policy is the whole rule. |
 
 **A tool owns how it READS.** The same call is shown in four places — the approval card, the
 anchor's pending list, the harness's report of a deferred outcome, the mirror's `[agent
@@ -2116,12 +2123,11 @@ the FULL form (the card: approving is judging exactly what will be said). `send`
 own, and what it adds is the one thing no generic rule can know — a NAME where the wire has
 an address: `send(to: Vivian, text: …)`, the address standing when nothing names it.
 
-So the durable substrate is a config switch: **files (`bash` + binaries) ⟺ db (`sql` +
-functions)**; `bash`-for-scratch rides along regardless. The switch is the docs' own, apart
-from where the store lives: an org whose log is on Postgres may keep its docs as files.
-`aread`/`awrite`/`aedit` ≈
-`SELECT`/`INSERT`/`UPDATE` ≈ the same read/write/edit triad, mediated by Unix perms (setuid)
-or RLS (SECURITY DEFINER).
+So the durable substrate is a config switch: **files (`bash` + binaries) ⟺ db (the doc
+calls + functions)**; `bash`-for-scratch rides along regardless. The switch is the docs'
+own, apart from where the store lives: an org whose log is on Postgres may keep its docs
+as files. `aread`/`awrite`/`aedit` ≈ `docs_read`/`docs_write`/`docs_edit` ≈ the same
+read/write/edit triad, mediated by Unix perms (the agent's uid) or RLS (the agent role).
 
 ### The exec plane, concretely (v0.0 — from the pi / Agent-SDK study)
 
@@ -2214,7 +2220,8 @@ beats a bespoke tool):
 - **Background processes** = `bash("cmd > /work/log 2>&1 &")` then `bash("tail /work/log")`.
   No `check_output`/`kill` tool — the agent owns its processes via bash + a **skill**.
 - **docs / memory / cron reads/writes** = substrate CRUD via the one primitive: `bash`
-  (`aread`/`awrite`/`aedit` on files) or `sql` (`docs_write`/`docs_edit` functions on db).
+  (`aread`/`awrite`/`aedit` on files) or `read`/`write`/`edit` (the same contracts as
+  functions on db).
   render reads them the privileged way — the in-process `Docs` port, not the agent's tool.
 - **reply / spawn / handoff / ask-principal** = `send` (+ routing). **soft-stop** = stop
   emitting + `bash` kill. **doc-read** = the substrate read.
@@ -2227,7 +2234,8 @@ beats a bespoke tool):
 - **MCP domain tools** (calendar, CRM…) = **dynamic per agent** (from tool-docs), credentials
   injected by nu (§8) — real tools, but wired at runtime, not part of the core surface.
 
-So the core surface is **`send` · `search` · the substrate primitive (`bash` / `sql`)** +
+So the core surface is **`send` · `search` · the substrate primitive (`bash` / the doc
+calls)** +
 the two that act on the agent's own standing state (**`schedule`** arms a wake, **`cancel`**
 unsets a wake or an open approval, §10) + dynamic MCP. Everything else is helpers
 (binaries/functions) + skill.
@@ -2542,7 +2550,7 @@ built for crash recovery: the stale lock is stolen, the steal sweeps, the model 
 ### Substrate symmetry & security model
 
 ```
-filesystem : bash+binaries : Unix perms   ::   database : SQL-client + RPC funcs : RLS/grants
+filesystem : bash+binaries : Unix perms   ::   database : the doc calls + functions : RLS/grants
        (mutable substrate + generic execution tool + engine-enforced permissions)
 ```
 
@@ -2553,9 +2561,9 @@ filesystem : bash+binaries : Unix perms   ::   database : SQL-client + RPC funcs
 - **Security is substrate-native, not tool-identity** (tool gating is theater when a
   generic tool exists — deny Write, the model does `echo >`). Two orthogonal axes:
   1. **Access control** — filesystem: container (blast radius) + Unix perms + mounts/egress;
-     DB: SQL-client + RLS/grants (the engine bounds the SQL, whatever it writes). Full stack
-     mirrors: RLS ≈ Unix perms · `EXECUTE` grants ≈ installed binaries · `SECURITY DEFINER`
-     ≈ setuid.
+     DB: the agent role + RLS/grants (the engine bounds every statement the functions
+     make). Full stack mirrors: RLS ≈ Unix perms · `EXECUTE` grants ≈ installed binaries ·
+     `SECURITY DEFINER` ≈ setuid.
   2. **Outward authorization** — `permission_request` → human, for semantic effects with no
      substrate analogue (send *this* email, issue *this* refund). Unforgeable because the
      sandbox has no route/creds outward — `send` is the sole door.

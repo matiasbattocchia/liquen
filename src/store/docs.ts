@@ -34,8 +34,9 @@
  * `instructions/compaction`); its handle is the way to the file from the agent's folder,
  * where its shell stands (`instructions/agent.md`, `../../system/instructions/base.md`),
  * so the handle is also the argument `aread` takes. The columns are the file's YAML
- * frontmatter, projected. Reads are fresh from disk (multi-process, like the log). On db
- * this same port is SELECTs over `docs`, and the handle is the row's key.
+ * frontmatter, projected. Reads are fresh from disk (multi-process, like the log). On the
+ * table (`pg/docs.ts`) this same port is SELECTs over `docs`, the columns projected from
+ * the row's text by the same parser, and the handle is the row's key, `scope/name`.
  */
 
 import { parse as parseYaml } from "@std/yaml";
@@ -97,19 +98,13 @@ export function openFileDocs(root: string): Docs {
           const path = `${dir}/${name}.md`;
           const frontmatter = await readFrontmatter(path);
           if (frontmatter === null) continue; // no frontmatter ⇒ not a doc (workspace file)
-          const description = frontmatter.description;
-          const load: DocLoad = frontmatter.load === "always" ? "always" : "lazy";
+          const columns = columnsOf(frontmatter);
           const entry: DocEntry = {
-            header: {
-              scope,
-              kind: kindOf(frontmatter),
-              name,
-              ...(typeof description === "string" && description.length > 0 ? { description } : {}),
-              load,
-              handle: from(home, path),
-            },
+            header: { scope, name, ...columns, handle: from(home, path) },
           };
-          if (load === "always") entry.body = stripFrontmatter(await Deno.readTextFile(path));
+          if (columns.load === "always") {
+            entry.body = stripFrontmatter(await Deno.readTextFile(path));
+          }
           out.push(entry);
         }
       }
@@ -138,10 +133,25 @@ function from(here: string, there: string): string {
   return [...a.slice(i).map(() => ".."), ...b.slice(i)].join("/");
 }
 
-/** `kind` is frontmatter metadata, never path: unknown/absent falls back to `memory`. */
-function kindOf(frontmatter: Record<string, unknown>): DocKind {
+/** The header columns a doc's frontmatter declares: `kind` (unknown or absent ⇒ `memory`),
+ *  `load` (`always`, else `lazy`) and a non-empty `description`. */
+export function columnsOf(
+  frontmatter: Record<string, unknown>,
+): Pick<DocHeader, "kind" | "load" | "description"> {
   const k = frontmatter.kind;
-  return typeof k === "string" && KINDS.includes(k) ? k as DocKind : "memory";
+  const description = frontmatter.description;
+  return {
+    kind: typeof k === "string" && KINDS.includes(k) ? k as DocKind : "memory",
+    load: frontmatter.load === "always" ? "always" : "lazy",
+    ...(typeof description === "string" && description.length > 0 ? { description } : {}),
+  };
+}
+
+/** A doc's frontmatter, parsed from its whole text: `null` when it opens with no block,
+ *  `{}` when the block is malformed. */
+export function frontmatterOf(text: string): Record<string, unknown> | null {
+  const block = blockOf(text);
+  return block === null ? null : parseBlock(block);
 }
 
 /** The scope directories to walk, in cascade order — skipping any that don't apply. */
@@ -204,15 +214,27 @@ async function targetOf(path: string): Promise<{ isFile: boolean; isDirectory: b
  *  `null` when the file has NO frontmatter block (⇒ not a doc); `{}` when malformed. */
 async function readFrontmatter(path: string): Promise<Record<string, unknown> | null> {
   const block = await readHead(path);
-  if (block === null) return null;
+  return block === null ? null : parseBlock(block);
+}
+
+/** A frontmatter block's YAML as a record; `{}` when it is not one, or malformed —
+ *  malformed frontmatter never breaks context-building. */
+function parseBlock(block: string): Record<string, unknown> {
   try {
     const doc = parseYaml(block);
     return doc && typeof doc === "object" && !Array.isArray(doc)
       ? doc as Record<string, unknown>
       : {};
   } catch {
-    return {}; // malformed frontmatter never breaks context-building
+    return {};
   }
+}
+
+/** A text's leading `--- … ---` block (content only), or null when it opens with none. */
+function blockOf(text: string): string | null {
+  if (!text.startsWith("---\n") && !text.startsWith("---\r\n")) return null;
+  const end = text.indexOf("\n---", 3);
+  return end === -1 ? null : text.slice(4, end);
 }
 
 /** Read a file's leading `--- … ---` block (content only), stopping at the closing delimiter. */
@@ -243,7 +265,7 @@ async function readHead(path: string): Promise<string | null> {
 }
 
 /** Drop a leading `--- … ---` frontmatter block, returning the body. */
-function stripFrontmatter(text: string): string {
+export function stripFrontmatter(text: string): string {
   if (!text.startsWith("---\n") && !text.startsWith("---\r\n")) return text;
   const end = text.indexOf("\n---", 3);
   if (end === -1) return text;

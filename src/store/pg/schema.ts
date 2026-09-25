@@ -310,9 +310,286 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 );
 `;
 
+/** The role every agent's substrate calls run as (§8, §9): one for the cluster, NOLOGIN,
+ *  granted to the store's owner so a transaction may `SET LOCAL ROLE` to it. */
+export const AGENT_ROLE = "liquen_agent";
+
+/** The docs table (§8), and the agent's side of it: the policies that bound what the
+ *  agent role reads and writes, and the substrate functions — `docs_read`, `docs_write`,
+ *  `docs_edit` — the binaries' contracts (`bin/afs.ts`) restated in PL/pgSQL, which the
+ *  harness calls under that role with the agent and its conversation set as
+ *  `liquen.agent` and `liquen.conversation` for the transaction.
+ *
+ *  A row is a doc: its text is what a file holds, frontmatter included, and the header
+ *  columns are projected from it by the reader as they are from a file. The key is
+ *  `(scope, owner, name)` — the owner is the agent's id or the conversation's address,
+ *  and empty for the two scopes shared by the org — and the handle the agent reads,
+ *  writes and edits by is `scope/name`: the owner is whoever is asking.
+ *
+ *  The policy is the container's ownership rule: an agent reads the scopes above it and
+ *  its own, writes its own scope and its conversation's, and reaches nothing else. It is
+ *  the one rule; the functions run as their caller (`SECURITY INVOKER`) so it applies to
+ *  every statement they make. */
+const docsDdl = (schema: string) => `
+CREATE TABLE IF NOT EXISTS docs (
+  scope      ${T} NOT NULL,
+  owner      ${T} NOT NULL DEFAULT '',
+  name       ${T} NOT NULL,
+  text       ${T} NOT NULL,
+  updated_at ${T} NOT NULL,
+  PRIMARY KEY (scope, owner, name)
+);
+
+DO $d$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${AGENT_ROLE}') THEN
+    CREATE ROLE ${AGENT_ROLE} NOLOGIN;
+  END IF;
+END $d$;
+GRANT ${AGENT_ROLE} TO CURRENT_USER;
+GRANT USAGE ON SCHEMA ${ident(schema)} TO ${AGENT_ROLE};
+GRANT SELECT, INSERT, UPDATE, DELETE ON docs TO ${AGENT_ROLE};
+
+-- whose row a scope's is, for the agent asking: the settings the harness sets for the
+-- transaction; unset, no row is anyone's
+CREATE OR REPLACE FUNCTION docs_owner(scope text) RETURNS text LANGUAGE sql STABLE AS $f$
+  SELECT CASE scope
+    WHEN 'system' THEN '' WHEN 'organization' THEN ''
+    WHEN 'agent' THEN nullif(current_setting('liquen.agent', true), '')
+    WHEN 'conversation' THEN nullif(current_setting('liquen.conversation', true), '')
+  END
+$f$;
+
+ALTER TABLE docs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS docs_reads ON docs;
+CREATE POLICY docs_reads ON docs FOR SELECT TO ${AGENT_ROLE}
+  USING (owner = docs_owner(scope));
+DROP POLICY IF EXISTS docs_writes ON docs;
+CREATE POLICY docs_writes ON docs FOR ALL TO ${AGENT_ROLE}
+  USING (scope IN ('agent', 'conversation') AND owner = docs_owner(scope))
+  WITH CHECK (scope IN ('agent', 'conversation') AND owner = docs_owner(scope));
+
+-- a handle, \`scope/name\`, as the row's key for whoever is asking
+CREATE OR REPLACE FUNCTION docs_ref(handle text, OUT scope text, OUT owner text, OUT name text)
+LANGUAGE plpgsql STABLE AS $f$
+BEGIN
+  scope := split_part(handle, '/', 1);
+  name := substr(handle, length(scope) + 2);
+  IF scope NOT IN ('system', 'organization', 'agent', 'conversation') OR name = '' THEN
+    RAISE EXCEPTION '%: a handle is scope/name — system, organization, agent or conversation, then the doc''s name', handle;
+  END IF;
+  owner := docs_owner(scope);
+END
+$f$;
+
+CREATE OR REPLACE FUNCTION docs_stamp() RETURNS text LANGUAGE sql VOLATILE AS $f$
+  SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+$f$;
+
+-- afs read: the doc from line \`at\` (1-indexed), \`lim\` lines at most, head-truncated to
+-- \`lim\` lines (2000) and \`max_bytes\` (50KB), never a partial line, a footer naming the
+-- line to continue from
+CREATE OR REPLACE FUNCTION docs_read(handle text, at integer DEFAULT NULL,
+  lim integer DEFAULT NULL, max_bytes integer DEFAULT NULL) RETURNS text
+LANGUAGE plpgsql STABLE AS $f$
+DECLARE
+  r record; content text; lines text[]; total integer; start integer; joined text;
+  span text[]; line text; kept text[] := '{}'; max_lines integer; cap integer;
+  size integer := 0; cost integer; shown integer := 0; count integer; footer text := '';
+BEGIN
+  SELECT * INTO r FROM docs_ref(handle);
+  SELECT d.text INTO content FROM docs d
+    WHERE d.scope = r.scope AND d.owner = r.owner AND d.name = r.name;
+  IF NOT FOUND THEN RAISE EXCEPTION '%: no such doc', handle; END IF;
+  lines := string_to_array(content, E'\\n');
+  IF right(content, 1) = E'\\n' THEN lines := lines[1:array_length(lines, 1) - 1]; END IF;
+  total := coalesce(array_length(lines, 1), 0);
+  start := CASE WHEN at IS NULL OR at < 1 THEN 0 ELSE at - 1 END;
+  IF total > 0 AND start >= total THEN
+    RAISE EXCEPTION 'offset % is beyond end of file (% lines)', at, total;
+  END IF;
+  span := lines[start + 1 : CASE WHEN lim IS NULL THEN total ELSE start + lim END];
+  joined := array_to_string(span, E'\\n');
+  max_lines := coalesce(lim, 2000);
+  cap := coalesce(max_bytes, 51200);
+  -- what the head keeps, counted as the truncation counts: a trailing newline is no line
+  lines := string_to_array(joined, E'\\n');
+  IF right(joined, 1) = E'\\n' THEN lines := lines[1:array_length(lines, 1) - 1]; END IF;
+  count := coalesce(array_length(lines, 1), 0);
+  IF count <= max_lines AND octet_length(joined) <= cap THEN
+    shown := count;
+  ELSE
+    FOREACH line IN ARRAY lines LOOP
+      EXIT WHEN shown >= max_lines;
+      cost := octet_length(line) + CASE WHEN shown > 0 THEN 1 ELSE 0 END;
+      EXIT WHEN size + cost > cap;
+      kept := kept || line;
+      size := size + cost;
+      shown := shown + 1;
+    END LOOP;
+    joined := array_to_string(kept, E'\\n');
+  END IF;
+  IF shown = 0 AND coalesce(array_length(span, 1), 0) > 0 THEN
+    RETURN format('[line %s alone exceeds the byte cap (%s bytes) — raise maxBytes]', start + 1, cap);
+  END IF;
+  IF start + shown < total THEN
+    footer := format(E'\\n\\n[showing lines %s-%s of %s — continue from line %s]',
+      start + 1, start + shown, total, start + shown + 1);
+  END IF;
+  RETURN joined || footer;
+END
+$f$;
+
+-- afs write: the whole text, a blind overwrite by contract
+CREATE OR REPLACE FUNCTION docs_write(handle text, content text) RETURNS text
+LANGUAGE plpgsql VOLATILE AS $f$
+DECLARE r record;
+BEGIN
+  SELECT * INTO r FROM docs_ref(handle);
+  INSERT INTO docs (scope, owner, name, text, updated_at)
+    VALUES (r.scope, r.owner, r.name, content, docs_stamp())
+    ON CONFLICT (scope, owner, name) DO UPDATE
+      SET text = excluded.text, updated_at = excluded.updated_at;
+  RETURN format('wrote %s bytes to %s', octet_length(content), handle);
+END
+$f$;
+
+-- a normalized offset back to the original's: the line it falls in, then the column when
+-- it is within the kept text, else the line's own end (its newline)
+CREATE OR REPLACE FUNCTION docs_offset(p integer, ln_norm integer[], ln_orig integer[],
+  kept_len integer[], orig_len integer[]) RETURNS integer
+LANGUAGE plpgsql IMMUTABLE AS $f$
+DECLARE k integer := 1; i integer; c integer;
+BEGIN
+  FOR i IN 1..array_length(ln_norm, 1) LOOP
+    IF ln_norm[i] <= p THEN k := i; END IF;
+  END LOOP;
+  c := p - ln_norm[k];
+  RETURN ln_orig[k] + CASE WHEN c < kept_len[k] THEN c ELSE orig_len[k] END;
+END
+$f$;
+
+-- afs edit: the conflict-marker multi-edit spec (exec/edit.ts). Every block is matched
+-- against the ORIGINAL text and must be unique and non-overlapping; exact first, then
+-- trailing-whitespace-insensitive — matched in normalized space, spliced in the original,
+-- so only the matched spans change. BOM and CRLF are stripped to match and restored.
+CREATE OR REPLACE FUNCTION docs_edit(handle text, spec text) RETURNS text
+LANGUAGE plpgsql VOLATILE AS $f$
+DECLARE
+  r record; raw text; bom text := ''; crlf boolean; content text;
+  olds text[] := '{}'; news text[] := '{}'; mode text := 'outside';
+  cur_old text[]; cur_new text[]; line text; n integer; i integer;
+  missed boolean := false; base text; use_old text[];
+  lines text[]; kept text[] := '{}'; kept_len integer[] := '{}'; orig_len integer[] := '{}';
+  ln_norm integer[] := '{}'; ln_orig integer[] := '{}'; pos integer; p integer;
+  first integer; s integer; e integer; starts integer[] := '{}'; ends integer[] := '{}';
+  ord integer[]; result text;
+BEGIN
+  SELECT * INTO r FROM docs_ref(handle);
+  SELECT d.text INTO raw FROM docs d
+    WHERE d.scope = r.scope AND d.owner = r.owner AND d.name = r.name FOR UPDATE;
+  IF NOT FOUND THEN
+    IF EXISTS (SELECT 1 FROM docs d
+               WHERE d.scope = r.scope AND d.owner = r.owner AND d.name = r.name) THEN
+      RAISE EXCEPTION '%: not yours to edit', handle;
+    END IF;
+    RAISE EXCEPTION '%: no such doc', handle;
+  END IF;
+  -- parse
+  FOREACH line IN ARRAY string_to_array(replace(spec, E'\\r\\n', E'\\n'), E'\\n') LOOP
+    IF line = '<<<<<<<' THEN
+      IF mode <> 'outside' THEN RAISE EXCEPTION 'malformed spec: unexpected <<<<<<<'; END IF;
+      mode := 'old'; cur_old := '{}'; cur_new := '{}';
+    ELSIF line = '=======' THEN
+      IF mode <> 'old' THEN RAISE EXCEPTION 'malformed spec: ======= outside a block'; END IF;
+      mode := 'new';
+    ELSIF line = '>>>>>>>' THEN
+      IF mode <> 'new' THEN RAISE EXCEPTION 'malformed spec: >>>>>>> outside a block'; END IF;
+      olds := olds || array_to_string(cur_old, E'\\n');
+      news := news || array_to_string(cur_new, E'\\n');
+      mode := 'outside';
+    ELSIF mode = 'old' THEN cur_old := cur_old || line;
+    ELSIF mode = 'new' THEN cur_new := cur_new || line;
+    ELSIF line !~ '^\\s*$' THEN
+      RAISE EXCEPTION 'malformed spec: text outside a block: %', left(line, 40);
+    END IF;
+  END LOOP;
+  IF mode <> 'outside' THEN RAISE EXCEPTION 'malformed spec: unterminated block'; END IF;
+  n := coalesce(array_length(olds, 1), 0);
+  IF n = 0 THEN RAISE EXCEPTION 'empty spec: no edit blocks found'; END IF;
+  -- normalize the text: BOM off, CRLF to LF
+  IF left(raw, 1) = chr(65279) THEN bom := chr(65279); content := substr(raw, 2);
+  ELSE content := raw; END IF;
+  crlf := position(E'\\r\\n' IN content) > 0;
+  IF crlf THEN content := replace(content, E'\\r\\n', E'\\n'); END IF;
+  -- exact first; if ANY edit misses, every edit is retried in trailing-whitespace-
+  -- normalized space — matched there, spliced HERE
+  base := content;
+  use_old := olds;
+  FOR i IN 1..n LOOP
+    IF strpos(content, olds[i]) = 0 THEN missed := true; END IF;
+  END LOOP;
+  IF missed THEN
+    lines := CASE WHEN content = '' THEN ARRAY[''] ELSE string_to_array(content, E'\\n') END;
+    pos := 0; p := 0;
+    FOR i IN 1..array_length(lines, 1) LOOP
+      line := regexp_replace(lines[i], '[ \\t]+$', '');
+      kept := kept || line;
+      kept_len[i] := length(line);
+      orig_len[i] := length(lines[i]);
+      ln_norm[i] := p;
+      ln_orig[i] := pos;
+      p := p + kept_len[i] + 1;
+      pos := pos + orig_len[i] + 1;
+    END LOOP;
+    base := array_to_string(kept, E'\\n');
+    FOR i IN 1..n LOOP
+      SELECT array_to_string(array_agg(regexp_replace(l, '[ \\t]+$', '') ORDER BY o), E'\\n')
+        INTO line
+        FROM unnest(string_to_array(olds[i], E'\\n')) WITH ORDINALITY AS t(l, o);
+      use_old[i] := coalesce(line, '');
+    END LOOP;
+  END IF;
+  -- locate every (unique) match against the original
+  FOR i IN 1..n LOOP
+    IF use_old[i] = '' THEN RAISE EXCEPTION 'edit #%: old text is empty', i; END IF;
+    first := strpos(base, use_old[i]);
+    IF first = 0 THEN
+      RAISE EXCEPTION 'edit #%: old text not found%', i,
+        CASE WHEN missed THEN ' (even ignoring trailing whitespace)' ELSE '' END;
+    END IF;
+    IF strpos(substr(base, first + 1), use_old[i]) > 0 THEN
+      RAISE EXCEPTION 'edit #%: old text matches more than once — make it unique', i;
+    END IF;
+    s := first - 1;
+    e := s + length(use_old[i]);
+    IF missed THEN
+      s := docs_offset(s, ln_norm, ln_orig, kept_len, orig_len);
+      e := docs_offset(e, ln_norm, ln_orig, kept_len, orig_len);
+    END IF;
+    starts[i] := s; ends[i] := e;
+  END LOOP;
+  SELECT array_agg(g ORDER BY starts[g]) INTO ord FROM generate_series(1, n) g;
+  FOR i IN 2..n LOOP
+    IF starts[ord[i]] < ends[ord[i - 1]] THEN
+      RAISE EXCEPTION 'edits overlap — merge nearby changes into one block';
+    END IF;
+  END LOOP;
+  -- splice back-to-front so earlier spans keep their offsets
+  result := content;
+  FOR i IN REVERSE n..1 LOOP
+    result := left(result, starts[ord[i]]) || news[ord[i]] || substr(result, ends[ord[i]] + 1);
+  END LOOP;
+  result := bom || CASE WHEN crlf THEN replace(result, E'\\n', E'\\r\\n') ELSE result END;
+  UPDATE docs SET text = result, updated_at = docs_stamp()
+    WHERE scope = r.scope AND owner = r.owner AND name = r.name;
+  RETURN format('applied %s edit(s) to %s', n, handle);
+END
+$f$;
+`;
+
 /** The version the DDL creates. A store found below it is raised in place, once, by the
  *  steps between; a store above it was made by a newer liquen, and this one refuses it. */
-export const VERSION = 1;
+export const VERSION = 2;
 
 /** `RAISE[v]` takes a store from version `v` to `v + 1`: the ALTERs the DDL's `IF NOT
  *  EXISTS` cannot express, run before the DDL so the views it replaces find their columns.
@@ -338,7 +615,7 @@ export async function prepare(sql: Sql, schema: string): Promise<void> {
       );
     }
     for (let v = found?.version ?? VERSION; v < VERSION; v++) await RAISE[v]?.(tx);
-    await tx.unsafe(functions() + LOG_DDL + VAULT_DDL);
+    await tx.unsafe(functions() + LOG_DDL + VAULT_DDL + docsDdl(schema));
     if (found === undefined) {
       await tx.unsafe("INSERT INTO schema_version (version) VALUES ($1::integer)", [VERSION]);
     } else if (found.version < VERSION) {
