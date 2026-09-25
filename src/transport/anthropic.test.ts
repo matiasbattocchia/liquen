@@ -1,4 +1,4 @@
-import { assert } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
 import { anthropicClient, anthropicTransport } from "./anthropic.ts";
 import { mu } from "../mu.ts";
@@ -40,71 +40,113 @@ Deno.test({
   },
 });
 
-Deno.test({
-  name: "smoke: tool cycle replays with OUR re-minted tool_use id (+ thinking verbatim)",
-  ignore: !KEY,
-  fn: async () => {
-    const tools: Anthropic.Tool[] = [{
-      name: "get_time",
-      description: "Returns the current time. Always use this when asked for the time.",
-      input_schema: { type: "object", properties: {}, required: [] },
-    }];
-    const system: Anthropic.TextBlockParam[] = [
-      { type: "text", text: "You must use the get_time tool to answer time questions." },
-    ];
-    const ask: Anthropic.MessageParam = { role: "user", content: "What time is it?" };
+// the cycle runs on a model that binds a thinking block to its conversation too, under
+// `error`: a replay that changed what the block read fails here instead of degrading
+for (const model of [MODEL, "claude-opus-5-5"]) {
+  Deno.test({
+    name:
+      `smoke: tool cycle replays with OUR re-minted tool_use id (+ thinking verbatim) — ${model}`,
+    ignore: !KEY,
+    fn: async () => {
+      const tools: Anthropic.Tool[] = [{
+        name: "get_time",
+        description: "Returns the current time. Always use this when asked for the time.",
+        input_schema: { type: "object", properties: {}, required: [] },
+      }];
+      const system: Anthropic.TextBlockParam[] = [
+        { type: "text", text: "You must use the get_time tool to answer time questions." },
+      ];
+      const ask: Anthropic.MessageParam = { role: "user", content: "What time is it?" };
 
-    // step 1 — expect a tool_use
-    const step1 = await mu({
-      model: MODEL,
-      maxTokens: 8192,
-      system,
-      messages: [ask],
-      tools,
-      effort: "low",
-    }, anthropicTransport(anthropicClient()));
-    assert(step1.ok, `step1 failed: ${JSON.stringify(step1)}`);
-    if (!step1.ok) return;
-    assert(step1.stop === "tool_use", `expected stop=tool_use, got ${step1.stop}`);
-    const use = step1.emissions.find((e) => e.kind === "tool_use");
-    assert(use && use.kind === "tool_use", "expected a tool_use emission");
+      // step 1 — expect a tool_use
+      const step1 = await mu({
+        model,
+        maxTokens: 8192,
+        system,
+        messages: [ask],
+        tools,
+        effort: "low",
+      }, anthropicTransport(anthropicClient()));
+      assert(step1.ok, `step1 failed: ${JSON.stringify(step1)}`);
+      if (!step1.ok) return;
+      assert(step1.stop === "tool_use", `expected stop=tool_use, got ${step1.stop}`);
+      const use = step1.emissions.find((e) => e.kind === "tool_use");
+      assert(use && use.kind === "tool_use", "expected a tool_use emission");
 
-    // step 2 — replay the turn the way render does: thinking verbatim + tool_use with a
-    // re-minted id (the design's bet), then the tool_result under the same id.
-    const OUR_ID = "01890000-0000-7000-8000-00000000abcd"; // uuidv7-shaped, ours not the API's
-    const replayed: Anthropic.ContentBlockParam[] = step1.emissions.flatMap(
-      (e): Anthropic.ContentBlockParam[] => {
-        if (e.kind === "thinking") {
-          return [{ type: "thinking", thinking: e.thinking, signature: e.signature }];
-        }
-        if (e.kind === "redacted_thinking") return [{ type: "redacted_thinking", data: e.data }];
-        if (e.kind === "assistant") return [{ type: "text", text: e.text }];
-        return [{ type: "tool_use", id: OUR_ID, name: e.name, input: e.input }];
-      },
-    );
-    const step2 = await mu({
-      model: MODEL,
-      maxTokens: 8192,
-      system,
-      messages: [
-        ask,
-        { role: "assistant", content: replayed },
-        {
-          role: "user",
-          content: [{ type: "tool_result", tool_use_id: OUR_ID, content: "14:30 UTC" }],
+      // step 2 — replay the turn the way render does: thinking verbatim + tool_use with a
+      // re-minted id (the design's bet), then the tool_result under the same id.
+      const OUR_ID = "01890000-0000-7000-8000-00000000abcd"; // uuidv7-shaped, ours not the API's
+      const replayed: Anthropic.ContentBlockParam[] = step1.emissions.flatMap(
+        (e): Anthropic.ContentBlockParam[] => {
+          if (e.kind === "thinking") {
+            return [{ type: "thinking", thinking: e.thinking, signature: e.signature }];
+          }
+          if (e.kind === "redacted_thinking") return [{ type: "redacted_thinking", data: e.data }];
+          if (e.kind === "assistant") return [{ type: "text", text: e.text }];
+          return [{ type: "tool_use", id: OUR_ID, name: e.name, input: e.input }];
         },
-      ],
-      tools,
-      effort: "low",
-    }, anthropicTransport(anthropicClient()));
-
-    assert(step2.ok, `REPLAY REJECTED — the re-minted-id bet fails: ${JSON.stringify(step2)}`);
-    if (step2.ok) {
-      const final = step2.emissions.find((e) => e.kind === "assistant");
-      assert(
-        final && final.kind === "assistant" && final.text.includes("14:30"),
-        "expected the tool result reflected in the answer",
       );
-    }
-  },
+      const step2 = await mu({
+        model,
+        maxTokens: 8192,
+        system,
+        messages: [
+          ask,
+          { role: "assistant", content: replayed },
+          {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: OUR_ID, content: "14:30 UTC" }],
+          },
+        ],
+        tools,
+        effort: "low",
+      }, anthropicTransport(anthropicClient(), { mismatch: "error" }));
+
+      assert(step2.ok, `REPLAY REJECTED — the re-minted-id bet fails: ${JSON.stringify(step2)}`);
+      if (step2.ok) {
+        const final = step2.emissions.find((e) => e.kind === "assistant");
+        assert(
+          final && final.kind === "assistant" && final.text.includes("14:30"),
+          "expected the tool result reflected in the answer",
+        );
+      }
+    },
+  });
+}
+
+Deno.test("the request states what a mismatched thinking block does, under the beta that lets it", async () => {
+  const seen: { params?: Record<string, unknown>; headers?: Record<string, string> } = {};
+  const stream = {
+    on: () => stream,
+    finalMessage: () => Promise.resolve({ content: [], input_transformations: [] }),
+  };
+  const client = {
+    messages: {
+      stream: (params: Record<string, unknown>, opts: { headers: Record<string, string> }) => {
+        seen.params = params;
+        seen.headers = opts.headers;
+        return stream;
+      },
+    },
+  } as unknown as Anthropic;
+  const params = {
+    model: MODEL,
+    max_tokens: 1024,
+    messages: [{ role: "user" as const, content: "hola" }],
+    thinking: { type: "adaptive" as const, display: "summarized" as const },
+  };
+
+  await anthropicTransport(client)(params);
+  assertEquals(seen.headers, { "anthropic-beta": "thinking-binding-controls-2026-08-01" });
+  assertEquals(seen.params?.thinking, {
+    type: "adaptive",
+    display: "summarized",
+    block_binding: { prefix_mismatch_behavior: "drop_block" },
+  });
+
+  await anthropicTransport(client, { mismatch: "error" })(params);
+  assertEquals(
+    (seen.params?.thinking as { block_binding: unknown }).block_binding,
+    { prefix_mismatch_behavior: "error" },
+  );
 });

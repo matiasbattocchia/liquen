@@ -3753,3 +3753,26 @@ session in the merge: it carries the agent's `contact` port like the mind does, 
 born from the roster's settings rather than from whatever an attachment had tuned the
 mind to. `portsFor` stays in main until the sandbox provider (EDGE-PLAN §7) and the row
 as config (§9) take its process-bound inputs.
+
+### A running turn's requests only append (2026-09-25) — LANDED
+
+Opus 5.5 and Fable 5.1 bind a thinking block's signature to everything its request held
+before it; an account created on or after 2026-08-31 gets a 400 when a replayed block's
+prefix changed, an older one only has the mismatch recorded. The anchor broke it on every
+step after a turn's first tool call: it was rebuilt each request and sat only on the newest
+user turn, so the previous step's anchor vanished from where its thinking had read it. A
+probe against `claude-opus-5-5` with `drop_block` reported `thinking_dropped …
+prefix_binding_mismatch` for that shape and nothing for the append-only one. A step that
+calls a tool now records its anchor (`extra.anchor`) and render places it again ahead of
+the step; `render.test` checks each request of a three-step turn against the next, block
+for block. The transport sends the controls beta with `drop_block` (the live smoke runs the
+replay on Opus 5.5 under `error`) and logs `input_transformations`.
+
+Thinking is requested with `display: "summarized"`: Sonnet 5 and Opus 5.5 default to
+`omitted`, which logged empty blocks with only a signature, and the display bills the same
+either way.
+
+Still open, each a prefix edit the log line would name: a world message that lands while a
+step's call is in flight renders ahead of that step on the next request; a checkpoint inside
+a running turn summarizes history under the turn's replayed thinking; a docs change mid-turn
+rebuilds the system prompt.

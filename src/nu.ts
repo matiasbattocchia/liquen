@@ -30,6 +30,7 @@ import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
 import {
+  anchorText,
   cancelled,
   type Env,
   type Member,
@@ -219,11 +220,12 @@ export async function nu(
   if (input.signal?.aborted) return [cancelled(here)]; // the cancel cut the checkpoint
   if (summary) return [summary];
 
+  const now = ts();
   const rendered = render({
     events: input.events,
     docs: input.docs,
     session,
-    now: ts(),
+    now,
     zone: config.timezone,
     env,
     ambient: input.ambient,
@@ -315,6 +317,16 @@ export async function nu(
       };
       events.push(e);
     }
+  }
+
+  // A step that calls a tool records the anchor it read, on its first event: the turn's
+  // later requests replay this step's thinking, whose signature binds the anchor where
+  // this request placed it, so render places it there again (§5).
+  if (events.some((e) => e.type === "tool_use")) {
+    events[0].extra = {
+      ...events[0].extra,
+      anchor: anchorText(now, config.timezone, input.ambient),
+    };
   }
 
   // A step that produced nothing to log — no words, no call — still ended, and the ending

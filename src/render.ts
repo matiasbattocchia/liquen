@@ -912,10 +912,37 @@ function renderMessages(
   closeCluster();
   mark((cur as { content: ContentBlockParam[] } | null)?.content.at(-1), "1h");
 
+  // A step's anchor, where its request carried it (nu records it on the step): a thinking
+  // block's signature binds everything the request held before it, so while a turn's
+  // chain replays its thinking, every earlier step's anchor stands where that step read it.
+  const anchors = new Map<string, string>();
+  for (const e of trailing) {
+    const turn = turnOf(e);
+    const read = e.extra?.anchor;
+    if (turn !== undefined && weldedTurns.has(turn) && typeof read === "string") {
+      anchors.set(turn, read);
+    }
+  }
+  const placeAnchor = (text: string) => {
+    closeCluster();
+    // the API takes `mid_conv_system` only after other content in a user turn; a turn that
+    // would hold nothing else carries the anchor as plain text (same info)
+    const turn = cur as { role: Role; content: ContentBlockParam[] } | null;
+    if (turn?.role === "user" && turn.content.some((b) => b.type !== "mid_conv_system")) {
+      turn.content.push(sys(text));
+    } else emit("user", { type: "text", text });
+  };
+
   // TRAILING — weld faithfully. `weldOrder` makes each group contiguous (uses, then results)
   // and floats intervening events after it, so a tool_result is always FIRST in its user
   // message (openbsp's sortToolMessages rule); the emit builder handles role alternation.
   for (const e of weldOrder(trailing, weldedTurns)) {
+    const turn = turnOf(e);
+    const read = turn === undefined ? undefined : anchors.get(turn);
+    if (read !== undefined) {
+      placeAnchor(read);
+      anchors.delete(turn!);
+    }
     if (e.type === "summary") { // boundary may be -1 — the leading summary lands here
       place("user", { type: "text", text: checkpointEl(e) });
     } else if (e.type === "error") {
@@ -968,20 +995,17 @@ function renderMessages(
   closeCluster();
   mark((cur as { content: ContentBlockParam[] } | null)?.content.at(-1));
 
-  // the trailing anchor: `now:` + the volatile environment lines (cwd · git · bg jobs).
-  // Kept as ONE block, last, so the whole prefix stays cache-stable (§5).
-  const anchor = [`now: ${nowStamp(now, zone)}`, ...(ambient ?? [])].join("\n");
-  place("user", sys(anchor));
-  // the API rejects a user turn whose content is ONLY system blocks — if nothing else
-  // landed in this turn, carry the anchor as plain text instead (valid content, same info)
-  if (cur !== null) {
-    const turn = cur as { role: Role; content: ContentBlockParam[] };
-    if (turn.role === "user" && turn.content.every((b) => b.type === "mid_conv_system")) {
-      turn.content = [{ type: "text", text: anchor }];
-    }
-  }
+  // the trailing anchor: `now:` + the volatile environment lines (cwd · git · bg jobs),
+  // ONE block after everything the prefix holds (§5)
+  placeAnchor(anchorText(now, zone, ambient));
   flush();
   return out;
+}
+
+/** The anchor's text: `now:` and the live environment lines. nu records it on the step
+ *  that read it, and render places it again from that record while the step is trailing. */
+export function anchorText(now: string, zone?: string, ambient?: string[]): string {
+  return [`now: ${nowStamp(now, zone)}`, ...(ambient ?? [])].join("\n");
 }
 
 /**

@@ -83,7 +83,9 @@ export async function mu(
     max_tokens: input.maxTokens ?? DEFAULT_MAX_TOKENS,
     messages: input.messages,
     tools: input.tools ?? [],
-    thinking: { type: "adaptive" }, // modern models reason adaptively (§2)
+    // modern models reason adaptively (§2); the summary is the log's only view of that
+    // reasoning, and it bills the same as the empty block the models return by default
+    thinking: { type: "adaptive", display: "summarized" },
     ...(input.system.length > 0 ? { system: input.system } : {}),
     ...(input.effort ? { output_config: { effort: input.effort } } : {}),
   };

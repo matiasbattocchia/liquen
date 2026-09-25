@@ -102,7 +102,9 @@ mu({system, messages, tools, model, maxTokens, effort?, turnId?}, transport, emi
 
 **mu emits three event types:** `message` (its bare assistant text to the
 principal, §5), `tool_use`, and `thinking` (its extended-thinking block, logged
-with signature so the unrolled next step can replay it — §5). Directed messages (to
+with signature so the unrolled next step can replay it — §5; requested with
+`display: "summarized"`, which bills the same as the empty block the models return by
+default and is the log's only view of the reasoning). Directed messages (to
 peers/principal) are produced by nu via the `send` tool. Everything else is written by nu
 (`tool_result`, `permission_request`, `summary`, `alarm/error`) or by producers (`message`
 from the world, `control` from ingest).
@@ -1324,6 +1326,12 @@ constraint, and render derives it **from the window's shape**:
   by nu) emitted no `tool_use`: a closing assistant text. Everything before it is **closed**.
 - **Trailing chain** (after the boundary) is **welded API-faithfully** — `thinking` (replayed
   verbatim, with signature) + text + `tool_use`/`tool_result` pairs (per-use `ref_id` linkage).
+  A thinking block's signature binds everything its request held before it, so a running
+  turn's requests only ever append: a step that calls a tool records the anchor its request
+  carried (`extra.anchor`, on the step's first event), and render places that anchor again
+  where it stood, ahead of the step it produced. The Anthropic transport sets the binding
+  explicitly (`prefix_mismatch_behavior: drop_block`, under the controls beta) and logs every
+  block the API reports dropped — each one is an edit to a prefix that should not have moved.
   A directed send dispatched by a welded `tool_use` is **skipped** (its content is in the block);
   once its group falls behind the boundary, the pair drops and the *message* renders — same
   event, two ages, zero bookkeeping.

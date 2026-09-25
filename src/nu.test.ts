@@ -410,3 +410,42 @@ Deno.test("an aborted step is the principal's cancel: one closing row, no retry"
   assertEquals(out[0].agent, undefined); // the harness's word — nothing failed, it was stopped
   assertEquals(out[0].payload?.turn_id, undefined); // unstamped: the turn ends here
 });
+
+Deno.test("nu: a step that calls a tool records the anchor its request carried", async () => {
+  let sent: Anthropic.MessageCreateParamsNonStreaming | undefined;
+  const principal: Event = {
+    id: "e1",
+    ts: "2026-07-19T10:00:00Z",
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "mind@a1" },
+      sender: { address: "ana", name: "Ana" },
+    },
+    parts: [{ type: "text", kind: "text", text: "¿qué hay?" }],
+  };
+  const input = {
+    events: [principal],
+    docs: [],
+    tools: [],
+    compactPrompt: PROMPT,
+    config: CONFIG,
+    ambient: ["cwd: /work"],
+  };
+  const out = await nu(input, (params) => {
+    sent = params;
+    return Promise.resolve(canned([
+      { kind: "thinking", thinking: "hm", signature: "sig" },
+      { kind: "tool_use", name: "bash", input: { command: "ls" } },
+    ], "tool_use"));
+  });
+  const last = (sent!.messages.at(-1)!.content as Anthropic.ContentBlockParam[]).at(-1)!;
+  assert(last.type === "mid_conv_system");
+  assertEquals(out[0].extra?.anchor, (last.content[0] as Anthropic.TextBlockParam).text);
+  assertEquals(out[1].extra, undefined); // once per step, on its first event
+
+  // a step that only speaks closes the turn: nothing replays it, so it records nothing
+  const spoken = await nu(input, once([{ kind: "assistant", text: "nada" }]));
+  assertEquals(spoken[0].extra?.anchor, undefined);
+});

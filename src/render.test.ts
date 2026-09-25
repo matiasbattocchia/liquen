@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
+  anchorText,
   CANCELLED,
   cancelled,
   capRun,
@@ -981,6 +982,57 @@ Deno.test("ambient env lines join the trailing anchor block after now:", () => {
   assertStringIncludes(text, "cwd: /app");
   assertStringIncludes(text, "git: main · 3 uncommitted");
   assertStringIncludes(text, "background — 1 job:\n· server — running 2m · pid 41");
+});
+
+Deno.test("a running turn's requests only append: each step's anchor stays where it was read", () => {
+  const t = (m: number) => `2026-07-21T10:0${m}:00Z`; // the anchor reads to the minute
+  const base = { docs: [] as DocEntry[], session: SESSION, zone: "UTC" };
+  // what nu does: render the step, then record the anchor that request carried on the
+  // step's first event
+  const step = (events: Event[], now: string, cwd: string) => ({
+    messages: render({ ...base, events, now, ambient: [`cwd: ${cwd}`] }).messages,
+    anchor: anchorText(now, "UTC", [`cwd: ${cwd}`]),
+  });
+  const strip = (ms: Anthropic.MessageParam[]) =>
+    ms.map((m) => ({ role: m.role, content: blocksOf([m]).map(bare) }));
+  const read = (e: ThinkingEvent, anchor: string): ThinkingEvent => ({ ...e, extra: { anchor } });
+
+  const opened: Event[] = [mindMsg("e1", t(0), "¿qué archivos hay?", false)];
+  const one = step(opened, t(1), "/a");
+
+  const first: Event[] = [
+    ...opened,
+    read(thinkingE("e2", t(2), "T1", "miro", "s1"), one.anchor),
+    toolUseE("e3", t(2), "T1", "bash", { command: "cd /b" }),
+    toolResultE("e4", t(3), "T1", "(no output)", "e3"),
+  ];
+  const two = step(first, t(4), "/b");
+
+  const second: Event[] = [
+    ...first,
+    read(thinkingE("e5", t(5), "T2", "ahora listo", "s2"), two.anchor),
+    toolUseE("e6", t(5), "T2", "bash", { command: "ls" }),
+    toolResultE("e7", t(6), "T2", "a.txt", "e6"),
+  ];
+  const three = step(second, t(7), "/b");
+
+  // each request is the one before it, whole, with the step it produced appended — the
+  // prefix a replayed thinking block's signature binds
+  for (const [before, after] of [[one, two], [two, three]]) {
+    assertEquals(strip(after.messages).slice(0, before.messages.length), strip(before.messages));
+  }
+  const tail = blocksOf(three.messages).filter((b) => b.type === "mid_conv_system").map(sysText);
+  assertEquals(tail, [one.anchor, two.anchor, three.anchor]);
+  assertStringIncludes(tail[0], "cwd: /a"); // where the first step stood when it read it
+
+  // once the turn closes, its chain collapses and the anchors it read go with it
+  const closed = render({
+    ...base,
+    events: [...second, mindMsg("e8", t(8), "a.txt", true, "T3")],
+    now: t(9),
+  }).messages;
+  const said = JSON.stringify(closed);
+  assert(!said.includes("cwd: /a") && !said.includes(JSON.stringify(two.anchor).slice(1, -1)));
 });
 
 /* ── media (§5): markers everywhere, real blocks in the TRAILING region only ── */

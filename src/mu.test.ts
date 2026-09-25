@@ -81,20 +81,20 @@ Deno.test("maps usage (incl. cache) for telemetry; keeps the API tool_use id (th
   });
 });
 
-Deno.test("builds the request: nu's maxTokens; adaptive thinking; effort sets output_config", async () => {
+Deno.test("builds the request: nu's maxTokens; adaptive, summarized thinking; effort sets output_config", async () => {
   const fake = fakeTransport(message([{ type: "text", text: "ok", citations: null }], "end_turn"));
   await mu(baseInput, fake.transport);
   let p = fake.seen();
   assertEquals(p.max_tokens, 8192); // exactly what nu passed — mu has no default
   assertEquals(p.tools?.length, 1);
-  assertEquals(p.thinking, { type: "adaptive" });
+  assertEquals(p.thinking, { type: "adaptive", display: "summarized" });
   assertEquals("output_config" in p, false); // no effort ⇒ model default
 
   const fake2 = fakeTransport(message([{ type: "text", text: "ok", citations: null }], "end_turn"));
   await mu({ ...baseInput, effort: "high" }, fake2.transport);
   p = fake2.seen();
   assertEquals(p.output_config, { effort: "high" });
-  assertEquals(p.thinking, { type: "adaptive" });
+  assertEquals(p.thinking, { type: "adaptive", display: "summarized" });
 });
 
 Deno.test("an empty system (no docs) is omitted from the request", async () => {
