@@ -3800,3 +3800,15 @@ the shell — and main holds only the provider: the proxy, the bundle, the groun
 shells map and `filesOf` left main together, since all of them exist for bash. The file
 scope rides with the sandbox because it names the ground the uid can read; the edge tier
 runs without any of the three ports, and a remote sandbox answers all of them.
+
+### The runner is a module (2026-09-25) — LANDED
+
+`runnerFor(host, agentRow, sessionId, seams)` (`src/runner.ts`) builds a session from
+the store, its agent's row and a `Host`: the ports a host wires once — the policy per
+session, the history law, the stock transport per agent, the sandbox, the address book,
+the media loader, and the delta and decision fan-outs. Without a sandbox the session has
+no `exec`, `files` or `ambient`, which is the edge tier's shape; `home` is the sandbox's
+fact. `configOf(row, sessionId)` is the row as the config a session runs with, and the
+seams (`gate`, `retryDelaysMs`) ride beside it from code. main works over rows now: the
+roster is what `agents()` returns, and main's own part is the `Host` it builds — the
+metered transports and the door's fan-outs.

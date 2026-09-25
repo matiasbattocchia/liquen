@@ -36,6 +36,7 @@ import { type AgentConfig, type Decision, relevant, xi, type XiPorts } from "./x
 import { ownComplex } from "./render.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
+import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runner.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { type ClockSettings, tick } from "./tick.ts";
 import { enroll, route } from "./route.ts";
@@ -60,7 +61,7 @@ import { createPresence } from "./connect/presence.ts";
 import { createTranscriber } from "./processors.ts";
 import { type DoorAgent, installDoors, type Status, type Tune } from "./door.ts";
 import { loadMediaBlock, memoizedLoader } from "./store/media.ts";
-import type { About, Delta, Effort, Event } from "./types.ts";
+import type { About, Delta, Event } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
   findRoot,
@@ -143,19 +144,25 @@ export async function start(
   // but the store rebuilds the same agent. What a caller passes in code rides beside it —
   // a policy, a compiled gate, a retry pace: seams, and no row carries a function.
   const inCode = new Map((config.principals ?? []).map((p) => [p.agentId, p]));
-  const roster: Principal[] = (await log.agents()).map((row) => {
-    const p = inCode.get(row.agentId);
+  const roster = await log.agents();
+  const principals = roster.filter((p) => p.runs !== false);
+  const seamsOf = (agentId: string): Seams => {
+    const p = inCode.get(agentId);
     return {
-      ...configOf(row, dir),
-      ...(p?.using ? { using: p.using } : {}),
-      ...(p?.check ? { check: p.check } : {}),
       ...(p?.gate ? { gate: p.gate } : {}),
       ...(p?.retryDelaysMs ? { retryDelaysMs: p.retryDelaysMs } : {}),
     };
-  });
-  const principals = roster.filter((p) => p.runs !== false);
+  };
+  // the session's VIEW of the log (§6): reads, writes, and the tail all go through it.
+  // A folder-declared org's policy is the connections map (live read-through lookups),
+  // and a named session's always is; an explicit principal's mind carries its own (tests)
+  const policyOf = (agentId: string, sessionId: string): Policy => {
+    if (derived || sessionId !== MIND) return policyFor({ agentId, id: sessionId });
+    const p = inCode.get(agentId);
+    return { using: p?.using, check: p?.check };
+  };
   // the provider can run the model at the effort declared (§9): refused here, not mid-turn
-  for (const p of principals) checkProvider(p);
+  for (const p of principals) checkProvider({ ...configOf(p, MIND), provider: p.provider });
   // the mind is a ONE-MEMBER conversation (§6): seeding it as membership is what makes
   // "own mind readable, others' invisible" plain branch-3 policy, no special case. EVERY
   // roster entry has the room — a paused agent's is what its door still reads (§4)
@@ -175,7 +182,7 @@ export async function start(
   // one transport per provider, shared by every agent declared on it; a test's scripted
   // edge stands in for all of them
   const transportOf = transports({ anthropic: config.apiKey });
-  const transportFor = (p: Principal): ModelTransport =>
+  const transportFor = (p: AgentRow): ModelTransport =>
     overrides.transport ?? transportOf(providerOf(p.provider));
   // the exec plane (§9): one provider owns the proxy, the grounds and the shells; main
   // holds only the provider, and every session's exec, ambient and files come from it
@@ -238,44 +245,26 @@ export async function start(
       agentId,
     );
   const stock = new Map(principals.map((p) => [p.agentId, meter(p.agentId, transportFor(p))]));
-  // the runner (§4): what a session of an agent runs with. The identity is shared — one
-  // ground, one metered transport, one home, one address book, one history — and the log
-  // view, the lease, the stream and the shell (where it stands, what it left running) are
-  // the session's. Built once per session and kept: an attachment's `tune` writes into it,
-  // and the next invocation reads what it wrote.
-  const portsFor = (p: Principal, sessionId: string) => {
-    const { using, check, ...agent } = p;
-    const { agentId } = agent;
-    // the session's VIEW of the log (§6): reads, writes, and the tail all go through it.
-    // A folder-declared org's policy is the connections map (live read-through lookups),
-    // and a named session's always is; an explicit principal's mind carries its own (tests)
-    const policy = derived || sessionId !== MIND
-      ? policyFor({ agentId, id: sessionId })
-      : { using, check };
-    const slog = scoped(log, policy);
-    const box = sandbox.forAgent(agentId).session(sessionId);
-    return {
-      config: { ...agent, sessionId },
-      log: slog,
-      ports: {
-        log: slog,
-        // the agent's history (§6): what `search` reads, from any of its sessions — the
-        // same map, keyed on the agent. Explicit principals search their own view
-        ...(derived ? { history: scoped(log, historyFor(agentId)) } : {}),
-        docs,
-        transport: stock.get(agentId)!,
-        exec: box.exec,
-        ...(contact ? { contact } : {}),
-        files: box.files,
-        media,
-        onDelta: (d: Delta) => cast(agentId, sessionId, d),
-        onDecision: (v: Decision, cursor: string | undefined, about: About[]) =>
-          disclose(agentId, sessionId, v, cursor, about),
-        ambient: box.ambient,
-      } satisfies XiPorts,
-    };
+  // the runner (§4): one builder for the mind and every named session, over the store,
+  // the row and these ports — the process's own part is the fan-outs and the transports
+  const host: Host = {
+    log,
+    docs,
+    media,
+    policy: policyOf,
+    // the agent's history (§6): what `search` reads, from any of its sessions — the
+    // same map, keyed on the agent. Explicit principals search their own view
+    ...(derived ? { history: historyFor } : {}),
+    transport: (agentId) => stock.get(agentId)!,
+    sandbox,
+    ...(contact ? { contact } : {}),
+    onDelta: (agentId, sessionId, d) => cast(agentId, sessionId, d),
+    onDecision: (agentId, sessionId, v, cursor, about) =>
+      disclose(agentId, sessionId, v, cursor, about),
   };
-  const agents = principals.map((p) => portsFor(p, MIND));
+  const build = (p: AgentRow, sessionId: string): Runner =>
+    runnerFor(host, p, sessionId, seamsOf(p.agentId));
+  const agents = principals.map((p) => build(p, MIND));
 
   // The whole fan-out: each agent tails ITS OWN view of the log — the scoped subscription
   // only delivers what the agent may see (Realtime-on-RLS, §6), and xi's `relevant` keeps
@@ -359,7 +348,7 @@ export async function start(
   // trigger's own address names the session to invoke (its room, or a dm: it is an end
   // of), so main builds a runner on first contact and a quiet session costs nothing.
   // Bursts bounce off the session's own turn lease; the mind's ladder never applies.
-  const named = new Map<string, ReturnType<typeof portsFor>>();
+  const named = new Map<string, Runner>();
   const runnerOf = async (agentId: string, sessionId: string) => {
     const key = sessionAddress(agentId, sessionId);
     const hit = named.get(key);
@@ -367,7 +356,7 @@ export async function start(
     const p = principals.find((x) => x.agentId === agentId);
     if (!p) return undefined; // an address wearing a name the roster doesn't
     await enroll(log, { agentId, sessionId });
-    const r = portsFor(p, sessionId);
+    const r = build(p, sessionId);
     named.set(key, r);
     return r;
   };
@@ -384,9 +373,10 @@ export async function start(
       ? agents.find((a) => a.config.agentId === agentId)
       : await runnerOf(agentId, sessionId);
     if (!p || !r) return;
+    const stated = configOf(p, MIND); // the roster's word, what the hang-up puts back
     const provider = t?.provider ?? p.provider;
-    const model = t?.model ?? p.model;
-    const effort = t?.effort ?? p.effort;
+    const model = t?.model ?? stated.model;
+    const effort = t?.effort ?? stated.effort;
     checkProvider({ agentId, provider, model, effort });
     r.config.model = model;
     r.config.effort = effort;
@@ -421,15 +411,9 @@ export async function start(
       // what landed, an order is refused — and no runner, no shell, stands behind it
       return {
         agentId: p.agentId,
-        sessionId: p.sessionId,
+        sessionId: MIND,
         paused: true,
-        port: (sessionId: string) =>
-          Promise.resolve(scoped(
-            log,
-            derived
-              ? policyFor({ agentId: p.agentId, id: sessionId })
-              : { using: p.using, check: p.check },
-          )),
+        port: (sessionId: string) => Promise.resolve(scoped(log, policyOf(p.agentId, sessionId))),
       };
     }),
   );
@@ -546,24 +530,17 @@ export async function start(
   };
 }
 
-/** What runs, as main builds it from the agent's row: the runtime config, the policy
- *  seam, and the row's own facts (`provider` for the transport seam, `runs` for whether a
- *  session runs at all, §4). */
-type Principal = AgentConfig & Policy & { provider?: string; runs?: boolean };
-
 /** An explicit principal (tests) as the row it compiles to. What no row carries stays in
- *  code: `home` is the data root's, `gate` and `retryDelaysMs` are a test's. */
-function rowOf(p: Principal): AgentRow {
+ *  code: `home` is the sandbox's, `gate` and `retryDelaysMs` are a test's. */
+function rowOf(p: AgentConfig & Policy): AgentRow {
   return {
     agentId: p.agentId,
     mind: sessionAddress(p.agentId, MIND),
-    provider: p.provider,
     model: p.model,
     effort: p.effort,
     name: p.name,
     email: p.email,
     phone: p.phone,
-    ...(p.runs === false ? { runs: false } : {}),
     settings: {
       maxTokens: p.maxTokens,
       timezone: p.timezone,
@@ -582,27 +559,6 @@ function rowOf(p: Principal): AgentRow {
       keepRecent: p.keepRecent,
       compactTurnAt: p.compactTurnAt,
     },
-  };
-}
-
-/** The agent its row describes (§9): the config a session of it runs with, and the row's
- *  own facts. `home` is where this data root keeps the agent's folder. */
-function configOf(row: AgentRow, dir: string): Principal {
-  if (!row.settings || row.model === undefined) {
-    throw new Error(`agent ${row.agentId}: its row carries no settings`);
-  }
-  return {
-    agentId: row.agentId,
-    sessionId: MIND,
-    model: row.model,
-    ...(row.effort ? { effort: row.effort as Effort } : {}),
-    ...(row.provider ? { provider: row.provider } : {}),
-    ...(row.name ? { name: row.name } : {}),
-    ...(row.email ? { email: row.email } : {}),
-    ...(row.phone ? { phone: row.phone } : {}),
-    ...(row.runs === false ? { runs: false } : {}),
-    ...row.settings,
-    home: `${dir}/agents/${row.agentId}`,
   };
 }
 

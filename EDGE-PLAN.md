@@ -120,11 +120,12 @@ the envelope, and `enroll` beside it is what a session named for the first time 
 store. main calls both where it did the work inline; the edge tick function and the edge
 trigger function call the same code: one implementation per role, two hosts.
 
-The runner is one builder, `portsFor(principal, sessionId)` in main, serving the mind and
-every named session. With §7 and §9 landed its inputs are a store, a row and a sandbox;
-what still ties it to main is the process's own — the shared transport per provider, the
-door's `cast`/`disclose` fan-outs — so lifting it to `portsFor(store, agentRow, session)`
-is a step of its own, with the door's redesign.
+The runner is one builder, `runnerFor(host, agentRow, sessionId, seams)`
+(`src/runner.ts`), serving the mind and every named session over the store, the row and
+a `Host` — the ports a host wires once: the policy, the history law, the stock transport
+per agent, the sandbox (absent on the edge tier: the session then has no exec plane),
+the address book, the media loader and the two fan-outs. `configOf(row, sessionId)` is
+the row as the config a session runs with. main's own part is the `Host` it builds.
 
 ## 9. The agent row is enough to run xi
 

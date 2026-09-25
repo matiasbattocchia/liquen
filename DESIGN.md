@@ -2483,7 +2483,10 @@ and which xi is one adapter-swap away from (`log` → Postgres, `lock` → an ad
 `locks` row). **The exec plane is one provider** (`Sandbox`, `src/sandbox.ts`):
 `forAgent(id).session(sid)` is a session's shell and file scope, and the egress proxy
 travels inside it because it exists for bash — the local provider starts it, a remote
-sandbox brings its own, and a host with no exec plane has neither.
+sandbox brings its own, and a host with no exec plane has neither. **The runner is a
+module** (`runnerFor`, `src/runner.ts`): a session is built from the store, the agent's
+row and a `Host` — the ports a host wires once — so main and an edge function build the
+same session from the same three things, and what main keeps of its own is the `Host`.
 
 Two asymmetries to plan around, not paper over: **(1) no bash on an edge function**, so an
 edge-deployed agent can run connectors, dispatch, a verdict and a think, but the exec plane
