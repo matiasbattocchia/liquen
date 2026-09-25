@@ -25,12 +25,17 @@
  *   • otherwise      → `{ header }` only, a pointer; the body is pulled on demand — by the
  *     agent via the substrate read, or by render via `read()`.
  *
- * Files adapter, rooted at the DATA ROOT (the §9 layout):
+ * A header is a row of the `docs` table (§8): the identity columns, `description`, `load`,
+ * and the `handle` — the adapter's word for the doc, printed as-is by render and taken
+ * as-is by the read the agent makes. Files adapter, rooted at the DATA ROOT (the §9 layout):
  *   <root>/system/**  ·  <root>/organization/**  ·  <root>/agents/<agentId>/**
  *   <root>/conversations/<convId>/**
  * A doc's `name` is its path relative to the scope dir, minus `.md` (so the conventional
- * `instructions/compaction`). Reads are fresh from disk (multi-process, like the log). On db
- * this same port is SELECTs over `docs`.
+ * `instructions/compaction`); its handle is the way to the file from the agent's folder,
+ * where its shell stands (`instructions/agent.md`, `../../system/instructions/base.md`),
+ * so the handle is also the argument `aread` takes. The columns are the file's YAML
+ * frontmatter, projected. Reads are fresh from disk (multi-process, like the log). On db
+ * this same port is SELECTs over `docs`, and the handle is the row's key.
  */
 
 import { parse as parseYaml } from "@std/yaml";
@@ -38,6 +43,7 @@ import type { AgentId } from "../types.ts";
 
 export type DocScope = "system" | "organization" | "agent" | "conversation";
 export type DocKind = "instruction" | "skill" | "memory" | "tool";
+export type DocLoad = "always" | "lazy";
 
 const KINDS: readonly string[] = ["instruction", "skill", "memory", "tool"];
 
@@ -51,12 +57,14 @@ export interface DocRef {
   name: string;
 }
 
-/** A doc's identity + its parsed YAML frontmatter + where it physically lives. */
+/** A doc's row: its identity, the columns render reads, and its handle. */
 export interface DocHeader extends DocRef {
-  frontmatter: Record<string, unknown>;
-  /** Substrate address (files: absolute path) — what the agent's own `aread` takes.
-   *  The ref alone can't be pulled: agent/conversation scopes add an id segment on disk. */
-  path: string;
+  /** The index line's word for the doc, when it has one. */
+  description?: string;
+  load: DocLoad;
+  /** The adapter's address for the doc — what render prints and what the agent's own read
+   *  takes, one string. Files: the path from the agent's folder to the file. */
+  handle: string;
 }
 
 /** What `list` hands render: the header always, the body when `load: always` (or after read). */
@@ -83,17 +91,25 @@ export function openFileDocs(root: string): Docs {
   return {
     async list(ctx: DocContext): Promise<DocEntry[]> {
       const out: DocEntry[] = [];
+      const home = scopeDir(root, "agent", ctx)!;
       for (const [scope, dir] of scopeDirs(root, ctx)) {
         for (const name of await markdownUnder(dir)) {
           const path = `${dir}/${name}.md`;
           const frontmatter = await readFrontmatter(path);
           if (frontmatter === null) continue; // no frontmatter ⇒ not a doc (workspace file)
+          const description = frontmatter.description;
+          const load: DocLoad = frontmatter.load === "always" ? "always" : "lazy";
           const entry: DocEntry = {
-            header: { scope, kind: kindOf(frontmatter), name, frontmatter, path },
+            header: {
+              scope,
+              kind: kindOf(frontmatter),
+              name,
+              ...(typeof description === "string" && description.length > 0 ? { description } : {}),
+              load,
+              handle: from(home, path),
+            },
           };
-          if (frontmatter.load === "always") {
-            entry.body = stripFrontmatter(await Deno.readTextFile(path));
-          }
+          if (load === "always") entry.body = stripFrontmatter(await Deno.readTextFile(path));
           out.push(entry);
         }
       }
@@ -111,6 +127,15 @@ export function openFileDocs(root: string): Docs {
       }
     },
   };
+}
+
+/** The path to `there` as walked from `here` — the shell's own arithmetic, no dependency. */
+function from(here: string, there: string): string {
+  const a = here.split("/").filter(Boolean);
+  const b = there.split("/").filter(Boolean);
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return [...a.slice(i).map(() => ".."), ...b.slice(i)].join("/");
 }
 
 /** `kind` is frontmatter metadata, never path: unknown/absent falls back to `memory`. */

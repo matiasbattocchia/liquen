@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "@std/assert";
+import { assertEquals } from "@std/assert";
 import { type DocEntry, openFileDocs } from "./docs.ts";
 
 /** Write `<root>/<rel>.md` with `content` (parent dirs created). */
@@ -95,7 +95,7 @@ Deno.test("load: always ⇒ body is inlined; otherwise header-only pointer", asy
   });
 });
 
-Deno.test("header carries parsed YAML frontmatter (quotes and colons handled)", async () => {
+Deno.test("the description is the frontmatter's, parsed as YAML (quotes and colons handled)", async () => {
   await withRoot(async (root) => {
     await put(
       root,
@@ -103,7 +103,8 @@ Deno.test("header carries parsed YAML frontmatter (quotes and colons handled)", 
       '---\nkind: skill\ndescription: "ratio a:b, quoted"\n---\nbody',
     );
     const [d] = await openFileDocs(root).list({ agent: "a1" });
-    assertEquals(d.header.frontmatter, { kind: "skill", description: "ratio a:b, quoted" });
+    assertEquals(d.header.description, "ratio a:b, quoted");
+    assertEquals(d.header.load, "lazy");
   });
 });
 
@@ -153,10 +154,10 @@ Deno.test("non-.md files are ignored; a missing scope lists empty; missing read 
       await docs.read({ agent: "a1" }, { scope: "organization", kind: "skill", name: "ghost" }),
       null,
     );
-    assert(
-      (await docs.list({ agent: "a1" }))[0].header.path.endsWith(
-        "/organization/instructions/x.md",
-      ),
+    // the handle is the way from the agent's folder: the read takes it as printed
+    assertEquals(
+      (await docs.list({ agent: "a1" }))[0].header.handle,
+      "../../organization/instructions/x.md",
     );
   });
 });

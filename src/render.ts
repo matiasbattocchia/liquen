@@ -171,10 +171,10 @@ export function renderSystem(docs: DocEntry[], env: Env = {}): TextBlockParam[] 
     blocks.push({ type: "text", text: (blocks.length ? RULE : "") + text.trimEnd() });
 
   const bodies = ordered.filter((d) => d.body !== undefined);
-  if (bodies.length > 0) add(bodies.map((d) => section(d, env.home)).join("\n\n"));
+  if (bodies.length > 0) add(bodies.map(section).join("\n\n"));
 
   const pointers = ordered.filter((d) => d.body === undefined);
-  if (pointers.length > 0) add(`# On-demand docs\n\n${renderIndex(pointers, env.home)}`);
+  if (pointers.length > 0) add(`# On-demand docs\n\n${renderIndex(pointers)}`);
 
   // the facts close the prefix, under the words that spend them
   const body = envBody(env);
@@ -196,36 +196,18 @@ function byCascade(a: DocEntry, b: DocEntry): number {
     (a.header.name < b.header.name ? -1 : a.header.name > b.header.name ? 1 : 0);
 }
 
-/** A doc's rendered handle: the way to it from the agent's home, which is where its
- *  shell stands — `instructions/agent.md` for its own, `../../system/instructions/base.md`
- *  for a scope above. One handle, and it is also the argument that opens the file: nothing
- *  to translate between what a doc is called and how it is read. The substrate path stands
- *  in when there is no home to count from (an env line without `home`). */
-function ref(d: DocEntry, home?: string): string {
-  return home ? from(home, d.header.path) : d.header.path;
-}
-
-/** The path to `to` as walked from `from` — the shell's own arithmetic, no dependency. */
-function from(here: string, there: string): string {
-  const a = here.split("/").filter(Boolean);
-  const b = there.split("/").filter(Boolean);
-  let i = 0;
-  while (i < a.length && i < b.length && a[i] === b[i]) i++;
-  return [...a.slice(i).map(() => ".."), ...b.slice(i)].join("/");
-}
-
-/** An inlined always-doc: a provenance header, then its body. */
-function section(d: DocEntry, home?: string): string {
-  return `[${ref(d, home)}]\n${d.body ?? ""}`;
+/** An inlined always-doc: a provenance header, then its body. The handle is the header's
+ *  own — the same string the index prints and the read takes. */
+function section(d: DocEntry): string {
+  return `[${d.header.handle}]\n${d.body ?? ""}`;
 }
 
 /** The pull-index: one pointer line per lazy doc — its handle in the brackets an inlined
  *  doc wears, and its description when it has one. */
-function renderIndex(pointers: DocEntry[], home?: string): string {
+function renderIndex(pointers: DocEntry[]): string {
   const lines = pointers.map((d) => {
-    const desc = d.header.frontmatter.description;
-    const tail = typeof desc === "string" && desc.length > 0 ? ` ${desc}` : "";
-    return `- [${ref(d, home)}]${tail}`;
+    const tail = d.header.description ? ` ${d.header.description}` : "";
+    return `- [${d.header.handle}]${tail}`;
   });
   return "The path is the doc's own, from your home; `aread` one to read it:\n\n" +
     lines.join("\n");

@@ -3822,3 +3822,13 @@ a reference that does not exist or points outside what the agent may attach. `lo
 filesystem — and the sandbox session carries the port beside its `home`, so the file
 scope left main's runner with the rest of the ground. Without a files port xi resolves
 over the process's own filesystem, unscoped, which is a test's shape.
+
+### Docs are addressed by a handle (2026-09-25) — LANDED
+
+`DocHeader` (`src/store/docs.ts`) is a row of the `docs` table: `scope · kind · name ·
+description · load · handle`, in place of a free-form frontmatter map and a substrate
+path. The handle is the adapter's word for the doc, one string: render prints it over an
+inlined body and in the index line, and the agent's read takes it as printed. The file
+adapter computes it as the way from the agent's folder to the file, so render does no
+path arithmetic and the prompt is byte-identical. `write` and `version` join the header
+with their first reader, the edge adapter's editor (EDGE-PLAN §4).

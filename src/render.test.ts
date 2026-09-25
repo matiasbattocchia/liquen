@@ -13,7 +13,7 @@ import {
   wantedMedia,
   WUM_PER_CONVERSATION,
 } from "./render.ts";
-import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
+import type { DocEntry, DocKind, DocLoad, DocScope } from "./store/docs.ts";
 import type {
   Event,
   Json,
@@ -23,24 +23,31 @@ import type {
   ToolUseEvent,
 } from "./types.ts";
 
-/** The agent whose workspace every handle is counted from, and the §9 layout it sits in. */
-const HOME = "/data/agents/a1";
-const SCOPE_DIR: Record<DocScope, string> = {
-  system: "/data/system",
-  organization: "/data/organization",
-  agent: HOME,
-  conversation: "/data/conversations/c1",
+/** A header as the file adapter lists it: the handle is the way from the agent's home. */
+const HANDLE_PREFIX: Record<DocScope, string> = {
+  system: "../../system/",
+  organization: "../../organization/",
+  agent: "",
+  conversation: "../../conversations/c1/",
 };
 
 function doc(
   scope: DocScope,
   kind: DocKind,
   name: string,
-  frontmatter: Record<string, unknown>,
+  fields: { description?: string; load?: DocLoad },
   body?: string,
 ): DocEntry {
-  const path = `${SCOPE_DIR[scope]}/${name}.md`;
-  const entry: DocEntry = { header: { scope, kind, name, frontmatter, path } };
+  const entry: DocEntry = {
+    header: {
+      scope,
+      kind,
+      name,
+      ...(fields.description ? { description: fields.description } : {}),
+      load: fields.load ?? "lazy",
+      handle: `${HANDLE_PREFIX[scope]}${name}.md`,
+    },
+  };
   if (body !== undefined) entry.body = body;
   return entry;
 }
@@ -62,7 +69,7 @@ function clinicDocs(): DocEntry[] {
 // A doc is named by the way to it from where the agent stands: its own docs by a bare
 // path, a scope above by the climb. One handle for reading it and for saying which it is.
 Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index", () => {
-  const [prefix, index] = renderSystem(clinicDocs(), { home: HOME });
+  const [prefix, index] = renderSystem(clinicDocs());
 
   assertEquals(
     prefix.text,
@@ -78,11 +85,6 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
       "- [../../organization/reschedule.md] reprogramar un turno\n" +
       "- [../../organization/patients.md] notas de pacientes",
   );
-});
-
-Deno.test("no home to count from ⇒ the substrate path stands in as the handle", () => {
-  const [prefix] = renderSystem([doc("agent", "instruction", "persona", { load: "always" }, "x")]);
-  assertEquals(prefix.text, "[/data/agents/a1/persona.md]\nx");
 });
 
 Deno.test("one cache breakpoint, on the last — an HOUR, since docs change when a human edits", () => {
@@ -114,7 +116,7 @@ Deno.test("only-bodies ⇒ single block (cached); only-pointers ⇒ single index
 });
 
 Deno.test("a pointer with no description is its handle alone", () => {
-  const [index] = renderSystem([doc("organization", "skill", "bare", {})], { home: HOME });
+  const [index] = renderSystem([doc("organization", "skill", "bare", {})]);
   assertEquals(index.text.endsWith("- [../../organization/bare.md]"), true);
 });
 

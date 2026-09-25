@@ -1888,7 +1888,10 @@ Registers (same substrate, different rules):
   workspace**, which is where its shell stands: `instructions/agent.md` for its own,
   `../../organization/instructions/x.md` for a scope above. One handle — the provenance
   header over an inlined body, the index line, and the argument that opens the file are the
-  same string, so nothing has to be translated to be read. nu stays dumb (no relevance matching); mu decides
+  same string, so nothing has to be translated to be read. The handle is a column of the
+  header (`DocHeader.handle`), the adapter's word: the file adapter counts it from the
+  agent's folder, a table adapter answers the row's key, and render prints what it is
+  given. nu stays dumb (no relevance matching); mu decides
   what to pull. Keeps the prompt (and its cache prefix) lean as doc volume grows.
 - Media lands NATIVE (§5): images/PDFs the model reads directly, everything else a
   marker + path. The PREPROCESSOR step (voice→transcription, image→described for
@@ -2491,6 +2494,10 @@ same session from the same three things, and what main keeps of its own is the `
 a reference sends as, and the sandbox session carries the port because what an agent
 may attach is the ground it stands on — a remote sandbox answers it by moving the bytes
 into the blob store.
+
+**A doc is a row with a handle** (`DocHeader`, `src/store/docs.ts`): the `docs` table's
+columns and the adapter's address for the doc, which render prints and the agent's read
+takes, one string — a home-relative path on files, the row's key on the table.
 
 Two asymmetries to plan around, not paper over: **(1) no bash on an edge function**, so an
 edge-deployed agent can run connectors, dispatch, a verdict and a think, but the exec plane

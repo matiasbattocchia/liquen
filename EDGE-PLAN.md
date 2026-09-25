@@ -69,18 +69,21 @@ The ways to reach a holder in another process, weighed:
 
 ## 4. Docs are addressed by a handle
 
-On the edge tier docs are the `docs` table (DESIGN §8), written through substrate CRUD
-under RLS — the query tool is that tier's editor. Locally they are files, written with
-bash; the query tool arrives with the edge adapter, as that tier's tool.
+**Landed** (PROJECT.md, 2026-09-25), the header side. `DocHeader` (`src/store/docs.ts`)
+is a row of the `docs` table: `scope · kind · name · description · load · handle`. The
+handle is the adapter's word for the doc — render prints it as-is over an inlined body
+and in the index line, and the agent's read takes it as-is. The file adapter's handle is
+the way from the agent's folder to the file (`instructions/agent.md`,
+`../../system/instructions/base.md`), computed by the adapter, so the prompt is
+byte-identical to what it was; the columns are the file's frontmatter, projected. On the
+edge tier docs are the `docs` table (DESIGN §8), written through substrate CRUD under RLS
+— the query tool is that tier's editor, and the handle is the row's key. Locally they are
+files, written with bash.
 
-The port gets there in two moves:
-
-- `DocEntry.header` carries an opaque `handle`, and render prints it (`ref`,
-  `src/render.ts`). The file adapter's handle is the home-relative path it prints now, so
-  the prompt is byte-identical.
-- The entry takes the table's columns — `scope · kind · name · description · body · load ·
-  write · version` — in place of free-form `frontmatter`. The file adapter is then a
-  projection of the table.
+Open: `write` and `version` join the header with their first reader — the edge adapter's
+editor, which refuses a write the column forbids and detects a lost update by the
+version. The file projection would take `write` from the frontmatter (absent: `human`;
+`system` scope: `builtin`) and has no version to offer.
 
 ## 5. Render gets its bytes from xi
 
