@@ -76,8 +76,9 @@ export interface TurnLock {
   /** The interrupt of the lease held (§2): fires when a `control` row lands in the session's
    *  room while this holder has it — the STORE fires it, so a cancel from any surface and
    *  any process reaches the turn by the path everything else does. Marked on the row
-   *  (`cancel`) by the publish that lands the control, read by this process's own publish
-   *  at once and by the heartbeat within a beat. Fresh per acquire; inert before one. */
+   *  (`cancel`) by the publish that lands the control, read at once by this process's own
+   *  publish, on the store's ring for one from another process, and by the heartbeat
+   *  within a beat whatever the ring missed. Fresh per acquire; inert before one. */
   signal(): AbortSignal;
   /** Release. Drops the row only if this holder's stamp is still on it: a no-op after a
    *  steal, and safe to call when nothing is held. */
@@ -119,10 +120,16 @@ export const OWNS_SQL = "SELECT 1 AS x FROM locks WHERE name = ?1 AND born = ?2"
  *  invocation, and with a fan-out that invokes every agent per event that adds up. `now`
  *  is the clock every stamp and every comparison reads (§9: the seam a test moves).
  *  `stop()` ends every heartbeat this locker started — a closing store has no holder left
- *  to speak for, and an abandoned turn's beat must not outlive the DB it beats into. */
+ *  to speak for, and an abandoned turn's beat must not outlive the DB it beats into.
+ *
+ *  `watch` is the store's change stream, rung on every `control` row that lands from any
+ *  process: while this locker holds a lease it is subscribed, and each ring has every
+ *  holder read its mark at once. The mark stays the one truth — a ring only makes it read
+ *  sooner than the heartbeat would, and a missed ring costs a beat, never the cancel. */
 export function createLocker(
   db: DatabaseSync,
   now: () => number = Date.now,
+  watch?: (ring: () => void) => () => void,
 ): Locker & { stop(): void; cancel(name: string): void } {
   const take = db.prepare(
     "INSERT INTO locks (name, born, seen) VALUES (?1, ?2, ?2) ON CONFLICT(name) DO NOTHING",
@@ -141,18 +148,41 @@ export function createLocker(
   );
   const free = db.prepare(RELEASE_SQL);
   const live = db.prepare("SELECT 1 AS x FROM locks WHERE name = ? AND seen > ?");
+  const marked = db.prepare("SELECT cancel FROM locks WHERE name = ?1 AND born = ?2");
   const hearts = new Set<ReturnType<typeof setInterval>>();
   // the interrupts of the leases THIS process holds, by name: a control row this process
   // lands fires the holder at once, no beat to wait for
-  const holding = new Map<string, AbortController>();
+  const holding = new Map<string, { ctl: AbortController; born: number }>();
+  let unwatch: (() => void) | undefined;
+  const ring = () => {
+    for (const [name, h] of holding) {
+      try {
+        if ((marked.get(name, h.born) as { cancel: number } | undefined)?.cancel === 1) {
+          h.ctl.abort();
+        }
+      } catch {
+        // the store is closing or wedged: the heartbeat speaks for this holder
+      }
+    }
+  };
+  const unhold = (name: string, ctl: AbortController) => {
+    if (holding.get(name)?.ctl === ctl) holding.delete(name);
+    if (holding.size === 0 && unwatch !== undefined) {
+      unwatch();
+      unwatch = undefined;
+    }
+  };
 
   return {
     stop() {
       for (const h of hearts) clearInterval(h);
       hearts.clear();
+      holding.clear();
+      unwatch?.();
+      unwatch = undefined;
     },
     cancel(name: string) {
-      holding.get(name)?.abort();
+      holding.get(name)?.ctl.abort();
     },
     lock(name: string, ttlMs: number = LOCK_TTL_MS): TurnLock {
       let born = 0; // no acquire yet — a stamp that matches no row
@@ -164,12 +194,13 @@ export function createLocker(
           hearts.delete(heart);
         }
         heart = undefined;
-        if (holding.get(name) === ctl) holding.delete(name);
+        unhold(name, ctl);
       };
       const start = () => {
         stop();
         ctl = new AbortController();
-        holding.set(name, ctl);
+        holding.set(name, { ctl, born });
+        if (watch !== undefined && unwatch === undefined) unwatch = watch(ring);
         let misses = 0;
         heart = setInterval(() => {
           try {

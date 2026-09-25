@@ -45,13 +45,15 @@ expression as the role's `USING`/`WITH CHECK`, with three functions to define on
 **Landed** (PROJECT.md, 2026-09-25). `TurnLock.signal()` is the running turn's interrupt,
 fresh per acquire. The publish that lands a `control` row (any but the harness's own
 `cancelled`) marks `locks.cancel` on `turn-<room>` inside its transaction; once it commits,
-a holder in the same process is fired at once, and a holder in any other process reads the
-mark on its next heartbeat (`UPDATE … RETURNING cancel`). A stolen lease starts unmarked.
-`XiPorts.interrupt` and main's `turns` map are gone. On Postgres the mark is the same
-column, set by a trigger on `control` inserts.
+a holder in the same process is fired at once. A holder in another process is rung: the
+locker, while it holds a lease, subscribes to the store's change stream for `control` rows
+(`createLocker`'s `watch`; SQLite: the tail), and each ring has every holder read its mark.
+The heartbeat reads it too (`UPDATE … RETURNING cancel`), so a missed ring costs a beat,
+never the cancel. A stolen lease starts unmarked. `XiPorts.interrupt` and main's `turns`
+map are gone. On Postgres the mark is the same column, set by a trigger on `control`
+inserts, and `watch` is a Realtime subscription or `LISTEN/NOTIFY`.
 
-The heartbeat bounds cross-process latency at `LOCK_TTL_MS / 3`. The alternatives that
-shorten it, weighed:
+The ways to reach a holder in another process, weighed:
 
 - check the mark at step boundaries (before each model call, each tool run): cheap, but a
   long stream or tool still waits;

@@ -3702,3 +3702,10 @@ publish that lands a `control` row marks `locks.cancel` on `turn-<room>` in its 
 another process reads the mark on its heartbeat. The harness's own `cancelled` closing row
 marks nothing, and a stolen lease starts unmarked. The in-process fire waits for the
 COMMIT, so a batch that rolls back cuts no turn.
+
+The heartbeat alone left a cross-process cancel up to `LOCK_TTL_MS / 3` (about 7 s) late.
+The locker now takes the store's change stream as a doorbell: while it holds a lease it
+tails `control` rows, and each ring has every holder read its mark, so another process's
+cancel arrives in the tail's latency (tens of ms). The mark stays the one truth and the
+heartbeat still reads it, so a ring the fs-watch drops costs a beat. The alternatives
+weighed are in `EDGE-PLAN.md` §3.

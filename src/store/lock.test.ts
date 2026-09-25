@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { type Log, openLog } from "./log.ts";
-import { LeaseLost, LOCK_TTL_MS } from "./lock.ts";
+import { DatabaseSync } from "node:sqlite";
+import { CANCEL_SQL, createLocker, LeaseLost, LOCK_TTL_MS, LOCKS_DDL } from "./lock.ts";
 import type { Draft, Event } from "../types.ts";
 
 /** A clock the test moves (§9): every lease comparison reads it, so a TTL is aged by
@@ -187,17 +188,39 @@ Deno.test("the lease carries the interrupt: a control row this process lands fir
   });
 });
 
-Deno.test("the lease carries the interrupt: a control row from another process reaches the holder within a beat", async () => {
+Deno.test("the lease carries the interrupt: a control row from another process rings the holder, no beat waited for", async () => {
   await withLogs(async (a, b) => {
-    const lock = a.lock("turn-mind@ana", 60); // beats every 20ms
+    const lock = a.lock("turn-mind@ana"); // the stock TTL: a beat is seconds away
     assertEquals(await lock.acquire(), "acquired");
     const signal = lock.signal();
-    await b.publish(control("mind@ana")); // the other process lands the order
+    await b.publish(control("mind@bo")); // a ring for another room reads an unmarked lease
+    await b.publish(control("mind@ana"));
     const t0 = Date.now();
     while (!signal.aborted && Date.now() - t0 < 2000) await new Promise((r) => setTimeout(r, 5));
     assertEquals(signal.aborted, true);
     await lock.release();
   });
+});
+
+Deno.test("the lease carries the interrupt: with no ring, the heartbeat reads the mark within a beat", async () => {
+  const dir = await Deno.makeTempDir();
+  const db = new DatabaseSync(`${dir}/locks.db`);
+  db.exec(LOCKS_DDL);
+  const locker = createLocker(db); // no change stream: the beat is all there is
+  try {
+    const lock = locker.lock("turn-mind@ana", 60); // beats every 20ms
+    assertEquals(await lock.acquire(), "acquired");
+    const signal = lock.signal();
+    db.prepare(CANCEL_SQL).run("turn-mind@ana"); // another process's control row, landed
+    const t0 = Date.now();
+    while (!signal.aborted && Date.now() - t0 < 2000) await new Promise((r) => setTimeout(r, 5));
+    assertEquals(signal.aborted, true);
+    await lock.release();
+  } finally {
+    locker.stop();
+    db.close();
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("the turn's own closing row (`cancelled`) orders nothing", async () => {

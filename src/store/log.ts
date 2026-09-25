@@ -496,7 +496,13 @@ export async function openLog(
   const unlock = db.prepare(RELEASE_SQL);
   const owns = db.prepare(OWNS_SQL);
   const cancel = db.prepare(CANCEL_SQL);
-  const locker = createLocker(db, opts.now);
+  // the lease's doorbell (§2): while this process holds a turn, a `control` row landing from
+  // any process has the holder read its mark now, not at its next beat
+  const locker = createLocker(
+    db,
+    opts.now,
+    (ring) => tail(dir, db, ring, { law: { sql: "events.type = 'control'", params: {} } }),
+  );
 
   /** One upsert — or, for a PARTLESS draft, one patch (merge-only: nothing stored when the
    *  referenced row doesn't exist ⇒ null). Returns the STORED id (minted here, or the
