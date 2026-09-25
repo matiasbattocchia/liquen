@@ -25,6 +25,7 @@ import type {
   ToolUseEvent,
 } from "./types.ts";
 import type { DocEntry } from "./store/docs.ts";
+import type { MediaBlock } from "./store/media.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
@@ -108,9 +109,9 @@ export interface TurnInput {
    *  xi resolves the I/O, nu only calls it when a checkpoint actually runs (§5). Null ⇒ the
    *  doc is gone, and the checkpoint fails as one that could not be written. */
   compactPrompt: () => Promise<string | null>;
-  /** Media resolver for the trailing-region blocks (§5) — xi injects
-   *  `store/media.loadMediaBlock`; render decides which uris to resolve. */
-  loadMedia?: (uri: string) => { media_type: string; data: string } | null;
+  /** The trailing-region attachments' bytes, by uri (§5) — what xi fetched through the
+   *  media port for the uris render asked for (`wantedMedia`). */
+  media?: ReadonlyMap<string, MediaBlock>;
   /** Who is one of us (§4, §5): names and principals, read off the registry by xi. */
   roster?: Roster;
   /** The account behind each surface, by address — the name the service shows for it,
@@ -226,7 +227,7 @@ export async function nu(
     zone: config.timezone,
     env,
     ambient: input.ambient,
-    loadMedia: input.loadMedia,
+    media: input.media,
     roster: input.roster,
     connections: input.connections,
   });

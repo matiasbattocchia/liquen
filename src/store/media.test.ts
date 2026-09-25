@@ -82,15 +82,15 @@ Deno.test("loadMediaBlock: images/PDFs inline as base64; other kinds and missing
   try {
     const img = `${root}/dot.png`;
     await Deno.writeFile(img, new Uint8Array([1, 2, 3]));
-    const block = loadMediaBlock(img);
+    const block = await loadMediaBlock(img);
     assertEquals(block?.media_type, "image/png");
     assertEquals(block?.data, "AQID");
-    assertEquals(loadMediaBlock(`file://${img}`)?.data, "AQID"); // canonical form too
-    assertEquals(loadMediaBlock("https://x.com/a.png"), null); // external: url block, not bytes
+    assertEquals((await loadMediaBlock(`file://${img}`))?.data, "AQID"); // canonical form too
+    assertEquals(await loadMediaBlock("https://x.com/a.png"), null); // external: url block, not bytes
     const audio = `${root}/note.mp3`;
     await Deno.writeFile(audio, new Uint8Array([1]));
-    assertEquals(loadMediaBlock(audio), null); // not inlineable — the marker stands alone
-    assertEquals(loadMediaBlock(`${root}/gone.pdf`), null);
+    assertEquals(await loadMediaBlock(audio), null); // not inlineable — the marker stands alone
+    assertEquals(await loadMediaBlock(`${root}/gone.pdf`), null);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -117,7 +117,7 @@ Deno.test("extension-less media classifies by its bytes — whole pipeline, not 
     const p = filePartOf(path);
     assertEquals(p.kind, "image"); // sniffed
     assertEquals(p.file.mime_type, "image/png");
-    const block = loadMediaBlock(path);
+    const block = await loadMediaBlock(path);
     assertEquals(block?.media_type, "image/png"); // inlines despite the nameless path
   } finally {
     await Deno.remove(root, { recursive: true });
@@ -226,22 +226,24 @@ Deno.test("saveMedia: the extension comes from the name only when the name carri
   }
 });
 
-Deno.test("memoizedLoader: a uri loads once, and the memo is bounded by bytes held", () => {
+Deno.test("memoizedLoader: a uri loads once, and the memo is bounded by bytes held", async () => {
   let loads = 0;
   const load = (uri: string) => {
     loads++;
-    return uri === "/gone" ? null : { media_type: "image/png", data: "x".repeat(100) };
+    return Promise.resolve(
+      uri === "/gone" ? null : { media_type: "image/png", data: "x".repeat(100) },
+    );
   };
   const memo = memoizedLoader(load, 250);
-  assertEquals(memo("/a")?.data.length, 100);
-  assertEquals(memo("/a")?.data.length, 100);
+  assertEquals((await memo("/a"))?.data.length, 100);
+  assertEquals((await memo("/a"))?.data.length, 100);
   assertEquals(loads, 1);
-  assertEquals(memo("/gone"), null);
-  assertEquals(memo("/gone"), null); // a miss is not remembered — the file may appear
+  assertEquals(await memo("/gone"), null);
+  assertEquals(await memo("/gone"), null); // a miss is not remembered — the file may appear
   assertEquals(loads, 3);
-  memo("/b");
-  memo("/c"); // over the cap: /a is the oldest and goes
-  memo("/a");
+  await memo("/b");
+  await memo("/c"); // over the cap: /a is the oldest and goes
+  await memo("/a");
   assertEquals(loads, 6);
 });
 

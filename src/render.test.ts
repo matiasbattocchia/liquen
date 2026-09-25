@@ -9,6 +9,7 @@ import {
   renderHits,
   renderSystem,
   SILENCE,
+  wantedMedia,
   WUM_PER_CONVERSATION,
 } from "./render.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
@@ -1013,10 +1014,11 @@ function fileMsg(
 }
 
 Deno.test("media: trailing attachments inline as base64 blocks; closed keep markers only (§5)", () => {
-  const loadMedia = (uri: string) =>
-    uri.endsWith(".pdf")
-      ? { media_type: "application/pdf", data: "UERG" }
-      : { media_type: "image/png", data: "AQID" };
+  const media = new Map([
+    ["/m/old.png", { media_type: "image/png", data: "AQID" }],
+    ["/m/new.png", { media_type: "image/png", data: "AQID" }],
+    ["/m/doc.pdf", { media_type: "application/pdf", data: "UERG" }],
+  ]);
   const events: Event[] = [
     fileMsg("e1", "2026-07-21T10:00:00Z", "/m/old.png", { text: "vieja" }),
     mindMsg("e2", "2026-07-21T10:01:00Z", "listo", true), // the closing — e1 is CLOSED
@@ -1029,8 +1031,10 @@ Deno.test("media: trailing attachments inline as base64 blocks; closed keep mark
     session: SESSION,
     zone: "UTC",
     now: "2026-07-21T10:04:00Z",
-    loadMedia,
+    media,
   });
+  // what render asked for is exactly what it inlines — the trailing two, newest first
+  assertEquals(wantedMedia(events, SESSION), ["/m/doc.pdf", "/m/new.png"]);
   const dump = JSON.stringify(messages);
   // the marker is every attachment's durable face — closed and trailing alike
   assertStringIncludes(dump, '<image name=\\"shot.png\\" path=\\"/m/old.png\\"/>');
@@ -1052,7 +1056,7 @@ Deno.test("media: trailing attachments inline as base64 blocks; closed keep mark
   );
 });
 
-Deno.test("media: without loadMedia (edge / closed-only) markers render, no blocks", () => {
+Deno.test("media: without a table (closed-only, or a port that answered nothing) markers render, no blocks", () => {
   const events: Event[] = [fileMsg("e1", "2026-07-21T10:00:00Z", "/m/a.png", { text: "hola" })];
   const { messages } = render({
     events,
@@ -1067,18 +1071,20 @@ Deno.test("media: without loadMedia (edge / closed-only) markers render, no bloc
 });
 
 Deno.test("media: the newest-first request budget — an oversize file keeps its marker, no block", () => {
-  const loadMedia = () => ({ media_type: "image/png", data: "AQID" });
+  const block = { media_type: "image/png", data: "AQID" };
+  const media = new Map([["/m/huge.png", block], ["/m/small.png", block]]);
   const events: Event[] = [
     fileMsg("e1", "2026-07-21T10:00:00Z", "/m/huge.png", { size: 13 * 1024 * 1024 }),
     fileMsg("e2", "2026-07-21T10:01:00Z", "/m/small.png", { size: 10 }),
   ];
+  assertEquals(wantedMedia(events, SESSION), ["/m/small.png"]); // the huge one is never asked for
   const { messages } = render({
     events,
     docs: [],
     session: SESSION,
     zone: "UTC",
     now: "2026-07-21T10:02:00Z",
-    loadMedia,
+    media, // even offered, the budget keeps it out
   });
   const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
   assertEquals(blocks.filter((b) => b.type === "image").length, 1); // the small one only
@@ -1095,11 +1101,10 @@ Deno.test("media: an external link renders a url-source block — no bytes, no b
     session: SESSION,
     zone: "UTC",
     now: "2026-07-21T10:01:00Z",
-    // loadMedia untouched by externals — prove it by making it explode
-    loadMedia: () => {
-      throw new Error("never");
-    },
+    // a table entry for the link is never consulted: the url IS the block
+    media: new Map([["https://example.com/pics/cat.jpg", { media_type: "image/jpeg", data: "x" }]]),
   });
+  assertEquals(wantedMedia(events, SESSION), []); // nothing to fetch
   const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
   const img = blocks.find((b) => b.type === "image");
   assertEquals(
@@ -1125,8 +1130,7 @@ Deno.test("media: a tool_result's attachment renders INSIDE its block — aread 
     session: SESSION,
     zone: "UTC",
     now: t,
-    loadMedia: (uri) =>
-      uri === "file:///w/dot.png" ? { media_type: "image/png", data: "AQID" } : null,
+    media: new Map([["file:///w/dot.png", { media_type: "image/png", data: "AQID" }]]),
   });
   const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
   const result = blocks.find((b) => b.type === "tool_result") as Anthropic.ToolResultBlockParam;
@@ -1905,26 +1909,23 @@ Deno.test("redacted thinking replays verbatim inside a welded turn", () => {
 });
 
 Deno.test("media: a file over the inline cap spends no budget — the loadable one behind it still inlines", () => {
-  const loaded: string[] = [];
-  const loadMedia = (uri: string) => {
-    loaded.push(uri);
-    return { media_type: "image/png", data: "AQID" };
-  };
+  const block = { media_type: "image/png", data: "AQID" };
   const events: Event[] = [
     fileMsg("e1", "2026-07-21T10:00:00Z", "/m/small.png", { size: 2 * 1024 * 1024 }),
     fileMsg("e2", "2026-07-21T10:01:00Z", "/m/big.png", { size: 11 * 1024 * 1024 }), // newest
   ];
+  const wanted = wantedMedia(events, SESSION);
+  assertEquals(wanted, ["/m/small.png"]);
   const { messages } = render({
     events,
     docs: [],
     session: SESSION,
     zone: "UTC",
     now: "2026-07-21T10:02:00Z",
-    loadMedia,
+    media: new Map(wanted.map((uri) => [uri, block])),
   });
   const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
   assertEquals(blocks.filter((b) => b.type === "image").length, 1);
-  assertEquals(loaded, ["/m/small.png"]);
 });
 
 function summaryE(id: string, ts: string, covers: [string, string], text: string): Event {

@@ -72,7 +72,7 @@ import { sameHandle, speaksThrough } from "./store/roster.ts";
 import { preferProper } from "./store/names.ts";
 import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
-import { filePartOf, type FileScope, loadMediaBlock, memoizedLoader } from "./store/media.ts";
+import { filePartOf, type FileScope, type MediaBlock, type MediaLoader } from "./store/media.ts";
 import type { FilePart, LocationPart, SendPreview } from "./types.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import {
@@ -95,6 +95,7 @@ import {
   type Surface,
   textOf,
   unreachedLine,
+  wantedMedia,
 } from "./render.ts"; // shared predicates: silenced never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
@@ -860,6 +861,9 @@ export interface XiPorts {
    *  attachments resolve through it — its own folder, the org floor, the system docs, the
    *  media store. Absent (an edge port, a test): whatever the process can read. */
   files?: FileScope;
+  /** The bytes behind a stored attachment (§5), for the trailing-region blocks: the file
+   *  adapter locally, a blob store on the edge. Absent (a test): markers only. */
+  media?: MediaLoader;
   onDelta?: Emit; // → the harness stream (fire-and-forget)
   /** The decision, disclosed the moment it is made — fire-and-forget like onDelta: main
    *  fans it to the door's tailers as a turn edge ({status}), the one fact an attach
@@ -1041,7 +1045,6 @@ export async function xi(
 
 /** One loader for the process: a tool loop re-renders the same attachments step after
  *  step, and the bytes under a uri never change (content-named, §8). */
-const loadMedia = memoizedLoader(loadMediaBlock);
 
 async function think(
   events: Event[],
@@ -1094,8 +1097,13 @@ async function think(
       ),
       processors: config.processors,
       ambient,
-      // trailing-region media → real image/document blocks (§5); the store loads, render picks
-      loadMedia,
+      // trailing-region media → real image/document blocks (§5): render names the uris it
+      // will inline, the port answers with the bytes, render gets the table
+      media: await mediaFor(
+        events,
+        { id: config.sessionId, agentId: config.agentId, conversation: home },
+        ports.media,
+      ),
       // who is one of us (§4, §5): the roster's names, and who steers this agent — live
       roster: {
         names: Object.fromEntries(
@@ -1115,6 +1123,23 @@ async function think(
     ports.transport,
     ports.onDelta,
   );
+}
+
+/** The trailing attachments' bytes (§5): render says which uris it will inline
+ *  (`wantedMedia`, the request budget), the port answers each, and render gets a table —
+ *  so the I/O is xi's and render stays pure. A uri the port declines keeps its marker. */
+async function mediaFor(
+  events: Event[],
+  session: Session,
+  load: MediaLoader | undefined,
+): Promise<Map<string, MediaBlock>> {
+  const table = new Map<string, MediaBlock>();
+  if (!load) return table;
+  for (const uri of wantedMedia(events, session)) {
+    const b = await load(uri);
+    if (b) table.set(uri, b);
+  }
+  return table;
 }
 
 /** The anchor's standing lists (§5): what is still in the air — background jobs, surfaces

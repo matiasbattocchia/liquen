@@ -60,6 +60,7 @@ import { createMirror } from "./connect/mirror.ts";
 import { createPresence } from "./connect/presence.ts";
 import { createTranscriber } from "./processors.ts";
 import { type DoorAgent, installDoors, type Status, type Tune } from "./door.ts";
+import { loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import type { About, AlarmEvent, Delta, Draft, Event, PermissionResponseEvent } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
@@ -212,6 +213,8 @@ export async function start(
   const dir = await Deno.realPath(config.dir);
   const log = await openLog(`${dir}/log`);
   const docs = openFileDocs(dir); // the doc cascade lives on the data root itself (§8, §9)
+  // the media port (§5): the file adapter, remembered across every agent this process renders
+  const media = memoizedLoader(loadMediaBlock);
   // the framework way (§9): no explicit principals ⇒ the catalog's roster IS the org
   const derived = config.principals === undefined; // …and gets the connections-map policy (§6)
   // the catalog: the entry point read the file once (readConfig) and hands main the VALUE —
@@ -385,6 +388,7 @@ export async function start(
         exec: shellOf(agent.agentId, agent.sessionId).exec,
         ...(contact ? { contact } : {}),
         files: filesOf(agent.agentId),
+        media,
         onDelta: (d) => cast(agent.agentId, agent.sessionId, d),
         onDecision: (v, cursor, about) =>
           disclose(agent.agentId, agent.sessionId, v, cursor, about),
@@ -503,6 +507,7 @@ export async function start(
         transport: stock.get(agentId)!,
         exec: shell.exec,
         files: base.ports.files,
+        media,
         onDelta: (d: Delta) => cast(agentId, sessionId, d),
         onDecision: (v: Decision, cursor: string | undefined, about: About[]) =>
           disclose(agentId, sessionId, v, cursor, about),

@@ -69,15 +69,12 @@ The port gets there in two moves:
 
 ## 5. Render gets its bytes from xi
 
-`loadMediaBlock` (`src/store/media.ts`) does `Deno.readFileSync`, and xi hands it to render
-as a sync loader: filesystem I/O inside nu's pure layer, and a read that cannot await
-Storage.
-
-Render exports a pure `wantedMedia(window)` — the trailing-region uris it will inline. xi
-fetches them through an async blob port (`get(uri) → bytes`) and passes nu a sync lookup
-table. Render stays sync and becomes actually pure; the file adapter reads `file://`, an
-edge adapter reads Storage under its own scheme — `FilePart.uri`'s scheme is already the
-whole distinction (DESIGN §5, Media).
+**Landed** (PROJECT.md, 2026-09-24). `wantedMedia(window, session)` (`src/render.ts`) is
+the pure request budget: the trailing-region uris a render inlines, newest first. xi asks
+the media port (`XiPorts.media`, a `MediaLoader`: `uri → Promise<MediaBlock | null>`) for
+each and hands render a `ReadonlyMap` — render reads no file and awaits nothing. The file
+adapter is `loadMediaBlock`, async, memoized once per process in main; an edge adapter
+answers the same question from Storage under its own uri scheme.
 
 ## 6. `FileScope` becomes a files port
 

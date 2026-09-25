@@ -3679,3 +3679,15 @@ caught a burst's first line and thought on it alone), so the debt is main's: a h
 holder is one of its own invocations is owed one trigger-less re-poke once that invocation
 settles, coalesced per session. The edge trigger function inherits the same debt.
 
+### Render gets its bytes from xi (2026-09-24) — LANDED
+
+The third edge-tier refactor (`EDGE-PLAN.md`). Render inlined a trailing attachment by
+calling a loader xi handed it — `Deno.readFileSync` inside nu's pure layer, and a read that
+could never await a blob store. The request budget that decided which uris inline is now
+`wantedMedia(window, session)`, exported and pure; xi resolves those uris through the media
+port (`XiPorts.media`, the file adapter `loadMediaBlock` made async and memoized once per
+process in main) and passes render a table by uri. Render still applies the budget to the
+table, so what inlines is decided in one place whatever the table holds. A test port that
+has no media port renders markers only, which is also the edge tier before it has a blob
+adapter.
+

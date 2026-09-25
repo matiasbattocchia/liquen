@@ -15,7 +15,7 @@
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
-import { INLINE_CAP, inlineable, isExternal, pathOf } from "./store/media.ts"; // pure helpers — no I/O
+import { INLINE_CAP, inlineable, isExternal, type MediaBlock, pathOf } from "./store/media.ts"; // pure helpers — no I/O
 import { MIND, routedSession } from "./session.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
@@ -250,12 +250,13 @@ export interface RenderInput {
    *  plane — joined into the trailing anchor block (§5). Deployment-specific: empty on edge
    *  (no persistent exec env). */
   ambient?: string[];
-  /** Base64 payload for a stored media file (images/PDFs, size-capped) — xi injects
-   *  `store/media.loadMediaBlock`. Only TRAILING-region messages resolve through it: the
-   *  model sees the picture while it's current, the kind marker (`<image/>`) once it's history
-   *  (§5 — the tool-pair collapse pattern; the path is the durable re-viewable handle).
-   *  Absent ⇒ markers only. */
-  loadMedia?: (uri: string) => { media_type: string; data: string } | null;
+  /** The bytes behind the attachments this render inlines, by uri — the blocks for the
+   *  uris `wantedMedia` names, fetched by xi through the media port (§5). Only
+   *  TRAILING-region messages inline: the model sees the picture while it's current, the
+   *  kind marker (`<image/>`) once it's history (the tool-pair collapse pattern; the path
+   *  is the durable re-viewable handle). A uri the table lacks keeps its marker. Absent ⇒
+   *  markers only. */
+  media?: ReadonlyMap<string, MediaBlock>;
   /** Who is one of us (§4, §5): the roster's word for each member, and who steers this
    *  session's agent. Absent ⇒ every member is named by their username and nobody is a
    *  principal but the agent itself. */
@@ -639,20 +640,59 @@ function reactionOf(e: MessageEvent): string | undefined {
 }
 const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 
-function renderMessages(
-  { events: window, session, now, zone, ambient, loadMedia, roster, connections }: RenderInput,
-): MessageParam[] {
-  const me = session; // whose voice — the (agent, session) pair
-  const who: Roster = roster ?? { names: {}, principals: [session.agentId] };
-  const accounts = connections ?? {};
+/** The window's regions (§2 unrolled): render derives everything from the window's shape.
+ *  Everything the boundary step CONSUMED is CLOSED (collapsed); after it — including
+ *  horizon-deferred messages the step never saw — the TRAILING chain. `events` is the
+ *  visible window in event-time order with its elisions; `boundary` indexes the closing
+ *  step in it; `deferred` travels by identity. */
+function regions(window: Event[], session: Session) {
+  const me = session;
   const here = session.conversation; // the session's own room — everything else is world
   const visible = applySummary(window.filter((e) => !silenced(e)));
   // the horizon is a LOG position (§5): what the boundary step consumed is what its read
   // returned, in append order — so the unconsumed set is taken here, before event time
   // reorders the runs, and travels by identity
   const deferred = deferredInput(visible, me, closingBoundary(visible, session));
-  const isCard = cardsIn(window);
   const { events, elisions } = byEventTime(visible, me, here);
+  const boundary = closingBoundary(events, session);
+  const trailing = [...deferred, ...events.slice(boundary + 1)];
+  return { deferred, events, elisions, boundary, trailing };
+}
+
+/** The request-level media budget (§5): which trailing attachments inline, NEWEST first — a
+ *  burst of images can't stack base64 past the API's request cap; older ones keep their
+ *  markers (the path is re-viewable). Sized on the KNOWN raw size: no bytes are read here.
+ *  Pure — what xi asks the media port for, and what `render` inlines from the table it
+ *  gets back. */
+export function wantedMedia(window: Event[], session: Session): string[] {
+  const wanted: string[] = [];
+  let budget = MEDIA_BUDGET;
+  for (const e of [...regions(window, session).trailing].reverse()) {
+    // world and own-room attachments, and tool-result attachments (the model asked to see those)
+    if (e.type !== "message" && e.type !== "tool_result") continue;
+    if (e.type === "message" && isSelf(e, session)) continue;
+    for (const p of filesOf(e)) {
+      // local bytes only — external links inline as url-source blocks, budget-free
+      if (isExternal(p.file.uri) || p.file.size === undefined) continue;
+      // what the loader would refuse spends nothing: an oversize file keeps its marker
+      if (!inlineable(p.file.mime_type) || p.file.size > INLINE_CAP) continue;
+      if (p.file.size > budget) continue;
+      budget -= p.file.size;
+      wanted.push(p.file.uri);
+    }
+  }
+  return wanted;
+}
+
+function renderMessages(
+  { events: window, session, now, zone, ambient, media, roster, connections }: RenderInput,
+): MessageParam[] {
+  const me = session; // whose voice — the (agent, session) pair
+  const who: Roster = roster ?? { names: {}, principals: [session.agentId] };
+  const accounts = connections ?? {};
+  const here = session.conversation; // the session's own room — everything else is world
+  const isCard = cardsIn(window);
+  const { deferred, events, elisions, boundary, trailing } = regions(window, session);
   // room names from the WHOLE window, silenced rows included — a name is a fact about the
   // room, and the row that carried it need not be one the model reads
   const names = roomNames(window);
@@ -690,8 +730,8 @@ function renderMessages(
         );
         continue;
       }
-      if (!loadMedia || !inlineBudget.has(p.file.uri)) continue;
-      const b = loadMedia(p.file.uri);
+      if (!inlineBudget.has(p.file.uri)) continue;
+      const b = media?.get(p.file.uri);
       if (!b) continue; // not inlineable / over the cap / gone — the marker stands alone
       blocks.push(
         b.media_type === "application/pdf"
@@ -800,15 +840,9 @@ function renderMessages(
   // backwards printed nothing. Each `<msg>` now carries its own absolute stamp instead:
   // one fact per line, no cross-message state to get wrong, clusters intact.
 
-  // No turns, no nu state (§2 unrolled): render derives everything from the window's shape.
-  // Everything the boundary step CONSUMED is CLOSED (collapsed); after it — including
-  // horizon-deferred messages the step never saw — the TRAILING chain, welded API-faithfully.
-  const boundary = closingBoundary(events, session);
-
   // Trailing weld sets — pairing is per *use* (a result's `ref_id` = its tool_use id), so
   // parallel tools weld order-independently and a half-filled barrier never leaves an
-  // unpaired block for the API to reject.
-  const trailing = [...deferred, ...events.slice(boundary + 1)];
+  // unpaired block for the API to reject. The trailing chain is welded API-faithfully.
   const useById = new Map(
     trailing.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => [u.id, u]),
   );
@@ -826,27 +860,9 @@ function renderMessages(
       .map((u) => u.payload.turn_id),
   );
 
-  // The request-level media budget: which trailing attachments inline, NEWEST first — a
-  // burst of images can't stack base64 past the API's request cap; older ones keep their
-  // markers (the path is re-viewable, §5). Sized on the KNOWN raw size, no reads here.
-  const inlineBudget = new Set<string>();
-  {
-    let budget = MEDIA_BUDGET;
-    for (const e of [...trailing].reverse()) {
-      // world and own-room attachments, and tool-result attachments (the model asked to see those)
-      if (e.type !== "message" && e.type !== "tool_result") continue;
-      if (e.type === "message" && isSelf(e, me)) continue;
-      for (const p of filesOf(e)) {
-        // local bytes only — external links inline as url-source blocks, budget-free
-        if (isExternal(p.file.uri) || p.file.size === undefined) continue;
-        // what the loader would refuse spends nothing: an oversize file keeps its marker
-        if (!inlineable(p.file.mime_type) || p.file.size > INLINE_CAP) continue;
-        if (p.file.size > budget) continue;
-        budget -= p.file.size;
-        inlineBudget.add(p.file.uri);
-      }
-    }
-  }
+  // the request-level media budget (`wantedMedia`): the table may hold more, the budget
+  // decides what inlines
+  const inlineBudget = new Set(wantedMedia(window, session));
 
   // CLOSED — collapse: messages survive; errors stay visible as system blocks (§2);
   // thinking and ALL tool traffic drop (§5) — pairs, and the deferred outcomes a gate

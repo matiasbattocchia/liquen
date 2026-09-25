@@ -315,20 +315,29 @@ export const INLINE_CAP = 3 * 1024 * 1024;
 export const inlineable = (mime: string): boolean =>
   mime.startsWith("image/") && mime !== "image/svg+xml" || mime === "application/pdf";
 
+/** A stored file as the Messages-API block it inlines as (§5): the mime, and the bytes in
+ *  base64. */
+export interface MediaBlock {
+  media_type: string;
+  data: string;
+}
+
+/** The media port (§5): the bytes behind a uri, as a block — or null when there is nothing
+ *  to inline (not inlineable, over the cap, gone). The file adapter is `loadMediaBlock`;
+ *  an adapter over a blob store answers the same question under its own uri scheme. */
+export type MediaLoader = (uri: string) => Promise<MediaBlock | null>;
+
 /** A loader remembered across calls: a stored file is content-named, so what a uri holds
  *  never changes, and a tool loop renders the same trailing attachments on every step.
  *  Bounded by the raw bytes held — the oldest entry goes first. A miss is not remembered:
  *  the file may still be on its way. */
-export function memoizedLoader(
-  load: (uri: string) => { media_type: string; data: string } | null,
-  capBytes = MEDIA_MEMO_BYTES,
-): (uri: string) => { media_type: string; data: string } | null {
-  const held = new Map<string, { media_type: string; data: string }>();
+export function memoizedLoader(load: MediaLoader, capBytes = MEDIA_MEMO_BYTES): MediaLoader {
+  const held = new Map<string, MediaBlock>();
   let size = 0;
-  return (uri) => {
+  return async (uri) => {
     const hit = held.get(uri);
     if (hit) return hit;
-    const b = load(uri);
+    const b = await load(uri);
     if (!b) return null;
     held.set(uri, b);
     size += b.data.length;
@@ -344,16 +353,16 @@ export function memoizedLoader(
 /** Base64 held by `memoizedLoader` at most, across every agent this process renders. */
 const MEDIA_MEMO_BYTES = 64 * 1024 * 1024;
 
-/** A stored file → the base64 payload for a Messages-API image/document block, or null
- *  (not inlineable, over the cap, missing). Sync — render stays free of async plumbing;
- *  only TRAILING-region files ever hit this, so the reads are few and recent. */
-export function loadMediaBlock(uri: string): { media_type: string; data: string } | null {
+/** The file adapter of the media port: a stored file → the base64 payload for a
+ *  Messages-API image/document block, or null (not inlineable, over the cap, missing).
+ *  Only TRAILING-region files are ever asked for, so the reads are few and recent. */
+export async function loadMediaBlock(uri: string): Promise<MediaBlock | null> {
   if (isExternal(uri)) return null; // external links inline as url-source blocks, not bytes
   const path = pathOf(uri);
   const named = mimeOf(path); // extension first; a nameless file sniffs from its bytes below
   if (named && !inlineable(named)) return null;
   try {
-    const bytes = Deno.readFileSync(path);
+    const bytes = await Deno.readFile(path);
     if (bytes.length > INLINE_CAP) return null;
     const mime = named ?? sniffMime(bytes);
     if (!mime || !inlineable(mime)) return null;
