@@ -3854,3 +3854,47 @@ two-clock claim tests moved onto two store handles from a raw table of their own
 they run against any adapter. The count is unchanged: 133 store tests before and after.
 The Postgres adapter is done when it is a `Substrate` these suites pass; the docs port's
 tests stay on the file adapter, since they exercise discovery over a folder.
+
+### The Postgres adapter (2026-09-25) — LANDED, not yet wired
+
+`src/store/pg/` implements every store port on Postgres, and passes all 81 tests of the
+store suites against a local `postgres:17` (plus six of its own: the SQL restatements of
+`fold`, `same_handle`, `digits`, `routed` and `json_patch` held to the code's answers, two
+processes opening one store at once, two vault handles merging one row). Run it with
+`LIQUEN_TEST_PG=<url> deno test -A src/store/pg.test.ts`; each test's store is a schema of
+its own, dropped at the end. Without the variable the file registers one ignored test.
+
+Decided while writing it:
+
+- **The schema is SQLite's, not an idealized one.** `id` stays `text` (tests name their
+  own ids, `"01"`; the column default is a `uuidv7()` defined in SQL, which Postgres 18
+  ships), timestamps stay ISO text, JSON is `jsonb`. Every text column is `COLLATE "C"`:
+  the test database's `en_US` collation sorts `slack:T1:U7` after `slack:T1:org`, which
+  SQLite does not.
+- **Writers take turns** on a transaction-scoped advisory lock, and the id is minted
+  inside it, so `ORDER BY id` is commit order as under SQLite's write lock. A publish,
+  `setDelivery` and the sweep are the writer sections. The lease a turn ends under is read
+  `FOR UPDATE` in that transaction.
+- **The tail's seed is a query**, and `subscribe()` returns before it lands. Every write
+  this process makes waits for the seeds in flight, which keeps "a publish after
+  `subscribe()` returns is delivered" exact within a process; across processes there is no
+  order to keep.
+- **The view definitions are the last opener's.** SQLite's roster views are `TEMP`, per
+  connection; a pooled Postgres client cannot hold those, so opening a store runs `CREATE
+  OR REPLACE` for functions and views, under an advisory lock on the schema's name.
+- Shared with SQLite now: `src/store/events.ts` (row mapping, the read builder over a
+  `Dialect`, the offer and cut rules of a write), the row mappers of each port, and the
+  locker, which runs over `LeaseRows`. `aliases()` and `enrolled()` state their order;
+  the empty law is `FALSE`, a boolean on both engines.
+
+Open:
+
+- **Wiring.** Nothing opens the Postgres store yet: main, the scheduler and every
+  connector call `openLog(dir)` and `openCredentials(dir)` directly, some forty sites. It
+  needs a store knob in the catalog (the URL's password in the environment), and one
+  opener those sites call.
+- **Migrations.** The Postgres schema has no version: `CREATE … IF NOT EXISTS` is its
+  whole upgrade path until the first change to a live table.
+- **Small divergences.** `fold` strips the combining-mark blocks, where the code strips
+  every `\p{M}`; `jsonb` refuses a `\u0000` that SQLite stores; the sweep reads a
+  non-numeric `error_code` as permanent, where SQLite's comparison happens to retry it.

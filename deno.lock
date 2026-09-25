@@ -14,6 +14,7 @@
     "npm:@google/genai@2.22.0": "2.22.0",
     "npm:@slack/types@2": "2.22.0",
     "npm:@slack/web-api@7": "7.19.0",
+    "npm:postgres@^3.4.9": "3.4.9",
     "npm:qrcode-terminal@0.12": "0.12.0"
   },
   "jsr": {
@@ -443,6 +444,9 @@
         "p-finally"
       ]
     },
+    "postgres@3.4.9": {
+      "integrity": "sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw=="
+    },
     "protobufjs@7.6.6": {
       "integrity": "sha512-dYDWdjSl5RNb7SgPxGQcRU+GtvP7s2fpkrY0r432PcOIaZ0/rBcxEZnQN67iJhFuQiVw754JDoPruPCNdGsbjg==",
       "dependencies": [
@@ -504,6 +508,7 @@
       "npm:@google/genai@2.22.0",
       "npm:@slack/types@2",
       "npm:@slack/web-api@7",
+      "npm:postgres@^3.4.9",
       "npm:qrcode-terminal@0.12"
     ]
   }

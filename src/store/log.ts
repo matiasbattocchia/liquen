@@ -53,7 +53,6 @@ import {
   OWNS_SQL,
   RELEASE_SQL,
   sqliteLeases,
-  turnLockOf,
 } from "./lock.ts";
 import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
@@ -64,7 +63,18 @@ import { createSweeper, type Sweeper } from "./sweep.ts";
 import { bindRoster, ROSTER_VIEWS } from "./roster.ts";
 import { routedSession } from "../session.ts";
 import { foldName } from "./names.ts";
-import { build, type Dialect, eventOf, type Row, rowOf, utcOf } from "./events.ts";
+import {
+  build,
+  cutOf,
+  type Dialect,
+  eventOf,
+  externalOf,
+  offerOf,
+  type Row,
+  rowOf,
+  storedAs,
+  utcOf,
+} from "./events.ts";
 
 /** A bounded, filtered read over the log. Fields AND-combine (the `search` half, §6). */
 export interface ReadQuery {
@@ -507,43 +517,26 @@ export async function openLog(
   /** One upsert — or, for a PARTLESS draft, one patch (merge-only: nothing stored when the
    *  referenced row doesn't exist ⇒ null). Returns the STORED id (minted here, or the
    *  surviving row's on a merge). The id is minted in JS, not by the column default: on
-   *  LOCAL events it doubles as the external_id, so references live in ONE space (§3).
-   *  Wire-service events keep NULL until their platform names them — absence IS the
-   *  "never confirmed" signal the dispatcher's echo-dedup and the mirror's absorb guard
-   *  read. */
+   *  LOCAL events it doubles as the external_id (`externalOf`). */
   const write = (event: Draft, now: string, cuts: string[]): Event | null => {
     const r = rowOf(event);
-    // An agent's message bound for a wire is born an OFFER: `queued`, stamped now. The
-    // dispatcher that serves the connection takes it off the stream, or off the rows if it
-    // opens later — so no send waits on a process being there to see it land. `local`
-    // rows are the mind's own traffic and go on no wire.
-    const born = r.status === null && r.type === "message" && r.agent_id !== null &&
-        r.external_id === null && r.service !== "local"
-      ? { state: "queued" as const, queued_at: now }
-      : undefined;
-    if (born) r.status = JSON.stringify(born);
+    const offer = offerOf(r, now);
+    if (offer) r.status = JSON.stringify(offer);
     if (r.parts === null && r.external_id !== null) {
       const hit = patch.get(r.payload, r.extra, r.status, now, r.external_id) as
         | { id: string }
         | undefined;
       return hit ? { ...event, id: hit.id } as Event : null;
     }
-    // a `control` row is an order to the turn RUNNING in its room (§2): the lease it
-    // holds is marked in the same transaction — the heartbeat reads the mark — and a
-    // holder in this very process is cut once the row is committed (`cuts`). The turn's
-    // own closing row (`cancelled`) orders nothing.
-    if (
-      r.type === "control" && r.conversation_address !== null &&
-      (event.payload as { control?: string } | undefined)?.control !== "cancelled"
-    ) {
-      const name = turnLockOf(r.conversation_address);
-      cancel.run(name);
-      cuts.push(name);
+    const cut = cutOf(r, event);
+    if (cut !== undefined) {
+      cancel.run(cut);
+      cuts.push(cut);
     }
     const id = r.id ?? newId();
     const stored = upsert.get(
       id,
-      r.external_id ?? (event.envelope.service === "local" ? id : null),
+      externalOf(r, event, id),
       r.type,
       r.service,
       r.connection_address,
@@ -564,12 +557,7 @@ export async function openLog(
       r.extra,
       r.status,
     ) as { id: string };
-    // the caller's copy carries what the row does: the offer it was born as
-    return {
-      ...event,
-      id: stored.id,
-      ...(born ? { status: born, envelope: { ...event.envelope, status: born.state } } : {}),
-    } as Event;
+    return storedAs(event, stored.id, offer);
   };
 
   /** Both writers, in one transaction: the batch (all or none) and, optionally, the lease

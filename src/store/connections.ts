@@ -109,7 +109,7 @@ export interface Connections {
   /** The map as it stands — live rows only: a soft-deleted grant is not a surface anyone
    *  has. What the anchor reads to say which surfaces exist and which are down (§5). */
   connections(): Promise<ConnectionRow[]>;
-  /** The mind-alias bindings (§4): every owned connection's self-conversation, derived
+  /** The mind-alias bindings (§4), in (service, connection, conversation) order: every owned connection's self-conversation, derived
    *  or recorded, and each principal's DM with an account the agent speaks through (the
    *  `aliases` view, `store/roster.ts`). A soft-deleted binding KEEPS answering, with
    *  `live: false` — a revocation closes the gate, never the hiding: the mind copies
@@ -144,7 +144,7 @@ export interface Connections {
   /** The distinct (agent, session) pairs enrolled anywhere — boot's backlog scan (§4):
    *  a session with rooms owes them a look when the org comes up, and the enrollments
    *  are the only record a named session leaves. */
-  enrolled(): Promise<{ agentId: string; sessionId: string }[]>;
+  enrolled(): Promise<{ agentId: string; sessionId: string }[]>; // agent, then session
 }
 
 export const CONNECTIONS_DDL = `CREATE TABLE IF NOT EXISTS connections (
@@ -168,6 +168,45 @@ CREATE TABLE IF NOT EXISTS memberships (
   deleted_at           TEXT,
   PRIMARY KEY (service, connection_address, conversation_address, agent_id, session_id)
 );`;
+
+/** A row of `connections` as the store answers it — `extra` as its text. */
+export function connectionOf(r: {
+  service: string;
+  address: string;
+  agent_id: string | null;
+  credential_key: string | null;
+  extra: string | null;
+}): ConnectionRow {
+  return {
+    service: r.service,
+    address: r.address,
+    ...(r.agent_id ? { agentId: r.agent_id } : {}),
+    ...(r.credential_key ? { credentialKey: r.credential_key } : {}),
+    ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
+  };
+}
+
+/** A row of the `aliases` view: `live` is 1 while the grant stands. */
+export interface AliasColumns {
+  service: string;
+  connection: string;
+  conversation: string;
+  agent_id: string;
+  principal: string;
+  live: number;
+}
+
+/** A row of the `aliases` view as the port answers it. */
+export function aliasRowOf(r: AliasColumns): AliasRow {
+  return {
+    service: r.service,
+    connection: r.connection,
+    conversation: r.conversation,
+    agentId: r.agent_id,
+    principal: r.principal,
+    live: r.live === 1,
+  };
+}
 
 /** Bind the connections capability to an open DB (composed by openLog, like the registry). */
 export function createConnections(db: DatabaseSync): Connections {
@@ -193,22 +232,11 @@ export function createConnections(db: DatabaseSync): Connections {
     `SELECT service, address, agent_id, credential_key, extra FROM connections
      WHERE deleted_at IS NULL ORDER BY service, address`,
   );
-  const rowOf = (r: {
-    service: string;
-    address: string;
-    agent_id: string | null;
-    credential_key: string | null;
-    extra: string | null;
-  }): ConnectionRow => ({
-    service: r.service,
-    address: r.address,
-    ...(r.agent_id ? { agentId: r.agent_id } : {}),
-    ...(r.credential_key ? { credentialKey: r.credential_key } : {}),
-    ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
-  });
+  const rowOf = connectionOf;
   // the `aliases` view (`store/roster.ts`): the store's own bindings and the derived DMs
   const getAliases = db.prepare(
-    "SELECT service, connection, conversation, agent_id, principal, live FROM aliases",
+    `SELECT service, connection, conversation, agent_id, principal, live FROM aliases
+     ORDER BY service, connection, conversation, agent_id, principal`,
   );
   const putM = db.prepare(
     `INSERT INTO memberships
@@ -233,7 +261,8 @@ export function createConnections(db: DatabaseSync): Connections {
        AND session_id = ? AND deleted_at IS NULL`,
   );
   const pairs = db.prepare(
-    "SELECT DISTINCT agent_id, session_id FROM memberships WHERE deleted_at IS NULL",
+    `SELECT DISTINCT agent_id, session_id FROM memberships WHERE deleted_at IS NULL
+     ORDER BY agent_id, session_id`,
   );
   // a row that names no session enrolls the ROUTED one — the wire writers never decide
   const sessionOf = (r: MembershipRow) =>
@@ -274,22 +303,7 @@ export function createConnections(db: DatabaseSync): Connections {
     },
 
     aliases(): Promise<AliasRow[]> {
-      const rows = getAliases.all() as unknown as {
-        service: string;
-        connection: string;
-        conversation: string;
-        agent_id: string;
-        principal: string;
-        live: number;
-      }[];
-      return Promise.resolve(rows.map((r) => ({
-        service: r.service,
-        connection: r.connection,
-        conversation: r.conversation,
-        agentId: r.agent_id,
-        principal: r.principal,
-        live: r.live === 1,
-      })));
+      return Promise.resolve((getAliases.all() as unknown as AliasColumns[]).map(aliasRowOf));
     },
 
     upsertMemberships(rows: MembershipRow[]): Promise<void> {

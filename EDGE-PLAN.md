@@ -154,8 +154,9 @@ process's own handle and whose `vault` is the same store's credentials. `sqlite`
 local substrate, and `src/store/*.test.ts` is each area's suite run over it plus what is
 the engine's own: the migrations a file takes on open, the index a bounded read walks,
 the write lock's patience, a locker with no change stream, a thread-per-process merge.
-The Postgres adapter is a `Substrate` that runs the same suites; its DDL is written
-against them.
+The Postgres adapter (`src/store/pg/`) runs the same suites (PROJECT.md, 2026-09-25):
+`src/store/pg.test.ts` registers them over a schema per store in the database
+`LIQUEN_TEST_PG` names.
 
 The docs port stays on its file adapter's tests (`docs.test.ts`, `seed.test.ts`): what
 they exercise is discovery over a folder — frontmatter, symlinks, workspace noise — and

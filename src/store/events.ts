@@ -10,6 +10,7 @@
 import type { Conversation, Draft, Envelope, Event } from "../types.ts";
 import type { ReadQuery } from "./log.ts";
 import { nameWords } from "./names.ts";
+import { turnLockOf } from "./lock.ts";
 
 /** An event as a row of the `events` table, as either engine hands it back: JSON columns
  *  as their text. */
@@ -260,4 +261,54 @@ function stringLeaves(v: unknown, out: string[]): void {
   } else if (v !== null && typeof v === "object") {
     for (const x of Object.values(v)) stringLeaves(x, out);
   }
+}
+
+/** A draft as its columns (`rowOf`). */
+export type Columns = ReturnType<typeof rowOf>;
+
+/** An agent's message bound for a wire is born an OFFER: `queued`, stamped now. The
+ *  dispatcher that serves the connection takes it off the stream, or off the rows if it
+ *  opens later — so no send waits on a process being there to see it land. `local` rows
+ *  are the mind's own traffic and go on no wire. */
+export function offerOf(
+  r: Columns,
+  now: string,
+): { state: "queued"; queued_at: string } | undefined {
+  return r.status === null && r.type === "message" && r.agent_id !== null &&
+      r.external_id === null && r.service !== "local"
+    ? { state: "queued", queued_at: now }
+    : undefined;
+}
+
+/** The lease a `control` row cuts (§2): the turn RUNNING in its room. The publish that
+ *  lands the row marks that lease in the same transaction — the heartbeat reads the mark —
+ *  and cuts a holder in its own process once the row is committed. The turn's own closing
+ *  row (`cancelled`) orders nothing. */
+export function cutOf(r: Columns, event: Draft): string | undefined {
+  return r.type === "control" && r.conversation_address !== null &&
+      (event.payload as { control?: string } | undefined)?.control !== "cancelled"
+    ? turnLockOf(r.conversation_address)
+    : undefined;
+}
+
+/** The external id a row is stored under: the wire's, else — on a LOCAL event — its own
+ *  id, so references live in ONE space (§3). Wire-service events keep NULL until their
+ *  platform names them: absence IS the "never confirmed" signal the dispatcher's
+ *  echo-dedup and the mirror's absorb guard read. */
+export function externalOf(r: Columns, event: Draft, id: string): string | null {
+  return r.external_id ?? (event.envelope.service === "local" ? id : null);
+}
+
+/** The caller's copy of what was stored: the draft, the id the row carries, and the offer
+ *  it was born as. */
+export function storedAs(
+  event: Draft,
+  id: string,
+  offer: { state: "queued"; queued_at: string } | undefined,
+): Event {
+  return {
+    ...event,
+    id,
+    ...(offer ? { status: offer, envelope: { ...event.envelope, status: offer.state } } : {}),
+  } as Event;
 }

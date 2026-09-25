@@ -47,6 +47,23 @@ export const GATES_DDL = `CREATE INDEX IF NOT EXISTS events_ref
 
 const REF = "json_extract(payload, '$.ref_id')";
 
+/** A use's row beside the parts of a ruling on it, in the ruling's order. */
+export type RulingRow = { ruling: string } & Record<string, unknown>;
+
+/** The rulings still owed, one per use — the earliest when several landed. */
+export function owedOf(rows: RulingRow[], eventOf: (row: unknown) => Event): Owed[] {
+  const out: Owed[] = [];
+  const seen = new Set<string>();
+  for (const { ruling, ...row } of rows) {
+    const use = eventOf(row) as ToolUseEvent;
+    if (seen.has(use.id)) continue;
+    seen.add(use.id);
+    const parts = JSON.parse(ruling) as PermissionResponseEvent["parts"];
+    out.push({ use, verdict: parts[0].data });
+  }
+  return out;
+}
+
 export function createGates(db: DatabaseSync, eventOf: (row: unknown) => Event): Gates {
   const open = (scoped: boolean) =>
     `SELECT r.* FROM events r
@@ -86,22 +103,7 @@ export function createGates(db: DatabaseSync, eventOf: (row: unknown) => Event):
       return Promise.resolve(rows.map((r) => eventOf(r) as PermissionRequestEvent));
     },
     owed(agentId, sessionId) {
-      const out: Owed[] = [];
-      const seen = new Set<string>();
-      for (
-        const r of rulings.all(
-          agentId,
-          sessionId,
-        ) as ({ ruling: string } & Record<string, unknown>)[]
-      ) {
-        const { ruling, ...row } = r;
-        const use = eventOf(row) as ToolUseEvent;
-        if (seen.has(use.id)) continue;
-        seen.add(use.id);
-        const parts = JSON.parse(ruling) as PermissionResponseEvent["parts"];
-        out.push({ use, verdict: parts[0].data });
-      }
-      return Promise.resolve(out);
+      return Promise.resolve(owedOf(rulings.all(agentId, sessionId) as RulingRow[], eventOf));
     },
   };
 }

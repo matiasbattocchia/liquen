@@ -75,6 +75,7 @@
     "@std/jsonc": "jsr:@std/jsonc@^1",
     "@std/streams": "jsr:@std/streams@^1",
     "@std/yaml": "jsr:@std/yaml@^1",
+    "postgres": "npm:postgres@^3.4.9",
     "qrcode-terminal": "npm:qrcode-terminal@^0.12"
   }
 }

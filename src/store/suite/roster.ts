@@ -1,38 +1,23 @@
 import { assertEquals } from "@std/assert";
 import type { AgentRow } from "../agents.ts";
 import type { ConnectionRow } from "../connections.ts";
-import { sameHandle, speaksThrough } from "../roster.ts";
+import { speaksThrough } from "../roster.ts";
 import type { Log } from "../log.ts";
 import { type Substrate, withStore } from "./mod.ts";
 
+export const roster: AgentRow[] = [
+  { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "+54 9 11 555-0001" },
+  { agentId: "sol", mind: "mind@sol", name: "Sol", phone: "549115550002", runs: false },
+  { agentId: "ventas", mind: "mind@ventas", name: "Ventas", phone: "549117770000" },
+  { agentId: "bot", mind: "mind@bot", principals: [] },
+];
+export const connections: ConnectionRow[] = [
+  { service: "whatsapp", address: "549115550001", agentId: "matias" }, // a member's phone
+  { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" }, // the org's
+  { service: "slack", address: "T1" }, // an org anchor nobody's handle claims
+];
+
 export function rosterSuite(s: Substrate): void {
-  const roster: AgentRow[] = [
-    { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "+54 9 11 555-0001" },
-    { agentId: "sol", mind: "mind@sol", name: "Sol", phone: "549115550002", runs: false },
-    { agentId: "ventas", mind: "mind@ventas", name: "Ventas", phone: "549117770000" },
-    { agentId: "bot", mind: "mind@bot", principals: [] },
-  ];
-  const connections: ConnectionRow[] = [
-    { service: "whatsapp", address: "549115550001", agentId: "matias" }, // a member's phone
-    { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" }, // the org's
-    { service: "slack", address: "T1" }, // an org anchor nobody's handle claims
-  ];
-
-  Deno.test("sameHandle: phones agree on digits, emails on the folded string, nothing else", () => {
-    assertEquals(sameHandle("+54 9 11 555-0001", "549115550001"), true);
-    assertEquals(sameHandle("549115550001", "549115550002"), false);
-    assertEquals(sameHandle("Ana@Acme.co", "ana@acme.co"), true);
-    assertEquals(sameHandle("ana@acme.co", "549115550001"), false);
-    assertEquals(sameHandle(undefined, "549115550001"), false);
-    assertEquals(sameHandle("+", "-"), false); // no digits is no phone
-  });
-
-  Deno.test("speaksThrough: a handle claims the org account, ownership names the member's", () => {
-    assertEquals(speaksThrough(roster[0], connections).map((c) => c.address), ["549115550001"]);
-    assertEquals(speaksThrough(roster[2], connections).map((c) => c.address), ["549117770000"]);
-    assertEquals(speaksThrough(roster[3], connections), []); // the Slack anchor claims nobody
-  });
-
   /** The views, over a store holding these rows. */
   async function withRoster(
     agents: AgentRow[],

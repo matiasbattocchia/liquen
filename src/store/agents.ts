@@ -89,6 +89,27 @@ export const AGENTS_DDL = `CREATE TABLE IF NOT EXISTS agents (
   updated_at TEXT NOT NULL
 );`;
 
+/** A row of `agents` as the registry answers it — JSON columns as their text. */
+export function agentOf(r: Record<string, string | number | null>): AgentRow {
+  return {
+    agentId: r.agent_id as string,
+    mind: r.mind as string,
+    ...(r.provider ? { provider: r.provider as string } : {}),
+    ...(r.model ? { model: r.model as string } : {}),
+    ...(r.effort ? { effort: r.effort as string } : {}),
+    ...(r.name ? { name: r.name as string } : {}),
+    ...(r.email ? { email: r.email as string } : {}),
+    ...(r.phone ? { phone: r.phone as string } : {}),
+    ...(typeof r.principals === "string"
+      ? { principals: JSON.parse(r.principals) as string[] }
+      : {}),
+    ...(r.runs === 0 ? { runs: false } : {}),
+    ...(typeof r.settings === "string"
+      ? { settings: JSON.parse(r.settings) as AgentSettings }
+      : {}),
+  };
+}
+
 /** Bind the registry to an open DB (same pattern as `createLocker` — composed by openLog). */
 export function createRegistry(db: DatabaseSync): Registry {
   const put = db.prepare(
@@ -136,23 +157,7 @@ export function createRegistry(db: DatabaseSync): Registry {
     },
 
     agents(): Promise<AgentRow[]> {
-      return Promise.resolve((all.all() as Record<string, string | number | null>[]).map((r) => ({
-        agentId: r.agent_id as string,
-        mind: r.mind as string,
-        ...(r.provider ? { provider: r.provider as string } : {}),
-        ...(r.model ? { model: r.model as string } : {}),
-        ...(r.effort ? { effort: r.effort as string } : {}),
-        ...(r.name ? { name: r.name as string } : {}),
-        ...(r.email ? { email: r.email as string } : {}),
-        ...(r.phone ? { phone: r.phone as string } : {}),
-        ...(typeof r.principals === "string"
-          ? { principals: JSON.parse(r.principals) as string[] }
-          : {}),
-        ...(r.runs === 0 ? { runs: false } : {}),
-        ...(typeof r.settings === "string"
-          ? { settings: JSON.parse(r.settings) as AgentSettings }
-          : {}),
-      })));
+      return Promise.resolve((all.all() as Record<string, string | number | null>[]).map(agentOf));
     },
   };
 }

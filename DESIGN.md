@@ -2408,18 +2408,18 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
 
 | port | SQLite (embedded, single container) | Postgres (server, edge / multi-instance) |
 |---|---|---|
-| Log · publish | **UPSERT on `external_id`**, id from `DEFAULT (uuidv7())`, `RETURNING id`: new ⇒ INSERT (wakes) · known ⇒ MERGE `payload`/`status` via `json_patch` — no new row, no wake | `INSERT … ON CONFLICT DO UPDATE` + jsonb merge (the open-bsp before-update trigger) |
-| Log · read | indexed `SELECT … WHERE`, `ORDER BY id` | `SELECT … WHERE` (RLS) |
+| Log · publish | **UPSERT on `external_id`**, id from `DEFAULT (uuidv7())`, `RETURNING id`: new ⇒ INSERT (wakes) · known ⇒ MERGE `payload`/`status` via `json_patch` — no new row, no wake | the same upsert, `INSERT … ON CONFLICT DO UPDATE`, `json_patch` defined in SQL with SQLite's semantics; writers take turns on an advisory lock and mint the id inside it |
+| Log · read | indexed `SELECT … WHERE`, `ORDER BY id` | the same builder over a `jsonb` dialect (the law in the WHERE; RLS on the edge tier); a JS filter walks a server-side cursor |
 | Log · growth | native indexes — no scan, no segment rotation | table partitioning |
-| Log · subscribe (the trigger) | dir-watch (WAL commits) + poll backstop, cursored on `id` — seeded **synchronously at subscribe time**, so everything appended after `subscribe()` returns is delivered. A subscriber that asks (`updates`) gets a second cursor, `(updated_at, id)` over rows whose lifecycle moved after they landed — the dispatcher's, never a mind's | LISTEN/NOTIFY · Realtime (INSERT for minds, INSERT+UPDATE for dispatchers) |
+| Log · subscribe (the trigger) | dir-watch (WAL commits) + poll backstop, cursored on `id` — seeded **synchronously at subscribe time**, so everything appended after `subscribe()` returns is delivered. A subscriber that asks (`updates`) gets a second cursor, `(updated_at, id)` over rows whose lifecycle moved after they landed — the dispatcher's, never a mind's | `LISTEN` on `<schema>.events`, rung by a statement trigger on INSERT and UPDATE, with the same poll behind it and the same two cursors; the seed is a query, and this process's writes wait for the seeds in flight |
 | retry / echo / edits (ONE mechanism) | the `external_id` upsert-merge above: a retried delivery, an edit, and our own dispatched artifact looping back all MERGE into the row | same, engine-native |
 | delivery bookkeeping | `setDelivery(id, {external_id?, status})` — an UPDATE; backfills the echo key after dispatch; reaches the update stream, wakes no mind | same + `AFTER INSERT`-only trigger for minds |
 | the dispatch sweeper (§5) | one UPDATE on the tick (`store/sweep.ts`): transiently `failed` → `queued`, the backoff ladder in the WHERE, an expression index on `state` | the same statement under pg_cron |
 | privacy (`scoped(log, policy)`, §6) | the policy bakes into the port: reads filter BEFORE the window limit, writes are checked before landing (`WITH CHECK`), each agent's subscription delivers only its view | RLS (`USING`/`WITH CHECK`) + the agent's own credential — the wrapper vanishes |
 | Stream | in-process EventEmitter → SSE | Supabase Realtime |
-| the turn lease (§2) | a `locks` row **in the same DB** — `INSERT … ON CONFLICT DO NOTHING` to take, one atomic `UPDATE … WHERE born <= cutoff` to steal a dead holder's, `DELETE` to release | advisory lock, or the same row |
+| the turn lease (§2) | a `locks` row **in the same DB** — `INSERT … ON CONFLICT DO NOTHING` to take, one atomic `UPDATE … WHERE born <= cutoff` to steal a dead holder's, `DELETE` to release | the same row; a turn's last publish reads it `FOR UPDATE`, so a steal waits for the release |
 | timers / clock | `timers` table + in-mem wheel | pg_cron / pgmq |
-| locks / atomicity | transactions (WAL + `busy_timeout`) | advisory locks · transactions |
+| locks / atomicity | transactions (WAL + `busy_timeout`) | transactions · an advisory lock per writer section |
 | agents (`store/agents.ts`) | `agents` table in `log.db`, MIRRORED from the `agents/` folders at start (§9 framework way) | `agents` table (openbsp lineage) |
 | blob | filesystem | object store |
 | search | `LIKE` (v0) → FTS5 | FTS / pgvector |
@@ -2442,6 +2442,16 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   permissions (below), no dedicated write tool and no port mediation.
 - Producers and dispatchers are **separate processes sharing `log.db`**; concurrent publishes
   serialize on SQLite's WAL lock — no central writer, no funnel.
+- **The Postgres adapter** (`src/store/pg/`) is the same ports over a server: `openPgLog`
+  and `openPgCredentials` open a store in one schema of a database, and the schema is the
+  SQLite one column for column — JSON as `jsonb`, lease stamps as `bigint`, every text
+  column `COLLATE "C"`, so ids, timestamps and keys compare byte by byte as they do in
+  SQLite. What the shared SQL calls and Postgres lacks is defined in the schema: `routed`
+  and `instr` for the law, `digits` and `same_handle` for the roster views, `fold` for
+  names, `json_patch` for merges. Rows come back as SQLite hands them (JSON as text), so
+  both adapters share the row mappers (`src/store/events.ts` and each port's own), and
+  the locker is one implementation over each engine's lease rows (`LeaseRows`). Both
+  adapters run the same suites (`src/store/suite/`).
 - **`store/agents.ts` (landed 2026-08-04):** the agent registry — each agent's identity,
   its mind session (`mind`), and declared settings/handles (`provider · model · effort · email · phone`,
   mirrored from `config.json` — the framework way below). Ingest/dispatch/main all read
@@ -2506,8 +2516,8 @@ takes, one string — a home-relative path on files, the row's key on the table.
 **The store's contract is its suites** (`src/store/suite/`): each port area's tests are a
 function over a `Substrate` — a store nothing has written to, a handle per process, the
 vault beside it — and an adapter is done when it runs them. The SQLite adapter runs them
-under `src/store/*.test.ts`, beside what is the engine's own; the Postgres adapter's DDL
-is written against them.
+under `src/store/*.test.ts`, beside what is the engine's own, and the Postgres adapter
+runs them under `src/store/pg.test.ts`, against the database a test URL names.
 
 Two asymmetries to plan around, not paper over: **(1) no bash on an edge function**, so an
 edge-deployed agent can run connectors, dispatch, a verdict and a think, but the exec plane

@@ -96,9 +96,10 @@ export const TIMERS_DDL = `CREATE TABLE IF NOT EXISTS timers (
 );
 CREATE INDEX IF NOT EXISTS timers_due ON timers (fire_at);`;
 
-type Raw = Record<string, string | null>;
+export type Raw = Record<string, string | null>;
 
-const rowOf = (r: Raw): TimerRow => ({
+/** A row of `timers` as the port answers it. */
+export const timerOf = (r: Raw): TimerRow => ({
   id: r.id!,
   agentId: r.agent_id!,
   sessionId: r.session_id!,
@@ -155,19 +156,19 @@ export function createTimers(db: DatabaseSync): Timers {
     },
 
     due(nowIso: string): Promise<TimerRow[]> {
-      return Promise.resolve((ripe.all(nowIso) as Raw[]).map(rowOf));
+      return Promise.resolve((ripe.all(nowIso) as Raw[]).map(timerOf));
     },
 
     claim(id: string, nowIso: string): Promise<TimerRow | null> {
       const horizon = new Date(Date.parse(nowIso) + CLAIM_LEASE_MS).toISOString();
       const raw = take.get(horizon, id, nowIso) as Raw | undefined;
-      return Promise.resolve(raw ? rowOf(raw) : null);
+      return Promise.resolve(raw ? timerOf(raw) : null);
     },
 
     settle(id: string, nowIso: string, tz?: string): Promise<void> {
       const [raw] = byId.all(id) as Raw[];
       if (raw) {
-        const row = rowOf(raw);
+        const row = timerOf(raw);
         // past NOW, not past the stamp it was due at: a long outage collapses to one fire
         if (row.cron) advance.run(nextFire(row.cron, nowIso, tz), id);
         else del.run(id);
@@ -176,7 +177,7 @@ export function createTimers(db: DatabaseSync): Timers {
     },
 
     timers(agentId: string, sessionId: string): Promise<TimerRow[]> {
-      return Promise.resolve((mine.all(agentId, sessionId) as Raw[]).map(rowOf));
+      return Promise.resolve((mine.all(agentId, sessionId) as Raw[]).map(timerOf));
     },
 
     disarm(id: string, agentId: string, sessionId: string): Promise<boolean> {

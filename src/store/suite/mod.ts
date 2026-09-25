@@ -9,6 +9,10 @@
 
 import { type Log, openLog } from "../log.ts";
 import { type Credentials, openCredentials } from "../credentials.ts";
+import { openPgLog } from "../pg/log.ts";
+import { openPgCredentials } from "../pg/credentials.ts";
+import { connect } from "../pg/sql.ts";
+import { ident } from "../pg/schema.ts";
 
 /** What a suite gets a store from: a store nothing has written to, per test. */
 export interface Substrate {
@@ -51,3 +55,26 @@ export const sqlite: Substrate = {
     };
   },
 };
+
+/** The Postgres adapter: a schema of its own per store, in the database at `url`, dropped
+ *  whole at the end. */
+export function postgres(url: string): { fresh(): Promise<Store & { schema: string }> } {
+  return {
+    fresh() {
+      const schema = `liquen_t_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+      return Promise.resolve({
+        schema,
+        open: (opts) => openPgLog(url, { schema, ...opts }),
+        vault: (opts) => openPgCredentials(url, { schema, ...opts }),
+        drop: async () => {
+          const sql = connect(url);
+          try {
+            await sql.unsafe(`DROP SCHEMA IF EXISTS ${ident(schema)} CASCADE`);
+          } finally {
+            await sql.end();
+          }
+        },
+      });
+    },
+  };
+}
