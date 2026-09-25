@@ -14,11 +14,13 @@
  * a row; the tail listens on it.
  *
  * Opening a store runs all of it, under an advisory lock on the schema's name, so the
- * processes an org boots at once create it once and the rest find it there.
+ * processes an org boots at once create it once and the rest find it there. The schema
+ * carries its version (`schema_version`, one row): a store behind `VERSION` is raised in
+ * place before the DDL runs, and a store ahead of it belongs to a newer liquen.
  */
 
 import { MIND } from "../../session.ts";
-import type { Sql } from "./sql.ts";
+import type { Db, Sql } from "./sql.ts";
 
 /** A text column: byte-ordered. */
 const T = `text COLLATE "C"`;
@@ -264,7 +266,7 @@ CREATE OR REPLACE VIEW aliases AS
   WHERE s.service = 'slack' AND jsonb_typeof(d.value) = 'string';
 `;
 
-/** The vault's tables (§4): its own opener creates them, as on SQLite. */
+/** The vault's tables (§4): one schema holds the log and the vault, as one file does. */
 export const VAULT_DDL = `
 CREATE TABLE IF NOT EXISTS credentials (
   key        ${T} PRIMARY KEY,
@@ -283,13 +285,40 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 );
 `;
 
-/** Create the schema and run `ddl` in it, once across every process opening it at the
- *  same moment: the advisory lock is the schema's name, held for the transaction. */
-export async function prepare(sql: Sql, schema: string, ddl: string): Promise<void> {
+/** The version the DDL creates. A store found below it is raised in place, once, by the
+ *  steps between; a store above it was made by a newer liquen, and this one refuses it. */
+export const VERSION = 1;
+
+/** `RAISE[v]` takes a store from version `v` to `v + 1`: the ALTERs the DDL's `IF NOT
+ *  EXISTS` cannot express, run before the DDL so the views it replaces find their columns.
+ *  A version with no entry is raised by the DDL alone — a table or an index added. */
+const RAISE: Record<number, (tx: Db) => Promise<void>> = {};
+
+/** Open the schema: create it when absent, raise it when behind, and run the DDL — every
+ *  table `IF NOT EXISTS`, every function and view `OR REPLACE`, so the definitions are the
+ *  last opener's. Once across every process opening it at the same moment: the advisory
+ *  lock is the schema's name, held for the transaction. */
+export async function prepare(sql: Sql, schema: string): Promise<void> {
   await sql.begin(async (tx) => {
     await tx.unsafe("SELECT pg_advisory_xact_lock(hashtext($1::text))", [`liquen:${schema}`]);
     await tx.unsafe(`CREATE SCHEMA IF NOT EXISTS ${ident(schema)}`);
-    await tx.unsafe(FUNCTIONS + ddl);
+    await tx.unsafe("CREATE TABLE IF NOT EXISTS schema_version (version integer NOT NULL)");
+    const [found] = await tx.unsafe("SELECT version FROM schema_version") as unknown as {
+      version: number;
+    }[];
+    if (found !== undefined && found.version > VERSION) {
+      throw new Error(
+        `the store in ${schema} is at schema version ${found.version}; this liquen knows ` +
+          `${VERSION} — update the org`,
+      );
+    }
+    for (let v = found?.version ?? VERSION; v < VERSION; v++) await RAISE[v]?.(tx);
+    await tx.unsafe(FUNCTIONS + LOG_DDL + VAULT_DDL);
+    if (found === undefined) {
+      await tx.unsafe("INSERT INTO schema_version (version) VALUES ($1::integer)", [VERSION]);
+    } else if (found.version < VERSION) {
+      await tx.unsafe("UPDATE schema_version SET version = $1::integer", [VERSION]);
+    }
   });
 }
 

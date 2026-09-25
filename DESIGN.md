@@ -2457,7 +2457,10 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   names, `json_patch` for merges. Rows come back as SQLite hands them (JSON as text), so
   both adapters share the row mappers (`src/store/events.ts` and each port's own), and
   the locker is one implementation over each engine's lease rows (`LeaseRows`). Both
-  adapters run the same suites (`src/store/suite/`).
+  adapters run the same suites (`src/store/suite/`). The schema carries its version, as
+  the SQLite file carries `user_version`: opening a store behind the code's `VERSION`
+  raises it in place under the setup lock, and a store ahead of it is refused as a newer
+  liquen's.
 - **`store/agents.ts` (landed 2026-08-04):** the agent registry — each agent's identity,
   its mind session (`mind`), and declared settings/handles (`provider · model · effort · email · phone`,
   mirrored from `config.json` — the framework way below). Ingest/dispatch/main all read

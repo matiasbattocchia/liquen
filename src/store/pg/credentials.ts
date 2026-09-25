@@ -9,7 +9,7 @@
 
 import type { CredentialRow, Credentials } from "../credentials.ts";
 import { connect, count, rows } from "./sql.ts";
-import { prepare, VAULT_DDL } from "./schema.ts";
+import { prepare } from "./schema.ts";
 
 const STATE_TTL_MS = 10 * 60 * 1000; // OAuth codes live ~10min; states match
 
@@ -28,7 +28,7 @@ export async function openPgCredentials(
   const now = opts.now ?? Date.now;
   const sql = connect(url, schema);
   try {
-    await prepare(sql, schema, VAULT_DDL);
+    await prepare(sql, schema);
   } catch (err) {
     await sql.end();
     throw err;

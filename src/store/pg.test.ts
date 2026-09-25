@@ -9,12 +9,13 @@
  * set up once when two processes open it at the same moment.
  */
 
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { foldName } from "./names.ts";
 import { digits, sameHandle } from "./roster.ts";
 import { routedSession } from "../session.ts";
 import { connect } from "./pg/sql.ts";
+import { VERSION } from "./pg/schema.ts";
 
 import { agentsSuite } from "./suite/agents.ts";
 import { connectionsSuite } from "./suite/connections.ts";
@@ -161,6 +162,25 @@ if (url === undefined) {
     } finally {
       await a.close();
       await b.close();
+      await store.drop();
+    }
+  });
+
+  Deno.test("the schema carries its version: a fresh store is stamped, a behind one raised, an ahead one refused", async () => {
+    const store = await pg.fresh();
+    const sql = connect(url, store.schema);
+    const version = async () =>
+      await one<number>(sql, "SELECT version AS v FROM schema_version", []);
+    try {
+      await (await store.open()).close();
+      assertEquals(await version(), VERSION);
+      await sql.unsafe("UPDATE schema_version SET version = 0");
+      await (await store.vault()).close(); // either opener raises the store
+      assertEquals(await version(), VERSION);
+      await sql.unsafe("UPDATE schema_version SET version = $1::integer", [VERSION + 1]);
+      await assertRejects(() => store.open(), Error, `schema version ${VERSION + 1}`);
+    } finally {
+      await sql.end();
       await store.drop();
     }
   });

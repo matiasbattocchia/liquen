@@ -3889,11 +3889,20 @@ Decided while writing it:
 
 Open:
 
-- **Migrations.** The Postgres schema has no version: `CREATE … IF NOT EXISTS` is its
-  whole upgrade path until the first change to a live table.
 - **Small divergences.** `fold` strips the combining-mark blocks, where the code strips
   every `\p{M}`; `jsonb` refuses a `\u0000` that SQLite stores; the sweep reads a
   non-numeric `error_code` as permanent, where SQLite's comparison happens to retry it.
+
+### The Postgres schema carries its version (2026-09-25) — LANDED
+
+`schema_version` is one row of the schema, stamped `VERSION` (`src/store/pg/schema.ts`)
+when a store is created. `prepare` runs at every open, under the schema's advisory lock:
+a store behind the code's version takes the `RAISE` steps between — the ALTERs the DDL's
+`IF NOT EXISTS` cannot express, run before the DDL so a replaced view finds its columns —
+then the whole DDL, then the stamp; a version with no step is raised by the DDL alone. A
+store ahead of the code is refused with the two numbers, so an org rolled back does not
+write a newer schema with older statements. One `prepare` sets up the log's tables and the
+vault's together, as one file holds both on SQLite, so either opener raises the store.
 
 ### The store is wired through the catalog (2026-09-25) — LANDED
 

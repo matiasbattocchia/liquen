@@ -41,7 +41,7 @@ import {
 import { newId } from "../id.ts";
 import type { Draft, Envelope, Event, EventId } from "../../types.ts";
 import { compile, connect, count, type Db, rows, type Sql } from "./sql.ts";
-import { LOG_DDL, prepare } from "./schema.ts";
+import { prepare } from "./schema.ts";
 import {
   pgConnections,
   pgGates,
@@ -146,7 +146,7 @@ export async function openPgLog(
   const schema = opts.schema ?? "public";
   const sql = connect(url, schema);
   try {
-    await prepare(sql, schema, LOG_DDL);
+    await prepare(sql, schema);
   } catch (err) {
     await sql.end();
     throw err;
