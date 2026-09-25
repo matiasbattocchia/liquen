@@ -8,10 +8,16 @@
  * is the org's, unless the entry declares the list itself. The DM between a principal's
  * own number and the agent's account is a mind surface — one alias per principal, and no
  * table holds them, since every input to the derivation is already a row.
+ *
+ * The derivation is three VIEWS over `agents` and `connections` — `speaks`, `principals`,
+ * `aliases` — so the visibility law (`policy.ts`) reads them as relations, the way the
+ * RLS `USING` expression joins them on Postgres. The two handle rules the views need
+ * (`same_handle`, `digits`) are the functions below, bound into the engine.
  */
 
+import type { DatabaseSync } from "node:sqlite";
 import type { AgentRow } from "./agents.ts";
-import type { AliasRow, ConnectionRow } from "./connections.ts";
+import type { ConnectionRow } from "./connections.ts";
 
 /** A phone as the wire spells it: digits only. A declared handle may carry `+`, spaces or
  *  dashes; a WhatsApp address never does. */
@@ -32,7 +38,7 @@ export function sameHandle(a: string | undefined, b: string | undefined): boolea
  *  ownerless ones its handles claim (an org account — that is what makes it an org agent).
  *  An account with no handle a human could declare — a Slack bot — names its agent on
  *  the row instead (`extra.agent`, written by the bot door), the way an opaque id is
- *  recorded rather than derived (§4). */
+ *  recorded rather than derived (§4). The same rule as the `speaks` view, over rows. */
 export function speaksThrough(agent: AgentRow, connections: ConnectionRow[]): ConnectionRow[] {
   return connections.filter((c) =>
     c.agentId === agent.agentId ||
@@ -42,72 +48,73 @@ export function speaksThrough(agent: AgentRow, connections: ConnectionRow[]): Co
   );
 }
 
-/** Does the agent act as the org? True when a handle of its claims an ownerless connection. */
-export function orgOwned(agent: AgentRow, connections: ConnectionRow[]): boolean {
-  return speaksThrough(agent, connections).some((c) => c.agentId === undefined);
+/** Bind the handle rules into the engine, under the names the views use. */
+export function bindRoster(db: DatabaseSync): void {
+  db.function("digits", { deterministic: true }, (s) => (s == null ? null : digits(String(s))));
+  db.function(
+    "same_handle",
+    { deterministic: true },
+    (
+      a,
+      b,
+    ) => (sameHandle(a == null ? undefined : String(a), b == null ? undefined : String(b)) ? 1 : 0),
+  );
 }
 
-/** Who steers `agentId` (§4): the entry's own list when it declares one; else every
- *  member when the agent acts as the org, else its owner alone — which is itself, the
- *  alter-ego duality. Unknown agent ⇒ nobody. */
-export function principalsOf(
-  agentId: string,
-  agents: AgentRow[],
-  connections: ConnectionRow[],
-): string[] {
-  const me = agents.find((a) => a.agentId === agentId);
-  if (!me) return [];
-  if (me.principals) return me.principals;
-  if (orgOwned(me, connections)) return agents.map((a) => a.agentId);
-  return [agentId];
-}
-
-/** The DM aliases (§4): on every connection an agent speaks through, the direct chat with
- *  each principal is a surface of its mind. On WhatsApp the chat is addressed by the
- *  principal's own number, so it is derived from their declared phone; on Slack the id is
- *  opaque, so it is read back from the row (`extra.dms`, member → channel, which the
- *  ingest records on first sight) — and only the entries naming a principal count. The
- *  self-chat is not among them — it is the connection's own row's business (`aliases()`
- *  in the store) — so a principal whose number IS the connection's yields nothing here.
- *  Only live connections are consulted: a revoked account's DMs are hidden by nothing,
- *  and shown to no one, since the gate is closed there and no new line can land. */
-export function dmAliases(agents: AgentRow[], connections: ConnectionRow[]): AliasRow[] {
-  const out: AliasRow[] = [];
-  for (const agent of agents) {
-    const own = speaksThrough(agent, connections);
-    if (own.length === 0) continue;
-    const principals = principalsOf(agent.agentId, agents, connections);
-    for (const c of own) {
-      if (c.service === "whatsapp") {
-        for (const p of principals) {
-          const who = agents.find((a) => a.agentId === p);
-          if (!who?.phone) continue;
-          const number = digits(who.phone);
-          if (digits(c.address) === number) continue;
-          out.push({
-            service: c.service,
-            connection: c.address,
-            conversation: number,
-            agentId: agent.agentId,
-            principal: p,
-            live: true,
-          });
-        }
-      } else if (c.service === "slack") {
-        const dms = (c.extra?.dms ?? {}) as Record<string, string>;
-        for (const [p, channel] of Object.entries(dms)) {
-          if (!principals.includes(p) || typeof channel !== "string") continue;
-          out.push({
-            service: c.service,
-            connection: c.address,
-            conversation: channel,
-            agentId: agent.agentId,
-            principal: p,
-            live: true,
-          });
-        }
-      }
-    }
-  }
-  return out;
-}
+/** The derivation, as views of this connection (`TEMP`: defined by the code that opened
+ *  the store, never a schema another process could be running an older version of).
+ *
+ *   speaks      (agent_id, owner, service, address, extra)
+ *               the LIVE connections an agent speaks through; `owner` is the row's
+ *               `agent_id`, null on an org account
+ *   principals  (agent_id, principal, rank)
+ *               who steers each agent: the declared list in its order, else every member
+ *               when the agent acts as the org, else itself
+ *   aliases     (service, connection, conversation, agent_id, principal, live)
+ *               the mind surfaces: an owned connection's self-conversation (recorded in
+ *               `extra.self_conversation`, or the number itself on WhatsApp) — a revoked
+ *               one still listed, `live` 0 — and, on every connection an agent speaks
+ *               through, each principal's DM with it: on WhatsApp their own number, on
+ *               Slack the id the ingest recorded (`extra.dms`, member → channel) */
+export const ROSTER_VIEWS = `
+CREATE TEMP VIEW IF NOT EXISTS speaks AS
+  SELECT a.agent_id, c.agent_id AS owner, c.service, c.address, c.extra
+  FROM agents a JOIN connections c
+    ON c.deleted_at IS NULL
+   AND (c.agent_id = a.agent_id
+        OR (c.agent_id IS NULL
+            AND (json_extract(c.extra, '$.agent') = a.agent_id
+                 OR same_handle(c.address, a.phone) OR same_handle(c.address, a.email))));
+CREATE TEMP VIEW IF NOT EXISTS principals AS
+  SELECT a.agent_id, p.value AS principal, p.key AS rank
+  FROM agents a, json_each(coalesce(a.principals, '[]')) p
+  UNION ALL
+  SELECT a.agent_id, b.agent_id, 0
+  FROM agents a JOIN agents b
+  WHERE a.principals IS NULL
+    AND EXISTS (SELECT 1 FROM speaks s WHERE s.agent_id = a.agent_id AND s.owner IS NULL)
+  UNION ALL
+  SELECT a.agent_id, a.agent_id, 0
+  FROM agents a
+  WHERE a.principals IS NULL
+    AND NOT EXISTS (SELECT 1 FROM speaks s WHERE s.agent_id = a.agent_id AND s.owner IS NULL);
+CREATE TEMP VIEW IF NOT EXISTS aliases AS
+  SELECT service, address AS connection,
+         coalesce(json_extract(extra, '$.self_conversation'),
+                  CASE service WHEN 'whatsapp' THEN address END) AS conversation,
+         agent_id, agent_id AS principal, deleted_at IS NULL AS live
+  FROM connections
+  WHERE agent_id IS NOT NULL
+    AND (json_extract(extra, '$.self_conversation') IS NOT NULL OR service = 'whatsapp')
+  UNION ALL
+  SELECT s.service, s.address, digits(w.phone), s.agent_id, p.principal, 1
+  FROM speaks s
+    JOIN principals p ON p.agent_id = s.agent_id
+    JOIN agents w ON w.agent_id = p.principal
+  WHERE s.service = 'whatsapp' AND w.phone IS NOT NULL AND w.phone <> ''
+    AND digits(s.address) <> digits(w.phone)
+  UNION ALL
+  SELECT s.service, s.address, d.value, s.agent_id, d.key, 1
+  FROM speaks s, json_each(json_extract(s.extra, '$.dms')) d
+    JOIN principals p ON p.agent_id = s.agent_id AND p.principal = d.key
+  WHERE s.service = 'slack' AND d.type = 'text';`;

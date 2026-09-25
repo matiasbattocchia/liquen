@@ -110,9 +110,10 @@ export interface Connections {
    *  has. What the anchor reads to say which surfaces exist and which are down (§5). */
   connections(): ConnectionRow[];
   /** The mind-alias bindings (§4): every owned connection's self-conversation, derived
-   *  or recorded. Soft-deleted rows KEEP answering, with `live: false` — a revocation
-   *  closes the gate, never the hiding: the mind copies already there are that surface's
-   *  record, and the binding still names whose they are. */
+   *  or recorded, and each principal's DM with an account the agent speaks through (the
+   *  `aliases` view, `store/roster.ts`). A soft-deleted binding KEEPS answering, with
+   *  `live: false` — a revocation closes the gate, never the hiding: the mind copies
+   *  already there are that surface's record, and the binding still names whose they are. */
   aliases(): AliasRow[];
   /** Enroll agents in conversations. Upsert only — a re-enroll REVIVES a left row. */
   upsertMemberships(rows: MembershipRow[]): void;
@@ -205,16 +206,9 @@ export function createConnections(db: DatabaseSync): Connections {
     ...(r.credential_key ? { credentialKey: r.credential_key } : {}),
     ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
   });
-  // a binding is DERIVED where platform structure gives it away — an owned WhatsApp
-  // connection's self-chat IS its own address, nothing stored — and RECORDED where it
-  // can't be (Slack's self-DM id is opaque: resolved once at connect, `extra.self_conversation`)
+  // the `aliases` view (`store/roster.ts`): the store's own bindings and the derived DMs
   const getAliases = db.prepare(
-    `SELECT service, address, agent_id, deleted_at IS NULL AS live,
-            coalesce(json_extract(extra, '$.self_conversation'),
-                     CASE service WHEN 'whatsapp' THEN address END) AS conversation
-     FROM connections
-     WHERE agent_id IS NOT NULL
-       AND (json_extract(extra, '$.self_conversation') IS NOT NULL OR service = 'whatsapp')`,
+    "SELECT service, connection, conversation, agent_id, principal, live FROM aliases",
   );
   const putM = db.prepare(
     `INSERT INTO memberships
@@ -278,17 +272,18 @@ export function createConnections(db: DatabaseSync): Connections {
     aliases(): AliasRow[] {
       const rows = getAliases.all() as unknown as {
         service: string;
-        address: string;
-        agent_id: string;
+        connection: string;
         conversation: string;
+        agent_id: string;
+        principal: string;
         live: number;
       }[];
       return rows.map((r) => ({
         service: r.service,
-        connection: r.address,
+        connection: r.connection,
         conversation: r.conversation,
         agentId: r.agent_id,
-        principal: r.agent_id, // self-talk: the owner on both sides
+        principal: r.principal,
         live: r.live === 1,
       }));
     },

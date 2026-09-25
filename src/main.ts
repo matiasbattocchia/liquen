@@ -365,7 +365,7 @@ export async function start(
     // Folder-declared agents get the connections-map policy (live read-through lookups);
     // explicit principals stay allow-all unless they carry their own (tests).
     const policy = derived
-      ? policyFor({ agentId: agent.agentId, id: agent.sessionId }, log)
+      ? policyFor({ agentId: agent.agentId, id: agent.sessionId })
       : { readable, writable };
     const slog = scoped(log, policy);
     return {
@@ -375,7 +375,7 @@ export async function start(
         log: slog,
         // the agent's history (§6): what `search` reads, from any of its sessions — the
         // same map, keyed on the agent. Explicit principals search their own view
-        ...(derived ? { history: scoped(log, historyFor(agent.agentId, log)) } : {}),
+        ...(derived ? { history: scoped(log, historyFor(agent.agentId)) } : {}),
         docs,
         transport: stock.get(agent.agentId)!,
         exec: shellOf(agent.agentId, agent.sessionId).exec,
@@ -459,7 +459,7 @@ export async function start(
     log.upsertMemberships([
       { service: "local", connection: "agent", conversation: key, agentId, sessionId },
     ]);
-    const slog = scoped(log, policyFor({ agentId, id: sessionId }, log));
+    const slog = scoped(log, policyFor({ agentId, id: sessionId }));
     // the identity is shared (§4): one ground, one metered transport, one home — the log
     // view, the lease, the stream and the shell (where it stands, what it runs) are the
     // session's
@@ -538,7 +538,7 @@ export async function start(
           scoped(
             log,
             derived
-              ? policyFor({ agentId: p.agentId, id: sessionId }, log)
+              ? policyFor({ agentId: p.agentId, id: sessionId })
               : { readable: p.readable, writable: p.writable },
           ),
       };

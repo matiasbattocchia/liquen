@@ -3641,3 +3641,21 @@ showed the other half: `denoland/deno` ships no `ca-certificates`, so the trust 
 the liquen CA alone and every tool reading `SSL_CERT_FILE` trusted nothing else, the
 proxy's own dials included. The scaffold image installs them, and `start` refuses a box with
 no system bundle rather than hand out a file that trusts nothing.
+
+### The read policy is SQL (2026-09-24) — LANDED
+
+The first of the edge-tier refactors (`EDGE-PLAN.md`). The three-branch visibility
+predicate ran as a JS closure over every row a SELECT returned, calling the store's prepared
+statements per row (`isMember` · `connection` · `aliases`), and a read that carried both a
+cap and a filter ran with no SQL LIMIT: a window read walked the agent's whole visible log in
+JS. On Postgres none of that can run inside the engine, and the edge tier's RLS needs the
+predicate as SQL. `policyFor` and `historyFor` now return a `Law` — the predicate as a SQL
+boolean over an event's columns, joined to `memberships`, `connections` and three views
+(`speaks`, `principals`, `aliases`) that derive who steers whom where `store/roster.ts`
+derived it in JS — and the store applies it in the read's WHERE (the LIMIT is back in SQL),
+in the tail's cursor scan and inside the writing transaction as WITH CHECK; `admits` asks
+it of one event, which is how the policy tests read now. `Policy` keeps JS `readable` and
+`writable` for a test's hand-written scope. The alias derivation as a view took one SQLite
+lesson: `json_each`'s `value` column is the bare SQL value, so a text entry is asked its
+type through the row's `type` column, never `json_type(value)`.
+

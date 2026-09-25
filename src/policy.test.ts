@@ -6,7 +6,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { type Log, openLog } from "./store/log.ts";
-import { historyFor, policyFor, scoped } from "./policy.ts";
+import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
 import type { Draft, Event, MessageEvent } from "./types.ts";
 
 function msg(id: string, conversation: string, text: string): MessageEvent {
@@ -55,6 +55,37 @@ Deno.test("read: the policy applies BEFORE the limit — the window fills with v
     // and a caller's own filter composes (AND) instead of replacing the policy
     const mine1 = await view.read({ filter: (e) => e.id === "01" || e.id === "02" });
     assertEquals(mine1.map((e) => e.id), ["01"]);
+  });
+});
+
+Deno.test("read: a law fills the window in the engine — the N most recent VISIBLE rows, no JS walk", async () => {
+  await withLog(async (log) => {
+    log.upsertMemberships([
+      { service: "local", connection: "org", conversation: "a", agentId: "ana", sessionId: "mind" },
+    ]);
+    await log.publish([
+      msg("01", "a", "mine-1"),
+      msg("02", "b", "theirs"),
+      msg("03", "a", "mine-2"),
+      msg("04", "b", "theirs"),
+      msg("05", "b", "theirs"),
+      msg("06", "a", "mine-3"),
+    ]);
+    const view = scoped(log, policyFor({ agentId: "ana", id: "mind" }));
+    assertEquals((await view.read({ limit: 2 })).map((e) => e.id), ["03", "06"]);
+    assertEquals((await view.read({ first: 2 })).map((e) => e.id), ["01", "03"]);
+    assertEquals((await view.read()).map((e) => e.id), ["01", "03", "06"]);
+    // WITH CHECK is the same law: a draft the session could not read, it may not write
+    await assertRejects(() => view.publish(msg("07", "b", "no")), Error, "not writable");
+    assertEquals((await view.publish(msg("08", "a", "yes")))?.id, "08");
+    // and delivery: the tail carries only what the law admits
+    const got: string[] = [];
+    const off = view.subscribe((e) => got.push(e.id));
+    await log.publish([msg("09", "b", "theirs"), msg("10", "a", "mine")]);
+    const t0 = Date.now();
+    while (got.length < 1 && Date.now() - t0 < 2000) await new Promise((r) => setTimeout(r, 25));
+    off();
+    assertEquals(got, ["10"]);
   });
 });
 
@@ -110,9 +141,12 @@ const at = (service: string, connection: string, conversation: string, ts?: stri
     ts,
     envelope: { service, connection_address: connection, conversation: { address: conversation } },
   }) as Event;
+/** The law, asked of one event by the store — `USING` and `WITH CHECK` sides. */
+const sees = (log: Log, p: Policy, e: Event) => log.admits(p.using!, e);
+const writes = (log: Log, p: Policy, e: Event) => log.admits(p.check ?? p.using!, e);
 
 Deno.test("policyFor: three branches — membership · shared (ownerless) · owned (private)", async () => {
-  await withLog((log) => {
+  await withLog(async (log) => {
     log.upsertMemberships([
       { service: "local", connection: "agent", conversation: "mind@ana", agentId: "ana" },
     ]);
@@ -122,79 +156,83 @@ Deno.test("policyFor: three branches — membership · shared (ownerless) · own
       { service: "email", address: "ana@org", agentId: "ana" }, // owned ⇒ private
       { service: "slack", address: "T9" }, // a registration STUB: gate admission only
     ]);
-    const ana = policyFor({ agentId: "ana", id: "mind" }, log);
-    const bo = policyFor({ agentId: "bo", id: "mind" }, log);
+    const ana = policyFor({ agentId: "ana", id: "mind" });
+    const bo = policyFor({ agentId: "bo", id: "mind" });
 
     // branch 3: the mind is a one-member conversation — private by membership, no special case
-    assert(ana.readable!(at("local", "agent", "mind@ana")));
-    assert(!bo.readable!(at("local", "agent", "mind@ana")));
+    assert(await sees(log, ana, at("local", "agent", "mind@ana")));
+    assert(!(await sees(log, bo, at("local", "agent", "mind@ana"))));
     // branch 1: ownerless + org credential = the org's — every agent reads it
-    assert(ana.readable!(at("whatsapp", "+549", "wa:cust1")));
-    assert(bo.readable!(at("whatsapp", "+549", "wa:cust1")));
+    assert(await sees(log, ana, at("whatsapp", "+549", "wa:cust1")));
+    assert(await sees(log, bo, at("whatsapp", "+549", "wa:cust1")));
     // a STUB (no owner, no org credential — a workspace with personal tokens only):
     // registered for the gate, but visibility rides membership alone
-    assert(!ana.readable!(at("slack", "T9", "C9")));
+    assert(!(await sees(log, ana, at("slack", "T9", "C9"))));
     // branch 2: an owned account is the owner's ONLY (v0 resolver: owner name = agent name)
-    assert(ana.readable!(at("email", "ana@org", "thread-7")));
-    assert(!bo.readable!(at("email", "ana@org", "thread-7")));
+    assert(await sees(log, ana, at("email", "ana@org", "thread-7")));
+    assert(!(await sees(log, bo, at("email", "ana@org", "thread-7"))));
     // no row at all (the local service, an unregistered pipe): membership is the only door
-    assert(!ana.readable!(at("slack", "T05", "C123")));
+    assert(!(await sees(log, ana, at("slack", "T05", "C123"))));
     log.upsertMemberships([
       { service: "slack", connection: "T05", conversation: "C123", agentId: "ana" },
     ]);
-    assert(ana.readable!(at("slack", "T05", "C123")));
-    assert(!bo.readable!(at("slack", "T05", "C123")));
+    assert(await sees(log, ana, at("slack", "T05", "C123")));
+    assert(!(await sees(log, bo, at("slack", "T05", "C123"))));
     // an unknown connection is unreadable, full stop
-    assert(!ana.readable!(at("teams", "nobody", "x")));
+    assert(!(await sees(log, ana, at("teams", "nobody", "x"))));
   });
 });
 
 Deno.test("policyFor: soft-delete never touches visibility — revocation closes the gate only", async () => {
-  await withLog((log) => {
+  await withLog(async (log) => {
     log.upsertConnections([{ service: "email", address: "ana@org", agentId: "ana" }]);
-    const ana = policyFor({ agentId: "ana", id: "mind" }, log);
-    assert(ana.readable!(at("email", "ana@org", "thread-7")));
+    const ana = policyFor({ agentId: "ana", id: "mind" });
+    assert(await sees(log, ana, at("email", "ana@org", "thread-7")));
     log.deleteConnections([{ service: "email", address: "ana@org" }]);
     // the history the grant ingested stays in ana's view — a running session is unaffected
-    assert(ana.readable!(at("email", "ana@org", "thread-7")));
+    assert(await sees(log, ana, at("email", "ana@org", "thread-7")));
     assert(
-      !policyFor({ agentId: "bo", id: "mind" }, log).readable!(at("email", "ana@org", "thread-7")),
+      !(await sees(
+        log,
+        policyFor({ agentId: "bo", id: "mind" }),
+        at("email", "ana@org", "thread-7"),
+      )),
     ); // still private
   });
 });
 
 Deno.test("policyFor: a membership is a lifetime — a leave keeps what the agent has seen", async () => {
-  await withLog((log) => {
+  await withLog(async (log) => {
     const row = { service: "slack", connection: "T1", conversation: "C1", agentId: "ana" };
     log.upsertMemberships([row]);
-    const ana = policyFor({ agentId: "ana", id: "mind" }, log);
-    assert(ana.readable!(at("slack", "T1", "C1", "2026-08-11T10:00:00Z")));
+    const ana = policyFor({ agentId: "ana", id: "mind" });
+    assert(await sees(log, ana, at("slack", "T1", "C1", "2026-08-11T10:00:00Z")));
 
     log.deleteMemberships([row]);
     // seen history stays in ana's view; the conversation's future does not — either side
-    assert(ana.readable!(at("slack", "T1", "C1", "2020-01-01T00:00:00Z")));
-    assert(!ana.readable!(at("slack", "T1", "C1", "2100-01-01T00:00:00Z")));
-    assert(!ana.writable!(at("slack", "T1", "C1", "2100-01-01T00:00:00Z") as Draft));
+    assert(await sees(log, ana, at("slack", "T1", "C1", "2020-01-01T00:00:00Z")));
+    assert(!(await sees(log, ana, at("slack", "T1", "C1", "2100-01-01T00:00:00Z"))));
+    assert(!(await writes(log, ana, at("slack", "T1", "C1", "2100-01-01T00:00:00Z"))));
 
     log.upsertMemberships([row]); // rejoin revives: the conversation whole again
-    assert(ana.readable!(at("slack", "T1", "C1", "2100-01-01T00:00:00Z")));
+    assert(await sees(log, ana, at("slack", "T1", "C1", "2100-01-01T00:00:00Z")));
   });
 });
 
 Deno.test("policyFor is LIVE: a mid-run bind is visible to the same closure (no restart)", async () => {
-  await withLog((log) => {
-    const bo = policyFor({ agentId: "bo", id: "mind" }, log); // built BEFORE the connection exists
-    assert(!bo.readable!(at("whatsapp", "+549", "wa:c")));
+  await withLog(async (log) => {
+    const bo = policyFor({ agentId: "bo", id: "mind" }); // built BEFORE the connection exists
+    assert(!(await sees(log, bo, at("whatsapp", "+549", "wa:c"))));
     log.upsertConnections([
       { service: "whatsapp", address: "+549", credentialKey: "whatsapp:+549:org" },
     ]);
-    assert(bo.readable!(at("whatsapp", "+549", "wa:c"))); // read-through, like the RLS join
-    assert(bo.writable!(at("whatsapp", "+549", "wa:c") as Draft)); // same predicate, WITH CHECK side
+    assert(await sees(log, bo, at("whatsapp", "+549", "wa:c"))); // read-through, like the RLS join
+    assert(await writes(log, bo, at("whatsapp", "+549", "wa:c"))); // same predicate, WITH CHECK side
   });
 });
 
 Deno.test("policyFor: the member is the (agent, session) pair — a sibling's room is not yours (§4)", async () => {
-  await withLog((log) => {
+  await withLog(async (log) => {
     log.upsertMemberships([
       {
         service: "local",
@@ -211,15 +249,15 @@ Deno.test("policyFor: the member is the (agent, session) pair — a sibling's ro
         sessionId: "build",
       },
     ]);
-    const mind = policyFor({ agentId: "ana", id: "mind" }, log);
-    const build = policyFor({ agentId: "ana", id: "build" }, log);
+    const mind = policyFor({ agentId: "ana", id: "mind" });
+    const build = policyFor({ agentId: "ana", id: "build" });
 
     // each session reads and writes where it is enrolled — enrollment IS the enforcement
-    assert(mind.readable!(at("local", "agent", "mind@ana")));
-    assert(build.readable!(at("local", "agent", "build@ana")));
-    assert(!mind.readable!(at("local", "agent", "build@ana")));
-    assert(!build.readable!(at("local", "agent", "mind@ana")));
-    assert(!build.writable!(at("local", "agent", "mind@ana") as Draft));
+    assert(await sees(log, mind, at("local", "agent", "mind@ana")));
+    assert(await sees(log, build, at("local", "agent", "build@ana")));
+    assert(!(await sees(log, mind, at("local", "agent", "build@ana"))));
+    assert(!(await sees(log, build, at("local", "agent", "mind@ana"))));
+    assert(!(await writes(log, build, at("local", "agent", "mind@ana"))));
     // …and a DM room both are in is how they reach each other, like two agents
     log.upsertMemberships([
       {
@@ -237,25 +275,25 @@ Deno.test("policyFor: the member is the (agent, session) pair — a sibling's ro
         sessionId: "build",
       },
     ]);
-    assert(mind.readable!(at("local", "agent", "dm:build@ana:mind@ana")));
-    assert(build.readable!(at("local", "agent", "dm:build@ana:mind@ana")));
+    assert(await sees(log, mind, at("local", "agent", "dm:build@ana:mind@ana")));
+    assert(await sees(log, build, at("local", "agent", "dm:build@ana:mind@ana")));
   });
 });
 
 Deno.test("policyFor: a connection grant opens the ROUTED session only — today the mind (§4)", async () => {
-  await withLog((log) => {
+  await withLog(async (log) => {
     log.upsertConnections([
       { service: "whatsapp", address: "+549", credentialKey: "whatsapp:+549:org" }, // the org's
       { service: "email", address: "ana@org", agentId: "ana" }, // ana's own
     ]);
-    const mind = policyFor({ agentId: "ana", id: "mind" }, log);
-    const build = policyFor({ agentId: "ana", id: "build" }, log);
+    const mind = policyFor({ agentId: "ana", id: "mind" });
+    const build = policyFor({ agentId: "ana", id: "build" });
 
     // ownership stays the AGENT's; which session it opens is the routing function's say
-    assert(mind.readable!(at("whatsapp", "+549", "wa:cust1")));
-    assert(!build.readable!(at("whatsapp", "+549", "wa:cust1")));
-    assert(mind.readable!(at("email", "ana@org", "thread-7")));
-    assert(!build.readable!(at("email", "ana@org", "thread-7")));
+    assert(await sees(log, mind, at("whatsapp", "+549", "wa:cust1")));
+    assert(!(await sees(log, build, at("whatsapp", "+549", "wa:cust1"))));
+    assert(await sees(log, mind, at("email", "ana@org", "thread-7")));
+    assert(!(await sees(log, build, at("email", "ana@org", "thread-7"))));
     // an explicit enrollment still reaches a named session — routing is the default, not a wall
     log.upsertMemberships([
       {
@@ -266,7 +304,7 @@ Deno.test("policyFor: a connection grant opens the ROUTED session only — today
         sessionId: "build",
       },
     ]);
-    assert(build.readable!(at("email", "ana@org", "thread-7")));
+    assert(await sees(log, build, at("email", "ana@org", "thread-7")));
   });
 });
 
@@ -282,42 +320,42 @@ Deno.test("memberships: a wire-filled row (no session named) enrolls the routed 
 });
 
 Deno.test("policyFor: the mind-alias conversation is invisible to its own agent (§4)", async () => {
-  await withLog((log) => {
+  await withLog(async (log) => {
     log.upsertConnections([
       { service: "slack", address: "T1" }, // the workspace anchor inbound events carry
       { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
     ]);
-    const ana = policyFor({ agentId: "ana", id: "mind" }, log);
+    const ana = policyFor({ agentId: "ana", id: "mind" });
 
     // the self-DM is the mind's surface, not a world conversation: the mirror's copies are
     // ana's view of it — the wire events (anchored to the workspace OR the grant) are not,
     // and `send` can't reach it either (the principal is never a send target)
-    assert(!ana.readable!(at("slack", "T1", "D1")));
-    assert(!ana.readable!(at("slack", "T1:U1", "D1")));
-    assert(!ana.writable!(at("slack", "T1", "D1") as Draft));
+    assert(!(await sees(log, ana, at("slack", "T1", "D1"))));
+    assert(!(await sees(log, ana, at("slack", "T1:U1", "D1"))));
+    assert(!(await writes(log, ana, at("slack", "T1", "D1"))));
     // the rest of the owned account view is untouched
-    assert(ana.readable!(at("slack", "T1:U1", "C7")));
+    assert(await sees(log, ana, at("slack", "T1:U1", "C7")));
   });
 });
 
 Deno.test("policyFor: an alias conversation is invisible to EVERY agent, not only its own (§4)", async () => {
-  await withLog((log) => {
+  await withLog(async (log) => {
     log.upsertConnections([
       { service: "slack", address: "T1", credentialKey: "slack:T1:org" }, // the org's anchor
       { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
     ]);
     // bo reads the org anchor's world — ana's self-DM is not part of it: ana's line there
     // is stamped hers, and would read to bo as ana speaking in a room bo is in
-    const bo = policyFor({ agentId: "bo", id: "mind" }, log);
-    assert(!bo.readable!(at("slack", "T1", "D1")));
-    assert(bo.readable!(at("slack", "T1", "C7")));
+    const bo = policyFor({ agentId: "bo", id: "mind" });
+    assert(!(await sees(log, bo, at("slack", "T1", "D1"))));
+    assert(await sees(log, bo, at("slack", "T1", "C7")));
   });
 });
 
 /* ── historyFor: the agent's history, what search reads (§6) ───────────── */
 
 Deno.test("historyFor: every session of an agent reads the same past — the agent's, no wider (§6)", async () => {
-  await withLog((log) => {
+  await withLog(async (log) => {
     log.upsertMemberships([
       {
         service: "local",
@@ -347,22 +385,22 @@ Deno.test("historyFor: every session of an agent reads the same past — the age
       { service: "email", address: "bo@org", agentId: "bo" }, // bo's own
       { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
     ]);
-    const history = historyFor("ana", log);
+    const history = historyFor("ana");
 
     // a sibling's room is the agent's past too: the window is the session's, the log is not
-    assert(history.readable!(at("local", "agent", "mind@ana")));
-    assert(history.readable!(at("local", "agent", "build@ana")));
-    assert(!history.readable!(at("local", "agent", "mind@bo")));
+    assert(await sees(log, history, at("local", "agent", "mind@ana")));
+    assert(await sees(log, history, at("local", "agent", "build@ana")));
+    assert(!(await sees(log, history, at("local", "agent", "mind@bo"))));
     // the agent's connections, whatever session their traffic routes to
-    assert(history.readable!(at("whatsapp", "+549", "wa:cust1")));
-    assert(history.readable!(at("email", "ana@org", "thread-7")));
-    assert(!history.readable!(at("email", "bo@org", "thread-9")));
+    assert(await sees(log, history, at("whatsapp", "+549", "wa:cust1")));
+    assert(await sees(log, history, at("email", "ana@org", "thread-7")));
+    assert(!(await sees(log, history, at("email", "bo@org", "thread-9"))));
     // the alias rule holds: the mind copies are the surface's readable record
-    assert(!history.readable!(at("slack", "T1:U1", "D1")));
-    assert(history.readable!(at("slack", "T1:U1", "C7")));
+    assert(!(await sees(log, history, at("slack", "T1:U1", "D1"))));
+    assert(await sees(log, history, at("slack", "T1:U1", "C7")));
     // and the handle writes nothing, wherever it looks
-    assert(!history.writable!(at("local", "agent", "build@ana") as Draft));
-    assert(!history.writable!(at("whatsapp", "+549", "wa:cust1") as Draft));
+    assert(!(await writes(log, history, at("local", "agent", "build@ana"))));
+    assert(!(await writes(log, history, at("whatsapp", "+549", "wa:cust1"))));
     // a membership's lifetime rules here as it does for the session (§4)
     log.deleteMemberships([
       {
@@ -373,7 +411,7 @@ Deno.test("historyFor: every session of an agent reads the same past — the age
         sessionId: "build",
       },
     ]);
-    assert(history.readable!(at("local", "agent", "build@ana", "2020-01-01T00:00:00Z")));
-    assert(!history.readable!(at("local", "agent", "build@ana", "2999-01-01T00:00:00Z")));
+    assert(await sees(log, history, at("local", "agent", "build@ana", "2020-01-01T00:00:00Z")));
+    assert(!(await sees(log, history, at("local", "agent", "build@ana", "2999-01-01T00:00:00Z"))));
   });
 });

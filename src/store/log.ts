@@ -66,7 +66,8 @@ import { type Connections, CONNECTIONS_DDL, createConnections } from "./connecti
 import { createTimers, type Timers, TIMERS_DDL } from "./timers.ts";
 import { createGates, type Gates, GATES_DDL } from "./gates.ts";
 import { createSweeper, type Sweeper } from "./sweep.ts";
-import { dmAliases, principalsOf } from "./roster.ts";
+import { bindRoster, ROSTER_VIEWS } from "./roster.ts";
+import { routedSession } from "../session.ts";
 import { foldName, nameWords } from "./names.ts";
 
 /** A bounded, filtered read over the log. Fields AND-combine (the `search` half, §6). */
@@ -114,19 +115,49 @@ export interface ReadQuery {
    *  onto a surface, or of a surface line into the mind). `search` passes it: a copy's
    *  original is a row of its own and matches on its own, so no sentence is a hit twice. */
   copies?: boolean;
-  /** Row-level predicate applied BEFORE `limit` — RLS `USING` semantics: the window fills
-   *  with N *visible* events, never N-minus-the-private-ones. `scoped()` (§6) pins it; on
-   *  Postgres the engine does this and the field disappears. */
+  /** The visibility law (§6), applied in the engine BEFORE `limit` — RLS `USING`
+   *  semantics: the window fills with N *visible* events, never N-minus-the-private-ones.
+   *  `scoped()` pins it; on Postgres it is the role's policy and the field disappears. */
+  law?: Law;
+  /** Row-level predicate applied BEFORE `limit`, in JS over the rows the engine returns —
+   *  a caller's own narrowing that no column expresses. */
   filter?: Filter;
 }
 
 export type Listener = (event: Event) => void;
 export type Filter = (event: Event) => boolean;
 
+/** A visibility law as the SQL boolean it is (§6): an expression over one event's columns
+ *  — `events.service`, `events.connection_address`, `events.conversation_address`,
+ *  `events.timestamp` — that may join the store's other relations (`memberships`,
+ *  `connections`, the roster views). Bindings are NAMED, so a law composes into any
+ *  statement — a read's WHERE, the tail's cursor scan, a draft's check — without
+ *  renumbering anything; a law's names must not collide with another's. On Postgres the
+ *  same expression is the role's RLS `USING` and `WITH CHECK`. */
+export interface Law {
+  sql: string;
+  params: Record<string, string | number | null>;
+}
+
+/** Two laws, both binding. */
+export function both(a: Law | undefined, b: Law | undefined): Law | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  for (const k of Object.keys(a.params)) {
+    if (k in b.params && a.params[k] !== b.params[k]) {
+      throw new Error(`law: binding $${k} bound twice, to different values`);
+    }
+  }
+  return { sql: `(${a.sql}) AND (${b.sql})`, params: { ...a.params, ...b.params } };
+}
+
 export interface SubscribeOptions {
   /** Deliver everything after the event with this id (at-least-once catch-up). Omit ⇒ live.
    *  Positions the append stream only: updates always start live. */
   from?: EventId;
+  /** The visibility law (§6): delivery itself is filtered, in the engine — a socket only
+   *  carries the rows the role may see. */
+  law?: Law;
   /** Narrow the stream (e.g. a Slack connection ignores email). */
   filter?: Filter;
   /** Also deliver a row each time its lifecycle moves (an UPDATE), as it then stands. The
@@ -154,17 +185,26 @@ export interface Appender {
    *  exist NOTHING is stored — null (single) or omitted (batch). Takes `Draft`s — the
    *  store mints event ids — and returns the STORED events, so callers read `.id` off the
    *  result. A batch is ONE transaction: all of it lands, or none. */
-  publish(event: Draft): Promise<Event | null>;
-  publish(events: Draft[]): Promise<Event[]>;
+  publish(event: Draft, opts?: PublishOptions): Promise<Event | null>;
+  publish(events: Draft[], opts?: PublishOptions): Promise<Event[]>;
   /** PUBLISH, and DROP A LEASE, in one transaction (§2). This is how a turn ends: its last
    *  events and its turn-lease release become visible together, so the wake they fire can
    *  never find the lease still held — that bounced wake was a real stalled-cycle bug. */
-  publishAndRelease(event: Draft, lease: Lease): Promise<Event | null>;
-  publishAndRelease(events: Draft[], lease: Lease): Promise<Event[]>;
+  publishAndRelease(event: Draft, lease: Lease, opts?: PublishOptions): Promise<Event | null>;
+  publishAndRelease(events: Draft[], lease: Lease, opts?: PublishOptions): Promise<Event[]>;
+}
+export interface PublishOptions {
+  /** RLS `WITH CHECK` (§6): every draft is held to this law inside the writing transaction,
+   *  before anything lands — one refused draft aborts the batch, as Postgres aborts the
+   *  INSERT. The refusal names the draft's type. */
+  check?: Law;
 }
 export interface Reader {
   /** QUERY. A point-in-time slice in append order. The escape hatch beyond a pushed event. */
   read(query?: ReadQuery): Promise<Event[]>;
+  /** The law, asked of ONE event — as it would stand in the log, whether or not it does.
+   *  What `publish` asks of every draft under a `check`. */
+  admits(law: Law, event: { ts?: string; envelope: Envelope }): Promise<boolean>;
 }
 export interface Subscriber {
   /** TAIL. Receive appended events, across processes. Returns unsubscribe. At-least-once. */
@@ -236,6 +276,14 @@ export async function openLog(
   // the name rule (`store/names.ts`), bound so the name columns are filtered in the engine:
   // case and accents folded, so `Álvaro` and `ALVARO` are one needle
   db.function("fold", { deterministic: true }, (s) => (s == null ? null : foldName(String(s))));
+  // the routing function (`session.ts`) bound, so the law asks the ONE decision (§4) in SQL
+  db.function(
+    "routed",
+    { deterministic: true },
+    (service, connection) =>
+      routedSession({ service: String(service), connection_address: String(connection) }),
+  );
+  bindRoster(db); // the handle rules the roster views read
   // A log that cannot be read must say so once, in a sentence naming itself. Every child
   // of the org opens this file, so a corrupt one otherwise arrives as four stack traces
   // every few seconds, none of them saying which file or what to do about it — and the
@@ -312,6 +360,7 @@ export async function openLog(
      ${GATES_DDL}`,
   );
   migrate(db); // schema versions below the current one are rewritten in place, exactly once
+  db.exec(ROSTER_VIEWS); // who steers whom, derived: the relations the law joins (§4, §6)
   const connections = createConnections(db); // the gate below reads its table
   const registry = createRegistry(db);
 
@@ -413,6 +462,35 @@ export async function openLog(
      WHERE id = ?3`,
   );
   const drop = db.prepare("DELETE FROM events WHERE id = ?");
+  // a law over ONE event that is not (yet) a row: the columns it reads, bound as a row
+  // named the way the law names the table
+  const trials = new Map<string, ReturnType<typeof db.prepare>>();
+  const trial = (law: Law) => {
+    let stmt = trials.get(law.sql);
+    if (stmt === undefined) {
+      stmt = db.prepare(
+        `SELECT (${law.sql}) AS ok FROM (SELECT $e_service AS service,
+           $e_connection AS connection_address, $e_conversation AS conversation_address,
+           $e_ts AS timestamp) AS events`,
+      );
+      trials.set(law.sql, stmt);
+    }
+    return stmt;
+  };
+  const admits = (law: Law, e: { ts?: string; envelope: Envelope }): boolean => {
+    const { service, connection_address, conversation } = e.envelope;
+    const r = trial(law).get({
+      ...law.params,
+      e_service: service,
+      e_connection: connection_address,
+      e_conversation: conversation.address,
+      e_ts: e.ts === undefined ? null : utcOf(e.ts),
+    }) as { ok: number | null };
+    return r.ok === 1;
+  };
+  const steers = db.prepare(
+    "SELECT principal FROM principals WHERE agent_id = ? ORDER BY rank, principal",
+  );
   const unlock = db.prepare(RELEASE_SQL);
   const owns = db.prepare(OWNS_SQL);
   const locker = createLocker(db, opts.now);
@@ -479,6 +557,7 @@ export async function openLog(
   const commit = async (
     one: Draft | Draft[],
     lease?: Lease,
+    opts: PublishOptions = {},
   ): Promise<Event | Event[] | null> => {
     const drafts = Array.isArray(one) ? one : [one];
     for (const d of drafts) {
@@ -512,6 +591,16 @@ export async function openLog(
       // a successor redoing this very window: its events would be that turn twice over.
       if (lease !== undefined && owns.get(lease.name, lease.born) === undefined) {
         throw new LeaseLost(lease);
+      }
+      // WITH CHECK (§6), inside the transaction: the law reads the live map, and a
+      // membership stamped between the check and the write would otherwise let a
+      // refused draft through
+      if (opts.check !== undefined) {
+        for (const d of drafts) {
+          if (!admits(opts.check, d)) {
+            throw new Error(`policy: draft not writable (type=${d.type})`);
+          }
+        }
       }
       const stored = drafts.map((e) => write(e, now)).filter((e): e is Event => e !== null);
       if (lease !== undefined) unlock.run(lease.name, lease.born);
@@ -553,18 +642,23 @@ export async function openLog(
     ...connections, // connections + memberships (§4, §6): what policy reads, live
     // the mind's surfaces (§4): the store's own bindings (self-talk, recorded self-DMs)
     // plus the DMs each principal holds with the agent's account — derived, not stored
-    aliases: () => [
-      ...connections.aliases(),
-      ...dmAliases(registry.agents(), connections.connections()),
-    ],
-    principalsOf: (agentId) => principalsOf(agentId, registry.agents(), connections.connections()),
+    principalsOf: (agentId) =>
+      (steers.all(agentId) as { principal: string }[]).map((r) => r.principal),
 
-    async publish(one: Draft | Draft[]): Promise<Event & Event[]> {
-      return await (commit(one) as Promise<Event & Event[]>);
+    async publish(one: Draft | Draft[], opts?: PublishOptions): Promise<Event & Event[]> {
+      return await (commit(one, undefined, opts) as Promise<Event & Event[]>);
     },
 
-    async publishAndRelease(one: Draft | Draft[], lease: Lease): Promise<Event & Event[]> {
-      return await (commit(one, lease) as Promise<Event & Event[]>);
+    async publishAndRelease(
+      one: Draft | Draft[],
+      lease: Lease,
+      opts?: PublishOptions,
+    ): Promise<Event & Event[]> {
+      return await (commit(one, lease, opts) as Promise<Event & Event[]>);
+    },
+
+    admits(law: Law, e: { ts?: string; envelope: Envelope }): Promise<boolean> {
+      return Promise.resolve(admits(law, e));
     },
     // (the casts above serve the overload pairs; commit itself is honest about null)
 
@@ -576,8 +670,9 @@ export async function openLog(
         return Promise.reject(err);
       }
       const { sql, params } = built;
+      const named = query.law?.params ?? {};
       if (query.filter === undefined) {
-        const rows = db.prepare(sql).all(...params) as unknown as Row[];
+        const rows = db.prepare(sql).all(named, ...params) as unknown as Row[];
         if (query.limit !== undefined) rows.reverse(); // built as DESC LIMIT — restore order
         return Promise.resolve(rows.map(eventOf));
       }
@@ -587,7 +682,7 @@ export async function openLog(
       // stops — as soon as the window is full. Postgres does all of this inside the engine.
       const out: Event[] = [];
       const cap = query.limit ?? query.first;
-      for (const r of db.prepare(sql).iterate(...params) as Iterable<Row>) {
+      for (const r of db.prepare(sql).iterate(named, ...params) as Iterable<Row>) {
         const e = eventOf(r);
         if (!query.filter(e)) continue;
         out.push(e);
@@ -1069,7 +1164,10 @@ function tail(
   let chain: Promise<void> = Promise.resolve();
 
   const maxId = db.prepare("SELECT MAX(id) AS m FROM events");
-  const after = db.prepare("SELECT * FROM events WHERE id > ? ORDER BY id ASC");
+  // the law (§6) in the scan itself: a row the subscriber may not see never leaves the engine
+  const law = opts.law ? ` AND (${opts.law.sql})` : "";
+  const named = opts.law?.params ?? {};
+  const after = db.prepare(`SELECT * FROM events WHERE id > $cursor${law} ORDER BY id ASC`);
   // the update stream (`opts.updates`): rows whose lifecycle moved after they landed, in
   // the order they moved. `updated_at > created_at` keeps a fresh insert off it — that row
   // is the append stream's — and `id` breaks the tie a batch stamp leaves, one
@@ -1080,7 +1178,7 @@ function tail(
   );
   const movedAfter = db.prepare(
     `SELECT * FROM events WHERE updated_at > created_at
-       AND (updated_at > ?1 OR (updated_at = ?1 AND id > ?2))
+       AND (updated_at > $at OR (updated_at = $at AND id > $cursor))${law}
      ORDER BY updated_at ASC, id ASC`,
   );
 
@@ -1102,12 +1200,14 @@ function tail(
   };
   const pump = (): Promise<void> => (chain = chain.then(() => {
     if (closed) return;
-    for (const r of after.all(cursor) as unknown as Row[]) {
+    for (const r of after.all({ ...named, cursor }) as unknown as Row[]) {
       cursor = r.id;
       deliver(r);
     }
     if (!opts.updates) return;
-    for (const r of movedAfter.all(moved[0], moved[1]) as unknown as Row[]) {
+    for (
+      const r of movedAfter.all({ ...named, at: moved[0], cursor: moved[1] }) as unknown as Row[]
+    ) {
       moved = [r.updated_at, r.id];
       deliver(r);
     }
@@ -1210,12 +1310,15 @@ function build(q: ReadQuery): { sql: string; params: (string | number)[] } {
     );
   }
   if (q.copies === false) where.push("json_extract(extra, '$.via') IS NULL");
+  // the law (§6): named bindings, supplied by read() beside the positional ones
+  if (q.law !== undefined) where.push(`(${q.law.sql})`);
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   // append order = `id` (store-minted UUIDv7 — lexical order is mint order, §3).
   // limit ⇒ the most recent N: fetch DESC and reverse in read(); first ⇒ the earliest N,
   // fetched ASC as they stand; else natural append order.
-  // a cap + filter ⇒ NO SQL limit: read() cuts AFTER the predicate (RLS-before-LIMIT), so
-  // the SQL can't know how deep the N visible rows reach.
+  // a cap + a JS filter ⇒ NO SQL limit: read() cuts AFTER the predicate (RLS-before-LIMIT),
+  // so the SQL can't know how deep the N visible rows reach. The law needs none of this:
+  // it is in the WHERE, and the engine fills the window with visible rows itself.
   if (q.limit !== undefined && q.first !== undefined) {
     throw new Error("read: `limit` and `first` are exclusive");
   }

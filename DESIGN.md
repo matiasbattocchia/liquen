@@ -1673,9 +1673,12 @@ with a time bound.
   longer result), a **write refuses** (irreversible, so the model re-reads). A name nobody
   wears is an error, never an empty result — "I don't know who that is" and "they never
   said that" are different answers.
-- **The connections map** (landed 2026-08-05; sessions 2026-09-01): `policyFor(session,
-  map)` derives the §6 Policy from the two tables — THE three-branch predicate, one
-  boolean for readable and writable alike. The MEMBER is the (agent, session) pair:
+- **The connections map** (landed 2026-08-05; sessions 2026-09-01): `policyFor(session)`
+  derives the §6 Policy from the two tables — THE three-branch predicate, one law for
+  readable and writable alike, written as the SQL boolean it is (`Law`: an expression over
+  an event's columns joined to `memberships`, `connections` and the roster views, with
+  named bindings for the agent and the session) and evaluated by the store in every
+  statement it touches. The MEMBER is the (agent, session) pair:
   `member(service, connection, conversation, agent, session, ts)` (branch 3: Slack
   channel/DM · local team chat · **a session's own room is a one-member conversation** —
   its privacy is plain membership, no special case; the registry seeds
@@ -1694,10 +1697,13 @@ with a time bound.
   membership is the only door; a soft-deleted grant KEEPS its visibility (revocation
   closes the publish gate, never a session's window) — and the write side is harder
   still: publish REFUSES any non-local event whose connection isn't registered live
-  (§4, the gate). The lookups **read
-  through** prepared statements — live like the Postgres RLS join they emulate: a
-  mid-run bind is visible on the next event, no reload, no restart. Applied to folder-declared agents;
-  explicit `principals` (tests) stay allow-all unless they pass their own.
+  (§4, the gate). The law joins the live tables — like the Postgres RLS join it
+  emulates: a mid-run bind is visible on the next event, no reload, no restart. Who steers
+  whom is derived the same way, as views the law reads (`speaks` · `principals` ·
+  `aliases`, `store/roster.ts`): the connections an agent speaks through, its principals,
+  and the mind surfaces — an owned account's self-conversation and each principal's DM
+  with the account. Applied to folder-declared agents; explicit `principals` (tests) stay
+  allow-all unless they pass their own.
   **The history is the agent's** (`historyFor(agent, map)`): the same three branches keyed
   on the AGENT — a room any of its sessions is enrolled in, its connections whatever
   session their traffic routes to, the alias rule as ever — read-only, and it is what
@@ -1717,11 +1723,13 @@ with a time bound.
   agent participates — enforced as an **RLS predicate**, the cross-peer visibility guard.
 - Agent-role log RLS: **SELECT + INSERT, no UPDATE/DELETE** (readable & appendable, not
   editable; edits/status-backfills via elevated RPC).
-- **The seam exists in code** (`policy.ts`): `scoped(log, {readable, writable})` — each
-  boolean predicate applied where Postgres would (USING before LIMIT · WITH CHECK
-  all-or-nothing · filtered delivery). Both default allow-all until the **connections map**
-  defines how they're computed; main lifts them off the principal entry, so xi never sees
-  policy — locally the scope is a wrapper, on Postgres a credential.
+- **The seam exists in code** (`policy.ts`): `scoped(log, {using, check})` — the law
+  applied where Postgres would, by the engine (USING in the read's WHERE, before LIMIT ·
+  WITH CHECK inside the writing transaction, all-or-nothing · the tail's scan filtered at
+  source). A test's hand-written scope rides the same wrapper as JS predicates
+  (`readable`/`writable`) over the rows the engine returns. Main lifts the policy off the
+  principal entry, so xi never sees it — locally the scope is a wrapper, on Postgres a
+  credential.
 - Dedicated control tools reduce to **`send` + `search`**; everything else is substrate
   CRUD (docs, timers via SQL/RLS) or runtime-owned.
 
