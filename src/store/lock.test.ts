@@ -5,7 +5,7 @@
 
 import { assertEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
-import { CANCEL_SQL, createLocker, LOCKS_DDL } from "./lock.ts";
+import { CANCEL_SQL, createLocker, LOCKS_DDL, sqliteLeases } from "./lock.ts";
 import { lockSuite } from "./suite/lock.ts";
 import { sqlite } from "./suite/mod.ts";
 
@@ -15,7 +15,7 @@ Deno.test("the lease carries the interrupt: with no ring, the heartbeat reads th
   const dir = await Deno.makeTempDir();
   const db = new DatabaseSync(`${dir}/locks.db`);
   db.exec(LOCKS_DDL);
-  const locker = createLocker(db); // no change stream: the beat is all there is
+  const locker = createLocker(sqliteLeases(db)); // no change stream: the beat is all there is
   try {
     const lock = locker.lock("turn-mind@ana", 60); // beats every 20ms
     assertEquals(await lock.acquire(), "acquired");

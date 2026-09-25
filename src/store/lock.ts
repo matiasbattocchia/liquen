@@ -116,27 +116,43 @@ export const RELEASE_SQL = "DELETE FROM locks WHERE name = ?1 AND born = ?2";
  *  Read inside the writing transaction, so a steal cannot land between check and write. */
 export const OWNS_SQL = "SELECT 1 AS x FROM locks WHERE name = ?1 AND born = ?2";
 
-/** Bind the locker to an open DB. Statements are prepared ONCE — `lock()` is called per xi
- *  invocation, and with a fan-out that invokes every agent per event that adds up. `now`
- *  is the clock every stamp and every comparison reads (§9: the seam a test moves).
- *  `stop()` ends every heartbeat this locker started — a closing store has no holder left
- *  to speak for, and an abandoned turn's beat must not outlive the DB it beats into.
- *
- *  `watch` is the store's change stream, rung on every `control` row that lands from any
- *  process: while this locker holds a lease it is subscribed, and each ring has every
- *  holder read its mark at once. The mark stays the one truth — a ring only makes it read
- *  sooner than the heartbeat would, and a missed ring costs a beat, never the cancel. */
-export function createLocker(
-  db: DatabaseSync,
-  now: () => number = Date.now,
-  watch?: (ring: () => void) => () => void,
-): Locker & { stop(): void; cancel(name: string): void } {
+/** The six statements a locker runs, as its engine answers them. Every one quotes what
+ *  it needs — the name, the token, the clock's reading — so the rows are the whole state
+ *  and any process's locker reads the same lease. */
+export interface LeaseRows {
+  /** Insert the row when there is none: whether this call inserted it. */
+  take(name: string, t: number): Promise<boolean>;
+  /** Re-stamp, unmarked, a row nobody has beaten since `cutoff`: whether this call did. One
+   *  statement, so two stealers cannot both win. */
+  steal(name: string, t: number, cutoff: number): Promise<boolean>;
+  /** The heartbeat under the token: the row's mark, or `undefined` when the row is no longer
+   *  this token's. */
+  beat(name: string, born: number, t: number): Promise<{ cancel: boolean } | undefined>;
+  /** Drop the row, if it still carries the token. */
+  free(name: string, born: number): Promise<void>;
+  /** A row beaten after `cutoff` exists. */
+  live(name: string, cutoff: number): Promise<boolean>;
+  /** The row under this token carries the mark. */
+  marked(name: string, born: number): Promise<boolean>;
+}
+
+/** A synchronous statement's answer as a promise — a throw becomes a rejection. */
+function settled<T>(f: () => T): Promise<T> {
+  try {
+    return Promise.resolve(f());
+  } catch (err) {
+    return Promise.reject(err);
+  }
+}
+
+/** The lease rows on SQLite: statements prepared once, since `lock()` is called per xi
+ *  invocation, and a fan-out that invokes every agent per event adds that up. */
+export function sqliteLeases(db: DatabaseSync): LeaseRows {
   const take = db.prepare(
     "INSERT INTO locks (name, born, seen) VALUES (?1, ?2, ?2) ON CONFLICT(name) DO NOTHING",
   );
-  // one atomic statement, so two stealers can't both win: only the row whose heartbeat is
-  // still older than the cutoff is updated, and `changes` says whether it was us. A stolen
-  // lease starts unmarked: the cancel was the dead holder's.
+  // only the row whose heartbeat is still older than the cutoff is updated, and `changes`
+  // says whether it was us. A stolen lease starts unmarked: the cancel was the dead holder's.
   const steal = db.prepare(
     "UPDATE locks SET born = ?2, seen = ?2, cancel = 0 WHERE name = ?1 AND seen <= ?3",
   );
@@ -149,6 +165,35 @@ export function createLocker(
   const free = db.prepare(RELEASE_SQL);
   const live = db.prepare("SELECT 1 AS x FROM locks WHERE name = ? AND seen > ?");
   const marked = db.prepare("SELECT cancel FROM locks WHERE name = ?1 AND born = ?2");
+  return {
+    take: (name, t) => settled(() => Number(take.run(name, t).changes) > 0),
+    steal: (name, t, cutoff) => settled(() => Number(steal.run(name, t, cutoff).changes) > 0),
+    beat: (name, born, t) =>
+      settled(() => {
+        const row = beat.get(name, born, t) as { cancel: number } | undefined;
+        return row === undefined ? undefined : { cancel: row.cancel === 1 };
+      }),
+    free: (name, born) => settled(() => void free.run(name, born)),
+    live: (name, cutoff) => settled(() => live.get(name, cutoff) !== undefined),
+    marked: (name, born) =>
+      settled(() => (marked.get(name, born) as { cancel: number } | undefined)?.cancel === 1),
+  };
+}
+
+/** Bind a locker to its lease rows. `now` is the clock every stamp and every comparison
+ *  reads (§9: the seam a test moves). `stop()` ends every heartbeat this locker started —
+ *  a closing store has no holder left to speak for, and an abandoned turn's beat must not
+ *  outlive the store it beats into.
+ *
+ *  `watch` is the store's change stream, rung on every `control` row that lands from any
+ *  process: while this locker holds a lease it is subscribed, and each ring has every
+ *  holder read its mark at once. The mark stays the one truth — a ring only makes it read
+ *  sooner than the heartbeat would, and a missed ring costs a beat, never the cancel. */
+export function createLocker(
+  rows: LeaseRows,
+  now: () => number = Date.now,
+  watch?: (ring: () => void) => () => void,
+): Locker & { stop(): void; cancel(name: string): void } {
   const hearts = new Set<ReturnType<typeof setInterval>>();
   // the interrupts of the leases THIS process holds, by name: a control row this process
   // lands fires the holder at once, no beat to wait for
@@ -156,13 +201,8 @@ export function createLocker(
   let unwatch: (() => void) | undefined;
   const ring = () => {
     for (const [name, h] of holding) {
-      try {
-        if ((marked.get(name, h.born) as { cancel: number } | undefined)?.cancel === 1) {
-          h.ctl.abort();
-        }
-      } catch {
-        // the store is closing or wedged: the heartbeat speaks for this holder
-      }
+      // the store is closing or wedged when this fails: the heartbeat speaks for the holder
+      rows.marked(name, h.born).then((m) => m && h.ctl.abort(), () => {});
     }
   };
   const unhold = (name: string, ctl: AbortController) => {
@@ -202,42 +242,50 @@ export function createLocker(
         holding.set(name, { ctl, born });
         if (watch !== undefined && unwatch === undefined) unwatch = watch(ring);
         let misses = 0;
-        heart = setInterval(() => {
-          try {
-            // gone: we were declared dead, or the turn already ended (publishAndRelease
-            // drops the row itself). Either way there is nothing left to keep alive, and a
-            // zombie that kept re-stamping would only fight its own successor.
-            const row = beat.get(name, born, now()) as { cancel: number } | undefined;
-            if (row === undefined) return stop();
-            if (row.cancel === 1) ctl.abort();
-            misses = 0;
-          } catch {
-            // the store is unreachable — closing down, or wedged behind a writer past
-            // `busy_timeout`. A holder that cannot re-stamp for a whole TTL has already
-            // lost the lease by definition, so stop claiming otherwise.
-            if (++misses >= BEATS) stop();
-          }
+        let beating = false;
+        const mine = setInterval(() => {
+          if (beating) return; // the last beat is still out: one at a time
+          beating = true;
+          const signal = ctl;
+          rows.beat(name, born, now()).then(
+            (row) => {
+              if (heart !== mine) return; // this heart was stopped while the beat was out
+              // gone: we were declared dead, or the turn already ended (publishAndRelease
+              // drops the row itself). Either way there is nothing left to keep alive, and
+              // a zombie that kept re-stamping would only fight its own successor.
+              if (row === undefined) return stop();
+              if (row.cancel) signal.abort();
+              misses = 0;
+            },
+            () => {
+              // the store is unreachable — closing down, or wedged behind a writer. A
+              // holder that cannot re-stamp for a whole TTL has already lost the lease by
+              // definition, so stop claiming otherwise.
+              if (heart === mine && ++misses >= BEATS) stop();
+            },
+          ).finally(() => (beating = false));
         }, Math.max(1, Math.floor(ttlMs / BEATS)));
+        heart = mine;
         // the heartbeat must never be a reason for the process to stay up: a supervisor's
         // SIGTERM has to end it, and a leaked lock has to stop holding the test open
-        Deno.unrefTimer(heart);
-        hearts.add(heart);
+        Deno.unrefTimer(mine);
+        hearts.add(mine);
       };
       return {
-        acquire(): Promise<Acquired> {
+        async acquire(): Promise<Acquired> {
           const t = now();
-          if (Number(take.run(name, t).changes) > 0) {
+          if (await rows.take(name, t)) {
             born = t;
             start();
-            return Promise.resolve("acquired");
+            return "acquired";
           }
           // held — steal only if the heartbeat stopped (the holder died without releasing)
-          if (Number(steal.run(name, t, t - ttlMs).changes) > 0) {
+          if (await rows.steal(name, t, t - ttlMs)) {
             born = t;
             start();
-            return Promise.resolve("stolen");
+            return "stolen";
           }
-          return Promise.resolve("held");
+          return "held";
         },
         lease(): Lease {
           return { name, born };
@@ -245,13 +293,12 @@ export function createLocker(
         signal(): AbortSignal {
           return ctl.signal;
         },
-        release(): Promise<void> {
+        async release(): Promise<void> {
           stop();
-          free.run(name, born);
-          return Promise.resolve();
+          await rows.free(name, born);
         },
         held(): Promise<boolean> {
-          return Promise.resolve(live.get(name, now() - ttlMs) !== undefined);
+          return rows.live(name, now() - ttlMs);
         },
       };
     },

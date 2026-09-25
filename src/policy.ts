@@ -34,7 +34,7 @@ export interface Policy {
 }
 
 /** The law that admits nothing. */
-export const NOTHING: Law = { sql: "0", params: {} };
+export const NOTHING: Law = { sql: "FALSE", params: {} };
 
 /** The mind-alias rule (§4), shared by every law: an alias conversation is INVISIBLE to
  *  every agent — the mirror's mind copies are its face in the window, and hiding the wire
