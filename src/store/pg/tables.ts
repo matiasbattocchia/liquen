@@ -17,6 +17,9 @@ import {
   aliasRowOf,
   connectionOf,
   type Connections,
+  ENROLLMENT_ORDER,
+  type EnrollmentColumns,
+  enrollmentOf,
   type MembershipRow,
 } from "../connections.ts";
 import { routedSession } from "../../session.ts";
@@ -292,6 +295,10 @@ export function pgConnections(db: Db): Connections {
          ORDER BY agent_id, session_id`,
       )).map((r) => ({ agentId: r.agent_id, sessionId: r.session_id }));
     },
+    async memberships() {
+      return (await rows<EnrollmentColumns>(db, `SELECT * FROM memberships ${ENROLLMENT_ORDER}`))
+        .map(enrollmentOf);
+    },
   };
 }
 
@@ -362,6 +369,9 @@ export function pgTimers(db: Db): Timers {
          ORDER BY fire_at, id`,
         [agentId, sessionId],
       )).map(timerOf);
+    },
+    async armed() {
+      return (await rows<Raw>(db, "SELECT * FROM timers ORDER BY fire_at, id")).map(timerOf);
     },
     async disarm(id, agentId, sessionId) {
       return await count(

@@ -149,4 +149,29 @@ export function connectionsSuite(s: Substrate): void {
       await store.drop();
     }
   });
+
+  Deno.test("memberships(): every enrollment, ended ones stamped, in key order", async () => {
+    const store = await s.fresh();
+    const log = await store.open();
+    try {
+      await log.upsertMemberships([
+        { service: "slack", connection: "T1", conversation: "slack:T1:C9", agentId: "bo" },
+        { service: "slack", connection: "T1", conversation: "slack:T1:C1", agentId: "ana" },
+        { service: "mail", connection: "ana@x.io", conversation: "thread-1", agentId: "ana" },
+      ]);
+      await log.deleteMemberships([
+        { service: "slack", connection: "T1", conversation: "slack:T1:C9", agentId: "bo" },
+      ]);
+      const found = await log.memberships();
+      assertEquals(found.map((m) => `${m.service} ${m.conversation} ${m.agentId}/${m.sessionId}`), [
+        "mail thread-1 ana/mind",
+        "slack slack:T1:C1 ana/mind",
+        "slack slack:T1:C9 bo/mind",
+      ]);
+      assertEquals(found.map((m) => m.deletedAt !== undefined), [false, false, true]);
+    } finally {
+      await log.close();
+      await store.drop();
+    }
+  });
 }

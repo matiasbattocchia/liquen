@@ -208,4 +208,20 @@ export function timersSuite(s: Substrate): void {
       await store.drop();
     }
   });
+
+  Deno.test("armed(): every session's wakes, next first", async () => {
+    const store = await s.fresh();
+    const log = await store.open();
+    try {
+      const late = await log.arm(wake({ fireAt: "2026-09-02T09:00:00.000Z" }));
+      const soon = await log.arm(
+        wake({ agentId: "bo", conversation: "mind@bo", fireAt: "2026-09-01T09:00:00.000Z" }),
+      );
+      const mid = await log.arm(wake({ sessionId: "ops", conversation: "ops@ana" }));
+      assertEquals((await log.armed()).map((t) => t.id), [soon.id, mid.id, late.id]);
+    } finally {
+      await log.close();
+      await store.drop();
+    }
+  });
 }

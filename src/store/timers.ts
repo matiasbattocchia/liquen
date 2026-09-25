@@ -78,6 +78,8 @@ export interface Timers {
   /** A session's armed wakes, next first — what its anchor lists (§5). The pair, because
    *  bare session names collide across agents (§4): `mind` alone names everyone's. */
   timers(agentId: string, sessionId: string): Promise<TimerRow[]>;
+  /** Every armed wake in the store, next first — what the status door prints. */
+  armed(): Promise<TimerRow[]>;
   /** Disarm by id, but only the session's own. `false` ⇒ no such timer of theirs. */
   disarm(id: string, agentId: string, sessionId: string): Promise<boolean>;
 }
@@ -131,6 +133,7 @@ export function createTimers(db: DatabaseSync): Timers {
   const mine = db.prepare(
     "SELECT * FROM timers WHERE agent_id = ? AND session_id = ? ORDER BY fire_at, id",
   );
+  const every = db.prepare("SELECT * FROM timers ORDER BY fire_at, id");
   const advance = db.prepare("UPDATE timers SET fire_at = ? WHERE id = ?");
   const del = db.prepare("DELETE FROM timers WHERE id = ?");
   const delMine = db.prepare(
@@ -178,6 +181,10 @@ export function createTimers(db: DatabaseSync): Timers {
 
     timers(agentId: string, sessionId: string): Promise<TimerRow[]> {
       return Promise.resolve((mine.all(agentId, sessionId) as Raw[]).map(timerOf));
+    },
+
+    armed(): Promise<TimerRow[]> {
+      return Promise.resolve((every.all() as Raw[]).map(timerOf));
     },
 
     disarm(id: string, agentId: string, sessionId: string): Promise<boolean> {

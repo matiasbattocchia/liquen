@@ -145,6 +145,16 @@ export interface Connections {
    *  a session with rooms owes them a look when the org comes up, and the enrollments
    *  are the only record a named session leaves. */
   enrolled(): Promise<{ agentId: string; sessionId: string }[]>; // agent, then session
+  /** Every enrollment the store holds, ended ones with their stamp — what the status door
+   *  prints. In (service, connection, conversation, agent, session) order. */
+  memberships(): Promise<EnrollmentRow[]>;
+}
+
+/** An enrollment as the store holds it: the session resolved, and the stamp that ended
+ *  it when one did. */
+export interface EnrollmentRow extends MembershipRow {
+  sessionId: string;
+  deletedAt?: string;
 }
 
 export const CONNECTIONS_DDL = `CREATE TABLE IF NOT EXISTS connections (
@@ -264,6 +274,7 @@ export function createConnections(db: DatabaseSync): Connections {
     `SELECT DISTINCT agent_id, session_id FROM memberships WHERE deleted_at IS NULL
      ORDER BY agent_id, session_id`,
   );
+  const every = db.prepare(`SELECT * FROM memberships ${ENROLLMENT_ORDER}`);
   // a row that names no session enrolls the ROUTED one — the wire writers never decide
   const sessionOf = (r: MembershipRow) =>
     r.sessionId ?? routedSession({ service: r.service, connection_address: r.connection });
@@ -354,5 +365,34 @@ export function createConnections(db: DatabaseSync): Connections {
           .map((r) => ({ agentId: r.agent_id, sessionId: r.session_id })),
       );
     },
+
+    memberships(): Promise<EnrollmentRow[]> {
+      return Promise.resolve((every.all() as unknown as EnrollmentColumns[]).map(enrollmentOf));
+    },
+  };
+}
+
+/** The order `memberships()` answers in. */
+export const ENROLLMENT_ORDER =
+  "ORDER BY service, connection_address, conversation_address, agent_id, session_id";
+
+export interface EnrollmentColumns {
+  service: string;
+  connection_address: string;
+  conversation_address: string;
+  agent_id: string;
+  session_id: string;
+  deleted_at: string | null;
+}
+
+/** A row of `memberships` as the store answers it. */
+export function enrollmentOf(r: EnrollmentColumns): EnrollmentRow {
+  return {
+    service: r.service,
+    connection: r.connection_address,
+    conversation: r.conversation_address,
+    agentId: r.agent_id,
+    sessionId: r.session_id,
+    ...(r.deleted_at ? { deletedAt: r.deleted_at } : {}),
   };
 }
