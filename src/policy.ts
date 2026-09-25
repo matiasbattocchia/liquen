@@ -19,13 +19,10 @@
  * claims, and the wrapper vanishes (§9). xi can't tell which world it's in. The gate in xi
  * (`relevant`) keeps only what a trigger's WHEN clause holds — event class; visibility is
  * the port's law.
- *
- * A policy may instead — or also — carry the two questions as JS predicates: a test's
- * hand-written scope, applied over the rows the engine returns.
  */
 
-import type { AgentId, Draft, Event, SessionRef } from "./types.ts";
-import { type Appender, both, type Filter, type Law, type Log } from "./store/log.ts";
+import type { AgentId, Draft, SessionRef } from "./types.ts";
+import { type Appender, both, type Law, type Log } from "./store/log.ts";
 import type { Lease } from "./store/lock.ts";
 
 export interface Policy {
@@ -34,9 +31,6 @@ export interface Policy {
   using?: Law;
   /** RLS `WITH CHECK`: what the agent may write. Omitted ⇒ `using`: one law, both sides. */
   check?: Law;
-  /** The same two questions as JS predicates, over the rows the engine returns. */
-  readable?: (e: Event) => boolean;
-  writable?: (d: Draft) => boolean;
 }
 
 /** The law that admits nothing. */
@@ -140,30 +134,23 @@ export function historyFor(agentId: AgentId): Policy {
 export function scoped(log: Log, policy: Policy): Log {
   const using = policy.using;
   const check = policy.check ?? policy.using;
-  const readable = policy.readable;
-  const writable = policy.writable ?? (() => true);
-  const vet = (one: Draft | Draft[]) => {
-    for (const d of Array.isArray(one) ? one : [one]) {
-      if (!writable(d)) throw new Error(`policy: draft not writable (type=${d.type})`);
-    }
-  };
-  const and = (extra?: Filter): Filter | undefined =>
-    readable === undefined ? extra : extra ? (e: Event) => readable(e) && extra(e) : readable;
   return {
     ...log,
-    publish: (async (one: Draft | Draft[], opts = {}) => {
-      vet(one); // rejects BEFORE the write — nothing lands, like an aborted transaction
-      return await log.publish(one as Draft[], { ...opts, check: both(opts.check, check) });
-    }) as Appender["publish"],
-    publishAndRelease: (async (one: Draft | Draft[], lease: Lease, opts = {}) => {
-      vet(one); // and before the release: the lease outlives a refused turn-end
-      return await log.publishAndRelease(one as Draft[], lease, {
-        ...opts,
-        check: both(opts.check, check),
-      });
-    }) as Appender["publishAndRelease"],
-    read: (q = {}) => log.read({ ...q, law: both(q.law, using), filter: and(q.filter) }),
+    // a refused draft aborts the whole transaction — nothing lands, and a turn-end's lease
+    // outlives it
+    publish:
+      ((one: Draft | Draft[], opts = {}) =>
+        log.publish(one as Draft[], { ...opts, check: both(opts.check, check) })) as Appender[
+          "publish"
+        ],
+    publishAndRelease:
+      ((one: Draft | Draft[], lease: Lease, opts = {}) =>
+        log.publishAndRelease(one as Draft[], lease, {
+          ...opts,
+          check: both(opts.check, check),
+        })) as Appender["publishAndRelease"],
+    read: (q = {}) => log.read({ ...q, law: both(q.law, using) }),
     subscribe: (listener, opts = {}) =>
-      log.subscribe(listener, { ...opts, law: both(opts.law, using), filter: and(opts.filter) }),
+      log.subscribe(listener, { ...opts, law: both(opts.law, using) }),
   };
 }

@@ -24,6 +24,12 @@ import { type OrgConfig, readConfig } from "./config.ts";
 
 type Principal = AgentConfig & Policy;
 
+/** A mind pinned to one room: it sees that room alone and writes anywhere. */
+const onlyIn = (room: string): Policy => ({
+  using: { sql: "events.conversation_address = $only_in", params: { only_in: room } },
+  check: { sql: "1", params: {} },
+});
+
 const agent = (n: string, over: Partial<Principal> = {}): Principal => ({
   agentId: `a${n}`,
   sessionId: "mind",
@@ -414,14 +420,13 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
 
 Deno.test("policy partitions the fan-out: each agent's subscription delivers only its view (§6)", async () => {
   const dir = await Deno.makeTempDir();
-  const scope = (n: string) => (e: Event) => e.envelope.conversation.address === `mind@a${n}`;
   const { transport, calls } = scripted([reply("para vos")]);
   const main = await start({
     dir,
     debounceMs: 0,
     principals: [
-      agent("1", { readable: scope("1") }),
-      agent("2", { readable: scope("2") }),
+      agent("1", onlyIn("mind@a1")),
+      agent("2", onlyIn("mind@a2")),
     ],
   }, { transport });
   try {
@@ -449,7 +454,7 @@ Deno.test("a named session wakes on its dm and answers in its own room (§4)", a
   const main = await start({
     dir,
     debounceMs: 0,
-    principals: [agent("1", { readable: (e) => e.envelope.conversation.address === "mind@a1" })],
+    principals: [agent("1", onlyIn("mind@a1"))],
   }, { transport });
   try {
     const dm = "dm:build@a1:mind@a1";
@@ -907,7 +912,7 @@ Deno.test({
     const main = await start({
       dir,
       debounceMs: 0,
-      principals: [agent("1", { readable: (e) => e.envelope.conversation.address === "mind@a1" })],
+      principals: [agent("1", onlyIn("mind@a1"))],
     }, { transport });
     try {
       const said = async () =>

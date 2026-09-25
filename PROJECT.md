@@ -3709,3 +3709,11 @@ tails `control` rows, and each ring has every holder read its mark, so another p
 cancel arrives in the tail's latency (tens of ms). The mark stays the one truth and the
 heartbeat still reads it, so a ring the fs-watch drops costs a beat. The alternatives
 weighed are in `EDGE-PLAN.md` §3.
+
+### A test's scope is a law too (2026-09-25) — LANDED
+
+`Policy` carried JS `readable`/`writable` beside the SQL law, reached only when a caller
+passed `principals` explicitly — which only tests do — so those tests exercised a path
+production never takes. The predicates are gone: `Policy` is `{using, check}`, and the
+hand-written scopes in the policy, door and main suites are laws (`events.conversation_address
+= $in_conv`, `NOTHING` for a refused write).

@@ -5,9 +5,9 @@
  */
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { type Log, openLog } from "./store/log.ts";
+import { type Law, type Log, openLog } from "./store/log.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
-import type { Draft, Event, MessageEvent } from "./types.ts";
+import type { Event, MessageEvent } from "./types.ts";
 
 function msg(id: string, conversation: string, text: string): MessageEvent {
   return {
@@ -23,8 +23,11 @@ function msg(id: string, conversation: string, text: string): MessageEvent {
   };
 }
 
-const inConv = (c: string) => (e: Event) => e.envelope.conversation.address === c;
-const writesTo = (c: string) => (d: Draft) => d.envelope.conversation.address === c;
+/** A hand-written scope: the rows of one conversation. */
+const inConv = (c: string): Law => ({
+  sql: "events.conversation_address = $in_conv",
+  params: { in_conv: c },
+});
 
 async function withLog(fn: (log: Log) => Promise<void> | void): Promise<void> {
   const dir = await Deno.makeTempDir();
@@ -48,7 +51,7 @@ Deno.test("read: the policy applies BEFORE the limit — the window fills with v
       msg("05", "b", "theirs"),
       msg("06", "a", "mine-3"),
     ]);
-    const view = scoped(log, { readable: inConv("a") });
+    const view = scoped(log, { using: inConv("a") });
     // post-hoc filtering would return ["06"] (limit 2 → rows 05,06 → one visible).
     // RLS fills the window first: the 2 most recent VISIBLE events, in append order.
     assertEquals((await view.read({ limit: 2 })).map((e) => e.id), ["03", "06"]);
@@ -91,7 +94,7 @@ Deno.test("read: a law fills the window in the engine — the N most recent VISI
 
 Deno.test("publish: WITH CHECK is all-or-nothing — one bad draft, nothing lands", async () => {
   await withLog(async (log) => {
-    const view = scoped(log, { writable: writesTo("a") });
+    const view = scoped(log, { check: inConv("a") });
     await assertRejects(
       () => view.publish([msg("01", "a", "ok"), msg("02", "b", "forbidden")]),
       Error,
@@ -105,7 +108,7 @@ Deno.test("publish: WITH CHECK is all-or-nothing — one bad draft, nothing land
 
 Deno.test("publishAndRelease: an unwritable draft aborts BEFORE the lease is touched", async () => {
   await withLog(async (log) => {
-    const view = scoped(log, { writable: writesTo("a") });
+    const view = scoped(log, { check: inConv("a") });
     const lock = log.lock("turn-x", 60_000);
     assertEquals(await lock.acquire(), "acquired");
     await assertRejects(() => view.publishAndRelease(msg("01", "b", "no"), lock.lease()));
@@ -118,7 +121,7 @@ Deno.test("publishAndRelease: an unwritable draft aborts BEFORE the lease is tou
 
 Deno.test("subscribe: delivery itself is filtered — each agent tails its own view (§6)", async () => {
   await withLog(async (log) => {
-    const view = scoped(log, { readable: inConv("a") });
+    const view = scoped(log, { using: inConv("a") });
     const got: string[] = [];
     const off = view.subscribe((e) => got.push(e.id));
     await log.publish([

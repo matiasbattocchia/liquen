@@ -20,7 +20,7 @@ import { installDoors, MAX_PENDING_LINES, type Status, type Tune } from "./door.
 import { bind, type Mu } from "./script.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { openFileDocs } from "./store/docs.ts";
-import { scoped } from "./policy.ts";
+import { NOTHING, scoped } from "./policy.ts";
 import { type AgentConfig, xi } from "./xi.ts";
 import { scripted } from "./testing.ts";
 import { textOf } from "./render.ts";
@@ -146,7 +146,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     // the policy refuses the write ⇒ NOTHING lands — a search's ask is a write too
-    const denied = await up({ writable: () => false });
+    const denied = await up({ check: NOTHING });
     try {
       await assertRejects(() => denied.mu.send({ to: "x", text: "no" }), Error, "not writable");
       await assertRejects(() => denied.mu.search({}), Error, "not writable");
@@ -155,7 +155,9 @@ Deno.test({
     }
     // what the agent may not see, its scripts may not search up: act runs the queued
     // search on the agent's own scoped port, so the hits are the agent's eyes, no wider
-    const blind = await up({ readable: (e) => e.envelope.conversation.address !== "wa:secret" });
+    const blind = await up({
+      using: { sql: "events.conversation_address <> 'wa:secret'", params: {} },
+    });
     try {
       await blind.log.publish(msg("wa:secret", "callado"));
       await blind.log.publish(msg("wa:+34600", "visible"));

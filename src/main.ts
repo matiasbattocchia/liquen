@@ -166,7 +166,7 @@ async function installProxy(dir: string): Promise<ProxyHandle> {
 
 export interface MainConfig {
   dir: string; // the org's data root (§9): log/ · system/ · org/ · agents/
-  /** One agent per principal. The `Policy` half (readable/writable, §6) never reaches xi:
+  /** One agent per principal. The `Policy` half (using/check, §6) never reaches xi:
    *  main lifts it into the agent's scoped log — locally a wrapper, on Postgres a credential.
    *  OMIT to create agents "the framework way": the catalog's `agents` roster declares
    *  them — agentId = the entry's name, the session's conversation = `mind@<name>`,
@@ -354,13 +354,13 @@ export async function start(
       agentId,
     );
   const stock = new Map(principals.map((p) => [p.agentId, meter(p.agentId, transportFor(p))]));
-  const agents = principals.map(({ readable, writable, ...agent }) => {
+  const agents = principals.map(({ using, check, ...agent }) => {
     // the agent's VIEW of the log (§6): reads, writes, and the tail below all go through it.
     // Folder-declared agents get the connections-map policy (live read-through lookups);
     // explicit principals stay allow-all unless they carry their own (tests).
     const policy = derived
       ? policyFor({ agentId: agent.agentId, id: agent.sessionId })
-      : { readable, writable };
+      : { using, check };
     const slog = scoped(log, policy);
     return {
       config: agent,
@@ -560,7 +560,7 @@ export async function start(
             log,
             derived
               ? policyFor({ agentId: p.agentId, id: sessionId })
-              : { readable: p.readable, writable: p.writable },
+              : { using: p.using, check: p.check },
           )),
       };
     }),

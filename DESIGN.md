@@ -1727,10 +1727,9 @@ with a time bound.
 - **The seam exists in code** (`policy.ts`): `scoped(log, {using, check})` — the law
   applied where Postgres would, by the engine (USING in the read's WHERE, before LIMIT ·
   WITH CHECK inside the writing transaction, all-or-nothing · the tail's scan filtered at
-  source). A test's hand-written scope rides the same wrapper as JS predicates
-  (`readable`/`writable`) over the rows the engine returns. Main lifts the policy off the
-  principal entry, so xi never sees it — locally the scope is a wrapper, on Postgres a
-  credential.
+  source). A test's hand-written scope is a law too, so every scope runs the engine's
+  path. Main lifts the policy off the principal entry, so xi never sees it — locally the
+  scope is a wrapper, on Postgres a credential.
 - Dedicated control tools reduce to **`send` + `search`**; everything else is substrate
   CRUD (docs, timers via SQL/RLS) or runtime-owned.
 
