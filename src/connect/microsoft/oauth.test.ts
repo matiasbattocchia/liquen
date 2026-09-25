@@ -52,8 +52,14 @@ async function withOAuth(
     creds,
     onGrant: (g) => grants.push(g),
     store: {
-      upsertConnections: (rows) => connections.push(...rows),
-      upsertMemberships: (rows) => memberships.push(...rows),
+      upsertConnections: (rows) => {
+        connections.push(...rows);
+        return Promise.resolve();
+      },
+      upsertMemberships: (rows) => {
+        memberships.push(...rows);
+        return Promise.resolve();
+      },
     },
     publish: ((e: Draft) => {
       const stored = { ...e, id: e.id ?? newId() } as Event;

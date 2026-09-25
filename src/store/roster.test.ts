@@ -25,8 +25,8 @@ async function withRoster(
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    log.syncAgents(agents);
-    log.upsertConnections(rows);
+    await log.syncAgents(agents);
+    await log.upsertConnections(rows);
     await fn(log);
   } finally {
     await log.close();
@@ -35,7 +35,7 @@ async function withRoster(
 }
 
 /** The derived DMs alone — the store's own bindings (self-chats) are `connections.test`'s. */
-const dms = (log: Log) => log.aliases().filter((a) => a.principal !== a.agentId);
+const dms = async (log: Log) => (await log.aliases()).filter((a) => a.principal !== a.agentId);
 
 Deno.test("sameHandle: phones agree on digits, emails on the folded string, nothing else", () => {
   assertEquals(sameHandle("+54 9 11 555-0001", "549115550001"), true);
@@ -53,21 +53,21 @@ Deno.test("speaksThrough: a handle claims the org account, ownership names the m
 });
 
 Deno.test("principalsOf: the list when declared, the roster for an org agent, oneself otherwise", async () => {
-  await withRoster(roster, connections, (log) => {
-    assertEquals(log.principalsOf("matias"), ["matias"]);
-    assertEquals(log.principalsOf("ventas"), ["bot", "matias", "sol", "ventas"]);
-    assertEquals(log.principalsOf("bot"), []);
-    assertEquals(log.principalsOf("nobody"), []);
+  await withRoster(roster, connections, async (log) => {
+    assertEquals(await log.principalsOf("matias"), ["matias"]);
+    assertEquals(await log.principalsOf("ventas"), ["bot", "matias", "sol", "ventas"]);
+    assertEquals(await log.principalsOf("bot"), []);
+    assertEquals(await log.principalsOf("nobody"), []);
   });
   const lent = roster.map((a) => a.agentId === "matias" ? { ...a, principals: ["sol"] } : a);
-  await withRoster(lent, connections, (log) => {
-    assertEquals(log.principalsOf("matias"), ["sol"]);
+  await withRoster(lent, connections, async (log) => {
+    assertEquals(await log.principalsOf("matias"), ["sol"]);
   });
 });
 
 Deno.test("aliases: each principal's DM with the agent's number, the self-chat left to the binding", async () => {
-  await withRoster(roster, connections, (log) => {
-    assertEquals(dms(log), [
+  await withRoster(roster, connections, async (log) => {
+    assertEquals(await dms(log), [
       // ventas, the org number: one DM per principal with a phone — its own number excluded
       {
         service: "whatsapp",
@@ -91,9 +91,9 @@ Deno.test("aliases: each principal's DM with the agent's number, the self-chat l
   const lent = roster.map((a) =>
     a.agentId === "matias" ? { ...a, principals: ["matias", "sol"] } : a
   );
-  await withRoster(lent, connections, (log) => {
+  await withRoster(lent, connections, async (log) => {
     assertEquals(
-      dms(log).filter((r) => r.agentId === "matias").map((r) => r.conversation),
+      (await dms(log)).filter((r) => r.agentId === "matias").map((r) => r.conversation),
       ["549115550002"],
     );
   });
@@ -116,9 +116,9 @@ Deno.test("slack: the bot row names its agent, and the recorded DMs of principal
     },
   ];
   assertEquals(speaksThrough(agents[2], connections).map((c) => c.address), ["T1:UBOT"]);
-  await withRoster(agents, connections, (log) => {
-    assertEquals(log.principalsOf("ventas"), ["matias", "sol", "ventas"]);
-    assertEquals(dms(log).sort((a, b) => a.conversation.localeCompare(b.conversation)), [
+  await withRoster(agents, connections, async (log) => {
+    assertEquals(await log.principalsOf("ventas"), ["matias", "sol", "ventas"]);
+    assertEquals((await dms(log)).sort((a, b) => a.conversation.localeCompare(b.conversation)), [
       {
         service: "slack",
         connection: "T1:UBOT",
@@ -140,9 +140,9 @@ Deno.test("slack: the bot row names its agent, and the recorded DMs of principal
 });
 
 Deno.test("a revoked account speaks for nobody: its DMs are surfaces no longer", async () => {
-  await withRoster(roster, connections, (log) => {
-    log.deleteConnections([{ service: "whatsapp", address: "549117770000" }]);
-    assertEquals(dms(log), []);
-    assertEquals(log.principalsOf("ventas"), ["ventas"]); // no org account ⇒ itself
+  await withRoster(roster, connections, async (log) => {
+    await log.deleteConnections([{ service: "whatsapp", address: "549117770000" }]);
+    assertEquals(await dms(log), []);
+    assertEquals(await log.principalsOf("ventas"), ["ventas"]); // no org account ⇒ itself
   });
 });

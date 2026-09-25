@@ -20,8 +20,11 @@ function fakeStore(conn?: ConnectionRow) {
   const upserts: ConnectionRow[] = [];
   const store: NonNullable<WhatsAppWebhookDeps["store"]> = {
     connection: (service, address) =>
-      conn && conn.service === service && conn.address === address ? conn : null,
-    upsertConnections: (rows) => upserts.push(...rows),
+      Promise.resolve(conn && conn.service === service && conn.address === address ? conn : null),
+    upsertConnections: (rows) => {
+      upserts.push(...rows);
+      return Promise.resolve();
+    },
   };
   return { store, upserts };
 }
@@ -641,9 +644,10 @@ Deno.test("the classifier reads the roster too (§4): a declared phone is that m
   const { handler, published } = harness({
     store: {
       ...store,
-      agents: () => [
-        { agentId: "sol", mind: "mind@sol", phone: "+54 9 11 555-0002", runs: false },
-      ],
+      agents: () =>
+        Promise.resolve([
+          { agentId: "sol", mind: "mind@sol", phone: "+54 9 11 555-0002", runs: false },
+        ]),
     },
   });
   await handler(

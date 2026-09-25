@@ -58,7 +58,7 @@ async function withDispatch(
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.upsertConnections([{ service: "github", address: "github" }]); // the gate wants a grant
+  await log.upsertConnections([{ service: "github", address: "github" }]); // the gate wants a grant
   const posts: { target: GhTarget; text: string }[] = [];
   const amends: Amend[] = [];
   const stop = createGithubDispatch({

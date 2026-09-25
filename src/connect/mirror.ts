@@ -78,10 +78,10 @@ export interface MirrorDeps {
   /** The settle re-read (小-window): is the origin row still there, or absorbed? */
   read: Reader["read"];
   /** The live bindings (§4): connect flows write them, the mirror reads through. */
-  aliases: () => AliasRow[];
+  aliases: () => Promise<AliasRow[]>;
   /** The roster's word for a member (§4) — what a principal's copy is signed with, and
    *  what the replayed-input tag names. Absent ⇒ the username. */
-  nameOf?: (agentId: string) => string;
+  nameOf?: (agentId: string) => Promise<string>;
   /** The org's language (config `locale`) — the harness's own words on a surface: the tags,
    *  the reply hint, the presence line. The model's voice needs no translating: the prefix
    *  states the locale and it answers in it. Unset, or a tongue we don't speak ⇒ English. */
@@ -121,10 +121,15 @@ export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): ()
     // present: ingests refuse to mint without one) must still fan in.
     if (e.type !== "message" || (e.agent && !e.envelope.external_id) || viaOf(e)) return;
     const { service, connection_address, conversation } = e.envelope;
-    const binding = aliasOf(deps.aliases(), service, connection_address, conversation.address);
-    if (binding) {
-      enqueue(e, () => fanIn(deps, e as MessageEvent, binding, settleMs, now));
-    }
+    enqueue(e, async () => {
+      const binding = aliasOf(
+        await deps.aliases(),
+        service,
+        connection_address,
+        conversation.address,
+      );
+      if (binding) await fanIn(deps, e as MessageEvent, binding, settleMs, now);
+    });
   });
 }
 
@@ -205,7 +210,7 @@ async function fanIn(
       // the phone's
       sender: {
         address: binding.principal,
-        name: deps.nameOf?.(binding.principal) ?? binding.principal,
+        name: (await deps.nameOf?.(binding.principal)) ?? binding.principal,
       },
     },
     parts: e.parts ?? [],
@@ -284,7 +289,7 @@ async function fanOut(
   const via = viaOf(e);
   // a copy goes to every surface the principal HOLDS: a revoked binding still names its
   // history, but the gate is closed there and nobody is reading
-  const targets = deps.aliases().filter((a) =>
+  const targets = (await deps.aliases()).filter((a) =>
     a.live && a.agentId === agentId &&
     !(via && via.service === a.service && via.conversation === a.conversation)
   );
@@ -404,7 +409,7 @@ async function ccParts(
   const where = viaOf(e)?.service ?? "repl";
   const sender = e.envelope.sender;
   const who = sender?.address
-    ? deps.nameOf?.(sender.address) ?? sender.name ?? sender.address
+    ? (await deps.nameOf?.(sender.address)) ?? sender.name ?? sender.address
     : sender?.name ?? "you";
   return [
     { type: "text", kind: "text", text: `\`[${w.via(who, where)}]\` ${text}` },

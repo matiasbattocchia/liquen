@@ -89,7 +89,7 @@ async function withDispatch(
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   // the publish gate wants grants for every non-local anchor the fixtures use
-  log.upsertConnections([
+  await log.upsertConnections([
     { service: "slack", address: "T1:U7" },
     { service: "slack", address: "T1" },
     { service: "github", address: "gh-app" },

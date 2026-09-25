@@ -321,7 +321,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     }
     // the membership mirror, active leg (§4): joins/leaves move rows, nothing published
     if (e.type === "member_joined_channel" || e.type === "member_left_channel") {
-      mirrorMember(e, team, deps.store);
+      await mirrorMember(e, team, deps.store);
       return;
     }
     // a reaction is an ACTION event (§3): add/remove + the reacted message's id in
@@ -402,9 +402,13 @@ function boundUsers(auths: Authorization[] | undefined): string[] {
 /** The classifier (§3): who a wire user IS — a point lookup of the sender's grant row
  *  (`<team>:<user>`, owned) on the connections map. Any sender classifies, not just the
  *  delivery's own user. */
-function ownerOf(store: Store | undefined, team: string, user: string | undefined): string | null {
+async function ownerOf(
+  store: Store | undefined,
+  team: string,
+  user: string | undefined,
+): Promise<string | null> {
   if (!store || !user) return null;
-  return store.connection("slack", `${team}:${user}`)?.agentId ?? null;
+  return (await store.connection("slack", `${team}:${user}`))?.agentId ?? null;
 }
 
 /** The classifier's second look (§4): a sender with no grant row is still a member when
@@ -417,23 +421,28 @@ async function memberOf(
   user: string | undefined,
   via: string[],
 ): Promise<string | null> {
-  const owner = ownerOf(store, team, user);
+  const owner = await ownerOf(store, team, user);
   if (owner || !user || !store?.agents || !names) return owner;
   const email = await names.emailOf(team, user, via);
   if (!email) return null;
-  return store.agents().find((a) => sameHandle(a.email, email))?.agentId ?? null;
+  return (await store.agents()).find((a) => sameHandle(a.email, email))?.agentId ?? null;
 }
 
 /** A principal's DM with the bot is a surface of the mind behind it (§4), and Slack's id
  *  for it is opaque — so the first line a member sends the bot in an `im` RECORDS the
  *  channel on the bot's own row (`extra.dms`, member → channel), where the alias
  *  derivation reads it. Which members are principals is decided there, not here. */
-function recordDm(store: Store, anchor: string, member: string, channel: string): void {
-  const row = store.connection("slack", anchor);
+async function recordDm(
+  store: Store,
+  anchor: string,
+  member: string,
+  channel: string,
+): Promise<void> {
+  const row = await store.connection("slack", anchor);
   if (!row) return;
   const dms = (row.extra?.dms ?? {}) as Record<string, string>;
   if (dms[member] === channel) return;
-  store.upsertConnections([{
+  await store.upsertConnections([{
     service: "slack",
     address: anchor,
     extra: { dms: { ...dms, [member]: channel } },
@@ -516,12 +525,12 @@ async function mapMessage(
   // users this event is visible to — every BOUND one is a member of this conversation;
   // messages fill the map
   if (store && authorizations) {
-    const members = authorizations
-      .filter((a) => !a.is_bot)
-      .map((a) => ownerOf(store, team, a.user_id))
+    const members = (await Promise.all(
+      authorizations.filter((a) => !a.is_bot).map((a) => ownerOf(store, team, a.user_id)),
+    ))
       .filter((id) => id !== null)
       .map((id) => ({ service: "slack", connection: team, conversation, agentId: id }));
-    if (members.length) store.upsertMemberships(members);
+    if (members.length) await store.upsertMemberships(members);
   }
 
   // body: the text (when any), then each attachment the media seam could land — a file
@@ -572,7 +581,7 @@ async function mapMessage(
   const owner = await memberOf(store, names, team, m.user, via);
   // a member's DM with the bot: written down where the mind's surfaces are derived (§4)
   if (owner && store && e.channel_type === "im" && anchor !== team) {
-    recordDm(store, anchor, owner, conversation);
+    await recordDm(store, anchor, owner, conversation);
   }
   return [{
     ts: ctx.now(),
@@ -661,12 +670,12 @@ async function decodeMentions(
 
 /** Join/leave → the membership row moves when the mover is a bound user. Unbound movers
  *  aren't ours — nothing to mirror. */
-function mirrorMember(
+async function mirrorMember(
   e: MemberJoinedChannelEvent | MemberLeftChannelEvent,
   team: string,
   store: Store | undefined,
-): void {
-  const who = ownerOf(store, team, e.user);
+): Promise<void> {
+  const who = await ownerOf(store, team, e.user);
   if (!store || !who) return;
   const row = {
     service: "slack",
@@ -674,8 +683,8 @@ function mirrorMember(
     conversation: e.channel,
     agentId: who,
   };
-  if (e.type === "member_joined_channel") store.upsertMemberships([row]);
-  else store.deleteMemberships([row]); // a leave ends the lifetime — seen history stays (§6)
+  if (e.type === "member_joined_channel") await store.upsertMemberships([row]);
+  else await store.deleteMemberships([row]); // a leave ends the lifetime — seen history stays (§6)
 }
 
 /* ── signature verification (Web-standard, constant-time; replay-bounded) ── */
@@ -883,7 +892,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
     const org = await creds.get(`slack:${team}:org`);
     if (org?.value.token) return org.value.token;
     for (const u of users) {
-      const key = log.connection("slack", `${team}:${u}`)?.credentialKey;
+      const key = (await log.connection("slack", `${team}:${u}`))?.credentialKey;
       const c = key ? await creds.get(key) : null;
       if (c?.value.token) return c.value.token;
     }

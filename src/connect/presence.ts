@@ -42,7 +42,7 @@ export const RECENT_MS = 60_000;
 export interface PresenceDeps {
   /** The mirror's surfaces, live — read through, so a binding granted while the org runs
    *  is heard without a restart. Presence only asks whether any exist. */
-  aliases: () => AliasRow[];
+  aliases: () => Promise<AliasRow[]>;
   /** → the log: one `delta` event in the mind's room, which the mirror carries from there. */
   publish: (draft: Draft<DeltaEvent>) => Promise<unknown>;
   now?: () => number;
@@ -105,10 +105,15 @@ export function createPresence(deps: PresenceDeps): Presence {
       if (sessionId !== MIND) return;
       const turn = turns.get(agentId);
       if (!turn || !turn.heard || turn.told.has(kind)) return;
-      if (!deps.aliases().some((a) => a.live && a.agentId === agentId)) return;
-      turn.told.add(kind); // claim the seat BEFORE the await: the deltas do not wait
-      deps.publish(factOf(agentId, kind, new Date().toISOString()))
-        .catch((err) => deps.onError?.(err)); // a line that did not land is one nobody needed
+      // the deltas do not wait: the seat is claimed as soon as a surface is known to exist,
+      // and the line lands on its own time — one that did not is one nobody needed
+      deps.aliases()
+        .then((rows) => {
+          if (turn.told.has(kind) || !rows.some((a) => a.live && a.agentId === agentId)) return;
+          turn.told.add(kind);
+          return deps.publish(factOf(agentId, kind, new Date().toISOString()));
+        })
+        .catch((err) => deps.onError?.(err));
     },
   };
 }

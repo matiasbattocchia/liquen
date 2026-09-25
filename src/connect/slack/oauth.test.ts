@@ -49,8 +49,14 @@ async function withOAuth(
   const handler = createSlackOAuth({
     // the map's write side in miniature: the grant creates anchor + binding (§4)
     store: {
-      upsertConnections: (rows) => connections.push(...rows),
-      upsertMemberships: (rows) => memberships.push(...rows),
+      upsertConnections: (rows) => {
+        connections.push(...rows);
+        return Promise.resolve();
+      },
+      upsertMemberships: (rows) => {
+        memberships.push(...rows);
+        return Promise.resolve();
+      },
     },
     config: CONFIG,
     creds,

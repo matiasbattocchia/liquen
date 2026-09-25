@@ -277,7 +277,12 @@ Deno.test("teams webhook: the handshake echoes the token plain; a notice is acke
       publish,
       creds,
       broker: createGrantBroker({ creds }),
-      store: { upsertMemberships: (r) => memberships.push(...r) },
+      store: {
+        upsertMemberships: (r) => {
+          memberships.push(...r);
+          return Promise.resolve();
+        },
+      },
       save,
       fetchApi,
       now: () => NOW,

@@ -40,9 +40,9 @@ export interface AgentRow {
 
 export interface Registry {
   /** Mirror the table to `rows`: upsert each, delete every row not named. */
-  syncAgents(rows: AgentRow[]): void;
+  syncAgents(rows: AgentRow[]): Promise<void>;
   /** The registry as it stands (ordered by agent id). */
-  agents(): AgentRow[];
+  agents(): Promise<AgentRow[]>;
 }
 
 export const AGENTS_DDL = `CREATE TABLE IF NOT EXISTS agents (
@@ -79,7 +79,7 @@ export function createRegistry(db: DatabaseSync): Registry {
   const del = db.prepare("DELETE FROM agents WHERE agent_id = ?");
 
   return {
-    syncAgents(rows: AgentRow[]): void {
+    syncAgents(rows: AgentRow[]): Promise<void> {
       const now = new Date().toISOString();
       const keep = new Set(rows.map((r) => r.agentId));
       for (const r of rows) {
@@ -101,10 +101,11 @@ export function createRegistry(db: DatabaseSync): Registry {
       for (const row of all.all() as { agent_id: string }[]) {
         if (!keep.has(row.agent_id)) del.run(row.agent_id);
       }
+      return Promise.resolve();
     },
 
-    agents(): AgentRow[] {
-      return (all.all() as Record<string, string | number | null>[]).map((r) => ({
+    agents(): Promise<AgentRow[]> {
+      return Promise.resolve((all.all() as Record<string, string | number | null>[]).map((r) => ({
         agentId: r.agent_id as string,
         mind: r.mind as string,
         ...(r.provider ? { provider: r.provider as string } : {}),
@@ -117,7 +118,7 @@ export function createRegistry(db: DatabaseSync): Registry {
           ? { principals: JSON.parse(r.principals) as string[] }
           : {}),
         ...(r.runs === 0 ? { runs: false } : {}),
-      }));
+      })));
     },
   };
 }

@@ -54,8 +54,14 @@ async function withOAuth(
     onGrant: (g) => grants.push(g),
     // the map's write side in miniature: the grant creates anchor + binding (§4)
     store: {
-      upsertConnections: (rows) => connections.push(...rows),
-      upsertMemberships: (rows) => memberships.push(...rows),
+      upsertConnections: (rows) => {
+        connections.push(...rows);
+        return Promise.resolve();
+      },
+      upsertMemberships: (rows) => {
+        memberships.push(...rows);
+        return Promise.resolve();
+      },
     },
     // the store's `publish` in miniature: it mints the id (§3). Cast because the fake only
     // implements the single-draft overload — a connection never publishes a batch.

@@ -11,15 +11,21 @@ Deno.test("syncAgents mirrors: upserts the given rows and deletes the rest", asy
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    log.syncAgents([{ agentId: "ana", mind: "mind@ana" }, { agentId: "bo", mind: "mind@bo" }]);
-    assertEquals(log.agents(), [
+    await log.syncAgents([{ agentId: "ana", mind: "mind@ana" }, {
+      agentId: "bo",
+      mind: "mind@bo",
+    }]);
+    assertEquals(await log.agents(), [
       { agentId: "ana", mind: "mind@ana" },
       { agentId: "bo", mind: "mind@bo" },
     ]);
 
     // re-sync: ana's mind session moves, bo's folder is gone, cai appears
-    log.syncAgents([{ agentId: "ana", mind: "mind@ana2" }, { agentId: "cai", mind: "mind@cai" }]);
-    assertEquals(log.agents(), [
+    await log.syncAgents([{ agentId: "ana", mind: "mind@ana2" }, {
+      agentId: "cai",
+      mind: "mind@cai",
+    }]);
+    assertEquals(await log.agents(), [
       { agentId: "ana", mind: "mind@ana2" }, // upserted, not duplicated
       { agentId: "cai", mind: "mind@cai" },
     ]);
@@ -33,7 +39,7 @@ Deno.test("syncAgents mirrors the declared settings and handles; a sync without 
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    log.syncAgents([{
+    await log.syncAgents([{
       agentId: "ana",
       mind: "mind@ana",
       provider: "anthropic",
@@ -42,7 +48,7 @@ Deno.test("syncAgents mirrors the declared settings and handles; a sync without 
       email: "ana@org.example",
       phone: "+5491155501234",
     }]);
-    assertEquals(log.agents(), [{
+    assertEquals(await log.agents(), [{
       agentId: "ana",
       mind: "mind@ana",
       provider: "anthropic",
@@ -53,8 +59,12 @@ Deno.test("syncAgents mirrors the declared settings and handles; a sync without 
     }]);
 
     // config.jsonc shrank — the mirror follows the declaration, it never remembers
-    log.syncAgents([{ agentId: "ana", mind: "mind@ana", email: "ana@org.example" }]);
-    assertEquals(log.agents(), [{ agentId: "ana", mind: "mind@ana", email: "ana@org.example" }]);
+    await log.syncAgents([{ agentId: "ana", mind: "mind@ana", email: "ana@org.example" }]);
+    assertEquals(await log.agents(), [{
+      agentId: "ana",
+      mind: "mind@ana",
+      email: "ana@org.example",
+    }]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

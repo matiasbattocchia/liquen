@@ -37,7 +37,7 @@ export const RETRY_BACKOFF_MS = [
 
 export interface Sweeper {
   /** One pass at `now` (UTC ISO): re-offer what has waited its rung out. Returns how many. */
-  sweep(now: string): number;
+  sweep(now: string): Promise<number>;
 }
 
 /** The dispatcher's own rows (`isOutbound`, minus the state it reads off the lifecycle).
@@ -70,7 +70,7 @@ export function createSweeper(db: DatabaseSync): Sweeper {
     sweep(now) {
       const at = new Date(now).getTime();
       const cutoffs = RETRY_BACKOFF_MS.map((ms) => new Date(at - ms).toISOString());
-      return Number(requeue.run(now, ...cutoffs).changes);
+      return Promise.resolve(Number(requeue.run(now, ...cutoffs).changes));
     },
   };
 }

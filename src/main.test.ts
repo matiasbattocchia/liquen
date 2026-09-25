@@ -229,7 +229,7 @@ Deno.test("the framework way: the catalog's roster declares the org; the table m
   });
   try {
     await Deno.stat(`${dir}/agents/ana`); // config → folders: boot derived the home
-    assertEquals(main.log.agents(), [ // the registry mirrors the roster (the RLS substrate)
+    assertEquals(await main.log.agents(), [ // the registry mirrors the roster (the RLS substrate)
       { agentId: "ana", mind: "mind@ana", model: "claude-x" },
       { agentId: "bo", mind: "mind@bo", model: "claude-x" },
     ]);
@@ -258,7 +258,7 @@ Deno.test("config.jsonc declares the agent: settings override defaults, handles 
     transport,
   });
   try {
-    assertEquals(main.log.agents(), [{
+    assertEquals(await main.log.agents(), [{
       agentId: "ana",
       mind: "mind@ana",
       model: "claude-y", // config wins over the MainConfig default
@@ -337,8 +337,8 @@ Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls
       (await main.log.read({ conversation: "dm:mind@ana:mind@bo" })).length > 0
     );
     // the executor canonicalized the name and enrolled the pair — visibility is membership
-    assert(main.log.isMember("local", "agent", "dm:mind@ana:mind@bo", "ana", "mind"));
-    assert(main.log.isMember("local", "agent", "dm:mind@ana:mind@bo", "bo", "mind"));
+    assert(await main.log.isMember("local", "agent", "dm:mind@ana:mind@bo", "ana", "mind"));
+    assert(await main.log.isMember("local", "agent", "dm:mind@ana:mind@bo", "bo", "mind"));
     const [dm] = await main.log.read({ conversation: "dm:mind@ana:mind@bo" });
     assertEquals(dm.agent, { id: "ana", session_id: "mind" });
   } finally {
@@ -361,8 +361,8 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
   });
   try {
     // the world speaks first: the inbound stamps the conversation's anchor + kind
-    main.log.upsertConnections([{ service: "slack", address: "T1", agentId: "ana" }]);
-    main.log.upsertMemberships([
+    await main.log.upsertConnections([{ service: "slack", address: "T1", agentId: "ana" }]);
+    await main.log.upsertMemberships([
       { service: "slack", connection: "T1", conversation: "C1", agentId: "ana" },
     ]);
     await main.log.publish({
@@ -454,7 +454,7 @@ Deno.test("a named session wakes on its dm and answers in its own room (§4)", a
   try {
     const dm = "dm:build@a1:mind@a1";
     // what the mind's send would have written: the room, both ends enrolled (§4)
-    main.log.upsertMemberships([
+    await main.log.upsertMemberships([
       { service: "local", connection: "agent", conversation: dm, agentId: "a1", sessionId: "mind" },
       {
         service: "local",
@@ -660,7 +660,7 @@ Deno.test("a person alone (mind: false, §4): a registry row, a door, no session
     transport,
   });
   try {
-    assertEquals(main.log.agents(), [
+    assertEquals(await main.log.agents(), [
       {
         agentId: "sol",
         mind: "mind@sol",
@@ -682,10 +682,10 @@ Deno.test("a person alone (mind: false, §4): a registry row, a door, no session
     await Deno.stat(`${dir}/agents/sol/door.sock`);
     await assertRejects(() => Deno.stat(`${dir}/agents/sol/instructions`), Deno.errors.NotFound);
     // the org number, paired to nobody: ventas speaks through it and the roster steers it
-    main.log.upsertConnections([
+    await main.log.upsertConnections([
       { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" },
     ]);
-    assertEquals(main.log.principalsOf("ventas"), ["sol", "ventas"]);
+    assertEquals(await main.log.principalsOf("ventas"), ["sol", "ventas"]);
   } finally {
     await main.stop();
     await Deno.remove(root, { recursive: true });
@@ -715,7 +715,7 @@ Deno.test({
       // the number is a1's own: its self-chat is the mirror's surface (§4), so a word the
       // principal types there is both the wake and the reason to answer it out loud — the
       // mirror crosses it into the mind's room, which is where presence looks for them
-      main.log.upsertConnections([
+      await main.log.upsertConnections([
         { service: "whatsapp", address: "5491133585694", agentId: "a1" },
       ]);
       await main.log.publish({
@@ -789,7 +789,7 @@ Deno.test("an ask nobody answers lapses (§9): past gateHours the harness settle
     await log.publish([card("old", at(30)), card("fresh", at(1)), card("stands", at(30), "a2")]);
     const hours = (id: string) => id === "a1" ? 24 : null; // a2's asks stand until answered
     assertEquals(await lapseGates(log, hours), 1);
-    assertEquals(log.gates().map((c) => c.payload.ref_id), ["fresh", "stands"]);
+    assertEquals((await log.gates()).map((c) => c.payload.ref_id), ["fresh", "stands"]);
     const settled = (await log.read({ types: ["permission_response"] })).at(-1)!;
     assertEquals(settled.payload?.ref_id, "old");
     assertEquals(settled.agent, undefined); // the harness's own word (§3)
@@ -838,7 +838,7 @@ Deno.test({
       transport,
     });
     try {
-      main.log.upsertConnections([{
+      await main.log.upsertConnections([{
         service: "whatsapp",
         address: "5491133585694",
         agentId: "a1",

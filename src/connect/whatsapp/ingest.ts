@@ -240,10 +240,11 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
       (batch.messages ?? []).find((m) => m.sender_address === connection && m.sender_name)
         ?.sender_name;
     if (
-      own && own !== accountNames.get(connection) && deps.store?.connection(SERVICE, connection)
+      deps.store && own && own !== accountNames.get(connection) &&
+      await deps.store.connection(SERVICE, connection)
     ) {
       accountNames.set(connection, own);
-      deps.store.upsertConnections([{
+      await deps.store.upsertConnections([{
         service: SERVICE,
         address: connection,
         extra: { name: own },
@@ -265,11 +266,11 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
     // turn_id, never this stamp, marks the model's voice.
     if (deps.store) {
       const store = deps.store;
-      const members = store.agents?.() ?? [];
+      const members = (await store.agents?.()) ?? [];
       for (const d of drafts) {
         const s = d.envelope.sender?.address;
         if (!s || d.agent) continue;
-        const owner = store.connection(SERVICE, s)?.agentId ??
+        const owner = (await store.connection(SERVICE, s))?.agentId ??
           members.find((a) => sameHandle(a.phone, s))?.agentId;
         if (owner) d.agent = { id: owner };
       }

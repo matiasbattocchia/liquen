@@ -27,9 +27,9 @@ export interface RememberedRule {
 
 export interface Standing {
   /** Upsert one standing verdict — same agent/tool/scope replaces the action. */
-  remember(rule: RememberedRule): void;
+  remember(rule: RememberedRule): Promise<void>;
   /** The agent's remembered rules, most specific first, newest breaking ties. */
-  remembered(agentId: string): RememberedRule[];
+  remembered(agentId: string): Promise<RememberedRule[]>;
 }
 
 export const RULES_DDL = `CREATE TABLE IF NOT EXISTS rules (
@@ -56,7 +56,7 @@ export function createStanding(db: DatabaseSync): Standing {
      ORDER BY (conversation != '') DESC, (connection != '') DESC, updated_at DESC, rowid DESC`,
   );
   return {
-    remember(rule: RememberedRule): void {
+    remember(rule: RememberedRule): Promise<void> {
       put.run(
         rule.agentId,
         rule.tool,
@@ -65,9 +65,10 @@ export function createStanding(db: DatabaseSync): Standing {
         rule.action,
         new Date().toISOString(),
       );
+      return Promise.resolve();
     },
-    remembered(agentId: string): RememberedRule[] {
-      return (all.all(agentId) as {
+    remembered(agentId: string): Promise<RememberedRule[]> {
+      return Promise.resolve((all.all(agentId) as {
         tool: string;
         connection: string;
         conversation: string;
@@ -78,7 +79,7 @@ export function createStanding(db: DatabaseSync): Standing {
         action: r.action,
         ...(r.connection !== "" ? { connection: r.connection } : {}),
         ...(r.conversation !== "" ? { conversation: r.conversation } : {}),
-      }));
+      })));
     },
   };
 }

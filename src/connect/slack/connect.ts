@@ -109,7 +109,7 @@ export async function landSlackUser(grant: SlackUserGrant, deps: SlackGrantDeps)
   // ownership edge already names the principal. Unresolvable ⇒ the grant still lands,
   // just without the alias (the note below says which).
   const selfIm = await (deps.openSelfIm ?? defaultOpenSelfIm)(token, user).catch(() => undefined);
-  deps.store.upsertConnections([
+  await deps.store.upsertConnections([
     { service: "slack", address: team },
     {
       service: "slack",
@@ -121,7 +121,7 @@ export async function landSlackUser(grant: SlackUserGrant, deps: SlackGrantDeps)
   ]);
   // the grant note below is the principal's to see — on a personal-only workspace the
   // anchor row is a stub (§6), so membership is what carries it into their view
-  deps.store.upsertMemberships([
+  await deps.store.upsertMemberships([
     { service: "slack", connection: team, conversation: "connect", agentId: deps.principal },
   ]);
   await deps.creds.put({
@@ -304,7 +304,7 @@ export async function connectSlackBot(
   // a bot has no handle a human could declare, so which agent speaks through it is
   // RECORDED on its row (`extra.agent`) the way an opaque id is (§4) — still nobody's:
   // the account is the org's, every member reads it, and the roster steers the agent
-  deps.store.upsertConnections([
+  await deps.store.upsertConnections([
     { service: "slack", address: team },
     {
       service: "slack",

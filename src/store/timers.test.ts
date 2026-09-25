@@ -31,13 +31,13 @@ Deno.test("timers: a one-shot fires once and is gone", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    const t = log.arm(wake());
+    const t = await log.arm(wake());
     assert(t.id.length > 0, "the row is armed with an id — cancel's handle");
-    assertEquals(log.due("2026-09-01T16:59:00.000Z"), []); // not yet
-    assertEquals(log.due("2026-09-01T17:00:00.000Z").map((r) => r.id), [t.id]); // due AT the moment
-    log.settle(t.id, "2026-09-01T17:00:00.000Z");
-    assertEquals(log.due("2026-09-02T00:00:00.000Z"), []); // consumed
-    assertEquals(log.timers("ana", "mind"), []);
+    assertEquals(await log.due("2026-09-01T16:59:00.000Z"), []); // not yet
+    assertEquals((await log.due("2026-09-01T17:00:00.000Z")).map((r) => r.id), [t.id]); // due AT the moment
+    await log.settle(t.id, "2026-09-01T17:00:00.000Z");
+    assertEquals(await log.due("2026-09-02T00:00:00.000Z"), []); // consumed
+    assertEquals(await log.timers("ana", "mind"), []);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -48,15 +48,15 @@ Deno.test("timers: a cron advances past NOW — a week down fires once, not 168 
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    const t = log.arm(wake({ cron: "0 9 * * *", fireAt: "2026-09-01T09:00:00.000Z" }));
+    const t = await log.arm(wake({ cron: "0 9 * * *", fireAt: "2026-09-01T09:00:00.000Z" }));
     // the org was down for a week; the clock's first pass fires it ONCE
     const now = "2026-09-08T11:30:00.000Z";
-    assertEquals(log.due(now).map((r) => r.id), [t.id]);
-    log.settle(t.id, now);
-    const [after] = log.timers("ana", "mind");
+    assertEquals((await log.due(now)).map((r) => r.id), [t.id]);
+    await log.settle(t.id, now);
+    const [after] = await log.timers("ana", "mind");
     assertEquals(after.fireAt, "2026-09-09T09:00:00.000Z"); // the next 09:00 after now
     assertEquals(after.cron, "0 9 * * *"); // still armed — a cron is forever
-    assertEquals(log.due(now), []); // and not due again in the same pass
+    assertEquals(await log.due(now), []); // and not due again in the same pass
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -69,9 +69,9 @@ Deno.test("timers: a cron advances on the clock it was armed against, not UTC", 
   try {
     // "0 9" said in Madrid means 9 on Madrid's wall EVERY fire — an advance that fell back
     // to UTC would silently shift the second fire to 10:00 or 11:00 local
-    const t = log.arm(wake({ cron: "0 9 * * *", fireAt: "2026-09-08T07:00:00.000Z" }));
-    log.settle(t.id, "2026-09-08T11:30:00.000Z", "Europe/Madrid");
-    const [after] = log.timers("ana", "mind");
+    const t = await log.arm(wake({ cron: "0 9 * * *", fireAt: "2026-09-08T07:00:00.000Z" }));
+    await log.settle(t.id, "2026-09-08T11:30:00.000Z", "Europe/Madrid");
+    const [after] = await log.timers("ana", "mind");
     assertEquals(after.fireAt, "2026-09-09T07:00:00.000Z"); // 09:00 CEST, not 09:00Z
   } finally {
     await log.close();
@@ -101,17 +101,17 @@ Deno.test("timers: a due row is claimed by exactly one of two clocks", async () 
   const { a, b, down } = await twoClocks();
   try {
     const now = "2026-09-01T17:00:00.000Z";
-    const t = a.arm(wake());
+    const t = await a.arm(wake());
     // both scans see it due — the scan is a read, never a claim
-    assertEquals(a.due(now).map((r) => r.id), [t.id]);
-    assertEquals(b.due(now).map((r) => r.id), [t.id]);
-    const won = a.claim(t.id, now);
+    assertEquals((await a.due(now)).map((r) => r.id), [t.id]);
+    assertEquals((await b.due(now)).map((r) => r.id), [t.id]);
+    const won = await a.claim(t.id, now);
     assertEquals(won?.id, t.id);
     assertEquals(won?.note, "call the clinic"); // the winner gets the row to fire
-    assertEquals(b.claim(t.id, now), null); // the loser gets nothing to publish
-    assertEquals(b.due(now), []); // and a re-scan no longer lists it
-    a.settle(t.id, now);
-    assertEquals(a.timers("ana", "mind"), []); // one-shot: consumed once, by the winner
+    assertEquals(await b.claim(t.id, now), null); // the loser gets nothing to publish
+    assertEquals(await b.due(now), []); // and a re-scan no longer lists it
+    await a.settle(t.id, now);
+    assertEquals(await a.timers("ana", "mind"), []); // one-shot: consumed once, by the winner
   } finally {
     await down();
   }
@@ -121,14 +121,14 @@ Deno.test("timers: a cron claimed by one clock advances once, not once per clock
   const { a, b, down } = await twoClocks();
   try {
     const now = "2026-09-08T11:30:00.000Z";
-    const t = a.arm(wake({ cron: "0 9 * * *", fireAt: "2026-09-08T09:00:00.000Z" }));
-    assert(a.claim(t.id, now));
-    assertEquals(b.claim(t.id, now), null);
-    a.settle(t.id, now);
-    const [after] = b.timers("ana", "mind");
+    const t = await a.arm(wake({ cron: "0 9 * * *", fireAt: "2026-09-08T09:00:00.000Z" }));
+    assert(await a.claim(t.id, now));
+    assertEquals(await b.claim(t.id, now), null);
+    await a.settle(t.id, now);
+    const [after] = await b.timers("ana", "mind");
     assertEquals(after.fireAt, "2026-09-09T09:00:00.000Z"); // the next 09:00 after now
     assertEquals(after.cron, "0 9 * * *");
-    assertEquals(b.claim(t.id, now), null); // settled past now — nothing to win
+    assertEquals(await b.claim(t.id, now), null); // settled past now — nothing to win
   } finally {
     await down();
   }
@@ -138,12 +138,12 @@ Deno.test("timers: a claim never settled comes due again at the lease horizon", 
   const { a, down } = await twoClocks();
   try {
     const now = "2026-09-01T17:00:00.000Z";
-    const t = a.arm(wake());
-    assert(a.claim(t.id, now)); // the claimer dies before it publishes
+    const t = await a.arm(wake());
+    assert(await a.claim(t.id, now)); // the claimer dies before it publishes
     const at = (ms: number) => new Date(Date.parse(now) + ms).toISOString();
-    assertEquals(a.due(at(CLAIM_LEASE_MS - 1)), []); // parked for the lease
-    assertEquals(a.due(at(CLAIM_LEASE_MS)).map((r) => r.id), [t.id]); // then due again
-    assert(a.claim(t.id, at(CLAIM_LEASE_MS))); // and claimable by whoever is alive
+    assertEquals(await a.due(at(CLAIM_LEASE_MS - 1)), []); // parked for the lease
+    assertEquals((await a.due(at(CLAIM_LEASE_MS))).map((r) => r.id), [t.id]); // then due again
+    assert(await a.claim(t.id, at(CLAIM_LEASE_MS))); // and claimable by whoever is alive
   } finally {
     await down();
   }
@@ -152,11 +152,11 @@ Deno.test("timers: a claim never settled comes due again at the lease horizon", 
 Deno.test("timers: rows outlive the process — recovery is just reading them", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  const t = log.arm(wake({ refId: "use-1", cron: "*/5 * * * *" }));
+  const t = await log.arm(wake({ refId: "use-1", cron: "*/5 * * * *" }));
   await log.close();
   const reopened = await openLog(dir);
   try {
-    const [row] = reopened.timers("ana", "mind");
+    const [row] = await reopened.timers("ana", "mind");
     assertEquals(row, {
       id: t.id,
       agentId: "ana",
@@ -178,15 +178,15 @@ Deno.test("timers: a wake is the session's — disarm is theirs alone, and the l
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    const late = log.arm(wake({ fireAt: "2026-09-03T10:00:00.000Z", note: "later" }));
-    const soon = log.arm(wake({ fireAt: "2026-09-02T10:00:00.000Z", note: "sooner" }));
+    const late = await log.arm(wake({ fireAt: "2026-09-03T10:00:00.000Z", note: "later" }));
+    const soon = await log.arm(wake({ fireAt: "2026-09-02T10:00:00.000Z", note: "sooner" }));
     // bo's session shares ana's bare name — the PAIR is what keeps them apart (§4)
-    const theirs = log.arm(wake({ agentId: "bo", note: "bo's" }));
-    assertEquals(log.timers("ana", "mind").map((r) => r.note), ["sooner", "later"]);
-    assertEquals(log.disarm(theirs.id, "ana", "mind"), false); // not ana's to unset (§6)
-    assertEquals(log.timers("bo", "mind").length, 1);
-    assertEquals(log.disarm(soon.id, "ana", "mind"), true);
-    assertEquals(log.timers("ana", "mind").map((r) => r.id), [late.id]);
+    const theirs = await log.arm(wake({ agentId: "bo", note: "bo's" }));
+    assertEquals((await log.timers("ana", "mind")).map((r) => r.note), ["sooner", "later"]);
+    assertEquals(await log.disarm(theirs.id, "ana", "mind"), false); // not ana's to unset (§6)
+    assertEquals((await log.timers("bo", "mind")).length, 1);
+    assertEquals(await log.disarm(soon.id, "ana", "mind"), true);
+    assertEquals((await log.timers("ana", "mind")).map((r) => r.id), [late.id]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -253,24 +253,26 @@ Deno.test("timers: a named wake is the operator's handle — arming it again rep
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    const first = log.arm(wake({ name: "sonar-digest", cron: "*/15 8-21 * * 1-5" }));
-    const second = log.arm(
+    const first = await log.arm(wake({ name: "sonar-digest", cron: "*/15 8-21 * * 1-5" }));
+    const second = await log.arm(
       wake({ name: "sonar-digest", note: "pull the digest", fireAt: "2026-09-02T11:00:00.000Z" }),
     );
-    const held = log.timers("ana", "mind");
+    const held = await log.timers("ana", "mind");
     assertEquals(held.map((t) => t.id), [second.id]); // one row, not two
     assertEquals(held[0].name, "sonar-digest");
     assertEquals(held[0].note, "pull the digest");
     assertEquals(held[0].cron, undefined); // the new row IS the wake, not a patch of the old
     assert(first.id !== second.id);
     // the name is per (agent, session): another agent's handle of the same name is its own
-    const bo = log.arm(wake({ agentId: "bo", conversation: "mind@bo", name: "sonar-digest" }));
-    assertEquals(log.timers("bo", "mind").map((t) => t.id), [bo.id]);
-    assertEquals(log.timers("ana", "mind").map((t) => t.id), [second.id]);
+    const bo = await log.arm(
+      wake({ agentId: "bo", conversation: "mind@bo", name: "sonar-digest" }),
+    );
+    assertEquals((await log.timers("bo", "mind")).map((t) => t.id), [bo.id]);
+    assertEquals((await log.timers("ana", "mind")).map((t) => t.id), [second.id]);
     // an unnamed wake collides with nothing, however many are armed
-    log.arm(wake());
-    log.arm(wake());
-    assertEquals(log.timers("ana", "mind").length, 3);
+    await log.arm(wake());
+    await log.arm(wake());
+    assertEquals((await log.timers("ana", "mind")).length, 3);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

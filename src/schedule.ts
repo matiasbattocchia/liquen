@@ -126,7 +126,7 @@ if (import.meta.main) {
     const { dir, target, timezone, paused } = await resolveAgent(args.agent, org.dir);
     const log = await openLog(`${dir}/log`);
     try {
-      const armed = log.timers(target, MIND);
+      const armed = await log.timers(target, MIND);
       if (args.cancel !== undefined) {
         const gone = armed.find((t) =>
           t.name === args.cancel || t.id === args.cancel || shortId(t.id) === args.cancel
@@ -138,13 +138,13 @@ if (import.meta.main) {
             }`,
           );
         }
-        log.disarm(gone.id, target, MIND);
+        await log.disarm(gone.id, target, MIND);
         console.error(`✓ cancelled: ${gone.name ?? shortId(gone.id)} — ${gone.note}`);
         return;
       }
       const fireAt = fireAtOf(args, timezone);
       const held = armed.find((t) => t.name === args.name);
-      const row = log.arm({
+      const row = await log.arm({
         agentId: target,
         sessionId: MIND,
         fireAt,

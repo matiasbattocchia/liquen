@@ -98,28 +98,28 @@ export function aliasOf(
 export interface Connections {
   /** Bind/update/REVIVE connected accounts. Upsert only — a restart never erases a
    *  binding; absent `agentId`/`credentialKey` preserve, `extra` merges. */
-  upsertConnections(rows: ConnectionRow[]): void;
+  upsertConnections(rows: ConnectionRow[]): Promise<void>;
   /** Soft-delete: closes the publish gate for this connection — nothing else. The row
    *  keeps answering `connection()` (identity and visibility persist over ingested
    *  history), and a re-grant upsert revives ingestion. */
-  deleteConnections(keys: { service: string; address: string }[]): void;
+  deleteConnections(keys: { service: string; address: string }[]): Promise<void>;
   /** Point lookup for policy and the ingest classifier (live — the RLS-join emulation).
    *  Deletion does not hide the row here; only the gate checks `deleted_at`. */
-  connection(service: string, address: string): ConnectionRow | null;
+  connection(service: string, address: string): Promise<ConnectionRow | null>;
   /** The map as it stands — live rows only: a soft-deleted grant is not a surface anyone
    *  has. What the anchor reads to say which surfaces exist and which are down (§5). */
-  connections(): ConnectionRow[];
+  connections(): Promise<ConnectionRow[]>;
   /** The mind-alias bindings (§4): every owned connection's self-conversation, derived
    *  or recorded, and each principal's DM with an account the agent speaks through (the
    *  `aliases` view, `store/roster.ts`). A soft-deleted binding KEEPS answering, with
    *  `live: false` — a revocation closes the gate, never the hiding: the mind copies
    *  already there are that surface's record, and the binding still names whose they are. */
-  aliases(): AliasRow[];
+  aliases(): Promise<AliasRow[]>;
   /** Enroll agents in conversations. Upsert only — a re-enroll REVIVES a left row. */
-  upsertMemberships(rows: MembershipRow[]): void;
+  upsertMemberships(rows: MembershipRow[]): Promise<void>;
   /** Soft-delete: a channel LEAVE ends the membership's lifetime — `isMember` keeps
    *  answering for events up to the stamp, refuses everything after. */
-  deleteMemberships(rows: MembershipRow[]): void;
+  deleteMemberships(rows: MembershipRow[]): Promise<void>;
   /** The membership branch of `readable`/`writable` (§6): a live row grants the whole
    *  conversation; a stamped row grants only events with `ts` ≤ its `deleted_at`.
    *  Omitting `ts` asks about NOW — live rows only. */
@@ -130,7 +130,7 @@ export interface Connections {
     agentId: string,
     sessionId: string,
     ts?: string,
-  ): boolean;
+  ): Promise<boolean>;
   /** The same question for the AGENT: is any session of theirs a member. The agent's
    *  history (§6) reads on it — every session of one agent reads the rooms every other
    *  one is enrolled in, under the same lifetime rule. */
@@ -140,11 +140,11 @@ export interface Connections {
     conversation: string,
     agentId: string,
     ts?: string,
-  ): boolean;
+  ): Promise<boolean>;
   /** The distinct (agent, session) pairs enrolled anywhere — boot's backlog scan (§4):
    *  a session with rooms owes them a look when the org comes up, and the enrollments
    *  are the only record a named session leaves. */
-  enrolled(): { agentId: string; sessionId: string }[];
+  enrolled(): Promise<{ agentId: string; sessionId: string }[]>;
 }
 
 export const CONNECTIONS_DDL = `CREATE TABLE IF NOT EXISTS connections (
@@ -240,7 +240,7 @@ export function createConnections(db: DatabaseSync): Connections {
     r.sessionId ?? routedSession({ service: r.service, connection_address: r.connection });
 
   return {
-    upsertConnections(rows: ConnectionRow[]): void {
+    upsertConnections(rows: ConnectionRow[]): Promise<void> {
       const now = new Date().toISOString();
       for (const r of rows) {
         putC.run(
@@ -253,23 +253,27 @@ export function createConnections(db: DatabaseSync): Connections {
           now,
         );
       }
+      return Promise.resolve();
     },
 
-    deleteConnections(keys: { service: string; address: string }[]): void {
+    deleteConnections(keys: { service: string; address: string }[]): Promise<void> {
       const now = new Date().toISOString();
       for (const k of keys) delC.run(now, now, k.service, k.address);
+      return Promise.resolve();
     },
 
-    connection(service: string, address: string): ConnectionRow | null {
+    connection(service: string, address: string): Promise<ConnectionRow | null> {
       const r = getC.get(service, address) as Parameters<typeof rowOf>[0] | undefined;
-      return r ? rowOf(r) : null;
+      return Promise.resolve(r ? rowOf(r) : null);
     },
 
-    connections(): ConnectionRow[] {
-      return (listC.all() as unknown as Parameters<typeof rowOf>[0][]).map(rowOf);
+    connections(): Promise<ConnectionRow[]> {
+      return Promise.resolve(
+        (listC.all() as unknown as Parameters<typeof rowOf>[0][]).map(rowOf),
+      );
     },
 
-    aliases(): AliasRow[] {
+    aliases(): Promise<AliasRow[]> {
       const rows = getAliases.all() as unknown as {
         service: string;
         connection: string;
@@ -278,28 +282,30 @@ export function createConnections(db: DatabaseSync): Connections {
         principal: string;
         live: number;
       }[];
-      return rows.map((r) => ({
+      return Promise.resolve(rows.map((r) => ({
         service: r.service,
         connection: r.connection,
         conversation: r.conversation,
         agentId: r.agent_id,
         principal: r.principal,
         live: r.live === 1,
-      }));
+      })));
     },
 
-    upsertMemberships(rows: MembershipRow[]): void {
+    upsertMemberships(rows: MembershipRow[]): Promise<void> {
       const now = new Date().toISOString();
       for (const r of rows) {
         putM.run(r.service, r.connection, r.conversation, r.agentId, sessionOf(r), now);
       }
+      return Promise.resolve();
     },
 
-    deleteMemberships(rows: MembershipRow[]): void {
+    deleteMemberships(rows: MembershipRow[]): Promise<void> {
       const now = new Date().toISOString();
       for (const r of rows) {
         delM.run(now, r.service, r.connection, r.conversation, r.agentId, sessionOf(r));
       }
+      return Promise.resolve();
     },
 
     isMember(
@@ -309,9 +315,11 @@ export function createConnections(db: DatabaseSync): Connections {
       agentId: string,
       sessionId: string,
       ts?: string,
-    ): boolean {
-      return getM.get(service, connection, conversation, agentId, sessionId, ts ?? null) !==
-        undefined;
+    ): Promise<boolean> {
+      return Promise.resolve(
+        getM.get(service, connection, conversation, agentId, sessionId, ts ?? null) !==
+          undefined,
+      );
     },
 
     isAgentMember(
@@ -320,13 +328,17 @@ export function createConnections(db: DatabaseSync): Connections {
       conversation: string,
       agentId: string,
       ts?: string,
-    ): boolean {
-      return getA.get(service, connection, conversation, agentId, ts ?? null) !== undefined;
+    ): Promise<boolean> {
+      return Promise.resolve(
+        getA.get(service, connection, conversation, agentId, ts ?? null) !== undefined,
+      );
     },
 
-    enrolled(): { agentId: string; sessionId: string }[] {
-      return (pairs.all() as { agent_id: string; session_id: string }[])
-        .map((r) => ({ agentId: r.agent_id, sessionId: r.session_id }));
+    enrolled(): Promise<{ agentId: string; sessionId: string }[]> {
+      return Promise.resolve(
+        (pairs.all() as { agent_id: string; session_id: string }[])
+          .map((r) => ({ agentId: r.agent_id, sessionId: r.session_id })),
+      );
     },
   };
 }

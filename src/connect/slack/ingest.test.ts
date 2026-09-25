@@ -22,10 +22,16 @@ function fakeStore(conn: ConnectionRow) {
   const deletes: MembershipRow[] = [];
   const store: NonNullable<SlackWebhookDeps["store"]> = {
     connection: (service, address) =>
-      conn.service === service && conn.address === address ? conn : null,
-    upsertMemberships: (rows) => upserts.push(...rows),
-    upsertConnections: () => {},
-    deleteMemberships: (rows) => deletes.push(...rows),
+      Promise.resolve(conn.service === service && conn.address === address ? conn : null),
+    upsertMemberships: (rows) => {
+      upserts.push(...rows);
+      return Promise.resolve();
+    },
+    upsertConnections: () => Promise.resolve(),
+    deleteMemberships: (rows) => {
+      deletes.push(...rows);
+      return Promise.resolve();
+    },
   };
   return { store, upserts, deletes };
 }
@@ -388,10 +394,13 @@ Deno.test("slack: one shared-app delivery enrolls EVERY bound grant (§4 passive
   const upserts: MembershipRow[] = [];
   const store: NonNullable<SlackWebhookDeps["store"]> = {
     connection: (service, address) =>
-      rows.find((r) => r.service === service && r.address === address) ?? null,
-    upsertMemberships: (r) => upserts.push(...r),
-    upsertConnections: () => {},
-    deleteMemberships: () => {},
+      Promise.resolve(rows.find((r) => r.service === service && r.address === address) ?? null),
+    upsertMemberships: (r) => {
+      upserts.push(...r);
+      return Promise.resolve();
+    },
+    upsertConnections: () => Promise.resolve(),
+    deleteMemberships: () => Promise.resolve(),
   };
   const { handler } = harness(SECRET, store);
   // ONE copy (one app, two grants): both principals are authorized, U2 is nobody's
@@ -973,7 +982,8 @@ Deno.test("the classifier reads the roster by email (§4): a profile email that 
     SECRET,
     {
       ...store,
-      agents: () => [{ agentId: "sol", mind: "mind@sol", email: "sol@acme.co", runs: false }],
+      agents: () =>
+        Promise.resolve([{ agentId: "sol", mind: "mind@sol", email: "sol@acme.co", runs: false }]),
     },
     undefined,
     names,
@@ -993,11 +1003,15 @@ Deno.test("a member's DM with the bot is recorded on the bot's row (§4): extra.
   };
   const written: ConnectionRow[] = [];
   const store: NonNullable<SlackWebhookDeps["store"]> = {
-    connection: (service, address) => service === "slack" && address === bot.address ? bot : null,
-    upsertMemberships: () => {},
-    upsertConnections: (rows) => written.push(...rows),
-    deleteMemberships: () => {},
-    agents: () => [{ agentId: "sol", mind: "mind@sol", email: "sol@acme.co" }],
+    connection: (service, address) =>
+      Promise.resolve(service === "slack" && address === bot.address ? bot : null),
+    upsertMemberships: () => Promise.resolve(),
+    upsertConnections: (rows) => {
+      written.push(...rows);
+      return Promise.resolve();
+    },
+    deleteMemberships: () => Promise.resolve(),
+    agents: () => Promise.resolve([{ agentId: "sol", mind: "mind@sol", email: "sol@acme.co" }]),
   };
   const { handler } = harness(SECRET, store, undefined, names);
   const im = (channel: string, text: string) =>

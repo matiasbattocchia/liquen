@@ -35,10 +35,10 @@ export interface Gates {
   /** Open asks, oldest first — every one when unscoped (the lapse sweep's scan), a
    *  session's own when given the pair (§4): what its anchor lists, what its `cancel` and
    *  its principal's verdict land on. */
-  gates(scope?: { agentId: string; sessionId: string }): PermissionRequestEvent[];
+  gates(scope?: { agentId: string; sessionId: string }): Promise<PermissionRequestEvent[]>;
   /** A session's rulings whose outcome is still owed (§9): the errand `act` runs on the
    *  model's behalf. One per use, the earliest ruling when several landed. */
-  owed(agentId: string, sessionId: string): Owed[];
+  owed(agentId: string, sessionId: string): Promise<Owed[]>;
 }
 
 /** The ref join: request, response and result all name their use in `payload.ref_id`. */
@@ -83,7 +83,7 @@ export function createGates(db: DatabaseSync, eventOf: (row: unknown) => Event):
   return {
     gates(scope) {
       const rows = scope ? mine.all(scope.agentId, scope.sessionId) : all.all();
-      return rows.map((r) => eventOf(r) as PermissionRequestEvent);
+      return Promise.resolve(rows.map((r) => eventOf(r) as PermissionRequestEvent));
     },
     owed(agentId, sessionId) {
       const out: Owed[] = [];
@@ -101,7 +101,7 @@ export function createGates(db: DatabaseSync, eventOf: (row: unknown) => Event):
         const parts = JSON.parse(ruling) as PermissionResponseEvent["parts"];
         out.push({ use, verdict: parts[0].data });
       }
-      return out;
+      return Promise.resolve(out);
     },
   };
 }

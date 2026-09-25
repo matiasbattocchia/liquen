@@ -242,14 +242,14 @@ export type Log =
   & Sweeper
   & {
     /** Record one model call's spend. Fire-and-forget telemetry — never read on the hot path. */
-    meter(row: UsageRow): void;
+    meter(row: UsageRow): Promise<void>;
     /** Delivery bookkeeping on an already-published event: backfill `external_id`, merge
      *  `status` stages. An UPDATE — no new row: the append stream never sees it, only a
      *  subscriber that asked for `updates` does (§3, §4). */
     setDelivery(id: EventId, patch: DeliveryPatch): Promise<void>;
     /** Who steers an agent (§4): the entry's list, else the roster when its account is
      *  the org's, else itself. Live — read off the registry and the connections map. */
-    principalsOf(agentId: string): string[];
+    principalsOf(agentId: string): Promise<string[]>;
     close(): Promise<void>;
   };
 
@@ -618,7 +618,7 @@ export async function openLog(
   );
 
   return {
-    meter(row: UsageRow): void {
+    meter(row: UsageRow): Promise<void> {
       spend.run(
         row.created_at,
         row.agent_id ?? null,
@@ -630,6 +630,7 @@ export async function openLog(
         row.cache_read_tokens ?? null,
         row.cache_write_tokens ?? null,
       );
+      return Promise.resolve();
     },
 
     lock: locker.lock, // the turn lease lives HERE — same DB, so one transaction holds both
@@ -643,7 +644,7 @@ export async function openLog(
     // the mind's surfaces (§4): the store's own bindings (self-talk, recorded self-DMs)
     // plus the DMs each principal holds with the agent's account — derived, not stored
     principalsOf: (agentId) =>
-      (steers.all(agentId) as { principal: string }[]).map((r) => r.principal),
+      Promise.resolve((steers.all(agentId) as { principal: string }[]).map((r) => r.principal)),
 
     async publish(one: Draft | Draft[], opts?: PublishOptions): Promise<Event & Event[]> {
       return await (commit(one, undefined, opts) as Promise<Event & Event[]>);

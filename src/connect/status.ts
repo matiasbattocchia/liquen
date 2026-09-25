@@ -23,7 +23,7 @@ if (import.meta.main) {
     const rows = (sql: string) => db.prepare(sql).all() as Record<string, unknown>[];
 
     console.log("agents (the registry — folders + config.jsonc declare, table mirrors):");
-    for (const a of log.agents()) {
+    for (const a of await log.agents()) {
       const opts = (["provider", "model", "effort", "email", "phone"] as const)
         .filter((k) => a[k])
         .map((k) => `${k}=${a[k]}`)

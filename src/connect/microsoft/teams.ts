@@ -565,7 +565,7 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
 
     // the membership mirror (§4): the member whose subscription delivered a chat is in it
     if (deps.store && grant.agentId && at.place.kind === "chat") {
-      deps.store.upsertMemberships([
+      await deps.store.upsertMemberships([
         { service: SERVICE, connection: upn, conversation: address, agentId: grant.agentId },
       ]);
     }

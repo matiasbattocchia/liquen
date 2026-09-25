@@ -126,14 +126,14 @@ export async function connectWhatsApp(
   // OWNED by the principal who paired their own phone, or the org's (§4: no owner, and a
   // credential key naming the bridge session, which is the credential the org holds for
   // it) — and, for a member's, the membership that carries the note into their view
-  deps.store.upsertConnections([{
+  await deps.store.upsertConnections([{
     service: SERVICE,
     address,
     ...(deps.principal ? { agentId: deps.principal } : { credentialKey: `${SERVICE}:${address}` }),
     extra: { state: "connected", connected_at: now(), organization_id: deps.organizationId },
   }]);
   if (deps.principal) {
-    deps.store.upsertMemberships([
+    await deps.store.upsertMemberships([
       { service: SERVICE, connection: address, conversation: "connect", agentId: deps.principal },
     ]);
   }

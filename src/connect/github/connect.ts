@@ -208,7 +208,9 @@ export async function connectGithubBot(
   // ONE row: the service anchor, org-credentialed — the app's installation IS the org's
   // identity on GitHub (§6); the mint coordinates are vault sidecar, the token itself is
   // minted hourly by the broker and only ever cached
-  deps.store.upsertConnections([{ service: "github", address: "github", credentialKey: ORG_KEY }]);
+  await deps.store.upsertConnections([
+    { service: "github", address: "github", credentialKey: ORG_KEY },
+  ]);
   await deps.creds.put({
     key: ORG_KEY,
     value: {},
@@ -374,7 +376,7 @@ export async function connectGithubUser(
   // org-credentialed is what the shared inbox IS, and it is the row the installation route
   // writes too, so neither dispatch nor the proxy can tell the two apart
   const credentialKey = deps.principal ? `github:${deps.principal}` : ORG_KEY;
-  deps.store.upsertConnections(
+  await deps.store.upsertConnections(
     deps.principal
       ? [
         { service: "github", address: "github" },
@@ -383,7 +385,7 @@ export async function connectGithubUser(
       : [{ service: "github", address: "github", credentialKey }],
   );
   if (deps.principal) {
-    deps.store.upsertMemberships([
+    await deps.store.upsertMemberships([
       {
         service: "github",
         connection: "github",

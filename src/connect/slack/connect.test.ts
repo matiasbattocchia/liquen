@@ -52,8 +52,14 @@ function harness() {
         },
       },
       store: {
-        upsertConnections: (rows: ConnectionRow[]) => connections.push(...rows),
-        upsertMemberships: (rows: MembershipRow[]) => memberships.push(...rows),
+        upsertConnections: (rows: ConnectionRow[]) => {
+          connections.push(...rows);
+          return Promise.resolve();
+        },
+        upsertMemberships: (rows: MembershipRow[]) => {
+          memberships.push(...rows);
+          return Promise.resolve();
+        },
       },
       publish: ((e: Draft) => {
         const stored = { ...e, id: e.id ?? newId() } as Event;

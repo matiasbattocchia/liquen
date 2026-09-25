@@ -84,19 +84,20 @@ Deno.test("gates: open is the absence of a ruling — the store and the derivati
     const u1 = await log.publish(use());
     const u2 = await log.publish(use());
     await log.publish([ask(u1!.id), result(u1!.id), ask(u2!.id), result(u2!.id)]);
-    const ids = () => log.gates({ agentId: "ana", sessionId: "mind" }).map((c) => c.payload.ref_id);
-    assertEquals(ids(), [u1!.id, u2!.id]);
-    assertEquals(log.gates().map((c) => c.payload.ref_id), [u1!.id, u2!.id]); // org-wide scan
+    const ids = async () =>
+      (await log.gates({ agentId: "ana", sessionId: "mind" })).map((c) => c.payload.ref_id);
+    assertEquals(await ids(), [u1!.id, u2!.id]);
+    assertEquals((await log.gates()).map((c) => c.payload.ref_id), [u1!.id, u2!.id]); // org-wide scan
     await log.publish(rule(u1!.id));
-    assertEquals(ids(), [u2!.id]);
+    assertEquals(await ids(), [u2!.id]);
     // the derivation over the whole log says the same
-    assertEquals(openCards(await log.read()).map((c) => c.payload.ref_id), ids());
+    assertEquals(openCards(await log.read()).map((c) => c.payload.ref_id), await ids());
     // another session's card is its own
     const u3 = await log.publish(use({ id: "ana", session_id: "build" }));
     await log.publish(ask(u3!.id, { id: "ana", session_id: "build" }));
-    assertEquals(ids(), [u2!.id]);
+    assertEquals(await ids(), [u2!.id]);
     assertEquals(
-      log.gates({ agentId: "ana", sessionId: "build" }).map((c) => c.payload.ref_id),
+      (await log.gates({ agentId: "ana", sessionId: "build" })).map((c) => c.payload.ref_id),
       [u3!.id],
     );
   } finally {
@@ -114,9 +115,12 @@ Deno.test("gates: a card deeper than the window is still open — that is why th
     for (let i = 0; i < 30; i++) await log.publish(noise(i));
     const window = await log.read({ limit: 10 });
     assertEquals(openCards(window), []); // the window has never heard of it
-    assertEquals(log.gates({ agentId: "ana", sessionId: "mind" }).map((c) => c.payload.ref_id), [
-      u1!.id,
-    ]);
+    assertEquals(
+      (await log.gates({ agentId: "ana", sessionId: "mind" })).map((c) => c.payload.ref_id),
+      [
+        u1!.id,
+      ],
+    );
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -130,23 +134,23 @@ Deno.test("owed: a ruling by someone else, on a use answered and not yet reporte
     const u1 = await log.publish(use());
     await log.publish([ask(u1!.id), result(u1!.id)]);
     const owed = () => log.owed("ana", "mind");
-    assertEquals(owed(), []); // asked, not ruled
+    assertEquals(await owed(), []); // asked, not ruled
     await log.publish(rule(u1!.id));
-    assertEquals(owed().map((o) => o.use.id), [u1!.id]);
-    assertEquals(owed()[0].verdict, { behavior: "allow", scope: "once" });
+    assertEquals((await owed()).map((o) => o.use.id), [u1!.id]);
+    assertEquals((await owed())[0].verdict, { behavior: "allow", scope: "once" });
     // the derivation over the whole log says the same
     assertEquals(owedOf(await log.read(), SESSION).map((o) => o.use.id), [u1!.id]);
     // a second ruling on the same use changes nothing: one errand per use, the first word
     await log.publish(rule(u1!.id));
-    assertEquals(owed().length, 1);
+    assertEquals((await owed()).length, 1);
     // the deferred report closes it
     await log.publish(result(u1!.id, true));
-    assertEquals(owed(), []);
+    assertEquals(await owed(), []);
     // the model's own withdrawal (turn-marked) is never the errand
     const u2 = await log.publish(use());
     await log.publish([ask(u2!.id), result(u2!.id), rule(u2!.id, "t1")]);
-    assertEquals(owed(), []);
-    assertEquals(log.gates({ agentId: "ana", sessionId: "mind" }), []); // and it closed the card
+    assertEquals(await owed(), []);
+    assertEquals(await log.gates({ agentId: "ana", sessionId: "mind" }), []); // and it closed the card
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

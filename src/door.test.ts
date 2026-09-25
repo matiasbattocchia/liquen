@@ -42,7 +42,7 @@ async function up(policy?: Parameters<typeof scoped>[1]) {
   const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
   const log = await openLog(`${dir}/log`);
   const slog = policy ? scoped(log, policy) : log;
-  const doors = await installDoors(dir, [{ ...AGENT, port: () => slog }]);
+  const doors = await installDoors(dir, [{ ...AGENT, port: () => Promise.resolve(slog) }]);
   // the client exactly as a script builds it: this module, bound to the folder it sits in
   const mu: Mu = bind(`${dir}/agents/ana`);
   const down = async () => {
@@ -338,7 +338,7 @@ Deno.test({
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
-    const doors = await installDoors(dir, [{ ...AGENT, port: () => log }]);
+    const doors = await installDoors(dir, [{ ...AGENT, port: () => Promise.resolve(log) }]);
     const wait = async (cond: () => boolean, ms = 10_000) => {
       const t0 = Date.now();
       while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 25));
@@ -381,7 +381,7 @@ Deno.test({
       ...AGENT,
       port: (s: string) => {
         asked.push(s);
-        return log;
+        return Promise.resolve(log);
       },
     }]);
     try {
@@ -422,7 +422,7 @@ Deno.test({
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
-    const doors = await installDoors(dir, [{ ...AGENT, port: () => log }]);
+    const doors = await installDoors(dir, [{ ...AGENT, port: () => Promise.resolve(log) }]);
     try {
       assertEquals(doors.attachments(), 0);
       const tailing = await rawClient(dir);
@@ -513,7 +513,7 @@ Deno.test({
     const seen: [string, string | undefined][] = [];
     const doors = await installDoors(dir, [{
       ...AGENT,
-      port: () => log,
+      port: () => Promise.resolve(log),
       stand: (session, p) => {
         if (p === "/nowhere") {
           return Promise.reject(new Error(`${p}: the agent cannot stand there`));
@@ -569,7 +569,7 @@ Deno.test({
     const seen: [string, Tune | undefined][] = [];
     const doors = await installDoors(dir, [{
       ...AGENT,
-      port: () => log,
+      port: () => Promise.resolve(log),
       tune: (session, t) => {
         if (t?.provider === "acme") throw new Error(`unknown provider "${t.provider}"`);
         seen.push([session, t]);
@@ -649,7 +649,11 @@ Deno.test({
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
-    const doors = await installDoors(dir, [{ ...AGENT, paused: true, port: () => log }]);
+    const doors = await installDoors(dir, [{
+      ...AGENT,
+      paused: true,
+      port: () => Promise.resolve(log),
+    }]);
     try {
       const c = await rawClient(dir);
       // an order: refused with the sentence, and nothing lands

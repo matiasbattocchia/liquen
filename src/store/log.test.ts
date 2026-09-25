@@ -479,16 +479,16 @@ Deno.test("the publish gate: only a registered, live connection may log (§4); l
     await assertRejects(() => log.publish(slack), Error, "connection not registered");
     assertEquals((await log.read()).length, 0);
 
-    log.upsertConnections([{ service: "slack", address: "T1:U7", agentId: "matias" }]);
+    await log.upsertConnections([{ service: "slack", address: "T1:U7", agentId: "matias" }]);
     await log.publish(slack); // the grant opens the log
 
     // a soft-deleted grant closes it again — and a re-grant reopens
-    log.deleteConnections([{ service: "slack", address: "T1:U7" }]);
+    await log.deleteConnections([{ service: "slack", address: "T1:U7" }]);
     const more = msg("02", "C1", "sigo acá");
     more.envelope.service = "slack";
     more.envelope.connection_address = "T1:U7";
     await assertRejects(() => log.publish(more), Error, "connection not registered");
-    log.upsertConnections([{ service: "slack", address: "T1:U7" }]);
+    await log.upsertConnections([{ service: "slack", address: "T1:U7" }]);
     await log.publish(more);
 
     await log.publish(msg("03", "mind@m", "local needs no grant")); // the exempt service
@@ -732,7 +732,7 @@ Deno.test("read: externalId is an exact match on the wire id", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    log.upsertConnections([{ service: "slack", address: "T1" }]);
+    await log.upsertConnections([{ service: "slack", address: "T1" }]);
     const draft = (ext: string) => ({
       ts: new Date().toISOString(),
       type: "message" as const,
@@ -819,7 +819,7 @@ Deno.test("the filter sees the row as it stands after the move", async () => {
 
 Deno.test("an agent's message bound for a wire is born queued; the mind's local traffic and the world's rows are not", async () => {
   await withLog(async (log) => {
-    log.upsertConnections([{ service: "slack", address: "T1", agentId: "ana" }]);
+    await log.upsertConnections([{ service: "slack", address: "T1", agentId: "ana" }]);
     const wire = (over: Partial<MessageEvent>): Draft<MessageEvent> => ({
       ts: "2026-07-16T00:00:00Z",
       type: "message",

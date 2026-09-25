@@ -44,8 +44,14 @@ function harness() {
     memberships,
     notes,
     store: {
-      upsertConnections: (rows: unknown[]) => connections.push(...rows),
-      upsertMemberships: (rows: unknown[]) => memberships.push(...rows),
+      upsertConnections: (rows: unknown[]) => {
+        connections.push(...rows);
+        return Promise.resolve();
+      },
+      upsertMemberships: (rows: unknown[]) => {
+        memberships.push(...rows);
+        return Promise.resolve();
+      },
     },
     publish: ((e: Draft<Event>) => {
       notes.push(e as Draft<MessageEvent>);

@@ -12,17 +12,17 @@ Deno.test("connections(): the live map, extra and all — a soft-deleted grant i
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    log.upsertConnections([
+    await log.upsertConnections([
       { service: "whatsapp", address: "549", agentId: "ana", extra: { state: "connected" } },
       { service: "slack", address: "T1", credentialKey: "slack:T1:org" },
       { service: "google", address: "gone@x.io", agentId: "ana" },
     ]);
-    log.deleteConnections([{ service: "google", address: "gone@x.io" }]);
-    assertEquals(log.connections(), [
+    await log.deleteConnections([{ service: "google", address: "gone@x.io" }]);
+    assertEquals(await log.connections(), [
       { service: "slack", address: "T1", credentialKey: "slack:T1:org" },
       { service: "whatsapp", address: "549", agentId: "ana", extra: { state: "connected" } },
     ]);
-    assertEquals(log.connection("google", "gone@x.io")?.agentId, "ana"); // identity persists
+    assertEquals((await log.connection("google", "gone@x.io"))?.agentId, "ana"); // identity persists
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -35,20 +35,20 @@ Deno.test("memberships: a lifetime — leave keeps seen history, refuses the fut
   const row = { service: "slack", connection: "T1", conversation: "slack:T1:C1", agentId: "ana" };
   const member = (ts?: string) => log.isMember("slack", "T1", "slack:T1:C1", "ana", "mind", ts);
   try {
-    assertEquals(member(), false);
-    log.upsertMemberships([row, row]); // re-enroll: no duplicate, no error
-    assertEquals(member(), true);
+    assertEquals(await member(), false);
+    await log.upsertMemberships([row, row]); // re-enroll: no duplicate, no error
+    assertEquals(await member(), true);
 
-    log.deleteMemberships([row]);
-    assertEquals(member(), false); // no ts asks about NOW — the lifetime is over
-    assertEquals(member("2020-01-01T00:00:00Z"), true); // what ana has seen stays hers
-    assertEquals(member("2100-01-01T00:00:00Z"), false); // the conversation's future is not
-    log.deleteMemberships([row]); // stamping again is harmless
-    assertEquals(member(), false);
+    await log.deleteMemberships([row]);
+    assertEquals(await member(), false); // no ts asks about NOW — the lifetime is over
+    assertEquals(await member("2020-01-01T00:00:00Z"), true); // what ana has seen stays hers
+    assertEquals(await member("2100-01-01T00:00:00Z"), false); // the conversation's future is not
+    await log.deleteMemberships([row]); // stamping again is harmless
+    assertEquals(await member(), false);
 
-    log.upsertMemberships([row]); // rejoin revives — the conversation whole again
-    assertEquals(member(), true);
-    assertEquals(member("2100-01-01T00:00:00Z"), true);
+    await log.upsertMemberships([row]); // rejoin revives — the conversation whole again
+    assertEquals(await member(), true);
+    assertEquals(await member("2100-01-01T00:00:00Z"), true);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -59,14 +59,14 @@ Deno.test("aliases: owned rows with a self_conversation, matched on the workspac
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    log.upsertConnections([
+    await log.upsertConnections([
       { service: "slack", address: "T1" }, // no owner, no binding — not an alias
       { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
       { service: "whatsapp", address: "549", agentId: "ana" }, // DERIVED: self-chat == own number
       { service: "whatsapp", address: "550" }, // ownerless (org number) — never a mind (§4)
       { service: "email", address: "ana@org", agentId: "ana" }, // owned, no binding
     ]);
-    assertEquals(log.aliases(), [
+    assertEquals(await log.aliases(), [
       {
         service: "slack",
         connection: "T1:U1",
@@ -85,7 +85,7 @@ Deno.test("aliases: owned rows with a self_conversation, matched on the workspac
       },
     ]);
 
-    const rows = log.aliases();
+    const rows = await log.aliases();
     // events anchor to a SIBLING of the grant (the workspace, the bot) — the root matches
     assertEquals(aliasOf(rows, "slack", "T1", "D1")?.agentId, "ana");
     assertEquals(aliasOf(rows, "slack", "T1:UBOT", "D1")?.agentId, "ana");
@@ -97,12 +97,12 @@ Deno.test("aliases: owned rows with a self_conversation, matched on the workspac
 
     // a revocation closes the gate, never the hiding: the binding keeps answering — but
     // the surface is no longer one somebody holds
-    log.deleteConnections([{ service: "slack", address: "T1:U1" }]);
-    assertEquals(aliasOf(log.aliases(), "slack", "T1", "D1")?.agentId, "ana");
-    assertEquals(log.aliases().map((a) => a.live), [false, true]);
+    await log.deleteConnections([{ service: "slack", address: "T1:U1" }]);
+    assertEquals(aliasOf(await log.aliases(), "slack", "T1", "D1")?.agentId, "ana");
+    assertEquals((await log.aliases()).map((a) => a.live), [false, true]);
     // a re-grant revives it
-    log.upsertConnections([{ service: "slack", address: "T1:U1", agentId: "ana" }]);
-    assertEquals(log.aliases().map((a) => a.live), [true, true]);
+    await log.upsertConnections([{ service: "slack", address: "T1:U1", agentId: "ana" }]);
+    assertEquals((await log.aliases()).map((a) => a.live), [true, true]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -113,17 +113,17 @@ Deno.test("aliases: a principal's DM with the org number is a surface of the org
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    log.syncAgents([
+    await log.syncAgents([
       { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "549115550001" },
       { agentId: "ventas", mind: "mind@ventas", name: "Ventas", phone: "549117770000" },
     ]);
-    log.upsertConnections([
+    await log.upsertConnections([
       { service: "whatsapp", address: "549115550001", agentId: "matias" },
       { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" },
     ]);
-    assertEquals(log.principalsOf("ventas"), ["matias", "ventas"]);
-    assertEquals(log.principalsOf("matias"), ["matias"]);
-    assertEquals(log.aliases(), [
+    assertEquals(await log.principalsOf("ventas"), ["matias", "ventas"]);
+    assertEquals(await log.principalsOf("matias"), ["matias"]);
+    assertEquals(await log.aliases(), [
       // the store's own: the member's self-chat
       {
         service: "whatsapp",

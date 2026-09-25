@@ -17,7 +17,7 @@ async function withTranscriber(
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
-  log.upsertConnections([{ service: "whatsapp", address: "549" }]);
+  await log.upsertConnections([{ service: "whatsapp", address: "549" }]);
   const media = `${dir}/note.ogg`;
   await Deno.writeTextFile(media, "not really ogg bytes");
   const errors: unknown[] = [];

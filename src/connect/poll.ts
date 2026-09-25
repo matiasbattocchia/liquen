@@ -120,10 +120,10 @@ export function createPoller(deps: PollerDeps): { tick(): Promise<void> } {
   const known = new Map<string, string>();
   // consecutive sweeps a grant has missed — reset by the first one that reads
   const missed = new Map<string, number>();
-  const mark = (key: string, state: string, error?: string) => {
+  const mark = async (key: string, state: string, error?: string) => {
     if (!deps.store || known.get(key) === state) return;
     known.set(key, state);
-    deps.store.upsertConnections([{
+    await deps.store.upsertConnections([{
       service: deps.service,
       address: key.slice(deps.grantPrefix.length),
       extra: { state, [`${state}_at`]: now(), ...(error !== undefined ? { error } : {}) },
@@ -146,11 +146,11 @@ export function createPoller(deps: PollerDeps): { tick(): Promise<void> } {
       }
       if (failure === undefined) {
         missed.delete(grant.key);
-        mark(grant.key, "connected");
+        await mark(grant.key, "connected");
       } else {
         const n = (missed.get(grant.key) ?? 0) + 1;
         missed.set(grant.key, n);
-        if (n >= FAILING_AFTER_SWEEPS) mark(grant.key, "failing", failure);
+        if (n >= FAILING_AFTER_SWEEPS) await mark(grant.key, "failing", failure);
       }
     }
   };

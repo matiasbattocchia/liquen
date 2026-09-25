@@ -60,7 +60,7 @@ Deno.test("read: the policy applies BEFORE the limit — the window fills with v
 
 Deno.test("read: a law fills the window in the engine — the N most recent VISIBLE rows, no JS walk", async () => {
   await withLog(async (log) => {
-    log.upsertMemberships([
+    await log.upsertMemberships([
       { service: "local", connection: "org", conversation: "a", agentId: "ana", sessionId: "mind" },
     ]);
     await log.publish([
@@ -147,10 +147,10 @@ const writes = (log: Log, p: Policy, e: Event) => log.admits(p.check ?? p.using!
 
 Deno.test("policyFor: three branches — membership · shared (ownerless) · owned (private)", async () => {
   await withLog(async (log) => {
-    log.upsertMemberships([
+    await log.upsertMemberships([
       { service: "local", connection: "agent", conversation: "mind@ana", agentId: "ana" },
     ]);
-    log.upsertConnections([
+    await log.upsertConnections([
       // ownerless + org-credentialed ⇒ the org's shared inbox (§6)
       { service: "whatsapp", address: "+549", credentialKey: "whatsapp:+549:org" },
       { service: "email", address: "ana@org", agentId: "ana" }, // owned ⇒ private
@@ -173,7 +173,7 @@ Deno.test("policyFor: three branches — membership · shared (ownerless) · own
     assert(!(await sees(log, bo, at("email", "ana@org", "thread-7"))));
     // no row at all (the local service, an unregistered pipe): membership is the only door
     assert(!(await sees(log, ana, at("slack", "T05", "C123"))));
-    log.upsertMemberships([
+    await log.upsertMemberships([
       { service: "slack", connection: "T05", conversation: "C123", agentId: "ana" },
     ]);
     assert(await sees(log, ana, at("slack", "T05", "C123")));
@@ -185,10 +185,10 @@ Deno.test("policyFor: three branches — membership · shared (ownerless) · own
 
 Deno.test("policyFor: soft-delete never touches visibility — revocation closes the gate only", async () => {
   await withLog(async (log) => {
-    log.upsertConnections([{ service: "email", address: "ana@org", agentId: "ana" }]);
+    await log.upsertConnections([{ service: "email", address: "ana@org", agentId: "ana" }]);
     const ana = policyFor({ agentId: "ana", id: "mind" });
     assert(await sees(log, ana, at("email", "ana@org", "thread-7")));
-    log.deleteConnections([{ service: "email", address: "ana@org" }]);
+    await log.deleteConnections([{ service: "email", address: "ana@org" }]);
     // the history the grant ingested stays in ana's view — a running session is unaffected
     assert(await sees(log, ana, at("email", "ana@org", "thread-7")));
     assert(
@@ -204,17 +204,17 @@ Deno.test("policyFor: soft-delete never touches visibility — revocation closes
 Deno.test("policyFor: a membership is a lifetime — a leave keeps what the agent has seen", async () => {
   await withLog(async (log) => {
     const row = { service: "slack", connection: "T1", conversation: "C1", agentId: "ana" };
-    log.upsertMemberships([row]);
+    await log.upsertMemberships([row]);
     const ana = policyFor({ agentId: "ana", id: "mind" });
     assert(await sees(log, ana, at("slack", "T1", "C1", "2026-08-11T10:00:00Z")));
 
-    log.deleteMemberships([row]);
+    await log.deleteMemberships([row]);
     // seen history stays in ana's view; the conversation's future does not — either side
     assert(await sees(log, ana, at("slack", "T1", "C1", "2020-01-01T00:00:00Z")));
     assert(!(await sees(log, ana, at("slack", "T1", "C1", "2100-01-01T00:00:00Z"))));
     assert(!(await writes(log, ana, at("slack", "T1", "C1", "2100-01-01T00:00:00Z"))));
 
-    log.upsertMemberships([row]); // rejoin revives: the conversation whole again
+    await log.upsertMemberships([row]); // rejoin revives: the conversation whole again
     assert(await sees(log, ana, at("slack", "T1", "C1", "2100-01-01T00:00:00Z")));
   });
 });
@@ -223,7 +223,7 @@ Deno.test("policyFor is LIVE: a mid-run bind is visible to the same closure (no 
   await withLog(async (log) => {
     const bo = policyFor({ agentId: "bo", id: "mind" }); // built BEFORE the connection exists
     assert(!(await sees(log, bo, at("whatsapp", "+549", "wa:c"))));
-    log.upsertConnections([
+    await log.upsertConnections([
       { service: "whatsapp", address: "+549", credentialKey: "whatsapp:+549:org" },
     ]);
     assert(await sees(log, bo, at("whatsapp", "+549", "wa:c"))); // read-through, like the RLS join
@@ -233,7 +233,7 @@ Deno.test("policyFor is LIVE: a mid-run bind is visible to the same closure (no 
 
 Deno.test("policyFor: the member is the (agent, session) pair — a sibling's room is not yours (§4)", async () => {
   await withLog(async (log) => {
-    log.upsertMemberships([
+    await log.upsertMemberships([
       {
         service: "local",
         connection: "agent",
@@ -259,7 +259,7 @@ Deno.test("policyFor: the member is the (agent, session) pair — a sibling's ro
     assert(!(await sees(log, build, at("local", "agent", "mind@ana"))));
     assert(!(await writes(log, build, at("local", "agent", "mind@ana"))));
     // …and a DM room both are in is how they reach each other, like two agents
-    log.upsertMemberships([
+    await log.upsertMemberships([
       {
         service: "local",
         connection: "agent",
@@ -282,7 +282,7 @@ Deno.test("policyFor: the member is the (agent, session) pair — a sibling's ro
 
 Deno.test("policyFor: a connection grant opens the ROUTED session only — today the mind (§4)", async () => {
   await withLog(async (log) => {
-    log.upsertConnections([
+    await log.upsertConnections([
       { service: "whatsapp", address: "+549", credentialKey: "whatsapp:+549:org" }, // the org's
       { service: "email", address: "ana@org", agentId: "ana" }, // ana's own
     ]);
@@ -295,7 +295,7 @@ Deno.test("policyFor: a connection grant opens the ROUTED session only — today
     assert(await sees(log, mind, at("email", "ana@org", "thread-7")));
     assert(!(await sees(log, build, at("email", "ana@org", "thread-7"))));
     // an explicit enrollment still reaches a named session — routing is the default, not a wall
-    log.upsertMemberships([
+    await log.upsertMemberships([
       {
         service: "email",
         connection: "ana@org",
@@ -309,19 +309,19 @@ Deno.test("policyFor: a connection grant opens the ROUTED session only — today
 });
 
 Deno.test("memberships: a wire-filled row (no session named) enrolls the routed session (§4)", async () => {
-  await withLog((log) => {
+  await withLog(async (log) => {
     // the Slack membership mirror writes what the wire says — agent and room, no session
-    log.upsertMemberships([
+    await log.upsertMemberships([
       { service: "slack", connection: "T1", conversation: "C1", agentId: "ana" },
     ]);
-    assert(log.isMember("slack", "T1", "C1", "ana", "mind"));
-    assert(!log.isMember("slack", "T1", "C1", "ana", "build"));
+    assert(await log.isMember("slack", "T1", "C1", "ana", "mind"));
+    assert(!await log.isMember("slack", "T1", "C1", "ana", "build"));
   });
 });
 
 Deno.test("policyFor: the mind-alias conversation is invisible to its own agent (§4)", async () => {
   await withLog(async (log) => {
-    log.upsertConnections([
+    await log.upsertConnections([
       { service: "slack", address: "T1" }, // the workspace anchor inbound events carry
       { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
     ]);
@@ -340,7 +340,7 @@ Deno.test("policyFor: the mind-alias conversation is invisible to its own agent 
 
 Deno.test("policyFor: an alias conversation is invisible to EVERY agent, not only its own (§4)", async () => {
   await withLog(async (log) => {
-    log.upsertConnections([
+    await log.upsertConnections([
       { service: "slack", address: "T1", credentialKey: "slack:T1:org" }, // the org's anchor
       { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
     ]);
@@ -356,7 +356,7 @@ Deno.test("policyFor: an alias conversation is invisible to EVERY agent, not onl
 
 Deno.test("historyFor: every session of an agent reads the same past — the agent's, no wider (§6)", async () => {
   await withLog(async (log) => {
-    log.upsertMemberships([
+    await log.upsertMemberships([
       {
         service: "local",
         connection: "agent",
@@ -379,7 +379,7 @@ Deno.test("historyFor: every session of an agent reads the same past — the age
         sessionId: "mind",
       },
     ]);
-    log.upsertConnections([
+    await log.upsertConnections([
       { service: "whatsapp", address: "+549", credentialKey: "whatsapp:+549:org" }, // the org's
       { service: "email", address: "ana@org", agentId: "ana" }, // ana's own
       { service: "email", address: "bo@org", agentId: "bo" }, // bo's own
@@ -402,7 +402,7 @@ Deno.test("historyFor: every session of an agent reads the same past — the age
     assert(!(await writes(log, history, at("local", "agent", "build@ana"))));
     assert(!(await writes(log, history, at("whatsapp", "+549", "wa:cust1"))));
     // a membership's lifetime rules here as it does for the session (§4)
-    log.deleteMemberships([
+    await log.deleteMemberships([
       {
         service: "local",
         connection: "agent",

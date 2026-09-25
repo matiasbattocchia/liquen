@@ -15,15 +15,19 @@ code would otherwise leak into xi and render, and 2 and 5 pay off locally too.
 
 ## 1. Every store port is async
 
-`Appender`, `Reader` and `Locker` return promises; `Registry`, `Connections`, `Standing`,
-`Gates` and `Timers` answer synchronously, because `DatabaseSync` does. A Postgres adapter
-cannot. Make every port method return a `Promise`; the SQLite adapter wraps what it has,
-and xi awaits its ~27 `ports.log.*` call sites.
+**Landed** (PROJECT.md, 2026-09-24). Every port method returns a `Promise`; the SQLite
+adapter resolves what it has, and xi, main, the door, the connectors and the tests await.
+`lock(name)` stays a plain constructor — its methods were already promises.
 
-**The audit is the substance.** Two back-to-back sync store calls are atomic in one JS
-thread; with an `await` between them, other work can interleave. Every place that relies
-on that becomes ONE store operation (claim-then-publish, enroll-then-write, …) — safer
-locally, and exactly the shape a Postgres RPC needs.
+The audit found one interleaving that mattered: a wake that finds the turn lease held exits
+on the word that the holder's end will poke, and an `ignore` verdict releases without
+publishing, so a row landing between the holder's read and its release woke nothing until
+the clock. main now owes such a session one trigger-less re-poke once its own in-flight
+invocation settles (coalesced per session; a holder in another process is not waited on).
+The edge host has the same debt: its trigger function, told "held", must re-enqueue the
+session or let `pg_cron` be the backstop. Everything else that was two sync calls in a row
+(enroll-then-scope in `runnerOf`, claim-then-publish in `fireDue`, gates-then-answer in xi)
+reads correctly under a lease or an atomic statement already.
 
 ## 2. The read policy is SQL
 

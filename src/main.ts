@@ -225,7 +225,7 @@ export async function start(
   // the declared handles (email/phone → member), and render names members by it (§5).
   // Every entry is a row, a person alone included: they steer, they are named, no session
   // of theirs ever runs (`mind: false`, §4).
-  log.syncAgents(roster.map((p) => ({
+  await log.syncAgents(roster.map((p) => ({
     agentId: p.agentId,
     mind: sessionAddress(p.agentId, MIND),
     provider: p.provider,
@@ -243,7 +243,7 @@ export async function start(
   // the mind is a ONE-MEMBER conversation (§6): seeding it as membership is what makes
   // "own mind readable, others' invisible" plain branch-3 policy, no special case. EVERY
   // roster entry has the room — a paused agent's is what its door still reads (§4)
-  log.upsertMemberships(roster.map((p) => (
+  await log.upsertMemberships(roster.map((p) => (
     {
       service: "local",
       connection: "agent",
@@ -252,7 +252,7 @@ export async function start(
       sessionId: MIND,
     }
   )));
-  if (config.connections) log.upsertConnections(config.connections);
+  if (config.connections) await log.upsertConnections(config.connections);
   // the doors lay these when they declare; boot lays them for a roster entry typed by hand
   await seedOrg(dir);
   for (const agent of principals) if (agent.runs !== false) await seedAgent(dir, agent.agentId);
@@ -358,7 +358,11 @@ export async function start(
   // The roster's transport is the STOCK one: what every session of the agent thinks
   // through unless an attachment asks for another (`tune`, below)
   const meter = (agentId: string, t: ModelTransport) =>
-    metered(t, (row) => log.meter(row), agentId);
+    metered(
+      t,
+      (row) => log.meter(row).catch((err) => console.error("metering failed:", err)),
+      agentId,
+    );
   const stock = new Map(principals.map((p) => [p.agentId, meter(p.agentId, transportFor(p))]));
   const agents = principals.map(({ readable, writable, ...agent }) => {
     // the agent's VIEW of the log (§6): reads, writes, and the tail below all go through it.
@@ -396,14 +400,39 @@ export async function start(
   // is the concurrency control). `outstanding` is lifecycle, not scheduling: teardown must
   // not close the log or reap the exec plane under a live turn.
   const outstanding = new Set<Promise<unknown>>();
-  const invoke = (a: { config: AgentConfig; ports: XiPorts }) => (trigger?: Event) => {
-    if (stopped) return; // teardown, not routing — main takes no other decision
-    const run = xi(a.config, a.ports, trigger)
-      // a failed invocation never affects the next one — but it is SAID: a swallowed throw
-      // reads as a healthy agent that chose silence
-      .catch((err) => console.error(`${a.config.agentId} invocation failed:`, err))
-      .finally(() => outstanding.delete(run));
-    outstanding.add(run);
+  // A wake that finds the session's lease held exits on the word that the holder's end will
+  // poke — a word only a publishing end keeps: an `ignore` verdict releases without
+  // publishing, and the row that landed between the holder's read and its release would
+  // wake nothing until the clock. So a held wake whose holder is one of OUR invocations is
+  // owed one more, trigger-less, once that invocation settles: the window is read whole
+  // then, so one re-poke answers for every wake held during the turn. A holder in another
+  // process is not waited on (its end pokes, or the tick does).
+  const inflight = new Map<string, Set<Promise<unknown>>>();
+  const owed = new Set<string>();
+  const invoke = (a: { config: AgentConfig; ports: XiPorts }) => {
+    const key = sessionAddress(a.config.agentId, a.config.sessionId);
+    const fire = (trigger?: Event) => {
+      if (stopped) return; // teardown, not routing — main takes no other decision
+      const mine = inflight.get(key) ?? new Set<Promise<unknown>>();
+      inflight.set(key, mine);
+      const run = xi(a.config, a.ports, trigger)
+        .then((r) => {
+          if (r === "held" && mine.size > 1) owed.add(key);
+        })
+        // a failed invocation never affects the next one — but it is SAID: a swallowed throw
+        // reads as a healthy agent that chose silence
+        .catch((err) => console.error(`${a.config.agentId} invocation failed:`, err))
+        .finally(() => {
+          outstanding.delete(run);
+          mine.delete(run);
+          if (mine.size > 0) return;
+          inflight.delete(key);
+          if (owed.delete(key)) fire();
+        });
+      outstanding.add(run);
+      mine.add(run);
+    };
+    return fire;
   };
 
   // The debounce (§2): people type the way they talk — three lines two seconds apart are one
@@ -448,7 +477,7 @@ export async function start(
   // of), so main builds a runner on first contact and a quiet session costs nothing.
   // Bursts bounce off the session's own turn lease; the mind's ladder never applies.
   const named = new Map<string, { config: AgentConfig; ports: XiPorts; log: Log }>();
-  const runnerOf = (agentId: string, sessionId: string) => {
+  const runnerOf = async (agentId: string, sessionId: string) => {
     const key = sessionAddress(agentId, sessionId);
     const hit = named.get(key);
     if (hit) return hit;
@@ -456,7 +485,7 @@ export async function start(
     if (!base) return undefined; // an address wearing a name the roster doesn't
     // born when first named (§4): the session's own room is a one-member conversation,
     // and this enrollment is what lets its closing messages land there (WITH CHECK)
-    log.upsertMemberships([
+    await log.upsertMemberships([
       { service: "local", connection: "agent", conversation: key, agentId, sessionId },
     ]);
     const slog = scoped(log, policyFor({ agentId, id: sessionId }));
@@ -491,11 +520,11 @@ export async function start(
   // the roster, so a provider that cannot run the model at that effort refuses the attach,
   // never a turn. The runner's config and transport are read at every invocation, so the
   // next turn thinks with the new ones; a turn already running finishes as it began.
-  const tune = (agentId: string, sessionId: string, t: Tune | undefined) => {
+  const tune = async (agentId: string, sessionId: string, t: Tune | undefined) => {
     const p = principals.find((x) => x.agentId === agentId);
     const r = sessionId === MIND
       ? agents.find((a) => a.config.agentId === agentId)
-      : runnerOf(agentId, sessionId);
+      : await runnerOf(agentId, sessionId);
     if (!p || !r) return;
     const provider = t?.provider ?? p.provider;
     const model = t?.model ?? p.model;
@@ -521,8 +550,10 @@ export async function start(
         return {
           agentId: a.config.agentId,
           sessionId: a.config.sessionId,
-          port: (sessionId: string) =>
-            sessionId === a.config.sessionId ? a.log : runnerOf(a.config.agentId, sessionId)!.log,
+          port: async (sessionId: string) =>
+            sessionId === a.config.sessionId
+              ? a.log
+              : (await runnerOf(a.config.agentId, sessionId))!.log,
           // where the principal stands is where the session's shell starts (§9)
           stand: (session, path) => shellOf(a.config.agentId, session).stand(path),
           tune: (session, settings) => tune(a.config.agentId, session, settings),
@@ -535,12 +566,12 @@ export async function start(
         sessionId: p.sessionId,
         paused: true,
         port: (sessionId: string) =>
-          scoped(
+          Promise.resolve(scoped(
             log,
             derived
               ? policyFor({ agentId: p.agentId, id: sessionId })
               : { readable: p.readable, writable: p.writable },
-          ),
+          )),
       };
     }),
   );
@@ -583,8 +614,9 @@ export async function start(
       return; // it never starts work (§2)
     }
     for (const p of namedIn(e)) {
-      const r = runnerOf(p.agentId, p.sessionId);
-      if (r) invoke(r)(e);
+      runnerOf(p.agentId, p.sessionId)
+        .then((r) => r && invoke(r)(e))
+        .catch((err) => console.error(`[main] ${p.sessionId}@${p.agentId}:`, err));
     }
   }));
   // the mirror rides the RAW log (§4): it copies between a mind and its alias surfaces, and
@@ -596,7 +628,7 @@ export async function start(
     publish: log.publish,
     read: (q) => log.read(q),
     aliases: () => log.aliases(),
-    nameOf: (id) => log.agents().find((a) => a.agentId === id)?.name ?? id,
+    nameOf: async (id) => (await log.agents()).find((a) => a.agentId === id)?.name ?? id,
     locale: catalog?.organization.locale,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onError: (e, err) => console.error(`mirror FAILED on ${e.envelope.conversation.address}:`, err),
@@ -617,9 +649,9 @@ export async function start(
   for (const a of agents) invoke(a)(); // boot: no trigger ⇒ look at whatever the log owes
   // …and every enrolled named session gets the same look (§4): the backlog rule applies
   // to it as to the mind, and its enrollments are the only record it leaves
-  for (const p of log.enrolled()) {
+  for (const p of await log.enrolled()) {
     if (p.sessionId === MIND) continue; // the roster's own runners just looked
-    const r = runnerOf(p.agentId, p.sessionId);
+    const r = await runnerOf(p.agentId, p.sessionId);
     if (r) invoke(r)();
   }
 
@@ -639,8 +671,8 @@ export async function start(
   const fireDue = (): Promise<void> =>
     firing ??= (async () => {
       const now = new Date().toISOString();
-      for (const due of log.due(now)) {
-        const t = log.claim(due.id, now);
+      for (const due of await log.due(now)) {
+        const t = await log.claim(due.id, now);
         if (!t) continue; // another sweep fired it
         await log.publish(
           {
@@ -665,7 +697,11 @@ export async function start(
           } satisfies Draft<AlarmEvent>,
         );
         // a cron advances on the clock it was armed against — the agent's zone, not UTC
-        log.settle(t.id, now, agents.find((a) => a.config.agentId === t.agentId)?.config.timezone);
+        await log.settle(
+          t.id,
+          now,
+          agents.find((a) => a.config.agentId === t.agentId)?.config.timezone,
+        );
       }
     })().finally(() => firing = undefined);
 
@@ -689,11 +725,8 @@ export async function start(
   const ticker = setInterval(() => {
     fireDue().catch((err) => console.error("firing scheduled wakes failed:", err));
     lapse().catch((err) => console.error("lapsing unanswered asks failed:", err));
-    try {
-      log.sweep(new Date().toISOString());
-    } catch (err) {
-      console.error("the dispatch sweep failed:", err);
-    }
+    log.sweep(new Date().toISOString())
+      .catch((err) => console.error("the dispatch sweep failed:", err));
     agents.forEach((a) => invoke(a)());
   }, TICK_MS);
 
@@ -873,7 +906,7 @@ export async function lapseGates(
   now: number = Date.now(),
 ): Promise<number> {
   let settled = 0;
-  for (const card of log.gates()) {
+  for (const card of await log.gates()) {
     const hours = card.agent ? hoursOf(card.agent.id) : undefined;
     if (hours == null || Date.parse(card.ts) > now - hours * 3_600_000) continue;
     await log.publish(

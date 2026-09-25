@@ -160,7 +160,7 @@ export function createMicrosoftOAuth(deps: MicrosoftOAuthDeps): OAuthHandler {
             : {}),
         },
       });
-      deps.store.upsertConnections([{
+      await deps.store.upsertConnections([{
         service: "microsoft",
         address: upn,
         ...(agent ? { agentId: agent } : {}),
@@ -168,7 +168,7 @@ export function createMicrosoftOAuth(deps: MicrosoftOAuthDeps): OAuthHandler {
       }]);
       if (agent) {
         // the grant note is the principal's to see (§6)
-        deps.store.upsertMemberships([
+        await deps.store.upsertMemberships([
           { service: "microsoft", connection: upn, conversation: "oauth", agentId: agent },
         ]);
       }

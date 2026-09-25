@@ -63,23 +63,23 @@ export const CLAIM_LEASE_MS = 5 * 60_000;
 
 export interface Timers {
   /** Arm a wake. The id and `armedAt` are minted here; the id is what `cancel` takes. */
-  arm(row: Omit<TimerRow, "id" | "armedAt">): TimerRow;
+  arm(row: Omit<TimerRow, "id" | "armedAt">): Promise<TimerRow>;
   /** Everything due at `nowIso`, oldest first — the clock's scan. A read: listing is not
    *  winning. */
-  due(nowIso: string): TimerRow[];
+  due(nowIso: string): Promise<TimerRow[]>;
   /** Win a due row: the one atomic statement that decides who fires it. The row comes
    *  back for the winner to publish (its `fireAt` now the lease horizon); `null` means
    *  another sweep won it, or it is no longer due. */
-  claim(id: string, nowIso: string): TimerRow | null;
+  claim(id: string, nowIso: string): Promise<TimerRow | null>;
   /** Consume a fired timer: one-shot ⇒ gone; cron ⇒ advanced past `nowIso` — in `tz`, the
    *  same clock the cron was armed against (§10): "0 9" means 9 on the org's wall, every
    *  fire, not just the first. */
-  settle(id: string, nowIso: string, tz?: string): void;
+  settle(id: string, nowIso: string, tz?: string): Promise<void>;
   /** A session's armed wakes, next first — what its anchor lists (§5). The pair, because
    *  bare session names collide across agents (§4): `mind` alone names everyone's. */
-  timers(agentId: string, sessionId: string): TimerRow[];
+  timers(agentId: string, sessionId: string): Promise<TimerRow[]>;
   /** Disarm by id, but only the session's own. `false` ⇒ no such timer of theirs. */
-  disarm(id: string, agentId: string, sessionId: string): boolean;
+  disarm(id: string, agentId: string, sessionId: string): Promise<boolean>;
 }
 
 export const TIMERS_DDL = `CREATE TABLE IF NOT EXISTS timers (
@@ -137,7 +137,7 @@ export function createTimers(db: DatabaseSync): Timers {
   );
 
   return {
-    arm(row: Omit<TimerRow, "id" | "armedAt">): TimerRow {
+    arm(row: Omit<TimerRow, "id" | "armedAt">): Promise<TimerRow> {
       const armed: TimerRow = { ...row, id: newId(), armedAt: new Date().toISOString() };
       put.run(
         armed.id,
@@ -151,34 +151,36 @@ export function createTimers(db: DatabaseSync): Timers {
         armed.refId ?? null,
         armed.armedAt!,
       );
-      return armed;
+      return Promise.resolve(armed);
     },
 
-    due(nowIso: string): TimerRow[] {
-      return (ripe.all(nowIso) as Raw[]).map(rowOf);
+    due(nowIso: string): Promise<TimerRow[]> {
+      return Promise.resolve((ripe.all(nowIso) as Raw[]).map(rowOf));
     },
 
-    claim(id: string, nowIso: string): TimerRow | null {
+    claim(id: string, nowIso: string): Promise<TimerRow | null> {
       const horizon = new Date(Date.parse(nowIso) + CLAIM_LEASE_MS).toISOString();
       const raw = take.get(horizon, id, nowIso) as Raw | undefined;
-      return raw ? rowOf(raw) : null;
+      return Promise.resolve(raw ? rowOf(raw) : null);
     },
 
-    settle(id: string, nowIso: string, tz?: string): void {
+    settle(id: string, nowIso: string, tz?: string): Promise<void> {
       const [raw] = byId.all(id) as Raw[];
-      if (!raw) return;
-      const row = rowOf(raw);
-      if (!row.cron) return void del.run(id);
-      // past NOW, not past the stamp it was due at: a long outage collapses to one fire
-      advance.run(nextFire(row.cron, nowIso, tz), id);
+      if (raw) {
+        const row = rowOf(raw);
+        // past NOW, not past the stamp it was due at: a long outage collapses to one fire
+        if (row.cron) advance.run(nextFire(row.cron, nowIso, tz), id);
+        else del.run(id);
+      }
+      return Promise.resolve();
     },
 
-    timers(agentId: string, sessionId: string): TimerRow[] {
-      return (mine.all(agentId, sessionId) as Raw[]).map(rowOf);
+    timers(agentId: string, sessionId: string): Promise<TimerRow[]> {
+      return Promise.resolve((mine.all(agentId, sessionId) as Raw[]).map(rowOf));
     },
 
-    disarm(id: string, agentId: string, sessionId: string): boolean {
-      return delMine.run(id, agentId, sessionId).changes > 0;
+    disarm(id: string, agentId: string, sessionId: string): Promise<boolean> {
+      return Promise.resolve(delMine.run(id, agentId, sessionId).changes > 0);
     },
   };
 }

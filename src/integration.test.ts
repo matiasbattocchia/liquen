@@ -113,8 +113,8 @@ async function scenario(
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   await seedOrg(`${dir}/docs`); // the docs root as every org boots on it: the checkpoint instruction included
-  if (roster.length > 0) log.syncAgents(roster);
-  if (connections.length > 0) log.upsertConnections(connections);
+  if (roster.length > 0) await log.syncAgents(roster);
+  if (connections.length > 0) await log.upsertConnections(connections);
   const preloaded: Event[] = [];
   for (const e of preload) preloaded.push((await log.publish(e))!);
   const { transport, calls } = scripted(script);
@@ -432,8 +432,8 @@ Deno.test("send: a name two conversations answer to is handed back, never guesse
 Deno.test("send `connection`: a named account places first contact on its wire", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
-  log.upsertConnections([
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "slack", address: "T1:U9", credentialKey: "slack:T1:org", extra: { name: "Acme" } },
   ]);
@@ -492,8 +492,8 @@ Deno.test("send `connection`: a named account places first contact on its wire",
 Deno.test("a gated send carries its preview: where it lands, the other side's last word, the text", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
-  log.upsertConnections([
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
   const { transport } = scripted([
@@ -552,8 +552,8 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
 Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere else", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
-  log.upsertConnections([
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
   const pin = { latitude: -32.946186, longitude: -68.823082, name: "Consultorio" };
@@ -604,8 +604,8 @@ Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere 
 Deno.test("send `subject`: a mail's thread rides the envelope; a reply inherits the referent's", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
-  log.upsertConnections([
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
     { service: "google", address: "me@org.com", agentId: "a1", extra: { name: "Me" } },
   ]);
   // a mail from Ana already in the log: the wire's row, its thread and its id
@@ -662,8 +662,8 @@ Deno.test("send `subject`: a mail's thread rides the envelope; a reply inherits 
 Deno.test("contact: `who` resolves like a send, the write rides the person's own account", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
-  log.upsertConnections([
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
   const wrote: Record<string, unknown>[] = [];
@@ -747,8 +747,8 @@ Deno.test("contact: `who` resolves like a send, the write rides the person's own
 Deno.test("search `from` asks the address books too: someone saved and never heard from", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
-  log.upsertConnections([
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "slack", address: "T1:U9", agentId: "a1" }, // keeps no book: never asked
   ]);
@@ -832,8 +832,8 @@ Deno.test("search `from` asks the address books too: someone saved and never hea
 Deno.test("search: a book that cannot be reached is named, never mistaken for an empty one", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
-  log.upsertConnections([
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
   const contact = {
@@ -877,8 +877,8 @@ Deno.test("search: a book that cannot be reached is named, never mistaken for an
 Deno.test("search: a port is per service, a book is per ACCOUNT — every one of them answers", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.syncAgents([{ agentId: "a1", mind: "mind@a1", phone: "5491100000002" }]);
-  log.upsertConnections([
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1", phone: "5491100000002" }]);
+  await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "whatsapp", address: "5491100000001", agentId: "a1", extra: { name: "Clínica" } },
     { service: "google", address: "sole@clinica.ar", agentId: "a1" },
@@ -941,8 +941,8 @@ Deno.test("search: a port is per service, a book is per ACCOUNT — every one of
 Deno.test("contact: two accounts and a stranger — the model must say which book", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
-  log.upsertConnections([
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "whatsapp", address: "5491100000001", agentId: "a1", extra: { name: "Clínica" } },
     { service: "slack", address: "T1:U9", agentId: "a1" },
@@ -1003,8 +1003,8 @@ Deno.test("contact: two accounts and a stranger — the model must say which boo
 Deno.test("contact: a person is in two places — a name saved on the book is reachable, a name two people wear is refused", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
-  log.upsertConnections([
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "whatsapp", address: "5491100000001", agentId: "a1", extra: { name: "Clínica" } },
   ]);
@@ -1550,7 +1550,7 @@ Deno.test("coalescing race: a message landing between window-read and closing pu
 Deno.test("send `re`: the window's id resolves to the wire's name — reply, react, and a miss", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.upsertConnections([{ service: "whatsapp", address: "org" }]); // the publish gate
+  await log.upsertConnections([{ service: "whatsapp", address: "org" }]); // the publish gate
   try {
     // what the model will point at: a peer message that already crossed a wire, so it has
     // the only name the platform will accept back — its external_id (§3)
@@ -1615,7 +1615,7 @@ Deno.test("send `re`: the window's id resolves to the wire's name — reply, rea
 Deno.test("send action: the account may unsay its own words, and lift its own reaction", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.upsertConnections([{ service: "whatsapp", address: "org" }]);
+  await log.upsertConnections([{ service: "whatsapp", address: "org" }]);
   try {
     const wa = (id: string, text: string, mine: boolean) => ({
       ts: new Date().toISOString(),
@@ -2488,7 +2488,7 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
     const armed = res.parts[0].data.output as { armed: string; at: string };
     assert(armed.armed.length > 0, "the result hands back the id cancel takes");
     // the row is the ONLY record of the future — nothing is in the log yet
-    const [row] = log.timers("a1", "mind"); // the SESSION's wakes (§4)
+    const [row] = await log.timers("a1", "mind"); // the SESSION's wakes (§4)
     assertEquals(row.note, "llamar a la clínica");
     assertEquals(row.sessionId, "mind"); // the session that armed it owns it
     assertEquals(row.conversation, "mind@a1"); // and is where the note comes back
@@ -2497,9 +2497,9 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
     await xi(config, ports); // …and the turn that closes on it
 
     // the clock: nothing is due a minute early, everything is due once it is
-    assertEquals(log.due(new Date(Date.parse(row.fireAt) - 1000).toISOString()), []);
+    assertEquals(await log.due(new Date(Date.parse(row.fireAt) - 1000).toISOString()), []);
     const now = new Date(Date.parse(row.fireAt) + 1000).toISOString();
-    for (const t of log.due(now)) {
+    for (const t of await log.due(now)) {
       await log.publish(
         {
           ts: now,
@@ -2514,10 +2514,10 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
           parts: [{ type: "text", kind: "alarm", text: t.note }],
         } satisfies Draft<Event>,
       );
-      log.settle(t.id, now);
+      await log.settle(t.id, now);
     }
     // one-shot: fired, consumed, gone — and the note is in the log for the mind to read
-    assertEquals(log.timers("a1", "mind"), []);
+    assertEquals(await log.timers("a1", "mind"), []);
     const [fired] = await log.read({ types: ["alarm"] });
     assertEquals(fired.parts[0].text, "llamar a la clínica");
     assertEquals(fired.agent, undefined); // harness-authored, so it wakes (§2)
@@ -2526,7 +2526,7 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
     assertEquals((fired.extra?.timer as { id: string }).id, row.id);
 
     // a second wake, unset by name through the SAME cancel the approvals use
-    const second = log.arm({
+    const second = await log.arm({
       agentId: "a1",
       sessionId: "mind",
       fireAt: "2030-01-01T09:00:00.000Z",
@@ -2542,7 +2542,7 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
       .map((e) => (e as ToolResultEvent).parts[0].data.output as Json)
       .find((o) => o && typeof o === "object" && "disarmed" in o);
     assertEquals((undone as { note: string }).note, "la otra cosa");
-    assertEquals(log.timers("a1", "mind"), []);
+    assertEquals(await log.timers("a1", "mind"), []);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -2562,7 +2562,7 @@ Deno.test("schedule: a bare `at` reads the org's clock — 17:00 Buenos Aires is
     await log.publish(principalMsg("a las cinco"));
     await xi({ ...CONFIG, timezone: "America/Argentina/Buenos_Aires" }, ports);
     await xi({ ...CONFIG, timezone: "America/Argentina/Buenos_Aires" }, ports);
-    const [t] = log.timers("a1", "mind");
+    const [t] = await log.timers("a1", "mind");
     assertEquals(t.fireAt, `${day}T20:00:00.000Z`);
   } finally {
     await log.close();
@@ -2580,7 +2580,7 @@ Deno.test("the roster: the prefix splits it into who steers this agent and every
   };
   const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
   try {
-    log.syncAgents([
+    await log.syncAgents([
       { agentId: "a1", mind: "mind@a1", principals: ["matias"] },
       // the one who steers: a person alone, no session of their own (§4)
       { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "+549", runs: false },
@@ -2608,7 +2608,7 @@ Deno.test("the surfaces: the prefix names them, the anchor lists the ones that a
   const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
   const config = { ...CONFIG, timezone: "UTC" };
   try {
-    log.upsertConnections([
+    await log.upsertConnections([
       // owned by a1 and down: the bridge said so, stamped
       {
         service: "whatsapp",
@@ -2666,7 +2666,7 @@ Deno.test("schedule: the horizon — no wake in the past, none beyond a year, no
     await log.publish(principalMsg("agendá cosas raras"));
     await xi({ ...CONFIG, timezone: "UTC" }, ports); // the turn that calls…
     await xi({ ...CONFIG, timezone: "UTC" }, ports); // …and the act that refuses, loudly
-    assertEquals(log.timers("a1", "mind"), [], "nothing armed — every call was refused");
+    assertEquals(await log.timers("a1", "mind"), [], "nothing armed — every call was refused");
     const errors = (await log.read({ types: ["tool_result"] }))
       .filter((e) => JSON.stringify(e.parts).includes("is_error"));
     assertEquals(errors.length, 3);
@@ -2696,7 +2696,7 @@ Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the ope
     ambient: () => Promise.resolve(["cwd: /work"]), // the exec plane's lines (§9)
   };
   try {
-    const armed = log.arm({
+    const armed = await log.arm({
       agentId: "a1",
       sessionId: "mind",
       fireAt: "2030-03-04T09:30:00.000Z",
@@ -2706,7 +2706,7 @@ Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the ope
       conversation: "mind@a1",
     });
     // another session's wake: armed on the same agent, and none of this session's business
-    log.arm({
+    await log.arm({
       agentId: "a1",
       sessionId: "s2",
       fireAt: "2030-03-04T08:00:00.000Z",

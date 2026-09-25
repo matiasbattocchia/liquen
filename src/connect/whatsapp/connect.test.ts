@@ -35,8 +35,14 @@ function harness(bridge: WABridgeSessions, over: Partial<WhatsAppConnectDeps> = 
     organizationId: "acme",
     webhookUrl: "http://localhost:8794",
     store: {
-      upsertConnections: (rows) => connections.push(...rows),
-      upsertMemberships: (rows) => memberships.push(...rows),
+      upsertConnections: (rows) => {
+        connections.push(...rows);
+        return Promise.resolve();
+      },
+      upsertMemberships: (rows) => {
+        memberships.push(...rows);
+        return Promise.resolve();
+      },
     },
     publish: ((e: Draft) => {
       const stored = { ...e, id: e.id ?? newId() } as Event;

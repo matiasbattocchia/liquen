@@ -73,7 +73,12 @@ function syncOf(creds: Awaited<ReturnType<typeof openCredentials>>): Promise<
 Deno.test("a grant's state is written on the transition: failing once sweeps in a row cannot read, connected when it reads again", async () => {
   await withVault(async (creds) => {
     const upserts: ConnectionRow[] = [];
-    const store = { upsertConnections: (rows: ConnectionRow[]) => upserts.push(...rows) };
+    const store = {
+      upsertConnections: (rows: ConnectionRow[]) => {
+        upserts.push(...rows);
+        return Promise.resolve();
+      },
+    };
     let ok = false;
     const p = poller(
       creds,

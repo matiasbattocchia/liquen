@@ -837,7 +837,7 @@ export interface XiPorts {
     & Reader
     & Locker
     & Pick<Registry, "agents">
-    & { principalsOf(agentId: string): string[] }
+    & { principalsOf(agentId: string): Promise<string[]> }
     & Pick<Standing, "remember" | "remembered">
     & Pick<Connections, "upsertMemberships" | "aliases" | "connections">
     & Pick<Timers, "arm" | "timers" | "disarm">
@@ -926,7 +926,9 @@ export async function xi(
   const name = `turn-${sessionAddress(config.agentId, config.sessionId)}`;
   const lock = ports.log.lock(name);
   const got = await lock.acquire();
-  if (got === "held") return "held"; // no retry: someone is on it, and their turn's end will poke
+  // no retry: someone is on it. A turn's end pokes; an `ignore` end does not, and the host
+  // that saw "held" owes the session one more look for that case (main's re-poke)
+  if (got === "held") return "held";
   // the interrupt, armed BEFORE the read: a cancel that lands while the window is being
   // read cuts this turn, never the next one
   const ctl = new AbortController();
@@ -942,7 +944,7 @@ export async function xi(
   // tool is special.
   const gate = config.gate ??
     gateOf([
-      ...ports.log.remembered(config.agentId).map(ruleOf),
+      ...(await ports.log.remembered(config.agentId)).map(ruleOf),
       ...(config.rules ?? DEFAULT_RULES),
     ]);
   // 3. decide, under the lease and from a fresh window — so it can't act on a stale verdict
@@ -972,7 +974,7 @@ export async function xi(
   // the open asks and the rulings still owed are STANDING state, read off the store (§9):
   // a card asked before the window's floor is as open as one asked a minute ago
   const gates = () => ports.log.gates({ agentId: session.agentId, sessionId: session.id });
-  for (const answer of gateVerdict(events, session, hereEnv, gates())) {
+  for (const answer of gateVerdict(events, session, hereEnv, await gates())) {
     const settled = await ports.log.publish(answer);
     if (settled) events.push(settled);
   }
@@ -981,7 +983,7 @@ export async function xi(
     session,
     config,
     Date.now(),
-    ports.log.owed(session.agentId, session.id),
+    await ports.log.owed(session.agentId, session.id),
   );
   ports.onDecision?.(v, events.at(-1)?.id, aboutOf(events, session));
   if (v === "ignore") {
@@ -1053,13 +1055,16 @@ async function think(
   // is STATE, not history — the transcript already closed those calls with
   // `pending_approval`, so the only place they belong is the block that is rewritten every
   // turn. It also self-corrects: an ask that gets answered simply stops being listed.
-  const surfaces = surfacesOf(config, ports);
-  const org = company(config, ports);
+  const surfaces = await surfacesOf(config, ports);
+  const org = await company(config, ports);
   const ambient = [
     ...(ports.ambient ? await ports.ambient() : []),
     ...downOn(surfaces, config),
-    ...armedOn(config, ports),
-    ...waitingOn(ports.log.gates({ agentId: config.agentId, sessionId: config.sessionId }), config),
+    ...(await armedOn(config, ports)),
+    ...waitingOn(
+      await ports.log.gates({ agentId: config.agentId, sessionId: config.sessionId }),
+      config,
+    ),
     ...unansweredOn(
       events,
       { id: config.sessionId, agentId: config.agentId, conversation: home },
@@ -1094,9 +1099,9 @@ async function think(
       // who is one of us (§4, §5): the roster's names, and who steers this agent — live
       roster: {
         names: Object.fromEntries(
-          ports.log.agents().map((a) => [a.agentId, a.name ?? a.agentId]),
+          (await ports.log.agents()).map((a) => [a.agentId, a.name ?? a.agentId]),
         ),
-        principals: ports.log.principalsOf(config.agentId),
+        principals: await ports.log.principalsOf(config.agentId),
       },
       // the checkpoint instruction is a DOC (§5/§8) — editable like any instruction
       compactPrompt: () =>
@@ -1128,8 +1133,8 @@ async function think(
 /** The surfaces this agent speaks through (§4, §6): the connections it OWNS — it speaks as
  *  its principal there — and the org's credentialed ones, where it speaks as the org. A
  *  stub row (no owner, no credential) only gates ingest and is nobody's voice. */
-function surfacesOf(config: AgentConfig, ports: XiPorts): ConnectionRow[] {
-  return ports.log.connections().filter((c) =>
+async function surfacesOf(config: AgentConfig, ports: XiPorts): Promise<ConnectionRow[]> {
+  return (await ports.log.connections()).filter((c) =>
     c.agentId === config.agentId || (!c.agentId && !!c.credentialKey)
   );
 }
@@ -1151,10 +1156,13 @@ function surfaceOf(c: ConnectionRow): Surface {
  *  else on the roster. Each member appears once — a principal is not repeated below — and
  *  self is in neither list, being the `self:` line itself. The derived case names the whole
  *  roster as an org agent's principals, including the agent, which is why self comes out. */
-function company(config: AgentConfig, ports: XiPorts): { principals: Member[]; rest: Member[] } {
-  const steers = new Set(ports.log.principalsOf(config.agentId));
+async function company(
+  config: AgentConfig,
+  ports: XiPorts,
+): Promise<{ principals: Member[]; rest: Member[] }> {
+  const steers = new Set(await ports.log.principalsOf(config.agentId));
   steers.delete(config.agentId);
-  const rows = ports.log.agents().filter((a) => a.agentId !== config.agentId);
+  const rows = (await ports.log.agents()).filter((a) => a.agentId !== config.agentId);
   const member = (a: AgentRow): Member => ({
     id: a.agentId,
     ...(a.name ? { name: a.name } : {}),
@@ -1193,8 +1201,8 @@ function downOn(surfaces: ConnectionRow[], config: AgentConfig): string[] {
  *  A cron carries its expression so the model knows the wake comes back, and a handle says
  *  the org armed that one (§10): the note is an instruction, not a thing this session
  *  chose, and cancelling it is a decision about the org's standing work. */
-function armedOn(config: AgentConfig, ports: XiPorts): string[] {
-  const rows = ports.log.timers(config.agentId, config.sessionId);
+async function armedOn(config: AgentConfig, ports: XiPorts): Promise<string[]> {
+  const rows = await ports.log.timers(config.agentId, config.sessionId);
   if (rows.length === 0) return [];
   return [
     `scheduled — ${rows.length} wake${rows.length === 1 ? "" : "s"}:`,
@@ -1396,7 +1404,7 @@ async function act(
   const out: Draft<Event>[] = [];
   const runnable: { use: ToolUseEvent; call?: string }[] = [];
   const pending = pendingOf(events, session);
-  const owed = ports.log.owed(session.agentId, session.id);
+  const owed = await ports.log.owed(session.agentId, session.id);
   // one rendering for every call this act touches — the card, the anchor and the deferred
   // report all read it, and resolving addresses to names takes the log (§9)
   const describers = describersOf(ports);
@@ -1416,7 +1424,7 @@ async function act(
     if (v.scope === "once") return;
     const tool = use.parts[0].data.name;
     if (v.scope === "always") {
-      ports.log.remember({ agentId: session.agentId, tool, action: v.behavior });
+      await ports.log.remember({ agentId: session.agentId, tool, action: v.behavior });
       return;
     }
     const target = await targetOf(use, self, ports);
@@ -1429,7 +1437,7 @@ async function act(
       ));
       return;
     }
-    ports.log.remember({
+    await ports.log.remember({
       agentId: session.agentId,
       tool,
       action: v.behavior,
@@ -1447,7 +1455,7 @@ async function act(
     // reaches them, so this call has no destination to approve — asking would put a card
     // in front of them whose only outcomes are a message they were already getting and a
     // refusal. Cheap to raise, and the model reads the hint and says the thing instead.
-    const nowhere = selfSend(name, input, config, ports);
+    const nowhere = await selfSend(name, input, config, ports);
     if (nowhere) {
       out.push(resultOf(use, nowhere, { is_error: true }));
       continue;
@@ -1665,9 +1673,9 @@ async function namesTo(
 /** The accounts this agent speaks through (§4): the connections that name it as owner and
  *  the org's that its handles claim — `speaksThrough` over the live map. An agent the
  *  registry does not know (an explicit principal, a test) speaks through every row. */
-function accounts(self: { id: string }, ports: XiPorts): ConnectionRow[] {
-  const rows = ports.log.connections();
-  const me = ports.log.agents().find((a) => a.agentId === self.id);
+async function accounts(self: { id: string }, ports: XiPorts): Promise<ConnectionRow[]> {
+  const rows = await ports.log.connections();
+  const me = (await ports.log.agents()).find((a) => a.agentId === self.id);
   return me ? speaksThrough(me, rows) : rows;
 }
 
@@ -1700,7 +1708,7 @@ async function booked(
   ports: XiPorts,
   query: string,
 ): Promise<Contacts | undefined> {
-  const asked = accounts(self, ports).filter((c) => ports.contact?.[c.service]?.lookup);
+  const asked = (await accounts(self, ports)).filter((c) => ports.contact?.[c.service]?.lookup);
   if (asked.length === 0) return undefined;
   const answers = await Promise.all(asked.map(async (c) => {
     try {
@@ -1721,8 +1729,12 @@ async function booked(
  *  matched case-insensitively on a substring, as every name here is) or its address (a
  *  phone as a phone). Only the agent's own accounts answer, and ambiguity is refused,
  *  never picked: the account is whose name a send goes out in. */
-function accountNamed(handle: string, self: { id: string }, ports: XiPorts): ConnectionRow {
-  const mine = accounts(self, ports);
+async function accountNamed(
+  handle: string,
+  self: { id: string },
+  ports: XiPorts,
+): Promise<ConnectionRow> {
+  const mine = await accounts(self, ports);
   const wanted = handle.trim().toLowerCase();
   const label = (c: ConnectionRow) =>
     typeof c.extra?.name === "string" ? `${c.extra.name} (${c.address})` : c.address;
@@ -1756,9 +1768,9 @@ async function targetOf(
   // a named account is the target's connection wherever the call goes; a name nobody
   // wears is the call's own error to raise, so here it is simply no scope
   const named = typeof args.connection === "string" && args.connection !== ""
-    ? (() => {
+    ? await (async () => {
       try {
-        return accountNamed(args.connection as string, self, ports).address;
+        return (await accountNamed(args.connection as string, self, ports)).address;
       } catch {
         return undefined;
       }
@@ -1769,7 +1781,7 @@ async function targetOf(
   const raw = args.to;
   if (typeof raw !== "string" || raw === "") return undefined;
   let to = raw;
-  const target = sessionTarget(to, ports.log.agents());
+  const target = sessionTarget(to, await ports.log.agents());
   if (target && !(target.agentId === self.id && target.sessionId === self.session_id)) {
     to = sessionDm(self, target);
   }
@@ -1794,22 +1806,22 @@ async function targetOf(
  * person, which is what the live log showed. The error carries the hint because the fix is
  * a channel choice, not a retry.
  */
-function selfSend(
+async function selfSend(
   name: string,
   input: Json,
   config: AgentConfig,
   ports: XiPorts,
-): string | undefined {
+): Promise<string | undefined> {
   if (name !== "send") return undefined;
   const to = (input as { to?: unknown } | null)?.to;
   if (typeof to !== "string" || to === "") return undefined;
-  const agents = ports.log.agents();
+  const agents = await ports.log.agents();
   const me = agents.find((a) => a.agentId === config.agentId);
   // the session's OWN ROOM, the agent's own handles, and every principal's — their
   // handles and, from the mind, their names (§4). The bare name is refused only from the
   // mind — an agent IS its mind, so from a sibling it is a real target, the dm: with the
   // mind, not a self-send.
-  const principals = ports.log.principalsOf(config.agentId)
+  const principals = (await ports.log.principalsOf(config.agentId))
     .map((p) => agents.find((a) => a.agentId === p))
     .filter((a): a is NonNullable<typeof a> => a !== undefined);
   // ids are ours and exact; handles are the WORLD's, and a phone number is written however
@@ -1823,7 +1835,7 @@ function selfSend(
     ].filter((x): x is string => typeof x === "string" && x !== ""),
   );
   const handles = [me?.email, me?.phone, ...principals.flatMap((p) => [p.email, p.phone])];
-  const alias = ports.log.aliases().some((r) =>
+  const alias = (await ports.log.aliases()).some((r) =>
     r.agentId === config.agentId && r.conversation === to
   );
   if (!ids.has(to) && !handles.some((h) => sameHandle(h, to)) && !alias) return undefined;
@@ -1867,7 +1879,7 @@ async function execute(
     // a wake belongs to the SESSION that armed it (§4): that session lists it, cancels it,
     // and is the one woken — so the row carries the session and the conversation it speaks
     // in, and firing needs no guess about where the note goes.
-    const armed = ports.log.arm({
+    const armed = await ports.log.arm({
       agentId: self.id,
       sessionId: self.session_id,
       fireAt,
@@ -1886,14 +1898,14 @@ async function execute(
     // nothing settles between this read and the publish.
     const id = String(args.id ?? "");
     const byId = (ref: EventId) => ref === id || shortId(ref) === id;
-    const card = ports.log.gates({ agentId: self.id, sessionId: self.session_id })
+    const card = (await ports.log.gates({ agentId: self.id, sessionId: self.session_id }))
       .find((c) => byId(c.payload.ref_id));
     if (!card) {
       // the same verb unsets a scheduled wake (§10): one "withdraw by id" the model can
       // reach for without knowing which list the id came from
-      const timer = ports.log.timers(self.id, self.session_id).find((t) => byId(t.id));
+      const timer = (await ports.log.timers(self.id, self.session_id)).find((t) => byId(t.id));
       if (timer) {
-        ports.log.disarm(timer.id, self.id, self.session_id);
+        await ports.log.disarm(timer.id, self.id, self.session_id);
         return { disarmed: shortId(timer.id), note: timer.note };
       }
       throw new Error(
@@ -1935,16 +1947,16 @@ async function execute(
     // canonicalizes to the pair's DM conversation, and both ends are enrolled as the
     // SESSIONS they are: membership is what makes it visible to exactly them
     // (upsert-only and live, so the scoped publish below already passes WITH CHECK)
-    const peer = sessionTarget(to, ports.log.agents());
+    const peer = sessionTarget(to, await ports.log.agents());
     // the account it rides (§4): named by the model, else the conversation's own record
     // below. A peer's DM rides no account — it is the local channel by construction.
     let via = args.connection === undefined || args.connection === ""
       ? undefined
-      : accountNamed(String(args.connection), self, ports);
+      : await accountNamed(String(args.connection), self, ports);
     if (peer && !(peer.agentId === self.id && peer.sessionId === self.session_id)) {
       if (via) throw new Error(`${to} is a peer — a DM between us rides no account`);
       to = sessionDm(self, peer);
-      ports.log.upsertMemberships([
+      await ports.log.upsertMemberships([
         {
           service: "local",
           connection: "agent",
@@ -1975,7 +1987,7 @@ async function execute(
     // somebody only a book knows is written to through the account that keeps them, the
     // way `contact` saves them there: the book that holds them is the account they are on
     if (!via && aimed.book !== undefined) {
-      via = accounts(self, ports).find((c) => c.address === aimed.book);
+      via = (await accounts(self, ports)).find((c) => c.address === aimed.book);
     }
     // The tool gave us an address; the envelope is ours to write (§2). The conversation's
     // events ARE its record: complete service · connection · kind from the latest visible
@@ -2159,15 +2171,15 @@ async function execute(
       (await ports.log.read({ from: address, limit: 1 }))[0];
     let via: { service: string; address: string };
     if (args.connection !== undefined && args.connection !== "") {
-      via = accountNamed(String(args.connection), self, ports);
+      via = await accountNamed(String(args.connection), self, ports);
     } else if (prior) {
       via = { service: prior.envelope.service, address: prior.envelope.connection_address };
     } else if (entry) {
       // the book that holds them is the account that keeps them
-      via = accounts(self, ports).find((c) => c.address === entry!.connection)!;
+      via = (await accounts(self, ports)).find((c) => c.address === entry!.connection)!;
     } else {
       const writable = writers(ports);
-      const mine = accounts(self, ports).filter((c) => writable.includes(c.service));
+      const mine = (await accounts(self, ports)).filter((c) => writable.includes(c.service));
       if (mine.length !== 1) {
         throw new Error(
           mine.length === 0
@@ -2204,12 +2216,12 @@ async function execute(
         // its `<conn>` named exactly as the window would — one vocabulary, both surfaces
         roster: {
           names: Object.fromEntries(
-            ports.log.agents().map((a) => [a.agentId, a.name ?? a.agentId]),
+            (await ports.log.agents()).map((a) => [a.agentId, a.name ?? a.agentId]),
           ),
-          principals: ports.log.principalsOf(config.agentId),
+          principals: await ports.log.principalsOf(config.agentId),
         },
         connections: Object.fromEntries(
-          surfacesOf(config, ports).flatMap((c) =>
+          (await surfacesOf(config, ports)).flatMap((c) =>
             typeof c.extra?.name === "string" && c.extra.name ? [[c.address, c.extra.name]] : []
           ),
         ),
@@ -2423,7 +2435,7 @@ async function search(
   const { lines, opts } = around > 0
     ? await surround(log, page, around)
     : { lines: page, opts: {} };
-  const books = contacts === undefined ? [] : bookLines(accounts(self, ports), contacts);
+  const books = contacts === undefined ? [] : bookLines(await accounts(self, ports), contacts);
   const lines_ = page.length === 0
     ? []
     : [renderHits(lines, view.session, view.roster, view.zone, view.connections, opts)];

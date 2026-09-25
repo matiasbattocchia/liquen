@@ -150,7 +150,7 @@ export function createGoogleOAuth(deps: GoogleOAuthDeps): OAuthHandler {
             : {}),
         },
       });
-      deps.store.upsertConnections([{
+      await deps.store.upsertConnections([{
         service: "google",
         address: id.email,
         ...(agent ? { agentId: agent } : {}),
@@ -158,7 +158,7 @@ export function createGoogleOAuth(deps: GoogleOAuthDeps): OAuthHandler {
       }]);
       if (agent) {
         // the grant note is the principal's to see (§6)
-        deps.store.upsertMemberships([
+        await deps.store.upsertMemberships([
           { service: "google", connection: id.email, conversation: "oauth", agentId: agent },
         ]);
       }

@@ -3659,3 +3659,23 @@ it of one event, which is how the policy tests read now. `Policy` keeps JS `read
 lesson: `json_each`'s `value` column is the bare SQL value, so a text entry is asked its
 type through the row's `type` column, never `json_type(value)`.
 
+### Every store port is async (2026-09-24) — LANDED
+
+The second edge-tier refactor (`EDGE-PLAN.md`). `Registry`, `Connections`, `Standing`,
+`Gates`, `Timers`, `Sweeper`, `meter` and `principalsOf` answered synchronously because
+`DatabaseSync` does; a Postgres adapter cannot. Every port method now returns a `Promise`,
+the SQLite adapter resolves what it has, and about a hundred call sites in xi, main, the
+door, the connectors and the tests await them. Two kinds of site the compiler could not
+flag were found by grep: writes whose result nobody read (`upsertConnections` in every
+connect door, `syncAgents` at boot) and a lookup used as a boolean (the WhatsApp ingest's
+account-name guard, where a pending promise read as a known row).
+
+One interleaving surfaced as three main tests timing out: a wake that finds the turn lease
+held exits on the word that the holder's end will poke, and an `ignore` end publishes
+nothing, so a message landing between the holder's read and its release woke nothing until
+the clock — a window that a few awaits made wide enough to hit at boot. Re-reading inside xi
+before an ignore verdict lets go was tried and defeated the debounce (the boot invocation
+caught a burst's first line and thought on it alone), so the debt is main's: a held wake whose
+holder is one of its own invocations is owed one trigger-less re-poke once that invocation
+settles, coalesced per session. The edge trigger function inherits the same debt.
+

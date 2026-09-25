@@ -38,7 +38,7 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
 
   // a subscriber in THIS process — exactly what `main` does — resolves on the first gh message
   const log = await openLog(`${dir}/data/log`);
-  log.upsertConnections([{ service: "github", address: "github" }]); // the gate wants a grant
+  await log.upsertConnections([{ service: "github", address: "github" }]); // the gate wants a grant
   let resolveGot!: (e: MessageEvent) => void;
   const got = new Promise<MessageEvent>((r) => (resolveGot = r));
   const unsub = log.subscribe((e: Event) => {

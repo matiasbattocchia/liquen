@@ -21,7 +21,7 @@ const binding = (over: Partial<AliasRow> = {}): AliasRow => ({
 function watching(over: Partial<PresenceDeps> = {}) {
   const wrote: Draft<DeltaEvent>[] = [];
   const on = createPresence({
-    aliases: () => [binding()],
+    aliases: () => Promise.resolve([binding()]),
     now: () => NOW,
     publish: (draft) => {
       wrote.push(draft);
@@ -194,10 +194,11 @@ Deno.test("presence: deltas outside any open turn are dropped", async () => {
 
 Deno.test("presence: no live surface of this agent's — it writes nothing at all", async () => {
   const { on, said } = watching({
-    aliases: () => [
-      binding({ live: false }), // revoked: nobody is reading
-      binding({ agentId: "a2" }), // another agent's mind
-    ],
+    aliases: () =>
+      Promise.resolve([
+        binding({ live: false }), // revoked: nobody is reading
+        binding({ agentId: "a2" }), // another agent's mind
+      ]),
   });
   on.status(AGENT, "mind", "busy", [spokeAt(1_000)]);
   on.delta(AGENT, "mind", { kind: "thinking" });

@@ -23,7 +23,7 @@ async function withMirror(
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.upsertConnections([
+  await log.upsertConnections([
     { service: "slack", address: "T1" }, // the workspace anchor inbounds carry (§4)
     { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
     { service: "whatsapp", address: "549", agentId: "ana" }, // WA binding is DERIVED (§4)
@@ -165,7 +165,7 @@ Deno.test("mirror fan-out: the agent's voice CCs tagged to every alias, and CCs 
 
 Deno.test("mirror fan-out: a logged-out surface gets no copy — the live bindings still do", async () => {
   await withMirror(async ({ publish, inConv, waitFor, log }) => {
-    log.deleteConnections([{ service: "slack", address: "T1:U1" }]);
+    await log.deleteConnections([{ service: "slack", address: "T1:U1" }]);
     await publish(
       mindMsg("done!", { agent: { id: "ana", session_id: "mind" }, payload: { turn_id: "t9" } }),
     );
@@ -612,12 +612,12 @@ Deno.test("mirror: a SILENCE note reaches no surface — nothing said is nothing
 Deno.test("mirror fan-in: a principal's DM with the org number copies to the org agent's mind, signed by the roster (§4)", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  log.syncAgents([
+  await log.syncAgents([
     { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "549115550001" },
     { agentId: "sol", mind: "mind@sol", name: "Sol", phone: "549115550002", runs: false },
     { agentId: "ventas", mind: "mind@ventas", name: "Ventas", phone: "549117770000" },
   ]);
-  log.upsertConnections([
+  await log.upsertConnections([
     { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" },
   ]);
   const stop = createMirror({
@@ -625,7 +625,7 @@ Deno.test("mirror fan-in: a principal's DM with the org number copies to the org
     publish: log.publish,
     read: (q) => log.read(q),
     aliases: () => log.aliases(),
-    nameOf: (id) => log.agents().find((a) => a.agentId === id)?.name ?? id,
+    nameOf: async (id) => (await log.agents()).find((a) => a.agentId === id)?.name ?? id,
   }, 10);
   const inConv = async (conversation: string) =>
     (await log.read({ conversation, types: ["message"] })) as MessageEvent[];
