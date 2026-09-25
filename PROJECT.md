@@ -3983,17 +3983,30 @@ The reference for the tool is open-bsp-api's `agent-client/tools/sql.ts`: five t
 (`executeSql`, `getDbSchema`, `sampleTableRows`, `selectAsCsv`, `bulkInsert`) over a
 database the org configures, not an RLS-scoped store. Its introspection (tables, columns,
 constraints, enums, and the comments `pg_description` holds) is what `db_schema` answers,
-and the sample is a query the agent can write. `selectAsCsv` and `bulkInsert` carry rows
-across to files and back, which meets the rule that the sandbox never writes the database.
+and the sample is a query the agent can write. `selectAsCsv` and `bulkInsert` are not
+carried over: a row reaches a table through a statement the agent writes, and a file
+reaches a doc through the agent reading it and writing what it read.
+
+Decided: the triad's engines are SQL. `docs_edit` is `src/exec/edit.ts` restated in
+PL/pgSQL (the conflict-marker spec, unique non-overlapping blocks matched against the
+original, the trailing-whitespace fallback that matches in normalized space and splices
+the original, BOM and CRLF kept), and `docs_read` is `truncateHead` with `aread`'s footer.
+Each is held to the TypeScript by running its tests' cases through both, as `fold` is.
+One unit differs and the port must answer for it: JavaScript offsets count UTF-16 code
+units, Postgres counts code points.
 
 Still to decide:
 
-- **Where `aedit`'s engine lives.** Its whitespace-insensitive fallback is TypeScript:
-  either restated in PL/pgSQL and held to the code by tests, as `fold` is, or kept in
-  TypeScript with the write a compare-and-swap on the body it read.
 - **Raw SQL or functions only.** Raw SQL bounded by row-level policy is the design's line;
   function calls alone make the approval card legible.
-- **Whether a file crosses into a table**, the `bulkInsert` shape: a gated function
-  reading through the files port, or nothing.
-- **Roles in the tests.** Policies need a role to switch to, so the suite needs a user
-  that may create one.
+- **How the database knows the agent.** Row-level policy applies to neither a superuser,
+  a `BYPASSRLS` role nor a table's owner, and the store connects as its owner. Under raw
+  SQL the agent's statements can undo whatever the connection set before them: `RESET
+  ROLE` returns to the owner, and a custom setting such as `liquen.agent` is writable by
+  anyone. So raw SQL needs a connection that logs in as a role of the agent's own, and
+  functions only can take the agent from the harness as an argument the model never
+  writes.
+- **Roles in the tests.** A role belongs to the cluster, not to a database or schema, so
+  it outlives the test schema that is dropped. On the shared `postgres:17` the test user
+  `turtle` is a superuser and may create roles; doing so leaves names in the catalog
+  turtle's databases share.
