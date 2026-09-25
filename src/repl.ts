@@ -117,7 +117,7 @@ await entry(async () => {
   });
 
   const w = wire(conn, { event: p.event, delta: p.delta });
-  w.hangup.then(() => {
+  void w.hangup.then(() => {
     if (!leaving) {
       write(`\n${RED}the daemon hung up${RESET}\n`);
       screen.close();

@@ -1271,9 +1271,11 @@ function tail(
   // backstop: fs-watch can miss events under load; a slow poll guarantees eventual delivery
   const loop = () => {
     if (closed) return;
-    pump().finally(() => {
+    // then(f, f): a rejected `finally` would be a second, unhandled rejection
+    const next = () => {
       if (!closed) poll = setTimeout(loop, POLL_MS);
-    });
+    };
+    pump().then(next, next);
   };
   poll = setTimeout(loop, POLL_MS);
 

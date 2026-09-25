@@ -319,7 +319,7 @@ async function handle(
   req: Record<string, unknown>,
   agent: DoorAgent,
   turnId: string,
-  tail: (session: string, from?: string) => void,
+  tail: (session: string, from?: string) => Promise<void>,
   stand: (session: string, path: string) => Promise<void>,
   tune: (session: string, settings: Tune) => Promise<void>,
 ): Promise<Record<string, unknown>> {

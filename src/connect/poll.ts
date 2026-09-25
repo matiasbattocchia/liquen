@@ -258,7 +258,8 @@ export async function runPollIngest(
     sweep = tick;
     if (tick === counted) return;
     counted = tick;
-    tick.finally(() => {
+    // then(f, f): a rejected `finally` would be a second, unhandled rejection
+    const settled = () => {
       swept.inARow = swept.failed ? swept.inARow + 1 : 0;
       swept.failed = false; // the verdict is in; the next sweep starts clean
       if (swept.inARow < WEDGED_AFTER_SWEEPS) return;
@@ -267,7 +268,8 @@ export async function runPollIngest(
           `fresh process`,
       );
       Deno.exit(1);
-    });
+    };
+    tick.then(settled, settled);
   }, POLL_MS);
   return async () => {
     clearInterval(timer);

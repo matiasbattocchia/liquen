@@ -96,7 +96,7 @@ await entry(async () => {
       }
     },
   });
-  w.hangup.then(() => {
+  void w.hangup.then(() => {
     if (!leaving) {
       console.error("the daemon hung up");
       settle(1);

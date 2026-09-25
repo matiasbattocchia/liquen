@@ -17,7 +17,7 @@ export function exitOnStop(stops: (() => Promise<void>)[]): void {
     Deno.addSignalListener(sig, () => {
       if (stopping) Deno.exit(1);
       stopping = true;
-      Promise.allSettled(stops.map((stop) => stop())).then(() => Deno.exit(0));
+      void Promise.allSettled(stops.map((stop) => stop())).then(() => Deno.exit(0));
     });
   }
 }

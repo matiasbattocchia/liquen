@@ -814,7 +814,9 @@ export function slackSocket(
           if (env.type === "events_api" && env.payload) {
             const delivery = deliver(socket, env.envelope_id, env.payload);
             inFlight.add(delivery);
-            delivery.finally(() => inFlight.delete(delivery));
+            // then(f, f): a rejected `finally` would be a second, unhandled rejection
+            const done = () => inFlight.delete(delivery);
+            delivery.then(done, done);
             await delivery;
             return;
           }
@@ -828,14 +830,14 @@ export function slackSocket(
         }
       };
       socket.onclose = () => {
-        if (!closed) setTimeout(connect, RECONNECT_MS);
+        if (!closed) setTimeout(() => void connect(), RECONNECT_MS);
       };
     } catch (err) {
       console.error("[ingest] socket error:", err instanceof Error ? err.message : err);
-      if (!closed) setTimeout(connect, RECONNECT_ERROR_MS);
+      if (!closed) setTimeout(() => void connect(), RECONNECT_ERROR_MS);
     }
   };
-  connect();
+  void connect(); // it reports its own failures and schedules its own retry
 
   return async () => {
     closed = true;
@@ -964,7 +966,9 @@ export async function runIngest(): Promise<() => Promise<void>> {
     signingSecrets,
     track: (work) => {
       inFlight.add(work);
-      work.finally(() => inFlight.delete(work));
+      // then(f, f): a rejected `finally` would be a second, unhandled rejection
+      const done = () => inFlight.delete(work);
+      work.then(done, done);
     },
   });
   const { slackConfig } = await import("./config.ts");

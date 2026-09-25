@@ -1177,7 +1177,9 @@ export async function runIngest(): Promise<() => Promise<void>> {
     fetchApi: timedFetch,
     track: (w) => {
       inflight.add(w);
-      w.finally(() => inflight.delete(w));
+      // then(f, f): a rejected `finally` would be a second, unhandled rejection
+      const done = () => inflight.delete(w);
+      w.then(done, done);
     },
   });
   const server = serveIngest(

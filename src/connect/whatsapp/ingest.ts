@@ -607,14 +607,14 @@ function session(
   deps: WhatsAppWebhookDeps,
   now: () => string,
 ): Promise<Response> {
-  return req.json().then((e: WASessionEvent) => {
+  return req.json().then(async (e: WASessionEvent) => {
     if (!e.address || !e.event) return text(400, "missing address or event");
     // `connected` is the moment the paired number becomes KNOWN — the row it writes is
     // the frontier gate the very next publish checks (§4). The other events only record
     // state, stamped `<state>_at` — what the anchor reads to say a surface is down (§5):
     // the gate stays open (history stays readable), and a reconnect or re-pairing
     // revives by upsert.
-    deps.store?.upsertConnections([{
+    await deps.store?.upsertConnections([{
       service: SERVICE,
       address: e.address,
       ...(e.agent_id ? { agentId: e.agent_id } : {}), // personal session ⇒ owned grant (§6)

@@ -3717,3 +3717,21 @@ passed `principals` explicitly — which only tests do — so those tests exerci
 production never takes. The predicates are gone: `Policy` is `{using, check}`, and the
 hand-written scopes in the policy, door and main suites are laws (`events.conversation_address
 = $in_conv`, `NOTHING` for a refused write).
+
+### The promise audit (2026-09-25) — LANDED
+
+Making the store async left two kinds of mistake the type checker cannot see: a write
+nobody awaits and a promise read as a value. `deno lint` has no rule for either, since
+both need types. `deno task audit` runs typescript-eslint's `no-floating-promises` and
+`no-misused-promises` from npm under Deno (`audit/`, no `node_modules` of its own and no
+lockfile entry); the audit's tsconfig resolves the repo's own modules, where the ports
+live, and leaves Deno's globals untyped. It is part of `check` and CI, about 13 s.
+
+Its first run found 19. Four were the async change's own: the WhatsApp session route's
+`upsertConnections` floated, the door's `handle` still typed `tail` as returning `void`,
+and two tests left a store's `close` or a dispatcher's `stop` unawaited. Six were older:
+bookkeeping hung on `.finally()` (the Slack and Teams in-flight sets, the Slack socket
+delivery, the poll sweep verdict, main's `withTimeout`, the tail's backstop loop) makes a
+second promise that carries the source's rejection unhandled, and an unhandled rejection
+exits the process (`entry.ts`). They settle with `then(f, f)`. The rest are deliberate
+fire-and-forget, marked `void`.

@@ -350,7 +350,7 @@ export async function start(
   const meter = (agentId: string, t: ModelTransport) =>
     metered(
       t,
-      (row) => log.meter(row).catch((err) => console.error("metering failed:", err)),
+      (row) => void log.meter(row).catch((err) => console.error("metering failed:", err)),
       agentId,
     );
   const stock = new Map(principals.map((p) => [p.agentId, meter(p.agentId, transportFor(p))]));
@@ -825,10 +825,11 @@ async function compileRoster(
 function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
   return new Promise<void>((resolve) => {
     const t = setTimeout(resolve, ms);
-    p.finally(() => {
+    const settled = () => {
       clearTimeout(t);
       resolve();
-    });
+    };
+    p.then(settled, settled); // a rejected `finally` would be a second, unhandled rejection
   });
 }
 
@@ -861,7 +862,7 @@ if (import.meta.main) {
     console.error(`agents: ${Object.keys(catalog.agents).join(", ")} · log: ${dir}/log`);
     for (const sig of ["SIGTERM", "SIGINT"] as const) {
       Deno.addSignalListener(sig, () => {
-        main.stop().finally(() => Deno.exit(0));
+        void main.stop().finally(() => Deno.exit(0));
       });
     }
     if (org.args.includes("--ephemeral")) {
@@ -870,7 +871,7 @@ if (import.meta.main) {
         if (main.attachments() > 0) occupied = Date.now();
         else if (Date.now() - occupied >= LINGER_MS) {
           clearInterval(reaper);
-          main.stop().finally(() => Deno.exit(0));
+          void main.stop().finally(() => Deno.exit(0));
         }
       }, REAP_POLL_MS);
     }

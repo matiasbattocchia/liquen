@@ -2593,7 +2593,7 @@ Deno.test("the roster: the prefix splits it into who steers this agent and every
     assertStringIncludes(env, "## Agents\n\n- sol · name: Sol · email: sol@x.io");
     assertEquals(env.includes("- a1"), false, "self is the `self:` line, not a member of either");
   } finally {
-    log.close();
+    await log.close();
   }
 });
 
