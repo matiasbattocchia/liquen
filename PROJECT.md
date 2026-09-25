@@ -3995,18 +3995,19 @@ Each is held to the TypeScript by running its tests' cases through both, as `fol
 One unit differs and the port must answer for it: JavaScript offsets count UTF-16 code
 units, Postgres counts code points.
 
-Still to decide:
+Decided: **the tool is for docs, and it is three calls.** The model writes no SQL: the
+database tier's substrate tool is `read · write · edit` by handle, the binaries' contracts
+one for one, each a function the harness calls with bound parameters. No schema tool: a
+fixed set of docs has nothing to introspect, and the prompt's index already lists them.
+Raw SQL would need a login role per agent, because a statement the model writes can
+`RESET ROLE` or overwrite a session setting; a call the harness builds cannot, which is
+what lets one shared role serve every agent.
 
-- **Raw SQL or functions only.** Raw SQL bounded by row-level policy is the design's line;
-  function calls alone make the approval card legible.
-- **How the database knows the agent.** Row-level policy applies to neither a superuser,
-  a `BYPASSRLS` role nor a table's owner, and the store connects as its owner. Under raw
-  SQL the agent's statements can undo whatever the connection set before them: `RESET
-  ROLE` returns to the owner, and a custom setting such as `liquen.agent` is writable by
-  anyone. So raw SQL needs a connection that logs in as a role of the agent's own, and
-  functions only can take the agent from the harness as an argument the model never
-  writes.
-- **Roles in the tests.** A role belongs to the cluster, not to a database or schema, so
-  it outlives the test schema that is dropped. On the shared `postgres:17` the test user
-  `turtle` is a superuser and may create roles; doing so leaves names in the catalog
-  turtle's databases share.
+Decided: **the rule is row-level policy, Supabase's shape.** One role, `liquen_agent`,
+NOLOGIN, created once per cluster and granted to the store's owner; the harness opens a
+transaction, `SET LOCAL ROLE` to it, sets the agent and the conversation as settings the
+policies read, and calls the function. The functions are `SECURITY INVOKER`, so the
+policy on `docs` is the boundary and a bug in an editor's splicing cannot write past it.
+An edge function calling through the platform's own gateway with the agent's token meets
+the same policy. A role belongs to the cluster, not to a schema, so the tests share the
+one name; it is created if absent and never dropped.
