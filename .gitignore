@@ -3,8 +3,9 @@
 .env.*
 !.env.example
 
-# local Claude Code overrides
+# local Claude Code overrides, and the worktrees its sessions check out
 .claude/settings.local.json
+.claude/worktrees/
 
 # materialized by nodeModulesDir: auto
 node_modules/
