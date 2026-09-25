@@ -3789,3 +3789,14 @@ to rows the same way and take the same round trip, so the suites prove the row i
 a field it cannot carry fails a test. What stays in code is what no row can hold — `home`
 is the data root's folder for the agent, and a test's `gate` and `retryDelaysMs` are a
 function and a pace.
+
+### One sandbox provider owns the exec plane (2026-09-25) — LANDED
+
+`Sandbox` (`src/sandbox.ts`) is the exec plane's provider: `forAgent(id).session(sid)`
+answers a session's `exec`, `ambient`, `stand`, `reap` and `files`, and `close` reaps
+every shell and stops the proxy. `openLocalSandbox` is the local one — the egress proxy
+and its trust bundle, one ground per agent, one shell per session, the file scope beside
+the shell — and main holds only the provider: the proxy, the bundle, the grounds, the
+shells map and `filesOf` left main together, since all of them exist for bash. The file
+scope rides with the sandbox because it names the ground the uid can read; the edge tier
+runs without any of the three ports, and a remote sandbox answers all of them.

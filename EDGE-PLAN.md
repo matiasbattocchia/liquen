@@ -101,12 +101,14 @@ adapter is today's code.
 
 ## 7. One sandbox provider owns the exec plane
 
-main wires `installProxy`, `writeTrustBundle`, `installExecGround` and the per-session
-`shellOf` itself — all of them exec. One provider owns them:
-`sandbox.forAgent(id).session(sid) → { exec, ambient, stand, reap, files }`, and main
-holds only the provider. The edge tier either has none (`exec?` and `ambient?` are
-already optional on `XiPorts`) or a remote one (E2B, Cloudflare Sandbox) that brings its
-own egress proxy — the proxy exists for bash, so it travels with bash.
+**Landed** (PROJECT.md, 2026-09-25). `Sandbox` (`src/sandbox.ts`) is the exec plane's
+provider: `sandbox.forAgent(id).session(sid)` is a session's `exec · ambient · stand ·
+reap · files`, and `close` reaps every shell and stops the proxy. `openLocalSandbox(dir,
+{agents, locale, bashTimeoutMs})` is the local provider — the egress proxy and its trust
+bundle, one ground per agent, one shell per session — and main holds only the provider.
+The edge tier either has none (`exec?`, `ambient?` and `files?` are optional on
+`XiPorts`) or a remote one (E2B, Cloudflare Sandbox) that brings its own egress proxy —
+the proxy exists for bash, so it travels with bash.
 
 ## 8. main's roles are functions
 
@@ -119,9 +121,10 @@ store. main calls both where it did the work inline; the edge tick function and 
 trigger function call the same code: one implementation per role, two hosts.
 
 The runner is one builder, `portsFor(principal, sessionId)` in main, serving the mind and
-every named session. It moves out of main once its inputs stop being the process's: the
-shell and the proxy (§7), and the agent's settings as a row (§9) — then it is
-`portsFor(store, agentRow, session)`.
+every named session. With §7 and §9 landed its inputs are a store, a row and a sandbox;
+what still ties it to main is the process's own — the shared transport per provider, the
+door's `cast`/`disclose` fan-outs — so lifting it to `portsFor(store, agentRow, session)`
+is a step of its own, with the door's redesign.
 
 ## 9. The agent row is enough to run xi
 

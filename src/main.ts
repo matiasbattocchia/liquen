@@ -21,8 +21,8 @@
  * decided never moves: it is always a log query, in xi.
  *
  * The one thing main keeps is `outstanding`: the in-flight invocations, so `stop()` can await
- * them. Lifecycle, not scheduling — teardown closes the log and reaps the exec plane, and
- * neither may happen under a live turn.
+ * them. Lifecycle, not scheduling — teardown closes the sandbox and the log, and neither
+ * may happen under a live turn.
  *
  * One subscription is not an agent's: the mind-alias mirror (§4), which rides the RAW log
  * because it joins across a boundary the scoped ports hide from each other. It lives here
@@ -50,15 +50,11 @@ import {
   providerOf,
   transports,
 } from "./transport/mod.ts";
-import { type ExecGround, type ExecPlane, installExecGround } from "./exec/bash.ts";
+import { openLocalSandbox } from "./sandbox.ts";
 import { whatsappContact } from "./connect/whatsapp/contact.ts";
 import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
 import { entry } from "./entry.ts";
 import { claim, MAIN } from "./stop.ts";
-import { openCredentials } from "./store/credentials.ts";
-import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
-import { openCA } from "./proxy/ca.ts";
-import { startProxy } from "./proxy/proxy.ts";
 import { createMirror } from "./connect/mirror.ts";
 import { createPresence } from "./connect/presence.ts";
 import { createTranscriber } from "./processors.ts";
@@ -74,98 +70,6 @@ import {
   STOP_TIMEOUT_MS,
   TICK_MS,
 } from "./config.ts";
-
-/** Start the egress proxy — the org's single credential-bearing egress — and return the
- *  env provider bash issues into every spawn (§9), PER AGENT. HTTPS_PROXY always rides;
- *  the proxy terminates only the authorities a fronted grant binds (where a placeholder
- *  can ride and the swap has to see plaintext) and bridges every other tunnel blind, so
- *  the world answers with its own certificates. The trust file user space is handed is
- *  the system bundle plus the liquen CA, under every name the common clients read it by:
- *  a tool verifying against its own roots still reaches the world, and one honoring the
- *  file reaches the fronted hosts too. Which placeholders ride is the VAULT's say, not
- *  this file's: a credential row that declares `extra.env` (the connect doors write it)
- *  is fronted under that var, and which row fronts which agent is `frontedFor` — the
- *  org's, or the agent's own, never a peer's. So the handle in an agent's pocket names
- *  a grant that agent holds, and the audit line's agent is the caller. */
-interface ProxyHandle {
-  env: (agentId: string) => Record<string, string>;
-  close(): Promise<void>;
-}
-
-// where a Linux system keeps its CA bundle, by distribution; the first that exists is it
-const SYSTEM_CA_BUNDLES = [
-  "/etc/ssl/certs/ca-certificates.crt",
-  "/etc/pki/tls/certs/ca-bundle.crt",
-  "/etc/ssl/ca-bundle.pem",
-  "/etc/ssl/cert.pem",
-];
-
-/** The trust file user space is handed: the system's roots followed by the liquen CA, written
- *  under the org at boot. It replaces the roots of every tool that reads it, so a machine
- *  with no system bundle refuses to start: the liquen CA alone would leave curl, git and
- *  python trusting nothing but the fronted hosts. */
-async function writeTrustBundle(dir: string, caPath: string): Promise<string> {
-  let system = "";
-  for (const path of SYSTEM_CA_BUNDLES) {
-    try {
-      system = await Deno.readTextFile(path);
-      break;
-    } catch { /* not this distribution */ }
-  }
-  if (!system) {
-    throw new Error(
-      `no system CA bundle at ${SYSTEM_CA_BUNDLES.join(", ")}: the agents' tools would trust ` +
-        `nothing but the fronted hosts. Install ca-certificates.`,
-    );
-  }
-  const out = `${dir}/system/ca-bundle.pem`;
-  await Deno.mkdir(`${dir}/system`, { recursive: true });
-  await Deno.writeTextFile(out, `${system.trimEnd()}\n${await Deno.readTextFile(caPath)}`);
-  return out;
-}
-
-async function installProxy(dir: string): Promise<ProxyHandle> {
-  const creds = await openCredentials(dir);
-  const broker = createGrantBroker({ creds });
-  const ca = await openCA(dir);
-  const rows = await creds.list("");
-  const fronted = rows.filter((r) => typeof r.extra?.env === "string");
-  const proxy = startProxy({
-    ca,
-    broker,
-    terminates: (authority) => fronted.some((r) => hostAllowed(r.extra?.hosts, authority)),
-  });
-  const bundle = await writeTrustBundle(dir, proxy.caPath);
-  const base: Record<string, string> = {
-    HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
-    SSL_CERT_FILE: bundle, // OpenSSL-based tools: curl, git, wget, Go
-    REQUESTS_CA_BUNDLE: bundle, // python requests, and pip through it
-    PIP_CERT: bundle,
-    NODE_EXTRA_CA_CERTS: proxy.caPath, // node adds to its own roots — the CA alone suffices
-    DENO_CERT: proxy.caPath, // so does deno
-  };
-  const pockets = new Map<string, Record<string, string>>();
-  console.error(`egress proxy on :${proxy.port}`);
-  return {
-    env: (agentId) => {
-      let env = pockets.get(agentId);
-      if (!env) {
-        env = { ...base };
-        const fronted = frontedFor(rows, agentId);
-        for (const r of fronted) env[r.extra!.env as string] = broker.issue(r.key, r.agentId);
-        if (fronted.length) {
-          console.error(`[proxy] ${agentId} fronted: ${fronted.map((r) => r.key).join(", ")}`);
-        }
-        pockets.set(agentId, env);
-      }
-      return env;
-    },
-    async close() {
-      await proxy.shutdown();
-      await creds.close();
-    },
-  };
-}
 
 export interface MainConfig {
   dir: string; // the org's data root (§9): log/ · system/ · org/ · agents/
@@ -273,13 +177,13 @@ export async function start(
   const transportOf = transports({ anthropic: config.apiKey });
   const transportFor = (p: Principal): ModelTransport =>
     overrides.transport ?? transportOf(providerOf(p.provider));
-  // the egress proxy (§9): front every credential row that declares an env var — user space
-  // gets the placeholder + proxy env, never a real credential (see installProxy).
-  const proxy = await installProxy(dir);
-  // ONE GROUND PER AGENT, ONE SHELL PER SESSION (§9): the ground is the agent's folder —
-  // `agents/<id>`, where its docs and memories already are — with the org's binaries on
-  // PATH; the shell on it is the session's, so where one session stands and what it left
-  // running is never another's. Shells open on first contact and are reaped at teardown.
+  // the exec plane (§9): one provider owns the proxy, the grounds and the shells; main
+  // holds only the provider, and every session's exec, ambient and files come from it
+  const sandbox = await openLocalSandbox(dir, {
+    agents: principals.map((p) => p.agentId),
+    locale: catalog?.organization.locale,
+    bashTimeoutMs: catalog?.system.bashTimeoutMs,
+  });
   // the address book (§9): one port per service that keeps one, wired where the connection
   // is declared — whatsapp's rides the bridge the dispatcher already talks to, on the same
   // token, and carries both legs: `contact` writes through it, `search` reads through it
@@ -292,35 +196,6 @@ export async function start(
       ),
     }
     : undefined;
-  const grounds = new Map<string, ExecGround>();
-  const shells = new Map<string, ExecPlane>();
-  const shellOf = (agentId: string, sessionId: string): ExecPlane => {
-    const key = sessionAddress(agentId, sessionId);
-    let shell = shells.get(key);
-    if (!shell) {
-      shell = grounds.get(agentId)!.shell();
-      shells.set(key, shell);
-    }
-    return shell;
-  };
-  // the org's locale reaches user space under the names every program reads (§9): the
-  // shell speaks the org's language, and a script the agent runs by hand does too
-  const locale = catalog?.organization.locale;
-  const localeEnv: Record<string, string> = locale ? { LANG: locale } : {};
-  for (const p of principals) {
-    const userEnv = () => ({ ...proxy.env(p.agentId), ...localeEnv });
-    grounds.set(
-      p.agentId,
-      await installExecGround(dir, p.agentId, userEnv, catalog?.system.bashTimeoutMs),
-    );
-  }
-  // what an agent may ATTACH (§9 data classification): its own folder, the shared floor,
-  // the system docs, and the media store — the same ground its uid can read. A `send`
-  // naming a path elsewhere is refused broker-side, before any byte is read.
-  const filesOf = (agentId: string) => {
-    const home = `${dir}/agents/${agentId}`;
-    return { home, roots: [home, `${dir}/organization`, `${dir}/system`, `${dir}/conversations`] };
-  };
 
   let stopped = false;
   // the fan-outs' late half: ports close over `cast`/`castStatus` before the doors exist,
@@ -378,7 +253,7 @@ export async function start(
       ? policyFor({ agentId, id: sessionId })
       : { using, check };
     const slog = scoped(log, policy);
-    const shell = shellOf(agentId, sessionId);
+    const box = sandbox.forAgent(agentId).session(sessionId);
     return {
       config: { ...agent, sessionId },
       log: slog,
@@ -389,14 +264,14 @@ export async function start(
         ...(derived ? { history: scoped(log, historyFor(agentId)) } : {}),
         docs,
         transport: stock.get(agentId)!,
-        exec: shell.exec,
+        exec: box.exec,
         ...(contact ? { contact } : {}),
-        files: filesOf(agentId),
+        files: box.files,
         media,
         onDelta: (d: Delta) => cast(agentId, sessionId, d),
         onDecision: (v: Decision, cursor: string | undefined, about: About[]) =>
           disclose(agentId, sessionId, v, cursor, about),
-        ambient: shell.ambient,
+        ambient: box.ambient,
       } satisfies XiPorts,
     };
   };
@@ -538,7 +413,7 @@ export async function start(
               ? a.log
               : (await runnerOf(a.config.agentId, sessionId))!.log,
           // where the principal stands is where the session's shell starts (§9)
-          stand: (session, path) => shellOf(a.config.agentId, session).stand(path),
+          stand: (session, path) => sandbox.forAgent(a.config.agentId).session(session).stand(path),
           tune: (session, settings) => tune(a.config.agentId, session, settings),
         };
       }
@@ -657,7 +532,7 @@ export async function start(
       for (const unsub of unsubs) unsub();
       await doors.close(); // stop taking syscalls before the log goes away
       // Bound the settle. A turn wedged on a hung model connection (e.g. a network
-      // outage during shutdown) must not block teardown forever — the exec-plane reap
+      // outage during shutdown) must not block teardown forever — the sandbox's close
       // and log.close have to run so no background job or file handle is left behind.
       // The orphaned in-flight turn is swallowed by drive's catch (and, in task
       // mode, killed outright by the process exit that follows).
@@ -665,9 +540,7 @@ export async function start(
         Promise.all([...outstanding]),
         config.stopTimeoutMs ?? STOP_TIMEOUT_MS,
       );
-      // each session's own jobs, reaped with its own shell (§9)
-      for (const shell of shells.values()) await shell.reap();
-      await proxy?.close(); // stop the egress proxy and close its vault handle
+      await sandbox.close(); // every shell's jobs reaped, the egress proxy stopped
       await log.close();
     },
   };
@@ -820,7 +693,7 @@ function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
 
 /** An interface-raised daemon reaps itself after this long with nothing attached — long
  *  enough that consecutive `liquen cli` runs reuse one org instead of re-paying seeding,
- *  the exec planes and the proxy each time. */
+ *  the sandbox each time. */
 const LINGER_MS = 30_000;
 const REAP_POLL_MS = 1_000;
 
