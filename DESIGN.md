@@ -2117,7 +2117,9 @@ own, and what it adds is the one thing no generic rule can know — a NAME where
 an address: `send(to: Vivian, text: …)`, the address standing when nothing names it.
 
 So the durable substrate is a config switch: **files (`bash` + binaries) ⟺ db (`sql` +
-functions)**; `bash`-for-scratch rides along regardless. `aread`/`awrite`/`aedit` ≈
+functions)**; `bash`-for-scratch rides along regardless. The switch is the docs' own, apart
+from where the store lives: an org whose log is on Postgres may keep its docs as files.
+`aread`/`awrite`/`aedit` ≈
 `SELECT`/`INSERT`/`UPDATE` ≈ the same read/write/edit triad, mediated by Unix perms (setuid)
 or RLS (SECURITY DEFINER).
 

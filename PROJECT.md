@@ -3644,7 +3644,7 @@ no system bundle rather than hand out a file that trusts nothing.
 
 ### The read policy is SQL (2026-09-24) — LANDED
 
-The first of the edge-tier refactors (`EDGE-PLAN.md`). The three-branch visibility
+The first of the edge-tier refactors (the plan closed below). The three-branch visibility
 predicate ran as a JS closure over every row a SELECT returned, calling the store's prepared
 statements per row (`isMember` · `connection` · `aliases`), and a read that carried both a
 cap and a filter ran with no SQL LIMIT: a window read walked the agent's whole visible log in
@@ -3661,7 +3661,7 @@ type through the row's `type` column, never `json_type(value)`.
 
 ### Every store port is async (2026-09-24) — LANDED
 
-The second edge-tier refactor (`EDGE-PLAN.md`). `Registry`, `Connections`, `Standing`,
+The second edge-tier refactor. `Registry`, `Connections`, `Standing`,
 `Gates`, `Timers`, `Sweeper`, `meter` and `principalsOf` answered synchronously because
 `DatabaseSync` does; a Postgres adapter cannot. Every port method now returns a `Promise`,
 the SQLite adapter resolves what it has, and about a hundred call sites in xi, main, the
@@ -3681,7 +3681,7 @@ settles, coalesced per session. The edge trigger function inherits the same debt
 
 ### Render gets its bytes from xi (2026-09-24) — LANDED
 
-The third edge-tier refactor (`EDGE-PLAN.md`). Render inlined a trailing attachment by
+The third edge-tier refactor. Render inlined a trailing attachment by
 calling a loader xi handed it — `Deno.readFileSync` inside nu's pure layer, and a read that
 could never await a blob store. The request budget that decided which uris inline is now
 `wantedMedia(window, session)`, exported and pure; xi resolves those uris through the media
@@ -3693,7 +3693,7 @@ adapter.
 
 ### The lease carries the interrupt (2026-09-25) — LANDED
 
-The fourth edge-tier refactor (`EDGE-PLAN.md`). A running turn armed an `AbortController`
+The fourth edge-tier refactor. A running turn armed an `AbortController`
 through xi's `interrupt` port and main kept it in a map its tail fired when a `control` row
 landed in the room — a cancel only reached a turn running in the process whose tail saw the
 row. The turn lease carries the interrupt now: `TurnLock.signal()`, fresh per acquire. The
@@ -3707,8 +3707,21 @@ The heartbeat alone left a cross-process cancel up to `LOCK_TTL_MS / 3` (about 7
 The locker now takes the store's change stream as a doorbell: while it holds a lease it
 tails `control` rows, and each ring has every holder read its mark, so another process's
 cancel arrives in the tail's latency (tens of ms). The mark stays the one truth and the
-heartbeat still reads it, so a ring the fs-watch drops costs a beat. The alternatives
-weighed are in `EDGE-PLAN.md` §3.
+heartbeat still reads it, so a ring the fs-watch drops costs a beat.
+
+The ways to reach a holder in another process, weighed:
+
+- check the mark at step boundaries (before each model call, each tool run): cheap, but a
+  long stream or tool still waits;
+- a faster poll of the mark alone: one query per running turn per period;
+- **a push that rings the holder to read its mark now**, the store's own change stream
+  (SQLite: the tail's fs-watch; Postgres: `LISTEN/NOTIFY`), the heartbeat left as the
+  guaranteed fallback. Chosen: the mark stays the one truth, the push only makes it read
+  sooner;
+- a dispatcher holding every invocation's request and aborting it: instant, but a master
+  process that must stay up;
+- conversation-affine execution (one actor per room, Durable-Objects style): the cancel is
+  always in-process; no Supabase equivalent.
 
 ### A test's scope is a law too (2026-09-25) — LANDED
 
@@ -3751,8 +3764,8 @@ The runner is one builder now: `portsFor(principal, sessionId)` in main serves t
 and every named session, where each had its own near-copy. Two things changed for a named
 session in the merge: it carries the agent's `contact` port like the mind does, and it is
 born from the roster's settings rather than from whatever an attachment had tuned the
-mind to. `portsFor` stays in main until the sandbox provider (EDGE-PLAN §7) and the row
-as config (§9) take its process-bound inputs.
+mind to. `portsFor` stays in main until the sandbox provider and the row as config take its
+process-bound inputs.
 
 ### A running turn's requests only append (2026-09-25) — LANDED
 
@@ -3936,3 +3949,51 @@ now, so it prints the same from either engine. Two reads were added for it, on b
 adapters and in the suites: `memberships()` (every enrollment, ended ones stamped) and
 `armed()` (every wake, next first). The connections line lists the live map, as the
 anchor sees it.
+
+### The edge-tier plan is closed (2026-09-25)
+
+The ten refactors that paved main, xi, nu and mu for the edge tier have landed, each in its
+entry above: the async ports, the read policy as SQL, render's bytes from xi, the lease's
+interrupt, the doc handle, the files port, the sandbox provider, main's roles as functions,
+the agent row as config, and the store suites over a substrate. The Postgres adapter runs
+those suites and is wired through the catalog. The plan's file is gone; what it alone held
+is here.
+
+The edge host inherits two debts. A trigger told the turn lease is held must re-enqueue
+the session or leave it to `pg_cron`, as main owes a held wake one re-poke. `tune`
+overrides live in memory as long as an attachment does, and the edge tier's attachments
+are the doors' redesign.
+
+Open, the build that follows:
+
+- **The edge host.** The `pg_net` trigger that delivers each row, the `pg_cron` job that
+  runs `tick`, the doors over HTTP, and the law installed as a role's row-level policy.
+- **The database as the agent's durable substrate.** Without it an agent on Postgres
+  keeps its docs as files and edits them with bash: the `aread`/`awrite`/`aedit` triad has
+  no counterpart. It needs a `docs` table and its adapter behind the docs port, an agent
+  identity the database can scope by, the `sql` tool through the one gate, and the triad
+  as functions (`docs_read` truncating from the head with `aread`'s footer, `docs_write`,
+  `docs_edit` anchored on the text it replaces).
+
+Decided: a Postgres org may keep its docs as files. Where docs live is a switch of its
+own, not implied by `system.database`, and a file org moving its store to Postgres keeps
+its docs where they are.
+
+The reference for the tool is open-bsp-api's `agent-client/tools/sql.ts`: five tools
+(`executeSql`, `getDbSchema`, `sampleTableRows`, `selectAsCsv`, `bulkInsert`) over a
+database the org configures, not an RLS-scoped store. Its introspection (tables, columns,
+constraints, enums, and the comments `pg_description` holds) is what `db_schema` answers,
+and the sample is a query the agent can write. `selectAsCsv` and `bulkInsert` carry rows
+across to files and back, which meets the rule that the sandbox never writes the database.
+
+Still to decide:
+
+- **Where `aedit`'s engine lives.** Its whitespace-insensitive fallback is TypeScript:
+  either restated in PL/pgSQL and held to the code by tests, as `fold` is, or kept in
+  TypeScript with the write a compare-and-swap on the body it read.
+- **Raw SQL or functions only.** Raw SQL bounded by row-level policy is the design's line;
+  function calls alone make the approval card legible.
+- **Whether a file crosses into a table**, the `bulkInsert` shape: a gated function
+  reading through the files port, or nothing.
+- **Roles in the tests.** Policies need a role to switch to, so the suite needs a user
+  that may create one.
