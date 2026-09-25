@@ -80,10 +80,9 @@ edge tier docs are the `docs` table (DESIGN §8), written through substrate CRUD
 — the query tool is that tier's editor, and the handle is the row's key. Locally they are
 files, written with bash.
 
-Open: `write` and `version` join the header with their first reader — the edge adapter's
-editor, which refuses a write the column forbids and detects a lost update by the
-version. The file projection would take `write` from the frontmatter (absent: `human`;
-`system` scope: `builtin`) and has no version to offer.
+Who may write a doc is the substrate's rule (RLS on the table, ownership on files), and
+an edit that names the text it replaces needs no version to be safe: the header carries
+neither.
 
 ## 5. Render gets its bytes from xi
 

@@ -1848,7 +1848,7 @@ Message-passing, **not** fork (ephemeral) nor merge (histories combined):
 Hierarchy (**agent memory dropped** — the session is the memory):
 
 ```
-system        product base framing (world model, send, digest) + built-in skills/tools  [write: builtin]
+system        product base framing (world model, send, digest) + built-in skills/tools  [read-only]
 org           instructions + memory + skills + tools   [shared across the org's agents]
 agent         instructions (the persona) — NO memory store (the long-running session is it)
 conversation  working state (optional projection for compaction)   [agent-written]
@@ -1908,10 +1908,14 @@ docs {
   kind:   "instruction" | "skill" | "memory" | "tool"        // tool = MCP config (nu-consumed)
   name, description, body
   load:   "always" | "lazy"
-  write:  "builtin" | "human" | "ratified" | "agent"
-  version, updated_at
+  updated_at
 }
 ```
+
+Who may write a row is the substrate's rule — RLS on the table, unix ownership on files
+(§9) — never a column of the row. An edit is safe against a concurrent one the way
+`aedit` is: it names the text it replaces, and text that is no longer there matches
+nothing.
 
 - **No "memory subsystem"**: docs (all kinds) *and* cron are just rows/files managed via
   the generic substrate tool (SQL-client/RLS on DB, bash/Unix on files), bounded by the

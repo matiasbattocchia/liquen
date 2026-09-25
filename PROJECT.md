@@ -3830,5 +3830,12 @@ description · load · handle`, in place of a free-form frontmatter map and a su
 path. The handle is the adapter's word for the doc, one string: render prints it over an
 inlined body and in the index line, and the agent's read takes it as printed. The file
 adapter computes it as the way from the agent's folder to the file, so render does no
-path arithmetic and the prompt is byte-identical. `write` and `version` join the header
-with their first reader, the edge adapter's editor (EDGE-PLAN §4).
+path arithmetic and the prompt is byte-identical.
+
+Two columns the §8 table used to list are dropped, decided the same day. `write` (who
+may change the doc) duplicated the substrate's own rule — RLS on the table, unix
+ownership on files — as a column nothing enforced. `version` (a counter for detecting a
+lost update) is unnecessary because the edit primitive names the text it replaces, the
+way `aedit` does: text a concurrent edit changed matches nothing, and the editor is told
+to re-read. A file has no counter to offer either, so the column would have been optional
+on the very tier that writes docs most.
