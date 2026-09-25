@@ -3776,3 +3776,16 @@ Still open, each a prefix edit the log line would name: a world message that lan
 step's call is in flight renders ahead of that step on the next request; a checkpoint inside
 a running turn summarizes history under the turn's replayed thinking; a docs change mid-turn
 rebuilds the system prompt.
+
+### The agent row is enough to run xi (2026-09-25) — LANDED
+
+The registry row carries `settings`: the catalog funnel's whole result past the identity
+columns — `maxTokens`, `tools`, `rules`, the backlog floor `since`, the attention knobs,
+`gateHours`, the compaction thresholds — with the nulls the funnel keeps on purpose
+(every tool, never sleeps, an ask stands). `compileRoster` compiles the catalog into
+rows, `syncAgents` mirrors them (migration v11 adds the column), and main builds each
+`AgentConfig` by reading the table back through `configOf`. Explicit principals compile
+to rows the same way and take the same round trip, so the suites prove the row is enough:
+a field it cannot carry fails a test. What stays in code is what no row can hold — `home`
+is the data root's folder for the agent, and a test's `gate` and `retryDelaysMs` are a
+function and a pace.

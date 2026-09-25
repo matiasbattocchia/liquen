@@ -40,6 +40,7 @@ import { type Log, openLog } from "./store/log.ts";
 import { type ClockSettings, tick } from "./tick.ts";
 import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
+import type { AgentRow } from "./store/agents.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { seedAgent, seedOrg } from "./store/seed.ts";
 import {
@@ -63,7 +64,7 @@ import { createPresence } from "./connect/presence.ts";
 import { createTranscriber } from "./processors.ts";
 import { type DoorAgent, installDoors, type Status, type Tune } from "./door.ts";
 import { loadMediaBlock, memoizedLoader } from "./store/media.ts";
-import type { About, Delta, Event } from "./types.ts";
+import type { About, Delta, Effort, Event } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
   findRoot,
@@ -223,25 +224,31 @@ export async function start(
   // main funnels the resolved values down the chain. Explicit principals (tests) carry
   // their own settings and need no catalog at all.
   const catalog = derived ? config.catalog ?? null : null;
-  const roster: Principal[] = config.principals ??
-    await compileRoster(dir, config, catalog!, Date.now());
   // config → tables → folders (§9): the declaration compiles into the registry — the table
   // exists because policy derives from rows (RLS later, §6), the ingest classifier scans
   // the declared handles (email/phone → member), and render names members by it (§5).
   // Every entry is a row, a person alone included: they steer, they are named, no session
-  // of theirs ever runs (`mind: false`, §4).
-  await log.syncAgents(roster.map((p) => ({
-    agentId: p.agentId,
-    mind: sessionAddress(p.agentId, MIND),
-    provider: p.provider,
-    model: p.model,
-    effort: p.effort,
-    name: p.name,
-    email: p.email,
-    phone: p.phone,
-    principals: p.principals,
-    ...(p.runs === false ? { runs: false } : {}),
-  })));
+  // of theirs ever runs (`mind: false`, §4). Explicit principals (tests) compile the same
+  // way, from what they carry.
+  await log.syncAgents(
+    derived
+      ? await compileRoster(dir, config, catalog!, Date.now())
+      : config.principals!.map(rowOf),
+  );
+  // an agent IS its row (§9): what runs is built from the table, so a host with nothing
+  // but the store rebuilds the same agent. What a caller passes in code rides beside it —
+  // a policy, a compiled gate, a retry pace: seams, and no row carries a function.
+  const inCode = new Map((config.principals ?? []).map((p) => [p.agentId, p]));
+  const roster: Principal[] = (await log.agents()).map((row) => {
+    const p = inCode.get(row.agentId);
+    return {
+      ...configOf(row, dir),
+      ...(p?.using ? { using: p.using } : {}),
+      ...(p?.check ? { check: p.check } : {}),
+      ...(p?.gate ? { gate: p.gate } : {}),
+      ...(p?.retryDelaysMs ? { retryDelaysMs: p.retryDelaysMs } : {}),
+    };
+  });
   const principals = roster.filter((p) => p.runs !== false);
   // the provider can run the model at the effort declared (§9): refused here, not mid-turn
   for (const p of principals) checkProvider(p);
@@ -666,14 +673,65 @@ export async function start(
   };
 }
 
-/** What runs plus what the registry mirrors: the runtime config, the policy seam, and the
- *  declared facts (`provider` for the transport seam, `email`/`phone` for the classifier,
- *  `principals` and `runs` for who steers and whether a session runs at all, §4). */
-type Principal = AgentConfig & Policy & {
-  provider?: string;
-  principals?: string[];
-  runs?: boolean;
-};
+/** What runs, as main builds it from the agent's row: the runtime config, the policy
+ *  seam, and the row's own facts (`provider` for the transport seam, `runs` for whether a
+ *  session runs at all, §4). */
+type Principal = AgentConfig & Policy & { provider?: string; runs?: boolean };
+
+/** An explicit principal (tests) as the row it compiles to. What no row carries stays in
+ *  code: `home` is the data root's, `gate` and `retryDelaysMs` are a test's. */
+function rowOf(p: Principal): AgentRow {
+  return {
+    agentId: p.agentId,
+    mind: sessionAddress(p.agentId, MIND),
+    provider: p.provider,
+    model: p.model,
+    effort: p.effort,
+    name: p.name,
+    email: p.email,
+    phone: p.phone,
+    ...(p.runs === false ? { runs: false } : {}),
+    settings: {
+      maxTokens: p.maxTokens,
+      timezone: p.timezone,
+      locale: p.locale,
+      tools: p.tools,
+      rules: p.rules,
+      windowLimit: p.windowLimit,
+      since: p.since,
+      gateHours: p.gateHours,
+      engagedMinutes: p.engagedMinutes,
+      digestAfterMessages: p.digestAfterMessages,
+      digestMinutes: p.digestMinutes,
+      sleepHours: p.sleepHours,
+      processors: p.processors,
+      compactAt: p.compactAt,
+      keepRecent: p.keepRecent,
+      compactTurnAt: p.compactTurnAt,
+    },
+  };
+}
+
+/** The agent its row describes (§9): the config a session of it runs with, and the row's
+ *  own facts. `home` is where this data root keeps the agent's folder. */
+function configOf(row: AgentRow, dir: string): Principal {
+  if (!row.settings || row.model === undefined) {
+    throw new Error(`agent ${row.agentId}: its row carries no settings`);
+  }
+  return {
+    agentId: row.agentId,
+    sessionId: MIND,
+    model: row.model,
+    ...(row.effort ? { effort: row.effort as Effort } : {}),
+    ...(row.provider ? { provider: row.provider } : {}),
+    ...(row.name ? { name: row.name } : {}),
+    ...(row.email ? { email: row.email } : {}),
+    ...(row.phone ? { phone: row.phone } : {}),
+    ...(row.runs === false ? { runs: false } : {}),
+    ...row.settings,
+    home: `${dir}/agents/${row.agentId}`,
+  };
+}
 
 /** The framework way (§9): the catalog's `agents` roster declares the org — each entry
  *  becomes a registry row and a home folder, config → tables → folders. agentId = the
@@ -691,7 +749,7 @@ async function compileRoster(
   defaults: Pick<MainConfig, "model" | "effort" | "maxTokens" | "backlogHours">,
   catalog: OrgConfig,
   startedAt: number,
-): Promise<Principal[]> {
+): Promise<AgentRow[]> {
   // the backlog is resolved ONCE, into an instant: every agent in this org comes up owing
   // the same stretch of history, and no later read re-decides where that stretch begins
   const hours = defaults.backlogHours ?? catalog.organization.backlogHours;
@@ -700,7 +758,7 @@ async function compileRoster(
   // the media kinds a processor makes readable — org-wide, one fact for every agent (§5)
   const processors = Object.entries(catalog.processors).filter(([, cmd]) => !!cmd)
     .map(([kind]) => kind);
-  const found: Principal[] = [];
+  const found: AgentRow[] = [];
   for (const [name, entry] of Object.entries(catalog.agents)) {
     const { identity = {}, principals, mind, ...cfg } = entry;
     // a session runs unless the entry — or `organization.agents.mind`, for all of them — says not
@@ -709,41 +767,42 @@ async function compileRoster(
     const runs = mind ?? org.mind;
     if (runs) await Deno.mkdir(`${dir}/agents/${name}`, { recursive: true });
     found.push({
+      agentId: name,
+      mind: sessionAddress(name, MIND),
       principals,
       ...(runs ? {} : { runs: false }),
-      agentId: name,
-      sessionId: MIND,
       model: cfg.model ?? defaults.model ?? org.model,
       effort: cfg.effort ?? defaults.effort ?? org.effort ?? undefined,
-      maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.maxTokens,
-      // null survives the funnel: it means "every tool", not "unset"
-      tools: (cfg.tools !== undefined ? cfg.tools : org.tools) ?? undefined,
-      rules: cfg.rules ?? org.rules,
-      since,
-      timezone: catalog.organization.timezone || undefined,
-      locale: catalog.organization.locale ?? undefined,
-      home: `${dir}/agents/${name}`,
-      // attention (§2): the wake policy is the agent's — hot, summoned, or on the digest
-      engagedMinutes: cfg.engagedMinutes ?? org.engagedMinutes,
-      digestAfterMessages: cfg.digestAfterMessages ?? org.digestAfterMessages,
-      digestMinutes: cfg.digestMinutes ?? org.digestMinutes,
-      // null survives the funnel: it means "never sleeps", not "unset" (Wake, §2)
-      sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.sleepHours,
-      // null survives too: an ask that stands until answered
-      gateHours: cfg.gateHours !== undefined ? cfg.gateHours : org.gateHours,
-      processors,
-      // the system half funnels too — org-wide, no per-agent seat (harness machinery)
-      windowLimit: catalog.system.windowLimit,
-      compactAt: catalog.system.compactAt,
-      keepRecent: catalog.system.keepRecent,
-      compactTurnAt: catalog.system.compactTurnAt,
       provider: cfg.provider ?? org.provider ?? undefined,
       name: identity.name ?? undefined,
       email: identity.email ?? undefined,
       phone: identity.phone ?? undefined,
+      settings: {
+        maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.maxTokens,
+        // null survives the funnel: it means "every tool", not "unset"
+        tools: (cfg.tools !== undefined ? cfg.tools : org.tools) ?? undefined,
+        rules: cfg.rules ?? org.rules,
+        since,
+        timezone: catalog.organization.timezone || undefined,
+        locale: catalog.organization.locale ?? undefined,
+        // attention (§2): the wake policy is the agent's — hot, summoned, or on the digest
+        engagedMinutes: cfg.engagedMinutes ?? org.engagedMinutes,
+        digestAfterMessages: cfg.digestAfterMessages ?? org.digestAfterMessages,
+        digestMinutes: cfg.digestMinutes ?? org.digestMinutes,
+        // null survives the funnel: it means "never sleeps", not "unset" (Wake, §2)
+        sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.sleepHours,
+        // null survives too: an ask that stands until answered
+        gateHours: cfg.gateHours !== undefined ? cfg.gateHours : org.gateHours,
+        processors,
+        // the system half funnels too — org-wide, no per-agent seat (harness machinery)
+        windowLimit: catalog.system.windowLimit,
+        compactAt: catalog.system.compactAt,
+        keepRecent: catalog.system.keepRecent,
+        compactTurnAt: catalog.system.compactTurnAt,
+      },
     });
   }
-  return found.sort((a, b) => a.agentId < b.agentId ? -1 : 1);
+  return found;
 }
 
 /** Resolve when `p` settles or `ms` elapses, whichever comes first — and never leave the

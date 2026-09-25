@@ -8,6 +8,7 @@ import { TextLineStream } from "@std/streams";
 import { start } from "./main.ts";
 import { openLog } from "./store/log.ts";
 import type { AgentConfig } from "./xi.ts";
+import type { AgentRow } from "./store/agents.ts";
 import type { Policy } from "./policy.ts";
 import type { ControlEvent, Draft, Event, MessageEvent, ToolResultEvent } from "./types.ts";
 import { isCancelled } from "./render.ts";
@@ -16,6 +17,10 @@ import { canned, scripted } from "./testing.ts";
 import { type OrgConfig, readConfig } from "./config.ts";
 
 type Principal = AgentConfig & Policy;
+
+/** The registry's identity columns — what a row says about who, beside what it runs with. */
+const identities = async (log: { agents(): Promise<AgentRow[]> }) =>
+  (await log.agents()).map(({ settings: _settings, ...row }) => row);
 
 /** A mind pinned to one room: it sees that room alone and writes anywhere. */
 const onlyIn = (room: string): Policy => ({
@@ -228,7 +233,7 @@ Deno.test("the framework way: the catalog's roster declares the org; the table m
   });
   try {
     await Deno.stat(`${dir}/agents/ana`); // config → folders: boot derived the home
-    assertEquals(await main.log.agents(), [ // the registry mirrors the roster (the RLS substrate)
+    assertEquals(await identities(main.log), [ // the registry mirrors the roster (the RLS substrate)
       { agentId: "ana", mind: "mind@ana", model: "claude-x" },
       { agentId: "bo", mind: "mind@bo", model: "claude-x" },
     ]);
@@ -257,13 +262,18 @@ Deno.test("config.jsonc declares the agent: settings override defaults, handles 
     transport,
   });
   try {
-    assertEquals(await main.log.agents(), [{
+    assertEquals(await identities(main.log), [{
       agentId: "ana",
       mind: "mind@ana",
       model: "claude-y", // config wins over the MainConfig default
       effort: "low",
       email: "ana@org.example",
     }]);
+    // an agent IS its row (§9): the funnel's result is on it, and main runs from there
+    const [{ settings }] = await main.log.agents();
+    assertEquals(settings?.maxTokens, 1024);
+    assertEquals(typeof settings?.since, "string");
+    assert(Array.isArray(settings?.tools)); // the catalog's offer, funneled
     await main.log.publish(principalMsg("mind@ana", "hola ana"));
     await waitFor(async () =>
       (await main.log.read({ types: ["message"] })).some((e) =>
@@ -658,7 +668,7 @@ Deno.test("a person alone (mind: false, §4): a registry row, a door, no session
     transport,
   });
   try {
-    assertEquals(await main.log.agents(), [
+    assertEquals(await identities(main.log), [
       {
         agentId: "sol",
         mind: "mind@sol",

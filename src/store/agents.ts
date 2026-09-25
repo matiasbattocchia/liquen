@@ -20,6 +20,31 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import type { Rule } from "../types.ts";
+
+/** The resolved settings a session of the agent runs with (§9): what the catalog's funnel
+ *  decided, stored so that a host with nothing but the store rebuilds the agent from its
+ *  row. `null` is a value here, not an absence — "every tool", "never sleeps", "an ask
+ *  stands until answered" — so the row keeps it. */
+export interface AgentSettings {
+  maxTokens: number;
+  timezone?: string;
+  locale?: string;
+  tools?: string[];
+  rules?: Rule[];
+  windowLimit?: number;
+  /** The backlog floor, an instant (§5): decided once when the org came up. */
+  since?: string;
+  gateHours?: number | null;
+  engagedMinutes?: number;
+  digestAfterMessages?: number;
+  digestMinutes?: number;
+  sleepHours?: string | null;
+  processors?: string[];
+  compactAt?: number;
+  keepRecent?: number;
+  compactTurnAt?: number;
+}
 
 export interface AgentRow {
   agentId: string;
@@ -36,6 +61,9 @@ export interface AgentRow {
   /** False ⇒ a person alone (`mind: false` in the catalog): no session runs, nothing
    *  routes to `mind`. Absent ⇒ runs. */
   runs?: boolean;
+  /** What its sessions run with — the whole of the config main builds, past the identity
+   *  columns above. A row without them names an agent nothing can run. */
+  settings?: AgentSettings;
 }
 
 export interface Registry {
@@ -56,6 +84,7 @@ export const AGENTS_DDL = `CREATE TABLE IF NOT EXISTS agents (
   phone      TEXT,
   principals TEXT,
   runs       INTEGER NOT NULL DEFAULT 1,
+  settings   TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );`;
@@ -64,16 +93,17 @@ export const AGENTS_DDL = `CREATE TABLE IF NOT EXISTS agents (
 export function createRegistry(db: DatabaseSync): Registry {
   const put = db.prepare(
     `INSERT INTO agents (agent_id, mind, provider, model, effort, name, email, phone,
-       principals, runs, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       principals, runs, settings, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(agent_id) DO UPDATE SET
        mind = excluded.mind, provider = excluded.provider, model = excluded.model,
        effort = excluded.effort, name = excluded.name, email = excluded.email,
        phone = excluded.phone, principals = excluded.principals, runs = excluded.runs,
-       updated_at = excluded.updated_at`,
+       settings = excluded.settings, updated_at = excluded.updated_at`,
   );
   const all = db.prepare(
-    `SELECT agent_id, mind, provider, model, effort, name, email, phone, principals, runs
+    `SELECT agent_id, mind, provider, model, effort, name, email, phone, principals, runs,
+       settings
      FROM agents ORDER BY agent_id`,
   );
   const del = db.prepare("DELETE FROM agents WHERE agent_id = ?");
@@ -94,6 +124,7 @@ export function createRegistry(db: DatabaseSync): Registry {
           r.phone ?? null,
           r.principals ? JSON.stringify(r.principals) : null,
           r.runs === false ? 0 : 1,
+          r.settings ? JSON.stringify(r.settings) : null,
           now,
           now,
         );
@@ -118,6 +149,9 @@ export function createRegistry(db: DatabaseSync): Registry {
           ? { principals: JSON.parse(r.principals) as string[] }
           : {}),
         ...(r.runs === 0 ? { runs: false } : {}),
+        ...(typeof r.settings === "string"
+          ? { settings: JSON.parse(r.settings) as AgentSettings }
+          : {}),
       })));
     },
   };

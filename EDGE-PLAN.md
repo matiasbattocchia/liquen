@@ -125,11 +125,16 @@ shell and the proxy (§7), and the agent's settings as a row (§9) — then it i
 
 ## 9. The agent row is enough to run xi
 
-`syncAgents` stores the fully resolved settings on the row (`maxTokens`, `timezone`,
-`gateHours`, tools, …), and main builds `AgentConfig` FROM the row — so a cold isolate
-rebuilds an agent from the store alone ("an agent IS its row", DESIGN §9). `tune`
-overrides stay in memory: they live as long as an attachment, and the edge tier's
-attachments are the doors' redesign, not this step's.
+**Landed** (PROJECT.md, 2026-09-25). The row carries `settings` (`AgentSettings`,
+`src/store/agents.ts`): everything the catalog's funnel decided past the identity columns
+— `maxTokens`, `tools`, `rules`, `since`, the attention knobs, `gateHours`, the
+compaction thresholds — nulls kept as the values they are. The roster compiles into rows,
+`syncAgents` mirrors them, and main builds every `AgentConfig` by reading the table back
+(`configOf`), explicit principals included: a test's agent takes the same round trip, so
+a field the row cannot carry fails a test. Off the row by nature: `home` (this data
+root's folder for the agent), and a test's compiled `gate` and `retryDelaysMs` (functions
+and pace, passed in code). `tune` overrides stay in memory: they live as long as an
+attachment, and the edge tier's attachments are the doors' redesign.
 
 ## 10. The store suites run against an adapter factory
 

@@ -2443,9 +2443,12 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   is N:M in the limit (an agent managed by many or any principals), so the *agent* is the
   entity. `MainConfig.principals` remains the in-code seam (tests); process
   bootstrap (data dir, API key) stays env — it exists before any substrate is open.
-  **An agent IS its row** — identity + bindings; docs, workspace, memory may all be empty
-  and the agent still fully exists (agents start blank). Everything else is a *projection*
-  of the row onto the substrate: its log streams and turn lease; its policy (`readable`/
+  **An agent IS its row** — identity, bindings and `settings`, the resolved config its
+  sessions run with (`AgentSettings`, `store/agents.ts`); docs, workspace, memory may all
+  be empty and the agent still fully exists (agents start blank). main builds the running
+  agent by reading the row back, never from what it compiled, so a host with nothing but
+  the store — a cold isolate — builds the same one. Everything else is a *projection* of
+  the row onto the substrate: its log streams and turn lease; its policy (`readable`/
   `writable` from bindings + the connections map, §6); on Docker a **legit linux user**
   (the row is the passwd entry, `useradd -m` is provisioning — unix-safe names / a reserved
   uid range decided at provisioning, not in the registry); on Postgres a **DB role / JWT

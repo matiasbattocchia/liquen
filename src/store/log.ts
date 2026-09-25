@@ -804,6 +804,20 @@ function migrate(db: DatabaseSync) {
   if (v < 8) migrateV8(db);
   if (v < 9) migrateV9(db);
   if (v < 10) migrateV10(db);
+  if (v < 11) migrateV11(db);
+}
+
+/** v11 — an agent's row carries its resolved settings (§9): `agents.settings`, the JSON a
+ *  host builds the agent's config from. */
+function migrateV11(db: DatabaseSync) {
+  writing(db, () => {
+    const cols = new Set(
+      (db.prepare("SELECT name FROM pragma_table_info('agents')").all() as { name: string }[])
+        .map((c) => c.name),
+    );
+    if (!cols.has("settings")) db.exec("ALTER TABLE agents ADD COLUMN settings TEXT");
+    db.exec("PRAGMA user_version = 11");
+  });
 }
 
 /** v10 — a lease carries its interrupt (§2): `locks.cancel`, the mark a control row leaves

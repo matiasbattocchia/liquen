@@ -70,3 +70,27 @@ Deno.test("syncAgents mirrors the declared settings and handles; a sync without 
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("a row carries the settings its sessions run with, nulls kept: an agent IS its row (§9)", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  try {
+    const settings = {
+      maxTokens: 4096,
+      timezone: "America/Argentina/Buenos_Aires",
+      tools: ["send", "bash"],
+      rules: [{ tool: "send", action: "ask" as const }],
+      since: "2026-09-25T00:00:00.000Z",
+      gateHours: null, // an ask stands until answered — a value, not an absence
+      sleepHours: null, // never sleeps
+      processors: ["audio"],
+    };
+    await log.syncAgents([{ agentId: "ana", mind: "mind@ana", model: "claude-x", settings }]);
+    assertEquals((await log.agents())[0].settings, settings);
+    await log.syncAgents([{ agentId: "ana", mind: "mind@ana", model: "claude-x" }]);
+    assertEquals((await log.agents())[0].settings, undefined); // the mirror never remembers
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
