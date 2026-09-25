@@ -3855,7 +3855,7 @@ they run against any adapter. The count is unchanged: 133 store tests before and
 The Postgres adapter is done when it is a `Substrate` these suites pass; the docs port's
 tests stay on the file adapter, since they exercise discovery over a folder.
 
-### The Postgres adapter (2026-09-25) — LANDED, not yet wired
+### The Postgres adapter (2026-09-25) — LANDED
 
 `src/store/pg/` implements every store port on Postgres, and passes all 81 tests of the
 store suites against a local `postgres:17` (plus six of its own: the SQL restatements of
