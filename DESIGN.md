@@ -2503,6 +2503,12 @@ into the blob store.
 columns and the adapter's address for the doc, which render prints and the agent's read
 takes, one string — a home-relative path on files, the row's key on the table.
 
+**The store's contract is its suites** (`src/store/suite/`): each port area's tests are a
+function over a `Substrate` — a store nothing has written to, a handle per process, the
+vault beside it — and an adapter is done when it runs them. The SQLite adapter runs them
+under `src/store/*.test.ts`, beside what is the engine's own; the Postgres adapter's DDL
+is written against them.
+
 Two asymmetries to plan around, not paper over: **(1) no bash on an edge function**, so an
 edge-deployed agent can run connectors, dispatch, a verdict and a think, but the exec plane
 (§9's substrate primitive) needs the container — or a sandbox service, which is a different

@@ -3839,3 +3839,18 @@ lost update) is unnecessary because the edit primitive names the text it replace
 way `aedit` does: text a concurrent edit changed matches nothing, and the editor is told
 to re-read. A file has no counter to offer either, so the column would have been optional
 on the very tier that writes docs most.
+
+### The store suites run over a substrate (2026-09-25) — LANDED
+
+`src/store/suite/` is the store's contract as tests. Each port area's tests are a
+function over a `Substrate` (`suite/mod.ts`): `fresh()` opens a `Store` nothing has
+written to, `open()` on it is one process's handle — the cross-process cases are two
+handles on one store — and `vault()` is the same store's credentials. `sqlite` is the
+local substrate (a temp folder laid out as an org's data root), and every
+`src/store/*.test.ts` runs its area's suite over it beside the tests that are SQLite's
+own: the v6 and v9 migrations, the timestamp index, the busy-timeout wait, the
+heartbeat-only locker, and the worker-thread merge of one credential row. The timers'
+two-clock claim tests moved onto two store handles from a raw table of their own, so
+they run against any adapter. The count is unchanged: 133 store tests before and after.
+The Postgres adapter is done when it is a `Substrate` these suites pass; the docs port's
+tests stay on the file adapter, since they exercise discovery over a folder.

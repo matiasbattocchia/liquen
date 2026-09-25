@@ -146,5 +146,18 @@ attachment, and the edge tier's attachments are the doors' redesign.
 
 ## 10. The store suites run against an adapter factory
 
-Parameterize `src/store/*.test.ts` over a factory that opens a store. The Postgres adapter
-is done when it passes the same suite; its DDL is written with it, against these tests.
+**Landed** (PROJECT.md, 2026-09-25). `src/store/suite/` holds the store's contract as
+tests: one module per port area (`log · lock · agents · connections · rules · timers ·
+gates · sweep · roster · credentials`), each a function that registers its tests over a
+`Substrate` — `fresh()` answers a `Store` nothing has written to, whose every `open` is a
+process's own handle and whose `vault` is the same store's credentials. `sqlite` is the
+local substrate, and `src/store/*.test.ts` is each area's suite run over it plus what is
+the engine's own: the migrations a file takes on open, the index a bounded read walks,
+the write lock's patience, a locker with no change stream, a thread-per-process merge.
+The Postgres adapter is a `Substrate` that runs the same suites; its DDL is written
+against them.
+
+The docs port stays on its file adapter's tests (`docs.test.ts`, `seed.test.ts`): what
+they exercise is discovery over a folder — frontmatter, symlinks, workspace noise — and
+a table adapter's docs test seeds rows through SQL and asserts the same `list` and
+`read`, with no writing side of the port in-process to share.

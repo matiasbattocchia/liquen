@@ -1,45 +1,33 @@
+/**
+ * The SQLite adapter runs the vault suite, and answers for what is the file's own: two
+ * processes merging one row under the engine's write lock, and the sweep of spent states
+ * read straight off the table.
+ */
+
 import { assertEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { openCredentials } from "./credentials.ts";
+import { credentialsSuite } from "./suite/credentials.ts";
+import { sqlite } from "./suite/mod.ts";
 
-/** An OAuth state is one-shot and short-lived: consumed once, and only within its TTL.
- *  The TTL is compared against the store's clock (§9), so the test ages it by moving the
- *  clock — never by waiting the ten minutes out. */
-Deno.test("an OAuth state is consumed once, and not at all past its TTL", async () => {
-  const dir = await Deno.makeTempDir();
-  let skew = 0;
-  const creds = await openCredentials(dir, { now: () => Date.now() + skew });
-  try {
-    const fresh = await creds.mintState("slack", { agentId: "ana" });
-    assertEquals(await creds.consumeState("google", fresh), null); // another service's door
-    assertEquals(await creds.consumeState("slack", fresh), { agentId: "ana" });
-    assertEquals(await creds.consumeState("slack", fresh), null); // spent
-
-    const aged = await creds.mintState("slack");
-    skew = 10 * 60_000 + 1; // a TTL and a millisecond later…
-    assertEquals(await creds.consumeState("slack", aged), null); // …the door is closed
-  } finally {
-    await creds.close();
-    await Deno.remove(dir, { recursive: true });
-  }
-});
+credentialsSuite(sqlite);
 
 /** One writer on its own thread and connection — a process's view of the vault. Each
  *  merges only its own field into the shared row, `n` times over, starting on `go` so
  *  the writers overlap rather than queue behind each other's boot. */
 function writer(dir: string, field: string, n: number): { go: () => Promise<void> } {
   const code = `
-    import { openCredentials } from ${JSON.stringify(import.meta.resolve("./credentials.ts"))};
-    const creds = await openCredentials(${JSON.stringify(dir)});
-    self.onmessage = async () => {
-      for (let i = 0; i < ${n}; i++) {
-        await creds.put({ key: "svc:org", value: { ${field}: String(i) } });
-      }
-      await creds.close();
-      self.postMessage("done");
-    };
-    self.postMessage("ready");
-  `;
+  import { openCredentials } from ${JSON.stringify(import.meta.resolve("./credentials.ts"))};
+  const creds = await openCredentials(${JSON.stringify(dir)});
+  self.onmessage = async () => {
+    for (let i = 0; i < ${n}; i++) {
+      await creds.put({ key: "svc:org", value: { ${field}: String(i) } });
+    }
+    await creds.close();
+    self.postMessage("done");
+  };
+  self.postMessage("ready");
+`;
   const url = URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
   const w = new Worker(url, { type: "module" });
   const ready = new Promise<void>((resolve, reject) => {
@@ -113,30 +101,6 @@ Deno.test("expired OAuth states are pruned at the next mint, and at open", async
     assertEquals(count(fresh), 0); // open is a prune point too
     await reopened.close();
   } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-/** The merge is FIELD-WISE: a top-level field lands whole, replacing what was under it —
- *  a door that rewrites a map (the calendar's cursors) drops a key by leaving it out. */
-Deno.test("put merges by top-level field: a nested object is replaced whole, not merged", async () => {
-  const dir = await Deno.makeTempDir();
-  const creds = await openCredentials(dir);
-  try {
-    await creds.put({
-      key: "google:ana",
-      value: { refresh_token: "r1" },
-      extra: { expiry: "t1", calendar_sync: { primary: "tok1", team: "tok2" } },
-    });
-    await creds.put({ key: "google:ana", value: {}, extra: { calendar_sync: { team: "tok3" } } });
-    await creds.put({ key: "google:ana", value: { access_token: "a1" }, extra: { expiry: "t2" } });
-    assertEquals(await creds.get("google:ana"), {
-      key: "google:ana",
-      value: { refresh_token: "r1", access_token: "a1" },
-      extra: { expiry: "t2", calendar_sync: { team: "tok3" } },
-    });
-  } finally {
-    await creds.close();
     await Deno.remove(dir, { recursive: true });
   }
 });

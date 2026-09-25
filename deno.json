@@ -24,6 +24,7 @@
       ".github",
       "audit",
       "**/*.test.ts",
+      "src/store/suite",
       "!README.md",
       "!src/seed/**/*.md"
     ]
