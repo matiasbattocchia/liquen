@@ -1148,14 +1148,14 @@ export function teamsWire(deps: TeamsWireDeps): TeamsWire {
  *  subscriptions alive on the shared cadence. No `notificationUrl` declared ⇒ nothing is
  *  subscribed and the half says so once. Returns stop. */
 export async function runIngest(): Promise<() => Promise<void>> {
-  const { openLog } = await import("../../store/log.ts");
-  const { openCredentials } = await import("../../store/credentials.ts");
+  const { openStore } = await import("../../store/mod.ts");
   const { createGrantBroker } = await import("../../proxy/grants.ts");
   const { serveIngest } = await import("../serve.ts");
   const { microsoftConfig } = await import("./config.ts");
   const { runPollIngest } = await import("../poll.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
+  const store = await openStore(root);
   const { ingestPort, notificationUrl } = await microsoftConfig(root);
   if (!notificationUrl) {
     console.error(
@@ -1164,8 +1164,8 @@ export async function runIngest(): Promise<() => Promise<void>> {
     );
     return () => Promise.resolve();
   }
-  const log = await openLog(`${dir}/log`);
-  const creds = await openCredentials(dir);
+  const log = await store.log();
+  const creds = await store.vault();
   const broker = createGrantBroker({ creds });
   const inflight = new Set<Promise<void>>();
   const handler = createTeamsWebhook({
@@ -1205,13 +1205,13 @@ export async function runIngest(): Promise<() => Promise<void>> {
 
 /** Wire the outbound half over the org's log — resident once it returns. Returns stop. */
 export async function runDispatch(): Promise<() => Promise<void>> {
-  const { openLog } = await import("../../store/log.ts");
-  const { openCredentials } = await import("../../store/credentials.ts");
+  const { openStore } = await import("../../store/mod.ts");
   const { createGrantBroker } = await import("../../proxy/grants.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
-  const log = await openLog(`${dir}/log`);
-  const creds = await openCredentials(dir);
+  const store = await openStore(root);
+  const log = await store.log();
+  const creds = await store.vault();
   const broker = createGrantBroker({ creds });
   const stop = createTeamsDispatch({
     subscribe: (l, o) => log.subscribe(l, o),

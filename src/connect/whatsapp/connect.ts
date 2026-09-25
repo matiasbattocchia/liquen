@@ -184,7 +184,7 @@ const USAGE = `usage: liquen connect whatsapp [agent] [--phone <digits>]
 
 if (import.meta.main) {
   await entry(async () => {
-    const { openLog } = await import("../../store/log.ts");
+    const { openStore } = await import("../../store/mod.ts");
     const { userInfo } = await import("node:os");
     const { basename } = await import("node:path");
     const qrcode = (await import("qrcode-terminal")).default;
@@ -192,7 +192,7 @@ if (import.meta.main) {
     const org = orgFlag();
     helpFlag(org.args, USAGE);
     const root = findRoot(org);
-    const dir = `${root}/data`;
+    const store = await openStore(root);
     const flags = new Map<string, string>();
     const positional: string[] = [];
     let orgOwned = false;
@@ -256,7 +256,7 @@ if (import.meta.main) {
       } (bridge ${base}, tenant "${tenant}", ingest ${webhookUrl}) — ` +
         `${phoneNumber ? `pairing code for ${phoneNumber}` : "QR"}.\n`,
     );
-    const log = await openLog(`${dir}/log`);
+    const log = await store.log();
     try {
       const { address } = await connectWhatsApp({
         bridge,

@@ -528,8 +528,7 @@ const USAGE = `usage: liquen connect slack app [--bot] [--user]
 
 if (import.meta.main) {
   await entry(async () => {
-    const { openLog } = await import("../../store/log.ts");
-    const { openCredentials } = await import("../../store/credentials.ts");
+    const { openStore } = await import("../../store/mod.ts");
     const { userInfo } = await import("node:os");
     const { slackConfig } = await import("./config.ts");
     const { readConfig } = await import("../../config.ts");
@@ -537,7 +536,7 @@ if (import.meta.main) {
     const org = orgFlag();
     helpFlag(org.args, USAGE);
     const root = findRoot(org);
-    const dir = `${root}/data`;
+    const store = await openStore(root);
     const [verb, ...rest] = org.args;
     if (verb !== "app" && verb !== "user") {
       console.error(USAGE);
@@ -632,8 +631,8 @@ if (import.meta.main) {
       );
       openBrowser(url);
 
-      const creds = await openCredentials(dir);
-      const log = pastes ? await openLog(`${dir}/log`) : null;
+      const creds = await store.vault();
+      const log = pastes ? await store.log() : null;
       try {
         const clientId = ask("Client ID:");
         if (clientId) {
@@ -725,7 +724,7 @@ if (import.meta.main) {
     const { createSlackOAuth } = await import("./oauth.ts");
     const agent = positional[0] ?? me();
     const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? userScopes;
-    const creds = await openCredentials(dir);
+    const creds = await store.vault();
     try {
       const app = await pickSlackApp(creds, flags.get("app")).catch((e: Error) => {
         console.error(e.message);
@@ -749,7 +748,7 @@ if (import.meta.main) {
         console.error(e instanceof Error ? e.message : String(e));
         Deno.exit(2);
       }
-      const log = await openLog(`${dir}/log`);
+      const log = await store.log();
       let landed: { user: string; missing: string[] } | undefined;
       const { handler, outcome } = oneShot(createSlackOAuth({
         config: {

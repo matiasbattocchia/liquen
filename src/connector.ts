@@ -2,7 +2,8 @@
  * connector.ts — the connector seam (DESIGN §4, §9): everything a connector may
  * import from liquen, shipped or custom, through ONE module.
  *
- * A connector is a standalone process over the org's substrate (the `./data` root): ingest
+ * A connector is a standalone process over the org's store (`openStore`, wherever the
+ * catalog puts it): ingest
  * publishes world events into the log, dispatch tails the log and delivers, connect
  * is the setup door writing the connection map and the vault. The shipped ones under
  * `src/connect/<service>/` import this module by path; the org's own under
@@ -11,9 +12,9 @@
  * violation, not a convenience. The contract itself: CONNECTORS.md.
  */
 
-export { openLog } from "./store/log.ts";
+export { openStore } from "./store/mod.ts";
+export type { Store } from "./store/mod.ts";
 export type { Appender, DeliveryPatch, Reader, ReadQuery, Subscriber } from "./store/log.ts";
-export { openCredentials } from "./store/credentials.ts";
 export type { CredentialRow, Credentials } from "./store/credentials.ts";
 export { appJwt, createGrantBroker } from "./proxy/grants.ts";
 export type { GrantBroker } from "./proxy/grants.ts";

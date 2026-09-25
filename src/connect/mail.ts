@@ -484,13 +484,13 @@ export async function runMailDispatch(
   service: Service,
   wire: (deps: MailWireDeps) => MailSend,
 ): Promise<() => Promise<void>> {
-  const { openLog } = await import("../store/log.ts");
-  const { openCredentials } = await import("../store/credentials.ts");
+  const { openStore } = await import("../store/mod.ts");
   const { createGrantBroker } = await import("../proxy/grants.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
-  const log = await openLog(`${dir}/log`);
-  const creds = await openCredentials(dir);
+  const store = await openStore(root);
+  const log = await store.log();
+  const creds = await store.vault();
   const broker = createGrantBroker({ creds });
   const stop = createMailDispatch({
     service,

@@ -1,7 +1,8 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { createGithubDispatch, type GhTarget, grantKeyFor } from "./dispatch.ts";
 import type { MessageEvent } from "../../connector.ts";
-import { DispatchError, openLog } from "../../connector.ts";
+import { DispatchError } from "../../connector.ts";
+import { openLog } from "../../store/log.ts";
 
 /** An agent-authored (outbound) message to `conversation`. */
 function agentMsg(id: string, conversation: string, text: string): MessageEvent {

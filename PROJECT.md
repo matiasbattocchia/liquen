@@ -3889,12 +3889,29 @@ Decided while writing it:
 
 Open:
 
-- **Wiring.** Nothing opens the Postgres store yet: main, the scheduler and every
-  connector call `openLog(dir)` and `openCredentials(dir)` directly, some forty sites. It
-  needs a store knob in the catalog (the URL's password in the environment), and one
-  opener those sites call.
 - **Migrations.** The Postgres schema has no version: `CREATE … IF NOT EXISTS` is its
   whole upgrade path until the first change to a live table.
 - **Small divergences.** `fold` strips the combining-mark blocks, where the code strips
   every `\p{M}`; `jsonb` refuses a `\u0000` that SQLite stores; the sweep reads a
   non-numeric `error_code` as permanent, where SQLite's comparison happens to retry it.
+
+### The store is wired through the catalog (2026-09-25) — LANDED
+
+`system.database` names the store: null is SQLite in `data/log`, a Postgres URL
+(`postgres://user@host:5432/db`, `?schema=` for one schema of it) is the adapter above.
+The URL carries no password — `readConfig` refuses one — and the driver reads
+`PGPASSWORD`, libpq's own name, so the scaffold's `.env` gains that line and the
+`schedule` task loads the file like the others that open the store. `openStore(root)`
+(`src/store/mod.ts`) reads the catalog and answers a `Store` — `log()` and `vault()` —
+and it is the one way in: main (through the catalog it was handed; a test's explicit
+principals bring none and run on SQLite under their data root), the scheduler, the proxy
+door, every connector's ingest, dispatch and connect flow, and the sandbox's proxy, which
+now takes the store from main. The connector seam exports `openStore` and no longer the
+two engine openers, so an org's own connector opens the store where the catalog put it or
+does not compile.
+
+`liquen status` printed its tables by opening `log.db` itself; it reads through the ports
+now, so it prints the same from either engine. Two reads were added for it, on both
+adapters and in the suites: `memberships()` (every enrollment, ended ones stamped) and
+`armed()` (every wake, next first). The connections line lists the live map, as the
+anchor sees it.

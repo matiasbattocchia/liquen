@@ -5,10 +5,14 @@
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { openLocalSandbox } from "./sandbox.ts";
+import { storeAt } from "./store/mod.ts";
 
 Deno.test("a session's shell is its own and kept: where one stands, its sibling does not", async () => {
   const dir = await Deno.makeTempDir();
-  const sandbox = await openLocalSandbox(dir, { agents: ["a1"] });
+  const sandbox = await openLocalSandbox(dir, {
+    store: storeAt({ engine: "sqlite", dir }),
+    agents: ["a1"],
+  });
   try {
     await Deno.mkdir(`${dir}/proj`);
     const mind = sandbox.forAgent("a1").session("mind");
@@ -33,7 +37,11 @@ Deno.test("a session's shell is its own and kept: where one stands, its sibling 
 
 Deno.test("the shell speaks through the proxy's pocket and the org's locale", async () => {
   const dir = await Deno.makeTempDir();
-  const sandbox = await openLocalSandbox(dir, { agents: ["a1"], locale: "es_AR.UTF-8" });
+  const sandbox = await openLocalSandbox(dir, {
+    store: storeAt({ engine: "sqlite", dir }),
+    agents: ["a1"],
+    locale: "es_AR.UTF-8",
+  });
   try {
     const { exec } = sandbox.forAgent("a1").session("mind");
     const out = await exec.bash.execute(

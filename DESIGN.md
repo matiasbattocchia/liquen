@@ -2442,6 +2442,12 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   permissions (below), no dedicated write tool and no port mediation.
 - Producers and dispatchers are **separate processes sharing `log.db`**; concurrent publishes
   serialize on SQLite's WAL lock — no central writer, no funnel.
+- **One opener** (`src/store/mod.ts`): every process of an org — main, the scheduler, each
+  connector, the doors — reaches the log and the vault through `openStore(root)`, which
+  reads the catalog's `system.database` and answers the store it names; a process never
+  learns which engine it got, and `liquen status` prints the same lines from either. Null
+  is SQLite under `data/log`; a Postgres URL (its password in `PGPASSWORD`, `?schema=` for
+  one schema of the database) is the adapter below.
 - **The Postgres adapter** (`src/store/pg/`) is the same ports over a server: `openPgLog`
   and `openPgCredentials` open a store in one schema of a database, and the schema is the
   SQLite one column for column — JSON as `jsonb`, lease stamps as `bigint`, every text
@@ -2782,9 +2788,11 @@ a process. Git is its history, a human is watching for all three, and boot COMPI
 roster into registry rows and
 homes, everything else funneled to the deepest function that needs it (main → xi → nu →
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
-log.db tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
+the store's tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
 tuning, every deployment works on the defaults: bashTimeoutMs ·
-compactAt · keepRecent · compactTurnAt · windowLimit · debounceMs), `organization`
+compactAt · keepRecent · compactTurnAt · windowLimit · debounceMs · database — where the
+store lives: null is SQLite in `data/log`, a Postgres URL is a schema of that database,
+its password in `PGPASSWORD`), `organization`
 (this deployment's identity: timezone · locale ·
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
 `organization.agents`, the defaults every agent inherits: model · effort · maxTokens · provider ·

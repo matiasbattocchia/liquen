@@ -111,11 +111,12 @@ const USAGE = `usage: liquen connect microsoft app
 
 if (import.meta.main) {
   await entry(async () => {
-    const { openCredentials } = await import("../../store/credentials.ts");
+    const { openStore } = await import("../../store/mod.ts");
     const org = orgFlag();
     helpFlag(org.args, USAGE);
     const root = findRoot(org);
     const dir = `${root}/data`;
+    const store = await openStore(root);
     const [verb, ...rest] = org.args;
 
     const flags = new Map<string, string>();
@@ -126,7 +127,7 @@ if (import.meta.main) {
       else positional.push(rest[i]);
     }
 
-    const creds = await openCredentials(dir);
+    const creds = await store.vault();
     try {
       if (verb === "app") {
         const { microsoftConfig } = await import("./config.ts");
@@ -181,7 +182,6 @@ if (import.meta.main) {
         }
       } else if (verb === "account") {
         const { createMicrosoftOAuth } = await import("./oauth.ts");
-        const { openLog } = await import("../../store/log.ts");
         const { userInfo } = await import("node:os");
         const org = flags.has("org");
         const agent = org ? undefined : positional[0] ?? (() => {
@@ -207,7 +207,7 @@ if (import.meta.main) {
           console.error(e instanceof Error ? e.message : String(e));
           Deno.exit(2);
         }
-        const log = await openLog(`${dir}/log`);
+        const log = await store.log();
         let shortfall: string[] = [];
         const { handler, outcome } = oneShot(createMicrosoftOAuth({
           config: {

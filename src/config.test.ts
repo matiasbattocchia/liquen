@@ -437,3 +437,23 @@ Deno.test("organization.agents.mind: the org's default, an entry's override, and
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("system.database: null or a Postgres URL without its password — the secret rides PGPASSWORD", async () => {
+  await withDir(async (root) => {
+    const write = (database: unknown) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system: { database } }));
+    await write("postgres://liquen@db.internal:5432/liquen?schema=acme");
+    assertEquals(
+      (await readConfig(root)).system.database,
+      "postgres://liquen@db.internal:5432/liquen?schema=acme",
+    );
+    await write(null);
+    assertEquals((await readConfig(root)).system.database, null);
+    await write("postgres://liquen:hunter2@db.internal:5432/liquen");
+    await assertRejects(() => readConfig(root), Error, "PGPASSWORD");
+    await write("mysql://liquen@db.internal/liquen");
+    await assertRejects(() => readConfig(root), Error, "postgres:// URL");
+    await write("postgres://liquen@db.internal:5432");
+    await assertRejects(() => readConfig(root), Error, "name a database");
+  });
+});

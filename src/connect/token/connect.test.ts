@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { connectToken, contention, parseTokenArgs, tokenKey } from "./connect.ts";
-import { openCredentials } from "../../connector.ts";
+import { openCredentials } from "../../store/credentials.ts";
 import { frontedFor } from "../../proxy/grants.ts";
 
 async function withVault(

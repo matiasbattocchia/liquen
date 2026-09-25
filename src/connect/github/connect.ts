@@ -605,13 +605,13 @@ const USAGE = `usage: liquen connect github app
 
 if (import.meta.main) {
   await entry(async () => {
-    const { openLog, openCredentials } = await import("../../connector.ts");
+    const { openStore } = await import("../../connector.ts");
     const { userInfo } = await import("node:os");
 
     const org = orgFlag();
     helpFlag(org.args, USAGE);
     const root = findRoot(org);
-    const dir = `${root}/data`;
+    const store = await openStore(root);
     const flags = new Set(org.args.filter((a) => a.startsWith("--")));
     const appFlag = org.args.indexOf("--app");
     const pickedApp = appFlag >= 0 ? org.args[appFlag + 1] : undefined;
@@ -664,7 +664,7 @@ if (import.meta.main) {
       const webhookSecret = ask("Webhook secret (verifies ingest; empty to skip):");
       const clientId = ask("Client ID (the device flow signs people in with it):");
       const clientSecret = clientId ? ask("Client secret:") : undefined;
-      const creds = await openCredentials(dir);
+      const creds = await store.vault();
       try {
         const key = await connectGithubApp(
           { appId, privateKey, webhookSecret, clientId, clientSecret },
@@ -679,8 +679,8 @@ if (import.meta.main) {
     }
 
     if (verb === "bot") {
-      const log = await openLog(`${dir}/log`);
-      const creds = await openCredentials(dir);
+      const log = await store.log();
+      const creds = await store.vault();
       try {
         const { appId, installationId, account } = await connectGithubBot({
           creds,
@@ -716,8 +716,8 @@ if (import.meta.main) {
         : "Connecting GitHub as the org — ownerless, the identity every agent falls back to.\n",
     );
 
-    const log = await openLog(`${dir}/log`);
-    const creds = await openCredentials(dir);
+    const log = await store.log();
+    const creds = await store.vault();
 
     // the device flow is the route when there is an app to run it with and a human at the
     // terminal to type the code; `--token` and piped stdin both mean the paste instead

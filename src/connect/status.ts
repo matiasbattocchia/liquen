@@ -4,23 +4,22 @@
  *   deno task status             # agents · connections · memberships · wakes · vault (REDACTED)
  *
  * The setup flows (`liquen connect <service>`: pastes, pairing, a sign-in) WRITE the map;
- * this prints it — the first thing a live smoke checks ("did the grant land?"). Secrets
- * never print: the vault lists keys, owners, and the FIELD NAMES of each value blob,
- * never values. Env: none.
+ * this prints it — the first thing a live smoke checks ("did the grant land?"). Every line
+ * is read through the store's ports, so it prints the same wherever the catalog put the
+ * store. Secrets never print: the vault lists keys, owners, and the FIELD NAMES of each
+ * value blob, never values. Env: the store's password when the catalog names Postgres.
  */
 
-import { DatabaseSync } from "node:sqlite";
-import { openLog } from "../store/log.ts";
+import { openStore } from "../store/mod.ts";
 import { findRoot, orgFlag } from "../config.ts";
 import { entry } from "../entry.ts";
 
 if (import.meta.main) {
   await entry(async () => {
     const root = findRoot(orgFlag());
-    const dir = `${root}/data`;
-    const log = await openLog(`${dir}/log`);
-    const db = new DatabaseSync(`${dir}/log/log.db`);
-    const rows = (sql: string) => db.prepare(sql).all() as Record<string, unknown>[];
+    const store = await openStore(root);
+    const log = await store.log();
+    const creds = await store.vault();
 
     console.log("agents (the registry — folders + config.jsonc declare, table mirrors):");
     for (const a of await log.agents()) {
@@ -31,23 +30,21 @@ if (import.meta.main) {
       console.log(`  ${a.agentId}  mind=${a.mind}${opts ? "  " + opts : ""}`);
     }
 
-    console.log("\nconnections (owned=private · org-credentialed=shared · stub=gate-only, §6):");
-    for (const c of rows("SELECT * FROM connections ORDER BY service, address")) {
-      const owner = c.agent_id ? `owner=${c.agent_id}` : c.credential_key ? "shared" : "stub";
-      const cred = c.credential_key ? `  cred=${c.credential_key}` : "";
-      const extra = c.extra ? `  extra=${c.extra}` : "";
-      const dead = c.deleted_at ? `  DELETED ${c.deleted_at}` : "";
-      console.log(`  ${c.service}:${c.address}  ${owner}${cred}${extra}${dead}`);
+    console.log(
+      "\nconnections (the live map: owned=private · org-credentialed=shared · stub=gate-only, §6):",
+    );
+    for (const c of await log.connections()) {
+      const owner = c.agentId ? `owner=${c.agentId}` : c.credentialKey ? "shared" : "stub";
+      const cred = c.credentialKey ? `  cred=${c.credentialKey}` : "";
+      const extra = c.extra ? `  extra=${JSON.stringify(c.extra)}` : "";
+      console.log(`  ${c.service}:${c.address}  ${owner}${cred}${extra}`);
     }
 
-    console.log("\nmemberships (who is enrolled where):");
-    for (
-      const m of rows(
-        "SELECT * FROM memberships ORDER BY service, connection_address, conversation_address",
-      )
-    ) {
+    console.log("\nmemberships (who is enrolled where — a stamp is a LEAVE):");
+    for (const m of await log.memberships()) {
+      const left = m.deletedAt ? `  LEFT ${m.deletedAt}` : "";
       console.log(
-        `  ${m.service}:${m.connection_address} ${m.conversation_address}  ∋ ${m.agent_id}`,
+        `  ${m.service}:${m.connection} ${m.conversation}  ∋ ${m.agentId}/${m.sessionId}${left}`,
       );
     }
 
@@ -55,29 +52,23 @@ if (import.meta.main) {
     // is the table. A handle means the org armed it from `liquen schedule`; the rest the
     // agent chose for itself, and a cron says the wake comes back.
     console.log("\narmed wakes (the future — handle = the org's, §10):");
-    for (const t of rows("SELECT * FROM timers ORDER BY fire_at, id")) {
-      const who = `${t.agent_id}/${t.session_id}`;
+    for (const t of await log.armed()) {
+      const who = `${t.agentId}/${t.sessionId}`;
       const repeats = t.cron ? `  repeats=${t.cron}` : "";
       const handle = t.name ? `  ${t.name}` : "";
-      console.log(`  ${t.fire_at}  ${who}${handle}${repeats}  id=${t.id}`);
+      console.log(`  ${t.fireAt}  ${who}${handle}${repeats}  id=${t.id}`);
       console.log(`    ${t.note}`);
     }
 
-    // the vault shares log.db (§4) — list keys and value FIELD NAMES only, never secrets
-    try {
-      console.log("\nvault (keys and value field names only — secrets never print):");
-      for (
-        const t of rows("SELECT key, value, agent_id, updated_at FROM credentials ORDER BY key")
-      ) {
-        const fields = Object.keys(JSON.parse(String(t.value))).join(",");
-        const owner = t.agent_id ? `owner=${t.agent_id}` : "org";
-        console.log(`  ${t.key}  ${owner}  fields=${fields}  (${t.updated_at})`);
-      }
-    } catch {
-      console.log("\nvault: (none)");
+    // the vault shares the store (§4) — list keys and value FIELD NAMES only, never secrets
+    console.log("\nvault (keys and value field names only — secrets never print):");
+    for (const r of await creds.list("")) {
+      const fields = Object.keys(r.value).join(",");
+      const owner = r.agentId ? `owner=${r.agentId}` : "org";
+      console.log(`  ${r.key}  ${owner}  fields=${fields}`);
     }
 
-    db.close();
+    await creds.close();
     await log.close();
   });
 }

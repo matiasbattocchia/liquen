@@ -37,7 +37,8 @@ import { ownComplex } from "./render.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
 import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runner.ts";
-import { type Log, openLog } from "./store/log.ts";
+import type { Log } from "./store/log.ts";
+import { databaseOf, storeAt } from "./store/mod.ts";
 import { type ClockSettings, tick } from "./tick.ts";
 import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
@@ -119,7 +120,10 @@ export async function start(
   // workspace, doc pull paths) must survive a cwd change — the data root is a relative path
   await Deno.mkdir(config.dir, { recursive: true });
   const dir = await Deno.realPath(config.dir);
-  const log = await openLog(`${dir}/log`);
+  // the store is where the catalog says (§9); a process with explicit principals (tests)
+  // brings no catalog and runs on the local engine under its data root
+  const store = storeAt(databaseOf(dir, config.catalog?.system.database ?? null));
+  const log = await store.log();
   const docs = openFileDocs(dir); // the doc cascade lives on the data root itself (§8, §9)
   // the media port (§5): the file adapter, remembered across every agent this process renders
   const media = memoizedLoader(loadMediaBlock);
@@ -187,6 +191,7 @@ export async function start(
   // the exec plane (§9): one provider owns the proxy, the grounds and the shells; main
   // holds only the provider, and every session's exec, ambient and files come from it
   const sandbox = await openLocalSandbox(dir, {
+    store,
     agents: principals.map((p) => p.agentId),
     locale: catalog?.organization.locale,
     bashTimeoutMs: catalog?.system.bashTimeoutMs,

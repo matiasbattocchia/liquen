@@ -178,6 +178,7 @@ export interface OrgConfig {
     compactTurnAt: number;
     windowLimit: number;
     debounceMs: number;
+    database: string | null; // null ⇒ SQLite in data/log; a Postgres URL ⇒ that database
   };
   organization: {
     timezone: string; // the ORG's clock — every stamp, cron and sleep span reads it (§5)
@@ -260,6 +261,13 @@ const SYSTEM: Entry[] = [
     key: "debounceMs",
     value: DEFAULT_DEBOUNCE_MS,
     doc: "how long a world message waits for the rest of its burst before a turn runs",
+  },
+  {
+    key: "database",
+    value: null,
+    doc: "where the log and the vault live: null ⇒ SQLite in data/log; a Postgres URL " +
+      "(postgres://user@host:5432/db, ?schema= for one schema of it) ⇒ that database, " +
+      "its password read from PGPASSWORD",
   },
 ];
 
@@ -791,7 +799,33 @@ function validateOrg(cfg: OrgConfig, path: string): void {
         `${JSON.stringify(cfg.processors.audio)})`,
     );
   }
+  const database = checkDatabase(cfg.system.database);
+  if (database) {
+    throw new Error(
+      `${path}: system.database ${database} (got ${JSON.stringify(cfg.system.database)})`,
+    );
+  }
   validateAgent(cfg.organization.agents, `${path}: organization.agents`);
+}
+
+/** What `system.database` may hold: null, or a Postgres URL naming the user, host and
+ *  database — its password is a secret, so it rides `PGPASSWORD`, and the file stays a
+ *  declaration git can hold. A complaint, or null when the value is fine. */
+export function checkDatabase(v: unknown): string | null {
+  if (v === null) return null;
+  if (typeof v !== "string") return "must be null or a postgres:// URL";
+  let url: URL;
+  try {
+    url = new URL(v);
+  } catch {
+    return "must be null or a postgres:// URL";
+  }
+  if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") {
+    return "must be null or a postgres:// URL";
+  }
+  if (url.password) return "must not carry a password — PGPASSWORD in .env holds it";
+  if (url.pathname.length < 2) return "must name a database (postgres://user@host:5432/db)";
+  return null;
 }
 
 /** The checks that would otherwise surface as a RangeError inside a turn's render or as an

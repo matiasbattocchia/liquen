@@ -34,9 +34,10 @@ Nothing below needs a sixth piece. What some of them need is **new state**, whic
 
 ### Where a connector lives — and the import contract
 
-A connector is a **standalone process over the org's substrate**: it reaches liquen through
-the shared `./data` root and imports only the seam module, **`src/connector.ts`** — the log (`openLog`,
-`publish`, subscribe/`setDelivery`), the vault (`openCredentials`, the grant broker),
+A connector is a **standalone process over the org's store**: it opens the store where the
+catalog says it is (`openStore(root)` — SQLite under `./data` or a Postgres schema, and the
+connector never learns which) and imports only the seam module, **`src/connector.ts`** — the
+store (`openStore`: the log's `publish`, subscribe/`setDelivery`, the vault, the grant broker),
 `connectorConfig`, the event types, the dispatch error contract, and `entry` — the rule
 every liquen process ends by. A deep
 import from a connector is a contract violation, not a convenience.

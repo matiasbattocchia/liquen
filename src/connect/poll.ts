@@ -219,15 +219,15 @@ export async function runPollIngest(
    *  the supervisor makes one in a second — so a poller this far gone stands down and lets it.
    *  Well past FAILING_AFTER_SWEEPS: the connection is called down before anyone gives up. */
   const WEDGED_AFTER_SWEEPS = 5;
-  const { openLog } = await import("../store/log.ts");
-  const { openCredentials } = await import("../store/credentials.ts");
+  const { openStore } = await import("../store/mod.ts");
   const { createGrantBroker } = await import("../proxy/grants.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
+  const store = await openStore(root);
   const resources = await resourcesOf(root);
 
-  const log = await openLog(`${dir}/log`);
-  const creds = await openCredentials(dir);
+  const log = await store.log();
+  const creds = await store.vault();
   const broker = createGrantBroker({ creds });
   // this sweep's verdict, and how many in a row have come back empty-handed
   const swept = { failed: false, inARow: 0 };

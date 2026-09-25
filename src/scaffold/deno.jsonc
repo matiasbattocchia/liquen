@@ -13,7 +13,7 @@
     "cli": "deno run -A --env-file=.env @liquen/liquen/cli",
     "repl": "deno run -A --env-file=.env @liquen/liquen/repl",
     "agent": "deno run -A @liquen/liquen/agent",
-    "schedule": "deno run -A @liquen/liquen/schedule",
+    "schedule": "deno run -A --env-file=.env @liquen/liquen/schedule",
     "connect": "deno run -A --env-file=.env @liquen/liquen/connect",
     "status": "deno run -A --env-file=.env @liquen/liquen/status"
   }

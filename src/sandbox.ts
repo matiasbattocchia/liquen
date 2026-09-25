@@ -13,7 +13,7 @@
 
 import { type ExecGround, type ExecPlane, installExecGround } from "./exec/bash.ts";
 import { type Files, localFiles } from "./store/media.ts";
-import { openCredentials } from "./store/credentials.ts";
+import type { Store } from "./store/mod.ts";
 import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
 import { startProxy } from "./proxy/proxy.ts";
@@ -40,6 +40,8 @@ export interface Sandbox {
 }
 
 export interface LocalSandboxOptions {
+  /** The org's store: the proxy fronts the vault's credential rows. */
+  store: Store;
   /** The agents that run: each gets a ground under `<dir>/agents/<id>`. */
   agents: string[];
   /** The org's locale, issued into user space under the names every program reads (§9):
@@ -60,11 +62,11 @@ export interface LocalSandboxOptions {
  *  refused broker-side, before any byte is read. */
 export async function openLocalSandbox(
   dir: string,
-  { agents, locale, bashTimeoutMs }: LocalSandboxOptions,
+  { store, agents, locale, bashTimeoutMs }: LocalSandboxOptions,
 ): Promise<Sandbox> {
   // the egress proxy (§9): front every credential row that declares an env var — user
   // space gets the placeholder + proxy env, never a real credential
-  const proxy = await installProxy(dir);
+  const proxy = await installProxy(dir, store);
   const localeEnv: Record<string, string> = locale ? { LANG: locale } : {};
   const grounds = new Map<string, ExecGround>();
   for (const agentId of agents) {
@@ -153,8 +155,8 @@ async function writeTrustBundle(dir: string, caPath: string): Promise<string> {
   return out;
 }
 
-async function installProxy(dir: string): Promise<ProxyHandle> {
-  const creds = await openCredentials(dir);
+async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
+  const creds = await store.vault();
   const broker = createGrantBroker({ creds });
   const ca = await openCA(dir);
   const rows = await creds.list("");

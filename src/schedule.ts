@@ -20,7 +20,7 @@
  * Nothing restarts: the clock's next sweep reads the table. Env: none.
  */
 
-import { openLog } from "./store/log.ts";
+import { openStore } from "./store/mod.ts";
 import { fireAtOf, type When } from "./store/timers.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { resolveAgent } from "./attach.ts";
@@ -123,8 +123,8 @@ if (import.meta.main) {
     const args = parseScheduleArgs(org.args);
     // the roster is the catalog's say: `resolveAgent` refuses a name it does not hold, so a
     // typo cannot arm a wake for an agent that will never read it
-    const { dir, target, timezone, paused } = await resolveAgent(args.agent, org.dir);
-    const log = await openLog(`${dir}/log`);
+    const { root, target, timezone, paused } = await resolveAgent(args.agent, org.dir);
+    const log = await (await openStore(root)).log();
     try {
       const armed = await log.timers(target, MIND);
       if (args.cancel !== undefined) {

@@ -319,13 +319,14 @@ function defaultAudit(a: EgressAudit): void {
  * Env: none — the port is EPHEMERAL (printed at start; main runs its own in-process). */
 if (import.meta.main) {
   await entry(async () => {
-    const { openCredentials } = await import("../store/credentials.ts");
+    const { openStore } = await import("../store/mod.ts");
     const { createGrantBroker } = await import("./grants.ts");
     const { openCA } = await import("./ca.ts");
     const org = orgFlag();
     const root = findRoot(org);
     const dir = `${root}/data`;
-    const creds = await openCredentials(dir);
+    const store = await openStore(root);
+    const creds = await store.vault();
 
     let key = org.args[0];
     if (!key) {

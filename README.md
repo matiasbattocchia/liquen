@@ -62,6 +62,10 @@ Every knob lives in `config.jsonc` at the project root (the catalog — init
 materializes it, the system never writes it; comments document each key). Env is for
 secrets only. The org is where you run liquen; `--dir <path>` names it from anywhere else.
 
+The store is SQLite under `data/log` until `system.database` names a Postgres database
+(`postgres://user@host:5432/db`, `?schema=` for one schema of it); the password goes in
+`.env` as `PGPASSWORD`. Every process of the org opens whichever the catalog says.
+
 ## Standing wakes
 
 An agent wakes itself with its own `schedule` tool. The work a *deployment* owns is armed

@@ -871,14 +871,14 @@ export function httpSigningSecrets(apps: { value: Record<string, string> }[]): s
 /** Wire the inbound half over the org's log — resident once it returns (socket or server).
  *  Returns stop: refuse new deliveries, finish the ones in flight, release the handles. */
 export async function runIngest(): Promise<() => Promise<void>> {
-  const { openLog } = await import("../../store/log.ts");
-  const { openCredentials } = await import("../../store/credentials.ts");
+  const { openStore } = await import("../../store/mod.ts");
   const { SOCKET_PREFIX } = await import("./connect.ts");
   const { kindOf, saveMedia } = await import("../../store/media.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
-  const log = await openLog(`${dir}/log`);
-  const creds = await openCredentials(dir);
+  const store = await openStore(root);
+  const log = await store.log();
+  const creds = await store.vault();
   // socket carriers: one per app-level token in the vault — Socket Mode is app-scoped,
   // and one socket carries every workspace that app is installed in (§4)
   const carriers = [

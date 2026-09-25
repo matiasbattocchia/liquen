@@ -290,17 +290,18 @@ function text(status: number, message: string): Response {
 /** Wire the inbound half over the org's log — resident once it returns (serving).
  *  Returns stop: refuse new deliveries, finish the ones in flight, release the handles. */
 export async function runIngest(): Promise<() => Promise<void>> {
-  const { openLog, openCredentials } = await import("../../connector.ts");
+  const { openStore } = await import("../../connector.ts");
   const { githubConfig } = await import("./config.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
+  const store = await openStore(root);
   const { ingestPort: port, events } = await githubConfig(root);
-  const creds = await openCredentials(dir);
+  const creds = await store.vault();
   const secret = (await creds.list("github:app:")).find((a) => a.value.webhook_secret)
     ?.value.webhook_secret;
   await creds.close(); // one read at boot — the ingest holds no vault handle while serving
 
-  const log = await openLog(`${dir}/log`);
+  const log = await store.log();
   if (!secret) {
     console.error(
       "[ingest] WARNING: no webhook secret in the vault (`liquen connect github app`) — " +

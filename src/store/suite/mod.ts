@@ -7,10 +7,9 @@
  * against them.
  */
 
-import { type Log, openLog } from "../log.ts";
-import { type Credentials, openCredentials } from "../credentials.ts";
-import { openPgLog } from "../pg/log.ts";
-import { openPgCredentials } from "../pg/credentials.ts";
+import type { Log } from "../log.ts";
+import type { Credentials } from "../credentials.ts";
+import { storeAt } from "../mod.ts";
 import { connect } from "../pg/sql.ts";
 import { ident } from "../pg/schema.ts";
 
@@ -48,9 +47,10 @@ export async function withStore(
 export const sqlite: Substrate = {
   async fresh(): Promise<Store> {
     const dir = await Deno.makeTempDir();
+    const store = storeAt({ engine: "sqlite", dir });
     return {
-      open: (opts) => openLog(`${dir}/log`, opts),
-      vault: (opts) => openCredentials(dir, opts),
+      open: store.log,
+      vault: store.vault,
       drop: () => Deno.remove(dir, { recursive: true }),
     };
   },
@@ -62,10 +62,11 @@ export function postgres(url: string): { fresh(): Promise<Store & { schema: stri
   return {
     fresh() {
       const schema = `liquen_t_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+      const store = storeAt({ engine: "postgres", url, schema });
       return Promise.resolve({
         schema,
-        open: (opts) => openPgLog(url, { schema, ...opts }),
-        vault: (opts) => openPgCredentials(url, { schema, ...opts }),
+        open: store.log,
+        vault: store.vault,
         drop: async () => {
           const sql = connect(url);
           try {

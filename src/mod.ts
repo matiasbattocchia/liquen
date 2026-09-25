@@ -21,7 +21,8 @@ export type {
 } from "./xi.ts";
 export { start } from "./main.ts";
 export type { Main, MainConfig } from "./main.ts";
-export { openLog } from "./store/log.ts";
+export { openStore, storeAt } from "./store/mod.ts";
+export type { Database, Store } from "./store/mod.ts";
 export type { Log } from "./store/log.ts";
 export { openFileDocs } from "./store/docs.ts";
 export type { Docs } from "./store/docs.ts";

@@ -403,12 +403,12 @@ export function slackWire(
 /** Wire the outbound half over the org's log — resident once it returns (subscribed).
  *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
 export async function runDispatch(): Promise<() => Promise<void>> {
-  const { openLog } = await import("../../store/log.ts");
-  const { openCredentials } = await import("../../store/credentials.ts");
+  const { openStore } = await import("../../store/mod.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
-  const log = await openLog(`${dir}/log`);
-  const creds = await openCredentials(dir);
+  const store = await openStore(root);
+  const log = await store.log();
+  const creds = await store.vault();
 
   // the token resolver (§4, dispatcher-internal): the author's own grant (alter-ego)
   // → the workspace bot — vault keys follow the connector's convention (§4)

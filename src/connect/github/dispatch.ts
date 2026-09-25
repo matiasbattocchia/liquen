@@ -161,11 +161,12 @@ export function grantKeyFor(
 /** Wire the outbound half over the org's log — resident once it returns (subscribed).
  *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
 export async function runDispatch(): Promise<() => Promise<void>> {
-  const { openLog, openCredentials, createGrantBroker } = await import("../../connector.ts");
+  const { openStore, createGrantBroker } = await import("../../connector.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
-  const log = await openLog(`${dir}/log`);
-  const creds = await openCredentials(dir);
+  const store = await openStore(root);
+  const log = await store.log();
+  const creds = await store.vault();
   const broker = createGrantBroker({ creds });
 
   // the token resolver (§4, dispatcher-internal): the author's own grant (alter-ego)

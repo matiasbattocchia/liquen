@@ -18,7 +18,7 @@ import {
   suggestSecret,
   type UserTokens,
 } from "./connect.ts";
-import { openCredentials } from "../../connector.ts";
+import { openCredentials } from "../../store/credentials.ts";
 import type { Appender, Draft, Event, MessageEvent } from "../../connector.ts";
 
 async function withVault(

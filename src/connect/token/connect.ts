@@ -200,12 +200,12 @@ const USAGE =
 
 if (import.meta.main) {
   await entry(async () => {
-    const { findRoot, openCredentials, orgFlag } = await import("../../connector.ts");
+    const { findRoot, openStore, orgFlag } = await import("../../connector.ts");
     const org = orgFlag();
     helpFlag(org.args, USAGE);
     const args = parseTokenArgs(org.args);
     const root = findRoot(org);
-    const dir = `${root}/data`;
+    const store = await openStore(root);
 
     if (args.agentId) {
       // the roster is the catalog's say (`agents.<name>`): a door runs before any start
@@ -233,7 +233,7 @@ if (import.meta.main) {
       Deno.exit(2);
     }
 
-    const creds = await openCredentials(dir);
+    const creds = await store.vault();
     try {
       const { key, contention } = await connectToken(args, token, { creds });
       console.error(`\n✓ stored: ${key}${args.probe ? ` (probe ${args.probe} answered 2xx)` : ""}`);
