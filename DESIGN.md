@@ -2462,10 +2462,14 @@ existing** — every piece of it is already something the database does better:
 | in-flight set + `stop()` | the platform's invocation lifecycle; safety is the lock TTL + steal-sweep |
 | the poll backstop | `pg_cron` — a periodic poke, which is also the liveness floor (§2) |
 
-So the split is: **main's roles become SQL** (trigger + RPC functions, so a trigger and an
-external caller poke the same way), and **xi/nu/mu + the connectors become functions** —
-`(Request) => Response` with injected ports, which the connectors already are and which xi is
-one adapter-swap away from (`log` → Postgres, `lock` → an advisory lock or `locks` row).
+So the split is: **main's roles are functions** that either host calls — the clock's beat
+(`tick`, `src/tick.ts`: due wakes → alarms, unanswered asks → lapsed, failed sends →
+queued) under main's ticker or a `pg_cron` job, and the named-session routing (`route`,
+`src/route.ts`: pure over one row's address, what a trigger's body computes over `NEW`)
+under main's raw-log subscription or the trigger — and **xi/nu/mu + the connectors become
+functions** — `(Request) => Response` with injected ports, which the connectors already are
+and which xi is one adapter-swap away from (`log` → Postgres, `lock` → an advisory lock or
+`locks` row).
 
 Two asymmetries to plan around, not paper over: **(1) no bash on an edge function**, so an
 edge-deployed agent can run connectors, dispatch, a verdict and a think, but the exec plane

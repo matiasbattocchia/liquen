@@ -3735,3 +3735,21 @@ delivery, the poll sweep verdict, main's `withTimeout`, the tail's backstop loop
 second promise that carries the source's rejection unhandled, and an unhandled rejection
 exits the process (`entry.ts`). They settle with `then(f, f)`. The rest are deliberate
 fire-and-forget, marked `void`.
+
+### main's roles are functions (2026-09-25) — LANDED
+
+The clock and the routing main did inline are modules any host calls. `tick(log,
+settings, now)` (`src/tick.ts`) is one beat: due timers fire as alarms, unanswered asks
+lapse, failed sends are re-offered — three passes, each its own, so one that fails is
+named in the beat and the next still runs — and it answers with the counts; main runs it
+on its ticker, one beat at a time, and the edge tier's `pg_cron` job runs the same function.
+`route(event)` (`src/route.ts`) names the sessions an event's address wakes, pure over the
+envelope, and `enroll` is the membership a session named for the first time owes before
+it runs; main's raw-log subscription calls both, and the edge trigger will.
+
+The runner is one builder now: `portsFor(principal, sessionId)` in main serves the mind
+and every named session, where each had its own near-copy. Two things changed for a named
+session in the merge: it carries the agent's `contact` port like the mind does, and it is
+born from the roster's settings rather than from whatever an attachment had tuned the
+mind to. `portsFor` stays in main until the sandbox provider (EDGE-PLAN §7) and the row
+as config (§9) take its process-bound inputs.

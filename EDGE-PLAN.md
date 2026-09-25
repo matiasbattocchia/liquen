@@ -110,14 +110,18 @@ own egress proxy — the proxy exists for bash, so it travels with bash.
 
 ## 8. main's roles are functions
 
-Extract, and have main call:
+**Landed** (PROJECT.md, 2026-09-25). `tick(log, settings, now)` (`src/tick.ts`) is one
+beat of the clock — `fireDue` · `lapseGates` · `sweep`, each pass its own, a failure
+named in the beat while the next still runs — answering with the counts;
+`route(event)` (`src/route.ts`) is the named sessions an event's address wakes, pure over
+the envelope, and `enroll` beside it is what a session named for the first time owes the
+store. main calls both where it did the work inline; the edge tick function and the edge
+trigger function call the same code: one implementation per role, two hosts.
 
-- `tick(store, now)` — `fireDue` · `lapseGates` · `sweep`
-- `route(event) → [(agent, session)]` — `namedIn` and the membership it enrolls
-- `portsFor(store, agentRow, session)` — the runner main builds per session
-
-The edge tick function and the edge trigger function then call the same code main does:
-one implementation per role, two hosts.
+The runner is one builder, `portsFor(principal, sessionId)` in main, serving the mind and
+every named session. It moves out of main once its inputs stop being the process's: the
+shell and the proxy (§7), and the agent's settings as a row (§9) — then it is
+`portsFor(store, agentRow, session)`.
 
 ## 9. The agent row is enough to run xi
 

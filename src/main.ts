@@ -34,9 +34,11 @@
 
 import { type AgentConfig, type Decision, relevant, xi, type XiPorts } from "./xi.ts";
 import { ownComplex } from "./render.ts";
-import { MIND, parseSession, sessionAddress } from "./session.ts";
+import { MIND, sessionAddress } from "./session.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
 import { type Log, openLog } from "./store/log.ts";
+import { type ClockSettings, tick } from "./tick.ts";
+import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { seedAgent, seedOrg } from "./store/seed.ts";
@@ -61,7 +63,7 @@ import { createPresence } from "./connect/presence.ts";
 import { createTranscriber } from "./processors.ts";
 import { type DoorAgent, installDoors, type Status, type Tune } from "./door.ts";
 import { loadMediaBlock, memoizedLoader } from "./store/media.ts";
-import type { About, AlarmEvent, Delta, Draft, Event, PermissionResponseEvent } from "./types.ts";
+import type { About, Delta, Event } from "./types.ts";
 import {
   DEFAULT_DEBOUNCE_MS,
   findRoot,
@@ -354,35 +356,44 @@ export async function start(
       agentId,
     );
   const stock = new Map(principals.map((p) => [p.agentId, meter(p.agentId, transportFor(p))]));
-  const agents = principals.map(({ using, check, ...agent }) => {
-    // the agent's VIEW of the log (§6): reads, writes, and the tail below all go through it.
-    // Folder-declared agents get the connections-map policy (live read-through lookups);
-    // explicit principals stay allow-all unless they carry their own (tests).
-    const policy = derived
-      ? policyFor({ agentId: agent.agentId, id: agent.sessionId })
+  // the runner (§4): what a session of an agent runs with. The identity is shared — one
+  // ground, one metered transport, one home, one address book, one history — and the log
+  // view, the lease, the stream and the shell (where it stands, what it left running) are
+  // the session's. Built once per session and kept: an attachment's `tune` writes into it,
+  // and the next invocation reads what it wrote.
+  const portsFor = (p: Principal, sessionId: string) => {
+    const { using, check, ...agent } = p;
+    const { agentId } = agent;
+    // the session's VIEW of the log (§6): reads, writes, and the tail all go through it.
+    // A folder-declared org's policy is the connections map (live read-through lookups),
+    // and a named session's always is; an explicit principal's mind carries its own (tests)
+    const policy = derived || sessionId !== MIND
+      ? policyFor({ agentId, id: sessionId })
       : { using, check };
     const slog = scoped(log, policy);
+    const shell = shellOf(agentId, sessionId);
     return {
-      config: agent,
+      config: { ...agent, sessionId },
       log: slog,
       ports: {
         log: slog,
         // the agent's history (§6): what `search` reads, from any of its sessions — the
         // same map, keyed on the agent. Explicit principals search their own view
-        ...(derived ? { history: scoped(log, historyFor(agent.agentId)) } : {}),
+        ...(derived ? { history: scoped(log, historyFor(agentId)) } : {}),
         docs,
-        transport: stock.get(agent.agentId)!,
-        exec: shellOf(agent.agentId, agent.sessionId).exec,
+        transport: stock.get(agentId)!,
+        exec: shell.exec,
         ...(contact ? { contact } : {}),
-        files: filesOf(agent.agentId),
+        files: filesOf(agentId),
         media,
-        onDelta: (d) => cast(agent.agentId, agent.sessionId, d),
-        onDecision: (v, cursor, about) =>
-          disclose(agent.agentId, agent.sessionId, v, cursor, about),
-        ambient: shellOf(agent.agentId, agent.sessionId).ambient,
+        onDelta: (d: Delta) => cast(agentId, sessionId, d),
+        onDecision: (v: Decision, cursor: string | undefined, about: About[]) =>
+          disclose(agentId, sessionId, v, cursor, about),
+        ambient: shell.ambient,
       } satisfies XiPorts,
     };
-  });
+  };
+  const agents = principals.map((p) => portsFor(p, MIND));
 
   // The whole fan-out: each agent tails ITS OWN view of the log — the scoped subscription
   // only delivers what the agent may see (Realtime-on-RLS, §6), and xi's `relevant` keeps
@@ -466,40 +477,15 @@ export async function start(
   // trigger's own address names the session to invoke (its room, or a dm: it is an end
   // of), so main builds a runner on first contact and a quiet session costs nothing.
   // Bursts bounce off the session's own turn lease; the mind's ladder never applies.
-  const named = new Map<string, { config: AgentConfig; ports: XiPorts; log: Log }>();
+  const named = new Map<string, ReturnType<typeof portsFor>>();
   const runnerOf = async (agentId: string, sessionId: string) => {
     const key = sessionAddress(agentId, sessionId);
     const hit = named.get(key);
     if (hit) return hit;
-    const base = agents.find((a) => a.config.agentId === agentId);
-    if (!base) return undefined; // an address wearing a name the roster doesn't
-    // born when first named (§4): the session's own room is a one-member conversation,
-    // and this enrollment is what lets its closing messages land there (WITH CHECK)
-    await log.upsertMemberships([
-      { service: "local", connection: "agent", conversation: key, agentId, sessionId },
-    ]);
-    const slog = scoped(log, policyFor({ agentId, id: sessionId }));
-    // the identity is shared (§4): one ground, one metered transport, one home — the log
-    // view, the lease, the stream and the shell (where it stands, what it runs) are the
-    // session's
-    const shell = shellOf(agentId, sessionId);
-    const r = {
-      config: { ...base.config, sessionId },
-      log: slog,
-      ports: {
-        log: slog,
-        ...(base.ports.history ? { history: base.ports.history } : {}),
-        docs,
-        transport: stock.get(agentId)!,
-        exec: shell.exec,
-        files: base.ports.files,
-        media,
-        onDelta: (d: Delta) => cast(agentId, sessionId, d),
-        onDecision: (v: Decision, cursor: string | undefined, about: About[]) =>
-          disclose(agentId, sessionId, v, cursor, about),
-        ambient: shell.ambient,
-      } satisfies XiPorts,
-    };
+    const p = principals.find((x) => x.agentId === agentId);
+    if (!p) return undefined; // an address wearing a name the roster doesn't
+    await enroll(log, { agentId, sessionId });
+    const r = portsFor(p, sessionId);
     named.set(key, r);
     return r;
   };
@@ -583,20 +569,11 @@ export async function start(
   };
 
   const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
-  /** The named sessions an event's address names — its own room, or the dm: ends. */
-  const namedIn = (e: Event): { agentId: string; sessionId: string }[] => {
-    const address = e.envelope.conversation.address;
-    if (e.envelope.service !== "local") return [];
-    const parts = address.startsWith("dm:") ? address.slice(3).split(":") : [address];
-    return parts.map(parseSession)
-      .filter((p): p is { agentId: string; sessionId: string } => p !== null)
-      .filter((p) => p.sessionId !== MIND); // the minds tail their own scoped views
-  };
+  // the named sessions ride the RAW log (§4): reactive, no subscription of their own —
+  // the trigger's address names the session to invoke, and main builds its runner on
+  // first contact, so a quiet session costs nothing
   unsubs.push(log.subscribe((e) => {
-    // a `control` row acts on a RUNNING turn — the store fires the lease's interrupt (§2) —
-    // and never starts one
-    if (e.type === "control") return;
-    for (const p of namedIn(e)) {
+    for (const p of route(e)) {
       runnerOf(p.agentId, p.sessionId)
         .then((r) => r && invoke(r)(e))
         .catch((err) => console.error(`[main] ${p.sessionId}@${p.agentId}:`, err));
@@ -638,78 +615,27 @@ export async function start(
     if (r) invoke(r)();
   }
 
-  // The scheduler's half of the clock (§10): a timer row whose moment has come becomes an
-  // `alarm` carrying its note, and the alarm's own fan-out is the wake — no direct invoke,
-  // so a scheduled wake reaches the agent by exactly the path everything else does. Firing
-  // is idempotent-ish by construction: `settle` consumes the row in the same pass (one-shot
-  // ⇒ gone, cron ⇒ advanced past now), so a long outage fires each cron once, late.
-  // Due wakes → alarms (§10). The alarm lands in the conversation the arming session
-  // speaks in, and says where it came from: `ref_id` the `schedule` call, `extra.timer` the
-  // row — a note read cold leads back to the moment it was written, and a repeating one
-  // says so. Firing consumes the row in the same pass (`settle`).
-  // One sweep at a time: a tick that lands while a pass is still publishing joins that
-  // pass instead of opening a second. Across processes the same guarantee is `claim`'s —
-  // the scan lists, the claim wins, and only what this sweep won gets an alarm.
-  let firing: Promise<void> | undefined;
-  const fireDue = (): Promise<void> =>
-    firing ??= (async () => {
-      const now = new Date().toISOString();
-      for (const due of await log.due(now)) {
-        const t = await log.claim(due.id, now);
-        if (!t) continue; // another sweep fired it
-        await log.publish(
-          {
-            ts: now,
-            type: "alarm", // harness-authored: no `agent`, so the relational rule wakes on it (§2)
-            payload: { ...(t.refId ? { ref_id: t.refId } : {}) },
-            envelope: {
-              service: "local",
-              connection_address: "agent",
-              conversation: { address: t.conversation },
-            },
-            extra: {
-              timer: {
-                id: t.id,
-                session_id: t.sessionId,
-                ...(t.cron ? { cron: t.cron } : {}),
-                ...(t.name ? { name: t.name } : {}),
-                ...(t.armedAt ? { armed_at: t.armedAt } : {}),
-              },
-            },
-            parts: [{ type: "text", kind: "alarm", text: t.note }],
-          } satisfies Draft<AlarmEvent>,
-        );
-        // a cron advances on the clock it was armed against — the agent's zone, not UTC
-        await log.settle(
-          t.id,
-          now,
-          agents.find((a) => a.config.agentId === t.agentId)?.config.timezone,
-        );
-      }
-    })().finally(() => firing = undefined);
-
   // the clock poke (§2 attention): deferred ambient news needs someone to re-ask once the
   // digest comes due, and the log cannot wake on time passing — so the clock is a poke
   // source like the log, a trigger-less invoke on a metronome. Cheap: decide() re-reads
   // one window and mostly answers `ignore`. A constant, not a knob: it is the resolution
-  // of the attention intervals, not one of them.
-  // The same metronome carries the harness-led retry (§5): one pass of the sweeper, which
-  // re-offers a transiently failed send by moving it back to `queued` — a state move on the
-  // row, delivered to the dispatcher by the log's update stream. Nothing here posts; where
-  // the log is a database with its own clock, this pass is that clock's statement.
-  // one lapse pass at a time, like the wakes: a tick that lands mid-pass joins it
-  let lapsing: Promise<number> | undefined;
-  const lapse = (): Promise<number> =>
-    lapsing ??= lapseGates(
-      log,
-      (agentId) => agents.find((a) => a.config.agentId === agentId)?.config.gateHours,
-    ).finally(() => lapsing = undefined);
-
+  // of the attention intervals, not one of them. The same metronome is the store's clock
+  // (`tick`, §10): due wakes become alarms, unanswered asks lapse, failed sends are
+  // re-offered — nothing here posts, and where the log is a database with its own clock,
+  // that pass is the clock's statement. One beat at a time: a tick that lands while a
+  // beat is still publishing joins it instead of opening a second.
+  const settingsOf: ClockSettings = (agentId) =>
+    agents.find((a) => a.config.agentId === agentId)?.config;
+  let beating: Promise<unknown> | undefined;
   const ticker = setInterval(() => {
-    fireDue().catch((err) => console.error("firing scheduled wakes failed:", err));
-    lapse().catch((err) => console.error("lapsing unanswered asks failed:", err));
-    log.sweep(new Date().toISOString())
-      .catch((err) => console.error("the dispatch sweep failed:", err));
+    beating ??= tick(log, settingsOf)
+      .then(
+        (beat) => {
+          for (const f of beat.failed) console.error(`the tick's ${f.pass} pass failed:`, f.error);
+        },
+        (err) => console.error("the tick failed:", err),
+      )
+      .finally(() => beating = undefined);
     agents.forEach((a) => invoke(a)());
   }, TICK_MS);
 
@@ -876,49 +802,4 @@ if (import.meta.main) {
       }, REAP_POLL_MS);
     }
   });
-}
-
-/** An ask nobody answered lapses (§9): past its agent's `gateHours` the harness settles the
- *  card with a deny that says `lapsed` — a row like any verdict, so the anchor drops the
- *  line, a late `/y` is told the card was answered, and the outcome reaches the model by
- *  the errand every ruling takes (`act`), telling it the call did not run. Read off the
- *  store, not a window: a card stands open however much traffic has passed it. `hoursOf`
- *  is the agent's knob — null or unknown (a paused agent) ⇒ its cards stand. */
-export async function lapseGates(
-  log: Pick<Log, "gates" | "publish">,
-  hoursOf: (agentId: string) => number | null | undefined,
-  now: number = Date.now(),
-): Promise<number> {
-  let settled = 0;
-  for (const card of await log.gates()) {
-    const hours = card.agent ? hoursOf(card.agent.id) : undefined;
-    if (hours == null || Date.parse(card.ts) > now - hours * 3_600_000) continue;
-    await log.publish(
-      {
-        ts: new Date(now).toISOString(),
-        type: "permission_response", // harness-authored: no `agent`, no turn_id (§3)
-        payload: { ref_id: card.payload.ref_id },
-        // the card's coordinates, rebuilt — its stored envelope carries an external_id,
-        // and reusing that would upsert-merge this settlement INTO the card's row
-        envelope: {
-          service: card.envelope.service,
-          connection_address: card.envelope.connection_address,
-          conversation: { address: card.envelope.conversation.address },
-        },
-        parts: [{
-          type: "data",
-          kind: "permission_response",
-          data: {
-            behavior: "deny",
-            scope: "once",
-            lapsed: true,
-            reason: `unanswered for ${hours}h`,
-          },
-          text: card.parts[0].data.call, // the card's own rendering — what the notice names
-        }],
-      } satisfies Draft<PermissionResponseEvent>,
-    );
-    settled++;
-  }
-  return settled;
 }
