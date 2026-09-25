@@ -66,6 +66,39 @@ Deno.test("runner: the row is the config, the seams ride beside it, and no sandb
   }
 });
 
+Deno.test("runner: a host with a reach into the docs table gives the session the three doc tools, over its own conversation", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(`${dir}/log`);
+  try {
+    const asked: string[] = [];
+    const host: Host = {
+      log,
+      docs: openFileDocs(dir),
+      reach: (ctx) => {
+        asked.push(`${ctx.agent} in ${ctx.conversation}`);
+        return {
+          read: (handle) => Promise.resolve(`read ${handle}`),
+          write: () => Promise.resolve(""),
+          edit: () => Promise.resolve(""),
+        };
+      },
+      policy: () => ({ using: NOTHING }),
+      transport: () => ({} as ModelTransport),
+    };
+    const r = runnerFor(host, row, "build");
+    assertEquals(Object.keys(r.ports.exec!), ["read", "write", "edit"]);
+    assertEquals(asked, ["ana in build@ana"]);
+    assertEquals(
+      await r.ports.exec!.read.execute({ handle: "agent/x" }, new AbortController().signal),
+      "read agent/x",
+    );
+    assertEquals(r.ports.files, undefined); // no sandbox: no file scope, no shell
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("configOf: a row without settings or model is one no session runs on", () => {
   assertThrows(() => configOf({ ...row, settings: undefined }, "mind"), Error, "no settings");
   assertThrows(() => configOf({ ...row, model: undefined }, "mind"), Error, "no settings");

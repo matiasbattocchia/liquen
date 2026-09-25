@@ -12,12 +12,41 @@ Deno.test("databaseOf: null is SQLite under the data root; a URL is Postgres, it
     engine: "postgres",
     url: "postgres://liquen@db:5432/liquen",
     schema: "acme",
+    dir: "/org/data",
+    docs: "files",
   });
-  assertEquals(databaseOf("/org/data", "postgres://liquen@db:5432/liquen?sslmode=require"), {
-    engine: "postgres",
-    url: "postgres://liquen@db:5432/liquen?sslmode=require",
-    schema: "public",
-  });
+  assertEquals(
+    databaseOf("/org/data", "postgres://liquen@db:5432/liquen?sslmode=require", "table"),
+    {
+      engine: "postgres",
+      url: "postgres://liquen@db:5432/liquen?sslmode=require",
+      schema: "public",
+      dir: "/org/data",
+      docs: "table",
+    },
+  );
+});
+
+Deno.test("storeAt: the SQLite store's docs are the files under its data root, seeded there", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const docs = await storeAt({ engine: "sqlite", dir }).docs();
+    assertEquals(docs.on, "files");
+    assertEquals(docs.as, undefined);
+    assertEquals(
+      await docs.bed.lay("agent", "a1", "memories/x", "---\nkind: memory\n---\nx"),
+      true,
+    );
+    assertEquals(await docs.bed.lay("agent", "a1", "memories/x", "again"), false);
+    assertEquals(await docs.bed.laid("agent", "a1", "memories"), true);
+    assertEquals(
+      (await docs.list({ agent: "a1" })).map((d) => d.header.handle),
+      ["memories/x.md"],
+    );
+    await docs.close();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("openStore: an org with no database knob opens log.db under data/log, log and vault on one file", async () => {

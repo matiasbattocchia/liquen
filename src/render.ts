@@ -105,6 +105,9 @@ export interface Env {
   /** The media kinds a processor makes readable (`audio`): the model is told the words
    *  follow on their own, so it waits for the `<transcript>` instead of opening the file. */
   processors?: string[];
+  /** What a doc's handle opens with: `aread` from the shell on files, the `read` tool on
+   *  the table (§9). Absent: files. */
+  docs?: "files" | "table";
 }
 
 /** What a configured processor means to the model, said once above the kinds. */
@@ -174,7 +177,7 @@ export function renderSystem(docs: DocEntry[], env: Env = {}): TextBlockParam[] 
   if (bodies.length > 0) add(bodies.map(section).join("\n\n"));
 
   const pointers = ordered.filter((d) => d.body === undefined);
-  if (pointers.length > 0) add(`# On-demand docs\n\n${renderIndex(pointers)}`);
+  if (pointers.length > 0) add(`# On-demand docs\n\n${renderIndex(pointers, env.docs)}`);
 
   // the facts close the prefix, under the words that spend them
   const body = envBody(env);
@@ -203,14 +206,17 @@ function section(d: DocEntry): string {
 }
 
 /** The pull-index: one pointer line per lazy doc — its handle in the brackets an inlined
- *  doc wears, and its description when it has one. */
-function renderIndex(pointers: DocEntry[]): string {
+ *  doc wears, and its description when it has one. The opening line says what the
+ *  handle opens with, which is the substrate's. */
+function renderIndex(pointers: DocEntry[], on: Env["docs"] = "files"): string {
   const lines = pointers.map((d) => {
     const tail = d.header.description ? ` ${d.header.description}` : "";
     return `- [${d.header.handle}]${tail}`;
   });
-  return "The path is the doc's own, from your home; `aread` one to read it:\n\n" +
-    lines.join("\n");
+  const opener = on === "table"
+    ? "The handle is the doc's own; `read` one to read it:"
+    : "The path is the doc's own, from your home; `aread` one to read it:";
+  return `${opener}\n\n${lines.join("\n")}`;
 }
 
 /* ─────────────────────── (b) the messages tail (§5) ─────────────────────── */

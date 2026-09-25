@@ -11,7 +11,7 @@
  */
 
 import { materialize, starterConfig } from "./config.ts";
-import { seedOrg } from "./store/seed.ts";
+import { onFiles, seedOrg } from "./store/seed.ts";
 import { entry } from "./entry.ts";
 
 /** template name in `scaffold/` → name in the project (dotfiles ship undotted so the
@@ -43,7 +43,9 @@ export async function init(path: string): Promise<void> {
     await Deno.writeFile(`${path}/${to}`, new Uint8Array(await res.arrayBuffer()));
   }
   await Deno.chmod(`${path}/entrypoint.sh`, 0o755);
-  await seedOrg(`${path}/data`); // the org's own words, on disk before anything runs
+  // the org's own words, on disk before anything runs: a starter catalog keeps its docs
+  // as files
+  await seedOrg(onFiles(`${path}/data`));
 }
 
 if (import.meta.main) {

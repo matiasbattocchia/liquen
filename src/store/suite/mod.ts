@@ -62,7 +62,8 @@ export function postgres(url: string): { fresh(): Promise<Store & { schema: stri
   return {
     fresh() {
       const schema = `liquen_t_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
-      const store = storeAt({ engine: "postgres", url, schema });
+      // the docs are the schema's own table: no data root is needed, none is given
+      const store = storeAt({ engine: "postgres", url, schema, dir: "", docs: "table" });
       return Promise.resolve({
         schema,
         open: store.log,

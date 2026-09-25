@@ -12,7 +12,10 @@
 import type { AgentConfig, Decision, XiPorts } from "./xi.ts";
 import type { Log } from "./store/log.ts";
 import { type Policy, scoped } from "./policy.ts";
-import type { Docs } from "./store/docs.ts";
+import type { DocContext, Docs } from "./store/docs.ts";
+import type { DocCalls } from "./store/pg/docs.ts";
+import { docTools } from "./exec/docs.ts";
+import { sessionAddress } from "./session.ts";
 import type { MediaLoader } from "./store/media.ts";
 import type { ModelTransport } from "./transport/mod.ts";
 import type { Sandbox } from "./sandbox.ts";
@@ -23,6 +26,10 @@ import type { About, Delta, Effort } from "./types.ts";
 export interface Host {
   log: Log;
   docs: Docs;
+  /** The agent's own reach into the docs, where they live in the table (§9): the session's
+   *  `read · write · edit` tools are built over it. Absent: the docs are files, and the
+   *  shell's binaries reach them. */
+  reach?: (ctx: DocContext) => DocCalls;
   /** The session's view of the log (§6): the law the store applies to its reads, its
    *  writes and its tail. */
   policy: (agentId: string, sessionId: string) => Policy;
@@ -87,6 +94,13 @@ export function runnerFor(
   const { agentId } = row;
   const box = host.sandbox?.forAgent(agentId).session(sessionId);
   const slog = scoped(host.log, host.policy(agentId, sessionId));
+  // the session's docs tools, where the docs are the table's: its conversation is the
+  // one the session speaks in (§4), which is where a conversation doc is looked for
+  const reach = host.reach?.({
+    agent: agentId,
+    conversation: sessionAddress(agentId, sessionId),
+  });
+  const exec = box || reach ? { exec: { ...box?.exec, ...(reach ? docTools(reach) : {}) } } : {};
   return {
     config: { ...configOf(row, sessionId), ...(box ? { home: box.home } : {}), ...seams },
     log: slog,
@@ -95,7 +109,8 @@ export function runnerFor(
       ...(host.history ? { history: scoped(host.log, host.history(agentId)) } : {}),
       docs: host.docs,
       transport: host.transport(agentId),
-      ...(box ? { exec: box.exec, files: box.files, ambient: box.ambient } : {}),
+      ...exec,
+      ...(box ? { files: box.files, ambient: box.ambient } : {}),
       ...(host.contact ? { contact: host.contact } : {}),
       ...(host.media ? { media: host.media } : {}),
       ...(host.onDelta ? { onDelta: (d: Delta) => host.onDelta!(agentId, sessionId, d) } : {}),

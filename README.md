@@ -64,7 +64,12 @@ secrets only. The org is where you run liquen; `--dir <path>` names it from anyw
 
 The store is SQLite under `data/log` until `system.database` names a Postgres database
 (`postgres://user@host:5432/db`, `?schema=` for one schema of it); the password goes in
-`.env` as `PGPASSWORD`. Every process of the org opens whichever the catalog says.
+`.env` as `PGPASSWORD`. Every process of the org opens whichever the catalog says. The
+docs stay files under `data/` either way until `system.docs` says `table`: they are then
+rows of that database's `docs` table, seeded there at boot, and an agent reaches them
+through its `read`, `write` and `edit` tools instead of its shell — each a function of
+the store, run under one agent role whose row-level policy bounds it to the org's two
+scopes, its own and its conversation's.
 
 ## Standing wakes
 

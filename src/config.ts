@@ -179,6 +179,7 @@ export interface OrgConfig {
     windowLimit: number;
     debounceMs: number;
     database: string | null; // null ⇒ SQLite in data/log; a Postgres URL ⇒ that database
+    docs: "files" | "table"; // where the docs live: files under data/, or the store's docs table
   };
   organization: {
     timezone: string; // the ORG's clock — every stamp, cron and sleep span reads it (§5)
@@ -268,6 +269,13 @@ const SYSTEM: Entry[] = [
     doc: "where the log and the vault live: null ⇒ SQLite in data/log; a Postgres URL " +
       "(postgres://user@host:5432/db, ?schema= for one schema of it) ⇒ that database, " +
       "its password read from PGPASSWORD",
+  },
+  {
+    key: "docs",
+    value: "files",
+    doc: "where the docs live: files under data/ (an agent reads and writes them from its " +
+      "shell), or table — the docs table of the Postgres database above, which an agent " +
+      "reaches through its read · write · edit tools",
   },
 ];
 
@@ -805,7 +813,19 @@ function validateOrg(cfg: OrgConfig, path: string): void {
       `${path}: system.database ${database} (got ${JSON.stringify(cfg.system.database)})`,
     );
   }
+  const docs = checkDocs(cfg.system.docs, cfg.system.database);
+  if (docs) {
+    throw new Error(`${path}: system.docs ${docs} (got ${JSON.stringify(cfg.system.docs)})`);
+  }
   validateAgent(cfg.organization.agents, `${path}: organization.agents`);
+}
+
+/** What `system.docs` may hold: `files`, or `table` when `system.database` names the
+ *  Postgres database whose table it is. A complaint, or null when the value is fine. */
+export function checkDocs(v: unknown, database: unknown): string | null {
+  if (v === "files") return null;
+  if (v !== "table") return 'must be "files" or "table"';
+  return database === null ? "table needs system.database to name a Postgres database" : null;
 }
 
 /** What `system.database` may hold: null, or a Postgres URL naming the user, host and

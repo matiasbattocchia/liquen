@@ -1,12 +1,12 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { seedAgent, seedOrg, seedSkill } from "./seed.ts";
+import { onFiles, seedAgent, seedOrg, seedSkill } from "./seed.ts";
 import { openFileDocs } from "./docs.ts";
 
 Deno.test("seed installs the cascade; list inlines the always-layers and indexes the skills", async () => {
   const root = await Deno.makeTempDir();
   try {
-    await seedOrg(root);
-    await seedAgent(root, "alter");
+    await seedOrg(onFiles(root));
+    await seedAgent(onFiles(root), "alter");
     const docs = await openFileDocs(root).list({ agent: "alter" });
     const refs = docs.map((d) => `${d.header.scope}/${d.header.kind}/${d.header.name}`).sort();
     assertEquals(refs, [
@@ -52,10 +52,10 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
 Deno.test("seeding never overwrites an edited doc", async () => {
   const root = await Deno.makeTempDir();
   try {
-    await seedOrg(root);
+    await seedOrg(onFiles(root));
     const path = `${root}/organization/instructions/organization.md`;
     await Deno.writeTextFile(path, "---\nkind: instruction\nload: always\n---\nEDITED");
-    await seedOrg(root); // idempotent boot
+    await seedOrg(onFiles(root)); // idempotent boot
     assertStringIncludes(await Deno.readTextFile(path), "EDITED");
   } finally {
     await Deno.remove(root, { recursive: true });
@@ -65,14 +65,14 @@ Deno.test("seeding never overwrites an edited doc", async () => {
 Deno.test("a deleted doc stays deleted — the folder is what says the org has this scope", async () => {
   const root = await Deno.makeTempDir();
   try {
-    await seedOrg(root);
-    await seedAgent(root, "alter");
+    await seedOrg(onFiles(root));
+    await seedAgent(onFiles(root), "alter");
     // an org that wants no org-wide instruction
     await Deno.remove(`${root}/organization/instructions/organization.md`);
     // and one that wants the scope gone altogether
     await Deno.remove(`${root}/system/skills`, { recursive: true });
-    await seedOrg(root); // every later boot
-    await seedAgent(root, "alter");
+    await seedOrg(onFiles(root)); // every later boot
+    await seedAgent(onFiles(root), "alter");
     assertEquals(
       await Deno.stat(`${root}/organization/instructions/organization.md`).catch(() => null),
       null,
@@ -89,9 +89,9 @@ Deno.test("a deleted doc stays deleted — the folder is what says the org has t
 Deno.test("the halves are the doors': org alone leaves no agent, and a home is a folder first", async () => {
   const root = await Deno.makeTempDir();
   try {
-    await seedOrg(root); // `liquen init`: nobody declared yet
+    await seedOrg(onFiles(root)); // `liquen init`: nobody declared yet
     assertEquals(await Deno.stat(`${root}/agents`).catch(() => null), null);
-    await seedAgent(root, "alter"); // `liquen agent alter`
+    await seedAgent(onFiles(root), "alter"); // `liquen agent alter`
     assert((await Deno.stat(`${root}/agents/alter`)).isDirectory); // the workspace itself
     assertStringIncludes(
       await Deno.readTextFile(`${root}/agents/alter/instructions/agent.md`),
@@ -105,15 +105,15 @@ Deno.test("the halves are the doors': org alone leaves no agent, and a home is a
 Deno.test("a connector's skill is laid by its door, by file — the skills folder already exists", async () => {
   const root = await Deno.makeTempDir();
   try {
-    await seedOrg(root); // system/skills/ is here now, with the harness's own skills
-    assertEquals(await seedSkill(root, "microsoft-graph"), true);
+    await seedOrg(onFiles(root)); // system/skills/ is here now, with the harness's own skills
+    assertEquals(await seedSkill(onFiles(root), "microsoft-graph"), true);
     const path = `${root}/system/skills/microsoft-graph.md`;
     assertStringIncludes(await Deno.readTextFile(path), "MICROSOFT_GRAPH_TOKEN");
     const docs = await openFileDocs(root).list({ agent: "alter" });
     assert(docs.some((d) => d.header.name === "skills/microsoft-graph"));
     // a second door run keeps the org's edit
     await Deno.writeTextFile(path, "---\nkind: skill\ndescription: x\n---\nEDITED");
-    assertEquals(await seedSkill(root, "microsoft-graph"), false);
+    assertEquals(await seedSkill(onFiles(root), "microsoft-graph"), false);
     assertStringIncludes(await Deno.readTextFile(path), "EDITED");
   } finally {
     await Deno.remove(root, { recursive: true });

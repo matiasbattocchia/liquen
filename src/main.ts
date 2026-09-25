@@ -43,7 +43,6 @@ import { type ClockSettings, tick } from "./tick.ts";
 import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import type { AgentRow } from "./store/agents.ts";
-import { openFileDocs } from "./store/docs.ts";
 import { seedAgent, seedOrg } from "./store/seed.ts";
 import {
   checkProvider,
@@ -122,9 +121,13 @@ export async function start(
   const dir = await Deno.realPath(config.dir);
   // the store is where the catalog says (§9); a process with explicit principals (tests)
   // brings no catalog and runs on the local engine under its data root
-  const store = storeAt(databaseOf(dir, config.catalog?.system.database ?? null));
+  const store = storeAt(databaseOf(
+    dir,
+    config.catalog?.system.database ?? null,
+    config.catalog?.system.docs ?? "files",
+  ));
   const log = await store.log();
-  const docs = openFileDocs(dir); // the doc cascade lives on the data root itself (§8, §9)
+  const docs = await store.docs(); // the doc cascade, files or the table (§8, §9)
   // the media port (§5): the file adapter, remembered across every agent this process renders
   const media = memoizedLoader(loadMediaBlock);
   // the framework way (§9): no explicit principals ⇒ the catalog's roster IS the org
@@ -181,8 +184,10 @@ export async function start(
   )));
   if (config.connections) await log.upsertConnections(config.connections);
   // the doors lay these when they declare; boot lays them for a roster entry typed by hand
-  await seedOrg(dir);
-  for (const agent of principals) if (agent.runs !== false) await seedAgent(dir, agent.agentId);
+  await seedOrg(docs.bed);
+  for (const agent of principals) {
+    if (agent.runs !== false) await seedAgent(docs.bed, agent.agentId);
+  }
   // one transport per provider, shared by every agent declared on it; a test's scripted
   // edge stands in for all of them
   const transportOf = transports({ anthropic: config.apiKey });
@@ -255,6 +260,8 @@ export async function start(
   const host: Host = {
     log,
     docs,
+    // where the docs are the table's, the session's read · write · edit tools (§9)
+    ...(docs.as ? { reach: docs.as } : {}),
     media,
     policy: policyOf,
     // the agent's history (§6): what `search` reads, from any of its sessions — the
@@ -530,6 +537,7 @@ export async function start(
         config.stopTimeoutMs ?? STOP_TIMEOUT_MS,
       );
       await sandbox.close(); // every shell's jobs reaped, the egress proxy stopped
+      await docs.close();
       await log.close();
     },
   };

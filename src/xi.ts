@@ -1073,6 +1073,7 @@ async function think(
     {
       events,
       docs,
+      docsOn: ports.docs.on,
       tools: specsOf(ports, config),
       config,
       surfaces: surfaces.map(surfaceOf),

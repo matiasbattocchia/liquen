@@ -24,6 +24,7 @@ import {
   orgFlag,
 } from "./config.ts";
 import { seedAgent } from "./store/seed.ts";
+import { openStore } from "./store/mod.ts";
 import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
 
@@ -73,8 +74,16 @@ if (import.meta.main) {
     const { name, identity, rest } = parseAgentArgs(org.args);
     const root = findRoot(org);
     await declareAgent(root, name, identity, rest);
-    // the home and the words that make it someone — a person alone (§4) has neither
-    if (rest.mind !== false) await seedAgent(`${root}/data`, name);
+    // the home and the words that make it someone — a person alone (§4) has neither;
+    // they go where the org keeps its docs
+    if (rest.mind !== false) {
+      const docs = await (await openStore(root)).docs();
+      try {
+        await seedAgent(docs.bed, name);
+      } finally {
+        await docs.close();
+      }
+    }
     const declared = [
       ...IDENTITY_KEYS.filter((k) => identity[k] !== undefined),
       ...(rest.principals ? [`principals: ${rest.principals.join(", ")}`] : []),

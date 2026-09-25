@@ -36,7 +36,8 @@
  * so the handle is also the argument `aread` takes. The columns are the file's YAML
  * frontmatter, projected. Reads are fresh from disk (multi-process, like the log). On the
  * table (`pg/docs.ts`) this same port is SELECTs over `docs`, the columns projected from
- * the row's text by the same parser, and the handle is the row's key, `scope/name`.
+ * the row's text by the same parser — a row with no frontmatter is likewise not listed —
+ * and the handle is the row's key, `scope/name`.
  */
 
 import { parse as parseYaml } from "@std/yaml";
@@ -85,11 +86,15 @@ export interface Docs {
   list(ctx: DocContext): Promise<DocEntry[]>;
   /** Pull one doc's body on demand (for a pointer), or null if it's gone. */
   read(ctx: DocContext, ref: DocRef): Promise<string | null>;
+  /** What the handles are: paths from the agent's home the shell's `aread` opens, or
+   *  the table's keys its `read` call opens. Absent (a test's stub): files. */
+  on?: "files" | "table";
 }
 
 /** Open a filesystem-backed Docs read port rooted at the org data root. */
 export function openFileDocs(root: string): Docs {
   return {
+    on: "files",
     async list(ctx: DocContext): Promise<DocEntry[]> {
       const out: DocEntry[] = [];
       const home = scopeDir(root, "agent", ctx)!;

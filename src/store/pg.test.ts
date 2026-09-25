@@ -9,7 +9,7 @@
  * set up once when two processes open it at the same moment.
  */
 
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { foldName } from "./names.ts";
 import { digits, sameHandle } from "./roster.ts";
@@ -18,6 +18,8 @@ import { connect } from "./pg/sql.ts";
 import { VERSION } from "./pg/schema.ts";
 import { openPgDocs, type PgDocs } from "./pg/docs.ts";
 import { applyEdits, parseEdits } from "../exec/edit.ts";
+import { seedAgent, seedOrg, seedSkill } from "./seed.ts";
+import { storeAt } from "./mod.ts";
 
 import { agentsSuite } from "./suite/agents.ts";
 import { connectionsSuite } from "./suite/connections.ts";
@@ -316,8 +318,7 @@ if (url === undefined) {
       assertEquals(by.get("loose")!.kind, "memory");
       assertEquals(by.get("loose")!.description, "d");
       assertEquals(by.get("weird")!.kind, "memory");
-      assertEquals(by.get("bare")!.kind, "memory");
-      assertEquals(by.get("bare")!.load, "lazy");
+      assertEquals(by.has("bare"), false); // no frontmatter ⇒ not a doc, as a file is not
       assertEquals(by.get("quoted")!.description, "ratio a:b, quoted");
     });
   });
@@ -394,6 +395,66 @@ if (url === undefined) {
         "no such doc",
       );
       await assertRejects(() => docs.as({ agent: "a1" }).write("conversation/state", "x"), Error);
+    });
+  });
+
+  Deno.test("docs: the cascade seeds into the table by folder — never twice, and a deleted doc stays deleted", async () => {
+    await withDocs([], async (docs, sql) => {
+      const bed = { laid: docs.laid, lay: docs.lay };
+      await seedOrg(bed);
+      await seedAgent(bed, "alter");
+      const listed = await docs.list({ agent: "alter" });
+      assertEquals(refs(listed).sort(), [
+        "agent/instruction/instructions/agent",
+        "organization/instruction/instructions/organization",
+        "system/instruction/instructions/system",
+        "system/skill/skills/transcribe-audio",
+        "system/skill/skills/workflows",
+      ]);
+      assertEquals(
+        listed.find((d) => d.header.name === "instructions/agent")!.header.handle,
+        "agent/instructions/agent",
+      );
+      // the compaction prompt has no frontmatter: never in the index, still read by name
+      assertStringIncludes(
+        (await docs.read({ agent: "alter" }, {
+          scope: "system",
+          kind: "instruction",
+          name: "instructions/compaction",
+        }))!,
+        "archived",
+      );
+      // an edit is kept, a deletion is kept: the folder's rows are the org's own
+      await sql.unsafe("UPDATE docs SET text = 'EDITED' WHERE name = 'instructions/organization'");
+      await sql.unsafe("DELETE FROM docs WHERE name = 'skills/workflows'");
+      await seedOrg(bed);
+      await seedAgent(bed, "alter");
+      const again = await docs.list({ agent: "alter" });
+      assertEquals(again.some((d) => d.header.name === "skills/workflows"), false);
+      assertEquals(
+        (await sql.unsafe("SELECT text FROM docs WHERE name = 'instructions/organization'"))[0]
+          .text,
+        "EDITED",
+      );
+      // a connector's skill is laid by the file's rule, once
+      assertEquals(await seedSkill(bed, "microsoft-graph"), true);
+      assertEquals(await seedSkill(bed, "microsoft-graph"), false);
+      // and the store hands the same bed out where the catalog puts the docs in the table
+      const store = storeAt({
+        engine: "postgres",
+        url,
+        schema: (await sql.unsafe("SELECT current_schema() AS s"))[0].s,
+        dir: "",
+        docs: "table",
+      });
+      const opened = await store.docs();
+      try {
+        assertEquals(opened.on, "table");
+        assertEquals(typeof opened.as, "function");
+        assertEquals(await opened.bed.laid("system", "", "skills"), true);
+      } finally {
+        await opened.close();
+      }
     });
   });
 

@@ -457,3 +457,18 @@ Deno.test("system.database: null or a Postgres URL without its password — the 
     await assertRejects(() => readConfig(root), Error, "name a database");
   });
 });
+
+Deno.test("system.docs: files, or table when system.database names the database whose table it is", async () => {
+  await withDir(async (root) => {
+    const write = (system: unknown) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system }));
+    await write({});
+    assertEquals((await readConfig(root)).system.docs, "files");
+    await write({ docs: "table", database: "postgres://liquen@db.internal:5432/liquen" });
+    assertEquals((await readConfig(root)).system.docs, "table");
+    await write({ docs: "table" });
+    await assertRejects(() => readConfig(root), Error, "needs system.database");
+    await write({ docs: "rows" });
+    await assertRejects(() => readConfig(root), Error, '"files" or "table"');
+  });
+});

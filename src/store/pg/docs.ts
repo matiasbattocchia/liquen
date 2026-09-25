@@ -23,7 +23,7 @@ import {
   frontmatterOf,
   stripFrontmatter,
 } from "../docs.ts";
-import { connect, rows, scrub, type Sql } from "./sql.ts";
+import { connect, count, rows, scrub, type Sql } from "./sql.ts";
 import { AGENT_ROLE, prepare } from "./schema.ts";
 
 /** The binaries' contracts (`bin/afs.ts`), as the agent calls them on the table. Each
@@ -37,6 +37,10 @@ export interface DocCalls {
 export interface PgDocs extends Docs {
   /** The agent's reach: its calls, bounded to what `ctx` may see and write. */
   as(ctx: DocContext): DocCalls;
+  /** Whether a row of the scope lies under `folder/` — the seed's unit of if-absent. */
+  laid(scope: DocScope, owner: string, folder: string): Promise<boolean>;
+  /** Lay a row where none is. Answers whether it wrote. */
+  lay(scope: DocScope, owner: string, name: string, text: string): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -80,6 +84,7 @@ export async function openPgDocs(url: string, opts: { schema?: string } = {}): P
     }) as Promise<T>;
 
   return {
+    on: "table",
     async list(ctx: DocContext): Promise<DocEntry[]> {
       const found = await rows<{ scope: DocScope; name: string; text: string }>(
         sql,
@@ -87,14 +92,18 @@ export async function openPgDocs(url: string, opts: { schema?: string } = {}): P
          ORDER BY array_position($3::text[], scope), name`,
         [ctx.agent, ctx.conversation ?? null, SCOPE_ORDER],
       );
-      return found.map((r) => {
-        const columns = columnsOf(frontmatterOf(r.text) ?? {});
+      const out: DocEntry[] = [];
+      for (const r of found) {
+        const frontmatter = frontmatterOf(r.text);
+        if (frontmatter === null) continue; // a doc declares itself, as a file does (§8)
+        const columns = columnsOf(frontmatter);
         const entry: DocEntry = {
           header: { scope: r.scope, name: r.name, ...columns, handle: `${r.scope}/${r.name}` },
         };
         if (columns.load === "always") entry.body = stripFrontmatter(r.text);
-        return entry;
-      });
+        out.push(entry);
+      }
+      return out;
     },
 
     async read(ctx: DocContext, ref: DocRef): Promise<string | null> {
@@ -125,6 +134,25 @@ export async function openPgDocs(url: string, opts: { schema?: string } = {}): P
           call<string>(ctx, "SELECT docs_edit($1::text, $2::text) AS v", [handle, scrub(spec)]),
       };
     },
+
+    async laid(scope, owner, folder) {
+      const [r] = await rows<{ v: boolean }>(
+        sql,
+        `SELECT EXISTS (SELECT 1 FROM docs WHERE scope = $1::text AND owner = $2::text
+           AND name LIKE $3::text || '/%') AS v`,
+        [scope, owner, folder],
+      );
+      return r.v;
+    },
+
+    lay: (scope, owner, name, text) =>
+      count(
+        sql,
+        `INSERT INTO docs (scope, owner, name, text, updated_at)
+         VALUES ($1::text, $2::text, $3::text, $4::text, docs_stamp())
+         ON CONFLICT (scope, owner, name) DO NOTHING`,
+        [scope, owner, name, scrub(text)],
+      ).then((n) => n > 0),
 
     close: () => sql.end(),
   };

@@ -115,7 +115,6 @@ if (import.meta.main) {
     const org = orgFlag();
     helpFlag(org.args, USAGE);
     const root = findRoot(org);
-    const dir = `${root}/data`;
     const store = await openStore(root);
     const [verb, ...rest] = org.args;
 
@@ -177,8 +176,13 @@ if (import.meta.main) {
         console.error(`✓ app stored: ${key} (tenant ${tenant}, callback: ${redirectUri ?? local})`);
         if (!alreadyDeclared) await declared(root, SPEC, { oauthPort });
         const { seedSkill } = await import("../../store/seed.ts");
-        if (await seedSkill(dir, "microsoft-graph")) {
-          console.error("✓ skill laid: data/system/skills/microsoft-graph.md");
+        const docs = await store.docs();
+        try {
+          if (await seedSkill(docs.bed, "microsoft-graph")) {
+            console.error(`✓ skill laid: system/skills/microsoft-graph (${docs.on})`);
+          }
+        } finally {
+          await docs.close();
         }
       } else if (verb === "account") {
         const { createMicrosoftOAuth } = await import("./oauth.ts");

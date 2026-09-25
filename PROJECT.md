@@ -4029,6 +4029,18 @@ past the BMP included, plus the read's windows against `aread`'s answers. A row 
 may see but not edit says "not yours to edit"; one it may not write is refused by the
 policy in the engine's words. `aread` of an empty file prints nothing, as the function does.
 
-Open: the tool that offers the three calls to the model where the docs live in the
-table, the switch that says so, seeding into the table, and the prompt's index line
-naming the call.
+### The docs live where the catalog says (2026-09-25) — LANDED
+
+`system.docs` is the switch: `files` (the default, wherever the store is) or `table`, the
+docs table of the Postgres database `system.database` names — the catalog refuses `table`
+without one. `Store.docs()` answers a `DocStore`: the read port, the bed the seeds go in,
+and — on the table — `as(ctx)`, the agent's reach. main hands the reach to the runner as
+the host's `reach`, and every session gets `read · write · edit` (`exec/docs.ts`) over its
+own agent and the conversation it speaks in, beside bash when there is a sandbox; the
+index line in the prompt names `read` where the shell's `aread` would not open a handle.
+Seeding is over a `Seedbed` (`store/seed.ts`): `onFiles(root)` lays files and the empty
+kind folders, the table's bed lays rows, and the if-absent unit is the folder on both — a
+row under `skills/` is the org's say on that folder, so deleting every row of it asks for
+the set again. `liquen init` seeds files (a starter catalog says so); boot, `liquen agent`
+and a connector's door seed wherever the org's docs are. The Postgres suite seeds the
+cascade into a table and lists it back as the file test does.

@@ -87,6 +87,18 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
   );
 });
 
+// On the table the handle is the row's key, and the call that opens it is the `read` tool
+Deno.test("on the table, the index says what opens a handle: `read`, not the shell's `aread`", () => {
+  const [, index] = renderSystem(clinicDocs(), { docs: "table" });
+  assertEquals(
+    index.text,
+    "\n\n---\n\n# On-demand docs\n\n" +
+      "The handle is the doc's own; `read` one to read it:\n\n" +
+      "- [../../organization/reschedule.md] reprogramar un turno\n" +
+      "- [../../organization/patients.md] notas de pacientes",
+  );
+});
+
 Deno.test("one cache breakpoint, on the last — an HOUR, since docs change when a human edits", () => {
   const blocks = renderSystem(clinicDocs());
   assertEquals(blocks.length, 2);

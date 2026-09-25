@@ -93,6 +93,9 @@ export interface TurnConfig {
 export interface TurnInput {
   events: Event[]; // the window xi read
   docs: DocEntry[]; // the cascade xi listed
+  /** What the docs' handles open with: the shell's `aread` on files, the `read` tool on
+   *  the table (§9). Absent: files. */
+  docsOn?: "files" | "table";
   tools: Anthropic.Tool[]; // the registry's specs
   config: TurnConfig;
   /** The surfaces the agent speaks through — the prefix's `## Connections` (§5). Stable
@@ -189,6 +192,7 @@ export async function nu(
     agents: input.members,
     connections: input.surfaces,
     processors: input.processors,
+    docs: input.docsOn,
   };
 
   // Maintenance first — and nu is where it belongs: nu is the layer that formats the window,

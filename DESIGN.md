@@ -1915,8 +1915,11 @@ docs {
 A row is a doc as a file is: its `text` is the whole document, and `kind`
 (`instruction · skill · memory · tool`, `tool` = MCP config), `description` and `load`
 (`always · lazy`) are its frontmatter, projected by the reader — one parser, both
-substrates. The handle is `scope/name`; the owner is whoever is asking, so an agent
-names its own doc and its session's conversation doc the way it names a system one.
+substrates, and a row with no frontmatter is likewise not in the index. The handle is
+`scope/name`; the owner is whoever is asking, so an agent names its own doc and its
+session's conversation doc the way it names a system one. Where the docs live is the
+catalog's `system.docs`: files under the data root, or the table of the database
+`system.database` names.
 
 Who may write a row is the substrate's rule — RLS on the table, unix ownership on files
 (§9) — never a column of the row. On the table it is one policy, the container's rule
@@ -2453,11 +2456,13 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
 - Producers and dispatchers are **separate processes sharing `log.db`**; concurrent publishes
   serialize on SQLite's WAL lock — no central writer, no funnel.
 - **One opener** (`src/store/mod.ts`): every process of an org — main, the scheduler, each
-  connector, the doors — reaches the log and the vault through `openStore(root)`, which
-  reads the catalog's `system.database` and answers the store it names; a process never
-  learns which engine it got, and `liquen status` prints the same lines from either. Null
-  is SQLite under `data/log`; a Postgres URL (its password in `PGPASSWORD`, `?schema=` for
-  one schema of the database) is the adapter below.
+  connector, the doors — reaches the log, the vault and the docs through `openStore(root)`,
+  which reads the catalog's `system.database` and `system.docs` and answers the store they
+  name; a process never learns which engine it got, and `liquen status` prints the same
+  lines from either. Null is SQLite under `data/log`; a Postgres URL (its password in
+  `PGPASSWORD`, `?schema=` for one schema of the database) is the adapter below. The docs
+  are files under the data root, or the table's rows, and the store's `docs()` carries the
+  agent's reach into the table where that is where they are.
 - **The Postgres adapter** (`src/store/pg/`) is the same ports over a server: `openPgLog`
   and `openPgCredentials` open a store in one schema of a database, and the schema is the
   SQLite one column for column — JSON as `jsonb`, lease stamps as `bigint`, every text

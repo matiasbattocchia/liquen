@@ -22,10 +22,12 @@ export type {
 export { start } from "./main.ts";
 export type { Main, MainConfig } from "./main.ts";
 export { openStore, storeAt } from "./store/mod.ts";
-export type { Database, Store } from "./store/mod.ts";
+export type { Database, DocStore, Store } from "./store/mod.ts";
 export type { Log } from "./store/log.ts";
 export { openFileDocs } from "./store/docs.ts";
 export type { Docs } from "./store/docs.ts";
+export { onFiles, seedAgent, seedOrg, seedSkill } from "./store/seed.ts";
+export type { Seedbed } from "./store/seed.ts";
 export { newId } from "./store/id.ts";
 export { scripted } from "./testing.ts";
 export { checkProvider, metered, providerOf, transports } from "./transport/mod.ts";
