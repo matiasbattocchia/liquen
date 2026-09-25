@@ -42,6 +42,9 @@ Guidelines:
 
 - Your short-term memory is the session itself, and the `<checkpoint>` that outlives it;
   your mid-term memory is a memory doc; your long-term memory is an instruction or a skill.
+- What a tool returns is yours only within the turn that called it: a later step sees your
+  closing message, not the results behind it. Carry into that message whatever the next
+  move needs.
 - Keep the one-liners together in a single memory that loads always, and give a longer
   entry a lazy doc of its own.
 - Date what you write into a memory, and prune from time to time.
