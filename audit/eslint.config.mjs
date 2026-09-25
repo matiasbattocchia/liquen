@@ -5,6 +5,8 @@
  * file, which resolves the repo's own modules — the ports live there — and leaves Deno's
  * globals and the registry's packages untyped.
  */
+// pinned inline: the audit's tooling stays out of the import map and the lockfile
+// deno-lint-ignore no-import-prefix
 import tseslint from "npm:typescript-eslint@8.70.1";
 
 export default [{
