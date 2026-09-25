@@ -10,6 +10,7 @@ import { type Log, openLog } from "./store/log.ts";
 import { LOCK_TTL_MS } from "./store/lock.ts";
 import type { AgentRow } from "./store/agents.ts";
 import { openFileDocs } from "./store/docs.ts";
+import { localFiles } from "./store/media.ts";
 import { seedOrg } from "./store/seed.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
@@ -2815,7 +2816,7 @@ Deno.test("a tool's attachment outside the agent's ground is refused, and the re
       },
       {},
       [],
-      { exec: { attach }, files: { home, roots: [home] } },
+      { exec: { attach }, files: localFiles({ home, roots: [home] }) },
     );
   } finally {
     await Deno.remove(ground, { recursive: true });

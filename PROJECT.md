@@ -3812,3 +3812,13 @@ fact. `configOf(row, sessionId)` is the row as the config a session runs with, a
 seams (`gate`, `retryDelaysMs`) ride beside it from code. main works over rows now: the
 roster is what `agents()` returns, and main's own part is the `Host` it builds — the
 metered transports and the door's fan-outs.
+
+### The files port (2026-09-25) — LANDED
+
+`Files` (`src/store/media.ts`) is what `send({files})` and a tool's attachments resolve
+through: `resolve(ref)` answers the `FilePart` a reference sends as, async, and throws for
+a reference that does not exist or points outside what the agent may attach. `localFiles
+(scope)` is the local adapter — the scope check, the stat and the mime sniff over this
+filesystem — and the sandbox session carries the port beside its `home`, so the file
+scope left main's runner with the rest of the ground. Without a files port xi resolves
+over the process's own filesystem, unscoped, which is a test's shape.

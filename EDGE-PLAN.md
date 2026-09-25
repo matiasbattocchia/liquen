@@ -93,11 +93,13 @@ answers the same question from Storage under its own uri scheme.
 
 ## 6. `FileScope` becomes a files port
 
-`filePartOf` checks scope and stats paths on the broker's filesystem. An async
-`files.resolve(ref) → FilePart` does the scope check, the stat and the mime, and both
-`ExecOutcome.files` and `send({files})` go through it. A remote sandbox implements it by
-moving the bytes from the sandbox into the blob store and returning the uri; the local
-adapter is today's code.
+**Landed** (PROJECT.md, 2026-09-25). `Files` (`src/store/media.ts`) is the port:
+`resolve(ref) → Promise<FilePart>` does the scope check, the stat and the mime, and both
+`ExecOutcome.files` and `send({files})` go through it. `localFiles(scope)` is the local
+adapter, and the sandbox session carries the port (`SandboxSession.files`) beside its
+`home`, since what an agent may attach is the ground it stands on. A remote sandbox
+implements it by moving the bytes from the sandbox into the blob store and returning the
+uri.
 
 ## 7. One sandbox provider owns the exec plane
 

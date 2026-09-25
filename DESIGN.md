@@ -2487,6 +2487,10 @@ sandbox brings its own, and a host with no exec plane has neither. **The runner 
 module** (`runnerFor`, `src/runner.ts`): a session is built from the store, the agent's
 row and a `Host` — the ports a host wires once — so main and an edge function build the
 same session from the same three things, and what main keeps of its own is the `Host`.
+**Files are a port** (`Files`, `src/store/media.ts`): `resolve(ref)` is the `FilePart`
+a reference sends as, and the sandbox session carries the port because what an agent
+may attach is the ground it stands on — a remote sandbox answers it by moving the bytes
+into the blob store.
 
 Two asymmetries to plan around, not paper over: **(1) no bash on an edge function**, so an
 edge-deployed agent can run connectors, dispatch, a verdict and a think, but the exec plane

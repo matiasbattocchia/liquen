@@ -259,12 +259,28 @@ export interface FileScope {
   roots: string[];
 }
 
+/** The files port (§9): a file reference → the `FilePart` it sends as. `send({files})`
+ *  and a tool's attachments both go through it, so where a reference may point and what
+ *  it takes to read one is the adapter's whole say. The local adapter is `localFiles`; a
+ *  remote sandbox's moves the bytes into the blob store and answers with the uri. */
+export interface Files {
+  /** Throws when the reference does not exist or points outside what the agent may
+   *  attach — the tool_result carries that back as the error it is. */
+  resolve(ref: string): Promise<FilePart>;
+}
+
+/** The local adapter: this filesystem, under a scope — or, without one, whatever the
+ *  process can read. */
+export const localFiles = (scope?: FileScope): Files => ({
+  resolve: (ref) => filePartOf(ref, scope),
+});
+
 /** A file reference → a `FilePart` (the send side). A local path (bare or `file://`)
  *  is statted and classified — throws when it doesn't exist or, under a `scope`, when it
- *  resolves outside the scope's roots, and the tool_result carries that back as the error
- *  it is. An `http(s)` link passes through UNTOUCHED (no fetch, no size — mime guessed
- *  from the URL's extension): the platforms that take links send it as-is. */
-export function filePartOf(ref: string, scope?: FileScope): FilePart {
+ *  resolves outside the scope's roots. An `http(s)` link passes through UNTOUCHED (no
+ *  fetch, no size — mime guessed from the URL's extension): the platforms that take links
+ *  send it as-is. */
+export async function filePartOf(ref: string, scope?: FileScope): Promise<FilePart> {
   if (isExternal(ref)) {
     const path = new URL(ref).pathname;
     const mime = mimeOf(path) ?? "application/octet-stream";
@@ -275,14 +291,14 @@ export function filePartOf(ref: string, scope?: FileScope): FilePart {
       file: { mime_type: mime, uri: ref, ...(name && name !== "/" ? { name } : {}) },
     };
   }
-  const abs = scope ? Deno.realPathSync(resolve(scope.home, pathOf(ref))) : resolve(pathOf(ref));
+  const abs = scope ? await Deno.realPath(resolve(scope.home, pathOf(ref))) : resolve(pathOf(ref));
   if (scope && !scope.roots.some((root) => abs === root || abs.startsWith(`${root}/`))) {
     throw new Error(
       `${ref}: outside your files — attach from your folder, the org's, or the media store`,
     );
   }
-  const size = Deno.statSync(abs).size;
-  const mime = mimeOf(abs) ?? sniffMime(headSync(abs)) ?? "application/octet-stream";
+  const size = (await Deno.stat(abs)).size;
+  const mime = mimeOf(abs) ?? sniffMime(await head(abs)) ?? "application/octet-stream";
   return {
     type: "file",
     kind: kindOf(mime),
@@ -291,13 +307,13 @@ export function filePartOf(ref: string, scope?: FileScope): FilePart {
 }
 
 /** The first bytes of a file (sniffing window) — never the whole thing. */
-function headSync(path: string, n = 16): Uint8Array {
-  const f = Deno.openSync(path, { read: true });
+async function head(path: string, n = 16): Promise<Uint8Array> {
+  const f = await Deno.open(path, { read: true });
   try {
     const buf = new Uint8Array(n);
     let at = 0;
     for (;;) {
-      const r = f.readSync(buf.subarray(at));
+      const r = await f.read(buf.subarray(at));
       if (r === null || (at += r) >= n) break;
     }
     return buf.subarray(0, at);

@@ -3,12 +3,13 @@
  * re-downloads and the dispatch echo converge on ONE file; the path is the durable handle.
  */
 
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { openCredentials } from "./credentials.ts";
 import {
   filePartOf,
   kindOf,
   loadMediaBlock,
+  localFiles,
   mediaSecret,
   memoizedLoader,
   mimeOf,
@@ -57,16 +58,16 @@ Deno.test("filePartOf: a real path stats and classifies; a missing one throws (t
   try {
     const path = `${root}/report.pdf`;
     await Deno.writeTextFile(path, "pdf bytes");
-    const p = filePartOf(path);
+    const p = await filePartOf(path);
     assertEquals(p.kind, "document");
     assertEquals(p.file.mime_type, "application/pdf");
     assertEquals(p.file.name, "report.pdf");
     assertEquals(p.file.size, 9);
     assert(p.file.uri.startsWith("file://")); // bare path in, canonical uri out
-    assertEquals(filePartOf(p.file.uri).file.uri, p.file.uri); // file:// in is idempotent
-    assertThrows(() => filePartOf(`${root}/gone.png`));
+    assertEquals((await filePartOf(p.file.uri)).file.uri, p.file.uri); // file:// in is idempotent
+    await assertRejects(() => filePartOf(`${root}/gone.png`));
     // an http(s) link passes through UNTOUCHED: no fetch, no size, mime from the extension
-    const ext = filePartOf("https://example.com/pics/cat.jpg");
+    const ext = await filePartOf("https://example.com/pics/cat.jpg");
     assertEquals(ext.file.uri, "https://example.com/pics/cat.jpg");
     assertEquals(ext.kind, "image");
     assertEquals(ext.file.mime_type, "image/jpeg");
@@ -114,7 +115,7 @@ Deno.test("extension-less media classifies by its bytes — whole pipeline, not 
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2]);
     const path = `${root}/snapshot`; // no extension at all
     await Deno.writeFile(path, png);
-    const p = filePartOf(path);
+    const p = await filePartOf(path);
     assertEquals(p.kind, "image"); // sniffed
     assertEquals(p.file.mime_type, "image/png");
     const block = await loadMediaBlock(path);
@@ -247,11 +248,11 @@ Deno.test("memoizedLoader: a uri loads once, and the memo is bounded by bytes he
   assertEquals(loads, 6);
 });
 
-Deno.test("filePartOf: a scoped reference resolves from the agent's home and stays inside its roots", async () => {
+Deno.test("localFiles: a scoped reference resolves from the agent's home and stays inside its roots", async () => {
   const tmp = await Deno.realPath(await Deno.makeTempDir());
   try {
     const home = `${tmp}/agents/ana`;
-    const scope = { home, roots: [home, `${tmp}/organization`] };
+    const files = localFiles({ home, roots: [home, `${tmp}/organization`] });
     await Deno.mkdir(`${home}/notes`, { recursive: true });
     await Deno.mkdir(`${tmp}/organization`, { recursive: true });
     await Deno.mkdir(`${tmp}/log`, { recursive: true });
@@ -261,18 +262,18 @@ Deno.test("filePartOf: a scoped reference resolves from the agent's home and sta
     await Deno.writeTextFile(`${tmp}/log/log.db`, "sqlite");
     await Deno.writeTextFile(`${tmp}/agents/bo/secret.md`, "bo's");
     // relative = from the agent's home, not the harness's cwd
-    assertEquals(filePartOf("notes/plan.md", scope).file.uri, `file://${home}/notes/plan.md`);
-    assertEquals(filePartOf(`${tmp}/organization/shared.csv`, scope).file.name, "shared.csv");
+    assertEquals((await files.resolve("notes/plan.md")).file.uri, `file://${home}/notes/plan.md`);
+    assertEquals((await files.resolve(`${tmp}/organization/shared.csv`)).file.name, "shared.csv");
     // the substrate and a peer's folder are outside — the tool_result carries the refusal
-    assertThrows(() => filePartOf(`${tmp}/log/log.db`, scope), Error, "outside");
-    assertThrows(() => filePartOf(`${tmp}/agents/bo/secret.md`, scope), Error, "outside");
-    assertThrows(() => filePartOf("../bo/secret.md", scope), Error, "outside");
+    await assertRejects(() => files.resolve(`${tmp}/log/log.db`), Error, "outside");
+    await assertRejects(() => files.resolve(`${tmp}/agents/bo/secret.md`), Error, "outside");
+    await assertRejects(() => files.resolve("../bo/secret.md"), Error, "outside");
     // a symlink inside pointing outside is judged by where it POINTS
     await Deno.symlink(`${tmp}/log/log.db`, `${home}/innocent.db`);
-    assertThrows(() => filePartOf(`${home}/innocent.db`, scope), Error, "outside");
+    await assertRejects(() => files.resolve(`${home}/innocent.db`), Error, "outside");
     // links pass untouched: nothing local is read
     assertEquals(
-      filePartOf("https://example.com/a.pdf", scope).file.uri,
+      (await files.resolve("https://example.com/a.pdf")).file.uri,
       "https://example.com/a.pdf",
     );
   } finally {

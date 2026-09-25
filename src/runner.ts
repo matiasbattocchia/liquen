@@ -88,7 +88,7 @@ export function runnerFor(
   const box = host.sandbox?.forAgent(agentId).session(sessionId);
   const slog = scoped(host.log, host.policy(agentId, sessionId));
   return {
-    config: { ...configOf(row, sessionId), ...(box ? { home: box.files.home } : {}), ...seams },
+    config: { ...configOf(row, sessionId), ...(box ? { home: box.home } : {}), ...seams },
     log: slog,
     ports: {
       log: slog,

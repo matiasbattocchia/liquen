@@ -12,17 +12,18 @@
  */
 
 import { type ExecGround, type ExecPlane, installExecGround } from "./exec/bash.ts";
-import type { FileScope } from "./store/media.ts";
+import { type Files, localFiles } from "./store/media.ts";
 import { openCredentials } from "./store/credentials.ts";
 import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
 import { startProxy } from "./proxy/proxy.ts";
 import { sessionAddress } from "./session.ts";
 
-/** One session's place in the sandbox: its shell (where it stands, what it left running)
- *  and where its file references may point. */
+/** One session's place in the sandbox: its shell (where it stands, what it left running),
+ *  the agent's folder on this ground, and the files port its references resolve through. */
 export interface SandboxSession extends ExecPlane {
-  files: FileScope;
+  home: string;
+  files: Files;
 }
 
 /** One agent's ground, prepared once; `session` opens (or returns) a session's shell on it. */
@@ -71,9 +72,13 @@ export async function openLocalSandbox(
     grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashTimeoutMs));
   }
   const shells = new Map<string, ExecPlane>();
-  const filesOf = (agentId: string): FileScope => {
-    const home = `${dir}/agents/${agentId}`;
-    return { home, roots: [home, `${dir}/organization`, `${dir}/system`, `${dir}/conversations`] };
+  const homeOf = (agentId: string) => `${dir}/agents/${agentId}`;
+  const filesOf = (agentId: string): Files => {
+    const home = homeOf(agentId);
+    return localFiles({
+      home,
+      roots: [home, `${dir}/organization`, `${dir}/system`, `${dir}/conversations`],
+    });
   };
   return {
     forAgent(agentId) {
@@ -87,7 +92,7 @@ export async function openLocalSandbox(
             shell = ground.shell();
             shells.set(key, shell);
           }
-          return { ...shell, files: filesOf(agentId) };
+          return { ...shell, home: homeOf(agentId), files: filesOf(agentId) };
         },
       };
     },

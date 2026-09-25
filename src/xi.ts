@@ -72,7 +72,7 @@ import { sameHandle, speaksThrough } from "./store/roster.ts";
 import { preferProper } from "./store/names.ts";
 import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
-import { filePartOf, type FileScope, type MediaBlock, type MediaLoader } from "./store/media.ts";
+import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./store/media.ts";
 import type { FilePart, LocationPart, SendPreview } from "./types.ts";
 import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import {
@@ -857,10 +857,10 @@ export interface XiPorts {
    *  whatsapp's where the connection is declared. The `contact` tool is offered when any
    *  is here and refuses an account whose service has none. */
   contact?: Record<string, ContactPort>;
-  /** Where this agent's file references may point (§9): `send({files})` and a tool's
-   *  attachments resolve through it — its own folder, the org floor, the system docs, the
-   *  media store. Absent (an edge port, a test): whatever the process can read. */
-  files?: FileScope;
+  /** The files port (§9): what `send({files})` and a tool's attachments resolve through —
+   *  the sandbox's, naming what the agent may attach. Absent (a test): the process's own
+   *  filesystem, unscoped. */
+  files?: Files;
   /** The bytes behind a stored attachment (§5), for the trailing-region blocks: the file
    *  adapter locally, a blob store on the edge. Absent (a test): markers only. */
   media?: MediaLoader;
@@ -1362,14 +1362,14 @@ async function act(
   };
   const ts = () => new Date().toISOString();
 
-  const resultOf = (
+  const resultOf = async (
     use: ToolUseEvent,
     outcome: Json | ExecOutcome,
     flags?: Partial<{ is_error: boolean; cancelled: boolean }>,
     /** The call, rendered — set only on a DEFERRED outcome, which has to name what it is
      *  reporting on: its `tool_use` has already collapsed out of the transcript (§5). */
     call?: string,
-  ): Draft<ToolResultEvent> => {
+  ): Promise<Draft<ToolResultEvent>> => {
     const { output: raw, files } = isOutcome(outcome) ? outcome : { output: outcome, files: [] };
     // the tool's attachments (§5 media): a path that vanished mid-turn drops; one outside
     // the agent's ground is refused, and the refusal is SAID in the output — the model
@@ -1378,7 +1378,7 @@ async function act(
     const refused: string[] = [];
     for (const f of files) {
       try {
-        parts.push(filePartOf(f, ports.files));
+        parts.push(await (ports.files ?? localFiles()).resolve(f));
       } catch (err) {
         if (err instanceof Deno.errors.NotFound) continue;
         refused.push(err instanceof Error ? err.message : String(err));
@@ -1473,7 +1473,7 @@ async function act(
     // refusal. Cheap to raise, and the model reads the hint and says the thing instead.
     const nowhere = await selfSend(name, input, config, ports);
     if (nowhere) {
-      out.push(resultOf(use, nowhere, { is_error: true }));
+      out.push(await resultOf(use, nowhere, { is_error: true }));
       continue;
     }
     const verdict = verdictOf(events, use.id);
@@ -1482,9 +1482,11 @@ async function act(
     // it. A verdict already given supersedes the table — the principal outranks policy.
     const ruling = verdict ? undefined : gate(name, input, await targetOf(use, self, ports));
     if (ruling === "deny") {
-      out.push(resultOf(use, "refused by policy — a standing rule denies this call", {
-        is_error: true,
-      }));
+      out.push(
+        await resultOf(use, "refused by policy — a standing rule denies this call", {
+          is_error: true,
+        }),
+      );
       continue;
     }
     if (ruling === "ask") {
@@ -1514,17 +1516,19 @@ async function act(
           } satisfies Draft<PermissionRequestEvent>,
         );
       }
-      out.push(resultOf(use, PENDING_APPROVAL));
+      out.push(await resultOf(use, PENDING_APPROVAL));
       continue;
     }
     if (verdict?.behavior === "deny") {
-      out.push(resultOf(use, refused(verdict), { is_error: true }));
+      out.push(await resultOf(use, refused(verdict), { is_error: true }));
       continue;
     }
     if (stolen) {
       // the previous holder crashed mid-act: execution state unknown — cancel, don't
       // re-run (a send may already have reached the peer); the model re-decides
-      out.push(resultOf(use, "orphaned by a crashed turn", { is_error: true, cancelled: true }));
+      out.push(
+        await resultOf(use, "orphaned by a crashed turn", { is_error: true, cancelled: true }),
+      );
       continue;
     }
     runnable.push({ use });
@@ -1537,10 +1541,15 @@ async function act(
     await standing(use, verdict);
     const call = describe(use);
     if (verdict.behavior === "deny") {
-      out.push(resultOf(use, refused(verdict), { is_error: true }, call));
+      out.push(await resultOf(use, refused(verdict), { is_error: true }, call));
     } else if (stolen) {
       out.push(
-        resultOf(use, "orphaned by a crashed turn", { is_error: true, cancelled: true }, call),
+        await resultOf(
+          use,
+          "orphaned by a crashed turn",
+          { is_error: true, cancelled: true },
+          call,
+        ),
       );
     } else {
       runnable.push({ use, call });
@@ -1554,14 +1563,14 @@ async function act(
   out.push(
     ...await Promise.all(runnable.map(async ({ use, call }) => {
       try {
-        return resultOf(
+        return await resultOf(
           use,
           await execute(use, signal, self, config, ports),
           undefined,
           call,
         );
       } catch (err) {
-        return resultOf(use, err instanceof Error ? err.message : String(err), {
+        return await resultOf(use, err instanceof Error ? err.message : String(err), {
           is_error: true,
           ...(signal.aborted ? { cancelled: true } : {}),
         }, call);
@@ -2036,7 +2045,7 @@ async function execute(
     // attachments (§5 media): paths → FileParts, statted and classified broker-side; a
     // missing path throws here and the tool_result carries the error back to the model
     const files = Array.isArray(args.files)
-      ? args.files.map((f) => filePartOf(String(f), ports.files))
+      ? await Promise.all(args.files.map((f) => (ports.files ?? localFiles()).resolve(String(f))))
       : [];
     const body = args.text === undefined ? "" : String(args.text);
     const glyph = args.react === undefined ? "" : String(args.react);
