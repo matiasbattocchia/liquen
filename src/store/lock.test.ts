@@ -154,3 +154,58 @@ Deno.test("independent agents lock independently", async () => {
     await a2.release();
   });
 });
+
+/** A `control` row in the session's room — the order a running turn is cut by (§2). */
+const control = (conversation: string, kind = "cancel"): Draft => ({
+  ts: new Date().toISOString(),
+  type: "control",
+  envelope: {
+    service: "local",
+    connection_address: "agent",
+    conversation: { address: conversation },
+  },
+  payload: { control: kind },
+  parts: [{ type: "text", kind: "control", text: kind }],
+} as unknown as Draft);
+
+Deno.test("the lease carries the interrupt: a control row this process lands fires it at once", async () => {
+  await withLogs(async (a) => {
+    const lock = a.lock("turn-mind@ana");
+    assertEquals(lock.signal().aborted, false); // inert before an acquire
+    assertEquals(await lock.acquire(), "acquired");
+    const signal = lock.signal();
+    assertEquals(signal.aborted, false);
+    await a.publish(control("mind@bo")); // another room: not this turn's order
+    assertEquals(signal.aborted, false);
+    await a.publish(control("mind@ana"));
+    assertEquals(signal.aborted, true); // the publish that landed it fired it, no beat waited for
+    await lock.release();
+    // the next turn starts unmarked, whatever landed for the last one
+    assertEquals(await lock.acquire(), "acquired");
+    assertEquals(lock.signal().aborted, false);
+    await lock.release();
+  });
+});
+
+Deno.test("the lease carries the interrupt: a control row from another process reaches the holder within a beat", async () => {
+  await withLogs(async (a, b) => {
+    const lock = a.lock("turn-mind@ana", 60); // beats every 20ms
+    assertEquals(await lock.acquire(), "acquired");
+    const signal = lock.signal();
+    await b.publish(control("mind@ana")); // the other process lands the order
+    const t0 = Date.now();
+    while (!signal.aborted && Date.now() - t0 < 2000) await new Promise((r) => setTimeout(r, 5));
+    assertEquals(signal.aborted, true);
+    await lock.release();
+  });
+});
+
+Deno.test("the turn's own closing row (`cancelled`) orders nothing", async () => {
+  await withLogs(async (a) => {
+    const lock = a.lock("turn-mind@ana");
+    assertEquals(await lock.acquire(), "acquired");
+    await a.publish(control("mind@ana", "cancelled"));
+    assertEquals(lock.signal().aborted, false);
+    await lock.release();
+  });
+});

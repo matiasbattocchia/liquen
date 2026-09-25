@@ -73,6 +73,12 @@ export interface TurnLock {
   acquire(): Promise<Acquired>;
   /** The token of the last winning acquire — what a write quotes to prove it is the holder. */
   lease(): Lease;
+  /** The interrupt of the lease held (§2): fires when a `control` row lands in the session's
+   *  room while this holder has it — the STORE fires it, so a cancel from any surface and
+   *  any process reaches the turn by the path everything else does. Marked on the row
+   *  (`cancel`) by the publish that lands the control, read by this process's own publish
+   *  at once and by the heartbeat within a beat. Fresh per acquire; inert before one. */
+  signal(): AbortSignal;
   /** Release. Drops the row only if this holder's stamp is still on it: a no-op after a
    *  steal, and safe to call when nothing is held. */
   release(): Promise<void>;
@@ -87,10 +93,19 @@ export interface Locker {
 }
 
 export const LOCKS_DDL = `CREATE TABLE IF NOT EXISTS locks (
-  name TEXT PRIMARY KEY,
-  born INTEGER NOT NULL,  -- WHO: minted per acquisition, quoted by the holder's writes
-  seen INTEGER NOT NULL   -- WHETHER: the heartbeat the TTL is measured against
+  name   TEXT PRIMARY KEY,
+  born   INTEGER NOT NULL,  -- WHO: minted per acquisition, quoted by the holder's writes
+  seen   INTEGER NOT NULL,  -- WHETHER: the heartbeat the TTL is measured against
+  cancel INTEGER NOT NULL DEFAULT 0  -- STILL WANTED: a control row landed for the holder
 );`;
+
+/** The lease of a session's turn, by the session's room (§2): what a `control` row landing
+ *  there names. */
+export const turnLockOf = (conversation: string): string => `turn-${conversation}`;
+
+/** A control row landing marks the holder's lease, whoever holds it: the heartbeat reads
+ *  the mark. Run by the publish that lands the row, inside its transaction. */
+export const CANCEL_SQL = "UPDATE locks SET cancel = 1 WHERE name = ?1";
 
 /** Releasing is one statement, so `publishAndRelease` can run it inside the SAME transaction
  *  as a turn's last writes (§2) — that atomicity is the whole reason the lease lives here. */
@@ -108,26 +123,40 @@ export const OWNS_SQL = "SELECT 1 AS x FROM locks WHERE name = ?1 AND born = ?2"
 export function createLocker(
   db: DatabaseSync,
   now: () => number = Date.now,
-): Locker & { stop(): void } {
+): Locker & { stop(): void; cancel(name: string): void } {
   const take = db.prepare(
     "INSERT INTO locks (name, born, seen) VALUES (?1, ?2, ?2) ON CONFLICT(name) DO NOTHING",
   );
   // one atomic statement, so two stealers can't both win: only the row whose heartbeat is
-  // still older than the cutoff is updated, and `changes` says whether it was us
-  const steal = db.prepare("UPDATE locks SET born = ?2, seen = ?2 WHERE name = ?1 AND seen <= ?3");
-  // the heartbeat, quoting the token: a holder that was stolen from re-stamps nothing
-  const beat = db.prepare("UPDATE locks SET seen = ?3 WHERE name = ?1 AND born = ?2");
+  // still older than the cutoff is updated, and `changes` says whether it was us. A stolen
+  // lease starts unmarked: the cancel was the dead holder's.
+  const steal = db.prepare(
+    "UPDATE locks SET born = ?2, seen = ?2, cancel = 0 WHERE name = ?1 AND seen <= ?3",
+  );
+  // the heartbeat, quoting the token: a holder that was stolen from re-stamps nothing —
+  // and reads the mark a control row left, which is how a cancel from another process
+  // reaches this holder
+  const beat = db.prepare(
+    "UPDATE locks SET seen = ?3 WHERE name = ?1 AND born = ?2 RETURNING cancel",
+  );
   const free = db.prepare(RELEASE_SQL);
   const live = db.prepare("SELECT 1 AS x FROM locks WHERE name = ? AND seen > ?");
   const hearts = new Set<ReturnType<typeof setInterval>>();
+  // the interrupts of the leases THIS process holds, by name: a control row this process
+  // lands fires the holder at once, no beat to wait for
+  const holding = new Map<string, AbortController>();
 
   return {
     stop() {
       for (const h of hearts) clearInterval(h);
       hearts.clear();
     },
+    cancel(name: string) {
+      holding.get(name)?.abort();
+    },
     lock(name: string, ttlMs: number = LOCK_TTL_MS): TurnLock {
       let born = 0; // no acquire yet — a stamp that matches no row
+      let ctl = new AbortController();
       let heart: ReturnType<typeof setInterval> | undefined;
       const stop = () => {
         if (heart !== undefined) {
@@ -135,16 +164,21 @@ export function createLocker(
           hearts.delete(heart);
         }
         heart = undefined;
+        if (holding.get(name) === ctl) holding.delete(name);
       };
       const start = () => {
         stop();
+        ctl = new AbortController();
+        holding.set(name, ctl);
         let misses = 0;
         heart = setInterval(() => {
           try {
             // gone: we were declared dead, or the turn already ended (publishAndRelease
             // drops the row itself). Either way there is nothing left to keep alive, and a
             // zombie that kept re-stamping would only fight its own successor.
-            if (Number(beat.run(name, born, now()).changes) === 0) return stop();
+            const row = beat.get(name, born, now()) as { cancel: number } | undefined;
+            if (row === undefined) return stop();
+            if (row.cancel === 1) ctl.abort();
             misses = 0;
           } catch {
             // the store is unreachable — closing down, or wedged behind a writer past
@@ -176,6 +210,9 @@ export function createLocker(
         },
         lease(): Lease {
           return { name, born };
+        },
+        signal(): AbortSignal {
+          return ctl.signal;
         },
         release(): Promise<void> {
           stop();

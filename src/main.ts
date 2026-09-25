@@ -33,7 +33,7 @@
  */
 
 import { type AgentConfig, type Decision, relevant, xi, type XiPorts } from "./xi.ts";
-import { isCancelled, ownComplex } from "./render.ts";
+import { ownComplex } from "./render.ts";
 import { MIND, parseSession, sessionAddress } from "./session.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
 import { type Log, openLog } from "./store/log.ts";
@@ -343,19 +343,6 @@ export async function start(
     reported.set(who, key);
     castStatus(agentId, sessionId, line, about);
   };
-  // the turns' interrupts (§2): a session's running turn arms one here, and a `control`
-  // row landing in that session's room fires it — the log is the signal's carrier, so a
-  // cancel from any surface reaches the turn by the path everything else does
-  const turns = new Map<string, AbortController>();
-  const interruptOf = (agentId: string, sessionId: string) => {
-    const key = sessionAddress(agentId, sessionId);
-    return (ctl: AbortController) => {
-      turns.set(key, ctl);
-      return () => {
-        if (turns.get(key) === ctl) turns.delete(key);
-      };
-    };
-  };
   // metered per agent: every model call this agent makes lands in the usage table
   // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in.
   // The roster's transport is the STOCK one: what every session of the agent thinks
@@ -393,7 +380,6 @@ export async function start(
         onDecision: (v, cursor, about) =>
           disclose(agent.agentId, agent.sessionId, v, cursor, about),
         ambient: shellOf(agent.agentId, agent.sessionId).ambient,
-        interrupt: interruptOf(agent.agentId, agent.sessionId),
       } satisfies XiPorts,
     };
   });
@@ -512,7 +498,6 @@ export async function start(
         onDecision: (v: Decision, cursor: string | undefined, about: About[]) =>
           disclose(agentId, sessionId, v, cursor, about),
         ambient: shell.ambient,
-        interrupt: interruptOf(agentId, sessionId),
       } satisfies XiPorts,
     };
     named.set(key, r);
@@ -608,16 +593,9 @@ export async function start(
       .filter((p) => p.sessionId !== MIND); // the minds tail their own scoped views
   };
   unsubs.push(log.subscribe((e) => {
-    if (e.type === "control") {
-      if (isCancelled(e)) return; // the turn's own closing row: nothing left to cut
-      const key = e.envelope.conversation.address;
-      const turn = turns.get(key);
-      if (turn) {
-        console.error(`[main] ${key}: ${e.payload.control} — the running turn is cut`);
-        turn.abort();
-      }
-      return; // it never starts work (§2)
-    }
+    // a `control` row acts on a RUNNING turn — the store fires the lease's interrupt (§2) —
+    // and never starts one
+    if (e.type === "control") return;
     for (const p of namedIn(e)) {
       runnerOf(p.agentId, p.sessionId)
         .then((r) => r && invoke(r)(e))

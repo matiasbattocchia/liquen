@@ -52,6 +52,7 @@ import type {
 } from "../types.ts";
 import { newId } from "./id.ts";
 import {
+  CANCEL_SQL,
   createLocker,
   type Lease,
   LeaseLost,
@@ -59,6 +60,7 @@ import {
   LOCKS_DDL,
   OWNS_SQL,
   RELEASE_SQL,
+  turnLockOf,
 } from "./lock.ts";
 import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
@@ -493,6 +495,7 @@ export async function openLog(
   );
   const unlock = db.prepare(RELEASE_SQL);
   const owns = db.prepare(OWNS_SQL);
+  const cancel = db.prepare(CANCEL_SQL);
   const locker = createLocker(db, opts.now);
 
   /** One upsert — or, for a PARTLESS draft, one patch (merge-only: nothing stored when the
@@ -502,7 +505,7 @@ export async function openLog(
    *  Wire-service events keep NULL until their platform names them — absence IS the
    *  "never confirmed" signal the dispatcher's echo-dedup and the mirror's absorb guard
    *  read. */
-  const write = (event: Draft, now: string): Event | null => {
+  const write = (event: Draft, now: string, cuts: string[]): Event | null => {
     const r = rowOf(event);
     // An agent's message bound for a wire is born an OFFER: `queued`, stamped now. The
     // dispatcher that serves the connection takes it off the stream, or off the rows if it
@@ -518,6 +521,18 @@ export async function openLog(
         | { id: string }
         | undefined;
       return hit ? { ...event, id: hit.id } as Event : null;
+    }
+    // a `control` row is an order to the turn RUNNING in its room (§2): the lease it
+    // holds is marked in the same transaction — the heartbeat reads the mark — and a
+    // holder in this very process is cut once the row is committed (`cuts`). The turn's
+    // own closing row (`cancelled`) orders nothing.
+    if (
+      r.type === "control" && r.conversation_address !== null &&
+      (event.payload as { control?: string } | undefined)?.control !== "cancelled"
+    ) {
+      const name = turnLockOf(r.conversation_address);
+      cancel.run(name);
+      cuts.push(name);
     }
     const id = r.id ?? newId();
     const stored = upsert.get(
@@ -602,9 +617,11 @@ export async function openLog(
           }
         }
       }
-      const stored = drafts.map((e) => write(e, now)).filter((e): e is Event => e !== null);
+      const cuts: string[] = [];
+      const stored = drafts.map((e) => write(e, now, cuts)).filter((e): e is Event => e !== null);
       if (lease !== undefined) unlock.run(lease.name, lease.born);
       db.exec("COMMIT");
+      for (const name of cuts) locker.cancel(name);
       return Array.isArray(one) ? stored : stored[0] ?? null;
     } catch (err) {
       db.exec("ROLLBACK");
@@ -780,6 +797,22 @@ function migrate(db: DatabaseSync) {
   if (v < 7) migrateV7(db);
   if (v < 8) migrateV8(db);
   if (v < 9) migrateV9(db);
+  if (v < 10) migrateV10(db);
+}
+
+/** v10 — a lease carries its interrupt (§2): `locks.cancel`, the mark a control row leaves
+ *  for the holder's heartbeat to read. */
+function migrateV10(db: DatabaseSync) {
+  writing(db, () => {
+    const cols = new Set(
+      (db.prepare("SELECT name FROM pragma_table_info('locks')").all() as { name: string }[])
+        .map((c) => c.name),
+    );
+    if (!cols.has("cancel")) {
+      db.exec("ALTER TABLE locks ADD COLUMN cancel INTEGER NOT NULL DEFAULT 0");
+    }
+    db.exec("PRAGMA user_version = 10");
+  });
 }
 
 /** A column migration under the write lock: every process an org boots opens the log at

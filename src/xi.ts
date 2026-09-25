@@ -471,7 +471,7 @@ export function relevant(config: AgentConfig, event: Event): boolean {
     // `error` is a PERMANENT failure until something new arrives — retrying transient ones
     // already happened inside nu, so a logged error means we stopped. `decide` says the same
     // from the window side (a trailing error ⇒ ignore); waking here would hot-loop.
-    // `control` acts on a RUNNING turn — main fires its interrupt (§2) — never starts one;
+    // `control` acts on a RUNNING turn — the store fires its lease's interrupt (§2) — never starts one;
     // the harness's `cancelled` closes one, and `decide` idles on it from the window side.
     //  turn (§5), so its insert must carry the think it displaced forward
     default:
@@ -876,11 +876,6 @@ export interface XiPorts {
     about: About[],
   ) => void;
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
-  /** The turn's interrupt (§2): xi arms a controller as it takes the lease and hands it
-   *  here; main fires it when a `control` row lands in the session's room while it is
-   *  armed — log-derived, because an out-of-process invocation can't be signalled — and
-   *  the returned disarm runs as the turn ends. Absent: nothing can cut a turn short. */
-  interrupt?: (ctl: AbortController) => () => void;
 }
 
 /** How coarse the window's floor is: the grid the oldest kept event snaps DOWN to. */
@@ -933,10 +928,9 @@ export async function xi(
   // no retry: someone is on it. A turn's end pokes; an `ignore` end does not, and the host
   // that saw "held" owes the session one more look for that case (main's re-poke)
   if (got === "held") return "held";
-  // the interrupt, armed BEFORE the read: a cancel that lands while the window is being
-  // read cuts this turn, never the next one
-  const ctl = new AbortController();
-  const disarm = ports.interrupt?.(ctl) ?? (() => {});
+  // the interrupt is the lease's (§2), armed with it and BEFORE the read: a cancel that
+  // lands while the window is being read cuts this turn, never the next one
+  const signal = lock.signal();
 
   const session: Session = {
     id: config.sessionId,
@@ -991,7 +985,6 @@ export async function xi(
   );
   ports.onDecision?.(v, events.at(-1)?.id, aboutOf(events, session));
   if (v === "ignore") {
-    disarm();
     await lock.release();
     return v;
   }
@@ -1001,17 +994,15 @@ export async function xi(
   //    after is the stalled-cycle bug: that wake bounces, and nothing wakes again (§2).
   let last: Draft<Event>[];
   try {
-    last = ctl.signal.aborted
+    last = signal.aborted
       ? [cancelled(hereEnv)] // cut before it began: the cancel still closes it
       : v === "act"
-      ? await act(events, got === "stolen", session, config, gate, ports, ctl.signal)
-      : await think(events, config, ports, ctl.signal);
+      ? await act(events, got === "stolen", session, config, gate, ports, signal)
+      : await think(events, config, ports, signal);
   } catch (err) {
-    disarm();
     await lock.release(); // nothing to pair the release with
     throw err;
   }
-  disarm();
   try {
     const landed = await ports.log.publishAndRelease(last, lock.lease());
     // the verdict the turn's own end implies, disclosed here: a closing message pokes the

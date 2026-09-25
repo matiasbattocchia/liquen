@@ -42,15 +42,28 @@ expression as the role's `USING`/`WITH CHECK`, with three functions to define on
 
 ## 3. The lease carries the interrupt
 
-main keeps a map of the running turns' `AbortController`s and fires one when a `control`
-row lands in the session's room. An edge invocation has no process to hold that map.
+**Landed** (PROJECT.md, 2026-09-25). `TurnLock.signal()` is the running turn's interrupt,
+fresh per acquire. The publish that lands a `control` row (any but the harness's own
+`cancelled`) marks `locks.cancel` on `turn-<room>` inside its transaction; once it commits,
+a holder in the same process is fired at once, and a holder in any other process reads the
+mark on its next heartbeat (`UPDATE … RETURNING cancel`). A stolen lease starts unmarked.
+`XiPorts.interrupt` and main's `turns` map are gone. On Postgres the mark is the same
+column, set by a trigger on `control` inserts.
 
-`acquire()` hands back a lease with an `AbortSignal`, and the STORE fires it: the SQLite
-adapter from its own subscription (as immediate as now), the Postgres adapter from the
-heartbeat — a trigger on `control` rows marks `locks.cancel` on `turn-<session>`, and the
-beat's `UPDATE … RETURNING cancel` reads it (latency ≤ `LOCK_TTL_MS / 3`). `XiPorts.interrupt`
-and main's `turns` map retire; the lease already lives in the store, and now its
-cancellation does too.
+The heartbeat bounds cross-process latency at `LOCK_TTL_MS / 3`. The alternatives that
+shorten it, weighed:
+
+- check the mark at step boundaries (before each model call, each tool run): cheap, but a
+  long stream or tool still waits;
+- a faster poll of the mark alone: one query per running turn per period;
+- **a push that rings the holder to read its mark now** — the store's own change stream
+  (SQLite: the tail's fs-watch; Postgres: Realtime or `LISTEN/NOTIFY`), the heartbeat
+  left as the guaranteed fallback. Chosen: the mark stays the one truth, the push only
+  makes it read sooner;
+- a dispatcher holding every invocation's request and aborting it: instant, but a master
+  process that must stay up;
+- conversation-affine execution (one actor per room, Durable-Objects style): the cancel is
+  always in-process; no Supabase equivalent.
 
 ## 4. Docs are addressed by a handle
 

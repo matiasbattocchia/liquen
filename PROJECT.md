@@ -3691,3 +3691,14 @@ table, so what inlines is decided in one place whatever the table holds. A test 
 has no media port renders markers only, which is also the edge tier before it has a blob
 adapter.
 
+### The lease carries the interrupt (2026-09-25) — LANDED
+
+The fourth edge-tier refactor (`EDGE-PLAN.md`). A running turn armed an `AbortController`
+through xi's `interrupt` port and main kept it in a map its tail fired when a `control` row
+landed in the room — a cancel only reached a turn running in the process whose tail saw the
+row. The turn lease carries the interrupt now: `TurnLock.signal()`, fresh per acquire. The
+publish that lands a `control` row marks `locks.cancel` on `turn-<room>` in its transaction
+(schema v10); after the commit a holder in the same process is fired directly, and one in
+another process reads the mark on its heartbeat. The harness's own `cancelled` closing row
+marks nothing, and a stolen lease starts unmarked. The in-process fire waits for the
+COMMIT, so a batch that rolls back cuts no turn.

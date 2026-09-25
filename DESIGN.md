@@ -254,7 +254,7 @@ arrives through the agent's scoped subscription, already readable (§6).
 | `tool_use` · `tool_result` | ours **yes** · another session's **no** (never react to others' tools) |
 | `permission_response` | **yes** (the human moved — the settlement is now derivable) |
 | `alarm` | **yes** — a scheduled wake arriving with its note (§10) |
-| `control` | **no** — it never *starts* work; it ENDS it. A running turn arms an interrupt as it takes the lease (xi's `interrupt` port); main's tail fires it when a `control` row lands in that session's room — log-derived, because an out-of-process invocation can't be signalled |
+| `control` | **no** — it never *starts* work; it ENDS it. The interrupt is the turn lease's: the publish that lands a `control` row in a session's room marks that room's lease (`locks.cancel`), and the store fires the holder's signal — at once in the process that landed it, within a heartbeat in any other |
 | `summary` | **yes** — a checkpoint DISPLACES a turn (§5): its insert carries the displaced think forward |
 | `permission_request` · `thinking` · `delta` · *(unknown)* | **no** (spectators) |
 | `error` | **no** — and this one is policy, not economy: a logged error is a PERMANENT failure until something new arrives (transient ones were already retried inside nu before one was written). `decide` says the same from the window side, via the trailing-error rule. Waking here would hot-loop a failing think with no backoff |
@@ -481,10 +481,10 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     the existing kill.)
   - *Hard (harness-mediated, guaranteed)*: a `control` row in the session's room — the
     door's `control` verb (the REPL's `/cancel`), or a whole-message reserved word ingest
-    reclassifies — fires the running turn's interrupt. What it cuts depends on where the
-    turn is: a **think** has its model request aborted and answers nothing; an **act** has
-    its running tools killed (bash: the whole process group) and writes **cancelled
-    tool_results** (count toward barriers, `cancelled: true`). Either way the turn closes on
+    reclassifies — fires the running turn's interrupt, which the turn lease carries. What
+    it cuts depends on where the turn is: a **think** has its model request aborted and
+    answers nothing; an **act** has its running tools killed (bash: the whole process
+    group) and writes **cancelled tool_results** (count toward barriers, `cancelled: true`). Either way the turn closes on
     the harness's own `control` row — unstamped, `payload.control: "cancelled"`, the text
     "cancelled by your principal — the turn stopped here" — so the agent idles instead of
     narrating what it was told to drop, until something new arrives. Nothing failed, so
@@ -494,7 +494,8 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     nothing; its consequence is what the model reads.
 - **`control` is classified at its source** — the door emits it typed (a button, a slash
   word), ingest reclassifies a principal's reserved word in self-talk — and xi routes the
-  type: it starts nothing (the wake table), main's tail fires the interrupt.
+  type: it starts nothing (the wake table); the store fires the interrupt of the lease held
+  in that room.
 
 In v0's single session, `stop` = cancel the session's current work → idle. *(Per-conversation
 **takeover/hold** and — in the deferred tree — `cause`-scoped stop are deferred, §10.)*
