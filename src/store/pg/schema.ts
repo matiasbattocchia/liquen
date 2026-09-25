@@ -25,9 +25,35 @@ import type { Db, Sql } from "./sql.ts";
 /** A text column: byte-ordered. */
 const T = `text COLLATE "C"`;
 
+/** The class of every combining mark — what `foldName` strips as `\p{M}` — as a Postgres
+ *  bracket expression: the engine's regexes know no Unicode property, so the property is
+ *  enumerated here, once, by the same runtime that applies it in the code. */
+const marks = (() => {
+  let built: string | undefined;
+  return () => {
+    if (built !== undefined) return built;
+    const mark = /\p{M}/u;
+    const hex = (c: number) =>
+      c > 0xffff
+        ? `\\U${c.toString(16).padStart(8, "0")}`
+        : `\\u${c.toString(16).padStart(4, "0")}`;
+    const ranges: string[] = [];
+    let start = -1;
+    for (let c = 0; c <= 0x110000; c++) {
+      const marked = c < 0x110000 && mark.test(String.fromCodePoint(c));
+      if (marked && start < 0) start = c;
+      if (!marked && start >= 0) {
+        ranges.push(start === c - 1 ? hex(start) : `${hex(start)}-${hex(c - 1)}`);
+        start = -1;
+      }
+    }
+    return built = `[${ranges.join("")}]`;
+  };
+})();
+
 /** The functions the shared SQL calls. Each is the code's rule, restated in SQL — the
  *  Postgres suite holds the two to the same answers. */
-export const FUNCTIONS = `
+const functions = () => `
 CREATE OR REPLACE FUNCTION uuidv7() RETURNS text LANGUAGE sql VOLATILE AS $f$
   SELECT encode(set_bit(set_bit(overlay(uuid_send(gen_random_uuid()) PLACING
     substring(int8send(floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint) FROM 3)
@@ -57,8 +83,7 @@ CREATE OR REPLACE FUNCTION flag(j jsonb, k text) RETURNS boolean LANGUAGE sql IM
 $f$;
 
 CREATE OR REPLACE FUNCTION fold(s text) RETURNS text LANGUAGE sql IMMUTABLE AS $f$
-  SELECT btrim(regexp_replace(lower(regexp_replace(normalize(s, NFD),
-    '[\\u0300-\\u036f\\u1ab0-\\u1aff\\u1dc0-\\u1dff\\u20d0-\\u20ff\\ufe20-\\ufe2f]', '', 'g')),
+  SELECT btrim(regexp_replace(lower(regexp_replace(normalize(s, NFD), '${marks()}', '', 'g')),
     '\\s+', ' ', 'g'))
 $f$;
 
@@ -313,7 +338,7 @@ export async function prepare(sql: Sql, schema: string): Promise<void> {
       );
     }
     for (let v = found?.version ?? VERSION; v < VERSION; v++) await RAISE[v]?.(tx);
-    await tx.unsafe(FUNCTIONS + LOG_DDL + VAULT_DDL);
+    await tx.unsafe(functions() + LOG_DDL + VAULT_DDL);
     if (found === undefined) {
       await tx.unsafe("INSERT INTO schema_version (version) VALUES ($1::integer)", [VERSION]);
     } else if (found.version < VERSION) {

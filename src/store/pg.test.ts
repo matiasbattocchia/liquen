@@ -76,6 +76,10 @@ if (url === undefined) {
           "Ünal Çelik",
           "Nguyễn Đức",
           "ÅSA",
+          "مُحَمَّد", // Arabic harakat: marks outside the Latin combining blocks
+          "हिन्दी", // Devanagari vowel signs, spacing marks
+          "שָׁלוֹם", // Hebrew points
+          "Ǆ ǅ ǆ", // no marks at all
         ]
       ) {
         assertEquals(await one(sql, "SELECT fold($1::text) AS v", [s]), foldName(s), s);
@@ -181,6 +185,31 @@ if (url === undefined) {
       await assertRejects(() => store.open(), Error, `schema version ${VERSION + 1}`);
     } finally {
       await sql.end();
+      await store.drop();
+    }
+  });
+
+  Deno.test("a NUL in a draft lands as U+FFFD, in the text and in the parts alike", async () => {
+    const store = await pg.fresh();
+    const log = await store.open();
+    try {
+      const e = await log.publish({
+        ts: "2026-09-25T00:00:00Z",
+        type: "message",
+        envelope: {
+          service: "local",
+          connection_address: "org",
+          conversation: { address: "c1", name: "room\0one" },
+        },
+        parts: [{ type: "text", kind: "text", text: "a\0b" }],
+      });
+      await log.setDelivery(e!.id, { status: { state: "failed", error: "x\0y" } });
+      const [found] = await log.read();
+      assertEquals(found.parts, [{ type: "text", kind: "text", text: "a�b" }]);
+      assertEquals(found.envelope.conversation.name, "room�one");
+      assertEquals(found.status?.error, "x�y");
+    } finally {
+      await log.close();
       await store.drop();
     }
   });

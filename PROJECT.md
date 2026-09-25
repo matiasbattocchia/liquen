@@ -3887,11 +3887,23 @@ Decided while writing it:
   locker, which runs over `LeaseRows`. `aliases()` and `enrolled()` state their order;
   the empty law is `FALSE`, a boolean on both engines.
 
-Open:
+### The two engines answer alike (2026-09-25) — LANDED
 
-- **Small divergences.** `fold` strips the combining-mark blocks, where the code strips
-  every `\p{M}`; `jsonb` refuses a `\u0000` that SQLite stores; the sweep reads a
-  non-numeric `error_code` as permanent, where SQLite's comparison happens to retry it.
+Three places where the adapters had parted:
+
+- **`fold`** stripped the Latin combining blocks on Postgres, where the code strips every
+  `\p{M}` — an Arabic name with harakat folded differently on each engine. Postgres's
+  regexes know no Unicode property, so the SQL function's bracket expression is the
+  property enumerated: `marks()` walks the code points once per process, under the
+  same runtime that applies `\p{M}` in `foldName`, and the Postgres suite holds the two to
+  the same answers on Arabic, Devanagari and Hebrew names.
+- **A NUL** in a draft made `jsonb` refuse the row, where SQLite stored it. It lands as
+  U+FFFD now (`scrub`, on every draft and delivery patch): a message is not refused for one
+  byte the wire let through.
+- **A non-numeric `error_code`** — out of the contract, which says number — was retried by
+  SQLite, where text compares above every number, and left standing by Postgres. The
+  SQLite sweep tests the JSON type now, so both engines leave it: a code the ladder cannot
+  class is no class.
 
 ### The Postgres schema carries its version (2026-09-25) — LANDED
 

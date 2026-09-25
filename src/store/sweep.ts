@@ -11,7 +11,8 @@
  *
  * Eligible: the dispatcher's own rows (`message`, ours, no `external_id` — a failure the
  * wire reported AFTER naming the artifact is not the harness's to retry), `failed` with a
- * transient class (`error_code` absent · 429 · 5xx), whose `failed_at` is older than the
+ * transient class (`error_code` absent · 429 · 5xx — a code that is not a number is no
+ * class, and stands), whose `failed_at` is older than the
  * rung their re-offer count has reached. The ladder's end is the ceiling: a row that has
  * been re-offered once per rung stays `failed`, and the agent reads it off the window.
  *
@@ -61,8 +62,9 @@ export function createSweeper(db: DatabaseSync): Sweeper {
      WHERE ${OURS}
        AND json_extract(status, '$.state') = 'failed'
        AND (json_extract(status, '$.error_code') IS NULL
-            OR json_extract(status, '$.error_code') = 429
-            OR json_extract(status, '$.error_code') >= 500)
+            OR (json_type(status, '$.error_code') IN ('integer', 'real')
+                AND (json_extract(status, '$.error_code') = 429
+                     OR json_extract(status, '$.error_code') >= 500)))
        AND json_extract(status, '$.failed_at') <=
            CASE coalesce(json_extract(status, '$.attempts'), 0) ${rung} END`,
   );

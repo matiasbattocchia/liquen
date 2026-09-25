@@ -14,6 +14,9 @@
  *                 cursor is seeded by a query, so every write this process makes waits for
  *                 the seeds in flight: a publish issued after `subscribe()` returns lands
  *                 after the seed, and is delivered.
+ *
+ * A NUL in a draft or a delivery patch lands as U+FFFD (`scrub`): the engine's `text` and
+ * `jsonb` hold none, and a message is not refused for one byte the wire let through.
  */
 
 import type {
@@ -40,7 +43,7 @@ import {
 } from "../events.ts";
 import { newId } from "../id.ts";
 import type { Draft, Envelope, Event, EventId } from "../../types.ts";
-import { compile, connect, count, type Db, rows, type Sql } from "./sql.ts";
+import { compile, connect, count, type Db, rows, scrub, type Sql } from "./sql.ts";
 import { prepare } from "./schema.ts";
 import {
   pgConnections,
@@ -245,7 +248,7 @@ export async function openPgLog(
     lease?: Lease,
     opts: PublishOptions = {},
   ): Promise<Event | Event[] | null> => {
-    const drafts = Array.isArray(one) ? one : [one];
+    const drafts = (Array.isArray(one) ? one : [one]).map(scrub);
     for (const d of drafts) {
       const { service, connection_address: address } = d.envelope;
       if (
@@ -372,7 +375,8 @@ export async function openPgLog(
       return tail(sql, channel, seeding, listener, opts);
     },
 
-    setDelivery(id: EventId, patch: DeliveryPatch): Promise<void> {
+    setDelivery(id: EventId, given: DeliveryPatch): Promise<void> {
+      const patch = scrub(given);
       return serial(async (tx) => {
         const now = new Date().toISOString();
         if (patch.external_id) {

@@ -66,6 +66,20 @@ export function compile(
   return { text: out, params };
 }
 
+/** `v` with every NUL in its strings replaced by U+FFFD, however deep: neither `text` nor
+ *  `jsonb` holds a NUL, so a draft that carries one lands with the replacement character
+ *  where it was. */
+export function scrub<T>(v: T): T {
+  if (typeof v === "string") return (v.includes("\0") ? v.replaceAll("\0", "�") : v) as T;
+  if (Array.isArray(v)) return v.map(scrub) as T;
+  if (v !== null && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v)) out[k] = scrub(x);
+    return out as T;
+  }
+  return v;
+}
+
 /** Run a statement, answering its rows. */
 export async function rows<T>(db: Db, text: string, params: unknown[] = []): Promise<T[]> {
   return Array.from(await db.unsafe(text, params as postgres.ParameterOrJSON<never>[])) as T[];

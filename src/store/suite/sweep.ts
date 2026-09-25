@@ -68,10 +68,13 @@ export function sweepSuite(s: Substrate): void {
       const refused = await failed(log, 422, 5 * MIN);
       const limited = await failed(log, 429, 5 * MIN);
       const unreached = await failed(log, undefined, 5 * MIN);
+      // a code that is not a number is no class the ladder knows: it stands as written
+      const odd = await failed(log, "ECONNRESET" as unknown as number, 5 * MIN);
       assertEquals(await log.sweep(iso(T0)), 2);
       assertEquals((await row(log, refused)).envelope.status, "failed");
       assertEquals((await row(log, limited)).envelope.status, "queued");
       assertEquals((await row(log, unreached)).envelope.status, "queued");
+      assertEquals((await row(log, odd)).envelope.status, "failed");
     });
   });
 

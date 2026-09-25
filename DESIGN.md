@@ -2454,7 +2454,9 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   column `COLLATE "C"`, so ids, timestamps and keys compare byte by byte as they do in
   SQLite. What the shared SQL calls and Postgres lacks is defined in the schema: `routed`
   and `instr` for the law, `digits` and `same_handle` for the roster views, `fold` for
-  names, `json_patch` for merges. Rows come back as SQLite hands them (JSON as text), so
+  names (its mark class is `\p{M}` enumerated by the runtime, so it strips what the code
+  strips), `json_patch` for merges. A NUL in a draft lands as U+FFFD, since neither
+  `text` nor `jsonb` holds one. Rows come back as SQLite hands them (JSON as text), so
   both adapters share the row mappers (`src/store/events.ts` and each port's own), and
   the locker is one implementation over each engine's lease rows (`LeaseRows`). Both
   adapters run the same suites (`src/store/suite/`). The schema carries its version, as
