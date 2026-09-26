@@ -51,7 +51,7 @@ import {
   providerOf,
   transports,
 } from "./transport/mod.ts";
-import { openLocalSandbox } from "./sandbox.ts";
+import { openCloudflareSandbox, openLocalSandbox } from "./sandbox.ts";
 import { whatsappContact } from "./connect/whatsapp/contact.ts";
 import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
 import { entry } from "./entry.ts";
@@ -194,13 +194,17 @@ export async function start(
   const transportFor = (p: AgentRow): ModelTransport =>
     overrides.transport ?? transportOf(providerOf(p.provider));
   // the exec plane (§9): one provider owns the proxy, the grounds and the shells; main
-  // holds only the provider, and every session's exec, ambient and files come from it
-  const sandbox = await openLocalSandbox(dir, {
-    store,
+  // holds only the provider, and every session's exec, ambient and files come from it —
+  // this machine's, or the sandbox gateway's the catalog names
+  const remote = catalog?.system.sandbox ?? null;
+  const planeOptions = {
     agents: principals.map((p) => p.agentId),
     locale: catalog?.organization.locale,
     bashTimeoutMs: catalog?.system.bashTimeoutMs,
-  });
+  };
+  const sandbox = remote
+    ? openCloudflareSandbox(dir, { url: remote, token: sandboxToken(), ...planeOptions })
+    : await openLocalSandbox(dir, { store, ...planeOptions });
   // the address book (§9): one port per service that keeps one, wired where the connection
   // is declared — whatsapp's rides the bridge the dispatcher already talks to, on the same
   // token, and carries both legs: `contact` writes through it, `search` reads through it
@@ -647,6 +651,16 @@ async function compileRoster(
 
 /** Resolve when `p` settles or `ms` elapses, whichever comes first — and never leave the
  *  timer dangling (an uncleared setTimeout would keep the event loop alive on a clean stop). */
+/** The sandbox gateway's bearer token: a secret, so the environment's, and a boot refusal
+ *  when the catalog names a gateway and the environment holds none. */
+function sandboxToken(): string {
+  const token = Deno.env.get("SANDBOX_API_KEY");
+  if (!token) {
+    throw new Error("system.sandbox names a gateway: SANDBOX_API_KEY in .env holds its token");
+  }
+  return token;
+}
+
 function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
   return new Promise<void>((resolve) => {
     const t = setTimeout(resolve, ms);

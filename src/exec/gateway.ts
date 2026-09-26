@@ -19,6 +19,18 @@
  */
 
 import { encodeBase32 } from "@std/encoding";
+import { posix } from "node:path";
+import {
+  filePartOf,
+  type Files,
+  isExternal,
+  kindOf,
+  loadMediaBlock,
+  mimeOf,
+  pathOf,
+  saveMedia,
+  sniffMime,
+} from "../store/media.ts";
 import type { ExecOutcome, ExecTool } from "../xi.ts";
 import type { Json } from "../types.ts";
 import { newId } from "../store/id.ts";
@@ -46,8 +58,8 @@ export interface GatewayExec {
 export interface Gateway {
   /** Run `script` under bash; resolves when bash exits. */
   exec(script: string, signal?: AbortSignal): Promise<GatewayExec>;
-  /** A file's bytes, by its path under the workspace. */
-  read(path: string): Promise<Uint8Array>;
+  /** A file's bytes, by its absolute path under the workspace; null when there is none. */
+  read(path: string): Promise<Uint8Array | null>;
   /** Stop the container: its processes and its files go with it. */
   destroy(): Promise<void>;
 }
@@ -78,6 +90,10 @@ export function gatewayFor(url: string, token: string, id: string): Gateway {
     },
     async read(path) {
       const res = await fetch(`${base}/file/${path.replace(/^\/+/, "")}`, { headers: auth });
+      if (res.status === 404) {
+        await res.body?.cancel();
+        return null;
+      }
       if (!res.ok) return refused(`read ${path}`, res);
       return new Uint8Array(await res.arrayBuffer());
     },
@@ -108,6 +124,35 @@ export function parseExecStream(text: string): GatewayExec {
     }
   }
   throw new Error("sandbox gateway: the exec stream ended without an exit");
+}
+
+/** The files port over a remote sandbox (§9): a reference is a path in the agent's folder
+ *  there — relative to it, or absolute under it — and resolving one moves its bytes onto the
+ *  conversation's media shelf under `dataDir`, content-named, so the part it answers is a
+ *  local file every reader already takes and the snapshot is of bytes that never change.
+ *  A link passes through untouched. */
+export function gatewayFiles(
+  gateway: Gateway,
+  { home, dataDir, conversation }: { home: string; dataDir: string; conversation: string },
+): Files {
+  return {
+    async resolve(ref) {
+      if (isExternal(ref)) return filePartOf(ref);
+      const path = posix.resolve(home, pathOf(ref));
+      if (path !== home && !path.startsWith(`${home}/`)) {
+        throw new Error(`${ref}: outside your files — attach from your folder`);
+      }
+      const bytes = await gateway.read(path);
+      if (bytes === null) throw new Error(`${ref}: no such file in your folder`);
+      const named = mimeOf(path) ?? sniffMime(bytes) ?? undefined;
+      const file = await saveMedia(dataDir, conversation, bytes, {
+        name: posix.basename(path),
+        ...(named ? { mime_type: named } : {}),
+      });
+      return { type: "file", kind: kindOf(file.mime_type), file };
+    },
+    snapshot: (part) => loadMediaBlock(part.file.uri),
+  };
 }
 
 /** Single-quoted for bash: the one quoting that needs no escaping but of `'` itself. */

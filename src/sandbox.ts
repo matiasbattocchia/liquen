@@ -18,6 +18,7 @@ import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
 import { startProxy } from "./proxy/proxy.ts";
 import { sessionAddress } from "./session.ts";
+import { gatewayFiles, gatewayFor, remoteShell, sandboxIdOf } from "./exec/gateway.ts";
 
 /** One session's place in the sandbox: its shell (where it stands, what it left running),
  *  the agent's folder on this ground, and the files port its references resolve through. */
@@ -102,6 +103,77 @@ export async function openLocalSandbox(
       // each session's own jobs, reaped with its own shell (§9)
       for (const shell of shells.values()) await shell.reap();
       await proxy.close(); // stop the egress proxy and close its vault handle
+    },
+  };
+}
+
+export interface CloudflareSandboxOptions {
+  /** The gateway's URL (`system.sandbox`). */
+  url: string;
+  /** Its bearer token (`SANDBOX_API_KEY`). */
+  token: string;
+  /** The agents that run: each gets a sandbox of its own. */
+  agents: string[];
+  locale?: string | null;
+  bashTimeoutMs?: number;
+}
+
+/** Where an agent stands in its Cloudflare sandbox: the container's workspace, which is the
+ *  agent's alone, since the sandbox is. */
+export const REMOTE_HOME = "/workspace";
+
+/** The environment a remote shell runs with, alone: the container's own tools, the agent's
+ *  `bin/` first, as the local PATH cascade puts the narrowest scope first. */
+const REMOTE_ENV: Record<string, string> = {
+  PATH: `${REMOTE_HOME}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+  HOME: "/home/sandbox",
+  USER: "sandbox",
+  LOGNAME: "sandbox",
+  SHELL: "/bin/bash",
+  TERM: "dumb",
+};
+
+/** The Cloudflare provider: ONE SANDBOX PER AGENT behind the gateway at `url`
+ *  (`sandbox/cloudflare/`), ONE SHELL PER SESSION on it (§9). The sandbox is named by the
+ *  agent's id and started by the first call that reaches it; its workspace is the agent's
+ *  folder, scratch that a sleeping container does not keep — the docs are in the table. A
+ *  file the agent attaches is copied onto the conversation's media shelf under `dir`.
+ *  Closing reaps every shell's jobs and leaves the sandboxes standing: the next process to
+ *  open them finds what the last one left. */
+export function openCloudflareSandbox(
+  dir: string,
+  { url, token, agents, locale, bashTimeoutMs }: CloudflareSandboxOptions,
+): Sandbox {
+  const env = { ...REMOTE_ENV, ...(locale ? { LANG: locale } : {}) };
+  const gateways = new Map(agents.map((id) => [id, gatewayFor(url, token, sandboxIdOf(id))]));
+  const shells = new Map<string, ExecPlane>();
+  return {
+    forAgent(agentId) {
+      const gateway = gateways.get(agentId);
+      if (!gateway) throw new Error(`agent ${agentId}: no sandbox opened for it`);
+      return {
+        session(sessionId) {
+          const key = sessionAddress(agentId, sessionId);
+          let shell = shells.get(key);
+          if (!shell) {
+            shell = remoteShell(gateway, {
+              workspace: REMOTE_HOME,
+              env: () => env,
+              ...(bashTimeoutMs ? { defaultTimeoutMs: bashTimeoutMs } : {}),
+            });
+            shells.set(key, shell);
+          }
+          const files = gatewayFiles(gateway, {
+            home: REMOTE_HOME,
+            dataDir: dir,
+            conversation: key,
+          });
+          return { ...shell, home: REMOTE_HOME, files };
+        },
+      };
+    },
+    async close() {
+      for (const shell of shells.values()) await shell.reap();
     },
   };
 }

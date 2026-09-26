@@ -1,3 +1,4 @@
 # .env — secrets only. Every knob lives in config.jsonc.
 # ANTHROPIC_API_KEY=
 # PGPASSWORD=            # the store's password, when system.database names Postgres
+# SANDBOX_API_KEY=       # the sandbox gateway's bearer token, when system.sandbox names one

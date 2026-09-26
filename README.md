@@ -71,6 +71,13 @@ through its `read`, `write` and `edit` tools instead of its shell — each a fun
 the store, run under one agent role whose row-level policy bounds it to the org's two
 scopes, its own and its conversation's.
 
+Agents' shells run on this machine until `system.sandbox` names a sandbox gateway: the
+Worker in `sandbox/cloudflare/`, deployed to your Cloudflare account with `npm run
+deploy` there and its token set with `wrangler secret put SANDBOX_API_KEY`. Each agent
+then gets a Cloudflare sandbox of its own, its workspace scratch that a sleeping
+container does not keep; the same token goes in `.env` as `SANDBOX_API_KEY`. A remote
+sandbox cannot reach files here, so it needs `system.docs: "table"`.
+
 ## Standing wakes
 
 An agent wakes itself with its own `schedule` tool. The work a *deployment* owns is armed

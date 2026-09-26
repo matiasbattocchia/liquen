@@ -2556,14 +2556,20 @@ and which xi is one adapter-swap away from (`log` → Postgres, `lock` → an ad
 `locks` row). **The exec plane is one provider** (`Sandbox`, `src/sandbox.ts`):
 `forAgent(id).session(sid)` is a session's shell and file scope, and the egress proxy
 travels inside it because it exists for bash — the local provider starts it, a remote
-sandbox brings its own, and a host with no exec plane has neither. **The runner is a
+sandbox brings its own, and a host with no exec plane has neither. The remote provider is
+Cloudflare's (`openCloudflareSandbox`): one sandbox per agent behind a gateway Worker
+(`sandbox/cloudflare/`, the Sandbox SDK's bridge), and a session's shell is the bash
+contract carried by the script each call sends (`src/exec/gateway.ts`) — its output to a
+file a background job holds instead of the gateway's pipe, `timeout` killing the group,
+`env -i` and the issued names, the cwd a `cd` — so the container keeps nothing of ours
+between calls but files. **The runner is a
 module** (`runnerFor`, `src/runner.ts`): a session is built from the store, the agent's
 row and a `Host` — the ports a host wires once — so main and an edge function build the
 same session from the same three things, and what main keeps of its own is the `Host`.
 **Files are a port** (`Files`, `src/store/media.ts`): `resolve(ref)` is the `FilePart`
 a reference sends as, and the sandbox session carries the port because what an agent
 may attach is the ground it stands on — a remote sandbox answers it by moving the bytes
-into the blob store.
+onto the conversation's media shelf.
 
 **A doc is a row with a handle** (`DocHeader`, `src/store/docs.ts`): the `docs` table's
 columns and the adapter's address for the doc, which render prints and the agent's read

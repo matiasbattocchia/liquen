@@ -178,6 +178,7 @@ export interface OrgConfig {
     debounceMs: number;
     database: string | null; // null ⇒ SQLite in data/log; a Postgres URL ⇒ that database
     docs: "files" | "table"; // where the docs live: files under data/, or the store's docs table
+    sandbox: string | null; // null ⇒ agents' shells on this machine; a URL ⇒ that gateway's
   };
   organization: {
     timezone: string; // the ORG's clock — every stamp, cron and sleep span reads it (§5)
@@ -269,6 +270,14 @@ const SYSTEM: Entry[] = [
     doc: "where the docs live: files under data/ (an agent reads and writes them from its " +
       "shell), or table — the docs table of the Postgres database above, which an agent " +
       "reaches through its read · write · edit tools",
+  },
+  {
+    key: "sandbox",
+    value: null,
+    doc: "where the agents' shells run: null ⇒ this machine; the URL of a Cloudflare " +
+      "sandbox gateway (sandbox/cloudflare in the package) ⇒ one sandbox per agent there, " +
+      "its bearer token read from SANDBOX_API_KEY; needs docs: table, since the sandbox " +
+      "cannot reach files on this machine",
   },
 ];
 
@@ -810,6 +819,12 @@ function validateOrg(cfg: OrgConfig, path: string): void {
   if (docs) {
     throw new Error(`${path}: system.docs ${docs} (got ${JSON.stringify(cfg.system.docs)})`);
   }
+  const sandbox = checkSandbox(cfg.system.sandbox, cfg.system.docs);
+  if (sandbox) {
+    throw new Error(
+      `${path}: system.sandbox ${sandbox} (got ${JSON.stringify(cfg.system.sandbox)})`,
+    );
+  }
   validateAgent(cfg.organization.agents, `${path}: organization.agents`);
 }
 
@@ -819,6 +834,29 @@ export function checkDocs(v: unknown, database: unknown): string | null {
   if (v === "files") return null;
   if (v !== "table") return 'must be "files" or "table"';
   return database === null ? "table needs system.database to name a Postgres database" : null;
+}
+
+/** What `system.sandbox` may hold: null, or the https URL of a sandbox gateway — plain
+ *  http only toward this machine, where `wrangler dev` serves one — when the docs are in
+ *  the table. A complaint, or null when the value is fine. */
+export function checkSandbox(v: unknown, docs: unknown): string | null {
+  if (v === null) return null;
+  let url: URL;
+  try {
+    url = new URL(String(v));
+  } catch {
+    return "must be null or a gateway's https URL";
+  }
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  if (
+    typeof v !== "string" || !(url.protocol === "https:" || (local && url.protocol === "http:"))
+  ) {
+    return "must be null or a gateway's https URL";
+  }
+  if (url.username || url.password) {
+    return "must not carry a credential — SANDBOX_API_KEY in .env holds it";
+  }
+  return docs === "table" ? null : 'needs system.docs: "table" — a sandbox cannot reach files here';
 }
 
 /** What `system.database` may hold: null, or a Postgres URL naming the user, host and

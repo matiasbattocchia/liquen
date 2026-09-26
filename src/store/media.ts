@@ -262,7 +262,8 @@ export interface FileScope {
 /** The files port (§9): a file reference → the `FilePart` it sends as. `send({files})`
  *  and a tool's attachments both go through it, so where a reference may point and what
  *  it takes to read one is the adapter's whole say. The local adapter is `localFiles`; a
- *  remote sandbox's moves the bytes into the blob store and answers with the uri. */
+ *  remote sandbox's (`gatewayFiles`) moves the bytes onto the media shelf and answers with
+ *  their uri there. */
 export interface Files {
   /** Throws when the reference does not exist or points outside what the agent may
    *  attach — the tool_result carries that back as the error it is. */

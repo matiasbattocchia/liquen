@@ -472,3 +472,30 @@ Deno.test("system.docs: files, or table when system.database names the database 
     await assertRejects(() => readConfig(root), Error, '"files" or "table"');
   });
 });
+
+Deno.test("system.sandbox: null, or a gateway's https URL when the docs are in the table", async () => {
+  await withDir(async (root) => {
+    const write = (sandbox: unknown, docs = "table") =>
+      Deno.writeTextFile(
+        `${root}/config.jsonc`,
+        JSON.stringify({
+          system: { sandbox, docs, database: "postgres://liquen@db.internal:5432/liquen" },
+        }),
+      );
+    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    assertEquals((await readConfig(root)).system.sandbox, null);
+    await write("https://liquen-sandbox.acme.workers.dev");
+    assertEquals(
+      (await readConfig(root)).system.sandbox,
+      "https://liquen-sandbox.acme.workers.dev",
+    );
+    await write("http://localhost:8799");
+    assertEquals((await readConfig(root)).system.sandbox, "http://localhost:8799");
+    await write("http://liquen-sandbox.acme.workers.dev");
+    await assertRejects(() => readConfig(root), Error, "https URL");
+    await write("https://key@liquen-sandbox.acme.workers.dev");
+    await assertRejects(() => readConfig(root), Error, "SANDBOX_API_KEY");
+    await write("https://liquen-sandbox.acme.workers.dev", "files");
+    await assertRejects(() => readConfig(root), Error, 'needs system.docs: "table"');
+  });
+});
