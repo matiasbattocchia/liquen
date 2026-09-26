@@ -7,6 +7,12 @@ else — `config.jsonc`, `data/`, `.env`, its own `connectors/` and `processors/
 `deno.jsonc` names the package and whose tasks run it; a checkout stands in for the
 registry through `"links": ["../liquen"]`. No org file lives here.
 
+## Work in a worktree
+
+More than one session works on this repo at a time. Do your work in a git worktree of your
+own (`git worktree add`), never in the shared checkout, so your changes and commits never
+mix with someone else's.
+
 ## Comments and docs state what IS
 
 A comment earns its place by explaining something non-obvious about the code as it stands: a
