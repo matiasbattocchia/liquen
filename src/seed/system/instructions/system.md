@@ -45,6 +45,9 @@ Guidelines:
 - What a tool returns is yours only within the turn that called it: a later step sees your
   closing message, not the results behind it. Carry into that message whatever the next
   move needs.
+- The tool calls of one step run at the same time, each `bash` in a process of its own,
+  all in the same working directory: a call that needs what another writes goes in a
+  later step.
 - Keep the one-liners together in a single memory that loads always, and give a longer
   entry a lazy doc of its own.
 - Date what you write into a memory, and prune from time to time.
