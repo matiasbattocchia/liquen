@@ -4094,3 +4094,61 @@ path. The closing that turns the cycle into history sheds the bytes in the same
 transaction (`PublishOptions.shed`, both adapters): the rows keep their markers, the
 window read stays light. Received media is untouched — content-named on the shelf, where
 the memo is right.
+
+### Cloudflare Sandboxes are the first remote exec plane (2026-09-26)
+
+main stays on the Supabase side; a remote sandbox is only where an agent's bash runs. The
+first provider is Cloudflare's Sandbox SDK, because its outbound handlers put the egress
+proxy where no provider without them can: Worker code beside the container, which every
+HTTP and HTTPS request passes through (HTTPS intercepted with a per-sandbox CA whose key
+never enters the container), with parameters the Worker sets per sandbox. The agent's
+identity at the proxy is then the platform's word, not a secret the sandbox holds.
+
+The alternatives, for the record. E2B has an allow/deny firewall and per-host header
+injection from stored secrets; Deno Sandbox and microsandbox swap placeholders for
+secrets at their own proxy, which is our model. Keeping our proxy for a provider without
+handlers means making it reachable from the provider's cloud, and then something must
+say which agent is calling: a proxy token in the agent's env leaks with one `env | curl`;
+a relay holding it as another user is exactly as strong as the user boundary inside the
+VM (E2B's default user has passwordless sudo); a connection our side dials INTO the
+sandbox, on a port the provider guards with a token only the creator holds, leaves
+nothing in the sandbox worth taking. That last is the shape for a provider without
+handlers.
+
+Decided: the provider is a **gateway Worker of ours**, in this repo (`sandbox/cloudflare/`,
+a wrangler project beside the Deno package, not published to JSR). A sandbox is reachable
+only through a Durable Object binding and the outbound handler is Worker code, so the
+gateway exposes the exec plane over HTTPS behind a bearer token main holds (the one
+secret in main's environment), and later hosts the handler. **One sandbox per agent**, as
+the local ground: sessions are shells on it, the cwd tracked on our side and sent with
+every call. **A workspace lost to sleep is accepted** for now: docs are on the table, the
+workspace is scratch; how often the loss bites decides persistence (R2 backup, a mounted
+bucket, `keepAlive`).
+
+Open, phase 1 — the sandbox works, with no credentials in play:
+
+1. The gateway: the container on Cloudflare's sandbox image plus deno and the
+   `aread`/`awrite`/`aedit`/`fetch` shims pinned to the package version; a JSON API (exec
+   with cwd, env and timeout answering output, code and the final cwd; background jobs;
+   a file's bytes; destroy); egress open, no handler.
+2. `openCloudflareSandbox(url, token)` implementing `Sandbox` over it: `exec`,
+   `ambient`, `stand`, `reap`, and `files` fetching the bytes into the media store.
+3. `system.sandbox` in the catalog, `local` or `cloudflare` with the gateway URL; the
+   token in the environment; `cloudflare` requires `system.docs: "table"`, since docs on
+   files sit on main's disk where the sandbox's `aread` cannot reach them.
+4. A suite against a live gateway, gated on an env var as Postgres is: exit codes, the
+   sticky cwd, timeouts, a background job and its reaping, the triad round trip inside
+   the sandbox, `fetch` to a public URL, a written file read back, cold start, what
+   survives a sleep. Then one live turn from a local main with a Postgres store.
+
+Open, phase 2 — the proxy as the outbound handler:
+
+1. `proxyRequest` as the handler, the agent from `setOutboundHandler`'s params.
+2. Handles named by the credential row and checked with `frontedFor`: a Worker isolate
+   keeps no in-memory handle table.
+3. The vault through Hyperdrive, the refresh under `SELECT … FOR UPDATE`: isolates do not
+   share the broker's in-flight map, and GitHub rotates a user grant's refresh token on
+   every use.
+4. Deno trusting Cloudflare's CA in the image (`DENO_CERT`); whether tools that verify
+   against their own roots survive interception of every host.
+5. `enableInternet = false` once the handler is the only way out.
