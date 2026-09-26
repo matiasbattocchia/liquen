@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "liquen-sandbox",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // one container per agent; `lite` until a workload asks for more
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      "instance_type": "lite",
+      "max_instances": 5
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "class_name": "Sandbox", "name": "Sandbox" },
+      { "class_name": "WarmPool", "name": "WarmPool" }
+    ]
+  },
+  "migrations": [
+    { "new_sqlite_classes": ["Sandbox"], "tag": "v1" },
+    { "new_sqlite_classes": ["WarmPool"], "tag": "v2" }
+  ],
+  // SANDBOX_API_KEY is a secret: `wrangler secret put SANDBOX_API_KEY`, or .dev.vars locally
+  "vars": {
+    "SANDBOX_TRANSPORT": "rpc",
+    "WARM_POOL_TARGET": "0"
+  },
+  "preview_urls": false
+}

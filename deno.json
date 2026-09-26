@@ -31,6 +31,7 @@
   },
   "exclude": [
     ".claude",
+    "sandbox",
     "**/*.md"
   ],
   "nodeModulesDir": "auto",

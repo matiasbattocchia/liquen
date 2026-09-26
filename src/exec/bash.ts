@@ -73,7 +73,7 @@ function hasSetsid(): boolean {
 // Sticky cwd: fresh subprocess per call, but the working directory persists between calls
 // like a real terminal — a tail sentinel reports the shell's final pwd + exit code, so the
 // model never re-`cd`s and its true exit status survives the appended print (§9 audit find).
-const CWD_MARK = "__MU_CWD__";
+export const CWD_MARK = "__MU_CWD__";
 
 // User space starts with an EMPTY pocket (clearEnv): the harness process's environment —
 // API keys, bridge tokens, whatever it was launched with — never leaks into the agent's
@@ -103,6 +103,131 @@ function userSpaceEnv(binPath?: string): Record<string, string> {
   return env;
 }
 
+/** The bash tool as the model reads it — the same contract wherever the shell runs. */
+export function bashSpec(timeoutMsDefault: number): ExecTool["spec"] {
+  return {
+    name: "bash",
+    description: "Run a bash command. The working directory PERSISTS between calls like a " +
+      "terminal (cd once, it sticks), but " +
+      "shell/env state (exported vars, activated venvs) does not, so re-export or chain those. " +
+      `stdout+stderr merged; output truncated to the last ${MAX_LINES} lines / ${
+        MAX_BYTES / 1024
+      }KB (override with max_lines/max_bytes when you deliberately need more or less); ` +
+      "when truncated, the full output is saved to a file the footer names (page it with aread). " +
+      `Default timeout ${timeoutMsDefault / 1000}s; run long work in the background ` +
+      "(cmd > out.log 2>&1 &) and poll with tail. Prefer fat commands: chain independent steps " +
+      "with && or ; in ONE call, and emit multiple bash calls in one turn when they don't depend " +
+      "on each other; every separate call is a full round-trip. " +
+      "File helpers on PATH: aread <path> [offset] [limit] [maxBytes]; on an image or PDF it " +
+      "attaches the file itself, so you see it · " +
+      "awrite <path> (content on stdin/heredoc) · " +
+      "aedit <path> (conflict-marker blocks on stdin: <<<<<<< old ======= new >>>>>>>) · " +
+      "fetch [-X METHOD] [-H 'k: v'] [-d BODY|@-] [-i] [-o PATH] URL [limit] [maxBytes] for HTTP: " +
+      "a status outside 2xx fails, JSON prints pretty, the body is head-truncated like aread " +
+      "(-o saves it whole); an API's credential is the $VAR the environment holds, sent as a " +
+      'header (-H "Authorization: Bearer $VAR"). ' +
+      "rg and fd are available for search when installed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "bash command to execute" },
+        timeout: {
+          type: "number",
+          description: `seconds (optional; default ${timeoutMsDefault / 1000})`,
+        },
+        max_lines: {
+          type: "number",
+          description: `output truncation: keep the last N lines (optional; default ${MAX_LINES})`,
+        },
+        max_bytes: {
+          type: "number",
+          description: `output truncation: byte cap (optional; default ${MAX_BYTES})`,
+        },
+      },
+      required: ["command"],
+    },
+  };
+}
+
+/** The input a bash call carries. */
+export interface BashInput {
+  command: string;
+  timeout?: number;
+  max_lines?: number;
+  max_bytes?: number;
+}
+
+/** The command as the shell runs it: followed by a sentinel line that prints the shell's
+ *  final pwd and the command's REAL exit code (the appended print would otherwise mask a
+ *  non-zero exit). A `cd` in the command is honored, and the cwd it leaves is the next
+ *  call's — the sticky cwd. */
+export function wrapCommand(command: string): string {
+  return `${command}\n__mu_rc=$?; printf '\\n${CWD_MARK}%s:%s\\n' "$(pwd)" "$__mu_rc"`;
+}
+
+/** How a call ended, beside what it printed. */
+export interface BashEnd {
+  code: number; // the process's own status, when the sentinel never printed (`exit`)
+  timedOut: boolean;
+  aborted: boolean;
+  timeoutMs: number;
+}
+
+/** A call's raw output → its result: the sentinel peeled off the tail (moving `state.cwd`,
+ *  recovering the exit code), the text tail-truncated — the whole of it handed to `spill`,
+ *  which answers where it now lies — and a non-zero exit, a timeout or an abort thrown as
+ *  the error result carrying the output. Media marks (`aread` on a bytes file, §5) come
+ *  off the text as the result's attachments. */
+export async function settle(
+  raw: string,
+  end: BashEnd,
+  input: BashInput,
+  state: BashState,
+  spill: (output: string) => Promise<string>,
+): Promise<Json | ExecOutcome> {
+  // If the sentinel is missing (the command called `exit`), the process status stands.
+  let output = raw;
+  let exitCode = end.code;
+  const mark = raw.lastIndexOf(`\n${CWD_MARK}`);
+  if (mark !== -1) {
+    const line = raw.slice(mark + 1 + CWD_MARK.length).trim();
+    const sep = line.lastIndexOf(":");
+    if (sep !== -1) {
+      const dir = line.slice(0, sep);
+      const rc = Number(line.slice(sep + 1));
+      if (dir) state.cwd = dir;
+      if (Number.isFinite(rc)) exitCode = rc;
+    }
+    output = raw.slice(0, mark);
+  }
+
+  // the raw output is what gets persisted; the model may widen/narrow the window
+  const t = truncateTail(output.trimEnd(), {
+    maxLines: input.max_lines,
+    maxBytes: input.max_bytes,
+  });
+  let text = t.text || "(no output)";
+  if (t.truncated) {
+    const path = await spill(output);
+    text +=
+      `\n\n[showing lines ${t.startLine}-${t.totalLines} of ${t.totalLines} — full output: ${path}]`;
+  }
+
+  if (end.aborted) throw new Error(`${text}\n\nCommand aborted`);
+  if (end.timedOut) throw new Error(`${text}\n\nCommand timed out after ${end.timeoutMs / 1000}s`);
+  if (exitCode !== 0) throw new Error(`${text}\n\nCommand exited with code ${exitCode}`);
+
+  const files: string[] = [];
+  const kept = text.split("\n").filter((line) => {
+    if (!line.startsWith(MEDIA_MARK)) return true;
+    files.push(line.slice(MEDIA_MARK.length));
+    return false;
+  });
+  if (files.length === 0) return text;
+  const outcome: ExecOutcome = { output: kept.join("\n").trimEnd() || "(no output)", files };
+  return outcome;
+}
+
 export function bashTool(opts: BashOptions): ExecTool {
   const timeoutMsDefault = opts.defaultTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
   // sticky cwd lives in the shared state when the plane provides one (so it can report it),
@@ -110,57 +235,11 @@ export function bashTool(opts: BashOptions): ExecTool {
   const state = opts.state ?? { cwd: opts.workspace };
 
   return {
-    spec: {
-      name: "bash",
-      description: "Run a bash command. The working directory PERSISTS between calls like a " +
-        "terminal (cd once, it sticks), but " +
-        "shell/env state (exported vars, activated venvs) does not, so re-export or chain those. " +
-        `stdout+stderr merged; output truncated to the last ${MAX_LINES} lines / ${
-          MAX_BYTES / 1024
-        }KB (override with max_lines/max_bytes when you deliberately need more or less); ` +
-        "when truncated, the full output is saved to a file the footer names (page it with aread). " +
-        `Default timeout ${timeoutMsDefault / 1000}s; run long work in the background ` +
-        "(cmd > out.log 2>&1 &) and poll with tail. Prefer fat commands: chain independent steps " +
-        "with && or ; in ONE call, and emit multiple bash calls in one turn when they don't depend " +
-        "on each other; every separate call is a full round-trip. " +
-        "File helpers on PATH: aread <path> [offset] [limit] [maxBytes]; on an image or PDF it " +
-        "attaches the file itself, so you see it · " +
-        "awrite <path> (content on stdin/heredoc) · " +
-        "aedit <path> (conflict-marker blocks on stdin: <<<<<<< old ======= new >>>>>>>) · " +
-        "fetch [-X METHOD] [-H 'k: v'] [-d BODY|@-] [-i] [-o PATH] URL [limit] [maxBytes] for HTTP: " +
-        "a status outside 2xx fails, JSON prints pretty, the body is head-truncated like aread " +
-        "(-o saves it whole); an API's credential is the $VAR the environment holds, sent as a " +
-        'header (-H "Authorization: Bearer $VAR"). ' +
-        "rg and fd are available for search when installed.",
-      input_schema: {
-        type: "object",
-        properties: {
-          command: { type: "string", description: "bash command to execute" },
-          timeout: {
-            type: "number",
-            description: `seconds (optional; default ${timeoutMsDefault / 1000})`,
-          },
-          max_lines: {
-            type: "number",
-            description:
-              `output truncation: keep the last N lines (optional; default ${MAX_LINES})`,
-          },
-          max_bytes: {
-            type: "number",
-            description: `output truncation: byte cap (optional; default ${MAX_BYTES})`,
-          },
-        },
-        required: ["command"],
-      },
-    },
+    spec: bashSpec(timeoutMsDefault),
 
     async execute(input: Json, signal: AbortSignal): Promise<Json | ExecOutcome> {
-      const { command, timeout, max_lines, max_bytes } = input as {
-        command: string;
-        timeout?: number;
-        max_lines?: number;
-        max_bytes?: number;
-      };
+      const call = input as unknown as BashInput;
+      const { command, timeout } = call;
       const timeoutMs = timeout !== undefined ? timeout * 1000 : timeoutMsDefault;
       const env = { ...userSpaceEnv(opts.binPath), ...opts.env?.() };
       if (opts.user) {
@@ -168,10 +247,7 @@ export function bashTool(opts: BashOptions): ExecTool {
         Object.assign(env, { HOME: opts.user.home, USER: opts.user.name, LOGNAME: opts.user.name });
       }
 
-      // append a sentinel that prints the shell's final pwd + the command's REAL exit code
-      // (the appended print would otherwise mask a non-zero exit). `cd` at start is honored,
-      // and `${cwd}` may have drifted from a previous call — that's the sticky-cwd behavior.
-      const wrapped = `${command}\n__mu_rc=$?; printf '\\n${CWD_MARK}%s:%s\\n' "$(pwd)" "$__mu_rc"`;
+      const wrapped = wrapCommand(command);
       // isolate the command in its own process group (setsid) so a runaway foreground tree
       // OR a leftover background job can be reaped by the group — see killGroup / opts.jobs
       const isolated = hasSetsid();
@@ -256,27 +332,8 @@ export function bashTool(opts: BashOptions): ExecTool {
         }
         const raw = new TextDecoder().decode(all);
 
-        // peel the sentinel off the tail: update sticky cwd, recover the real exit code.
-        // If it's missing (the command called `exit`), fall back to the process status.
-        let output = raw;
-        let exitCode = status.code;
-        const mark = raw.lastIndexOf(`\n${CWD_MARK}`);
-        if (mark !== -1) {
-          const line = raw.slice(mark + 1 + CWD_MARK.length).trim();
-          const sep = line.lastIndexOf(":");
-          if (sep !== -1) {
-            const dir = line.slice(0, sep);
-            const rc = Number(line.slice(sep + 1));
-            if (dir) state.cwd = dir;
-            if (Number.isFinite(rc)) exitCode = rc;
-          }
-          output = raw.slice(0, mark);
-        }
-
-        // the raw output is what gets persisted; the model may widen/narrow the window
-        const t = truncateTail(output.trimEnd(), { maxLines: max_lines, maxBytes: max_bytes });
-        let text = t.text || "(no output)";
-        if (t.truncated) {
+        const end = { code: status.code, timedOut, aborted: signal.aborted, timeoutMs };
+        return await settle(raw, end, call, state, async (output) => {
           // the spill sits in the agent's own folder wherever the shell stands — never in a
           // repo it walked into; written by the harness, the agent's to keep
           const path = `${opts.workspace}/.out/bash-${newId()}.log`;
@@ -284,25 +341,8 @@ export function bashTool(opts: BashOptions): ExecTool {
           await Deno.writeTextFile(path, output);
           await own(`${opts.workspace}/.out`, opts.user);
           await own(path, opts.user);
-          text +=
-            `\n\n[showing lines ${t.startLine}-${t.totalLines} of ${t.totalLines} — full output: ${path}]`;
-        }
-
-        if (signal.aborted) throw new Error(`${text}\n\nCommand aborted`);
-        if (timedOut) throw new Error(`${text}\n\nCommand timed out after ${timeoutMs / 1000}s`);
-        if (exitCode !== 0) throw new Error(`${text}\n\nCommand exited with code ${exitCode}`);
-
-        // peel media marks (`aread` on a bytes file, §5 — the CWD_MARK pattern): the mark
-        // line carries the path; the file rides the tool_result as an attachment
-        const files: string[] = [];
-        const kept = text.split("\n").filter((line) => {
-          if (!line.startsWith(MEDIA_MARK)) return true;
-          files.push(line.slice(MEDIA_MARK.length));
-          return false;
+          return path;
         });
-        if (files.length === 0) return text;
-        const outcome: ExecOutcome = { output: kept.join("\n").trimEnd() || "(no output)", files };
-        return outcome;
       } finally {
         clearTimeout(timer);
         signal.removeEventListener("abort", onAbort);
@@ -390,20 +430,23 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
   const git = await gitLine(state.cwd);
   if (git) lines.push(git);
   for (const j of jobs) if (!groupAlive(j.pgid)) jobs.delete(j);
-  if (jobs.size > 0) {
-    // one section in the anchor's grammar (xi's standing lists): `· what — when · handle`.
-    // pid is the kill handle: `kill <pid>` stops the leader, `kill -<pid>` the whole tree.
-    // command is collapsed to one line and clipped — the full text lives on the Job.
-    const brief = (c: string) => {
-      const one = c.replace(/\s+/g, " ").trim();
-      return one.length > 60 ? `${one.slice(0, 59)}…` : one;
-    };
-    lines.push(`background — ${jobs.size} job${jobs.size === 1 ? "" : "s"}:`);
-    for (const j of jobs) {
-      lines.push(`· ${brief(j.command)} — running ${ageOf(j.since)} · pid ${j.pgid}`);
-    }
-  }
-  return lines;
+  return [...lines, ...jobLines(jobs)];
+}
+
+/** The background section of the ambient block, one section in the anchor's grammar (xi's
+ *  standing lists): `· what — when · handle`. pid is the kill handle: `kill <pid>` stops the
+ *  leader, `kill -<pid>` the whole tree. The command is collapsed to one line and clipped —
+ *  the full text lives on the Job. None when nothing runs. */
+export function jobLines(jobs: Set<Job>): string[] {
+  if (jobs.size === 0) return [];
+  const brief = (c: string) => {
+    const one = c.replace(/\s+/g, " ").trim();
+    return one.length > 60 ? `${one.slice(0, 59)}…` : one;
+  };
+  return [
+    `background — ${jobs.size} job${jobs.size === 1 ? "" : "s"}:`,
+    ...[...jobs].map((j) => `· ${brief(j.command)} — running ${ageOf(j.since)} · pid ${j.pgid}`),
+  ];
 }
 
 /** This process's module cache — the one the shims read. Asked of the deno that runs the
