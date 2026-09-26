@@ -168,7 +168,9 @@ export async function run(
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (args.out) {
       const dir = args.out.replace(/\/[^/]*$/, "");
-      if (dir && dir !== args.out) await Deno.mkdir(dir, { recursive: true });
+      // a refusal is left to the write: `/dev` can't even be looked at without --allow-all,
+      // while `/dev/null` can be written (`-o /dev/null` is a common probe)
+      if (dir && dir !== args.out) await Deno.mkdir(dir, { recursive: true }).catch(() => {});
       await Deno.writeFile(args.out, bytes);
       console.log(`saved ${bytes.length} bytes to ${args.out} (HTTP ${res.status})`);
       return res.ok ? 0 : 1;
