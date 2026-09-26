@@ -570,7 +570,6 @@ function rowOf(p: AgentConfig & Policy): AgentRow {
       processors: p.processors,
       compactAt: p.compactAt,
       keepRecent: p.keepRecent,
-      compactTurnAt: p.compactTurnAt,
     },
   };
 }
@@ -640,7 +639,6 @@ async function compileRoster(
         windowLimit: catalog.system.windowLimit,
         compactAt: catalog.system.compactAt,
         keepRecent: catalog.system.keepRecent,
-        compactTurnAt: catalog.system.compactTurnAt,
       },
     });
   }

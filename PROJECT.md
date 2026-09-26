@@ -3623,9 +3623,10 @@ A checkpoint cuts as late as `keepRecent` allows, so a turn heavier than that wa
 its own steps whenever the window crossed `compactAt`, even with closed history enough to
 cover. On a Sonar org (one turn = one batch of CRM events worked through `sonar api` reads)
 the batch the turn was working from went under a summary halfway through the turn, and the agent
-fetched it again. `compactTurnAt` (default 150K est.) is the running turn's own ceiling: under
-it a checkpoint covers closed turns only, or waits for the turn to close; past it the old
-between-steps cut applies. **Known gap**: the count cap still binds on a running turn whose
+fetched it again. `compactTurnAt` (default 150K est.) was the running turn's own ceiling: under
+it a checkpoint covered closed turns only, or waited for the turn to close; past it the old
+between-steps cut applied. Superseded 2026-09-26: a checkpoint never runs while a turn runs
+(see "A checkpoint is a turn between turns"). **Known gap**: the count cap still binds on a running turn whose
 events are light — past `windowLimit` events its first ones fall off the window, the input
 that started it included. Reading from the latest summary rather than a count closes both
 this and the entry above's gap.
@@ -3785,10 +3786,42 @@ Thinking is requested with `display: "summarized"`: Sonnet 5 and Opus 5.5 defaul
 `omitted`, which logged empty blocks with only a signature, and the display bills the same
 either way.
 
-Still open, each a prefix edit the log line would name: a world message that lands while a
-step's call is in flight renders ahead of that step on the next request; a checkpoint inside
-a running turn summarizes history under the turn's replayed thinking; a docs change mid-turn
-rebuilds the system prompt.
+Two of the three prefix edits left open here landed the next day ("A checkpoint is a turn
+between turns", below). Still open: a docs change mid-turn rebuilds the system prompt.
+
+### A checkpoint is a turn between turns (2026-09-26) — LANDED
+
+The append-only fix above held on the plain loop, and the warning kept coming. A run on
+Opus 5.5 (chiche, 2026-09-26T03-24-21) showed the two edits it had left open: a
+checkpoint inside a five-minute turn dropped all nine of the turn's replayed thinking
+blocks on every step for its last hundred seconds — the summary lands at the head of the
+window, under every block the turn replays, even when it covers closed history only, which
+that one did (the turn weighed far under `compactTurnAt`) — and a message that landed
+while a step's call was in flight dropped that step's block on the four steps after it.
+The usage rows said the cache was not the casualty: one write after the checkpoint, near
+full reads after; what the model lost was its own reasoning.
+
+Three changes. A checkpoint runs only between turns: `compactionSpan` is null while the
+trailing chain is live, whatever the window weighs, and `decide` gains a fourth verdict,
+`compact`, taken after every other derivation — the closing's own insert is the look that
+finds nothing owed and the window over budget, so the gap after a turn is when a
+checkpoint runs, and input never waits behind one (nu no longer checkpoints before a
+think; `checkpoint` is its own turn in nu, with the same ladder, meter and stream).
+`compactTurnAt` is gone, `compactAt` is a soft budget, and the one hard ceiling is the
+API's: a request refused as "prompt is too long" (the error as the last row) makes the
+next look `compact` under any budget, and a dead turn — error or cancel as its last row —
+is covered whole, chain and input, so nothing replays under the summary and the record
+carries what the turn was asked, what its tools found and how it ended; the summary's
+insert then wakes the think over the record. And a tool step records the horizon its
+request read (`extra.consumed`, beside `extra.anchor`), so `weldOrder` places an event
+newer than the horizon and older than the step after the step's group — the first request
+that could carry it — instead of under its thinking. `render.test` checks the three-step
+turn with a line landing during step 2, `compact.test` the running, closed, dead and
+refused windows, `xi.test` the verdict's place in the order, and the integration test the
+two gaps of a two-exchange conversation.
+
+chiche's side: `compactTurnAt` leaves its config, and a checkpoint arriving on the door in
+an idle gap is not work the voice reports on.
 
 ### The agent row is enough to run xi (2026-09-25) — LANDED
 

@@ -101,13 +101,15 @@ import {
 } from "./render.ts"; // shared predicates: silenced never wakes;
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
-import { type ModelTransport, nu, type TurnConfig } from "./nu.ts";
+import { checkpoint, type ModelTransport, nu, type TurnConfig } from "./nu.ts";
+import { compactionSpan } from "./compact.ts";
 
 /* ── the poke, the class filter, and the owed-derivation ──────────────── */
 
 /** The decision: what the log owes right now (§2). `ignore` ⇒ nothing owed — quiescence,
- *  the next move is a human's, or we just failed. */
-export type Decision = "think" | "act" | "ignore";
+ *  the next move is a human's, or we just failed. `compact` ⇒ nothing owed either, and
+ *  the window is over budget: the idle gap is when a checkpoint runs (§5). */
+export type Decision = "think" | "act" | "ignore" | "compact";
 
 /** Policy, per CALL — the name, the arguments, and where the call LANDS (§9): a dispatching
  *  tool carries a target, and that is what a scoped rule matches on. */
@@ -164,6 +166,10 @@ export interface Wake {
   /** The media kinds a processor makes readable (main: the catalog's configured ones,
    *  `audio` today). A note of such a kind is sealed until its words land: not news yet. */
   processors?: string[];
+  /** The checkpoint budget (§5): what an idle window may weigh before the gap is spent
+   *  compacting it, and what the checkpoint leaves uncovered. Unset ⇒ the catalog's. */
+  compactAt?: number;
+  keepRecent?: number;
 }
 
 /** Decide — once, from one window — what is owed. Position-aware, so a late invocation that
@@ -184,10 +190,23 @@ export function decide(
   // …and a verdict that has since landed is work of its own: run the call, report back.
   if (owed.length > 0) return "act";
   if (cutOff(events)) return "think"; // a paced/truncated turn CONTINUES
-  if (justFailed(events)) return "ignore"; // idle-after-error
-  if (justCancelled(events)) return "ignore"; // the principal cut it: idle until they speak
+  // Nothing owed is the one moment a checkpoint may run (§5): the turn is over, so no
+  // thinking is in flight for a summary to land under, and no input is waiting behind it.
+  // The turn that just ended ends the same way whether it closed, failed or was cut — and
+  // the one that failed for its size (the API's ceiling, the only hard one) is exactly the
+  // window that has to shrink before the next think can run.
+  const idle = (): Decision => (needsCheckpoint(events, session, wake) ? "compact" : "ignore");
+  if (justFailed(events)) return idle(); // idle-after-error
+  if (justCancelled(events)) return idle(); // the principal cut it: idle until they speak
   if (unclosedChain(events, session)) return "think";
-  return attention(events, session, wake, now);
+  const v = attention(events, session, wake, now);
+  return v === "ignore" ? idle() : v;
+}
+
+/** The window is over its budget and a checkpoint can be written from it now: the same
+ *  question the checkpoint turn asks, so the verdict and the work never disagree (§5). */
+function needsCheckpoint(events: Event[], session: Session, wake: Wake): boolean {
+  return compactionSpan(events, session, wake.compactAt, wake.keepRecent) !== null;
 }
 
 /* ── attention (§2): three wake classes over the unanswered news ────────── */
@@ -468,14 +487,17 @@ export function relevant(config: AgentConfig, event: Event): boolean {
     case "permission_response": // the human moved — the settlement is derivable now
     case "alarm": // the universal poke (§2)
       return true;
-    case "summary": // the one self-authored non-message that wakes: a checkpoint DISPLACES a
+    // the one self-authored non-message that wakes: a checkpoint's insert is the next look
+    // (§5), which idles, or thinks over the record when the turn an overflow ended left its
+    // input owed
+    case "summary":
       return true;
     // `error` is a PERMANENT failure until something new arrives — retrying transient ones
     // already happened inside nu, so a logged error means we stopped. `decide` says the same
-    // from the window side (a trailing error ⇒ ignore); waking here would hot-loop.
+    // from the window side (a trailing error ⇒ ignore, or compact when the window is over
+    // budget: the tick brings that look); waking here would hot-loop.
     // `control` acts on a RUNNING turn — the store fires its lease's interrupt (§2) — never starts one;
     // the harness's `cancelled` closes one, and `decide` idles on it from the window side.
-    //  turn (§5), so its insert must carry the think it displaced forward
     default:
       return false; // thinking · error · permission_request · control · delta · unknown
   }
@@ -1000,7 +1022,7 @@ export async function xi(
       ? [cancelled(hereEnv)] // cut before it began: the cancel still closes it
       : v === "act"
       ? await act(events, got === "stolen", session, config, gate, ports, signal)
-      : await think(events, config, ports, signal);
+      : await think(events, config, ports, signal, v);
   } catch (err) {
     await lock.release(); // nothing to pair the release with
     throw err;
@@ -1051,6 +1073,7 @@ async function think(
   config: AgentConfig,
   ports: XiPorts,
   signal: AbortSignal,
+  what: "think" | "compact" = "think",
 ): Promise<Draft<Event>[]> {
   const home = sessionAddress(config.agentId, config.sessionId); // where this turn speaks (§4)
   const docs = await ports.docs.list({ agent: config.agentId, conversation: home });
@@ -1075,10 +1098,11 @@ async function think(
       config.timezone,
     ),
   ];
-  // ONE turn per invocation, and nu decides what the turn IS: an over-budget window makes it
-  // the checkpoint (the summary's insert wakes the think it displaced); a paced/truncated
-  // turn continues via `meta.stop` and `decide` (§2, §5). xi only gathers the I/O.
-  return await nu(
+  // ONE turn per invocation, and `decide` said which: a think, or — nothing owed and the
+  // window over budget — the checkpoint, whose summary's insert wakes the next look (§5). A
+  // paced/truncated turn continues via `meta.stop` and `decide` (§2). xi only gathers the
+  // I/O, the same for both.
+  return await (what === "compact" ? checkpoint : nu)(
     {
       events,
       docs,

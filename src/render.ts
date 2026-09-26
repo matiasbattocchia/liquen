@@ -1020,10 +1020,20 @@ export function anchorText(now: string, zone?: string, ambient?: string[]): stri
  * Reorder the trailing chain so each welded group is contiguous at the position of its first
  * event — non-results in log order, then its results — and anything that interleaved (a world
  * message landing between a use and its result) floats to after the group.
+ *
+ * And anything that landed while the step's call was in flight floats after it too: such an
+ * event has a log id older than the step's own (those are appended when the call returns)
+ * yet was not in the request that produced the step, and the step's thinking is signed over
+ * what that request held. nu records the request's horizon on the step (`extra.consumed`,
+ * its first event, beside the anchor); an event newer than the horizon and older than the
+ * step is placed after the step's group — the first request that could carry it, and where
+ * every later request of the turn keeps it (§5).
  */
 function weldOrder(trailing: Event[], weldedTurns: Set<string>): Event[] {
   const groups = new Map<string, Event[]>();
   const sequence: (Event | { group: string })[] = [];
+  // per welded step: the horizon its request read, and its own first id
+  const horizons = new Map<string, { seen: string; first: string }>();
   for (const e of trailing) {
     const turn = turnOf(e);
     if (turn !== undefined && weldedTurns.has(turn)) {
@@ -1032,20 +1042,37 @@ function weldOrder(trailing: Event[], weldedTurns: Set<string>): Event[] {
         g = [];
         groups.set(turn, g);
         sequence.push({ group: turn }); // the group renders where it first appeared
+        const seen = e.extra?.consumed;
+        if (typeof seen === "string") horizons.set(turn, { seen, first: e.id });
       }
       g.push(e);
     } else {
       sequence.push(e);
     }
   }
+  // what landed in flight, by the step it must follow
+  const late = new Map<string, Event[]>();
+  const inFlight = (e: Event): string | undefined => {
+    for (const [turn, h] of horizons) {
+      if (e.id > h.seen && e.id < h.first) return turn;
+    }
+    return undefined;
+  };
   const out: Event[] = [];
   for (const item of sequence) {
     if ("group" in item) {
       const g = groups.get(item.group)!;
       out.push(...g.filter((e) => e.type !== "tool_result"));
       out.push(...g.filter((e) => e.type === "tool_result"));
+      out.push(...(late.get(item.group) ?? []));
     } else {
-      out.push(item);
+      const after = inFlight(item);
+      if (after !== undefined && !out.some((e) => turnOf(e) === after)) {
+        // the step is still to come in the sequence: hold the event for after it
+        late.set(after, [...(late.get(after) ?? []), item]);
+      } else {
+        out.push(item);
+      }
     }
   }
   return out;
@@ -1574,7 +1601,7 @@ export function outcomeLine(e: ToolResultEvent, max = 0): string {
 /** An `error` event's message — rendered as a `<system>` text block rather than a real
  *  `mid_conv_system` one: it PRECEDES what it marks, and the API takes `mid_conv_system`
  *  only in trailing position (§5, live-smoke finding). */
-function errorTextOf(e: HarnessErrorEvent): string {
+export function errorTextOf(e: HarnessErrorEvent): string {
   return e.parts[0]?.data?.error ?? "unknown error";
 }
 

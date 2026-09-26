@@ -8,6 +8,12 @@
  * Iterative: a later compaction folds the previous summary in (pi's update rule), and
  * `covers` chains from the previous summary's start so survivors get re-covered.
  *
+ * A checkpoint runs only BETWEEN turns (§5): a thinking block's signature binds everything
+ * its request held before it, and a summary lands at the head of the window, so one written
+ * while a turn runs changes the prefix under every thinking block the turn replays. The
+ * span is therefore null while a turn is running, whatever the window weighs; `decide`
+ * asks for it only once the turn is over (its closing, or the error or cancel that ended it).
+ *
  * The call itself comes from nu, as a `StepCall`: nu owns the retry ladder and the stream,
  * so the checkpoint is attempted exactly like a think and streams like one. A checkpoint
  * that cannot be written comes back as an error event, whatever the reason — the window
@@ -15,12 +21,20 @@
  */
 
 import type { Draft, ErrorEvent, Event, Session, SummaryEvent } from "./types.ts";
-import { applySummary, closingBoundary, deferredInput, outcomeLine, ownVoice } from "./render.ts";
+import {
+  applySummary,
+  closingBoundary,
+  deferredInput,
+  errorTextOf,
+  isCancelled,
+  outcomeLine,
+  ownVoice,
+} from "./render.ts";
 import type { StepCall, StepInput } from "./mu.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import { describeCall } from "./describe.ts";
 
-import { DEFAULT_COMPACT_AT, DEFAULT_COMPACT_TURN_AT, DEFAULT_KEEP_RECENT } from "./config.ts";
+import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT } from "./config.ts";
 
 /** chars/4 over what renders — crude but monotone; both thresholds are order-of-magnitude
  *  knobs. The wire sidecar (`extra`, where a connector keeps the raw delivery) never reaches
@@ -52,10 +66,38 @@ export interface CompactInput {
   prompt: () => Promise<string | null>;
   compactAt?: number;
   keepRecent?: number;
-  compactTurnAt?: number;
   /** The invocation's turn (nu mints it): the checkpoint call's spend is metered under it,
    *  and the summary carries it — a checkpoint is a model turn like any other. */
   turnId?: string;
+}
+
+/** The API refused the request for its size: "prompt is too long: N tokens > M maximum"
+ *  (Anthropic's wording, the one measured). The window's own estimate is chars/4 over the
+ *  raw events — order-of-magnitude, and blind to inlined media — so the ceiling that
+ *  counts is the API's, and this is how it says so. */
+const TOO_LONG = /prompt is too long/i;
+
+/** The last event says the previous request was over the model's ceiling: the window has to
+ *  shrink before any think can run, whatever `compactAt` says. */
+export function overflowed(events: Event[]): boolean {
+  const last = events.at(-1);
+  return last?.type === "error" && TOO_LONG.test(errorTextOf(last));
+}
+
+/** Is the turn over? The trailing chain — everything after the last closing — replays its
+ *  thinking on the next request, and a summary inserted under it changes the prefix every
+ *  signature was bound to. So a checkpoint waits for the turn to end: a closing (nothing
+ *  trails), or the harness's word that the turn is dead — a terminal error or a cancel as
+ *  the last event. A dead turn's chain replays too, but nothing continues it: the
+ *  checkpoint covers it whole, and the record says what its tools found. */
+export function turnOver(events: Event[], session: Session): boolean {
+  const last = events.at(-1);
+  if (last !== undefined && (last.type === "error" || isCancelled(last))) return true;
+  const boundary = closingBoundary(events, session);
+  return !events.slice(boundary + 1).some((e) =>
+    (e.type === "thinking" || e.type === "tool_use" || e.type === "tool_result") &&
+    ownVoice(e, session)
+  );
 }
 
 /** Where a cut may fall: after index `i` when no STEP straddles it. A step — the events
@@ -93,13 +135,13 @@ function cutPoints(events: Event[]): Set<number> {
 }
 
 /** Decide the covered span: everything up to the last safe cut before the keep-recent
- *  tail. Null ⇒ nothing to do. */
+ *  tail. Null ⇒ nothing to do: under the threshold, a turn still running, or nothing
+ *  coverable yet. */
 export function compactionSpan(
   events: Event[],
   session: Session,
   compactAt = DEFAULT_COMPACT_AT,
   keepRecent = DEFAULT_KEEP_RECENT,
-  compactTurnAt = DEFAULT_COMPACT_TURN_AT,
 ): { covered: Event[]; covers: [string, string] } | null {
   // measure and span the VISIBLE window (latest summary applied): the raw window stays heavy
   // after a checkpoint (the read is windowLimit-capped, not from-the-summary), so a raw
@@ -107,13 +149,15 @@ export function compactionSpan(
   // that the checkpoint is its own turn (§5). Chaining survives: the summary sits first in
   // the visible window, so a new span covers it and `covers[0]` chains from it.
   events = applySummary(events);
-  if (estTokens(events) <= compactAt) return null;
+  // the ceiling that counts is the API's: a window it refused shrinks whatever it estimates
+  if (estTokens(events) <= compactAt && !overflowed(events)) return null;
+  // never under a running turn (see the header): its replayed thinking is bound to the
+  // prefix as it stands
+  if (!turnOver(events, session)) return null;
   const boundary = closingBoundary(events, session);
   const deferred = deferredInput(events, session, boundary);
   // walk back from the end keeping ~keepRecent est. tokens uncovered: `kept` = the first
-  // kept index. The tail may be a long open tool loop — that is exactly when the closed
-  // region is not where the weight is, and a cut between two of its steps is what shrinks
-  // the window (the checkpoint then leads a trailing chain that starts on a whole step).
+  // kept index
   let keep = 0;
   let kept = events.length;
   for (let i = events.length - 1; i >= 0; i--) {
@@ -121,22 +165,26 @@ export function compactionSpan(
     if (keep > keepRecent) break;
     kept = i;
   }
-  // where the cut may fall: in the closed region, after any event no step straddles; in
-  // the open chain beyond it, only after a tool outcome — a world message there is INPUT
-  // the agent has not answered, and a checkpoint is a record, not an answer. Input the
-  // closing never consumed sits BEFORE the boundary and is input all the same: `covers` is
-  // an id range, so the cut stays below the first such message, or the range would hide it.
-  // The open chain is the turn still running, and what its tools answered is what it is
-  // working from: a summary of a result it has not finished with is a result it has to
-  // fetch again. So the chain is cut only once it alone outweighs `compactTurnAt`; below
-  // that the checkpoint covers closed turns, or waits for this one to close.
+  // where the cut may fall: in the closed region, after any event no step straddles. Never
+  // after unanswered input: a world message is INPUT, and a checkpoint is a record, not
+  // an answer. Input the closing never consumed sits BEFORE the boundary and is input all
+  // the same: `covers` is an id range, so the cut stays below the first such message, or
+  // the range would hide it.
+  // A DEAD turn — an error or a cancel ended it — is covered WHOLE, its chain and the
+  // input it was answering, down to the row that killed it: its thinking replays on the
+  // next request, and a summary under part of it is the prefix edit this layer exists to
+  // avoid; nothing continues the turn, so its results are not being worked from; and the
+  // record carries what it was asked and what its tools found, which is what the next
+  // think answers from. `keepRecent` is a live conversation's tail, and does not apply.
+  const last = events.at(-1);
+  const dead = last !== undefined && (last.type === "error" || isCancelled(last));
   const safe = cutPoints(events);
   const firstDeferred = events.findIndex((e) => deferred.has(e));
-  const ceiling = firstDeferred === -1 ? kept : Math.min(kept, firstDeferred);
-  const intoTurn = estTokens(events.slice(boundary + 1)) > compactTurnAt;
+  const reach = dead ? events.length : kept;
+  const ceiling = firstDeferred === -1 ? reach : Math.min(reach, firstDeferred);
   let cut = -1;
   for (let c = ceiling - 1; c >= 0; c--) {
-    if (safe.has(c) && (c <= boundary || (intoTurn && events[c].type === "tool_result"))) {
+    if (safe.has(c) && (c <= boundary || dead)) {
       cut = c;
       break;
     }
@@ -174,6 +222,11 @@ function transcript(covered: Event[], session: Session): { text: string; previou
       lines.push(`[me → ${describeCall({ name, input }, { full: true })}]`);
     } else if (e.type === "tool_result") {
       lines.push(`[tool] ${outcomeLine(e, RESULT_CHARS)}`);
+    } else if (e.type === "error") {
+      // a dead turn's last word: the record says the work stopped, and why
+      lines.push(`[error] ${errorTextOf(e)}`);
+    } else if (isCancelled(e)) {
+      lines.push(`[cancelled] the turn was stopped`);
     }
     // thinking: private — never part of the record
   }
@@ -190,13 +243,7 @@ export async function buildSummary(
   input: CompactInput,
   call: StepCall,
 ): Promise<Draft<SummaryEvent> | Draft<ErrorEvent> | null> {
-  const span = compactionSpan(
-    input.events,
-    input.session,
-    input.compactAt,
-    input.keepRecent,
-    input.compactTurnAt,
-  );
+  const span = compactionSpan(input.events, input.session, input.compactAt, input.keepRecent);
   if (!span) return null;
   const { text, previous } = transcript(span.covered, input.session);
 

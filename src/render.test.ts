@@ -1049,6 +1049,60 @@ Deno.test("a running turn's requests only append: each step's anchor stays where
   assert(!said.includes("cwd: /a") && !said.includes(JSON.stringify(two.anchor).slice(1, -1)));
 });
 
+Deno.test("a message that lands while a step's call is in flight renders after that step, not under its thinking", () => {
+  const t = (m: number) => `2026-07-21T10:0${m}:00Z`;
+  const base = { docs: [] as DocEntry[], session: SESSION, zone: "UTC" };
+  const step = (events: Event[], now: string) => ({
+    messages: render({ ...base, events, now }).messages,
+    anchor: anchorText(now, "UTC"),
+    consumed: events.at(-1)!.id, // what nu records beside the anchor: the horizon it read
+  });
+  const strip = (ms: Anthropic.MessageParam[]) =>
+    ms.map((m) => ({ role: m.role, content: blocksOf([m]).map(bare) }));
+  const read = (e: ThinkingEvent, s: { anchor: string; consumed: string }): ThinkingEvent => ({
+    ...e,
+    extra: { anchor: s.anchor, consumed: s.consumed },
+  });
+
+  const opened: Event[] = [mindMsg("e1", t(0), "¿qué archivos hay?", false)];
+  const one = step(opened, t(1));
+  const first: Event[] = [
+    ...opened,
+    read(thinkingE("e2", t(2), "T1", "miro", "s1"), one),
+    toolUseE("e3", t(2), "T1", "bash", { command: "ls" }),
+    toolResultE("e4", t(3), "T1", "a.txt", "e3"),
+  ];
+  const two = step(first, t(4)); // step 2's request: through e4
+  // Ana speaks while step 2's call is in flight: her line is appended before the step's
+  // own events are (those land when the call returns), so its id is older than theirs
+  const late = mindMsg("e4m", t(5), "y b.txt?", false);
+  const second: Event[] = [
+    ...first,
+    late,
+    read(thinkingE("e5", t(5), "T2", "sigo", "s2"), two),
+    toolUseE("e6", t(5), "T2", "bash", { command: "ls -a" }),
+    toolResultE("e7", t(6), "T2", "a.txt b.txt", "e6"),
+  ];
+  const three = step(second, t(7));
+
+  // request 3 still starts with request 2 whole — the line is not under T2's thinking…
+  assertEquals(strip(three.messages).slice(0, two.messages.length), strip(two.messages));
+  // …it follows the step, the first request that could carry it
+  const texts = blocksOf(three.messages).map((b) =>
+    b.type === "text" ? b.text : b.type === "tool_result" ? "tool_result" : b.type
+  );
+  const at = (s: string) => texts.findIndex((x) => x.includes(s));
+  assert(at("y b.txt?") > texts.lastIndexOf("tool_result"), texts.join(" | ")); // after step 2
+  // and a step that recorded no horizon (an older log) keeps the old order: log position
+  const unrecorded = second.map((e) =>
+    e.id === "e5" ? { ...e, extra: { anchor: two.anchor } } as Event : e
+  );
+  const old = blocksOf(render({ ...base, events: unrecorded, now: t(7) }).messages)
+    .map((b) => b.type === "text" ? b.text : b.type);
+  const oldAt = (s: string) => old.findIndex((x) => x.includes(s));
+  assert(oldAt("y b.txt?") < old.lastIndexOf("tool_use"), old.join(" | ")); // before step 2
+});
+
 /* ── media (§5): markers everywhere, real blocks in the TRAILING region only ── */
 
 function fileMsg(

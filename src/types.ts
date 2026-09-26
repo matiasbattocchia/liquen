@@ -307,8 +307,9 @@ export interface Payload {
  *  (§2, §5) — `delta` (on the mirror's CC of a presence event, §9: a line that is only
  *  true while the turn runs, so the sweeper never re-offers it) — `consumed` (on the agent's closing
  *  session messages: the last event id the step's window read — the coalescing horizon
- *  `unanswered` measures against,
- *  §2), `via` (mirror provenance, §4), `timer` (alarm provenance, §10: the row that fired,
+ *  `unanswered` measures against, §2; and on a tool step's first event, beside `anchor`:
+ *  what that step's request held, so render keeps what landed later out from under its
+ *  replayed thinking, §5), `via` (mirror provenance, §4), `timer` (alarm provenance, §10: the row that fired,
  *  who armed it and when), and per-service provenance under the service name —
  *  how the wire said it, not what the event means (`slack: {subtype, authorizations}`,
  *  `raw`). */

@@ -378,6 +378,55 @@ Deno.test("decide: the max_tokens continuation is bounded — 3 overflows and it
   assertEquals(decide([peerMsg(), cut(), cut(), cut()], SESSION, WAKE), "ignore"); // capped
 });
 
+/* ── the checkpoint is the idle gap's (§5) ────────────────────────────── */
+
+const OVER: Wake = { compactAt: 1, keepRecent: 0 }; // every window is over budget
+const err = (error: string) =>
+  ev("error", { parts: [{ type: "data", kind: "error", data: { error } }] } as Partial<Event>);
+
+Deno.test("decide: nothing owed and the window over budget → compact; under budget → ignore", () => {
+  const closed = [peerMsg(), selfMsg(), peerMsg(), selfMsg()];
+  assertEquals(decide(closed, SESSION, OVER), "compact");
+  assertEquals(decide(closed, SESSION, WAKE), "ignore");
+  // the summary's insert is the next look: it finds the visible window light, and idles
+  const summary = ev("summary", {
+    ...SELF,
+    payload: { covers: [closed[0].id, closed[3].id] },
+    parts: [{ type: "text", kind: "text", text: "## Open" }],
+  } as Partial<Event>);
+  assertEquals(decide([...closed, summary], SESSION, OVER), "ignore");
+});
+
+Deno.test("decide: input never waits for a checkpoint — and a running turn is never cut", () => {
+  assertEquals(decide([peerMsg(), selfMsg(), peerMsg()], SESSION, OVER), "think"); // input first
+  assertEquals(decide([peerMsg(), use("u1")], SESSION, OVER), "act"); // its call first
+  assertEquals(decide([peerMsg(), use("u1"), result("u1")], SESSION, OVER), "think"); // its closing first
+  assertEquals(
+    decide([peerMsg(), selfMsg(), peerMsg(), use("u1"), result("u1"), selfMsg()], SESSION, OVER),
+    "compact",
+  );
+});
+
+Deno.test("decide: a turn that died over budget compacts in the gap it left — the refused one whatever the budget", () => {
+  // idle-after-error still holds: the failed think is not retried, the window is tidied
+  assertEquals(
+    decide([peerMsg(), selfMsg(), peerMsg(), err("overloaded")], SESSION, OVER),
+    "compact",
+  );
+  assertEquals(
+    decide([peerMsg(), selfMsg(), peerMsg(), err("overloaded")], SESSION, WAKE),
+    "ignore",
+  );
+  // the API's ceiling is the hard one: the window it refused shrinks before the next think
+  const refused = [
+    peerMsg(),
+    selfMsg(),
+    peerMsg(),
+    err("prompt is too long: 213462 tokens > 200000 maximum"),
+  ];
+  assertEquals(decide(refused, SESSION, WAKE), "compact");
+});
+
 Deno.test("decide: a trailing harness error ⇒ nothing owed (idle-after-error, §2)", () => {
   const err = ev("error", {
     parts: [{ type: "data", kind: "error", data: { error: "model overloaded" } }],

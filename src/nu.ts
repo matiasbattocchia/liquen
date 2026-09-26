@@ -85,9 +85,8 @@ export interface TurnConfig {
   /** Slow OUTER retries for mu failures — `RETRY_DELAYS_MS` unless a caller says otherwise
    *  (a test runs them at zero). */
   retryDelaysMs?: number[];
-  compactAt?: number; // est. tokens before a checkpoint displaces the turn (§5; default 50K)
+  compactAt?: number; // est. tokens before a checkpoint runs, between turns (§5; default 50K)
   keepRecent?: number; // est. tokens left uncovered by a checkpoint (default ~20K)
-  compactTurnAt?: number; // est. tokens the running turn weighs before a checkpoint cuts it
 }
 
 export interface TurnInput {
@@ -130,14 +129,11 @@ export interface TurnInput {
  *  separate channel — it rides on the last event's `meta.stop`, where `decide` reads it. */
 export type TurnOutput = Draft<Event>[];
 
-/** Run one turn: render → mu (retrying) → stamp. Never throws; failure returns an error event. */
-export async function nu(
-  input: TurnInput,
-  transport: ModelTransport,
-  emit?: Emit,
-): Promise<TurnOutput> {
+/** What one invocation shares between its two possible turns — a think or a checkpoint,
+ *  never both (§5): the session and its room, the turn id its one call is metered under,
+ *  the retry ladder, and the prefix the call reads. */
+function turnOf(input: TurnInput, transport: ModelTransport) {
   const { config } = input;
-  const self = { id: config.agentId, session_id: config.sessionId };
   const session: Session = {
     id: config.sessionId,
     agentId: config.agentId,
@@ -150,13 +146,6 @@ export async function nu(
     connection_address: "agent",
     conversation: { address: session.conversation },
   };
-  const ts = () => new Date().toISOString();
-  const errorEvent = (error: string): Draft<Event> => ({
-    ts: ts(),
-    type: "error",
-    envelope: here, // harness-authored: no `agent` (§3)
-    parts: [{ type: "data", kind: "error", data: { error } }],
-  });
 
   // The turn's id, minted BEFORE the call rather than after it: the metered transport stamps
   // it on the spend row, so a usage row joins to the events it paid for (§2). One id per
@@ -178,7 +167,7 @@ export async function nu(
     return res;
   };
 
-  // the prefix the think would read: the checkpoint writes against it, so what the agent's
+  // the prefix the think reads: a checkpoint writes against it too, so what the agent's
   // instructions and memories already say stays out of the record
   const env: Env = {
     self: config.agentId,
@@ -195,15 +184,27 @@ export async function nu(
     docs: input.docsOn,
   };
 
-  // Maintenance first — and nu is where it belongs: nu is the layer that formats the window,
-  // so it's the one that knows what the turn will actually weigh. When the VISIBLE window
-  // outgrows the budget, THIS turn is the checkpoint: one model call either way (the
-  // one-call-per-invocation invariant), and the summary's own insert wakes the think it
-  // displaced — the log is the continuation engine, applied to maintenance (§5). A
-  // checkpoint that cannot be written comes back as an error event: unstamped, so the turn
-  // ends there, and the next input retries. Its words stream as their own kind — a
-  // checkpoint is neither the model reasoning nor the model answering, and a surface can
-  // only fold away what it can name.
+  return { session, here, turnId, attempt, env };
+}
+
+/** The maintenance turn (§5): a checkpoint over the window, or nothing. Run by xi in an
+ *  idle gap — after a turn ended, never while one runs: a summary lands at the head of the
+ *  window, under every thinking block a running turn would replay. Input never waits for
+ *  it: `decide` asks for this only when nothing else is owed. The summary's own insert
+ *  wakes the next look, which finds the visible window light and idles — or, after an
+ *  overflow ended a turn, finds its input still owed and thinks over the record. An empty
+ *  result is a window that turned out to need nothing (the span is decided from the same
+ *  window xi decided on, so that is a race with nobody). A checkpoint that cannot be
+ *  written comes back as an error event: unstamped, the next look retries it. Its words
+ *  stream as their own kind — a checkpoint is neither the model reasoning nor the model
+ *  answering, and a surface can only fold away what it can name. */
+export async function checkpoint(
+  input: TurnInput,
+  transport: ModelTransport,
+  emit?: Emit,
+): Promise<TurnOutput> {
+  const { config } = input;
+  const { session, here, turnId, attempt, env } = turnOf(input, transport);
   const summary = await buildSummary({
     system: renderSystem(input.docs, env),
     events: input.events,
@@ -212,7 +213,6 @@ export async function nu(
     effort: config.effort,
     compactAt: config.compactAt,
     keepRecent: config.keepRecent,
-    compactTurnAt: config.compactTurnAt,
     prompt: input.compactPrompt,
     turnId,
     signal: input.signal,
@@ -222,7 +222,25 @@ export async function nu(
       emit && ((d) => emit(d.kind === "text" ? { ...d, kind: "checkpoint" } : d)),
     ));
   if (input.signal?.aborted) return [cancelled(here)]; // the cancel cut the checkpoint
-  if (summary) return [summary];
+  return summary ? [summary] : [];
+}
+
+/** Run one turn: render → mu (retrying) → stamp. Never throws; failure returns an error event. */
+export async function nu(
+  input: TurnInput,
+  transport: ModelTransport,
+  emit?: Emit,
+): Promise<TurnOutput> {
+  const { config } = input;
+  const self = { id: config.agentId, session_id: config.sessionId };
+  const { session, here, turnId, attempt, env } = turnOf(input, transport);
+  const ts = () => new Date().toISOString();
+  const errorEvent = (error: string): Draft<Event> => ({
+    ts: ts(),
+    type: "error",
+    envelope: here, // harness-authored: no `agent` (§3)
+    parts: [{ type: "data", kind: "error", data: { error } }],
+  });
 
   const now = ts();
   const rendered = render({
@@ -323,13 +341,18 @@ export async function nu(
     }
   }
 
-  // A step that calls a tool records the anchor it read, on its first event: the turn's
-  // later requests replay this step's thinking, whose signature binds the anchor where
-  // this request placed it, so render places it there again (§5).
+  // A step that calls a tool records, on its first event, what its request held: the anchor
+  // it read, and the last event it read (`consumed`, the closing's horizon, here on the
+  // step). The turn's later requests replay this step's thinking, whose signature binds
+  // everything the request held before it — so render places the anchor there again, and
+  // an event that landed after the horizon, while this step's call was in flight, renders
+  // after the step rather than under its thinking (§5).
   if (events.some((e) => e.type === "tool_use")) {
+    const read = input.events.at(-1);
     events[0].extra = {
       ...events[0].extra,
       anchor: anchorText(now, config.timezone, input.ambient),
+      ...(read ? { consumed: read.id } : {}),
     };
   }
 

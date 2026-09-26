@@ -43,7 +43,6 @@ export interface AgentSettings {
   processors?: string[];
   compactAt?: number;
   keepRecent?: number;
-  compactTurnAt?: number;
 }
 
 export interface AgentRow {

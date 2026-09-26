@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
-import { nu, type TurnConfig } from "./nu.ts";
+import { checkpoint, nu, type TurnConfig } from "./nu.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission } from "./mu.ts";
 import { canned } from "./testing.ts";
@@ -253,10 +253,44 @@ function exchange(i: number): Event[] {
   ];
 }
 
+Deno.test("nu: a think is a think — an over-budget window never makes it wait for a checkpoint", async () => {
+  // the checkpoint is `decide`'s to ask for, in an idle gap (§5); input never waits for it
+  const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
+  const kinds: (string | undefined)[] = [];
+  const out = await nu(
+    {
+      events,
+      docs: [],
+      tools: [],
+      compactPrompt: PROMPT,
+      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+    },
+    (_p, _emit, meta) => {
+      kinds.push(meta?.kind);
+      return Promise.resolve(canned([{ kind: "assistant", text: "hola" }]));
+    },
+  );
+  assertEquals(kinds, ["think"]);
+  assertEquals(out[0].type, "message");
+});
+
+Deno.test("checkpoint: a window under budget is nothing to do — no call, no event", async () => {
+  let calls = 0;
+  const out = await checkpoint(
+    { events: exchange(0), docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
+    () => {
+      calls++;
+      return Promise.resolve(canned([{ kind: "assistant", text: "## Open" }]));
+    },
+  );
+  assertEquals(calls, 0);
+  assertEquals(out, []);
+});
+
 Deno.test("nu: a checkpoint cut at max_tokens is an error, not a record — and no second call", async () => {
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   let calls = 0;
-  const out = await nu(
+  const out = await checkpoint(
     {
       events,
       docs: [],
@@ -281,7 +315,7 @@ Deno.test("nu: a checkpoint streams as its own kind, and its spend says what it 
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   const kinds: (string | undefined)[] = [];
   const deltas: Delta[] = [];
-  const out = await nu(
+  const out = await checkpoint(
     {
       events,
       docs: [],
@@ -305,7 +339,7 @@ Deno.test("nu: a checkpoint streams as its own kind, and its spend says what it 
 Deno.test("nu: a checkpoint is written under the agent's own prefix — what it says stays out", async () => {
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
-  const out = await nu(
+  const out = await checkpoint(
     {
       events,
       docs: [{
@@ -352,7 +386,7 @@ Deno.test("nu: a think's text streams as text — the kind belongs to the checkp
 Deno.test("nu: a checkpoint call rides the ladder, and what outlasts it is an error", async () => {
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   let calls = 0;
-  const out = await nu(
+  const out = await checkpoint(
     {
       events,
       docs: [],
@@ -374,7 +408,7 @@ Deno.test("nu: a checkpoint call rides the ladder, and what outlasts it is an er
 Deno.test("nu: an empty checkpoint is an error too — not a full re-run on every wake", async () => {
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   let calls = 0;
-  const out = await nu(
+  const out = await checkpoint(
     {
       events,
       docs: [],
@@ -443,6 +477,7 @@ Deno.test("nu: a step that calls a tool records the anchor its request carried",
   const last = (sent!.messages.at(-1)!.content as Anthropic.ContentBlockParam[]).at(-1)!;
   assert(last.type === "mid_conv_system");
   assertEquals(out[0].extra?.anchor, (last.content[0] as Anthropic.TextBlockParam).text);
+  assertEquals(out[0].extra?.consumed, "e1"); // and the horizon: the last event it read
   assertEquals(out[1].extra, undefined); // once per step, on its first event
 
   // a step that only speaks closes the turn: nothing replays it, so it records nothing

@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { buildSummary, compactionSpan, estTokens } from "./compact.ts";
+import { buildSummary, compactionSpan, estTokens, overflowed, turnOver } from "./compact.ts";
 import { DEFAULT_COMPACT_AT, DEFAULT_WINDOW_LIMIT } from "./config.ts";
 import { applySummary } from "./render.ts";
 import type {
@@ -270,38 +270,71 @@ Deno.test("span: a second checkpoint chains from the first's start, and its rang
   assert(visible.includes(m7));
 });
 
-Deno.test("span: an open tool loop is cut between steps — never inside one", () => {
-  const events: Event[] = [msg("hacé el informe", false)];
-  for (let k = 1; k <= 8; k++) events.push(...step(k));
-  const span = compactionSpan(events, SESSION, 1, 400, 1);
-  assert(span !== null);
-  const last = span.covered.at(-1)!;
-  assertEquals(last.type, "tool_result"); // a step's end
-  const kept = events.slice(events.indexOf(last) + 1);
-  assert(kept.length >= 3); // something IS kept
-  assertEquals(kept[0].type, "thinking"); // and it starts on a whole step
-  const coveredTurns = new Set(span.covered.map((e) => e.payload?.turn_id));
-  assert(kept.every((e) => !coveredTurns.has(e.payload?.turn_id))); // no step straddles the cut
-  assertEquals(span.covers[1], last.id);
+const errorEv = (error: string): Event => ({
+  id: `e${String(++n).padStart(3, "0")}`,
+  ts: "2026-07-20T10:00:00Z",
+  type: "error",
+  envelope: HERE,
+  parts: [{ type: "data", kind: "error", data: { error } }],
 });
 
-Deno.test("span: a running turn under compactTurnAt is left whole — closed turns are covered", () => {
+Deno.test("span: a running turn is never cut, whatever it weighs — not even its closed history", () => {
+  // a thinking block's signature binds everything its request held before it, and a
+  // summary lands at the head of the window: written now, it would sit under every block
+  // the turn replays on its next request (measured: `thinking_dropped … prefix_binding_
+  // mismatch` on each of them, every step to the turn's end)
   const events: Event[] = [
     msg("uno", false),
     msg("respuesta uno", true),
     msg("hacé el informe", false),
   ];
   for (let k = 1; k <= 8; k++) events.push(...step(k));
-  const span = compactionSpan(events, SESSION, 1, 0, 1_000_000);
+  assertEquals(compactionSpan(events, SESSION, 1, 0), null);
+  assertEquals(turnOver(events, SESSION), false);
+  // the moment it closes, the same window compacts — and the whole turn is closed history
+  const closed = [...events, msg("listo", true)];
+  assertEquals(turnOver(closed, SESSION), true);
+  const span = compactionSpan(closed, SESSION, 1, 0);
   assert(span !== null);
-  assertEquals(span.covered, events.slice(0, 2)); // up to the closing, not a step past it
-  // and a turn with nothing closed before it waits for its own closing
-  assertEquals(compactionSpan(events.slice(2), SESSION, 1, 0, 1_000_000), null);
+  assertEquals(span.covered.at(-1), closed.at(-1)); // through the closing
 });
 
-Deno.test("buildSummary: an open loop's checkpoint carries the tool traffic — that IS the content", async () => {
+Deno.test("span: a dead turn is covered whole, down to the row that killed it", () => {
+  const events: Event[] = [
+    msg("uno", false),
+    msg("respuesta uno", true),
+    msg("hacé el informe", false),
+  ];
+  for (let k = 1; k <= 8; k++) events.push(...step(k));
+  const dead = [...events, errorEv("overloaded")];
+  assertEquals(turnOver(dead, SESSION), true);
+  const span = compactionSpan(dead, SESSION, 1, 400); // keepRecent would keep half the chain…
+  assert(span !== null);
+  assertEquals(span.covered, dead); // …but nothing continues a dead turn: it goes whole
+  assertEquals(span.covers[1], dead.at(-1)!.id);
+  // a step still waiting for its result holds the turn open past the error, and stays out
+  const waiting = [...events, use("T9", "step 9"), errorEv("overloaded")];
+  const partial = compactionSpan(waiting, SESSION, 1, 0);
+  assert(partial !== null);
+  assert(!partial.covered.some((e) => e.payload?.turn_id === "T9"));
+});
+
+Deno.test("span: the API's ceiling is the one hard one — a refused request compacts under the threshold", () => {
+  const events: Event[] = [msg("uno", false), msg("respuesta uno", true), msg("dos", false)];
+  for (let k = 1; k <= 3; k++) events.push(...step(k));
+  const refused = [...events, errorEv("prompt is too long: 213462 tokens > 200000 maximum")];
+  assert(overflowed(refused));
+  assert(!overflowed([...events, errorEv("overloaded")]));
+  assertEquals(compactionSpan([...events, errorEv("overloaded")], SESSION, 1_000_000, 0), null);
+  const span = compactionSpan(refused, SESSION, 1_000_000, 0);
+  assert(span !== null);
+  assertEquals(span.covered, refused);
+});
+
+Deno.test("buildSummary: a dead loop's checkpoint carries the tool traffic and the error — that IS the content", async () => {
   const events: Event[] = [msg("hacé el informe", false)];
   for (let k = 1; k <= 8; k++) events.push(...step(k));
+  events.push(errorEv("prompt is too long: 213462 tokens > 200000 maximum"));
   const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
   const out = await buildSummary(
     {
@@ -310,7 +343,6 @@ Deno.test("buildSummary: an open loop's checkpoint carries the tool traffic — 
       model: "claude-x",
       compactAt: 1,
       keepRecent: 400,
-      compactTurnAt: 1,
       prompt: PROMPT,
     },
     stepping((p) => {
@@ -322,8 +354,10 @@ Deno.test("buildSummary: an open loop's checkpoint carries the tool traffic — 
   );
   assert(out !== null && out.type === "summary");
   const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
+  assertStringIncludes(prompt, "[Ana @ mind@a1] hacé el informe"); // what it was asked
   assertStringIncludes(prompt, "bash(step 1)");
   assertStringIncludes(prompt, "out 1");
+  assertStringIncludes(prompt, "[error] prompt is too long"); // and how it ended
 });
 
 Deno.test("buildSummary: a cut checkpoint is an error, not a record", async () => {

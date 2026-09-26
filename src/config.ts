@@ -104,11 +104,10 @@ export const DEFAULT_BASH_TIMEOUT_MS = 120_000; // a bash call's cap unless the 
 // comes out flat. What moves it is less world traffic reaching the window at all.
 export const DEFAULT_COMPACT_AT = 50_000;
 export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves uncovered
-// est. tokens the RUNNING turn may weigh before a checkpoint cuts into it. Under it the
-// checkpoint covers closed turns only, so a turn keeps every result it is working from; it
-// sits well past `compactAt` because a turn is bounded by the task that started it, while
-// history grows without end.
-export const DEFAULT_COMPACT_TURN_AT = 150_000;
+// A checkpoint runs only between turns, in an idle gap, so `compactAt` is a soft budget: a
+// window over it waits for the turn to end, and input never waits for a checkpoint. The
+// one hard ceiling is the API's own: a request it refuses as too long is compacted before
+// the next think, whatever the estimate says (compact.ts `overflowed`).
 export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard (§5)
 export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for its burst (§2)
 // The tick is not a knob. It is the RESOLUTION of the attention rules, not one of them:
@@ -175,7 +174,6 @@ export interface OrgConfig {
     bashTimeoutMs: number;
     compactAt: number;
     keepRecent: number;
-    compactTurnAt: number;
     windowLimit: number;
     debounceMs: number;
     database: string | null; // null ⇒ SQLite in data/log; a Postgres URL ⇒ that database
@@ -240,18 +238,13 @@ const SYSTEM: Entry[] = [
   {
     key: "compactAt",
     value: DEFAULT_COMPACT_AT,
-    doc: "est. tokens of raw event JSON (~1.8x the prompt) before a checkpoint runs",
+    doc: "est. tokens of raw event JSON (~1.8x the prompt) before a checkpoint runs, " +
+      "between turns; input never waits for one",
   },
   {
     key: "keepRecent",
     value: DEFAULT_KEEP_RECENT,
     doc: "est. tokens a checkpoint leaves uncovered",
-  },
-  {
-    key: "compactTurnAt",
-    value: DEFAULT_COMPACT_TURN_AT,
-    doc: "est. tokens the running turn may weigh before a checkpoint cuts into it; under " +
-      "it, a checkpoint covers closed turns only",
   },
   {
     key: "windowLimit",

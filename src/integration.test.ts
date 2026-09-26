@@ -1481,34 +1481,43 @@ Deno.test("recovery: a pending use with a cleanly released lock is simply run at
   );
 });
 
-Deno.test("compaction: an over-threshold window is checkpointed before the think (§5)", async () => {
+Deno.test("compaction: an over-budget window is checkpointed in the gap after the turn — never before a think (§5)", async () => {
   await scenario(
     [
       ok([{ kind: "assistant", text: "respuesta uno" }], "end_turn"),
       ok([{ kind: "assistant", text: "## checkpoint viejo" }], "end_turn"), // the checkpoint TURN
       ok([{ kind: "assistant", text: "respuesta dos" }], "end_turn"),
+      ok([{ kind: "assistant", text: "## checkpoint nuevo" }], "end_turn"), // the next gap's
     ],
     async ({ publish, read, calls }) => {
       await publish(principalMsg("uno"));
-      await waitFor(async () => (await read("message")).some((e) => e.agent !== undefined));
-      await publish(principalMsg("dos"));
-
+      // the closing's own insert is the next look: nothing owed, the window over budget,
+      // so the gap is spent on the checkpoint — no input asked for it, none waited on it
       await waitFor(async () => (await read("summary")).length === 1);
       const [sum] = await read("summary");
       assert(sum.type === "summary");
       assertEquals(JSON.stringify(sum.parts).includes("checkpoint viejo"), true);
-      // covers exactly the first closed exchange: [uno, respuesta uno]
+      // covers exactly the closed exchange: [uno, respuesta uno]
       const msgs = await read("message");
+      assertEquals(msgs.length, 2);
       assertEquals(sum.payload.covers[0], msgs[0].id);
       assertEquals(sum.payload.covers[1], msgs[1].id);
+      await new Promise((r) => setTimeout(r, 300)); // quiescence: the summary's wake idles
+      assertEquals(calls(), 2);
 
+      await publish(principalMsg("dos"));
       await waitFor(async () =>
         (await read("message")).some((e) => JSON.stringify(e.parts).includes("respuesta dos"))
       );
-      await new Promise((r) => setTimeout(r, 300)); // quiescence
-      // THREE model calls — the checkpoint being its own invocation didn't add any: reply,
-      // checkpoint (displacing a turn; its insert wakes the think), the displaced think
-      assertEquals(calls(), 3);
+      // the second exchange closes over budget too (every window is, at 1), so its gap
+      // compacts again: reply, checkpoint, reply, checkpoint — each checkpoint between turns
+      await waitFor(async () => (await read("summary")).length === 2);
+      await new Promise((r) => setTimeout(r, 300));
+      assertEquals(calls(), 4);
+      const [, next] = await read("summary");
+      assert(next.type === "summary");
+      assertEquals(next.payload.covers[0], msgs[0].id); // chained from the first's start
+      assertEquals(next.payload.covers[1], (await read("message")).at(-1)!.id);
     },
     { compactAt: 1, keepRecent: 0 },
   );

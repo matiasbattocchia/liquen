@@ -257,7 +257,7 @@ arrives through the agent's scoped subscription, already readable (§6).
 | `permission_response` | **yes** (the human moved — the settlement is now derivable) |
 | `alarm` | **yes** — a scheduled wake arriving with its note (§10) |
 | `control` | **no** — it never *starts* work; it ENDS it. The interrupt is the turn lease's: the publish that lands a `control` row in a session's room marks that room's lease (`locks.cancel`), and the store fires the holder's signal — at once in the process that landed it, within a heartbeat in any other |
-| `summary` | **yes** — a checkpoint DISPLACES a turn (§5): its insert carries the displaced think forward |
+| `summary` | **yes** — a checkpoint is a turn of its own (§5): its insert is the next look, which idles or answers what a dead turn left owed |
 | `permission_request` · `thinking` · `delta` · *(unknown)* | **no** (spectators) |
 | `error` | **no** — and this one is policy, not economy: a logged error is a PERMANENT failure until something new arrives (transient ones were already retried inside nu before one was written). `decide` says the same from the window side, via the trailing-error rule. Waking here would hot-loop a failing think with no backoff |
 
@@ -721,7 +721,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · xi (the principal's `/y`·`/n`, any surface) · the REPL · main (a lapsed ask) | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?,lapsed?}) · payload{ref_id→tool_use} |
-| `summary` | nu (the checkpoint IS the turn, §5) | leading text block (§5) | **think** (it displaced one) | parts(text) · payload{covers} |
+| `summary` | nu, in the idle gap after a turn (§5) | leading text block (§5) | look again (idle, or the think a dead turn left owed) | parts(text) · payload{covers} |
 | `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `<system kind="wake">` carrying the note | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
 | `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
 | `delta` | main (presence, §9): the mind is at work and somebody is waiting | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
@@ -1327,9 +1327,14 @@ constraint, and render derives it **from the window's shape**:
 - **Trailing chain** (after the boundary) is **welded API-faithfully** — `thinking` (replayed
   verbatim, with signature) + text + `tool_use`/`tool_result` pairs (per-use `ref_id` linkage).
   A thinking block's signature binds everything its request held before it, so a running
-  turn's requests only ever append: a step that calls a tool records the anchor its request
-  carried (`extra.anchor`, on the step's first event), and render places that anchor again
-  where it stood, ahead of the step it produced. The Anthropic transport sets the binding
+  turn's requests only ever append: a step that calls a tool records what its request
+  carried, on the step's first event — the anchor it read (`extra.anchor`), which render
+  places again where it stood, ahead of the step it produced; and the horizon it read
+  (`extra.consumed`, the closing's field on the step), so an event that landed while the
+  step's call was in flight — older than the step's own events by id, absent from the
+  request that produced them — renders after the step's group, the first request that
+  could carry it, rather than under its thinking. A checkpoint waits for the turn to end
+  for the same reason (Compaction, below). The Anthropic transport sets the binding
   explicitly (`prefix_mismatch_behavior: drop_block`, under the controls beta) and logs every
   block the API reports dropped — each one is an edit to a prefix that should not have moved.
   A directed send dispatched by a welded `tool_use` is **skipped** (its content is in the block);
@@ -1563,38 +1568,51 @@ compaction proper is only pi's **checkpoint layer**:
 - **The `summary` event** = pi's `CompactionEntry` in log clothes: agent-authored,
   `payload.covers: [fromId, toId]`, appended like everything else. The log stays append-only;
   compaction is just another event.
-- **Trigger — nu, and the checkpoint IS the turn.** nu is the layer that formats the
-  window, so nu is the one that knows what the turn will weigh: when the **visible**
-  (summary-applied) window exceeds `compactAt` (default 50K est. tokens, chars/4 over the
-  RAW events — roughly 1.8x the prompt they render to, since the estimate counts ids,
-  envelopes and the tool traffic the closed region drops; our checkpoint is non-destructive,
-  the log keeps everything and `search` reads it back), the turn nu produces is not a think
-  but **the checkpoint itself** — one model call (no tools) over the closed region,
-  keeping the most recent `keepRecent` (~20K) uncovered. The summary commits as the batch
-  (publishAndRelease), and **its own insert wakes the think it displaced** — the log as
-  continuation engine, applied to maintenance. This keeps the invariant *one invocation =
-  at most one model call* (edge wall-clocks), and it is why `summary` is the one
-  self-authored non-message that passes `relevant` (§2). `decide` needs no compact arm:
-  the displaced work is still owed, so the follow-up derivation says think all by itself —
-  and a future user-*commanded* compact needs nothing either (nothing owed after it ⇒
-  quiescence; a `meta` marker can distinguish the two if it ever matters). Measuring the
-  VISIBLE window matters: the raw window stays heavy after a checkpoint (the read is
-  windowLimit-capped), so a raw estimate would re-fire on the next invocation — a
-  compact-forever livelock. The cut falls where no tool step straddles it: anywhere in the
-  closed region, and — when the running turn alone outweighs `compactTurnAt` (default
-  150K) — between two of its steps, after a tool outcome, never after unanswered input.
-  Under that ceiling the running turn is left whole: what its tools answered is what it is
-  working from, and a checkpoint over a result it has not finished with sends it to fetch
-  that result again. The checkpoint then covers closed turns only, or none, and waits for
-  the turn to close. The step rule is pi's never-cut-a-tool-result rule, structurally: a step (the events sharing a call's
-  `turn_id`) replays as one API turn, and stays whole on either side of the cut. The
-  transcript the checkpoint works from carries the tool calls and their outcomes for the
-  same reason — inside a loop they ARE the content. A checkpoint that cannot be written is
-  an error event, not a record — the model wrote it badly (cut at the output ceiling, or
-  empty), or the call never completed. The turn ends on it, unstamped, and the next input
-  retries: the window stays uncovered whichever it was, a turn taken over it would cost
-  more and say less, and a checkpoint failing for a standing reason must not buy a second
-  call on every wake in silence.
+- **Trigger — the idle gap after a turn, and the checkpoint IS a turn.** `decide` has a
+  fourth verdict, `compact`: nothing is owed — the turn just closed, or the error or cancel
+  that ended it is the last row — and the **visible** (summary-applied) window exceeds
+  `compactAt` (default 50K est. tokens, chars/4 over the RAW events — roughly 1.8x the
+  prompt they render to, since the estimate counts ids, envelopes and the tool traffic the
+  closed region drops; our checkpoint is non-destructive, the log keeps everything and
+  `search` reads it back). The closing's own insert is that look (the self-poke, §2), so
+  the checkpoint runs the moment the turn ends, in the gap: **one model call (no tools)
+  over the closed region**, keeping the most recent `keepRecent` (~20K) uncovered, its
+  summary committed as the batch (publishAndRelease). Its insert wakes the next look —
+  `summary` is the one self-authored non-message that passes `relevant` (§2) — which finds
+  the visible window light and idles, or thinks over the record when the input a dead
+  turn was answering is still owed. This keeps the invariant *one invocation = at most one
+  model call* (edge wall-clocks). Measuring the VISIBLE window matters: the raw window
+  stays heavy after a checkpoint (the read is windowLimit-capped), so a raw estimate would
+  re-fire on the next invocation — a compact-forever livelock.
+  **Never while a turn runs, and never in front of input.** A thinking block's signature
+  binds everything its request held before it, and a summary lands at the head of the
+  window: written while a turn runs — even over closed history only — it sits under every
+  block the turn replays, and the API drops them all, on every step to the turn's end
+  (measured 2026-09-26: nine blocks a request, for the last hundred seconds of a five-minute
+  turn). So the span is null while the trailing chain is live, whatever the window weighs,
+  and `compactAt` is a soft budget: a window over it waits for the turn to end. And the
+  verdict comes after every other derivation — pending calls, a continuation, an unclosed
+  chain, unanswered news — so input never waits behind a checkpoint: a wish arriving over a
+  heavy window is answered first, and the gap after that answer compacts. The one hard
+  ceiling is the API's own: a request refused as too long ("prompt is too long", the error
+  as the last row) makes the next look `compact` whatever the estimate says — the estimate
+  is chars/4 and blind to inlined media, the API's count is the one that binds — and the
+  summary's insert then wakes the think over the record. A dead turn (an error or a cancel
+  as its last row) is covered WHOLE, its chain and the input it was answering: nothing
+  continues it, so its results are not being worked from, a summary under part of its
+  chain is the prefix edit this layer exists to avoid, and the record carries what it was
+  asked, what its tools found and how it ended, which is what the next think answers from.
+  The cut falls where no tool step straddles it — pi's never-cut-a-tool-result rule,
+  structurally: a step (the events sharing a call's `turn_id`) replays as one API turn, and
+  stays whole on either side of the cut — and never after unanswered input a closing left
+  unconsumed: a world message is INPUT, and a checkpoint is a record, not an answer. The
+  transcript the checkpoint works from carries the tool calls, their outcomes and the
+  error that ended a dead turn for the same reason — inside a loop they ARE the content. A
+  checkpoint that cannot be written is an error event, not a record — the model wrote it
+  badly (cut at the output ceiling, or empty), or the call never completed. The turn ends
+  on it, unstamped, and the next look retries: the window stays uncovered whichever it
+  was, a turn taken over it would cost more and say less, and a checkpoint failing for a
+  standing reason must not buy a second call on every wake in silence.
 - **One call, attempted one way.** nu owns the retry ladder and the stream, and hands
   compaction a *step-caller* rather than the transport: the checkpoint is retried over
   weather exactly as a think is (`RETRY_DELAYS_MS`, stopping the moment a cancel lands),
@@ -2822,7 +2840,7 @@ homes, everything else funneled to the deepest function that needs it (main → 
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
 the store's tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
 tuning, every deployment works on the defaults: bashTimeoutMs ·
-compactAt · keepRecent · compactTurnAt · windowLimit · debounceMs · database — where the
+compactAt · keepRecent · windowLimit · debounceMs · database — where the
 store lives: null is SQLite in `data/log`, a Postgres URL is a schema of that database,
 its password in `PGPASSWORD`), `organization`
 (this deployment's identity: timezone · locale ·
