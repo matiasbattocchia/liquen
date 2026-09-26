@@ -672,6 +672,24 @@ export function wantedMedia(window: Event[], session: Session): string[] {
   return wanted;
 }
 
+/** The attachment bytes an event carries itself (§5): a tool_result pins each inlineable
+ *  attachment's block under its uri in `extra.media` the moment it lands, because the
+ *  path is the agent's workspace and moves on. Two results naming one path, before and
+ *  after a rewrite, each keep the picture the model saw; the closing that makes them
+ *  history sheds the bytes (`PublishOptions.shed`). Empty for everything else. */
+export function pinnedMedia(e: Event): Record<string, MediaBlock> {
+  const m = e.extra?.media;
+  if (!m || typeof m !== "object" || Array.isArray(m)) return {};
+  const out: Record<string, MediaBlock> = {};
+  for (const [uri, b] of Object.entries(m as Record<string, unknown>)) {
+    if (
+      b && typeof b === "object" && typeof (b as MediaBlock).media_type === "string" &&
+      typeof (b as MediaBlock).data === "string"
+    ) out[uri] = b as MediaBlock;
+  }
+  return out;
+}
+
 function renderMessages(
   { events: window, session, now, zone, ambient, media, roster, connections }: RenderInput,
 ): MessageParam[] {
@@ -719,7 +737,9 @@ function renderMessages(
         continue;
       }
       if (!inlineBudget.has(p.file.uri)) continue;
-      const b = media?.get(p.file.uri);
+      // the bytes pinned on the event first (a tool's attachment: what the model saw when
+      // it asked, §5), the port's table for the rest (received media, content-named)
+      const b = pinnedMedia(e)[p.file.uri] ?? media?.get(p.file.uri);
       if (!b) continue; // not inlineable / over the cap / gone — the marker stands alone
       blocks.push(
         b.media_type === "application/pdf"

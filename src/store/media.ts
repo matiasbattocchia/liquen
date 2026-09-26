@@ -267,12 +267,18 @@ export interface Files {
   /** Throws when the reference does not exist or points outside what the agent may
    *  attach — the tool_result carries that back as the error it is. */
   resolve(ref: string): Promise<FilePart>;
+  /** The bytes a just-resolved part holds NOW, as the block it inlines as — null when it
+   *  can't inline (kind, cap, gone). A tool's attachment is a snapshot of a file the agent
+   *  keeps rewriting, so its result PINS this (§5): what the model saw stays what it saw,
+   *  whatever the path holds by the next step. */
+  snapshot(part: FilePart): Promise<MediaBlock | null>;
 }
 
 /** The local adapter: this filesystem, under a scope — or, without one, whatever the
  *  process can read. */
 export const localFiles = (scope?: FileScope): Files => ({
   resolve: (ref) => filePartOf(ref, scope),
+  snapshot: (part) => loadMediaBlock(part.file.uri),
 });
 
 /** A file reference → a `FilePart` (the send side). A local path (bare or `file://`)
@@ -343,8 +349,10 @@ export interface MediaBlock {
  *  an adapter over a blob store answers the same question under its own uri scheme. */
 export type MediaLoader = (uri: string) => Promise<MediaBlock | null>;
 
-/** A loader remembered across calls: a stored file is content-named, so what a uri holds
- *  never changes, and a tool loop renders the same trailing attachments on every step.
+/** A loader remembered across calls: a RECEIVED file is content-named, so what its uri
+ *  holds never changes, and a tool loop renders the same trailing attachments on every
+ *  step. A tool's attachment is a workspace path that does change — its bytes ride on the
+ *  result (`extra.media`, pinned by `Files.snapshot`), so no loader is asked for them.
  *  Bounded by the raw bytes held — the oldest entry goes first. A miss is not remembered:
  *  the file may still be on its way. */
 export function memoizedLoader(load: MediaLoader, capBytes = MEDIA_MEMO_BYTES): MediaLoader {

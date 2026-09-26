@@ -1181,6 +1181,46 @@ Deno.test("media: an external link renders a url-source block — no bytes, no b
   assertStringIncludes(JSON.stringify(messages), 'path=\\"https://example.com/pics/cat.jpg\\"');
 });
 
+Deno.test("media: a tool_result's pinned bytes win over the table — two reads of one path, each its own picture (§5)", () => {
+  const t = "2026-07-21T10:00:00Z";
+  const dot = {
+    type: "file",
+    kind: "image",
+    file: { mime_type: "image/png", uri: "file:///w/dot.png", name: "dot.png", size: 3 },
+  } as const;
+  const first = toolResultE("r1", t, "turn1", "[media image/png · 3 bytes]", "u1");
+  first.parts.push({ ...dot });
+  first.extra = { media: { "file:///w/dot.png": { media_type: "image/png", data: "v1v1" } } };
+  const second = toolResultE("r2", t, "turn2", "[media image/png · 3 bytes]", "u2");
+  second.parts.push({ ...dot });
+  second.extra = { media: { "file:///w/dot.png": { media_type: "image/png", data: "v2v2" } } };
+  // a result from before pinning (no extra.media) still reads the table
+  const third = toolResultE("r3", t, "turn3", "[media image/png · 3 bytes]", "u3");
+  third.parts.push({ ...dot });
+  const { messages } = render({
+    events: [
+      mindMsg("e1", t, "mira la imagen", false),
+      toolUseE("u1", t, "turn1", "bash", { command: "aread dot.png" }),
+      first,
+      toolUseE("u2", t, "turn2", "bash", { command: "aread dot.png" }),
+      second,
+      toolUseE("u3", t, "turn3", "bash", { command: "aread dot.png" }),
+      third,
+    ],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t,
+    media: new Map([["file:///w/dot.png", { media_type: "image/png", data: "now" }]]),
+  });
+  const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+  const pictures = blocks.filter((b) => b.type === "tool_result").map((b) =>
+    ((b as Anthropic.ToolResultBlockParam).content as { source: { data: string } }[])[1].source
+      .data
+  );
+  assertEquals(pictures, ["v1v1", "v2v2", "now"]);
+});
+
 Deno.test("media: a tool_result's attachment renders INSIDE its block — aread answers with the picture", () => {
   const t = "2026-07-21T10:00:00Z";
   const use = toolUseE("u1", t, "turn1", "bash", { command: "aread dot.png" });

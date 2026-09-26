@@ -97,6 +97,23 @@ Deno.test("loadMediaBlock: images/PDFs inline as base64; other kinds and missing
   }
 });
 
+Deno.test("localFiles.snapshot: the part's bytes NOW, as its block — nothing for what can't inline", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const files = localFiles();
+    const img = `${root}/dot.png`;
+    await Deno.writeFile(img, new Uint8Array([1, 2, 3]));
+    const part = await files.resolve(img);
+    assertEquals(await files.snapshot(part), { media_type: "image/png", data: "AQID" });
+    await Deno.writeFile(img, new Uint8Array([4])); // the same part, asked again: what is there now
+    assertEquals((await files.snapshot(part))?.data, "BA==");
+    await Deno.writeTextFile(`${root}/a.txt`, "x");
+    assertEquals(await files.snapshot(await files.resolve(`${root}/a.txt`)), null);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("sniffMime/looksBinary: magic bytes decide when the extension says nothing", async () => {
   const { looksBinary, sniffMime } = await import("./media.ts");
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

@@ -204,6 +204,10 @@ export interface PublishOptions {
    *  before anything lands — one refused draft aborts the batch, as Postgres aborts the
    *  INSERT. The refusal names the draft's type. */
   check?: Law;
+  /** SHED (§5 media): in the same transaction, drop the attachment bytes this session's
+   *  tool results pinned (`extra.media`) — the closing being published makes them
+   *  history, and history renders markers only. The rows keep everything else. */
+  shed?: { agentId: string; sessionId: string };
 }
 export interface Reader {
   /** QUERY. A point-in-time slice in append order. The escape hatch beyond a pushed event. */
@@ -474,6 +478,13 @@ export async function openLog(
      WHERE id = ?3`,
   );
   const drop = db.prepare("DELETE FROM events WHERE id = ?");
+  // the pinned attachment bytes of a session's tool results (`PublishOptions.shed`, §5):
+  // the key alone goes, the row stays what it was
+  const shed = db.prepare(
+    `UPDATE events SET extra = json_remove(extra, '$.media'), updated_at = ?1
+     WHERE agent_id = ?2 AND session_id = ?3 AND type = 'tool_result'
+       AND json_type(extra, '$.media') IS NOT NULL`,
+  );
   // a law over ONE event that is not (yet) a row: the columns it reads, bound as a row
   // named the way the law names the table
   const trials = new Map<string, ReturnType<typeof db.prepare>>();
@@ -611,6 +622,8 @@ export async function openLog(
           }
         }
       }
+      // shed before the batch lands, so the closing's own rows are never touched
+      if (opts.shed !== undefined) shed.run(now, opts.shed.agentId, opts.shed.sessionId);
       const cuts: string[] = [];
       const stored = drafts.map((e) => write(e, now, cuts)).filter((e): e is Event => e !== null);
       if (lease !== undefined) unlock.run(lease.name, lease.born);

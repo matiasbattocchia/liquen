@@ -4044,3 +4044,20 @@ row under `skills/` is the org's say on that folder, so deleting every row of it
 the set again. `liquen init` seeds files (a starter catalog says so); boot, `liquen agent`
 and a connector's door seed wherever the org's docs are. The Postgres suite seeds the
 cascade into a table and lists it back as the file test does.
+
+### A tool's attachment is pinned on its result (2026-09-26) — LANDED
+
+Found by driving the disquería build: the builder fixed a sprite, `aread` the same path
+and saw the old picture, then spent 45 s suspecting a cache and renaming files. The
+memoized loader keyed by uri assumed content-named files; a tool's attachment is a
+workspace path that changes under it, and the two ways it could fail — the memo hit
+(the old picture answers the new read) and the memo miss (every earlier result silently
+shows the new one, and the prefix moves) — both rewrite what the model saw. On the edge
+the memo does not exist at all, so the fix could not be a better cache. `Files.snapshot
+(part)` reads the bytes the moment a tool attaches them and xi pins the block on the
+`tool_result` (`extra.media`, keyed by uri); render (`pinnedMedia`) takes a result's
+picture off the result, before the port's table, so the port is never asked for a tool's
+path. The closing that turns the cycle into history sheds the bytes in the same
+transaction (`PublishOptions.shed`, both adapters): the rows keep their markers, the
+window read stays light. Received media is untouched — content-named on the shelf, where
+the memo is right.

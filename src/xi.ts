@@ -78,6 +78,7 @@ import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
 import {
   bookEl,
   cancelled,
+  closingBoundary,
   hhmm,
   type HitsOpts,
   isCancelled,
@@ -86,6 +87,7 @@ import {
   ownComplex,
   ownSide,
   ownVoice,
+  pinnedMedia,
   renderHits,
   roomNames,
   type Roster,
@@ -1004,7 +1006,14 @@ export async function xi(
     throw err;
   }
   try {
-    const landed = await ports.log.publishAndRelease(last, lock.lease());
+    // a closing makes every tool result before it history — markers from here on (§5) —
+    // so the bytes their results pinned are shed in the same transaction
+    const closes = closingBoundary([...events, ...last as Event[]], session) >= events.length;
+    const landed = await ports.log.publishAndRelease(
+      last,
+      lock.lease(),
+      closes ? { shed: { agentId: session.agentId, sessionId: session.id } } : undefined,
+    );
     // the verdict the turn's own end implies, disclosed here: a closing message pokes the
     // next invocation, which discloses again, but a terminal error or a cancel wakes
     // nothing on purpose (`relevant`), and the idle they leave would otherwise go unsaid
@@ -1127,11 +1136,42 @@ async function mediaFor(
 ): Promise<Map<string, MediaBlock>> {
   const table = new Map<string, MediaBlock>();
   if (!load) return table;
+  // a tool's attachment carries its own bytes (`pinnedMedia`, §5): render reads them off
+  // the event, so the port is not asked — and could not answer for what the path held then
+  const pinned = new Set(events.flatMap((e) => Object.keys(pinnedMedia(e))));
   for (const uri of wantedMedia(events, session)) {
+    if (pinned.has(uri)) continue;
     const b = await load(uri);
     if (b) table.set(uri, b);
   }
   return table;
+}
+
+/** A tool outcome's attachments (§5 media), resolved through the files port: the parts
+ *  the result carries, the bytes PINNED per uri for the inlineable ones — read now, while
+ *  the file is what the tool just made, since the next step may rewrite the path — and
+ *  the refusals. A path that vanished mid-turn drops; one outside the agent's ground is
+ *  refused, and the refusal is SAID in the output, because the model asked for bytes and
+ *  must learn why none came. */
+export async function attachmentsOf(
+  files: string[],
+  port: Files,
+): Promise<{ parts: FilePart[]; pinned: Record<string, MediaBlock>; refused: string[] }> {
+  const parts: FilePart[] = [];
+  const pinned: Record<string, MediaBlock> = {};
+  const refused: string[] = [];
+  for (const f of files) {
+    try {
+      const part = await port.resolve(f);
+      parts.push(part);
+      const block = await port.snapshot(part);
+      if (block) pinned[part.file.uri] = block;
+    } catch (err) {
+      if (err instanceof Deno.errors.NotFound) continue;
+      refused.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  return { parts, pinned, refused };
 }
 
 /** The anchor's standing lists (§5): what is still in the air — background jobs, surfaces
@@ -1372,19 +1412,7 @@ async function act(
     call?: string,
   ): Promise<Draft<ToolResultEvent>> => {
     const { output: raw, files } = isOutcome(outcome) ? outcome : { output: outcome, files: [] };
-    // the tool's attachments (§5 media): a path that vanished mid-turn drops; one outside
-    // the agent's ground is refused, and the refusal is SAID in the output — the model
-    // asked for bytes and must learn why none came
-    const parts: FilePart[] = [];
-    const refused: string[] = [];
-    for (const f of files) {
-      try {
-        parts.push(await (ports.files ?? localFiles()).resolve(f));
-      } catch (err) {
-        if (err instanceof Deno.errors.NotFound) continue;
-        refused.push(err instanceof Error ? err.message : String(err));
-      }
-    }
+    const { parts, pinned, refused } = await attachmentsOf(files, ports.files ?? localFiles());
     const output = refused.length && typeof raw === "string"
       ? `${raw}${raw ? "\n" : ""}${refused.map((r) => `[attachment refused: ${r}]`).join("\n")}`
       : raw;
@@ -1407,6 +1435,7 @@ async function act(
         },
         ...parts,
       ],
+      ...(Object.keys(pinned).length ? { extra: { media: pinned } } : {}),
     };
   };
 

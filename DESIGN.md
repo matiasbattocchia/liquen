@@ -1394,6 +1394,18 @@ per-request budget (12MB raw, NEWEST first; url blocks are budget-free) — a lo
 full of images carries only its trailing burst as bytes, and each closing collapses them
 back to markers (requests get LIGHTER after an answer, like tool pairs).
 
+A tool's attachment is not a received file: its uri is a workspace path the agent keeps
+rewriting (`aread shot.png` after every fix), so the path cannot stand for the bytes the
+model saw. The result PINS them — `Files.snapshot` reads the file the moment it is
+attached, and the block rides on the event (`extra.media`, keyed by uri). Render takes a
+result's picture off the result itself, never from a loader; two reads of one path in
+one cycle each keep their own picture, and a step re-sends exactly what the earlier step
+sent (the prefix holds, the cache holds, the evidence holds). The closing that makes
+them history sheds the bytes in the same transaction (`PublishOptions.shed`): the rows
+keep their markers, and a window read never carries a closed cycle's pictures. Received
+media stays content-named on the shelf, where a uri IS its bytes and a loader may be
+memoized.
+
 Dispatch is per-connector capability: Slack uploads local files via the `files.uploadV2`
 flow with the text as the share comment, and external links join the text as lines
 (Slack's own idiom — the client unfurls them); WhatsApp (future) passes links natively.

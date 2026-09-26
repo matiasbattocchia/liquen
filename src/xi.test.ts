@@ -3,6 +3,7 @@ import {
   aboutOf,
   type AgentConfig,
   anchored,
+  attachmentsOf,
   decide,
   gateOf,
   parseVerdict,
@@ -15,6 +16,7 @@ import {
   type XiPorts,
 } from "./xi.ts";
 import type { Envelope, Event, Session, ToolUseEvent } from "./types.ts";
+import { localFiles } from "./store/media.ts";
 
 const MIND = "mind@a1"; // the session's own conversation (§4)
 const SESSION: Session = { id: "mind", agentId: "a1", conversation: MIND };
@@ -747,6 +749,31 @@ Deno.test("anchored: the window is the limit PLUS whatever shares the floor's bu
   const kept = anchored(trickle(12), 4);
   assertEquals(kept.length, 6); // :30 … :55 — never fewer than the limit
   assertEquals(kept.at(-1)!.id, "w011"); // and the newest is always kept
+});
+
+/* ── attachmentsOf: a tool's picture is pinned the moment it is attached (§5) ── */
+
+Deno.test("attachmentsOf: the bytes ride on the result — a rewrite of the path leaves the earlier read its picture", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const shot = `${root}/shot.png`;
+    await Deno.writeFile(shot, new Uint8Array([1, 2, 3]));
+    const first = await attachmentsOf([shot], localFiles());
+    await Deno.writeFile(shot, new Uint8Array([9, 9, 9])); // the fix: same path, new bytes
+    const second = await attachmentsOf([shot], localFiles());
+    const uri = first.parts[0].file.uri;
+    assertEquals(second.parts[0].file.uri, uri); // one path, one uri…
+    assertEquals(first.pinned[uri].data, "AQID"); // …two pictures, each the one it saw
+    assertEquals(second.pinned[uri].data, "CQkJ");
+    // what can't inline pins nothing, and a vanished path is no attachment at all
+    await Deno.writeTextFile(`${root}/notes.txt`, "hola");
+    const text = await attachmentsOf([`${root}/notes.txt`, `${root}/gone.png`], localFiles());
+    assertEquals(text.parts.length, 1);
+    assertEquals(text.pinned, {});
+    assertEquals(text.refused, []);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 });
 
 /* ── specsOf: the offer is config's to shape ──────────────────────────── */
