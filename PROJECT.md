@@ -4094,3 +4094,16 @@ path. The closing that turns the cycle into history sheds the bytes in the same
 transaction (`PublishOptions.shed`, both adapters): the rows keep their markers, the
 window read stays light. Received media is untouched — content-named on the shelf, where
 the memo is right.
+
+### A daily quota is not weather, and a refusal keeps its words (2026-09-27) — LANDED
+
+Found in a chiche run with a child: the builder (`gemini-3.8-flash`, a free-tier key)
+used up its 20 requests per day mid-build. Each wish then sat 123 s and 132 s with no event —
+the Interactions client's own retries on a 429 (5 requests, 8 s apart, measured on a
+local server) under nu's ladder (3 attempts, 5 s and 20 s) — and ended in `429 API error
+occurred: {"httpMeta":…}`, which told the voice nothing, so it went on promising the game.
+The API sends a refusal as an event stream (`event: error`, `data: {"error":{…}}`) the
+SDK does not parse; `explained` in the Google transport reads the server's words from the
+raw body, and `retryable` gives up at once on a quota counted per day (the API says "limit:
+20 requests per day on Free Tier", measured). What stays: the SDK's own 32 s before the
+error reaches nu, since it retries on the status alone.

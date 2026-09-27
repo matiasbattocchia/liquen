@@ -45,8 +45,9 @@ import { type Effort, type ModelTransport, mu, type StepInput, type StepResult }
 /** Re-exported so the layer above talks to nu, not past it (main → xi → nu → mu). */
 export type { ModelTransport };
 
-/** Slow OUTER retries for a failed model step, after the SDK client's own fast ones (2×,
- *  backoff + jitter, honoring retry-after on 429/5xx). This layer covers persistent
+/** Slow OUTER retries for a failed model step, after the SDK client's own (Anthropic's: 2×,
+ *  backoff + jitter, honoring retry-after on 429/5xx; Google's Interactions client, on a
+ *  429: 4× more, 8 s apart, measured). This layer covers persistent
  *  failure — API weather, the same for every deployment — so it is a constant, not a knob
  *  (§9). The sleeps are wall time a turn spends holding its lease, which the heartbeat
  *  covers. */
@@ -54,8 +55,11 @@ export const RETRY_DELAYS_MS = [5_000, 20_000];
 
 /** Which failures the slow retries cover: weather — a rate limit, a server-side error, a
  *  timeout, a conflict, or a dropped connection (no status at all). A 4xx is the request's
- *  own fault, and the same request fails the same way however often it is sent. */
-export function retryable(status: number | undefined): boolean {
+ *  own fault, and the same request fails the same way however often it is sent. So is a
+ *  quota counted per day, whatever its status: refused once, it is refused until the next
+ *  day, and its error says so ("per day", or a quota id with "PerDay"). */
+export function retryable(status: number | undefined, error = ""): boolean {
+  if (/per ?day/i.test(error)) return false;
   return status === undefined || status === 408 || status === 409 || status === 429 ||
     status >= 500;
 }
@@ -162,7 +166,7 @@ function turnOf(input: TurnInput, transport: ModelTransport) {
     for (let i = 0; i <= delays.length; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, delays[i - 1]));
       res = await mu(step, transport, stream);
-      if (input.signal?.aborted || res.ok || !retryable(res.status)) break;
+      if (input.signal?.aborted || res.ok || !retryable(res.status, res.error)) break;
     }
     return res;
   };

@@ -132,12 +132,12 @@ const WORLD: Event = {
   parts: [{ type: "text", kind: "text", text: "algo" }],
 };
 
-const failing = (status?: number) => {
+const failing = (status?: number, message = "model said no") => {
   let calls = 0;
   return {
     transport: () => {
       calls++;
-      return Promise.reject(Object.assign(new Error("model said no"), status ? { status } : {}));
+      return Promise.reject(Object.assign(new Error(message), status ? { status } : {}));
     },
     calls: () => calls,
   };
@@ -164,6 +164,24 @@ Deno.test("nu: weather is retried — 429, 5xx and a connection failure get the 
       f.transport,
     );
     assertEquals(f.calls(), 3, `status ${status}`);
+  }
+});
+
+Deno.test("nu: a quota counted per day is not weather — one call, and its words in the error", async () => {
+  for (
+    const message of [
+      "429 Rate limit exceeded for model m (limit: 20 requests per day on Free Tier).",
+      "429 Quota exceeded (GenerateRequestsPerDayPerProjectPerModel-FreeTier)",
+    ]
+  ) {
+    const f = failing(429, message);
+    const out = await nu(
+      { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
+      f.transport,
+    );
+    assertEquals(f.calls(), 1, message);
+    assert(out[0].type === "error");
+    assert(JSON.stringify(out[0].parts).includes(message.slice(4, 30)), "the server's words");
   }
 });
 

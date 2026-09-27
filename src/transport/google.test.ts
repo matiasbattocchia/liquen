@@ -1,6 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
-import { googleClient, googleTransport } from "./google.ts";
+import { explained, googleClient, googleTransport } from "./google.ts";
 import { mu } from "../mu.ts";
 
 const KEY = Deno.env.get("GEMINI_API_KEY");
@@ -126,4 +126,33 @@ Deno.test({
       );
     }
   },
+});
+
+// Offline: the body is the one the API sent for a 429 (a free tier's zero quota), 2026-09-27.
+const REFUSED = 'event: error\ndata: {"error":{"message":"Rate limit exceeded for model ' +
+  "gemini-3.1-pro (limit: 0 input tokens per minute on Free Tier). Please upgrade your tier " +
+  'at https://ai.dev/rate-limit.","code":"rate_limit_exceeded"},"event_type":"error"}\n';
+
+Deno.test("google: a refusal sent as an event stream keeps its status and the server's words", () => {
+  const sdk = Object.assign(
+    new Error('429 API error occurred: {"httpMeta":{"response":{},"request":{}}}'),
+    { status: 429, body: REFUSED },
+  );
+  const e = explained(sdk) as Error & { status: number };
+  assertEquals(e.status, 429);
+  assertEquals(
+    e.message,
+    "429 Rate limit exceeded for model gemini-3.1-pro (limit: 0 input tokens per minute on " +
+      "Free Tier). Please upgrade your tier at https://ai.dev/rate-limit.",
+  );
+});
+
+Deno.test("google: an error the SDK could read, or with no status, passes through as it is", () => {
+  const read = Object.assign(new Error("404 Model 'x' not found."), {
+    status: 404,
+    body: '{"error":{"message":"Model \'x\' not found.","code":"not_found"}}',
+  });
+  assertEquals(explained(read), read);
+  const dropped = new TypeError("fetch failed");
+  assertEquals(explained(dropped), dropped);
 });
