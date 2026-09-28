@@ -1118,11 +1118,12 @@ The 3×2 grid, each cell real and distinct:
   the CLI prints the manifest prefill link (app creation and app-level tokens have no
   public API; the link is the automation ceiling) and takes what the console shows, the
   OAuth client (`slack:app:<id>`), its signing secret, the xapp socket carrier
-  (`slack:socket:<app id>`), the public redirect URI, and with `--bot`/`--user` the tokens
-  the install issued (`slack:<team>:org`, the dev's own leg). `auth.test` resolves the
-  workspace (a token string never identifies one) before the map writes. A paste serves
-  whoever is at the terminal; `user` serves a member who is not, through the OAuth handler
-  mounted for one sign-in at the app's registered https URI — the link carries the agent
+  (`slack:socket:<app id>`), and with `--bot`/`--user` the tokens the install issued
+  (`slack:<team>:org`, the dev's own leg). `auth.test` resolves the workspace (a token
+  string never identifies one) before the map writes. A paste serves whoever is at the
+  terminal; `user` serves a member who is not, through the OAuth handler mounted for one
+  sign-in at the org's public door (`<edge.publicUrl>/slack/oauth/callback`, which the
+  manifest registers) — the link carries the agent
   name the way Google's does, Slack's verified `authed_user.id` is what the terminal
   reports against it, and the grant lands through the same `landSlackUser` a paste lands
   through. Only user scopes are asked there: the bot is the org's, from the install. Facts
@@ -2571,7 +2572,10 @@ queued) under main's ticker or a `pg_cron` job, and the named-session routing (`
 under main's raw-log subscription or the trigger — and **xi/nu/mu + the connectors become
 functions** — `(Request) => Response` with injected ports, which the connectors already are
 and which xi is one adapter-swap away from (`log` → Postgres, `lock` → an advisory lock or
-`locks` row). **The exec plane is one provider** (`Sandbox`, `src/sandbox.ts`):
+`locks` row). The platform's function router is the edge there: `edge.publicUrl` is the
+functions base (`https://<ref>.supabase.co/functions/v1`), each connector one function
+named for its service, and the address grammar (§9, `/<service>/ingest`,
+`/<service>/oauth/callback`) holds byte for byte with nothing forwarding at all. **The exec plane is one provider** (`Sandbox`, `src/sandbox.ts`):
 `forAgent(id).session(sid)` is a session's shell and file scope, and the egress proxy
 travels inside it because it exists for bash — the local provider starts it, a remote
 sandbox brings its own, and a host with no exec plane has neither. **The runner is a
@@ -3001,6 +3005,25 @@ loudly, the same law as an unknown config key.
   when it is not (`declared`, src/connect/declare.ts). The bind is the test, so only a
   RUNNING sibling moves a port; two orgs installed and never run together still meet at the
   boot that runs them both, where the failing message is the right one.
+- **One public door, and the tunnel is nobody's business.** Every address a service is
+  handed hangs off one base by path — `<edge.publicUrl>/<service>/ingest` is where it
+  pushes, `<edge.publicUrl>/<service>/oauth/callback` where its sign-in returns
+  (`ingestAddress` · `callbackAddress`, src/edge.ts) — so the org asks one thing of
+  whatever puts it on the internet: publish `edge.port` at that https address. A named
+  tunnel, a host's reverse proxy, a cloud's function router each do exactly that, and the
+  harness knows none of them by name; `edge.tunnel` is an argv `liquen start` keeps alive
+  beside the org for the one that runs here. Behind the port stands the edge process, one
+  more child under a `publicUrl`: it forwards each path to the port the service's own spec
+  declares, an ingest handed the path under its root, a door the path as it came, and
+  answers 502 naming the port when nothing is there. The doors DERIVE the address rather
+  than ask for it — the portal guides print it, Slack's manifest and GitHub's form carry it
+  — and check it from the internet in while a human is there to read the answer: every
+  ingest names itself to a `GET /`, so the fetched string says whether the tunnel is up,
+  aimed at this port and in front of this org. A subscription that records an address
+  (Teams) is remade when the address changes. With no `publicUrl` the org is reached on
+  localhost only: an ingest at its own port, a sign-in on the loopback callback, and what
+  needs the internet to dial in — Graph's push, a member's Slack sign-in, a GitHub webhook
+  short of `gh webhook forward` — waits for the address to exist, said by the door.
 - **A crash comes back, a refusal does not.** `entry` picks the exit code by the same rule
   it picks the message: an `Error` the program modeled is a refusal and exits `REFUSAL`
   (2), the runtime's own is a fault and exits 1. The supervisor reads that code (`comesBack`, src/start.ts): a

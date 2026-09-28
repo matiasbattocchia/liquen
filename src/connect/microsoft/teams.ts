@@ -11,15 +11,18 @@
  * minute, every grant, one subscription over all the member's chats
  * (`/users/<oid>/chats/getAllMessages`) and one per channel of every team the member is
  * in — created when absent, renewed inside its last day, recorded on the grant
- * (`extra.teams_sub`, keyed by the resource path, with the id, the expiry and the secret
- * the notices must echo). A channel subscription is one per channel for the whole app:
- * the first grant to reach it holds it and the others meet a 409, which is not a failure.
- * The lifecycle notices ride the same endpoint: a reauthorization renews, a removal drops
- * the record so the next sweep recreates, a miss is said on stderr.
+ * (`extra.teams_sub`, keyed by the resource path, with the id, the expiry, the secret the
+ * notices must echo and the address it was made for). A channel subscription is one per
+ * channel for the whole app: the first grant to reach it holds it and the others meet a
+ * 409, which is not a failure. The lifecycle notices ride the same endpoint: a
+ * reauthorization renews, a removal drops the record so the next sweep recreates, a miss
+ * is said on stderr.
  *
- * Graph must reach the endpoint over public HTTPS, so `connections.microsoft.notificationUrl`
- * is where it dials — the org's tunnel or its edge — and the ingest binds `ingestPort`
- * behind it. No URL declared means no subscriptions: the dispatch still runs, so the log's
+ * Graph must reach the endpoint over public HTTPS, so it dials the org's public door,
+ * `<edge.publicUrl>/microsoft/ingest` (edge.ts), and the ingest binds `ingestPort` behind
+ * it. A subscription is Graph's record of that address, so one made for another address
+ * is deleted and made anew — the sweep compares each record's `url` with the address as
+ * it stands. No `publicUrl` means no subscriptions: the dispatch still runs, so the log's
  * sends reach Teams, and nothing comes back until the address exists.
  *
  * Mapping (§3, §4): a chat is a conversation addressed by its id, `direct` when Teams
@@ -194,11 +197,14 @@ interface Notice {
   lifecycleEvent?: string;
 }
 
-/** What a grant records of one subscription. */
+/** What a grant records of one subscription: Graph's id, when it lapses, the secret its
+ *  notices echo, and the address it delivers to — a subscription that names another
+ *  address than the org's delivers nowhere, however fresh. */
 export interface SubRecord {
   id: string;
   expires: string;
   secret: string;
+  url: string;
 }
 
 type Graph = (url: string, init?: RequestInit) => Promise<Response>;
@@ -631,7 +637,8 @@ export interface TeamsKeeperDeps {
   creds: Pick<Credentials, "list" | "get" | "put">;
   broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
   store?: Pick<Connections, "upsertConnections">;
-  /** Where Graph dials the ingest — the `notificationUrl` and `lifecycleNotificationUrl`. */
+  /** Where Graph dials the ingest — `<edge.publicUrl>/microsoft/ingest`, sent as the
+   *  `notificationUrl` and `lifecycleNotificationUrl` of every subscription made. */
   notificationUrl: string;
   fetchApi?: typeof fetch;
   now?: () => string;
@@ -667,8 +674,16 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
     let touched = 0;
     let changed = false;
     for (const path of paths) {
-      const sub = subs[path];
+      let sub: SubRecord | undefined = subs[path];
       const t = Date.parse(now());
+      // made for another address: Graph would keep delivering there, so it goes, and the
+      // path is one with no subscription from here on
+      if (sub && sub.url !== deps.notificationUrl) {
+        await remove(graph, sub);
+        delete subs[path];
+        sub = undefined;
+        changed = true;
+      }
       if (sub && Date.parse(sub.expires) - t > RENEW_AHEAD_MS) continue;
       if (sub && Date.parse(sub.expires) > t) {
         subs[path] = await renew(graph, sub, now);
@@ -775,7 +790,18 @@ async function create(
   }
   const made = await res.json() as { id?: string; expirationDateTime?: string };
   if (!made.id) throw new Error(`teams subscribe ${resource}: no id in the answer`);
-  return { id: made.id, expires: made.expirationDateTime ?? expires, secret };
+  return { id: made.id, expires: made.expirationDateTime ?? expires, secret, url: notificationUrl };
+}
+
+/** Delete a subscription; one Graph no longer has is as gone as asked. */
+async function remove(graph: Graph, sub: SubRecord): Promise<void> {
+  const res = await graph(`${GRAPH}/subscriptions/${enc(sub.id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(
+      `teams unsubscribe ${sub.id}: ${res.status} ${(await res.text()).slice(0, 300)}`,
+    );
+  }
+  await res.body?.cancel();
 }
 
 /** Renew a subscription for another lifetime — which also reauthorizes it. */
@@ -1145,22 +1171,25 @@ export function teamsWire(deps: TeamsWireDeps): TeamsWire {
 /* ── local entries: the ingest (the webhook and the keeper) and the dispatch ────────── */
 
 /** Wire the inbound half over the org's log: serve the webhook on `ingestPort`, keep the
- *  subscriptions alive on the shared cadence. No `notificationUrl` declared ⇒ nothing is
- *  subscribed and the half says so once. Returns stop. */
+ *  subscriptions alive on the shared cadence. No public address ⇒ nothing is subscribed
+ *  and the half says so once. Returns stop. */
 export async function runIngest(): Promise<() => Promise<void>> {
   const { openStore } = await import("../../store/mod.ts");
   const { createGrantBroker } = await import("../../proxy/grants.ts");
   const { serveIngest } = await import("../serve.ts");
   const { microsoftConfig } = await import("./config.ts");
   const { runPollIngest } = await import("../poll.ts");
+  const { readConfig } = await import("../../config.ts");
+  const { ingestAddress } = await import("../../edge.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const store = await openStore(root);
-  const { ingestPort, notificationUrl } = await microsoftConfig(root);
-  if (!notificationUrl) {
+  const { ingestPort } = await microsoftConfig(root);
+  const notificationUrl = ingestAddress((await readConfig(root)).edge.publicUrl, SERVICE);
+  if (notificationUrl === null) {
     console.error(
-      "[ingest] microsoft teams: no connections.microsoft.notificationUrl — Graph has nowhere " +
-        "to push, so no Teams subscription is made; sends still go out",
+      "[ingest] microsoft teams: no edge.publicUrl — Graph has nowhere to push, so no Teams " +
+        "subscription is made; sends still go out",
     );
     return () => Promise.resolve();
   }

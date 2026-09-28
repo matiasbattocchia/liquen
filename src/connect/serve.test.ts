@@ -14,9 +14,13 @@ Deno.test("serveIngest: 0 binds a free port and announces it; a taken port names
   // `localhost` is both loopbacks: a service that resolves it to ::1 first (Go's pure
   // resolver does, some of the time) has to be answered too, or its batch is lost
   for (const host of ["127.0.0.1", "[::1]"]) {
-    const res = await fetch(`http://${host}:${bound}/`);
+    const res = await fetch(`http://${host}:${bound}/`, { method: "POST" });
     assertEquals(await res.text(), "ok", host);
   }
+  // an ingest names itself to a GET at its root — the middle word of its knob — and
+  // hands everything else to the handler
+  assertEquals(await (await fetch(`http://127.0.0.1:${bound}/`)).text(), "x");
+  assertEquals(await (await fetch(`http://127.0.0.1:${bound}/m/1`)).text(), "ok");
   assertThrows(
     () => serveIngest("connections.x.ingestPort", bound, () => new Response(null), () => {}),
     Error,

@@ -55,6 +55,15 @@ declaring its DEFAULT_s and its `ConnectorSpec`; `connectorConfig` reads the
 merged values — nothing is ever written back. Secrets never enter the file — they live in the vault (slack and github keep
 their app, bot, and grants there) or, for a local bridge, in env (`WA_BRIDGE_TOKEN`).
 
+Two spec keys are addresses the org's edge knows (DESIGN §9, `src/edge.ts`): an
+`ingestPort` is reached at `<edge.publicUrl>/<name>/ingest`, handed the path under it, and
+an `oauthPort` at `<edge.publicUrl>/<name>/oauth/…`, handed the path as it came — so a
+connector that serves its ingest through `serveIngest` and its sign-in door by path
+suffix is on the internet the moment the org is, with nothing to declare. A door hands a
+service that address with `ingestAddress` / `callbackAddress`, and says whether it answers
+with `reachLine`: `serveIngest` makes every ingest name itself to a `GET /` (the middle
+word of its `connections.<name>.ingestPort` knob), which is what the check reads.
+
 A connector whose CLI should work from agent bash **fronts its grant through the egress
 proxy by declaration, not by code**: the connect door writes two sidecar fields on the
 credential row — `extra.env`, the env var the placeholder is issued under (what the tool
@@ -454,13 +463,14 @@ so the sweep recreates, `missed` is said on stderr.
 
 **The carrier.** Graph pushes to a public HTTPS endpoint only — it validates it at
 subscription time (`POST ?validationToken=…`, answered plain within ten seconds) and
-expects a 2xx within three seconds on every notice. So `connections.microsoft.notificationUrl`
-is where Graph dials — the org's tunnel (cloudflared, Tailscale Funnel) or its edge — and
-the ingest serves `ingestPort` behind it: a webhook `(Request) => Response` that echoes
-the handshake, checks each notice's `clientState` against the record, acks 202 and reads
-the message back behind the ack. No URL declared ⇒ nothing is subscribed, the dispatch
-still sends, and the boot says so once. Event Grid is not this carrier: its delivery has
-no `created` change type, and it needs an Azure subscription and a second token audience.
+expects a 2xx within three seconds on every notice. So it dials the org's public door,
+`<edge.publicUrl>/microsoft/ingest`, and the ingest serves `ingestPort` behind it: a
+webhook `(Request) => Response` that echoes the handshake, checks each notice's
+`clientState` against the record, acks 202 and reads the message back behind the ack.
+Each record carries the address it was made for, and the sweep deletes and remakes one
+made for another. No `publicUrl` ⇒ nothing is subscribed, the dispatch still sends, and
+the boot says so once. Event Grid is not this carrier: its delivery has no `created`
+change type, and it needs an Azure subscription and a second token audience.
 
 **The rows.** A notice carries the resource path and nothing else (the rich form needs a
 certificate and shortens the lifetime), so each is one `GET` of the message. A chat is a
@@ -503,7 +513,7 @@ across all apps.
    poll-vs-watch tier asymmetry; converges with (2).
 5. **Microsoft trio** — the door, the Graph skill, the Outlook calendar poll and Outlook
    mail landed on the grammars (3) and (4) share; Teams landed on delegated Graph, pushed
-   to a declared public URL and kept alive by the same sweep.
+   to the org's public door and kept alive by the same sweep.
 
 ## 9. Sources (checked 2026-08-06)
 

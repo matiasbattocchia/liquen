@@ -155,30 +155,37 @@ Deno.test("connect: the manifest's consent comes from the catalog, not the seed"
   ) as { oauth_config?: Record<string, unknown>; settings: Record<string, unknown> };
   // the seed is the app's SHAPE — name, bot user, events, the carrier — and consent is
   // the catalog's alone. A manifest Slack BUILDS from must also carry nothing it would
-  // refuse: a redirect url is knowable only once a public host exists, and a placeholder
-  // fails validation, so the section arrives with the scopes or not at all.
+  // refuse: a redirect url is knowable only once the org has a public door, and a
+  // placeholder fails validation, so it rides only when there is one.
   assertEquals(seed.oauth_config, undefined);
   assertEquals(seed.settings.socket_mode_enabled, true);
 
   const filled = withScopes(seed, { bot: DEFAULT_BOT_SCOPES, user: DEFAULT_USER_SCOPES }) as {
-    oauth_config: { scopes: Record<string, string[]> };
+    oauth_config: { scopes: Record<string, string[]>; redirect_urls?: string[] };
   };
   assertEquals(filled.oauth_config.scopes.bot, DEFAULT_BOT_SCOPES);
   assertEquals(filled.oauth_config.scopes.user, DEFAULT_USER_SCOPES);
+  assertEquals(filled.oauth_config.redirect_urls, undefined);
+  const open = withScopes(
+    seed,
+    { bot: DEFAULT_BOT_SCOPES, user: DEFAULT_USER_SCOPES },
+    "https://acme.example.com/slack/oauth/callback",
+  ) as { oauth_config: { redirect_urls?: string[] } };
+  assertEquals(open.oauth_config.redirect_urls, ["https://acme.example.com/slack/oauth/callback"]);
 });
 
-Deno.test("slackDoor: a public https callback is served on the configured port; loopback and http are refused at paste time", () => {
-  const d = slackDoor("https://liquen.example/oauth/slack/callback", 8790);
+Deno.test("slackDoor: the org's https callback is served on the configured port; loopback and http are refused", () => {
+  const d = slackDoor("https://liquen.example/slack/oauth/callback", 8790);
   assertEquals(d.loopback, false);
   assertEquals(d.port, 8790);
-  assertEquals(d.start, "https://liquen.example/oauth/slack/start");
-  assertThrows(() => slackDoor("http://liquen.example/oauth/slack/callback", 8790), Error, "https");
+  assertEquals(d.start, "https://liquen.example/slack/oauth/start");
+  assertThrows(() => slackDoor("http://liquen.example/slack/oauth/callback", 8790), Error, "https");
   assertThrows(
-    () => slackDoor("https://localhost:8790/oauth/slack/callback", 8790),
+    () => slackDoor("https://localhost:8790/slack/oauth/callback", 8790),
     Error,
     "loopback",
   );
-  assertThrows(() => slackDoor("https://liquen.example/oauth/slack", 8790), Error, "/callback");
+  assertThrows(() => slackDoor("https://liquen.example/slack/oauth", 8790), Error, "/callback");
 });
 
 Deno.test("connect: the prefill link embeds the manifest for api.slack.com to build from", () => {
@@ -241,16 +248,10 @@ Deno.test("app door: the client lands under its own id; pick = only one, or by i
     list: (p: string) => Promise.resolve([...rows.values()].filter((r) => r.key.startsWith(p))),
   };
   await assertRejects(() => pickSlackApp(creds), Error, "liquen connect slack app");
-  const key = await connectSlackApp(
-    { clientId: "123.456", clientSecret: "sec", redirectUri: "https://org.example/cb" },
-    creds,
-  );
+  const key = await connectSlackApp({ clientId: "123.456", clientSecret: "sec" }, creds);
   assertEquals(key, "slack:app:123.456");
   assertEquals((await pickSlackApp(creds)).value.client_id, "123.456");
-  assertEquals(
-    (await pickSlackApp(creds, "123.456")).extra?.redirect_uri,
-    "https://org.example/cb",
-  );
+  assertEquals((await pickSlackApp(creds, "123.456")).value.client_secret, "sec");
   await connectSlackApp({ clientId: "789.000", clientSecret: "sec2" }, creds);
   await assertRejects(() => pickSlackApp(creds), Error, "--app"); // several ⇒ pick explicitly
 });

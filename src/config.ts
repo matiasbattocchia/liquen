@@ -117,6 +117,13 @@ export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for
 // one window read and no model call, so there is nothing to buy by making it rarer.
 export const TICK_MS = 60_000;
 
+// edge — the org's one public door. Every address a service is handed hangs off ONE
+// base by path, `/<service>/ingest` and `/<service>/oauth/callback`, so the org tells a
+// tunnel one thing: publish `edge.port` at `publicUrl`. The edge process behind that port
+// forwards each path to the service's own port (edge.ts). The same grammar names a
+// function per service on a platform that routes by name, where nothing forwards at all.
+export const DEFAULT_EDGE_PORT = 8787;
+
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 /** The model providers a transport exists for (transport/mod.ts); `provider: null` ⇒ the first. */
 export const PROVIDERS = ["anthropic", "google"] as const;
@@ -190,6 +197,14 @@ export interface OrgConfig {
      *  no transcript). null ⇒ voice notes stay untranscribed. The command IS the plugin
      *  interface — the repo ships `processors/qwen-asr/` as one implementation. */
     audio: string | null;
+  };
+  edge: {
+    /** The org's public https base; null ⇒ reached on localhost only. */
+    publicUrl: string | null;
+    /** The one port the edge binds — what the tunnel publishes. */
+    port: number;
+    /** The tunnel's argv, supervised by `liquen start`; null ⇒ the operator runs one. */
+    tunnel: string[] | null;
   };
   /** The roster: every key under `agents` IS an agent — boot compiles the entries into
    *  registry rows and creates the missing home folders (§9). The name is the agent's id,
@@ -364,10 +379,36 @@ const PROCESSORS: Entry[] = [
   },
 ];
 
+const EDGE: Entry[] = [
+  {
+    key: "publicUrl",
+    value: null,
+    doc: "the org's public https:// base — what a tunnel or a real host in front of edge.port " +
+      "answers as; every service's address hangs off it (/<service>/ingest, " +
+      "/<service>/oauth/callback), and the doors print the one to register; null ⇒ the " +
+      "org is reached on localhost only",
+  },
+  {
+    key: "port",
+    value: DEFAULT_EDGE_PORT,
+    doc: "the one port the edge binds and the tunnel publishes — it forwards /<service>/… " +
+      "to that service's own ports; runs only under a publicUrl",
+  },
+  {
+    key: "tunnel",
+    value: null,
+    doc: 'the command that publishes edge.port at publicUrl, as an argv (["cloudflared", ' +
+      '"tunnel", "run", "acme"]), run and kept alive by `liquen start` beside the org; ' +
+      "null ⇒ something else runs it (systemd, a host's own proxy)",
+  },
+];
+
 const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
   organization: "this deployment's identity — the clock, the backlog, and every agent's defaults",
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
+  edge: "the org's one public door — the address the world dials, the port the tunnel " +
+    "publishes, and the tunnel",
   agents: "the roster: every key is a member — an agent, its folder and its unix user, or " +
     "a person alone (mind: false)",
   connections: "the connectors' knobs — a subsection per connector, validated by its owner",
@@ -386,6 +427,7 @@ function defaults(): OrgConfig {
     system: fromEntries(SYSTEM),
     organization: { ...fromEntries(ORG), agents: fromEntries(AGENT) },
     processors: fromEntries(PROCESSORS),
+    edge: fromEntries(EDGE),
     agents: {},
     connections: {},
   } as unknown as OrgConfig;
@@ -505,6 +547,7 @@ export async function readConfig(root: string): Promise<OrgConfig> {
       path,
       "processors",
     ),
+    edge: mergeSection(asObject(found.edge, "edge"), EDGE, path, "edge"),
     agents: {} as Record<string, unknown>,
     connections: {} as Record<string, unknown>,
   };
@@ -620,6 +663,9 @@ export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string
   lines.push("    }", "  },");
   lines.push(`  // ${SECTION_DOCS.processors}`, `  "processors": {`);
   emit("    ", PROCESSORS, cfg.processors as unknown as Record<string, unknown>);
+  lines.push("  },");
+  lines.push(`  // ${SECTION_DOCS.edge}`, `  "edge": {`);
+  emit("    ", EDGE, cfg.edge as unknown as Record<string, unknown>);
   lines.push("  },");
   lines.push(`  // ${SECTION_DOCS.agents}`, `  "agents": {`, `    // ${IDENTITY_DOC}`);
   const agents = Object.entries(cfg.agents);
@@ -893,7 +939,50 @@ function validateOrg(cfg: OrgConfig, path: string): void {
   if (docs) {
     throw new Error(`${path}: system.docs ${docs} (got ${JSON.stringify(cfg.system.docs)})`);
   }
+  const publicUrl = checkPublicUrl(cfg.edge.publicUrl);
+  if (publicUrl) {
+    throw new Error(
+      `${path}: edge.publicUrl ${publicUrl} (got ${JSON.stringify(cfg.edge.publicUrl)})`,
+    );
+  }
+  if (!(Number.isInteger(cfg.edge.port) && cfg.edge.port > 0 && cfg.edge.port < 65536)) {
+    throw new Error(
+      `${path}: edge.port must be a port (1-65535) — a tunnel publishes a number it was ` +
+        `told (got ${JSON.stringify(cfg.edge.port)})`,
+    );
+  }
+  if (cfg.edge.tunnel !== null) {
+    if (checkStrings(cfg.edge.tunnel)) {
+      throw new Error(
+        `${path}: edge.tunnel must be an argv (["cloudflared", "tunnel", "run", "acme"]) ` +
+          `or null (got ${JSON.stringify(cfg.edge.tunnel)})`,
+      );
+    }
+    if (cfg.edge.publicUrl === null) {
+      throw new Error(`${path}: edge.tunnel publishes edge.publicUrl, and publicUrl is null`);
+    }
+  }
   validateAgent(cfg.organization.agents, `${path}: organization.agents`);
+}
+
+/** What `edge.publicUrl` may hold: null, or an https:// base — an origin, or an origin
+ *  and a path prefix, with nothing after (no query, no fragment, no trailing slash): the
+ *  service paths are appended to it byte for byte. A complaint, or null when fine. */
+export function checkPublicUrl(v: unknown): string | null {
+  if (v === null) return null;
+  if (typeof v !== "string") return "must be null or an https:// URL";
+  let url: URL;
+  try {
+    url = new URL(v);
+  } catch {
+    return "must be null or an https:// URL";
+  }
+  if (url.protocol !== "https:") {
+    return "must be an https:// URL — the services push to nothing else";
+  }
+  if (url.search || url.hash) return "must carry no query or fragment";
+  if (v.endsWith("/")) return "must not end in a slash — /<service>/… is appended to it";
+  return null;
 }
 
 /** What `system.docs` may hold: `files`, or `table` when `system.database` names the

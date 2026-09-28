@@ -1,26 +1,27 @@
 /**
  * connect/google/connect.ts — `liquen connect google`: the two dev-side Google doors (§4).
  *
- *   app      the door's own key: paste the OAuth client (id + secret + the public redirect
- *            URI registered on it) → vault `google:app:<client_id>`. Not a grant — no
- *            connection, no membership, no event; nobody got connected. Several apps may
- *            coexist (`list("google:app:")`); the id in the key is what a sign-in picks by.
+ *   app      the door's own key: paste the OAuth client (id + secret) → vault
+ *            `google:app:<client_id>`. Not a grant — no connection, no membership, no
+ *            event; nobody got connected. Several apps may coexist (`list("google:app:")`);
+ *            the id in the key is what a sign-in picks by.
  *   account  a grant through the OAuth handler (connect/google/oauth.ts), served for
  *            exactly one sign-in: hand out /start, and the callback does what every grant
  *            does — writes the map. Ownership (the connection's agent_id) is decided HERE,
  *            at mint time: the agent arg rides `?agent=`; `--org` mints an ownerless link,
  *            the org's shared account (§6). The handler only executes what the mint said.
  *
- * One registered redirect URI is the whole of the account door's addressing: the app row's
- * public one, or `localCallback` when it names none. It is sent verbatim as `redirect_uri`,
- * so the string Google matches against its own list is the one that was registered, and its
- * host decides who can reach that sign-in. A loopback URI is the dev's own browser — Google
- * permits plain http there — and it names the port the door binds, because that browser dials
- * the door directly; the command opens it. Any other host is one a member elsewhere can
- * reach, so the command prints the link to send instead and binds
- * `connections.google.oauthPort` for whatever terminates TLS to forward to.
+ * The redirect URI is the org's, not the app row's: `callbackAddress` (edge.ts) — the
+ * public door `<edge.publicUrl>/google/oauth/callback` when the org has a public address,
+ * else the loopback `http://localhost:<oauthPort>/google/oauth/callback`, which Google
+ * permits in plain http. It is sent verbatim as `redirect_uri`, so the string Google
+ * matches against its own list is the one expression, and its host decides who can reach
+ * that sign-in. The loopback one is the dev's own browser and names the port the door
+ * binds, because that browser dials the door directly; the command opens it. The public
+ * one is reached by a member anywhere, so the command prints the link to send instead and
+ * binds `connections.google.oauthPort` for the edge to forward to.
  *
- * The app door prints the loopback URI before it asks for anything, so the console's
+ * The app door prints the callback before it asks for anything, so the console's
  * "Authorized redirect URIs" field can be filled while the client is still being created.
  * Printing it is what fixes the port: it is picked free of this machine on the run that has
  * nothing declared yet, written to config.jsonc beside the app row, and from then on read —
@@ -33,32 +34,29 @@
 import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag, readConfig } from "../../config.ts";
+import { callbackAddress } from "../../edge.ts";
 import { declared, freePort, printNext, startStep } from "../declare.ts";
 import { type DoorAddress, doorAddress, oneShot, openBrowser } from "../door.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
 export const APP_PREFIX = "google:app:";
+const SERVICE = "google";
 
 export interface GoogleApp {
   clientId: string;
   clientSecret: string;
-  redirectUri?: string; // a public callback registered on the client; none ⇒ the loopback one
 }
 
 /** Store an OAuth client under its own id. The vault's merge lets a re-paste rotate the
- *  secret without losing the sidecar. */
+ *  secret. */
 export async function connectGoogleApp(
   app: GoogleApp,
   creds: Pick<Credentials, "put">,
 ): Promise<string> {
   if (!app.clientId || !app.clientSecret) throw new Error("client_id and client_secret required");
   const key = `${APP_PREFIX}${app.clientId}`;
-  await creds.put({
-    key,
-    value: { client_id: app.clientId, client_secret: app.clientSecret },
-    ...(app.redirectUri ? { extra: { redirect_uri: app.redirectUri } } : {}),
-  });
+  await creds.put({ key, value: { client_id: app.clientId, client_secret: app.clientSecret } });
   return key;
 }
 
@@ -91,14 +89,6 @@ export async function pickGoogleApp(
  *
  * The account door serves its callback on connections.google.oauthPort. */
 
-/** The door's address when the app row names no public one: this machine's browser, on
- *  `oauthPort`. The app door prints it for the console's "Authorized redirect URIs" field
- *  and a sign-in sends it — one expression, so the registered string and the sent string
- *  cannot drift apart. */
-export function localCallback(oauthPort: number): string {
-  return `http://localhost:${oauthPort}/oauth/google/callback`;
-}
-
 /** The API a scope reaches, by the scope's first path word: a Google Cloud project answers
  *  403 for an API it has not enabled, whatever the consent carried. */
 const APIS: Record<string, string> = {
@@ -113,8 +103,9 @@ const APIS: Record<string, string> = {
 
 /** What the app door prints before it asks for anything: the console walk, step by step.
  *  The APIs to enable and the scopes to list are read off the catalog's `scopes`, the very
- *  ones a sign-in asks for, so the page cannot drift from them. */
-export function appGuide(local: string, scopes: string[]): string {
+ *  ones a sign-in asks for, so the page cannot drift from them. `callback` is the org's
+ *  redirect URI as `callbackAddress` names it. */
+export function appGuide(callback: string, scopes: string[]): string {
   const apis = [
     ...new Set(
       scopes.flatMap((s) => {
@@ -132,10 +123,11 @@ export function appGuide(local: string, scopes: string[]): string {
     `4. Data access → Add or remove scopes, and add these (connections.google.scopes):`,
     ...scopes.map((s) => `     ${s}`),
     `5. Clients → Create client, type "Web application". Under "Authorized redirect URIs":`,
-    `     ${local}`,
-    `   That is where a sign-in from this terminal comes back (the port is`,
-    `   connections.google.oauthPort). A member signing in from elsewhere needs a public URI:`,
-    `   register it too and paste it below.`,
+    `     ${callback}`,
+    `   That is where a sign-in comes back: the org's public door when edge.publicUrl is`,
+    `   set (a member signs in from anywhere), else this machine's browser on`,
+    `   connections.google.oauthPort. Setting publicUrl later means registering the public`,
+    `   one too.`,
     `6. Copy the client ID and the client secret (shown once, at creation) and paste them below.`,
     ``,
   ].join("\n");
@@ -179,10 +171,11 @@ if (import.meta.main) {
         // hands it to a human who registers it with Google. So the port is picked HERE, once:
         // free of whatever else is up on this machine while the file has nothing to say, and
         // then never again — a declared port is the operator's, printed as it stands.
-        const alreadyDeclared = "google" in (await readConfig(root)).connections;
+        const { connections, edge } = await readConfig(root);
+        const alreadyDeclared = SERVICE in connections;
         const oauthPort = alreadyDeclared ? fromCatalog : freePort(fromCatalog);
-        const local = localCallback(oauthPort);
-        console.error(appGuide(local, scopes));
+        const callback = callbackAddress(edge.publicUrl, SERVICE, oauthPort);
+        console.error(appGuide(callback, scopes));
         const ask = (label: string): string => {
           const v = prompt(label)?.trim();
           if (!v) {
@@ -193,17 +186,8 @@ if (import.meta.main) {
         };
         const clientId = ask("Client ID:");
         const clientSecret = ask("Client secret:");
-        const redirectUri = prompt("Public redirect URI (empty to skip):")?.trim() || undefined;
-        if (redirectUri) {
-          try { // a URI the door cannot serve is caught here, not after someone consents
-            doorAddress(redirectUri, oauthPort);
-          } catch (e) {
-            console.error(e instanceof Error ? e.message : String(e));
-            Deno.exit(2);
-          }
-        }
-        const key = await connectGoogleApp({ clientId, clientSecret, redirectUri }, creds);
-        console.error(`✓ app stored: ${key} (callback: ${redirectUri ?? local})`);
+        const key = await connectGoogleApp({ clientId, clientSecret }, creds);
+        console.error(`✓ app stored: ${key} (callback: ${callback})`);
         // the number that was just printed, in the file, before any sign-in reads it back —
         // and only now, because a door that wrote nothing promised nothing
         if (!alreadyDeclared) await declared(root, SPEC, { oauthPort });
@@ -229,9 +213,11 @@ if (import.meta.main) {
         const { googleConfig } = await import("./config.ts");
         const { oauthPort, scopes } = await googleConfig(root);
         const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? scopes;
-        // no public URI on the app row means the dev never set one up: the sign-in is theirs
-        const registered = (app.extra?.redirect_uri as string | undefined) ??
-          localCallback(oauthPort);
+        const registered = callbackAddress(
+          (await readConfig(root)).edge.publicUrl,
+          SERVICE,
+          oauthPort,
+        );
         let door: DoorAddress;
         try {
           door = doorAddress(registered, oauthPort);

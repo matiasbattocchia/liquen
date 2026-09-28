@@ -52,16 +52,10 @@ export const GRANT_HOSTS = ["graph.microsoft.com"];
 export interface MicrosoftConfig {
   calendars: string[];
   oauthPort: number;
+  /** Where Graph's Teams notifications land, behind `<edge.publicUrl>/microsoft/ingest`. */
   ingestPort: number;
-  /** null ⇒ no Teams subscription is made: Graph pushes only to a public HTTPS address */
-  notificationUrl: string | null;
   scopes: string[];
 }
-
-const aUrlOrNull = (v: unknown): string | null =>
-  v === null || (typeof v === "string" && /^https:\/\/\S+$/.test(v))
-    ? null
-    : "must be an https:// URL, or null";
 
 export const SPEC: ConnectorSpec = {
   name: "microsoft",
@@ -78,22 +72,15 @@ export const SPEC: ConnectorSpec = {
       key: "oauthPort",
       value: DEFAULT_OAUTH_PORT,
       doc:
-        "the port the account door binds when the app's callback is remote; a loopback one names its own",
+        "the port the account door binds behind <edge.publicUrl>/microsoft/oauth/callback; with no publicUrl, the loopback callback's own",
       check: checkPort,
     },
     {
       key: "ingestPort",
       value: DEFAULT_INGEST_PORT,
       doc:
-        "where Graph's Teams notifications land, behind notificationUrl; 0 = any free port, announced",
+        "where Graph's Teams notifications land, behind <edge.publicUrl>/microsoft/ingest; no publicUrl ⇒ Teams is not subscribed (sends still go out)",
       check: checkPort,
-    },
-    {
-      key: "notificationUrl",
-      value: null,
-      doc:
-        "the public https:// address Graph pushes Teams notifications to — the org's tunnel or edge in front of ingestPort; null ⇒ Teams is not subscribed (sends still go out)",
-      check: aUrlOrNull,
     },
     {
       key: "scopes",

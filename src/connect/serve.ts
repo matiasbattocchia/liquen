@@ -7,6 +7,12 @@
  * request URL) needs a declared port: an auto port re-rolls on every restart.
  *
  * A taken port names its own knob — parallel orgs each declare their own.
+ *
+ * Every ingest NAMES ITSELF to a `GET /`: the service's name, plain. The services only
+ * ever POST, so the answer costs the handler nothing, and it is what lets the org's public
+ * address be checked from the internet in — `<publicUrl>/<service>/ingest` fetched and
+ * read (`reached`, edge.ts) tells a tunnel that is down, aimed at another port or standing
+ * in front of another org apart from one that works, without knowing which tool it is.
  */
 
 /** Whether something is already answering on the org's ingest port.
@@ -35,13 +41,19 @@ export async function ingestUp(port: number): Promise<boolean> {
 }
 
 /** Serve `handler`, announcing the actually-bound port; a taken port throws naming
- *  `configKey` (e.g. `connections.slack.ingestPort`). */
+ *  `configKey` — `connections.<service>.ingestPort`, whose middle word is the name the
+ *  ingest answers a `GET /` with. */
 export function serveIngest(
   configKey: string,
   port: number,
   handler: (req: Request) => Response | Promise<Response>,
   announce: (boundPort: number) => void,
 ): Deno.HttpServer<Deno.NetAddr> {
+  const service = configKey.split(".")[1];
+  const named = (req: Request) =>
+    req.method === "GET" && new URL(req.url).pathname === "/"
+      ? new Response(service, { headers: { "content-type": "text/plain" } })
+      : handler(req);
   try {
     // "::" is every interface of BOTH families: the door is registered with a service as
     // `http://localhost:<port>`, and `localhost` is ::1 as much as 127.0.0.1 — a client
@@ -49,7 +61,7 @@ export function serveIngest(
     // refused by an IPv4-only listener and lose the batch.
     return Deno.serve(
       { hostname: "::", port, onListen: ({ port: bound }) => announce(bound) },
-      handler,
+      named,
     );
   } catch (err) {
     if (err instanceof Deno.errors.AddrInUse) {

@@ -20,7 +20,15 @@ export { appJwt, createGrantBroker } from "./proxy/grants.ts";
 export type { GrantBroker } from "./proxy/grants.ts";
 export type { Connections } from "./store/connections.ts";
 export { newId } from "./store/id.ts";
-export { checkPort, checkStrings, connectorConfig, findRoot, orgFlag } from "./config.ts";
+export {
+  checkPort,
+  checkStrings,
+  connectorConfig,
+  findRoot,
+  orgFlag,
+  readConfig,
+} from "./config.ts";
+export { callbackAddress, ingestAddress, reachLine } from "./edge.ts";
 export { entry, report } from "./entry.ts";
 export type { ConnectorSpec } from "./config.ts";
 export { declared, printNext, requireIngest, startStep } from "./connect/declare.ts";

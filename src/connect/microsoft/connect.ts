@@ -3,12 +3,11 @@
  * Google's shape (connect/google/connect.ts) at Microsoft's wire.
  *
  *   app      the door's own key: paste the app registration (client id + secret + the
- *            tenant it lives in + the public redirect URI registered on it) → vault
- *            `microsoft:app:<client_id>`. Not a grant — no connection, no membership, no
- *            event; nobody got connected. Several apps may coexist; the id in the key is
- *            what a sign-in picks by. The door also lays the Graph skill
- *            (`data/system/skills/microsoft-graph.md`, write-if-absent): the org has
- *            it iff it connected Microsoft.
+ *            tenant it lives in) → vault `microsoft:app:<client_id>`. Not a grant — no
+ *            connection, no membership, no event; nobody got connected. Several apps may
+ *            coexist; the id in the key is what a sign-in picks by. The door also lays
+ *            the Graph skill (`data/system/skills/microsoft-graph.md`, write-if-absent):
+ *            the org has it iff it connected Microsoft.
  *   account  a grant through the OAuth handler (connect/microsoft/oauth.ts), served for
  *            exactly one sign-in. Ownership (the connection's agent_id) is decided HERE,
  *            at mint time: the agent arg rides `?agent=`; `--org` mints an ownerless link,
@@ -18,17 +17,20 @@
  * directory, and its endpoints are that directory's. `organizations` names an app
  * registered for any work account; a directory id or domain, an app for one org.
  *
- * One registered redirect URI is the whole of the account door's addressing: the app row's
- * public one, or `localCallback` when it names none — sent verbatim as `redirect_uri`, so
- * the string Entra matches against its own list is the one that was registered. A
- * loopback URI is the dev's own browser, which Entra permits in plain http, and it names
- * the port the door binds; any other host is one a member elsewhere can reach, so the
- * command prints the link to send instead and binds `connections.microsoft.oauthPort`.
+ * The redirect URI is the org's, not the app row's: `callbackAddress` (edge.ts) — the
+ * public door `<edge.publicUrl>/microsoft/oauth/callback` when the org has a public
+ * address, else the loopback `http://localhost:<oauthPort>/microsoft/oauth/callback`,
+ * which Entra permits in plain http. The app door prints it for the portal's redirect
+ * URI field, and a sign-in sends it verbatim as `redirect_uri`, so the string Entra
+ * matches against its own list is the one expression. A loopback callback is this
+ * machine's browser and names the port the door binds; the public one is reached by a
+ * member anywhere, so the command prints the link to send and binds
+ * `connections.microsoft.oauthPort` for the edge to forward to.
  *
- * The app door prints the loopback URI before it asks for anything, so the portal's
- * redirect URI field can be filled while the registration is still being created; the
- * port is picked free of this machine on the run that has nothing declared yet, written
- * to config.jsonc beside the app row, and from then on read — never picked again.
+ * The app door prints the callback before it asks for anything, so the portal's field
+ * can be filled while the registration is still being created; the port is picked free
+ * of this machine on the run that has nothing declared yet, written to config.jsonc
+ * beside the app row, and from then on read — never picked again.
  *
  * Removal is not a door yet: deleting an app or a grant is a deliberate SQL act (§9).
  */
@@ -36,18 +38,19 @@
 import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag, readConfig } from "../../config.ts";
+import { callbackAddress, ingestAddress, reachLine } from "../../edge.ts";
 import { declared, freePort, printNext, startStep } from "../declare.ts";
 import { type DoorAddress, doorAddress, oneShot, openBrowser } from "../door.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
 export const APP_PREFIX = "microsoft:app:";
+const SERVICE = "microsoft";
 
 export interface MicrosoftApp {
   clientId: string;
   clientSecret: string;
   tenant: string;
-  redirectUri?: string; // a public callback registered on the app; none ⇒ the loopback one
 }
 
 /** Store an app registration under its own id. The vault's merge lets a re-paste rotate
@@ -63,7 +66,7 @@ export async function connectMicrosoftApp(
   await creds.put({
     key,
     value: { client_id: app.clientId, client_secret: app.clientSecret },
-    extra: { tenant: app.tenant, ...(app.redirectUri ? { redirect_uri: app.redirectUri } : {}) },
+    extra: { tenant: app.tenant },
   });
   return key;
 }
@@ -89,19 +92,13 @@ export async function pickMicrosoftApp(
   return apps[0];
 }
 
-/** The door's address when the app row names no public one: this machine's browser, on
- *  `oauthPort`. The app door prints it for the portal's redirect URI field and a sign-in
- *  sends it — one expression, so the registered string and the sent string cannot drift. */
-export function localCallback(oauthPort: number): string {
-  return `http://localhost:${oauthPort}/oauth/microsoft/callback`;
-}
-
 /** What the app door prints before it asks for anything: the portal walk, step by step.
  *  Entra takes a registration's permissions by hand, one checkbox each, so the list is
  *  the catalog's `scopes` — the very ones a sign-in asks for — and cannot drift from them.
  *  A sign-in that asks for an admin-only permission nobody has granted stops at an
- *  "approval required" page for every surface at once, so admin consent is a step. */
-export function appGuide(local: string, scopes: string[]): string {
+ *  "approval required" page for every surface at once, so admin consent is a step.
+ *  `callback` is the org's redirect URI as `callbackAddress` names it. */
+export function appGuide(callback: string, scopes: string[]): string {
   const width = 76;
   const lines: string[] = [];
   let line = "";
@@ -117,10 +114,11 @@ export function appGuide(local: string, scopes: string[]): string {
     `1. Register the app: https://entra.microsoft.com → App registrations → New registration.`,
     `   Supported account types: "this organizational directory only" serves one tenant.`,
     `   Redirect URI: platform "Web", value:`,
-    `     ${local}`,
-    `   That is where a sign-in from this terminal comes back (the port is`,
-    `   connections.microsoft.oauthPort). A member signing in from elsewhere needs a public`,
-    `   URI: register it too and paste it below.`,
+    `     ${callback}`,
+    `   That is where a sign-in comes back: the org's public door when edge.publicUrl is`,
+    `   set (a member signs in from anywhere), else this machine's browser on`,
+    `   connections.microsoft.oauthPort. Setting publicUrl later means registering the`,
+    `   public one too.`,
     `2. Certificates & secrets → New client secret. Copy its VALUE (shown once), not its id.`,
     `3. API permissions → Add a permission → Microsoft Graph → Delegated permissions, and`,
     `   tick each of these (connections.microsoft.scopes):`,
@@ -173,10 +171,11 @@ if (import.meta.main) {
         // the loopback callback is handed to a human who registers it with Entra, so the
         // port is picked HERE, once: free of this machine while the file has nothing to
         // say, and then never again — a declared port is the operator's
-        const alreadyDeclared = "microsoft" in (await readConfig(root)).connections;
+        const { connections, edge } = await readConfig(root);
+        const alreadyDeclared = SERVICE in connections;
         const oauthPort = alreadyDeclared ? fromCatalog : freePort(fromCatalog);
-        const local = localCallback(oauthPort);
-        console.error(appGuide(local, scopes));
+        const callback = callbackAddress(edge.publicUrl, SERVICE, oauthPort);
+        console.error(appGuide(callback, scopes));
         const ask = (label: string): string => {
           const v = prompt(label)?.trim();
           if (!v) {
@@ -189,20 +188,8 @@ if (import.meta.main) {
         const clientSecret = ask("Client secret value:");
         const tenant = prompt("Directory (tenant) ID or domain (empty = organizations):")
           ?.trim() || "organizations";
-        const redirectUri = prompt("Public redirect URI (empty to skip):")?.trim() || undefined;
-        if (redirectUri) {
-          try { // a URI the door cannot serve is caught here, not after someone consents
-            doorAddress(redirectUri, oauthPort);
-          } catch (e) {
-            console.error(e instanceof Error ? e.message : String(e));
-            Deno.exit(2);
-          }
-        }
-        const key = await connectMicrosoftApp(
-          { clientId, clientSecret, tenant, redirectUri },
-          creds,
-        );
-        console.error(`✓ app stored: ${key} (tenant ${tenant}, callback: ${redirectUri ?? local})`);
+        const key = await connectMicrosoftApp({ clientId, clientSecret, tenant }, creds);
+        console.error(`✓ app stored: ${key} (tenant ${tenant}, callback: ${callback})`);
         if (!alreadyDeclared) await declared(root, SPEC, { oauthPort });
         const { seedSkill } = await import("../../store/seed.ts");
         const docs = await store.docs();
@@ -233,10 +220,10 @@ if (import.meta.main) {
           Deno.exit(2);
         });
         const { microsoftConfig } = await import("./config.ts");
-        const { oauthPort, scopes, ingestPort, notificationUrl } = await microsoftConfig(root);
+        const { oauthPort, scopes } = await microsoftConfig(root);
+        const { publicUrl } = (await readConfig(root)).edge;
         const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? scopes;
-        const registered = (app.extra?.redirect_uri as string | undefined) ??
-          localCallback(oauthPort);
+        const registered = callbackAddress(publicUrl, SERVICE, oauthPort);
         let door: DoorAddress;
         try {
           door = doorAddress(registered, oauthPort);
@@ -310,15 +297,18 @@ if (import.meta.main) {
             : "\n✓ connected (deno task status shows the map)",
         );
         await declared(root, SPEC, { oauthPort: door.port });
+        // Teams is push-only, to the org's public door: the address is checked from the
+        // internet in while there is a human here to read the answer
+        const push = ingestAddress(publicUrl, SERVICE);
+        if (push !== null) console.error(await reachLine(push, SERVICE));
         printNext([
           await startStep(
             root,
             "the Microsoft process polls calendar and mail, and agents get $MICROSOFT_GRAPH_TOKEN",
           ),
-          ...(notificationUrl ? [] : [
-            `Teams: set connections.microsoft.notificationUrl to a public https:// address ` +
-            `(a tunnel or an edge) that forwards to ingestPort ${ingestPort} — Graph pushes ` +
-            `chats and channels there; sends go out without it`,
+          ...(push !== null ? [] : [
+            "Teams: set edge.publicUrl — Graph pushes chats and channels to " +
+            "<publicUrl>/microsoft/ingest, and nowhere else; sends go out without it",
           ]),
         ]);
       } else {

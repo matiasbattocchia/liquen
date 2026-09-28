@@ -2,11 +2,12 @@
  * start.ts — `liquen start`: the org as one command (DESIGN §9).
  *
  * A keep-alive loop and nothing more: read the catalog, spawn one child per process the
- * org declares — main (the tail + fan-out, hosting the egress proxy) and one per
- * `connections.<name>` — and respawn whatever exits, with backoff. The log is the bus,
- * so there is no dependency order, no readiness probe, no IPC: a child finds the org the
- * way every process does (cwd walks up to config.jsonc), and env rides through untouched
- * (secrets only).
+ * org declares — main (the tail + fan-out, hosting the egress proxy), one per
+ * `connections.<name>`, and under an `edge.publicUrl` the edge (edge.ts) and the tunnel
+ * the org runs itself (`edge.tunnel`, any argv) — and respawn whatever exits, with
+ * backoff. The log is the bus, so there is no dependency order, no readiness probe, no
+ * IPC: a child finds the org the way every process does (cwd walks up to config.jsonc),
+ * and env rides through untouched (secrets only).
  *
  * A child that CRASHES comes back; a child that REFUSES does not. The two are told apart
  * by the exit code `entry` chose (`REFUSAL` — a sentence was printed, and a port already
@@ -37,7 +38,7 @@
  */
 
 import { TextLineStream } from "@std/streams";
-import { findRoot, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
+import { findRoot, type OrgConfig, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
 import { entry, REFUSAL } from "./entry.ts";
 import { claim, holder, MAIN, SUPERVISOR } from "./stop.ts";
 import { RUNNING, SHIPPED } from "./connect/connect.ts";
@@ -163,12 +164,24 @@ async function pump(stream: ReadableStream<Uint8Array>, name: string, err: boole
   for await (const line of lines) stamp(name, line, err);
 }
 
-/** name → entry module for everything the catalog says this org runs. A connection is
- *  ONE process, its folder's `run.ts`: `src/connect/<name>/` ships with core,
- *  `<root>/connectors/<name>/` is the org's own. A shipped service that only grants a
- *  credential is declared for its knobs and runs nothing; a custom connection with no
- *  run.ts is a boot error, same law as an unknown config key. */
-export function roster(root: string, connections: Record<string, unknown>): [string, string][] {
+/** One process of the org's run: its tag, and the command that is it. */
+export interface Proc {
+  name: string;
+  argv: string[];
+}
+
+/** A liquen module as a process: this deno, the module, every permission. */
+function module(name: string, url: string): Proc {
+  return { name, argv: [Deno.execPath(), "run", "-A", url] };
+}
+
+/** Everything the catalog says this org runs. A connection is ONE process, its folder's
+ *  `run.ts`: `src/connect/<name>/` ships with core, `<root>/connectors/<name>/` is the
+ *  org's own. A shipped service that only grants a credential is declared for its knobs
+ *  and runs nothing; a custom connection with no run.ts is a boot error, same law as an
+ *  unknown config key. The edge stands only where there is a public address to stand
+ *  behind, and the tunnel is whatever argv the catalog says, verbatim. */
+export function roster(root: string, cfg: Pick<OrgConfig, "connections" | "edge">): Proc[] {
   const has = (p: string | URL) => {
     try {
       Deno.statSync(p);
@@ -177,19 +190,23 @@ export function roster(root: string, connections: Record<string, unknown>): [str
       return false;
     }
   };
-  const procs: [string, string][] = [["main", new URL("./main.ts", import.meta.url).href]];
-  for (const name of Object.keys(connections)) {
+  const procs: Proc[] = [module("main", new URL("./main.ts", import.meta.url).href)];
+  for (const name of Object.keys(cfg.connections)) {
     const bundled = new URL(`./connect/${name}/run.ts`, import.meta.url);
     const local = `${root}/connectors/${name}/run.ts`;
-    if (RUNNING.includes(name)) procs.push([name, bundled.href]);
+    if (RUNNING.includes(name)) procs.push(module(name, bundled.href));
     else if (SHIPPED.includes(name)) continue;
-    else if (has(local)) procs.push([name, local]);
+    else if (has(local)) procs.push(module(name, local));
     else {
       throw new Error(
         `connection "${name}" is declared in config.jsonc but has no process: ` +
           `no run.ts under src/connect/${name}/ or ${root}/connectors/${name}/`,
       );
     }
+  }
+  if (cfg.edge.publicUrl !== null) {
+    procs.push(module("edge", new URL("./edge.ts", import.meta.url).href));
+    if (cfg.edge.tunnel) procs.push({ name: "tunnel", argv: cfg.edge.tunnel });
   }
   return procs;
 }
@@ -202,8 +219,7 @@ if (import.meta.main) {
     const stray = org.args.find((a) => a !== "-D" && a !== "--detach");
     if (stray !== undefined) throw new Error(`unknown argument ${stray}\n${USAGE}`);
     const root = findRoot(org);
-    const catalog = await readConfig(root);
-    const procs = roster(root, catalog.connections);
+    const procs = roster(root, await readConfig(root));
     // ONE OF EACH ROLE (stop.ts). The locks are taken after the catalog is read, so a
     // manifest this run cannot serve refuses on its own terms and not on a lock it went
     // on to drop
@@ -237,12 +253,12 @@ if (import.meta.main) {
     const halt = new AbortController();
     const stopping = () => halt.signal.aborted;
 
-    const keepAlive = async ([name, module]: [string, string]) => {
+    const keepAlive = async ({ name, argv: [cmd, ...args] }: Proc) => {
       let failures = 0;
       while (!stopping()) {
         const started = Date.now();
-        const child = new Deno.Command(Deno.execPath(), {
-          args: ["run", "-A", module],
+        const child = new Deno.Command(cmd, {
+          args,
           cwd: root,
           stdout: "piped",
           stderr: "piped",
@@ -295,7 +311,7 @@ if (import.meta.main) {
     Deno.addSignalListener("SIGTERM", stop);
     Deno.addSignalListener("SIGINT", stop);
 
-    stamp("liquen", `${procs.map(([n]) => n).join(" · ")} — root ${root}`);
+    stamp("liquen", `${procs.map((p) => p.name).join(" · ")} — root ${root}`);
     await Promise.all(procs.map(keepAlive));
     // every process is down and at least one meant it — the org has nothing left to run
     if (!stopping() && refused.length > 0) {

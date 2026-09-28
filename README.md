@@ -67,6 +67,13 @@ Every knob lives in `config.jsonc` at the project root (the catalog — init
 materializes it, the system never writes it; comments document each key). Env is for
 secrets only. The org is where you run liquen; `--dir <path>` names it from anywhere else.
 
+The org is reached on localhost until `edge.publicUrl` names its public https address —
+whatever a tunnel or a host publishes `edge.port` at. Every service's address then hangs
+off it, `<publicUrl>/<service>/ingest` and `<publicUrl>/<service>/oauth/callback`; the
+doors print the one to register, and `edge.tunnel` holds the tunnel's argv when `liquen
+start` should run it. Without one, what needs the internet to dial in (Teams, a member's
+Slack sign-in, a GitHub webhook short of `gh webhook forward`) waits for the address.
+
 The store is SQLite under `data/log` until `system.database` names a Postgres database
 (`postgres://user@host:5432/db`, `?schema=` for one schema of it); the password goes in
 `.env` as `PGPASSWORD`. Every process of the org opens whichever the catalog says. The
@@ -134,9 +141,9 @@ Every door closes by naming what the org still owes, and `--help` explains each 
 1. **One sitting at the console.** The door prints the prefill link and opens it (Slack
    builds the app from [`src/seed/slack-manifest.json`](./src/seed/slack-manifest.json),
    consent lists filled from `connections.slack`), then takes what the console shows,
-   each paste empty to skip: the OAuth client, its signing secret (HTTP ingest only), the
-   app-level token (xapp, the Socket Mode carrier), and a public redirect URI. *Install to
-   Workspace* while you are there, and the flags take the tokens it issued:
+   each paste empty to skip: the OAuth client, its signing secret (HTTP ingest only), and
+   the app-level token (xapp, the Socket Mode carrier). *Install to Workspace* while you
+   are there, and the flags take the tokens it issued:
 
    ```sh
    deno task connect slack app --bot --user   # xoxb → the org's shared identity, xoxp → your own leg
@@ -146,9 +153,10 @@ Every door closes by naming what the org still owes, and `--help` explains each 
    signing secret is HTTP.
 
 2. **Connect a member who is not at this terminal**: Slack redirects to https only, so this
-   needs the public redirect URI from step 1 with a tunnel or a real host in front of
-   `connections.slack.oauthPort`. The door prints a link that binds the grant to `[agent]`
-   and is good for one sign-in; send it to them and the door waits until they finish:
+   needs the org's public door (`edge.publicUrl`, which the manifest of step 1 registers as
+   `<publicUrl>/slack/oauth/callback`). The door prints a link that binds the grant to
+   `[agent]` and is good for one sign-in; send it to them and the door waits until they
+   finish:
 
    ```sh
    deno task connect slack user [agent]

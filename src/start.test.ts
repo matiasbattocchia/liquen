@@ -8,10 +8,28 @@ Deno.test("roster: main first, bundled connections resolve, org-local ones probe
     Deno.mkdirSync(`${tmp}/connectors/acme`, { recursive: true });
     Deno.writeTextFileSync(`${tmp}/connectors/acme/run.ts`, "");
     // token is a shipped door with nothing to run: declared, it is no process and no error
-    const procs = roster(tmp, { slack: {}, token: {}, acme: {} });
-    assertEquals(procs.map(([n]) => n), ["main", "slack", "acme"]);
-    assert(procs[1][1].endsWith("/connect/slack/run.ts"));
-    assertEquals(procs[2][1], `${tmp}/connectors/acme/run.ts`);
+    const closed = { publicUrl: null, port: 8787, tunnel: null };
+    const procs = roster(tmp, { connections: { slack: {}, token: {}, acme: {} }, edge: closed });
+    assertEquals(procs.map((p) => p.name), ["main", "slack", "acme"]);
+    assertEquals(procs[1].argv.slice(0, 3), [Deno.execPath(), "run", "-A"]);
+    assert(procs[1].argv[3].endsWith("/connect/slack/run.ts"));
+    assertEquals(procs[2].argv[3], `${tmp}/connectors/acme/run.ts`);
+  } finally {
+    Deno.removeSync(tmp, { recursive: true });
+  }
+});
+
+Deno.test("roster: a public address adds the edge, and the tunnel is the argv the catalog says", () => {
+  const tmp = Deno.makeTempDirSync();
+  try {
+    const open = { publicUrl: "https://acme.example.com", port: 8787, tunnel: null };
+    let procs = roster(tmp, { connections: {}, edge: open });
+    assertEquals(procs.map((p) => p.name), ["main", "edge"]);
+    assert(procs[1].argv[3].endsWith("/edge.ts"));
+    const tunnel = ["cloudflared", "tunnel", "run", "acme"];
+    procs = roster(tmp, { connections: {}, edge: { ...open, tunnel } });
+    assertEquals(procs.map((p) => p.name), ["main", "edge", "tunnel"]);
+    assertEquals(procs[2].argv, tunnel);
   } finally {
     Deno.removeSync(tmp, { recursive: true });
   }
@@ -20,7 +38,12 @@ Deno.test("roster: main first, bundled connections resolve, org-local ones probe
 Deno.test("roster: a declared connection with no run.ts is a boot error", () => {
   const tmp = Deno.makeTempDirSync();
   try {
-    assertThrows(() => roster(tmp, { ghost: {} }), Error, 'connection "ghost"');
+    const closed = { publicUrl: null, port: 8787, tunnel: null };
+    assertThrows(
+      () => roster(tmp, { connections: { ghost: {} }, edge: closed }),
+      Error,
+      'connection "ghost"',
+    );
   } finally {
     Deno.removeSync(tmp, { recursive: true });
   }

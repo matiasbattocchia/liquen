@@ -1,13 +1,8 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import {
-  APP_PREFIX,
-  appGuide,
-  connectMicrosoftApp,
-  localCallback,
-  pickMicrosoftApp,
-} from "./connect.ts";
+import { APP_PREFIX, appGuide, connectMicrosoftApp, pickMicrosoftApp } from "./connect.ts";
 import { DEFAULT_SCOPES } from "./config.ts";
 import { doorAddress } from "../door.ts";
+import { callbackAddress } from "../../edge.ts";
 import { openCredentials } from "../../store/credentials.ts";
 
 async function withVault(
@@ -26,7 +21,7 @@ async function withVault(
 Deno.test("app: the paste lands under its own id with its tenant; a re-paste rotates the secret", async () => {
   await withVault(async (creds) => {
     const key = await connectMicrosoftApp(
-      { clientId: "cid1", clientSecret: "old", tenant: "t-1", redirectUri: "https://x/cb" },
+      { clientId: "cid1", clientSecret: "old", tenant: "t-1" },
       creds,
     );
     assertEquals(key, `${APP_PREFIX}cid1`);
@@ -34,7 +29,6 @@ Deno.test("app: the paste lands under its own id with its tenant; a re-paste rot
     const row = (await creds.get(key))!;
     assertEquals(row.value.client_secret, "new");
     assertEquals(row.extra?.tenant, "t-1");
-    assertEquals(row.extra?.redirect_uri, "https://x/cb"); // the vault's merge keeps it
     await assertRejects(
       () => connectMicrosoftApp({ clientId: "cid2", clientSecret: "s", tenant: "" }, creds),
       Error,
@@ -43,11 +37,15 @@ Deno.test("app: the paste lands under its own id with its tenant; a re-paste rot
   });
 });
 
-Deno.test("app: no public URI is the loopback door — the dev's own browser", () => {
-  const door = doorAddress(localCallback(8792), 8792);
-  assertEquals(door.loopback, true);
-  assertEquals(door.port, 8792);
-  assertEquals(door.start, "http://localhost:8792/oauth/microsoft/start");
+Deno.test("the callback: no public address is the loopback door — the dev's own browser; a public one binds oauthPort behind the edge", () => {
+  const local = doorAddress(callbackAddress(null, "microsoft", 8792), 8792);
+  assertEquals(local.loopback, true);
+  assertEquals(local.port, 8792);
+  assertEquals(local.start, "http://localhost:8792/microsoft/oauth/start");
+  const remote = doorAddress(callbackAddress("https://acme.example.com", "microsoft", 8792), 8792);
+  assertEquals(remote.loopback, false);
+  assertEquals(remote.port, 8792);
+  assertEquals(remote.callback, "https://acme.example.com/microsoft/oauth/callback");
 });
 
 Deno.test("pick: the only app is the choice; several demand a name; none is an error", async () => {
@@ -63,8 +61,8 @@ Deno.test("pick: the only app is the choice; several demand a name; none is an e
 });
 
 Deno.test("app guide: the redirect URI to register, every scope a sign-in asks for, admin consent", () => {
-  const guide = appGuide(localCallback(8792), DEFAULT_SCOPES);
-  assertStringIncludes(guide, "http://localhost:8792/oauth/microsoft/callback");
+  const guide = appGuide(callbackAddress(null, "microsoft", 8792), DEFAULT_SCOPES);
+  assertStringIncludes(guide, "http://localhost:8792/microsoft/oauth/callback");
   // ticked by hand in the portal, so each one the catalog asks for is on the page
   for (const s of DEFAULT_SCOPES) assertStringIncludes(guide, s);
   assertStringIncludes(guide, "Grant admin consent");

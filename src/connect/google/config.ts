@@ -44,7 +44,7 @@ export const SPEC: ConnectorSpec = {
       key: "oauthPort",
       value: DEFAULT_OAUTH_PORT,
       doc:
-        "the port the account door binds when the app's callback is remote; a loopback one names its own",
+        "the port the account door binds behind <edge.publicUrl>/google/oauth/callback; with no publicUrl, the loopback callback's own",
       check: checkPort,
     },
     {

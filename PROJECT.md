@@ -4252,3 +4252,43 @@ before the leaving, the one write the law would refuse after. A direct room is i
 members and takes no change; `which` on a wire conversation is refused, its members
 being the wire's. The tool joins the offer the way `send` does: named in an agent's
 `tools`.
+
+### One public door: `edge.publicUrl`, the edge process, the tunnel as an argv (2026-09-28) — LANDED
+
+Every address a service is handed now hangs off one base by path: `<edge.publicUrl>/
+<service>/ingest` is where it pushes, `<edge.publicUrl>/<service>/oauth/callback` where
+its sign-in returns (`ingestAddress` · `callbackAddress`, `src/edge.ts`). The org asks one
+thing of whatever puts it on the internet — publish `edge.port` at that https address —
+so cloudflared, ngrok, Tailscale Funnel, a host's nginx and a cloud's function router are
+all the same tool to it, and none is named in the harness. `edge.tunnel` is an argv that
+`liquen start` keeps alive beside the org (a `Proc` is a name and a command now, not a
+module); `edge.port` (8787) is what it publishes. The edge process stands behind that
+port under a `publicUrl`, one more child of the supervisor: it reads each connection's
+spec for `ingestPort` and `oauthPort` and forwards `/<service>/ingest/…` to the ingest
+with the prefix stripped, `/<service>/oauth/…` to the door with the path as it came,
+answering 502 with the port's number when nothing is there. On the edge tier the same
+grammar is a function per service under the functions base, and nothing forwards.
+
+The doors derive the address instead of asking for it. The Google and Microsoft app rows
+lose their pasted `redirect_uri`; the guides print `callbackAddress`, the account doors
+send it, and the loopback callback reads `http://localhost:<oauthPort>/<service>/oauth/
+callback` — the same grammar as the public one, so an app registered before this entry
+needs the new spelling added to its redirect URIs. Slack's manifest carries
+`oauth_config.redirect_urls` when the org has a public door, and the user door refuses
+without one. GitHub's form link turns the webhook on at `<publicUrl>/github/ingest`.
+Teams' `connections.microsoft.notificationUrl` is gone: the keeper dials
+`ingestAddress(publicUrl, "microsoft")`, every subscription record carries the `url` it
+was made for, and one made for another address is deleted and made anew — the gap where a
+changed address never reached a live subscription is closed. Every ingest names itself to
+a `GET /` (`serveIngest`, the middle word of its knob), which is what `reached` reads:
+the GitHub app door and the Microsoft account door fetch the address they just handed
+out and print whether it answered as the service, so a tunnel that is down, aimed at
+another port or in front of another org is said at the terminal, not by a webhook that
+never arrives.
+
+Left out on purpose: capturing the random hostname a quick tunnel prints. It is one
+tool's output format, and it changes on every restart, which breaks every redirect URI
+and webhook already registered — only a fixed hostname works as `publicUrl`. WhatsApp's
+`ingestUrl` stays as it is: the bridge's private address for this org, which may be a
+Docker alias no tunnel ever sees. A door that is a one-shot process (the sign-ins) is not
+checked end to end; the link the human opens fails visibly if the path is down.

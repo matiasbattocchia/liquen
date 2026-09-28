@@ -1,7 +1,8 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { APP_PREFIX, appGuide, connectGoogleApp, localCallback, pickGoogleApp } from "./connect.ts";
+import { APP_PREFIX, appGuide, connectGoogleApp, pickGoogleApp } from "./connect.ts";
 import { DEFAULT_SCOPES } from "./config.ts";
 import { doorAddress } from "../door.ts";
+import { callbackAddress } from "../../edge.ts";
 import { openCredentials } from "../../store/credentials.ts";
 
 async function withVault(
@@ -19,40 +20,32 @@ async function withVault(
 
 Deno.test("app: the paste lands under its own id — several apps coexist", async () => {
   await withVault(async (creds) => {
-    const key = await connectGoogleApp(
-      { clientId: "cid1", clientSecret: "sec1", redirectUri: "https://x/cb" },
-      creds,
-    );
+    const key = await connectGoogleApp({ clientId: "cid1", clientSecret: "sec1" }, creds);
     assertEquals(key, `${APP_PREFIX}cid1`);
     await connectGoogleApp({ clientId: "cid2", clientSecret: "sec2" }, creds);
     const rows = await creds.list(APP_PREFIX);
     assertEquals(rows.map((r) => r.value.client_id), ["cid1", "cid2"]);
-    assertEquals(rows[0].extra?.redirect_uri, "https://x/cb");
   });
 });
 
-Deno.test("app: no public URI is the loopback door — the dev's own browser, nothing stored", async () => {
-  await withVault(async (creds) => {
-    await connectGoogleApp({ clientId: "cid1", clientSecret: "s" }, creds);
-    const row = (await creds.get(`${APP_PREFIX}cid1`))!;
-    assertEquals(row.extra?.redirect_uri, undefined);
-    // what the app door prints to register is what a sign-in sends: one expression
-    const door = doorAddress(localCallback(8791), 8791);
-    assertEquals(door.loopback, true);
-    assertEquals(door.port, 8791);
-  });
+Deno.test("the callback: no public address is the loopback door — the dev's own browser; a public one binds oauthPort behind the edge", () => {
+  // what the app door prints to register is what a sign-in sends: one expression
+  const local = doorAddress(callbackAddress(null, "google", 8791), 8791);
+  assertEquals(local.loopback, true);
+  assertEquals(local.port, 8791);
+  assertEquals(local.start, "http://localhost:8791/google/oauth/start");
+  const remote = doorAddress(callbackAddress("https://acme.example.com", "google", 8791), 8791);
+  assertEquals(remote.loopback, false);
+  assertEquals(remote.port, 8791);
+  assertEquals(remote.callback, "https://acme.example.com/google/oauth/callback");
 });
 
-Deno.test("app: a re-paste rotates the secret, the sidecar survives (vault merge)", async () => {
+Deno.test("app: a re-paste rotates the secret", async () => {
   await withVault(async (creds) => {
-    await connectGoogleApp(
-      { clientId: "cid1", clientSecret: "old", redirectUri: "https://x/cb" },
-      creds,
-    );
+    await connectGoogleApp({ clientId: "cid1", clientSecret: "old" }, creds);
     await connectGoogleApp({ clientId: "cid1", clientSecret: "new" }, creds);
     const row = (await creds.get(`${APP_PREFIX}cid1`))!;
     assertEquals(row.value.client_secret, "new");
-    assertEquals(row.extra?.redirect_uri, "https://x/cb");
   });
 });
 
@@ -71,10 +64,10 @@ Deno.test("pick: the only app is the choice; several demand a name; none is an e
 });
 
 Deno.test("app guide: the APIs the scopes reach, every scope, the redirect URI to register", () => {
-  const guide = appGuide(localCallback(8791), DEFAULT_SCOPES);
+  const guide = appGuide(callbackAddress(null, "google", 8791), DEFAULT_SCOPES);
   assertStringIncludes(guide, "enable Google Calendar API, Gmail API.");
   for (const s of DEFAULT_SCOPES) assertStringIncludes(guide, s);
-  assertStringIncludes(guide, "http://localhost:8791/oauth/google/callback");
+  assertStringIncludes(guide, "http://localhost:8791/google/oauth/callback");
   // a scope with no known API still says which API is owed
   assertStringIncludes(
     appGuide("x", ["https://www.googleapis.com/auth/youtube"]),

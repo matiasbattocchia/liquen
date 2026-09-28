@@ -126,7 +126,7 @@ const save: SaveFile = (conversation, bytes, meta) => {
 };
 
 const sub = (resource: string, id: string, secret = "s-" + id) => ({
-  [resource]: { id, expires: "2026-09-26T12:00:00.000Z", secret },
+  [resource]: { id, expires: "2026-09-26T12:00:00.000Z", secret, url: URL_ },
 });
 const CHAT_RES = `/users/${OID}/chats/getAllMessages`;
 const CHAN_RES = `/teams/${TEAM}/channels/${CHANNEL}/messages`;
@@ -583,6 +583,7 @@ Deno.test("teams keeper: a first sweep subscribes the member's chats and every c
       id: "sub-1",
       expires: "2026-09-26T11:50:00Z",
       secret: posts[0].clientState as string,
+      url: URL_,
     });
     assertEquals(subs[CHAN_RES].id, "sub-2");
 
@@ -612,7 +613,9 @@ Deno.test("teams keeper: a subscription inside its last day is renewed, an expir
     await creds.put({
       key: KEY,
       value: {},
-      extra: { [TEAMS_SUB]: { [CHAT_RES]: { id: "sub-old", expires: soon, secret: "keep" } } },
+      extra: {
+        [TEAMS_SUB]: { [CHAT_RES]: { id: "sub-old", expires: soon, secret: "keep", url: URL_ } },
+      },
     });
     await keeper.tick();
     assertEquals(calls.filter((c) => c.init?.method === "PATCH").length, 1);
@@ -621,6 +624,7 @@ Deno.test("teams keeper: a subscription inside its last day is renewed, an expir
       id: "sub-old",
       expires: "2026-09-26T11:50:00Z",
       secret: "keep",
+      url: URL_,
     });
 
     await creds.put({
@@ -628,7 +632,7 @@ Deno.test("teams keeper: a subscription inside its last day is renewed, an expir
       value: {},
       extra: {
         [TEAMS_SUB]: {
-          [CHAT_RES]: { id: "sub-old", expires: "2026-09-20T00:00:00Z", secret: "gone" },
+          [CHAT_RES]: { id: "sub-old", expires: "2026-09-20T00:00:00Z", secret: "gone", url: URL_ },
         },
       },
     });
@@ -636,6 +640,45 @@ Deno.test("teams keeper: a subscription inside its last day is renewed, an expir
     subs = subsOf(await creds.get(KEY));
     assertEquals(subs[CHAT_RES].id, "sub-new");
     assert(subs[CHAT_RES].secret !== "gone");
+  });
+  // made for another address: Graph would go on delivering there, so it is deleted and
+  // one for the org's address made in its place, however fresh the old one was
+  await withVault(async (creds) => {
+    const calls: Call[] = [];
+    const fetchApi = graph({
+      "/me/joinedTeams": { value: [] },
+      "DELETE /subscriptions/sub-elsewhere": new Response(null, { status: 204 }),
+      "POST /subscriptions": { id: "sub-here", expirationDateTime: "2026-09-26T11:50:00Z" },
+    }, calls);
+    const keeper = createTeamsKeeper({
+      creds,
+      broker: createGrantBroker({ creds }),
+      notificationUrl: URL_,
+      fetchApi,
+      now: () => NOW,
+    });
+    const fresh = new Date(Date.parse(NOW) + LIFETIME_MS).toISOString();
+    await creds.put({
+      key: KEY,
+      value: {},
+      extra: {
+        [TEAMS_SUB]: {
+          [CHAT_RES]: {
+            id: "sub-elsewhere",
+            expires: fresh,
+            secret: "old",
+            url: "https://old.example/microsoft/ingest",
+          },
+        },
+      },
+    });
+    await keeper.tick();
+    assertEquals(calls.filter((c) => c.init?.method === "DELETE").map((c) => c.path), [
+      "/v1.0/subscriptions/sub-elsewhere",
+    ]);
+    const subs = subsOf(await creds.get(KEY));
+    assertEquals(subs[CHAT_RES].id, "sub-here");
+    assertEquals(subs[CHAT_RES].url, URL_);
   });
   // no Chat scope on the consent: the sweep skips the grant without a verdict
   await withVault(

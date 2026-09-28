@@ -6,8 +6,10 @@
  *          installation JWTs with and what the ingest verifies deliveries against. The
  *          door opens with a link that prefills the registration form (`appForm`) off
  *          `connections.github.events`, so what the app is subscribed to and what the
- *          ingest maps are the same list, and offers a secret for the field no link can
- *          carry.
+ *          ingest maps are the same list, and off the org's public door
+ *          (`<edge.publicUrl>/github/ingest`, edge.ts) when it has one, checked from the
+ *          internet in before the form is filled; and offers a secret for the field no
+ *          link can carry.
  *   bot    the org's shared identity: the app's INSTALLATION. Discovered over the app's
  *          JWT (`GET /app/installations` — which also proves the pasted key really is the
  *          app's) → connections: the `github` anchor, org-credentialed → vault
@@ -42,9 +44,12 @@ import {
   type Credentials,
   type Draft,
   findRoot,
+  ingestAddress,
   type MessageEvent,
   orgFlag,
   printNext,
+  reachLine,
+  readConfig,
   requireIngest,
   startStep,
 } from "../../connector.ts";
@@ -96,11 +101,12 @@ export async function connectGithubApp(
 }
 
 /** The registration form, prefilled by URL parameters (GitHub reads them at
- *  /settings/apps/new): the name, the two permissions a commenter needs, and the events
- *  the ingest maps — `connections.github.events`, so the subscription and the mapping stay
- *  the one list. The webhook stays off: GitHub cannot reach a laptop, and a link cannot
- *  carry a secret, so the URL and the secret are the form's own two blanks. */
-export function appForm(org: string, events: string[]): string {
+ *  /settings/apps/new): the name, the two permissions a commenter needs, the events the
+ *  ingest maps — `connections.github.events`, so the subscription and the mapping stay the
+ *  one list — and the webhook, on and addressed at the org's public door when the org has
+ *  one (`webhook`: `<edge.publicUrl>/github/ingest`), off when GitHub cannot reach it. A
+ *  link cannot carry a secret, so that is the form's own blank. */
+export function appForm(org: string, events: string[], webhook?: string): string {
   const form = new URL("https://github.com/settings/apps/new");
   const q = form.searchParams;
   q.set("name", `liquen-${org}`);
@@ -109,7 +115,8 @@ export function appForm(org: string, events: string[]): string {
   q.set("public", "false");
   q.set("issues", "write");
   q.set("pull_requests", "write");
-  q.set("webhook_active", "false");
+  q.set("webhook_active", webhook ? "true" : "false");
+  if (webhook) q.set("webhook_url", webhook);
   for (const e of events) q.append("events[]", e);
   return form.href;
 }
@@ -643,21 +650,28 @@ if (import.meta.main) {
     if (verb === "app") {
       const { githubConfig } = await import("./config.ts");
       const { ingestPort, events } = await githubConfig(root);
+      const { publicUrl } = (await readConfig(root)).edge;
+      const webhook = ingestAddress(publicUrl, "github");
       console.error(
         `Register the app (once) — this link fills the form with what this org needs:\n  ${
-          appForm(root.split("/").pop() ?? "liquen", events)
+          appForm(root.split("/").pop() ?? "liquen", events, webhook ?? undefined)
         }\n`,
       );
       console.error(
-        `Four things a link cannot fill:\n` +
+        `What a link cannot fill:\n` +
           `  — Webhook secret: a fresh one to paste there and below → ${suggestSecret()}\n` +
-          `  — Webhook URL: only if this org answers from the internet; the ingest listens\n` +
-          `    on :${ingestPort} at /. Locally leave the webhook off and forward instead:\n` +
-          `      gh webhook forward --repo=<owner/repo> --url=http://localhost:${ingestPort}/\n` +
+          (webhook === null
+            ? `  — Webhook URL: this org has no public door (edge.publicUrl), so the webhook\n` +
+              `    stays off; the ingest listens on :${ingestPort} at /, so forward instead:\n` +
+              `      gh webhook forward --repo=<owner/repo> --url=http://localhost:${ingestPort}/\n`
+            : "") +
           `  — Enable Device Flow: tick it, and LEAVE ON expire user authorization tokens\n` +
           `    (that pair is what \`liquen connect github user\` signs a person in with)\n` +
           `  — Generate a private key: the button at the bottom downloads the .pem\n`,
       );
+      // the address GitHub was just handed, checked from the internet in while there is a
+      // human here to read the answer
+      if (webhook !== null) console.error(`${await reachLine(webhook, "github")}\n`);
       const appId = ask("App ID (the number on the About page):");
       const pemPath = ask("Private key file (path to the .pem):");
       if (!appId || !pemPath) {

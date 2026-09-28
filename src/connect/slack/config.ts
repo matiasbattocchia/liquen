@@ -57,14 +57,14 @@ export const SPEC: ConnectorSpec = {
     {
       key: "ingestPort",
       value: DEFAULT_INGEST_PORT,
-      doc: "the HTTP-mode ingest port (Socket Mode needs none); 0 = any free port, announced",
+      doc: "the HTTP-mode ingest port, behind <edge.publicUrl>/slack/ingest (Socket Mode " +
+        "needs none); 0 = any free port, announced",
       check: checkPort,
     },
     {
       key: "oauthPort",
       value: DEFAULT_OAUTH_PORT,
-      doc:
-        "the port the user door binds for whatever terminates TLS at the app's redirect URI to forward to",
+      doc: "the port the user door binds behind <edge.publicUrl>/slack/oauth/callback",
       check: checkPort,
     },
     {
