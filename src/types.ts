@@ -295,7 +295,7 @@ export interface Payload {
    *  wears: `@` a person (the default when absent), `#` a conversation. Unordered —
    *  pair by name, not position. */
   mentions?: { address: string; name?: string; type?: "@" | "#" }[];
-  /** A `control` row's kind: the principal's reserved word (§3 classifier), or the
+  /** A `control` row's kind: the principal's hard stop, typed at the door (§2), or the
    *  harness's `cancelled` acknowledging that it carried one out (§2). */
   control?: ControlKind | "cancelled";
 }
@@ -416,7 +416,7 @@ export interface PermissionVerdict {
   every?: boolean;
 }
 
-/** ingest-classified reserved word from the agent's principal (§3 classifier). */
+/** The principal's hard stop, as the door's `control` verb names it (§2). */
 export type ControlKind = "stop" | "cancel";
 
 /** World text, or the agent's own monologue/send. (`visibility` parked — returns with
@@ -426,8 +426,8 @@ export interface MessageEvent extends EventBase {
   parts: Part[];
 }
 
-/** The hard stop (§2), both halves. The principal's word — the door's verb, or a reserved
- *  word reclassified at ingest — is stamped like a message and fires the running turn's
+/** The hard stop (§2), both halves. The principal's word — the door's verb — is stamped
+ *  like a message and fires the running turn's
  *  interrupt. The harness's `cancelled` is unstamped and closes the turn it cut: its text
  *  is what the model reads, and it is the last row until the principal speaks again. */
 export interface ControlEvent extends EventBase {

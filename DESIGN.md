@@ -482,9 +482,8 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     (`cancel_pending` is **not** a dedicated tool — it decomposes into "stop emitting" +
     the existing kill.)
   - *Hard (harness-mediated, guaranteed)*: a `control` row in the session's room — the
-    door's `control` verb (the REPL's Ctrl-C while the session is busy, or `/cancel`),
-    or a whole-message reserved word ingest reclassifies — fires the running turn's interrupt, which the turn lease carries. What
-    it cuts depends on where the turn is: a **think** has its model request aborted and
+    door's `control` verb (the REPL's Ctrl-C while the session is busy, or `/cancel`) —
+    fires the running turn's interrupt, which the turn lease carries. What it cuts depends on where the turn is: a **think** has its model request aborted and
     answers nothing; an **act** has its running tools killed (bash: the whole process
     group) and writes **cancelled tool_results** (count toward barriers, `cancelled: true`). Either way the turn closes on
     the harness's own `control` row — unstamped, `payload.control: "cancelled"`, the text
@@ -494,8 +493,8 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     model reads it as a `<system>` line. **Undirected — affects all the session's
     in-flight work.** The principal's row itself is transparent (§5): their word draws
     nothing; its consequence is what the model reads.
-- **`control` is classified at its source** — the door emits it typed (a button, a slash
-  word), ingest reclassifies a principal's reserved word in self-talk — and xi routes the
+- **`control` is typed at its source** — the door emits it (Ctrl-C, a slash word, a
+  button); a word typed on a chat surface is a `message`, a soft stop — and xi routes the
   type: it starts nothing (the wake table); the store fires the interrupt of the lease held
   in that room.
 
@@ -604,7 +603,7 @@ one peripheral for both.
     stop_reason?      // on a turn's LAST event: the stop, in the harness's vocabulary (decide reads it)
     covers?           // on a summary: [from,to] — the id range the checkpoint stands for
     mentions?         // wire mentions, canonical addresses
-    control?          // ingest-classified reserved word (stop | cancel)
+    control?          // the principal's hard stop, typed at the door (stop | cancel)
   }
   extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, <service> provenance, raw
   status?: {        // delivery lifecycle — ONE mutable json_patch-merged column, never events
@@ -718,7 +717,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | type | producer *(model→role)* | consumer *(→ LLM role)* | xi | type-specific fields |
 |---|---|---|---|---|
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
-| `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`) · ingest (reclassified) · xi/nu (the `cancelled` closing) | the principal's: transparent — its consequence renders; the harness's: `<system kind="cancelled">` | the principal's **interrupts** the running turn (§2), never a wake; the harness's closes it — `decide` idles on a trailing one | parts(text: the word) · payload{control: stop · cancel · cancelled} |
+| `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`) · xi/nu (the `cancelled` closing) | the principal's: transparent — its consequence renders; the harness's: `<system kind="cancelled">` | the principal's **interrupts** the running turn (§2), never a wake; the harness's closes it — `decide` idles on a trailing one | parts(text: the word) · payload{control: stop · cancel · cancelled} |
 | `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
 | `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `<system kind="outcome">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
@@ -734,15 +733,11 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 
 ### Ingest is a classifier (deterministic, no model)
 
-Every inbound passes through ingest, which does identity resolution **and** may reclassify:
+Every inbound passes through ingest, which classifies its AUTHOR — principal, member,
+stranger — and never its words: an inbound is a `message` whatever it says. A "stop" typed on a chat surface is the soft
+stop (§2), a customer's "stop" or "yes" is their own words (an unsubscribe, an answer),
+and a `/y` is read in xi, below.
 
-| outcome | when | produces |
-|---|---|---|
-| pass through | ordinary text | `message` (+ resolved authorship) |
-| `control` | reserved word from the agent's principal in self-talk | `control` + `payload.control` |
-
-- Raw text always preserved (`parts` + `extra.raw`) — misclassification auditable/reversible.
-- **Control vocab (v0)**: `stop`/`cancel`.
 - **The verdict is not ingest's** (landed 2026-08-18): a gate is answered in **xi**, which
   already derives what the log owes and therefore already knows which cards are open. The
   principal's line passes through as an ordinary `message`, and xi reads
@@ -813,8 +808,6 @@ Every inbound passes through ingest, which does identity resolution **and** may 
 - **Scope is parked at `once`** — `/always` · `/never` (per conversation) is the next rung:
   `PermissionVerdict.scope` already carries `always`, and a standing verdict writes into
   that same rule table.
-- A customer typing "stop"/"yes" is **not** reclassified (wrong author/context) — stays a
-  `message` (e.g. "stop" = unsubscribe).
 
 ## 4. Identity, services & the loopback problem
 
@@ -2311,7 +2304,7 @@ Under Postgres the door gives way to RLS — the script client is unchanged.
 **The door is also the attach seam.** An interface — the REPL, a one-turn CLI, whatever
 else — never holds a log handle: it speaks to its agent through the same socket, which
 serves five ops: `call` (above), `message` (the principal's half of the complex, no
-`turn_id`), `control` (the principal's reserved word, typed — `cancel` cuts the session's
+`turn_id`), `control` (the principal's hard stop, typed — `cancel` cuts the session's
 running turn, §2), `permission_response` (a gate answered), and `tail` (the agent's scoped
 view pushed from a cursor, model deltas riding the same wire — `onDelta` is a fan-out over
 the tailers; its `cwd` is where the client stands, and the session's shell starts there for

@@ -27,8 +27,8 @@
  *   message              {op, text, sender?, session?}   → the principal's half of the
  *                                                          complex (no turn_id, §3) → {ok, id}
  *   permission_response  {op, ref_id, verdict, session?} → answers a gate → {ok, id}
- *   control              {op, kind, session?}            → the principal's reserved word,
- *                                                          already classified: `cancel`
+ *   control              {op, kind, session?}            → the principal's hard stop,
+ *                                                          typed: `cancel`
  *                                                          cuts the session's running turn
  *                                                          (§2) → {ok, id}
  *   tail          {op, from?, session?, cwd?, recall?,

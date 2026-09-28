@@ -4160,3 +4160,7 @@ shell's does. The line editor offers Ctrl-C to its surface first (`interrupt`). 
 that opens mid-turn gets the busy edge it missed: the door keeps which sessions are
 between a busy and an idle and pushes `busy` on the tail's open, so a REPL attached late
 can still cut the turn it walked in on.
+
+The hard stop is the door's alone. Ingest reclassifying a principal's "stop" typed on a
+chat surface into a `control` row, which DESIGN promised and nothing built, is dropped:
+that word is a `message`, the soft stop, and the model decides what to drop.
