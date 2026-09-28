@@ -4183,8 +4183,15 @@ run showed, each now carried by the code:
   13 minutes, answered the next call from a fresh container, both gone. The SDK counts
   requests in flight, never processes; an exec whose stream a job holds open counts as in
   flight, which is how a raw `sleep 1200 &` kept another sandbox up for 26 minutes. So an
-  agent's background job lives only while the agent keeps calling, and a job meant to
-  outlast ten quiet minutes needs `keepAlive` or a caller.
+  agent's background job lives only while the agent keeps calling. `keepAlive` would hold
+  a container until someone clears it, so a main that dies holding it bills forever; the
+  window is bounded instead: `system.sandboxSleepMinutes` (10) rides every call as
+  `x-sleep-after`, the gateway sets it on the container that answered, and the ambient
+  block tells the agent, whose own calls, scheduled wakes included, keep a job alive.
+  Measured: a 30-minute window kept a job and a file past 13 quiet minutes; a 1-minute
+  window stopped the container inside five and a half, not one — the SDK checks the
+  deadline on an alarm that sleeps up to three minutes, so a window shorter than that is
+  kept late.
 
 **Open, a decision:** the docs-table tools never reached the model. `agent.tools` in the
 scaffold names four (`search`, `schedule`, `cancel`, `bash`), and the offer is filtered by
