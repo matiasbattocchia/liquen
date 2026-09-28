@@ -312,3 +312,32 @@ export function storedAs(
     ...(offer ? { status: offer, envelope: { ...event.envelope, status: offer.state } } : {}),
   } as Event;
 }
+
+/** A mail thread is a `group` conversation addressed at its root Message-ID and named by
+ *  its subject (connect/mail.ts). The statements that file every mail row so: each row's
+ *  reply chain is walked up through the log (`ref_external_id`), and the furthest id it
+ *  reaches — the last one the log holds, or the one it answers and the log never saw — is
+ *  the root. `ref` is the engine's expression for the payload's `ref_external_id`. */
+export const MAIL_THREADS = (ref: string): string[] => [
+  `CREATE TEMPORARY TABLE mail_roots AS
+     WITH RECURSIVE up(id, at, ref, depth) AS (
+       SELECT id, substr(external_id, 6), ${ref}, 0
+         FROM events
+        WHERE type = 'message' AND external_id LIKE 'mail:%'
+       UNION ALL
+       SELECT up.id, substr(up.ref, 6),
+              (SELECT ${ref} FROM events WHERE external_id = up.ref), up.depth + 1
+         FROM up
+        WHERE up.ref LIKE 'mail:%' AND up.depth < 100
+     )
+     SELECT id, at AS root
+       FROM up
+      WHERE depth = (SELECT max(depth) FROM up u WHERE u.id = up.id)`,
+  `UPDATE events
+      SET conversation_address = (SELECT root FROM mail_roots r WHERE r.id = events.id),
+          conversation_kind = 'group',
+          conversation_name = conversation_thread,
+          conversation_thread = NULL
+    WHERE id IN (SELECT id FROM mail_roots)`,
+  `DROP TABLE mail_roots`,
+];

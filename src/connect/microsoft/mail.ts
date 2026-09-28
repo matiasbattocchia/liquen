@@ -30,15 +30,16 @@ import {
   htmlToText,
   MAIL_SYNC,
   mailbox,
-  mailConversation,
   type MailMessage,
   mailRow,
   type MailSend,
   type MailWireDeps,
   mediaShelf,
   messageId,
+  referencesOf,
   runMailDispatch,
   type SaveFile,
+  threadRoot,
 } from "../mail.ts";
 import {
   createPoller,
@@ -50,7 +51,7 @@ import {
   storeCursor,
 } from "../poll.ts";
 import { DispatchError } from "../errors.ts";
-import type { Appender } from "../../store/log.ts";
+import type { Appender, Reader } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
@@ -128,6 +129,8 @@ const SELECT = [
 export interface OutlookMailDeps {
   /** → the EventLog: a mail is an ordinary published event (§3). */
   publish: Appender["publish"];
+  /** The log, read: a reply is filed where the message it answers already is. */
+  read?: Reader["read"];
   /** The vault: grants (the connections + the refresh_token) and the deltaLink cursors. */
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
@@ -196,8 +199,8 @@ async function pollFolder(
       if (item["@removed"]) return;
       const msg = await getMessage(graph, item.id!);
       if (!msg || msg.isDraft) return;
-      const m = await messageOf(graph, msg, upn, deps.save, now);
-      await deps.publish(mailRow(base, m));
+      const { m, root } = await messageOf(graph, msg, deps, now);
+      await deps.publish(mailRow(base, m, root));
       published++;
     });
   } catch (err) {
@@ -211,18 +214,18 @@ async function pollFolder(
   return published;
 }
 
-/** A read message → the shared shape, its attachments fetched onto the shelf. */
+/** A read message → the shared shape and its thread, its attachments fetched onto the
+ *  thread's shelf. */
 async function messageOf(
   graph: Graph,
   msg: GraphMessage,
-  account: string,
-  save: SaveFile,
+  deps: Pick<OutlookMailDeps, "read" | "save">,
   now: () => string,
-): Promise<MailMessage> {
+): Promise<{ m: MailMessage; root: string }> {
   const parsed = parseMessage(msg, now);
+  const root = await threadRoot(deps.read ? { read: deps.read } : undefined, parsed);
   const files: MailMessage["files"] = [];
   if (msg.hasAttachments && msg.id) {
-    const conversation = mailConversation(account, parsed).address;
     const res = await graph(`${GRAPH}/messages/${encodeURIComponent(msg.id)}/attachments`);
     if (res.ok) {
       const { value } = await res.json() as { value?: GraphAttachment[] };
@@ -230,7 +233,7 @@ async function messageOf(
         if (a["@odata.type"] !== "#microsoft.graph.fileAttachment" || a.isInline) continue;
         if (!a.contentBytes) continue;
         files.push(
-          await save(conversation, decodeBase64(a.contentBytes), {
+          await deps.save(root, decodeBase64(a.contentBytes), {
             mime_type: a.contentType,
             name: a.name,
           }),
@@ -238,7 +241,7 @@ async function messageOf(
       }
     } else await res.body?.cancel(); // the message still lands; the files are the wire's to hold
   }
-  return { ...parsed, files };
+  return { m: { ...parsed, files }, root };
 }
 
 /** The headers and words of a read message. */
@@ -255,6 +258,7 @@ export function parseMessage(msg: GraphMessage, now: () => string): Omit<MailMes
     ? msg.body?.contentType?.toLowerCase() === "html" ? htmlToText(content) : content
     : undefined;
   const inReplyTo = messageId(header("In-Reply-To"));
+  const references = referencesOf(header("References"));
   return {
     id: messageId(msg.internetMessageId) ?? msg.id!,
     ts: msg.sentDateTime ?? msg.receivedDateTime ?? now(),
@@ -263,6 +267,7 @@ export function parseMessage(msg: GraphMessage, now: () => string): Omit<MailMes
     cc: boxes(msg.ccRecipients),
     ...(msg.subject ? { subject: msg.subject } : {}),
     ...(inReplyTo ? { inReplyTo } : {}),
+    ...(references.length ? { references } : {}),
     ...(text ? { text } : {}),
   };
 }

@@ -50,11 +50,12 @@ eats it.
 
 Mail and Teams are conversations of yours, not Graph calls: what arrives in the account's
 Inbox and what leaves its Sent Items, the member's chats and the channels of their teams,
-are in your log as `<conv>` lines on the account (a mail's other party with the subject
-as `thread`, a chat by its id, a channel by `Team / Channel`), and you write them with
-`send` — `to` an address or a name, `subject` for a new mail thread, `re` to answer a
-line — the same way as any other conversation. Graph is for what the log does not carry:
-searching the mailbox, flags and folders, the calendar, a chat's members, a team's roster.
+are in your log as `<conv>` lines on the account (a mail thread as a group named by its
+subject, a chat by its id, a channel by `Team / Channel`), and you write them with
+`send` — `to` a thread's name or address to answer in it, `to` addresses with `subject`
+to open one, `re` to answer a particular line — the same way as any other conversation.
+Graph is for what the log does not carry: searching the mailbox, flags and folders, the
+calendar, a chat's members, a team's roster.
 
 ```sh
 # create an event

@@ -214,12 +214,8 @@ Deno.test("outlook mail: a listed id is read back as text with its headers → t
       envelope: {
         service: "microsoft",
         connection_address: "ana@contoso.com",
-        conversation: {
-          address: "bob@y.com,carl@z.com",
-          kind: "direct",
-          name: "Bob Ross",
-          thread: "Invoice 42",
-        },
+        // the thread: a reply to a message no log holds is filed at that message's id
+        conversation: { address: "m0@contoso.com", kind: "group", name: "Invoice 42" },
         sender: { address: "bob@y.com", name: "Bob Ross" },
         external_id: "mail:m1@x.com",
       },
@@ -231,9 +227,15 @@ Deno.test("outlook mail: a listed id is read back as text with its headers → t
           file: { mime_type: "application/pdf", uri: "file:///m/receipt.pdf" },
         },
       ],
+      extra: {
+        mail: {
+          to: [{ address: "ana@contoso.com", name: "Ana" }],
+          cc: [{ address: "carl@z.com" }],
+        },
+      },
     });
     assertEquals(saved.length, 1);
-    assertEquals(saved[0].conversation, "bob@y.com,carl@z.com");
+    assertEquals(saved[0].conversation, "m0@contoso.com");
     assertEquals(new TextDecoder().decode(saved[0].bytes), "%PDF-1.4");
     assertEquals(
       (await syncOf(creds))?.inbox,

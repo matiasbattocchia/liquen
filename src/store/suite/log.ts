@@ -368,6 +368,24 @@ export function logSuite(s: Substrate): void {
     });
   });
 
+  Deno.test("setDelivery conversation: the wire's filing moves the row, kind and name as given", async () => {
+    await withLog(async (log) => {
+      await log.publish(msg("01", "ana@x.com,bob@y.com", "hola"));
+      await log.setDelivery("01", { external_id: "mail:u1@org.com" });
+      assertEquals((await log.read())[0].envelope.conversation.address, "ana@x.com,bob@y.com");
+      await log.setDelivery("01", {
+        conversation: { address: "u1@org.com", kind: "group", name: "Lunch" },
+      });
+      assertEquals((await log.read())[0].envelope.conversation, {
+        address: "u1@org.com",
+        kind: "group",
+        name: "Lunch",
+      });
+      assertEquals((await log.read({ conversation: "u1@org.com" })).length, 1);
+      assertEquals((await log.read({ conversation: "ana@x.com,bob@y.com" })).length, 0);
+    });
+  });
+
   Deno.test("echo race: the echo arrives BEFORE the backfill — setDelivery absorbs it into one row", async () => {
     await withLog(async (log) => {
       // 1. the agent's outbound send — dispatch is posting, no external_id yet

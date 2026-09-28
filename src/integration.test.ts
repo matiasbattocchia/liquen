@@ -602,21 +602,21 @@ Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere 
   }
 });
 
-Deno.test("send `subject`: a mail's thread rides the envelope; a reply inherits the referent's", async () => {
+Deno.test("send `subject`: a first send names the thread it opens; a send into a thread wears its name, and carries no rename", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "google", address: "me@org.com", agentId: "a1", extra: { name: "Me" } },
   ]);
-  // a mail from Ana already in the log: the wire's row, its thread and its id
+  // a mail from Ana already in the log: the wire's row, in the thread at its root
   const theirs = await log.publish({
     ts: "2026-09-23T10:00:00Z",
     type: "message",
     envelope: {
       service: "google",
       connection_address: "me@org.com",
-      conversation: { address: "ana@x.com", kind: "direct", name: "Ana", thread: "Invoice 42" },
+      conversation: { address: "m0@x.com", kind: "group", name: "Invoice 42" },
       sender: { address: "ana@x.com", name: "Ana" },
       external_id: "mail:m1@x.com",
     },
@@ -631,7 +631,12 @@ Deno.test("send `subject`: a mail's thread rides the envelope; a reply inherits 
     ok([{
       kind: "tool_use",
       name: "send",
-      input: { to: "ana@x.com", text: "paid", re: shortId(theirs!.id) },
+      input: { to: "Invoice 42", text: "paid", re: shortId(theirs!.id) },
+    }], "tool_use"),
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "m0@x.com", subject: "Invoice 43", text: "and the next one" },
     }], "tool_use"),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
@@ -642,18 +647,28 @@ Deno.test("send `subject`: a mail's thread rides the envelope; a reply inherits 
     const sent = (await log.read({ types: ["message"] })).filter((e) =>
       e.agent && e.payload?.turn_id
     );
+    // first contact: the addresses, under the subject — the dispatcher files the thread
     const fresh = sent.find((e) => e.envelope.conversation.address === "bob@y.com");
     assertEquals(fresh?.envelope.service, "google");
     assertEquals(fresh?.envelope.connection_address, "me@org.com");
-    assertEquals(fresh?.envelope.conversation, { address: "bob@y.com", thread: "Lunch" });
-    const reply = sent.find((e) => e.envelope.conversation.address === "ana@x.com");
+    assertEquals(fresh?.envelope.conversation, { address: "bob@y.com", name: "Lunch" });
+    // the thread by its name: its address, kind and name, the referent's line answered
+    const reply = sent.find((e) => e.envelope.conversation.address === "m0@x.com");
     assertEquals(reply?.envelope.conversation, {
-      address: "ana@x.com",
-      kind: "direct",
-      thread: "Invoice 42",
+      address: "m0@x.com",
+      kind: "group",
+      name: "Invoice 42",
     });
     assertEquals(reply?.payload?.action, "reply");
     assertEquals(reply?.payload?.ref_external_id, "mail:m1@x.com");
+    // a subject on a thread that wears another name is refused
+    const results = await log.read({ types: ["tool_result"] });
+    const refused = results.map((r) =>
+      String((r.parts[0] as { data: { output: string } }).data.output)
+    )
+      .find((o) => o.includes("carries no rename"));
+    assertStringIncludes(refused ?? "", 'm0@x.com is "Invoice 42" — a send carries no rename');
+    assertEquals(sent.filter((e) => e.envelope.service === "google").length, 2);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

@@ -4207,3 +4207,30 @@ the way `send(connection:)` names one (`accountNamed`: the `<conn>` name, any pa
 or the address); an account nobody wears, or a name two wear, is the call's error with
 the agent's accounts listed. The store's read already filtered on the connection; the
 tool now exposes it.
+
+### A mail thread is a conversation (2026-09-28) — LANDED
+
+A mail conversation was the set of other parties, comma-joined, with the subject a label
+on each row: a Cc added mid-thread moved the thread to another conversation, every thread
+with one person shared a room, and a new subject to the same people opened nothing. Now a
+thread is a `group` addressed at its ROOT, the Message-ID of the message that opened it,
+and named by its subject (`Re:`/`Fwd:` off). `threadRoot` reads the root off a message:
+the conversation the log already files the answered message under, else `References`'
+first id, else `In-Reply-To`, else the message's own id — so a reply joins the thread
+however its client spelled the headers, and a thread the log holds is joined at the log's
+word. Both wires parse `References`; the poll gets the log to read (`PollIngestDeps.read`).
+Every row keeps its recipients (`extra.mail`: To and Cc), and a send into a thread goes to
+the CAST — everyone the thread's rows name but the account, senders included — answering
+the line `re` names or else the thread's latest, under `Re:` its name, with `References`
+root-then-parent. A send to addresses opens a thread: the dispatcher mints the id, and
+the row MOVES to it (`DeliveryPatch.conversation`, both engines), where the replies will
+land. `send(subject:)` names the conversation a first send opens, on mail as on a local
+list; on a conversation that wears another name it is refused — a send carries no rename,
+a new subject is a new thread. `conversation.thread` is stamped by nothing now.
+
+Migration v13 (SQLite) and v4 (Postgres) file every mail row by thread: the reply chain
+walked up through the log (`MAIL_THREADS`, a recursive CTE per engine), the furthest id
+reached the root — the last the log holds, or the one answered and never seen — the
+subject the name. Attachments already on the shelf stay where they are (a file part's
+URI is absolute); new ones land under the thread's root. Timers armed in a mail
+conversation keep their old address.

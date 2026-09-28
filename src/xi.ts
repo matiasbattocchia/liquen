@@ -2160,8 +2160,8 @@ async function execute(
     // the only dispatch path (§9): directed message + sent result (two appends on
     // files — atomic pair on DB later; the steal-sweep covers the crash window)
     let to = String(args.to);
-    // the thread (§3 `conversation.thread`): a mail's subject — and on a local list, the
-    // room's name, what makes the list a group or a channel rather than a direct room
+    // the name a conversation opens under: a mail thread's subject — and on a local list,
+    // the room's name, what makes the list a group or a channel rather than a direct room
     const subject = args.subject === undefined ? "" : String(args.subject).trim();
     // the account it rides (§4): named by the model, else the conversation's own record
     // below. A local room rides no account — it is the local channel by construction.
@@ -2228,15 +2228,26 @@ async function execute(
       : prior?.envelope.conversation.kind;
     // a broadcast is fan-out, not a room anyone is in (§3): nothing answers there
     if (kind === "broadcast") throw new Error(`${to} is a broadcast — nobody answers there`);
-    // the thread: the mail subject named, else the referent's, so a reply lands under the
-    // thread it answers and the wire's Re: is the dispatcher's to spell
     const target = args.re === undefined ? undefined : await referent(ports, to, String(args.re));
-    const thread = local ? undefined : subject || target?.envelope.conversation.thread;
+    // a wire conversation's name is its record's — a send carries no rename; on first
+    // contact the subject names the thread this send opens, and the wire's Re: on a reply
+    // is the dispatcher's to spell
+    if (
+      !local && prior && subject &&
+      foldName(subject) !== foldName(prior.envelope.conversation.name ?? "")
+    ) {
+      throw new Error(
+        `${to} is ${
+          prior.envelope.conversation.name ? `"${prior.envelope.conversation.name}"` : "unnamed"
+        } — ` +
+          "a send carries no rename; a new subject is a new conversation: send to the addresses",
+      );
+    }
+    const name = local?.room ? local.room.name : prior ? prior.envelope.conversation.name : subject;
     const conversation = {
       address: to,
       ...(kind !== undefined ? { kind } : {}),
-      ...(local?.room ? { name: local.room.name } : {}),
-      ...(thread ? { thread } : {}),
+      ...(name ? { name } : {}),
     };
     const envelope = via
       ? { service: via.service as Service, connection_address: via.address, conversation }
@@ -2832,9 +2843,10 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
           subject: {
             type: "string",
             description:
-              "the thread this message opens — a mail's Subject line, only for a message " +
-              "that is not a reply: a reply inherits the thread of the message it answers. " +
-              "On a list of agents, the room's name: `ops` opens a group, `#ops` a channel",
+              "the name of the conversation this message opens: a mail's Subject line on a " +
+              "first send to addresses — every mail thread is a conversation of its own, " +
+              "and a send into one needs no subject. On a list of agents, the room's name: " +
+              "`ops` opens a group, `#ops` a channel",
           },
           react: { type: "string", description: "an emoji to land on the `re` message" },
           action: {

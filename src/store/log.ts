@@ -41,7 +41,15 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import type { CallKind, DeliveryStatus, Draft, Envelope, Event, EventId } from "../types.ts";
+import type {
+  CallKind,
+  Conversation,
+  DeliveryStatus,
+  Draft,
+  Envelope,
+  Event,
+  EventId,
+} from "../types.ts";
 import { newId } from "./id.ts";
 import {
   CANCEL_SQL,
@@ -69,6 +77,7 @@ import {
   type Dialect,
   eventOf,
   externalOf,
+  MAIL_THREADS,
   offerOf,
   type Row,
   rowOf,
@@ -181,6 +190,10 @@ export interface DeliveryPatch {
    *  so sender-presence means "on the wire", not "echo arrived". Fill-only: the echo's
    *  later merge still contributes what only it knows (the pushname). */
   sender?: { address: string; name?: string };
+  /** The conversation the wire filed the row in, when the post is what decides it (a mail
+   *  opening a thread is addressed at the id it minted): the row MOVES there, its kind
+   *  and name as given. */
+  conversation?: Pick<Conversation, "address" | "kind" | "name">;
 }
 
 /** Capability slices — a consumer can depend on exactly what it's allowed (RLS parity, §6). */
@@ -463,6 +476,10 @@ export async function openLog(
                              THEN coalesce(?5, sender_address) ELSE sender_address END,
        sender_name    = CASE WHEN coalesce(sender_name, '') = ''
                              THEN coalesce(?6, sender_name) ELSE sender_name END,
+       -- the wire's filing moves the row: a thread opened by this send lives at its id
+       conversation_address = coalesce(?7, conversation_address),
+       conversation_kind    = CASE WHEN ?7 IS NULL THEN conversation_kind ELSE ?8 END,
+       conversation_name    = CASE WHEN ?7 IS NULL THEN conversation_name ELSE ?9 END,
        updated_at  = ?3
      WHERE id = ?4`,
   );
@@ -743,6 +760,9 @@ export async function openLog(
           id,
           patch.sender?.address ?? null,
           patch.sender?.name ?? null,
+          patch.conversation?.address ?? null,
+          patch.conversation?.kind ?? null,
+          patch.conversation?.name ?? null,
         );
         db.exec("COMMIT");
       } catch (err) {
@@ -782,6 +802,15 @@ function migrate(db: DatabaseSync) {
   if (v < 10) migrateV10(db);
   if (v < 11) migrateV11(db);
   if (v < 12) migrateV12(db);
+  if (v < 13) migrateV13(db);
+}
+
+/** v13 — a mail thread is a group conversation at its root Message-ID (§4). */
+function migrateV13(db: DatabaseSync) {
+  writing(db, () => {
+    for (const s of MAIL_THREADS("json_extract(payload, '$.ref_external_id')")) db.exec(s);
+    db.exec("PRAGMA user_version = 13");
+  });
 }
 
 /** v12 — local addresses carry no prefix (§3): a direct room is its members joined by `,`,

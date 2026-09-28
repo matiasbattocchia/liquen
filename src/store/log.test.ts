@@ -71,6 +71,78 @@ Deno.test("migrate v6: a pre-sessions log settles on the pair vocabulary (§4, �
   }
 });
 
+Deno.test("migrate v13: mail rows are filed by thread — the reply chain walked to its root, the subject the name", async () => {
+  const dir = await Deno.makeTempDir();
+  const first = await openLog(dir);
+  const mail = (
+    id: string,
+    address: string,
+    thread: string | undefined,
+    ref?: string,
+  ): Draft<MessageEvent> => ({
+    ts: "2026-08-30T10:00:00.000Z",
+    type: "message",
+    ...(ref ? { payload: { action: "reply", ref_external_id: `mail:${ref}` } } : {}),
+    envelope: {
+      service: "google",
+      connection_address: "me@org.com",
+      conversation: { address, kind: "direct", name: "Ana", ...(thread ? { thread } : {}) },
+      external_id: `mail:${id}`,
+    },
+    parts: [{ type: "text", kind: "text", text: id }],
+  });
+  await first.upsertConnections([
+    { service: "google", address: "me@org.com" },
+    { service: "whatsapp", address: "549" },
+  ]);
+  await first.publish([
+    mail("m0@org.com", "ana@x.com", "Invoice 42"),
+    mail("m1@x.com", "ana@x.com", "Invoice 42", "m0@org.com"),
+    // a Cc joined: the same thread under another address, two replies deep
+    mail("m2@y.com", "ana@x.com,bob@y.com", "Invoice 42", "m1@x.com"),
+    // a reply to a message the log never saw: that message is the root
+    mail("m3@z.com", "carl@z.com", "Quote", "old@z.com"),
+    // another thread with the same person, and one with no subject
+    mail("m4@x.com", "ana@x.com", "Lunch"),
+    mail("m5@x.com", "ana@x.com", undefined),
+    {
+      ts: "2026-08-30T10:00:00.000Z",
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "549",
+        conversation: { address: "ana@x.com", kind: "direct", thread: "not mail" },
+        external_id: "whatsapp:w1",
+      },
+      parts: [{ type: "text", kind: "text", text: "hola" }],
+    },
+  ]);
+  await first.close();
+  const db = new DatabaseSync(`${dir}/log.db`);
+  db.exec("PRAGMA user_version = 12");
+  db.close();
+
+  const log = await openLog(dir); // reopening IS the migration
+  try {
+    const rows = await log.read({ types: ["message"] });
+    const filed = Object.fromEntries(
+      rows.map((e) => [e.envelope.external_id, e.envelope.conversation]),
+    );
+    assertEquals(filed, {
+      "mail:m0@org.com": { address: "m0@org.com", kind: "group", name: "Invoice 42" },
+      "mail:m1@x.com": { address: "m0@org.com", kind: "group", name: "Invoice 42" },
+      "mail:m2@y.com": { address: "m0@org.com", kind: "group", name: "Invoice 42" },
+      "mail:m3@z.com": { address: "old@z.com", kind: "group", name: "Quote" },
+      "mail:m4@x.com": { address: "m4@x.com", kind: "group", name: "Lunch" },
+      "mail:m5@x.com": { address: "m5@x.com", kind: "group" },
+      "whatsapp:w1": { address: "ana@x.com", kind: "direct", thread: "not mail" },
+    });
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("migrate v9: a log from before named wakes opens, and its timers take a handle", async () => {
   const dir = await Deno.makeTempDir();
   const first = await openLog(dir);

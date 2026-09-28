@@ -815,12 +815,16 @@ and a `/y` is read in xi, below.
 riding the grant that reads it (`google`, `microsoft`) on the account's connection:
 ```
 service: "google" · connection: "hi@org" | "matias@org"
-conversation: {address: "customer@x.com", kind: "direct", thread: <subject>}
+conversation: {address: <root Message-ID>, kind: "group", name: <subject>}
 sender: {address: "customer@x.com"} · parts: [text, file(attachments)] · external_id: mail:<Message-ID>
+extra.mail: {to, cc}
 ```
-The conversation is the other parties (every address but the account's, sorted), so a
-first send to a stranger is `send(to: <address>, connection: <account>, subject:)` and a
-reply is `send(re:)` — the thread is the subject, inherited. The mapping is one module for
+A thread is a conversation: a group addressed at its root — the Message-ID of the message
+that opened it, read off `References`/`In-Reply-To`, or the log's own filing of the message
+answered — and named by its subject, its members everyone the thread's rows name. A
+first send is `send(to: <addresses>, connection: <account>, subject:)`, which opens a
+thread the dispatcher files at the id it mints; a send into a thread (`to` its name or
+address, `re` a line) goes to the whole cast under `Re:`. The mapping is one module for
 every mail wire (`connect/mail.ts`). Shared inbox (`hi@org`) = an ownerless grant **every
 agent reads**; personal = that principal's.
 Shared-inbox coordination is left to **coexistence-yield** (an agent that sees another
