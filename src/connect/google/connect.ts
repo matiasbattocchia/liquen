@@ -16,9 +16,10 @@
  * else this machine's edge, `http://localhost:<edge.port>/google/oauth/callback`, which
  * Google permits in plain http. It is sent verbatim as `redirect_uri`, so the string
  * Google matches against its own list is the one expression, and its host decides who can
- * reach that sign-in: the loopback one is the dev's own browser, and the command opens
- * it; the public one is reached by a member anywhere, so the command prints the link to
- * send instead. Either way the edge forwards the callback to the door's socket
+ * reach that sign-in: the loopback one is the dev's own browser, and the public one is
+ * reached by a member anywhere. The command opens the link here when it is for the person
+ * at this terminal — a loopback callback, or a grant bound to the terminal's own user —
+ * and prints it to send otherwise (`handOut`, door.ts). Either way the edge forwards the callback to the door's socket
  * (`serveDoor`), so the org must be running for a sign-in to land.
  *
  * The app door prints the callback before it asks for anything, so the console's

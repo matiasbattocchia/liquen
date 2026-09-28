@@ -22,9 +22,10 @@
  * address, else this machine's edge, `http://localhost:<edge.port>/microsoft/oauth/
  * callback`, which Entra permits in plain http. The app door prints it for the portal's
  * redirect URI field, and a sign-in sends it verbatim as `redirect_uri`, so the string
- * Entra matches against its own list is the one expression. A loopback callback is this
- * machine's browser, and the command opens it; the public one is reached by a member
- * anywhere, so the command prints the link to send. Either way the edge forwards the
+ * Entra matches against its own list is the one expression. The command opens the link
+ * here when it is for the person at this terminal — a loopback callback, or a grant bound
+ * to the terminal's own user — and prints it to send otherwise (`handOut`, door.ts).
+ * Either way the edge forwards the
  * callback to the door's socket (`serveDoor`), so the org must be running for a sign-in
  * to land.
  *
