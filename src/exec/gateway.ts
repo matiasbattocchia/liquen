@@ -37,6 +37,7 @@ import { newId } from "../store/id.ts";
 import { MAX_BYTES, MAX_LINES } from "./truncate.ts";
 import { DEFAULT_BASH_TIMEOUT_MS } from "../config.ts";
 import {
+  ageOf,
   type BashInput,
   bashSpec,
   type BashState,
@@ -183,7 +184,31 @@ export interface RemoteShellOptions {
    *  in the ambient block: the agent's background jobs and files live only that long once
    *  it stops calling. */
   sleepMinutes?: number;
+  /** When the sandbox's last call closed, from any of the agent's sessions: the idle
+   *  window runs from there (`clocked`). */
+  lastCall?: () => number | undefined;
 }
+
+/** A gateway that keeps when its last call closed. One per sandbox, so every session's
+ *  shell on it reads the same clock the container's idle window runs on; a call the
+ *  gateway refused never reached the container and does not count. */
+export function clocked(gateway: Gateway): Gateway & { lastCall(): number | undefined } {
+  let last: number | undefined;
+  const stamp = <T>(v: T): T => {
+    last = Date.now();
+    return v;
+  };
+  return {
+    exec: (script, signal) => gateway.exec(script, signal).then(stamp),
+    read: (path) => gateway.read(path).then(stamp),
+    destroy: () => gateway.destroy(),
+    lastCall: () => last,
+  };
+}
+
+/** The file whose absence tells the ambient probe the container is new since the last
+ *  call: the container's own scratch, which a stopped container does not keep. */
+const UP = "/tmp/.liquen-up";
 
 /** The exit code `timeout` answers when it had to kill the command. */
 const TIMED_OUT = 137;
@@ -201,6 +226,28 @@ const alive = (pgid: string) =>
  *  sends. */
 export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPlane {
   const timeoutMsDefault = opts.defaultTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
+  /** The sandbox's line in the ambient block: how long ago the last call closed, and what
+   *  the window means — or, when the container is new since that call, that what ran and
+   *  what was written there is gone. */
+  const sleepLine = (last: number | undefined, fresh: boolean): string[] => {
+    const n = opts.sleepMinutes;
+    if (!n) return [];
+    if (last === undefined) {
+      return [
+        `sandbox: stops ${n} min after your last call — its background jobs and files go with it`,
+      ];
+    }
+    if (fresh) {
+      return [
+        `sandbox: restarted since the last call, ${ageOf(last)} ago — its background jobs ` +
+        `and files are gone; it stops ${n} min after a call`,
+      ];
+    }
+    return [
+      `sandbox: last call ${ageOf(last)} ago; it stops ${n} min after one — its background ` +
+      `jobs and files go with it`,
+    ];
+  };
   const state: BashState = { cwd: opts.workspace };
   const jobs = new Set<Job>();
   const out = `${opts.workspace}/.out`;
@@ -274,7 +321,10 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
     exec: { bash },
     async ambient() {
       const pgids = [...jobs].map((j) => j.pgid);
+      // read before the probe, which is a call itself: the gap it closes is the one to say
+      const last = opts.lastCall?.();
       const probe = [
+        `[ -f ${UP} ] || echo fresh; touch ${UP}`,
         `cd ${quote(state.cwd)} 2>/dev/null || exit 0`,
         `b=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) && ` +
         `echo "git: $b · $(git status --porcelain | grep -c .)"`,
@@ -282,18 +332,14 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
         "true",
       ].join("\n");
       const lines = [`cwd: ${state.cwd}`];
-      if (opts.sleepMinutes) {
-        lines.push(
-          `sandbox: stops ${opts.sleepMinutes} min after your last call — its background ` +
-            `jobs and files go with it`,
-        );
-      }
       let said = "";
       try {
         said = (await gateway.exec(probe)).stdout;
       } catch {
-        return lines; // the sandbox is unreachable: the ambient block is not where to say so
+        // the sandbox is unreachable: the ambient block is not where to say so
+        return [...lines, ...sleepLine(last, false)];
       }
+      lines.push(...sleepLine(last, /^fresh$/m.test(said)));
       const git = /^git: (.+) · (\d+)$/m.exec(said);
       if (git) {
         const dirty = Number(git[2]);

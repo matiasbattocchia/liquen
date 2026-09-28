@@ -418,7 +418,7 @@ async function gitLine(cwd: string): Promise<string | null> {
   }
 }
 
-const ageOf = (since: number): string => {
+export const ageOf = (since: number): string => {
   const s = Math.floor((Date.now() - since) / 1000);
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
 };

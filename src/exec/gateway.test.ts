@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "@std/assert";
 import {
+  clocked,
   type Gateway,
   gatewayFiles,
   gatewayFor,
@@ -215,21 +216,56 @@ cases("a file the agent attaches lands on the conversation's shelf", async (shel
   }
 });
 
-Deno.test("the ambient block says how long the sandbox outlives the agent's last call", async () => {
+Deno.test("the ambient block says when the last call closed, the window, and a restart", async () => {
   const workspace = await Deno.makeTempDir();
+  let last: number | undefined;
+  const shell = remoteShell(localGateway(), {
+    workspace,
+    env: () => ({ PATH: "/usr/bin:/bin" }),
+    sleepMinutes: 10,
+    lastCall: () => last,
+  });
+  const line = async () => (await shell.ambient())[1];
   try {
-    const shell = remoteShell(localGateway(), {
-      workspace,
-      env: () => ({ PATH: "/usr/bin:/bin" }),
-      sleepMinutes: 10,
-    });
     assertEquals(
-      (await shell.ambient())[1],
+      await line(),
       "sandbox: stops 10 min after your last call — its background jobs and files go with it",
+    );
+    last = Date.now() - 8 * 60_000;
+    assertEquals(
+      await line(),
+      "sandbox: last call 8m ago; it stops 10 min after one — its background jobs and files " +
+        "go with it",
+    );
+    await Deno.remove("/tmp/.liquen-up"); // the container a sleep replaces has none
+    last = Date.now() - 14 * 60_000;
+    assertEquals(
+      await line(),
+      "sandbox: restarted since the last call, 14m ago — its background jobs and files are " +
+        "gone; it stops 10 min after a call",
     );
   } finally {
     await Deno.remove(workspace, { recursive: true });
   }
+});
+
+Deno.test("clocked: a call the gateway answered stamps the clock, a refused one does not", async () => {
+  let refuse = false;
+  const gateway = clocked({
+    ...localGateway(),
+    exec: () =>
+      refuse
+        ? Promise.reject(new Error("sandbox gateway: exec answered 502"))
+        : Promise.resolve({ stdout: "", stderr: "", code: 0 }),
+  });
+  assertEquals(gateway.lastCall(), undefined);
+  const before = Date.now();
+  await gateway.exec("true");
+  const stamped = gateway.lastCall()!;
+  assert(stamped >= before);
+  refuse = true;
+  await assertRejects(() => gateway.exec("true"), Error, "502");
+  assertEquals(gateway.lastCall(), stamped);
 });
 
 Deno.test("gatewayFor: every call carries the token and the sandbox's sleep", async () => {

@@ -18,7 +18,7 @@ import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
 import { startProxy } from "./proxy/proxy.ts";
 import { sessionAddress } from "./session.ts";
-import { gatewayFiles, gatewayFor, remoteShell, sandboxIdOf } from "./exec/gateway.ts";
+import { clocked, gatewayFiles, gatewayFor, remoteShell, sandboxIdOf } from "./exec/gateway.ts";
 
 /** One session's place in the sandbox: its shell (where it stands, what it left running),
  *  the agent's folder on this ground, and the files port its references resolve through. */
@@ -148,7 +148,7 @@ export function openCloudflareSandbox(
 ): Sandbox {
   const env = { ...REMOTE_ENV, ...(locale ? { LANG: locale } : {}) };
   const gateways = new Map(
-    agents.map((id) => [id, gatewayFor(url, token, sandboxIdOf(id), sleepMinutes)]),
+    agents.map((id) => [id, clocked(gatewayFor(url, token, sandboxIdOf(id), sleepMinutes))]),
   );
   const shells = new Map<string, ExecPlane>();
   return {
@@ -165,6 +165,7 @@ export function openCloudflareSandbox(
               env: () => env,
               ...(bashTimeoutMs ? { defaultTimeoutMs: bashTimeoutMs } : {}),
               ...(sleepMinutes ? { sleepMinutes } : {}),
+              lastCall: gateway.lastCall,
             });
             shells.set(key, shell);
           }
