@@ -343,13 +343,90 @@ Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls
       }],
     } as Draft<Event>);
     await waitFor(async () =>
-      (await main.log.read({ conversation: "dm:mind@ana:mind@bo" })).length > 0
+      (await main.log.read({ conversation: "mind@ana,mind@bo" })).length > 0
     );
     // the executor canonicalized the name and enrolled the pair — visibility is membership
-    assert(await main.log.isMember("local", "agent", "dm:mind@ana:mind@bo", "ana", "mind"));
-    assert(await main.log.isMember("local", "agent", "dm:mind@ana:mind@bo", "bo", "mind"));
-    const [dm] = await main.log.read({ conversation: "dm:mind@ana:mind@bo" });
+    assert(await main.log.isMember("local", "agent", "mind@ana,mind@bo", "ana", "mind"));
+    assert(await main.log.isMember("local", "agent", "mind@ana,mind@bo", "bo", "mind"));
+    const [dm] = await main.log.read({ conversation: "mind@ana,mind@bo" });
     assertEquals(dm.agent, { id: "ana", session_id: "mind" });
+  } finally {
+    await main.stop();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+/** The one gated send of a scripted turn, approved as the principal would (§9). */
+async function approveOnce(main: Awaited<ReturnType<typeof start>>, room: string) {
+  await waitFor(async () => (await main.log.read({ types: ["permission_request"] })).length > 0);
+  const [req] = await main.log.read({ types: ["permission_request"] });
+  await main.log.publish({
+    ts: new Date().toISOString(),
+    type: "permission_response",
+    payload: { ref_id: (req as { payload: { ref_id: string } }).payload.ref_id },
+    envelope: { service: "local", connection_address: "agent", conversation: { address: room } },
+    parts: [{
+      type: "data",
+      kind: "permission_response",
+      data: { behavior: "allow", scope: "once" },
+    }],
+  } as Draft<Event>);
+}
+
+Deno.test("team chat: a list opens a direct room of its members, the sender among them, in any order (§6)", async () => {
+  const { root, dir, catalog } = await orgDir({ ana: {}, bo: {}, cy: {} });
+  const { transport } = scripted([
+    canned([{ kind: "tool_use", name: "send", input: { to: "cy, bo", text: "hola" } }], "tool_use"),
+  ]);
+  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+    transport,
+  });
+  try {
+    await main.log.publish(principalMsg("mind@ana", "armá un grupo con bo y cy"));
+    await approveOnce(main, "mind@ana");
+    const room = "mind@ana,mind@bo,mind@cy";
+    await waitFor(async () => (await main.log.read({ conversation: room })).length > 0);
+    for (const who of ["ana", "bo", "cy"]) {
+      assert(await main.log.isMember("local", "agent", room, who, "mind"));
+    }
+    const [line] = await main.log.read({ conversation: room });
+    assertEquals(line.envelope.conversation.kind, "direct");
+    assertEquals(line.agent, { id: "ana", session_id: "mind" });
+  } finally {
+    await main.stop();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("team chat: a list with a subject opens a room of its own — `#ops` a channel, recorded and enrolled (§6)", async () => {
+  const { root, dir, catalog } = await orgDir({ ana: {}, bo: {}, cy: {} });
+  const { transport } = scripted([
+    canned(
+      [{ kind: "tool_use", name: "send", input: { to: "bo,cy", subject: "#ops", text: "hola" } }],
+      "tool_use",
+    ),
+  ]);
+  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+    transport,
+  });
+  try {
+    await main.log.publish(principalMsg("mind@ana", "abrí #ops con bo y cy"));
+    await approveOnce(main, "mind@ana");
+    await waitFor(async () => (await main.log.conversations()).length > 0);
+    const [ops] = await main.log.conversations();
+    assertEquals([ops.name, ops.kind, ops.service], ["ops", "channel", "local"]);
+    await waitFor(async () => (await main.log.read({ conversation: ops.address })).length > 0);
+    const [line] = await main.log.read({ conversation: ops.address });
+    assertEquals(line.envelope.conversation, {
+      address: ops.address,
+      kind: "channel",
+      name: "ops",
+    });
+    assertEquals(await main.log.membersOf("local", "agent", ops.address), [
+      { agentId: "ana", sessionId: "mind" },
+      { agentId: "bo", sessionId: "mind" },
+      { agentId: "cy", sessionId: "mind" },
+    ]);
   } finally {
     await main.stop();
     await Deno.remove(root, { recursive: true });
@@ -460,7 +537,7 @@ Deno.test("a named session wakes on its dm and answers in its own room (§4)", a
     principals: [agent("1", onlyIn("mind@a1"))],
   }, { transport });
   try {
-    const dm = "dm:build@a1:mind@a1";
+    const dm = "build@a1,mind@a1";
     // what the mind's send would have written: the room, both ends enrolled (§4)
     await main.log.upsertMemberships([
       { service: "local", connection: "agent", conversation: dm, agentId: "a1", sessionId: "mind" },

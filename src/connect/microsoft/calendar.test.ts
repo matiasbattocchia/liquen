@@ -192,7 +192,7 @@ Deno.test("a new event is a create: the deltaLink is fetched as it is, the event
     assertEquals(row.envelope.service, "microsoft");
     assertEquals(row.envelope.connection_address, "ana@contoso.com");
     // `primary` resolves to its true id — the grant's address
-    assertEquals(row.envelope.conversation.address, "calendar:ana@contoso.com");
+    assertEquals(row.envelope.conversation.address, "ana@contoso.com");
     assertEquals(row.envelope.conversation.kind, "broadcast");
     assertEquals(row.envelope.external_id, "calendar:ana@contoso.com:AAMk1"); // the STABLE referent
     assertEquals(row.payload?.action, undefined);
@@ -384,7 +384,7 @@ Deno.test("a named calendar is asked by id and keeps it — only `primary` resol
       cap.publish,
       [team],
     ).tick();
-    assertEquals(cap.rows[0].envelope.conversation.address, `calendar:${team}`);
+    assertEquals(cap.rows[0].envelope.conversation.address, team);
     assertEquals(cap.rows[0].envelope.external_id, `calendar:${team}:AAMk9`);
     assertEquals((await syncOf(creds))![team], `${link}b`); // the cursor keys on the CONFIGURED id
   });

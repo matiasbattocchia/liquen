@@ -357,8 +357,9 @@ export async function start(
   };
 
   // NAMED sessions (§4): reactive — no standing subscription and no registry. The
-  // trigger's own address names the session to invoke (its room, or a dm: it is an end
-  // of), so main builds a runner on first contact and a quiet session costs nothing.
+  // trigger's own address names the session to invoke (its room, a direct room it is in,
+  // a group it is enrolled in), so main builds a runner on first contact and a quiet
+  // session costs nothing.
   // Bursts bounce off the session's own turn lease; the mind's ladder never applies.
   const named = new Map<string, Runner>();
   const runnerOf = async (agentId: string, sessionId: string) => {
@@ -451,11 +452,13 @@ export async function start(
   // the trigger's address names the session to invoke, and main builds its runner on
   // first contact, so a quiet session costs nothing
   unsubs.push(log.subscribe((e) => {
-    for (const p of route(e)) {
-      runnerOf(p.agentId, p.sessionId)
-        .then((r) => r && invoke(r)(e))
-        .catch((err) => console.error(`[main] ${p.sessionId}@${p.agentId}:`, err));
-    }
+    route(e, log).then((named) => {
+      for (const p of named) {
+        runnerOf(p.agentId, p.sessionId)
+          .then((r) => r && invoke(r)(e))
+          .catch((err) => console.error(`[main] ${p.sessionId}@${p.agentId}:`, err));
+      }
+    }).catch((err) => console.error("[main] route:", err));
   }));
   // the mirror rides the RAW log (§4): it copies between a mind and its alias surfaces, and
   // an agent's own alias conversation is invisible to that agent's scoped port (§6) — the

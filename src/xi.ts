@@ -69,12 +69,14 @@ import type { ConnectionRow, Connections } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { sameHandle, speaksThrough } from "./store/roster.ts";
-import { preferProper } from "./store/names.ts";
+import { foldName, namesMatch, preferProper } from "./store/names.ts";
+import { newId } from "./store/id.ts";
+import type { ConversationRow } from "./store/connections.ts";
 import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./store/media.ts";
 import type { FilePart, LocationPart, SendPreview } from "./types.ts";
-import { dmAddress, MIND, parseSession, sessionAddress } from "./session.ts";
+import { directAddress, MIND, parseDirect, parseSession, sessionAddress } from "./session.ts";
 import {
   bookEl,
   cancelled,
@@ -850,8 +852,9 @@ function isOutcome(x: Json | ExecOutcome): x is ExecOutcome {
 }
 
 export interface XiPorts {
-  /** Publish · read · lock — plus the three connection slices the send path needs (§6):
-   *  `agents` to recognize a peer's name, `upsertMemberships` to enroll a DM's ends,
+  /** Publish · read · lock — plus the connection slices the send path needs (§6):
+   *  `agents` to recognize a peer's name, `upsertMemberships` to enroll a room's members,
+   *  the conversation rows a group or channel is recorded in and read back by name,
    *  `aliases` to recognize the principal's own surfaces so a send at them is refused
    *  rather than gated — and the standing half of the permission table (§9): `remembered`
    *  compiles into the gate, `remember` is where a scoped verdict lands. NOT `Subscriber`:
@@ -864,7 +867,16 @@ export interface XiPorts {
     & Pick<Registry, "agents">
     & { principalsOf(agentId: string): Promise<string[]> }
     & Pick<Standing, "remember" | "remembered">
-    & Pick<Connections, "upsertMemberships" | "aliases" | "connections">
+    & Pick<
+      Connections,
+      | "upsertMemberships"
+      | "aliases"
+      | "connections"
+      | "membersOf"
+      | "createConversation"
+      | "conversation"
+      | "conversations"
+    >
     & Pick<Timers, "arm" | "timers" | "disarm">
     & Pick<Gates, "gates" | "owed">;
   docs: Docs;
@@ -1648,30 +1660,157 @@ const PENDING_APPROVAL = {
     "being worth asking, withdraw it with cancel(id) — your pending list names the id.",
 };
 
+type Party = { agentId: string; sessionId: string };
+
 /** A send target that names a SESSION (§4): a peer agent's bare name (an agent IS its
- *  mind), or a full session address wearing a roster agent's name. Anything else — a
- *  wire address, a local room — is not a session target. */
+ *  mind), a full session address wearing a roster agent's name, or the name the roster
+ *  gives an agent (`Laura` → laura's mind — by the name rule, so `laura pérez` reaches
+ *  her too). Anything else — a wire address, a local room — is not a session target. A
+ *  name several agents answer to is an error to raise: the wrong recipient is the one
+ *  send that cannot be taken back. */
 function sessionTarget(
   to: string,
-  agents: { agentId: string; runs?: boolean }[],
-): { agentId: string; sessionId: string } | null {
+  agents: { agentId: string; name?: string; runs?: boolean }[],
+): Party | null {
   // a person alone (`mind: false`, §4) runs no session: their name is nowhere to send
   const minds = agents.filter((a) => a.runs !== false);
   if (minds.some((a) => a.agentId === to)) return { agentId: to, sessionId: MIND };
   const s = parseSession(to);
-  return s !== null && minds.some((a) => a.agentId === s.agentId) ? s : null;
+  if (s !== null) return minds.some((a) => a.agentId === s.agentId) ? s : null;
+  const named = minds.filter((a) => namesMatch(to, a.name));
+  if (named.length > 1) {
+    throw new Error(
+      `"${to}" names ${named.length} agents — say which: ${named.map((a) => a.agentId).join(", ")}`,
+    );
+  }
+  return named.length === 1 ? { agentId: named[0].agentId, sessionId: MIND } : null;
 }
 
-/** Contact between sessions is a DM room (§4): `dm:` + the sorted pair of session
- *  addresses — one rule for sessions of one agent and sessions of two. */
-function sessionDm(self: { id: string; session_id: string }, target: {
-  agentId: string;
-  sessionId: string;
-}): string {
-  return dmAddress(
-    sessionAddress(self.id, self.session_id),
-    sessionAddress(target.agentId, target.sessionId),
+/** How many a direct room holds besides the sender — Slack's group DM size, one rule on
+ *  every service. Past it, the room is named: a group or a channel. */
+const DIRECT_MAX = 8;
+
+/** Where a `send` lands, resolved before anything is written (§4, §5): the address, and —
+ *  for a local room — the members to enroll and the room to record, so `targetOf` can
+ *  name the conversation a rule is scoped to without creating anything. */
+interface Aim {
+  address: string;
+  /** A local room the send opens or reaches: its members, and the row a named room is
+   *  recorded in — `create` when this send is what makes it. */
+  local?: { members: Party[]; room?: ConversationRow; create?: boolean };
+  /** A name several conversations answer to — the caller's error to raise. */
+  candidates: Named[];
+  /** The account whose address book named the recipient, when one did. */
+  book?: string;
+}
+
+/** The kind a `subject` opens on a local list (§3): `#ops` is a channel, `ops` a group. */
+function roomOf(subject: string): { name: string; kind: ConversationRow["kind"] } {
+  const channel = subject.startsWith("#");
+  const name = (channel ? subject.slice(1) : subject).trim();
+  if (!name) throw new Error("a room needs a name — `subject` is empty");
+  return { name, kind: channel ? "channel" : "group" };
+}
+
+/** A local room by the name it wears, exact under the name rule's folding. */
+async function roomNamed(name: string, ports: XiPorts): Promise<ConversationRow | undefined> {
+  const want = foldName(name);
+  return (await ports.log.conversations()).find((r) =>
+    r.service === "local" && foldName(r.name) === want
   );
+}
+
+/**
+ * What `to` names, with `subject` weighed for a local list (§4, §5). One resolver for a
+ * single recipient and a list: a `,`-separated `to` is tried whole first — a conversation
+ * the log knows, a room by its name — and only then read as recipients, each resolved as
+ * a single one would be. A list of sessions is a local room: unnamed, the DIRECT room of
+ * its members, whose address is the member set (so a copy in any order lands in the same
+ * room, and the sender is always in it); named by `subject`, a GROUP (`ops`) or a CHANNEL
+ * (`#ops`) of its own — found by the name when one exists with these members, refused when
+ * the name is taken by other members, made when nobody wears it. A list nobody here answers
+ * to is left whole for the wire (a mail to several addresses is one conversation); a list
+ * that mixes agents and strangers spans two services and is nobody's.
+ */
+async function aimOf(
+  to: string,
+  subject: string,
+  self: { id: string; session_id: string },
+  ports: XiPorts,
+): Promise<Aim> {
+  const agents = await ports.log.agents();
+  const me = { agentId: self.id, sessionId: self.session_id };
+  const same = (a: Party, b: Party) => a.agentId === b.agentId && a.sessionId === b.sessionId;
+  const localRoom = async (targets: Party[]): Promise<Aim> => {
+    const members = [me, ...targets].filter((s, i, all) => all.findIndex((x) => same(x, s)) === i);
+    if (!subject) {
+      if (targets.length > DIRECT_MAX) {
+        throw new Error(
+          `a direct room holds up to ${DIRECT_MAX} besides you — name it with \`subject\` ` +
+            "to open a group (`ops`) or a channel (`#ops`)",
+        );
+      }
+      const address = directAddress(
+        members.map((s) => sessionAddress(s.agentId, s.sessionId)),
+      );
+      return { address, local: { members }, candidates: [] };
+    }
+    const { name, kind } = roomOf(subject);
+    const room = await roomNamed(name, ports);
+    if (room) {
+      const there = await ports.log.membersOf("local", room.connection, room.address);
+      const equal = there.length === members.length &&
+        members.every((m) => there.some((t) => same(t, m)));
+      if (!equal) {
+        throw new Error(
+          `"${room.name}" already exists with other members — send to its address ` +
+            `${room.address}, or name a room of your own`,
+        );
+      }
+      return { address: room.address, local: { members, room }, candidates: [] };
+    }
+    const made: ConversationRow = {
+      service: "local",
+      connection: "agent",
+      address: newId(),
+      name,
+      kind,
+    };
+    return { address: made.address, local: { members, room: made, create: true }, candidates: [] };
+  };
+  const peer = sessionTarget(to, agents);
+  if (peer && !same(peer, me)) return localRoom([peer]);
+  if (!peer) {
+    // a room by its name: what the window prints beside the address
+    const room = await roomNamed(to.replace(/^#/, ""), ports);
+    if (room) return { address: room.address, local: { members: [], room }, candidates: [] };
+  }
+  if ((await ports.log.read({ conversation: to, limit: 1 })).length > 0) {
+    return await knownRoom(to, ports);
+  }
+  const parts = to.split(",").map((p) => p.trim()).filter((p) => p !== "");
+  if (parts.length > 1) {
+    const sessions = parts.map((p) => sessionTarget(p, agents));
+    const strangers = parts.filter((_, i) => sessions[i] === null);
+    if (strangers.length === 0) {
+      return localRoom(sessions.filter((s): s is Party => s !== null && !same(s, me)));
+    }
+    if (strangers.length < parts.length) {
+      throw new Error(
+        `a room holds agents or people on one wire, not both — ${strangers.join(", ")} ` +
+          "is nobody in the roster",
+      );
+    }
+  }
+  return await namesTo(to, self, ports);
+}
+
+/** A conversation the log holds, by address: a local room of its own carries its row. */
+async function knownRoom(address: string, ports: XiPorts): Promise<Aim> {
+  const row = parseDirect(address) === null
+    ? await ports.log.conversation("local", "agent", address)
+    : null;
+  return { address, ...(row ? { local: { members: [], room: row } } : {}), candidates: [] };
 }
 
 /** How many events a name is looked for in: the scan only has to see each conversation the
@@ -1860,13 +1999,12 @@ async function targetOf(
   const raw = args.to;
   if (typeof raw !== "string" || raw === "") return undefined;
   let to = raw;
-  const target = sessionTarget(to, await ports.log.agents());
-  if (target && !(target.agentId === self.id && target.sessionId === self.session_id)) {
-    to = sessionDm(self, target);
-  }
   // a name nobody answers to is the call's own error to raise; here it is simply no scope
   try {
-    to = (await namesTo(to, self, ports)).address;
+    const subject = typeof (input as { subject?: unknown })?.subject === "string"
+      ? String((input as { subject: string }).subject).trim()
+      : "";
+    to = (await aimOf(to, subject, self, ports)).address;
   } catch {
     return undefined;
   }
@@ -1898,7 +2036,7 @@ async function selfSend(
   const me = agents.find((a) => a.agentId === config.agentId);
   // the session's OWN ROOM, the agent's own handles, and every principal's — their
   // handles and, from the mind, their names (§4). The bare name is refused only from the
-  // mind — an agent IS its mind, so from a sibling it is a real target, the dm: with the
+  // mind — an agent IS its mind, so from a sibling it is a real target, the direct room with the
   // mind, not a self-send.
   const principals = (await ports.log.principalsOf(config.agentId))
     .map((p) => agents.find((a) => a.agentId === p))
@@ -2022,39 +2160,17 @@ async function execute(
     // the only dispatch path (§9): directed message + sent result (two appends on
     // files — atomic pair on DB later; the steal-sweep covers the crash window)
     let to = String(args.to);
-    // team chat (§6): a session target — a peer agent's name, a session address —
-    // canonicalizes to the pair's DM conversation, and both ends are enrolled as the
-    // SESSIONS they are: membership is what makes it visible to exactly them
-    // (upsert-only and live, so the scoped publish below already passes WITH CHECK)
-    const peer = sessionTarget(to, await ports.log.agents());
+    // the thread (§3 `conversation.thread`): a mail's subject — and on a local list, the
+    // room's name, what makes the list a group or a channel rather than a direct room
+    const subject = args.subject === undefined ? "" : String(args.subject).trim();
     // the account it rides (§4): named by the model, else the conversation's own record
-    // below. A peer's DM rides no account — it is the local channel by construction.
+    // below. A local room rides no account — it is the local channel by construction.
     let via = args.connection === undefined || args.connection === ""
       ? undefined
       : await accountNamed(String(args.connection), self, ports);
-    if (peer && !(peer.agentId === self.id && peer.sessionId === self.session_id)) {
-      if (via) throw new Error(`${to} is a peer — a DM between us rides no account`);
-      to = sessionDm(self, peer);
-      await ports.log.upsertMemberships([
-        {
-          service: "local",
-          connection: "agent",
-          conversation: to,
-          agentId: self.id,
-          sessionId: self.session_id,
-        },
-        {
-          service: "local",
-          connection: "agent",
-          conversation: to,
-          agentId: peer.agentId,
-          sessionId: peer.sessionId,
-        },
-      ]);
-    }
     // A name is as good as an address (§5) — and `targetOf` resolved the same way, so the
     // rule that judged this call named the conversation the log is about to record.
-    const aimed = await namesTo(to, self, ports);
+    const aimed = await aimOf(to, subject, self, ports);
     if (aimed.candidates.length > 0) {
       throw new Error(
         `"${to}" names ${aimed.candidates.length} conversations — say which: ${
@@ -2063,6 +2179,36 @@ async function execute(
       );
     }
     to = aimed.address;
+    // team chat (§6): a local room is its members' — they are enrolled as the SESSIONS they
+    // are, and membership is what makes it visible to exactly them (upsert-only and live,
+    // so the scoped publish below already passes WITH CHECK). A room of its own is
+    // recorded first; its name is the row's, and a send never changes it.
+    const local = aimed.local;
+    if (local) {
+      if (via) throw new Error(`${to} is a local room — it rides no account`);
+      if (subject && !local.room) {
+        throw new Error("a direct room has no name — `subject` opens a group or a channel");
+      }
+      if (
+        subject && local.room && !local.create &&
+        foldName(roomOf(subject).name) !== foldName(local.room.name)
+      ) {
+        throw new Error(
+          `this room is named "${local.room.name}" — send carries no rename; open a room ` +
+            "of your own with a list, or drop `subject`",
+        );
+      }
+      if (local.create && local.room) await ports.log.createConversation(local.room);
+      if (local.members.length > 0) {
+        await ports.log.upsertMemberships(local.members.map((m) => ({
+          service: "local",
+          connection: "agent",
+          conversation: to,
+          agentId: m.agentId,
+          sessionId: m.sessionId,
+        })));
+      }
+    }
     // somebody only a book knows is written to through the account that keeps them, the
     // way `contact` saves them there: the book that holds them is the account they are on
     if (!via && aimed.book !== undefined) {
@@ -2075,16 +2221,21 @@ async function execute(
     // settles the service where there is no record: first contact on a wire is the one
     // send only the model can place. No events and no account ⇒ the local channel.
     const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
-    const kind = prior?.envelope.conversation.kind;
-    // the thread (§3 `conversation.thread`): a mail's subject — the one named, else the
-    // referent's, so a reply lands under the thread it answers and the wire's Re: is
-    // the dispatcher's to spell
-    const subject = args.subject === undefined ? "" : String(args.subject).trim();
+    // a local room's kind and name are its own (the row's; a direct room's is its shape),
+    // stamped on every row so the window names the room by its newest line
+    const kind = local
+      ? local.room?.kind ?? ("direct" as const)
+      : prior?.envelope.conversation.kind;
+    // a broadcast is fan-out, not a room anyone is in (§3): nothing answers there
+    if (kind === "broadcast") throw new Error(`${to} is a broadcast — nobody answers there`);
+    // the thread: the mail subject named, else the referent's, so a reply lands under the
+    // thread it answers and the wire's Re: is the dispatcher's to spell
     const target = args.re === undefined ? undefined : await referent(ports, to, String(args.re));
-    const thread = subject || target?.envelope.conversation.thread;
+    const thread = local ? undefined : subject || target?.envelope.conversation.thread;
     const conversation = {
       address: to,
       ...(kind !== undefined ? { kind } : {}),
+      ...(local?.room ? { name: local.room.name } : {}),
       ...(thread ? { thread } : {}),
     };
     const envelope = via
@@ -2650,7 +2801,13 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
       input_schema: {
         type: "object",
         properties: {
-          to: { type: "string", description: "target <conv> `name` or `address`" },
+          to: {
+            type: "string",
+            description: "target <conv> `name` or `address` — or recipients separated by `,` " +
+              "(agents by name, or mail addresses) to open a room with them: unnamed, a " +
+              "direct room of up to 8 besides you; with `subject`, a group (`ops`) or a " +
+              "channel (`#ops`). A room's address in any order lands in the same room",
+          },
           connection: {
             type: "string",
             description:
@@ -2672,9 +2829,9 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
           subject: {
             type: "string",
             description:
-              "the thread this message opens — a mail's Subject line. Mail conversations " +
-              "only, and only for a message that is not a reply: a reply inherits the " +
-              "thread of the message it answers",
+              "the thread this message opens — a mail's Subject line, only for a message " +
+              "that is not a reply: a reply inherits the thread of the message it answers. " +
+              "On a list of agents, the room's name: `ops` opens a group, `#ops` a channel",
           },
           react: { type: "string", description: "an emoji to land on the `re` message" },
           action: {

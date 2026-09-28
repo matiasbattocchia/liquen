@@ -9,9 +9,17 @@
  *     mind@matias · build@matias
  *
  * `@` because `:` already separates the segments of world addresses (`slack:T0AB:C123`),
- * so a `dm:` pair of session addresses splits cleanly on `:` — and because a local address
- * lands in filesystem paths (`conversations/<address>/` is a doc scope walked as a
- * directory), where `/` could not.
+ * and because a local address lands in filesystem paths (`conversations/<address>/` is a
+ * doc scope walked as a directory), where `/` could not.
+ *
+ * A DIRECT room between sessions is its sorted members joined by `,` — the member set IS
+ * the address (§3 `direct`, the mpim rule), so a copy in any order names the same room and
+ * nothing has to be looked up to know who is in it:
+ *
+ *     mind@ana,mind@bo · build@ana,mind@ana,mind@cy
+ *
+ * A session's own room is the one-member case. A local group or channel has an address of
+ * its own (a minted id), since its members change; its members are the memberships table's.
  */
 
 import type { AgentId, SessionId } from "./types.ts";
@@ -47,10 +55,21 @@ export function parseSession(
   return NAME.test(sessionId) && NAME.test(agentId) ? { agentId, sessionId } : null;
 }
 
-/** The DM room of two session addresses: `dm:` + the sorted pair — member-defined identity
- *  (§3 `direct`), one rule for sessions of one agent and sessions of two. */
-export function dmAddress(a: string, b: string): string {
-  return `dm:${[a, b].sort().join(":")}`;
+/** The direct room of some session addresses: the distinct members, sorted, joined by `,`
+ *  — member-defined identity (§3 `direct`), one rule for sessions of one agent and
+ *  sessions of many. */
+export function directAddress(members: string[]): string {
+  return [...new Set(members)].sort().join(",");
+}
+
+/** The members a local address spells, when it spells them: every `,` part a session
+ *  address — a session's own room is the one-part case. Null for anything else, a
+ *  group's or channel's minted id included: those hold their members in the table. */
+export function parseDirect(
+  address: string,
+): { agentId: AgentId; sessionId: SessionId }[] | null {
+  const parts = address.split(",").map(parseSession);
+  return parts.every((p) => p !== null) ? parts : null;
 }
 
 /** Which of an agent's sessions a connection's traffic belongs to (§4): whose window may

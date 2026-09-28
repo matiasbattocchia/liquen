@@ -64,6 +64,13 @@ const GRANTED = `EXISTS (
   WHERE c.service = events.service AND c.address = events.connection_address
     AND (c.agent_id = $law_agent OR (c.agent_id IS NULL AND c.credential_key IS NOT NULL)))`;
 
+/** A public room (§3): a local channel's history is every agent's to read. */
+const PUBLIC = `EXISTS (
+  SELECT 1 FROM conversations cv
+  WHERE cv.service = events.service AND cv.connection_address = events.connection_address
+    AND cv.address = events.conversation_address AND cv.kind = 'channel'
+    AND cv.deleted_at IS NULL)`;
+
 /** Branch 3's lifetime rule: a live row grants the whole conversation; a stamped row grants
  *  only events with `ts` ≤ its `deleted_at` — the agent keeps what it has seen (events up
  *  to the leave) and loses the conversation's future, reads and writes alike. */
@@ -111,7 +118,9 @@ export function policyFor(session: SessionRef): Policy {
  * sessions is enrolled in (branch 3, under the same lifetime rule), and its connections
  * whatever session their traffic routes to (branches 1–2). Another agent's rows stay as
  * invisible as ever, and the alias rule holds: the mind copies are a surface's readable
- * record. Read-only by law — the handle refuses every draft.
+ * record. A local CHANNEL is public (§3): every agent reads it here, member or not —
+ * while waking on it and writing into it stay membership's. Read-only by law — the
+ * handle refuses every draft.
  */
 export function historyFor(agentId: AgentId): Policy {
   return {
@@ -121,6 +130,7 @@ export function historyFor(agentId: AgentId): Policy {
   WHERE m.service = events.service AND m.connection_address = events.connection_address
     AND m.conversation_address = events.conversation_address
     AND m.agent_id = $law_agent AND ${IN_LIFETIME})
+  OR ${PUBLIC}
   OR ${GRANTED})`,
       params: { law_agent: agentId },
     },

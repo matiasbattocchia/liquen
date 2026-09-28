@@ -67,7 +67,7 @@ Deno.test("mail: the conversation is the other parties, lower-cased and sorted; 
 Deno.test("mail: a mail address is one or more addresses comma-joined, nothing else", () => {
   assert(isMailAddress("ana@x.com"));
   assert(isMailAddress("ana@x.com,bob@y.com"));
-  assert(!isMailAddress("calendar:me@org.com"));
+  assert(!isMailAddress("19:abc@thread.v2"));
   assert(!isMailAddress("5491100000000"));
   assert(!isMailAddress("ana@x.com,"));
   assert(!isMailAddress(""));
@@ -383,7 +383,7 @@ Deno.test("mail dispatch: what mail cannot do fails with its class — an edit, 
   }));
   log.push(outbound({
     id: "e3",
-    envelope: { ...outbound().envelope, conversation: { address: "calendar:me@org.com" } },
+    envelope: { ...outbound().envelope, conversation: { address: "19:abc@thread.v2" } },
   }));
   log.push(outbound({ id: "e4", parts: [] }));
   log.push(outbound({ id: "e5", payload: { action: "reply", ref_external_id: "slack:T:C:1.2" } }));

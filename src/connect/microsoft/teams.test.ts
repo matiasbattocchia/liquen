@@ -168,7 +168,7 @@ Deno.test("teams: an address is a chat id or team/channel; a ref is teams:<addre
   assert(isTeamsAddress(CHAT));
   assert(isTeamsAddress(`${TEAM}/${CHANNEL}`));
   assert(!isTeamsAddress("ana@x.com"));
-  assert(!isTeamsAddress("calendar:me@org.com"));
+  assert(!isTeamsAddress("me@org.com"));
   assertEquals(
     shareId("https://onedrive.live.com/redir?resid=1231244193912!12&authKey=1201919!12921!1"),
     "u!aHR0cHM6Ly9vbmVkcml2ZS5saXZlLmNvbS9yZWRpcj9yZXNpZD0xMjMxMjQ0MTkzOTEyITEyJmF1dGhLZXk9MTIwMTkxOSExMjkyMSEx",

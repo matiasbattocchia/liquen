@@ -505,7 +505,7 @@ Deno.test("attention: the world is checked on the interval, counted from the LAS
 Deno.test("attention: a NAMED session is reactive — no digest cadence, no sleep window (§4)", () => {
   const s: Session = { id: "build", agentId: "a1", conversation: "build@a1" };
   const self = { agent: { id: "a1", session_id: "build" } };
-  const dm = "dm:build@a1:mind@a1";
+  const dm = "build@a1,mind@a1";
   const line = world(dm, 0);
   const look = ev(
     "message",
@@ -1020,7 +1020,7 @@ Deno.test("unansweredOn: a local peer's DM carries no sender and is still theirs
   const dm = ev(
     "message",
     {
-      conv: "dm:mind@a1|mind@a2",
+      conv: "mind@a1,mind@a2",
       ts: T(1),
       agent: { id: "a2", session_id: "mind" },
       parts: [{ type: "text", kind: "text", text: "can you take this one?" }],
@@ -1028,10 +1028,10 @@ Deno.test("unansweredOn: a local peer's DM carries no sender and is still theirs
   );
   assertEquals(unansweredOn([dm], SESSION, ACCOUNTS, "UTC"), [
     "unanswered — 1 conversation:",
-    "· dm:mind@a1|mind@a2 — local, 1 since 16 Sep 14:01",
+    "· mind@a1,mind@a2 — local, 1 since 16 Sep 14:01",
   ]);
   // and the agent's own reply there closes it
-  assertEquals(unansweredOn([dm, selfMsg("dm:mind@a1|mind@a2")], SESSION, ACCOUNTS, "UTC"), []);
+  assertEquals(unansweredOn([dm, selfMsg("mind@a1,mind@a2")], SESSION, ACCOUNTS, "UTC"), []);
 });
 
 Deno.test("unansweredOn: the session's own room and a broadcast are never unanswered", () => {

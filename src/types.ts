@@ -208,8 +208,8 @@ export interface Conversation {
   address: string;
   name?: string;
   thread?: string;
-  /** direct = member-defined identity (im AND mpim: the member set IS the address — our
-   *  `dm:<sorted names>` makes that literal) · group = private room · channel = public
+  /** direct = member-defined identity (im AND mpim: the member set IS the address — a
+   *  local room's sorted members joined by `,` make that literal) · group = private room · channel = public
    *  room · broadcast = fan-out, not a room anyone is in (WA broadcast lists — open-bsp
    *  carries them in production). Stamped by ingest from platform facts (Slack types,
    *  WA jid shape) — never derived from counting members (§3). */

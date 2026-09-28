@@ -15,12 +15,12 @@
  * identity and visibility over the history the grant already ingested persist —
  * sessions are unaffected by a revocation. A re-grant upsert REVIVES it.
  *
- * A *membership* row is open-bsp's `conversations_agents`, address-keyed (liquen has no
- * conversations entity table): `(service, connection_address, conversation_address,
- * agent_id, session_id)` — the MEMBER is a session, the (agent, session) pair (§4) —
- * the membership branch of visibility (channel/DM membership), and the local team-chat
- * substrate (a session's own room is a one-member conversation; a DM is a two-member
- * one). A row that names no session enrolls the ROUTED one (`routedSession`) — the wire
+ * A *membership* row is open-bsp's `conversations_agents`, address-keyed:
+ * `(service, connection_address, conversation_address, agent_id, session_id)` — the
+ * MEMBER is a session, the (agent, session) pair (§4) — the membership branch of
+ * visibility (channel/DM membership), and the local team-chat substrate (a session's own
+ * room is a one-member conversation; a direct room is its members'). A row that names no
+ * session enrolls the ROUTED one (`routedSession`) — the wire
  * writers never decide which session a conversation belongs to. A membership is a LIFETIME: a live row grants the conversation
  * whole; a channel LEAVE stamps `deleted_at`, and the stamped row keeps granting
  * events up to the stamp — the agent keeps what it has seen, never what came after.
@@ -33,6 +33,12 @@
  * another door bound, and `extra` merges field-wise. Policy reads THROUGH prepared
  * statements (`connection`/`isMember`) — live by construction, like the RLS join it
  * emulates (§6); a mid-run bind, delete, or revival is visible on the next event.
+ *
+ * A *conversation* row is a room whose address does not spell its members: a local group
+ * (private) or channel (public), `(service, connection_address, address)` with the name
+ * and kind. The address is a minted id, so the name may change while every row keyed on
+ * the address stays put. Only local rooms live here — the substrate is their source of
+ * truth; a wire conversation's facts ride its events. A local name is unique per org.
  */
 
 import type { DatabaseSync } from "node:sqlite";
@@ -55,6 +61,16 @@ export interface MembershipRow {
    *  wire writers never name one — the store enrolls the ROUTED session, the one this
    *  connection's traffic belongs to (`routedSession`). */
   sessionId?: string;
+}
+
+/** A room of its own (a local group or channel): where it is, what it is called, what
+ *  kind it is. Its members are the memberships table's. */
+export interface ConversationRow {
+  service: string;
+  connection: string;
+  address: string;
+  name: string;
+  kind: "group" | "channel";
 }
 
 /** A mind-alias binding (§4): a conversation on the wire whose every counterpart is a
@@ -148,6 +164,23 @@ export interface Connections {
   /** Every enrollment the store holds, ended ones with their stamp — what the status door
    *  prints. In (service, connection, conversation, agent, session) order. */
   memberships(): Promise<EnrollmentRow[]>;
+  /** The live members of one conversation, in (agent, session) order — what wakes a
+   *  group whose address does not spell them. */
+  membersOf(
+    service: string,
+    connection: string,
+    conversation: string,
+  ): Promise<{ agentId: string; sessionId: string }[]>;
+  /** Record a room of its own. Refuses a local name another live room wears. */
+  createConversation(row: ConversationRow): Promise<void>;
+  /** Point lookup: the room at an address, live or not. */
+  conversation(
+    service: string,
+    connection: string,
+    address: string,
+  ): Promise<ConversationRow | null>;
+  /** The live rooms of their own, in (service, connection, name) order. */
+  conversations(): Promise<ConversationRow[]>;
 }
 
 /** An enrollment as the store holds it: the session resolved, and the stamp that ended
@@ -177,7 +210,60 @@ CREATE TABLE IF NOT EXISTS memberships (
   created_at           TEXT NOT NULL,
   deleted_at           TEXT,
   PRIMARY KEY (service, connection_address, conversation_address, agent_id, session_id)
-);`;
+);
+CREATE TABLE IF NOT EXISTS conversations (
+  service            TEXT NOT NULL,
+  connection_address TEXT NOT NULL,
+  address            TEXT NOT NULL,
+  name               TEXT NOT NULL,
+  kind               TEXT NOT NULL,
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL,
+  deleted_at         TEXT,
+  PRIMARY KEY (service, connection_address, address)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS conversations_local_name
+  ON conversations (connection_address, name) WHERE service = 'local' AND deleted_at IS NULL;`;
+
+/** The rewrite of a store whose local addresses wore prefixes (`dm:` on a direct room,
+ *  `calendar:` on a calendar), one statement per table and prefix — the same SQL on both
+ *  engines, run once by each engine's versioning. */
+export const UNPREFIX = [
+  `UPDATE events SET conversation_address = replace(substr(conversation_address, 4), ':', ',')
+     WHERE service = 'local' AND conversation_address LIKE 'dm:%'`,
+  `UPDATE memberships SET conversation_address = replace(substr(conversation_address, 4), ':', ',')
+     WHERE service = 'local' AND conversation_address LIKE 'dm:%'`,
+  `UPDATE timers SET conversation = replace(substr(conversation, 4), ':', ',')
+     WHERE conversation LIKE 'dm:%'`,
+  `UPDATE events SET conversation_address = substr(conversation_address, 10)
+     WHERE conversation_address LIKE 'calendar:%'`,
+  `UPDATE memberships SET conversation_address = substr(conversation_address, 10)
+     WHERE conversation_address LIKE 'calendar:%'`,
+  `UPDATE timers SET conversation = substr(conversation, 10)
+     WHERE conversation LIKE 'calendar:%'`,
+];
+
+/** The order `conversations()` answers in. */
+export const CONVERSATION_ORDER = "ORDER BY service, connection_address, name";
+
+export interface ConversationColumns {
+  service: string;
+  connection_address: string;
+  address: string;
+  name: string;
+  kind: string;
+}
+
+/** A row of `conversations` as the store answers it. */
+export function conversationOf(r: ConversationColumns): ConversationRow {
+  return {
+    service: r.service,
+    connection: r.connection_address,
+    address: r.address,
+    name: r.name,
+    kind: r.kind as ConversationRow["kind"],
+  };
+}
 
 /** A row of `connections` as the store answers it — `extra` as its text. */
 export function connectionOf(r: {
@@ -275,6 +361,24 @@ export function createConnections(db: DatabaseSync): Connections {
      ORDER BY agent_id, session_id`,
   );
   const every = db.prepare(`SELECT * FROM memberships ${ENROLLMENT_ORDER}`);
+  const members = db.prepare(
+    `SELECT agent_id, session_id FROM memberships
+     WHERE service = ? AND connection_address = ? AND conversation_address = ?
+       AND deleted_at IS NULL ORDER BY agent_id, session_id`,
+  );
+  const putV = db.prepare(
+    `INSERT INTO conversations
+       (service, connection_address, address, name, kind, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const getV = db.prepare(
+    `SELECT service, connection_address, address, name, kind FROM conversations
+     WHERE service = ? AND connection_address = ? AND address = ?`,
+  );
+  const listV = db.prepare(
+    `SELECT service, connection_address, address, name, kind FROM conversations
+     WHERE deleted_at IS NULL ${CONVERSATION_ORDER}`,
+  );
   // a row that names no session enrolls the ROUTED one — the wire writers never decide
   const sessionOf = (r: MembershipRow) =>
     r.sessionId ?? routedSession({ service: r.service, connection_address: r.connection });
@@ -369,7 +473,48 @@ export function createConnections(db: DatabaseSync): Connections {
     memberships(): Promise<EnrollmentRow[]> {
       return Promise.resolve((every.all() as unknown as EnrollmentColumns[]).map(enrollmentOf));
     },
+
+    membersOf(service, connection, conversation) {
+      return Promise.resolve(
+        (members.all(service, connection, conversation) as {
+          agent_id: string;
+          session_id: string;
+        }[]).map((r) => ({ agentId: r.agent_id, sessionId: r.session_id })),
+      );
+    },
+
+    createConversation(r: ConversationRow): Promise<void> {
+      const now = new Date().toISOString();
+      try {
+        putV.run(r.service, r.connection, r.address, r.name, r.kind, now, now);
+      } catch (err) {
+        return Promise.reject(nameTaken(err, r));
+      }
+      return Promise.resolve();
+    },
+
+    conversation(service, connection, address) {
+      const r = getV.get(service, connection, address) as ConversationColumns | undefined;
+      return Promise.resolve(r ? conversationOf(r) : null);
+    },
+
+    conversations(): Promise<ConversationRow[]> {
+      return Promise.resolve(
+        (listV.all() as unknown as ConversationColumns[]).map(conversationOf),
+      );
+    },
   };
+}
+
+/** The engine's refusal of a taken name, said in the store's words; anything else passes
+ *  through. Postgres names the unique index that refused, SQLite its columns. */
+export function nameTaken(err: unknown, r: ConversationRow): Error {
+  const text = err instanceof Error ? err.message : String(err);
+  return /conversations(_local_name|\.name)/.test(text)
+    ? new Error(`a room named "${r.name}" already exists`)
+    : err instanceof Error
+    ? err
+    : new Error(text);
 }
 
 /** The order `memberships()` answers in. */

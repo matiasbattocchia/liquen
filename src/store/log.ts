@@ -56,7 +56,7 @@ import {
 } from "./lock.ts";
 import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
-import { type Connections, CONNECTIONS_DDL, createConnections } from "./connections.ts";
+import { type Connections, CONNECTIONS_DDL, createConnections, UNPREFIX } from "./connections.ts";
 import { createTimers, type Timers, TIMERS_DDL } from "./timers.ts";
 import { createGates, type Gates, GATES_DDL } from "./gates.ts";
 import { createSweeper, type Sweeper } from "./sweep.ts";
@@ -781,6 +781,16 @@ function migrate(db: DatabaseSync) {
   if (v < 9) migrateV9(db);
   if (v < 10) migrateV10(db);
   if (v < 11) migrateV11(db);
+  if (v < 12) migrateV12(db);
+}
+
+/** v12 — local addresses carry no prefix (§3): a direct room is its members joined by `,`,
+ *  a calendar is addressed by its id. */
+function migrateV12(db: DatabaseSync) {
+  writing(db, () => {
+    for (const s of UNPREFIX) db.exec(s);
+    db.exec("PRAGMA user_version = 12");
+  });
 }
 
 /** v11 — an agent's row carries its resolved settings (§9): `agents.settings`, the JSON a

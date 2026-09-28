@@ -1520,7 +1520,7 @@ Deno.test("authorship marks (§3, §5): turn_id = self; the stamp alone = princi
   const sibling: MessageEvent = {
     ...base,
     id: "e4",
-    envelope: { ...base.envelope, conversation: { address: "dm:build@ana:mind@ana" } },
+    envelope: { ...base.envelope, conversation: { address: "build@ana,mind@ana" } },
     agent: { id: "ana", session_id: "build" },
     payload: { turn_id: "T3" },
     parts: [{ type: "text", kind: "text", text: "terminé el refactor" }],

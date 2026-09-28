@@ -17,10 +17,14 @@ import {
   aliasRowOf,
   connectionOf,
   type Connections,
+  CONVERSATION_ORDER,
+  type ConversationColumns,
+  conversationOf,
   ENROLLMENT_ORDER,
   type EnrollmentColumns,
   enrollmentOf,
   type MembershipRow,
+  nameTaken,
 } from "../connections.ts";
 import { routedSession } from "../../session.ts";
 import {
@@ -298,6 +302,46 @@ export function pgConnections(db: Db): Connections {
     async memberships() {
       return (await rows<EnrollmentColumns>(db, `SELECT * FROM memberships ${ENROLLMENT_ORDER}`))
         .map(enrollmentOf);
+    },
+    async membersOf(service, connection, conversation) {
+      return (await rows<{ agent_id: string; session_id: string }>(
+        db,
+        `SELECT agent_id, session_id FROM memberships
+         WHERE service = $1::text AND connection_address = $2::text
+           AND conversation_address = $3::text AND deleted_at IS NULL
+         ORDER BY agent_id, session_id`,
+        [service, connection, conversation],
+      )).map((r) => ({ agentId: r.agent_id, sessionId: r.session_id }));
+    },
+    async createConversation(r) {
+      const now = new Date().toISOString();
+      try {
+        await count(
+          db,
+          `INSERT INTO conversations
+             (service, connection_address, address, name, kind, created_at, updated_at)
+           VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $6::text)`,
+          [r.service, r.connection, r.address, r.name, r.kind, now],
+        );
+      } catch (err) {
+        throw nameTaken(err, r);
+      }
+    },
+    async conversation(service, connection, address) {
+      const [r] = await rows<ConversationColumns>(
+        db,
+        `SELECT service, connection_address, address, name, kind FROM conversations
+         WHERE service = $1::text AND connection_address = $2::text AND address = $3::text`,
+        [service, connection, address],
+      );
+      return r ? conversationOf(r) : null;
+    },
+    async conversations() {
+      return (await rows<ConversationColumns>(
+        db,
+        `SELECT service, connection_address, address, name, kind FROM conversations
+         WHERE deleted_at IS NULL ${CONVERSATION_ORDER}`,
+      )).map(conversationOf);
     },
   };
 }

@@ -4107,3 +4107,46 @@ SDK does not parse; `explained` in the Google transport reads the server's words
 raw body, and `retryable` gives up at once on a quota counted per day (the API says "limit:
 20 requests per day on Free Tier", measured). What stays: the SDK's own 32 s before the
 error reaches nu, since it retries on the status alone.
+
+### Local is a team chat: `send` opens rooms, addresses wear no prefix (2026-09-28) — LANDED
+
+Agents could reach each other one pair at a time — `send(to: "bo")` made the pair's room —
+and nothing could open a room of three. Now `send(to:)` takes a `,`-separated list, each
+part resolved as a single recipient is (an agent's id, a session address, the roster's
+name for an agent — `Laura` reaches agent laura, and a name two agents answer to is
+refused with both named), and the list is a local room: unnamed, a DIRECT room whose
+address is its sorted members joined by `,` (`mind@ana,mind@bo,mind@cy`, the sender always
+in it, up to 8 besides — Slack's `conversations.open` takes 1 to 8 users and adds the
+caller, one rule on every service); with `subject`, a room of its own — `ops` a private
+group, `#ops` a public channel — at a minted address, its name and kind in the new
+`conversations` table (both engines; a local name is unique per org by a partial index),
+every member enrolled. A name that exists with these very members is that room; with
+other members the send is refused and names the address; `subject` on a direct room, or
+one that differs from a room's name, is refused: `send` creates and never manages —
+join, leave and rename are a follow-up verb. A list the roster does not answer to stays
+whole for the wire (a mail to several addresses was already one conversation); one that
+mixes agents and strangers is refused. The whole `to` is tried first — a known conversation,
+a room by its name — so a copied address in any order lands in the same room.
+
+`route` (§4) reads a direct room's members off the address and asks the memberships for a
+group's, so a named session wakes in either; a mind sees a room through its enrollment as
+ever. A channel's history is every agent's to `search` (`historyFor` gained the public
+branch); its window, wake and writes stay its members'. A broadcast (a calendar) is
+refused as a send target.
+
+Conversation addresses wear no prefix anywhere now: `dm:` is gone, and a calendar is
+addressed by its id (its merge key keeps `calendar:`, as every external id keeps its
+service word). Migration v12 (SQLite) and v3 (Postgres) rewrite events, memberships and
+timers in place. A pre-existing org's doc folders under `conversations/dm:…/` and media
+under `conversations/dm_…/` are files the store does not rewrite: rename them by hand,
+`dm:a:b` → `a,b` (media: `dm_a_b` → `a_b`).
+
+Decided along the way, recorded for the follow-ups: `direct` covers im AND mpim (a fixed
+roster, any size, member-defined); `group` and `channel` are rooms whose members change,
+and are what the table is for; `kind` is never counted from members. The table holds
+local rooms only — a wire room's facts ride its events, and a connector gains nothing
+from a copy it cannot keep in sync. Mail threads as groups (a Cc added mid-thread moves
+the thread to a new `direct` conversation today) is its own rework. Open on other
+services: Slack group DMs need `mpim:write`, channels `channels:manage`; Teams chats
+create under `Chat.ReadWrite`, already asked for; open-bsp-whatsmeow's server exposes no
+group route (whatsmeow underneath has `CreateGroup` and its siblings).

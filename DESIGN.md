@@ -665,11 +665,14 @@ Decisions:
   route on `envelope.service` and target with `connection_address` +
   `conversation.address`. `external_id` is the one prefixed string
   (`slack:T:C:ts`) — a global merge key in one store-wide map, where cross-service
-  uniqueness is the point. The local service names its conversations by session —
-  `mind@<agent>` — and `dm:<sorted session addresses>`. An address is meaningful WITH its envelope (or its `<conv>` element);
-  single-string positions (`send.to`, log filters) rely on addresses not colliding
-  across services — acceptable: platform id spaces (Slack C/D ids, jids, `owner/repo#N`,
-  `@`/`dm:` names) are disjoint in practice.
+  uniqueness is the point. Conversation addresses wear no prefix: the local service names
+  a session's room `mind@<agent>`, a direct room its sorted members joined by `,`
+  (`mind@ana,mind@bo`), and a group or channel by a minted id whose name and kind the
+  `conversations` table holds; a calendar is addressed by its id. An address is
+  meaningful WITH its envelope (or its `<conv>` element); single-string positions
+  (`send.to`, log filters) rely on addresses not colliding across services — acceptable:
+  platform id spaces (Slack C/D ids, jids, `owner/repo#N`, `@` names) are disjoint in
+  practice.
 - **`envelope` is on the base** — every event belongs to a conversation (internal events
   carry the conversation's own coordinates; `visibility` keeps them off the wire).
 - **`payload` vs `extra`, one admission rule**: `payload` is what the event MEANS — the
@@ -844,7 +847,7 @@ ownership) only if double-answers show up.
 - **`conversation.kind` = `direct | group | channel | broadcast`** (landed 2026-08-05,
   column `conversation_kind`; broadcast added 2026-08-11 with the WhatsApp connector):
   *direct* = member-DEFINED identity (Slack im AND mpim — the member set is the address;
-  local `dm:<sorted session addresses>` makes that literal, and it scales to n parties unchanged);
+  a local room's sorted members joined by `,` make that literal, and it scales to n parties unchanged);
   *group* = private room; *channel* = public room (room-defined: identity survives
   membership churn); *broadcast* = fan-out, not a room anyone is in (a WA broadcast list
   — replies land in the individual chats; open-bsp carries `…@broadcast` in production).
@@ -1268,8 +1271,8 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   model can tie the "Matías" in a room to the one steering it; the value is elided when
   it equals `from` (`<msg from="Sol" agent>`), written when the wire calls them
   something else (`<msg from="Sol R." principal="Sol">`). A mark is an identity, never a
-  session: which hands of an agent are talking is the conversation's business (a `dm:`
-  address names both ends), and on the local service `from` is the session's address,
+  session: which hands of an agent are talking is the conversation's business (a direct
+  room's address names its members), and on the local service `from` is the session's address,
   the one word that wire has. A customer's line carries no mark.
   The reply sits with what it answers. A dead delivery carries
   `status="failed"`; wire mentions ride a `mentions=` attribute. **Two elements, the
@@ -1750,11 +1753,23 @@ with a time bound.
   the log is the agent's memory (§7): a named session's view stays its own rooms, so its
   prompt holds only its work, while its `search` reaches what the mind reads, the mind's
   own room included.
-  **Local is a team chat**: a local conversation is visible iff you're a member; `send`
-  to a peer agent's NAME canonicalizes to `dm:` + the sorted pair of session addresses
-  and enrolls both ends
-  (the Slack membership mirror, landed 2026-08-12, fills the same rows from the wire —
-  §4 "the wire fills the map").
+  **Local is a team chat**: a local conversation is visible iff you're a member, and
+  `send` is what opens rooms. Its `to` takes one recipient or a `,`-separated list of
+  them, each resolved as one would be — an agent's id, a session address, or the name
+  the roster gives an agent. A list of agents unnamed is a DIRECT room: the sorted
+  members joined by `,`, the sender always among them, up to 8 besides — Slack's group
+  DM size, one rule on every service — so a copy of the address in any order lands in
+  the same room and nobody can write themselves into a room they are not in. Named by
+  `subject`, the list opens a room of its own with a minted address: `ops` a private
+  GROUP, `#ops` a public CHANNEL; the name is unique per org and the `conversations`
+  table holds it, so it may change while every row keyed on the address stays put. A
+  name that exists with these very members is that room; with others, the send is
+  refused and names the address. Every member is enrolled, and enrollment is the whole of
+  waking and writing — a channel's history is every agent's to `search`, its window,
+  wake and writes stay its members'. `send` never manages a room: who joins, who leaves
+  and what it is called after are a verb of their own.
+  (The Slack membership mirror, landed 2026-08-12, fills the same rows from the wire —
+  §4 "the wire fills the map".)
 - **Privacy = a property of the conversation**: `public` (org-readable) | `private`
   (participants + owning agent). Slack native (public channel / DM); WhatsApp by
   **connection ownership** (ownerless org inbox = public; personal book = private);
@@ -1784,12 +1799,12 @@ with a time bound.
   principal-DM + all peer conversations, cross-labeled by envelope: *one coherent mind*
   with general workspace knowledge **and** in-context answers — a human-like alter-ego
   (one mind per principal, not a fragmented tree). Named sessions hold only the rooms
-  they are ENROLLED in — their own room and the `dm:` rooms they are an end of — which
+  they are ENROLLED in — their own room and the rooms they are a member of — which
   is the whole enforcement (§6 memberships on the pair). That is the window and the
   writes; the past is the agent's, one for all its sessions — `search` from any of them
   reads the agent's history (§6), the mind's room and the world routed to it included.
-- **Sessions reach each other the way two agents do**: a `dm:` room both are in
-  (`dm:<sorted session addresses>`), so agent-to-agent contact is a case of one rule. No
+- **Sessions reach each other the way two agents do**: a direct room both are in (the
+  sorted session addresses joined by `,`), so agent-to-agent contact is a case of one rule. No
   tree, no spawn, no inter-session message-passing beyond `send(→envelope)`.
 - **Per session: the turn lock, the window, compaction, its timers.** The lease is
   `turn-<session address>`, so siblings run concurrently; the window is the session's
