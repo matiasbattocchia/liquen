@@ -13,20 +13,16 @@
  *
  * The redirect URI is the org's, not the app row's: `callbackAddress` (edge.ts) — the
  * public door `<edge.publicUrl>/google/oauth/callback` when the org has a public address,
- * else the loopback `http://localhost:<oauthPort>/google/oauth/callback`, which Google
- * permits in plain http. It is sent verbatim as `redirect_uri`, so the string Google
- * matches against its own list is the one expression, and its host decides who can reach
- * that sign-in. The loopback one is the dev's own browser and names the port the door
- * binds, because that browser dials the door directly; the command opens it. The public
- * one is reached by a member anywhere, so the command prints the link to send instead and
- * binds `connections.google.oauthPort` for the edge to forward to.
+ * else this machine's edge, `http://localhost:<edge.port>/google/oauth/callback`, which
+ * Google permits in plain http. It is sent verbatim as `redirect_uri`, so the string
+ * Google matches against its own list is the one expression, and its host decides who can
+ * reach that sign-in: the loopback one is the dev's own browser, and the command opens
+ * it; the public one is reached by a member anywhere, so the command prints the link to
+ * send instead. Either way the edge forwards the callback to the door's socket
+ * (`serveDoor`), so the org must be running for a sign-in to land.
  *
  * The app door prints the callback before it asks for anything, so the console's
  * "Authorized redirect URIs" field can be filled while the client is still being created.
- * Printing it is what fixes the port: it is picked free of this machine on the run that has
- * nothing declared yet, written to config.jsonc beside the app row, and from then on read —
- * never picked again. A registered URI is a promise to a third party, and the only way to
- * keep it is to let a port that someone else took be a refusal instead of a new number.
  *
  * Removal is not a door yet: deleting an app or a grant is a deliberate SQL act (§9).
  */
@@ -35,8 +31,8 @@ import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag, readConfig } from "../../config.ts";
 import { callbackAddress } from "../../edge.ts";
-import { declared, freePort, printNext, startStep } from "../declare.ts";
-import { type DoorAddress, doorAddress, oneShot, openBrowser } from "../door.ts";
+import { declared, printNext, requireEdge, startStep } from "../declare.ts";
+import { type DoorAddress, doorAddress, oneShot, openBrowser, serveDoor } from "../door.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
@@ -86,8 +82,7 @@ export async function pickGoogleApp(
  *   deno task connect google app                          # paste client id + secret
  *   deno task connect google account [principal] [--org] [--app <client_id>]
  *                                    [--scopes "a b c"]   # default: connections.google.scopes
- *
- * The account door serves its callback on connections.google.oauthPort. */
+ */
 
 /** The API a scope reaches, by the scope's first path word: a Google Cloud project answers
  *  403 for an API it has not enabled, whatever the consent carried. */
@@ -125,9 +120,8 @@ export function appGuide(callback: string, scopes: string[]): string {
     `5. Clients → Create client, type "Web application". Under "Authorized redirect URIs":`,
     `     ${callback}`,
     `   That is where a sign-in comes back: the org's public door when edge.publicUrl is`,
-    `   set (a member signs in from anywhere), else this machine's browser on`,
-    `   connections.google.oauthPort. Setting publicUrl later means registering the public`,
-    `   one too.`,
+    `   set (a member signs in from anywhere), else this machine's edge (edge.port).`,
+    `   Setting publicUrl later means registering the public one too.`,
     `6. Copy the client ID and the client secret (shown once, at creation) and paste them below.`,
     ``,
   ].join("\n");
@@ -166,15 +160,9 @@ if (import.meta.main) {
     try {
       if (verb === "app") {
         const { googleConfig } = await import("./config.ts");
-        const { oauthPort: fromCatalog, scopes } = await googleConfig(root);
-        // The loopback callback is the whole of this door's addressing, and the line below
-        // hands it to a human who registers it with Google. So the port is picked HERE, once:
-        // free of whatever else is up on this machine while the file has nothing to say, and
-        // then never again — a declared port is the operator's, printed as it stands.
+        const { scopes } = await googleConfig(root);
         const { connections, edge } = await readConfig(root);
-        const alreadyDeclared = SERVICE in connections;
-        const oauthPort = alreadyDeclared ? fromCatalog : freePort(fromCatalog);
-        const callback = callbackAddress(edge.publicUrl, SERVICE, oauthPort);
+        const callback = callbackAddress(edge, SERVICE);
         console.error(appGuide(callback, scopes));
         const ask = (label: string): string => {
           const v = prompt(label)?.trim();
@@ -188,9 +176,8 @@ if (import.meta.main) {
         const clientSecret = ask("Client secret:");
         const key = await connectGoogleApp({ clientId, clientSecret }, creds);
         console.error(`✓ app stored: ${key} (callback: ${callback})`);
-        // the number that was just printed, in the file, before any sign-in reads it back —
-        // and only now, because a door that wrote nothing promised nothing
-        if (!alreadyDeclared) await declared(root, SPEC, { oauthPort });
+        // only now, because a door that wrote nothing promised nothing
+        if (!(SERVICE in connections)) await declared(root, SPEC);
         printNext([
           "`liquen connect google account <agent>` — sign an account in from this machine's " +
           "browser (`--org` for the org's shared one)",
@@ -211,20 +198,17 @@ if (import.meta.main) {
           Deno.exit(2);
         });
         const { googleConfig } = await import("./config.ts");
-        const { oauthPort, scopes } = await googleConfig(root);
+        const { scopes } = await googleConfig(root);
         const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? scopes;
-        const registered = callbackAddress(
-          (await readConfig(root)).edge.publicUrl,
-          SERVICE,
-          oauthPort,
-        );
+        const registered = callbackAddress((await readConfig(root)).edge, SERVICE);
         let door: DoorAddress;
         try {
-          door = doorAddress(registered, oauthPort);
+          door = doorAddress(registered);
         } catch (e) {
           console.error(e instanceof Error ? e.message : String(e));
           Deno.exit(2);
         }
+        await requireEdge(root);
         const log = await store.log();
         let shortfall: string[] = [];
         const { handler, outcome } = oneShot(createGoogleOAuth({
@@ -239,19 +223,11 @@ if (import.meta.main) {
           store: log,
           onGrant: (g) => (shortfall = g.missing),
         }));
-        // the port is registered with Google now, so a taken one is a conflict a human has to
-        // settle — the door cannot step over it without invalidating the URI it must send
         let server: Deno.HttpServer;
         try {
-          server = Deno.serve({ port: door.port, onListen: () => {} }, handler);
+          server = await serveDoor(root, SERVICE, handler);
         } catch (e) {
-          if (!(e instanceof Deno.errors.AddrInUse)) throw e;
-          console.error(
-            `port ${door.port} is already in use, and it is the port ${door.callback} is ` +
-              `registered on — stop whatever holds it (another org's door, \`deno task ` +
-              `status\`), or register a callback on a free port and set ` +
-              `connections.google.oauthPort to match.`,
-          );
+          console.error(e instanceof Error ? e.message : String(e));
           await log.close();
           Deno.exit(2);
         }
@@ -271,7 +247,7 @@ if (import.meta.main) {
             `Send this link to the person signing in:\n  ${start.href}\n` +
               `It binds the grant to ${agent ? `"${agent}"` : "the org"} and is good for one ` +
               `sign-in, so it goes to exactly one person. This door waits until they finish, ` +
-              `serving ${door.callback} on port ${door.port}.`,
+              `serving ${door.callback}.`,
           );
         }
         const res = await outcome;
@@ -289,9 +265,7 @@ if (import.meta.main) {
               `consent is incremental, so it merges into this grant.`
             : "\n✓ connected (deno task status shows the map)",
         );
-        // what this door SERVED, not what a second bind test thinks is free now: the URI is
-        // registered with Google, so the port is a fact by the time we get here
-        await declared(root, SPEC, { oauthPort: door.port });
+        await declared(root, SPEC);
         printNext([
           await startStep(
             root,

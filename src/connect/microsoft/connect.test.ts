@@ -37,14 +37,14 @@ Deno.test("app: the paste lands under its own id with its tenant; a re-paste rot
   });
 });
 
-Deno.test("the callback: no public address is the loopback door — the dev's own browser; a public one binds oauthPort behind the edge", () => {
-  const local = doorAddress(callbackAddress(null, "microsoft", 8792), 8792);
+Deno.test("the callback: no public address is this machine's edge — the dev's own browser; a public one is a member anywhere", () => {
+  const local = doorAddress(callbackAddress({ publicUrl: null, port: 8787 }, "microsoft"));
   assertEquals(local.loopback, true);
-  assertEquals(local.port, 8792);
-  assertEquals(local.start, "http://localhost:8792/microsoft/oauth/start");
-  const remote = doorAddress(callbackAddress("https://acme.example.com", "microsoft", 8792), 8792);
+  assertEquals(local.start, "http://localhost:8787/microsoft/oauth/start");
+  const remote = doorAddress(
+    callbackAddress({ publicUrl: "https://acme.example.com", port: 8787 }, "microsoft"),
+  );
   assertEquals(remote.loopback, false);
-  assertEquals(remote.port, 8792);
   assertEquals(remote.callback, "https://acme.example.com/microsoft/oauth/callback");
 });
 
@@ -61,8 +61,11 @@ Deno.test("pick: the only app is the choice; several demand a name; none is an e
 });
 
 Deno.test("app guide: the redirect URI to register, every scope a sign-in asks for, admin consent", () => {
-  const guide = appGuide(callbackAddress(null, "microsoft", 8792), DEFAULT_SCOPES);
-  assertStringIncludes(guide, "http://localhost:8792/microsoft/oauth/callback");
+  const guide = appGuide(
+    callbackAddress({ publicUrl: null, port: 8787 }, "microsoft"),
+    DEFAULT_SCOPES,
+  );
+  assertStringIncludes(guide, "http://localhost:8787/microsoft/oauth/callback");
   // ticked by hand in the portal, so each one the catalog asks for is on the page
   for (const s of DEFAULT_SCOPES) assertStringIncludes(guide, s);
   assertStringIncludes(guide, "Grant admin consent");

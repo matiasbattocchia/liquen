@@ -3,8 +3,8 @@
  *
  * A keep-alive loop and nothing more: read the catalog, spawn one child per process the
  * org declares — main (the tail + fan-out, hosting the egress proxy), one per
- * `connections.<name>`, and under an `edge.publicUrl` the edge (edge.ts) and the tunnel
- * the org runs itself (`edge.tunnel`, any argv) — and respawn whatever exits, with
+ * `connections.<name>`, the edge (edge.ts) and the tunnel the org runs itself
+ * (`edge.tunnel`, any argv) — and respawn whatever exits, with
  * backoff. The log is the bus, so there is no dependency order, no readiness probe, no
  * IPC: a child finds the org the way every process does (cwd walks up to config.jsonc),
  * and env rides through untouched (secrets only).
@@ -179,8 +179,8 @@ function module(name: string, url: string): Proc {
  *  `run.ts`: `src/connect/<name>/` ships with core, `<root>/connectors/<name>/` is the
  *  org's own. A shipped service that only grants a credential is declared for its knobs
  *  and runs nothing; a custom connection with no run.ts is a boot error, same law as an
- *  unknown config key. The edge stands only where there is a public address to stand
- *  behind, and the tunnel is whatever argv the catalog says, verbatim. */
+ *  unknown config key. The edge is every connector's door and always stands; the tunnel
+ *  is whatever argv the catalog says, verbatim. */
 export function roster(root: string, cfg: Pick<OrgConfig, "connections" | "edge">): Proc[] {
   const has = (p: string | URL) => {
     try {
@@ -204,10 +204,8 @@ export function roster(root: string, cfg: Pick<OrgConfig, "connections" | "edge"
       );
     }
   }
-  if (cfg.edge.publicUrl !== null) {
-    procs.push(module("edge", new URL("./edge.ts", import.meta.url).href));
-    if (cfg.edge.tunnel) procs.push({ name: "tunnel", argv: cfg.edge.tunnel });
-  }
+  procs.push(module("edge", new URL("./edge.ts", import.meta.url).href));
+  if (cfg.edge.tunnel) procs.push({ name: "tunnel", argv: cfg.edge.tunnel });
   return procs;
 }
 

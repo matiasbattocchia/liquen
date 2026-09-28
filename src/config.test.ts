@@ -35,6 +35,24 @@ async function withDir(fn: (root: string) => Promise<void>): Promise<void> {
   }
 }
 
+Deno.test("a connection's name is its route on the edge — one the edge cannot route is a boot error", async () => {
+  await withDir(async (root) => {
+    for (const bad of ["acme_crm", "Acme", "9acme"]) {
+      await Deno.writeTextFile(
+        `${root}/config.jsonc`,
+        JSON.stringify({ connections: { [bad]: {} } }),
+      );
+      await assertRejects(
+        () => readConfig(root),
+        Error,
+        `connections.${bad} — a connection's name`,
+      );
+    }
+    await Deno.writeTextFile(`${root}/config.jsonc`, '{"connections":{"acme-crm":{}}}');
+    assertEquals((await readConfig(root)).connections, { "acme-crm": {} });
+  });
+});
+
 Deno.test("the reader only reads: an absent file is the defaults, and stays absent", async () => {
   await withDir(async (root) => {
     const cfg = await readConfig(root);

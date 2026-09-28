@@ -67,12 +67,14 @@ Every knob lives in `config.jsonc` at the project root (the catalog — init
 materializes it, the system never writes it; comments document each key). Env is for
 secrets only. The org is where you run liquen; `--dir <path>` names it from anywhere else.
 
-The org is reached on localhost until `edge.publicUrl` names its public https address —
-whatever a tunnel or a host publishes `edge.port` at. Every service's address then hangs
-off it, `<publicUrl>/<service>/ingest` and `<publicUrl>/<service>/oauth/callback`; the
-doors print the one to register, and `edge.tunnel` holds the tunnel's argv when `liquen
-start` should run it. Without one, what needs the internet to dial in (Teams, a member's
-Slack sign-in, a GitHub webhook short of `gh webhook forward`) waits for the address.
+The org binds one port, `edge.port` (8787): every service is reached through it by path,
+`/<service>/ingest` and `/<service>/oauth/callback`, and the connectors behind it listen
+on sockets under `data/run/`, so nothing else is configured. The org is reached at
+`http://localhost:8787` until `edge.publicUrl` names its public https address — whatever
+a tunnel or a host publishes `edge.port` at; the doors print the address to register
+either way, and `edge.tunnel` holds the tunnel's argv when `liquen start` should run it.
+Without a public address, what needs the internet to dial in (Teams, a member's Slack
+sign-in, a GitHub webhook short of `gh webhook forward`) waits for it.
 
 The store is SQLite under `data/log` until `system.database` names a Postgres database
 (`postgres://user@host:5432/db`, `?schema=` for one schema of it); the password goes in
@@ -121,7 +123,7 @@ deno task start                               # webhook receiver → the log, re
 deno task connect github user --org --token   # a machine user's token → the org
 gh webhook forward --repo=you/repo \
   --events=issue_comment,pull_request,pull_request_review_comment \
-  --url=http://localhost:8788/
+  --url=http://localhost:8787/github/ingest
 ```
 
 An App buys three things a paste cannot: an org token minted hourly with nothing static

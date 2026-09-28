@@ -1,46 +1,68 @@
-import { assert, assertEquals, assertThrows } from "@std/assert";
-import { ingestUp, serveIngest } from "./serve.ts";
+import { assertEquals, assertRejects } from "@std/assert";
+import { ingestUp, serveIngest, serveSocket } from "./serve.ts";
+import { socketOf } from "../edge.ts";
 
-Deno.test("serveIngest: 0 binds a free port and announces it; a taken port names its knob", async () => {
-  let bound = 0;
-  const srv = serveIngest(
-    "connections.x.ingestPort",
-    0,
-    () => new Response("ok"),
-    (p) => (bound = p),
-  );
-  assertEquals(bound, (srv.addr as Deno.NetAddr).port);
-  assert(bound > 0);
-  // `localhost` is both loopbacks: a service that resolves it to ::1 first (Go's pure
-  // resolver does, some of the time) has to be answered too, or its batch is lost
-  for (const host of ["127.0.0.1", "[::1]"]) {
-    const res = await fetch(`http://${host}:${bound}/`, { method: "POST" });
-    assertEquals(await res.text(), "ok", host);
+/** A fetch through the socket, the way the edge dials it. */
+async function over(path: string, url: string, init?: RequestInit): Promise<string> {
+  const client = Deno.createHttpClient({ proxy: { transport: "unix", path } });
+  try {
+    return await (await fetch(url, { ...init, client })).text();
+  } finally {
+    client.close();
   }
-  // an ingest names itself to a GET at its root — the middle word of its knob — and
-  // hands everything else to the handler
-  assertEquals(await (await fetch(`http://127.0.0.1:${bound}/`)).text(), "x");
-  assertEquals(await (await fetch(`http://127.0.0.1:${bound}/m/1`)).text(), "ok");
-  assertThrows(
-    () => serveIngest("connections.x.ingestPort", bound, () => new Response(null), () => {}),
-    Error,
-    `port ${bound} in use — another org running? set connections.x.ingestPort`,
-  );
-  await srv.shutdown();
+}
+
+Deno.test("serveIngest: the socket under the org's run dir names itself to a GET / and hands the rest over", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const srv = await serveIngest(root, "x", () => new Response("ok"));
+    const sock = socketOf(root, "x", "ingest");
+    assertEquals(srv.addr.path, sock);
+    assertEquals(await over(sock, "http://x/", { method: "POST" }), "ok");
+    assertEquals(await over(sock, "http://x/"), "x");
+    assertEquals(await over(sock, "http://x/m/1"), "ok");
+    // a socket somebody answers on is another process of this org — refused, not stolen
+    await assertRejects(
+      () => serveIngest(root, "x", () => new Response(null)),
+      Error,
+      `${sock} is already served`,
+    );
+    await srv.shutdown();
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 });
 
-Deno.test("ingestUp: a served port answers, a free one does not", async () => {
-  // a free port: the door asking about an org nobody started
-  const probe = Deno.listen({ port: 0 });
-  const free = (probe.addr as Deno.NetAddr).port;
-  probe.close();
-  assertEquals(await ingestUp(free), false);
-
-  // the same port once an ingest holds it
-  const srv = serveIngest("connections.x.ingestPort", free, () => new Response("ok"), () => {});
+Deno.test("serveSocket: a file nobody answers on is a run that ended — replaced; a path too long is refused", async () => {
+  const root = await Deno.makeTempDir();
   try {
-    assertEquals(await ingestUp(free), true);
-  } finally {
+    const path = `${root}/stale.sock`;
+    await Deno.writeTextFile(path, "");
+    const srv = await serveSocket(path, () => new Response("fresh"));
+    assertEquals(await over(path, "http://x/"), "fresh");
     await srv.shutdown();
+    await assertRejects(
+      () => serveSocket(`${root}/${"a".repeat(120)}.sock`, () => new Response(null)),
+      Error,
+      "a socket path holds",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("ingestUp: a served socket answers, an absent one does not", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    assertEquals(await ingestUp(root, "x"), false);
+    const srv = await serveIngest(root, "x", () => new Response("ok"));
+    try {
+      assertEquals(await ingestUp(root, "x"), true);
+    } finally {
+      await srv.shutdown();
+    }
+    assertEquals(await ingestUp(root, "x"), false);
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });

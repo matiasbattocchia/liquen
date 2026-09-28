@@ -28,15 +28,15 @@ Deno.test("app: the paste lands under its own id — several apps coexist", asyn
   });
 });
 
-Deno.test("the callback: no public address is the loopback door — the dev's own browser; a public one binds oauthPort behind the edge", () => {
+Deno.test("the callback: no public address is this machine's edge — the dev's own browser; a public one is a member anywhere", () => {
   // what the app door prints to register is what a sign-in sends: one expression
-  const local = doorAddress(callbackAddress(null, "google", 8791), 8791);
+  const local = doorAddress(callbackAddress({ publicUrl: null, port: 8787 }, "google"));
   assertEquals(local.loopback, true);
-  assertEquals(local.port, 8791);
-  assertEquals(local.start, "http://localhost:8791/google/oauth/start");
-  const remote = doorAddress(callbackAddress("https://acme.example.com", "google", 8791), 8791);
+  assertEquals(local.start, "http://localhost:8787/google/oauth/start");
+  const remote = doorAddress(
+    callbackAddress({ publicUrl: "https://acme.example.com", port: 8787 }, "google"),
+  );
   assertEquals(remote.loopback, false);
-  assertEquals(remote.port, 8791);
   assertEquals(remote.callback, "https://acme.example.com/google/oauth/callback");
 });
 
@@ -64,10 +64,13 @@ Deno.test("pick: the only app is the choice; several demand a name; none is an e
 });
 
 Deno.test("app guide: the APIs the scopes reach, every scope, the redirect URI to register", () => {
-  const guide = appGuide(callbackAddress(null, "google", 8791), DEFAULT_SCOPES);
+  const guide = appGuide(
+    callbackAddress({ publicUrl: null, port: 8787 }, "google"),
+    DEFAULT_SCOPES,
+  );
   assertStringIncludes(guide, "enable Google Calendar API, Gmail API.");
   for (const s of DEFAULT_SCOPES) assertStringIncludes(guide, s);
-  assertStringIncludes(guide, "http://localhost:8791/google/oauth/callback");
+  assertStringIncludes(guide, "http://localhost:8787/google/oauth/callback");
   // a scope with no known API still says which API is owed
   assertStringIncludes(
     appGuide("x", ["https://www.googleapis.com/auth/youtube"]),

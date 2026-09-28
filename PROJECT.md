@@ -4292,3 +4292,48 @@ and webhook already registered — only a fixed hostname works as `publicUrl`. W
 `ingestUrl` stays as it is: the bridge's private address for this org, which may be a
 Docker alias no tunnel ever sees. A door that is a one-shot process (the sign-ins) is not
 checked end to end; the link the human opens fails visibly if the path is down.
+
+### One port: the connectors listen on sockets, the edge always stands (2026-09-28) — LANDED
+
+The org binds one port, `edge.port`, and nothing else. Every connector serves its ingest
+on a Unix socket under the org's own folder, `data/run/<service>.sock`, and a sign-in door
+on `data/run/<service>-oauth.sock` while it is open (`socketOf`, `src/edge.ts`;
+`serveSocket` · `serveIngest` · `serveLeg`, `src/connect/serve.ts`; `serveDoor`,
+`src/connect/door.ts`). The location is the whole address: `ingestPort` and `oauthPort`
+are gone from every connector spec, `checkPort` from the catalog, `freePort` and
+`pickPorts` from the doors, and with them the port-moving lines a door printed on a busy
+machine and the `port in use — set connections.<x>.<knob>` restart loop. Two orgs on one
+machine collide on `edge.port` alone. A socket somebody answers on is refused
+(`already served`), a file nobody answers on is a run that ended and is replaced, and a
+path past `sun_path`'s length is refused in a sentence at bind time.
+
+The edge is one child of the supervisor always, not only under a `publicUrl`, and it
+forwards each path to the socket the grammar names through a Unix-socket HTTP client
+(`Deno.createHttpClient({ proxy: { transport: "unix" } })`, one per socket, cached), so
+its door table and the spec import it needed are gone. Whatever dials the org on this
+host dials the edge: the loopback callback reads `http://localhost:<edge.port>/<service>/
+oauth/callback` (`callbackAddress(edge, service)`), the whatsmeow bridge posts to
+`http://localhost:<edge.port>/whatsapp/ingest` (`ingestUrlOf(cfg, edge.port)`; `ingestUrl`
+still overrides it for a bridge in a container), and `gh webhook forward` targets
+`http://localhost:<edge.port>/github/ingest`. `ingestAddress(base, service)` takes the
+base the dialer can reach — `publicUrl`, or `localBase(port)` — and the callers that need
+the internet (Teams, the Slack Events URL, the GitHub webhook) check `publicUrl` for null
+themselves.
+
+Two doors change order. The Google and Microsoft account doors need the org running,
+because the callback lands on the edge: `requireEdge` (`src/connect/declare.ts`) probes
+`edge.port` and waits the way `requireIngest` waits on the socket, so `liquen start` in
+the next terminal lets the door go on. The loopback redirect URI moved with it, from the
+connector's port to `edge.port`: an app registered before this entry needs
+`http://localhost:8787/<service>/oauth/callback` added to its redirect URIs. Every org's
+`config.jsonc` loses its port keys, because an unknown key is a boot error.
+
+Kept: Slack's Socket Mode and the polls, which go through no socket and no edge; the
+GitHub xproc test now dials the child's socket instead of scraping an announced port.
+
+A custom connector reaches the edge the same way, with nothing to add to it: the edge
+routes by the grammar, so `serveIngest` and `serveDoor` under the connection's name are
+the whole of it. `serveDoor`, `doorAddress`, `oneShot` and `openBrowser` are exported
+through `@liquen/liquen/connector` for an org's own sign-in door, and a connection whose
+name the edge cannot route (`acme_crm`, `Acme`) is a boot error instead of a connector
+that starts and is never reached (`SERVICE_NAME`, `src/config.ts`).

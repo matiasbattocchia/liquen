@@ -32,7 +32,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { SERVICE } from "./ingest.ts";
-import { findRoot, orgFlag } from "../../config.ts";
+import { findRoot, orgFlag, readConfig } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { requireIngest } from "../declare.ts";
 import { SPEC } from "./config.ts";
@@ -222,7 +222,7 @@ if (import.meta.main) {
     await requireIngest(root, SPEC, { organizationId: tenant });
     const cfg = await whatsappConfig(root);
     const { bridgeUrl: base } = cfg;
-    const webhookUrl = ingestUrlOf(cfg);
+    const webhookUrl = ingestUrlOf(cfg, (await readConfig(root)).edge.port);
     const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
     const phoneNumber = flags.get("phone") || undefined;
     if (flags.has("phone") && !phoneNumber) {

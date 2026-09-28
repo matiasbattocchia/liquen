@@ -8,10 +8,8 @@
  * list (`user_scope`) — so the app you create and the consent you request cannot drift.
  */
 
-import { checkPort, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
 
-export const DEFAULT_INGEST_PORT = 8789;
-export const DEFAULT_OAUTH_PORT = 8790;
 /** The BOT is one identity for the whole org: it sees a channel only once invited, so
  *  reading the roster, the history and the names of what it was invited to is the whole
  *  job — the four `:read`s are what `conversations.info` needs to name a room of each
@@ -44,8 +42,6 @@ export const DEFAULT_USER_SCOPES = [
 ];
 
 export interface SlackConfig {
-  ingestPort: number;
-  oauthPort: number;
   botScopes: string[];
   userScopes: string[];
 }
@@ -54,19 +50,6 @@ export const SPEC: ConnectorSpec = {
   name: "slack",
   doc: "slack — ingest (HTTP mode) and dispatch",
   entries: [
-    {
-      key: "ingestPort",
-      value: DEFAULT_INGEST_PORT,
-      doc: "the HTTP-mode ingest port, behind <edge.publicUrl>/slack/ingest (Socket Mode " +
-        "needs none); 0 = any free port, announced",
-      check: checkPort,
-    },
-    {
-      key: "oauthPort",
-      value: DEFAULT_OAUTH_PORT,
-      doc: "the port the user door binds behind <edge.publicUrl>/slack/oauth/callback",
-      check: checkPort,
-    },
     {
       key: "botScopes",
       value: DEFAULT_BOT_SCOPES,

@@ -4,10 +4,9 @@
  * into `data/config.jsonc` under `connections.google` and are validated at boot.
  */
 
-import { checkPort, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
 
 export const DEFAULT_CALENDARS = ["primary"];
-export const DEFAULT_OAUTH_PORT = 8791;
 /** Identity, the calendar, and the mailbox read and sent: the product. The mail poll runs
  *  only on a grant whose consent carries a mail read scope (`mail.ts`), so a grant made
  *  before mail joined keeps its calendar and takes mail on re-consent. */
@@ -26,7 +25,6 @@ export const GRANT_HOSTS = ["*.googleapis.com"];
 
 export interface GoogleConfig {
   calendars: string[];
-  oauthPort: number;
   scopes: string[];
 }
 
@@ -39,13 +37,6 @@ export const SPEC: ConnectorSpec = {
       value: DEFAULT_CALENDARS,
       doc: 'calendars the poll watches on every grant; "primary" = the account\'s own',
       check: checkStrings,
-    },
-    {
-      key: "oauthPort",
-      value: DEFAULT_OAUTH_PORT,
-      doc:
-        "the port the account door binds behind <edge.publicUrl>/google/oauth/callback; with no publicUrl, the loopback callback's own",
-      check: checkPort,
     },
     {
       key: "scopes",
