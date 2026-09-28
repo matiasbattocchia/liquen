@@ -95,7 +95,10 @@ export function gatewayFor(url: string, token: string, id: string): Gateway {
         return null;
       }
       if (!res.ok) return refused(`read ${path}`, res);
-      return new Uint8Array(await res.arrayBuffer());
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      // the bridge answers a missing file as an empty one: an empty body is asked again
+      if (bytes.length === 0 && (await this.exec(`test -f ${quote(path)}`)).code !== 0) return null;
+      return bytes;
     },
     async destroy() {
       const res = await fetch(base, { method: "DELETE", headers: auth });
@@ -176,6 +179,12 @@ const LOST = 97;
 /** One session's shell in a remote sandbox: the same contract as the local one — the
  *  bash tool, its ambient lines, `stand` and `reap` — carried by the script each call
  *  sends. */
+/** The test that a process group still runs something: a member that is not a zombie. The
+ *  container's init leaves an orphan unreaped, so a finished job stays in the table as
+ *  `Z` until the container goes, and would count as running by its presence alone. */
+const alive = (pgid: string) =>
+  `ps -eo pgid=,stat= | awk -v g=${pgid} '$1 == g && $2 !~ /^Z/ { f = 1 } END { exit !f }'`;
+
 export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPlane {
   const timeoutMsDefault = opts.defaultTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
   const state: BashState = { cwd: opts.workspace };
@@ -206,7 +215,7 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
         `cat ${quote(log)}`,
         `if [ -f ${quote(`${log}.end`)} ]; then ` +
         `printf '\\n${CWD_MARK}%s\\n' "$(cat ${quote(`${log}.end`)})"; fi`,
-        `if pgrep -g "$pgid" > /dev/null; then echo "__MU_JOB__$pgid"; fi`,
+        `if ${alive('"$pgid"')}; then echo "__MU_JOB__$pgid"; fi`,
         `if [ "$(wc -l < ${quote(log)})" -lt ${lines} ] && ` +
         `[ "$(wc -c < ${quote(log)})" -le ${bytes} ]; then rm -f ${quote(log)}; fi`,
         `rm -f ${quote(`${log}.pgid`)} ${quote(`${log}.end`)}`,
@@ -255,7 +264,7 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
         `cd ${quote(state.cwd)} 2>/dev/null || exit 0`,
         `b=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) && ` +
         `echo "git: $b · $(git status --porcelain | grep -c .)"`,
-        ...pgids.map((p) => `pgrep -g ${p} > /dev/null && echo "live ${p}"`),
+        ...pgids.map((p) => `${alive(String(p))} && echo "live ${p}"`),
         "true",
       ].join("\n");
       const lines = [`cwd: ${state.cwd}`];

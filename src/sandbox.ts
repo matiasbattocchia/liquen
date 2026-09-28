@@ -168,7 +168,14 @@ export function openCloudflareSandbox(
             dataDir: dir,
             conversation: key,
           });
-          return { ...shell, home: REMOTE_HOME, files };
+          return {
+            ...shell,
+            // the place an attach names is the principal's, on this machine: no address
+            // in the sandbox, so the shell stands in the workspace whoever is connected
+            stand: () => shell.stand(undefined),
+            home: REMOTE_HOME,
+            files,
+          };
         },
       };
     },
