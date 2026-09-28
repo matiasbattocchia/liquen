@@ -110,6 +110,7 @@ export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves un
 // the next think, whatever the estimate says (compact.ts `overflowed`).
 export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard (§5)
 export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for its burst (§2)
+export const DEFAULT_SANDBOX_SLEEP_MINUTES = 10; // the Sandbox SDK's own sleepAfter
 // The tick is not a knob. It is the RESOLUTION of the attention rules, not one of them:
 // `digestMinutes` says when the agent looks, and the tick only decides how late that look
 // may land. At a minute the promise is kept to the minute; raise it and every interval in
@@ -179,6 +180,7 @@ export interface OrgConfig {
     database: string | null; // null ⇒ SQLite in data/log; a Postgres URL ⇒ that database
     docs: "files" | "table"; // where the docs live: files under data/, or the store's docs table
     sandbox: string | null; // null ⇒ agents' shells on this machine; a URL ⇒ that gateway's
+    sandboxSleepMinutes: number; // a gateway sandbox's life after its last call
   };
   organization: {
     timezone: string; // the ORG's clock — every stamp, cron and sleep span reads it (§5)
@@ -278,6 +280,12 @@ const SYSTEM: Entry[] = [
       "sandbox gateway (sandbox/cloudflare in the package) ⇒ one sandbox per agent there, " +
       "its bearer token read from SANDBOX_API_KEY; needs docs: table, since the sandbox " +
       "cannot reach files on this machine",
+  },
+  {
+    key: "sandboxSleepMinutes",
+    value: DEFAULT_SANDBOX_SLEEP_MINUTES,
+    doc: "how long a gateway sandbox lives after its agent's last call: then the container " +
+      "stops, and its background jobs and workspace files go with it (the agent is told)",
   },
 ];
 
@@ -823,6 +831,13 @@ function validateOrg(cfg: OrgConfig, path: string): void {
   if (sandbox) {
     throw new Error(
       `${path}: system.sandbox ${sandbox} (got ${JSON.stringify(cfg.system.sandbox)})`,
+    );
+  }
+  const sleep = cfg.system.sandboxSleepMinutes;
+  if (!Number.isInteger(sleep) || sleep < 1) {
+    throw new Error(
+      `${path}: system.sandboxSleepMinutes must be a whole number of minutes, 1 or more ` +
+        `(got ${JSON.stringify(sleep)})`,
     );
   }
   validateAgent(cfg.organization.agents, `${path}: organization.agents`);

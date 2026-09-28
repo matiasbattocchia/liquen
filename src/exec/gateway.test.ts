@@ -215,6 +215,52 @@ cases("a file the agent attaches lands on the conversation's shelf", async (shel
   }
 });
 
+Deno.test("the ambient block says how long the sandbox outlives the agent's last call", async () => {
+  const workspace = await Deno.makeTempDir();
+  try {
+    const shell = remoteShell(localGateway(), {
+      workspace,
+      env: () => ({ PATH: "/usr/bin:/bin" }),
+      sleepMinutes: 10,
+    });
+    assertEquals(
+      (await shell.ambient())[1],
+      "sandbox: stops 10 min after your last call — its background jobs and files go with it",
+    );
+  } finally {
+    await Deno.remove(workspace, { recursive: true });
+  }
+});
+
+Deno.test("gatewayFor: every call carries the token and the sandbox's sleep", async () => {
+  const seen: { path: string; auth: string | null; sleep: string | null }[] = [];
+  const server = Deno.serve({ port: 0, onListen() {} }, (req) => {
+    seen.push({
+      path: new URL(req.url).pathname,
+      auth: req.headers.get("authorization"),
+      sleep: req.headers.get("x-sleep-after"),
+    });
+    return req.method === "POST"
+      ? new Response(`event: exit\ndata: {"exit_code": 0}\n\n`)
+      : new Response("bytes");
+  });
+  try {
+    const url = `http://localhost:${server.addr.port}`;
+    const gateway = gatewayFor(url, "tok", "mfsgc", 45);
+    await gateway.exec("true");
+    await gateway.read("/workspace/a.txt");
+    assertEquals(seen, [
+      { path: "/v1/sandbox/mfsgc/exec", auth: "Bearer tok", sleep: "45m" },
+      { path: "/v1/sandbox/mfsgc/file/workspace/a.txt", auth: "Bearer tok", sleep: "45m" },
+    ]);
+    seen.length = 0;
+    await gatewayFor(url, "tok", "mfsgc").exec("true");
+    assertEquals(seen[0].sleep, null);
+  } finally {
+    await server.shutdown();
+  }
+});
+
 Deno.test("parseExecStream: base64 chunks per stream, then the exit", () => {
   const b64 = (s: string) => btoa(s);
   const text = [

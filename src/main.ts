@@ -203,7 +203,12 @@ export async function start(
     bashTimeoutMs: catalog?.system.bashTimeoutMs,
   };
   const sandbox = remote
-    ? openCloudflareSandbox(dir, { url: remote, token: sandboxToken(), ...planeOptions })
+    ? openCloudflareSandbox(dir, {
+      url: remote,
+      token: sandboxToken(),
+      sleepMinutes: catalog?.system.sandboxSleepMinutes,
+      ...planeOptions,
+    })
     : await openLocalSandbox(dir, { store, ...planeOptions });
   // the address book (§9): one port per service that keeps one, wired where the connection
   // is declared — whatsapp's rides the bridge the dispatcher already talks to, on the same

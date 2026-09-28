@@ -2562,7 +2562,10 @@ Cloudflare's (`openCloudflareSandbox`): one sandbox per agent behind a gateway W
 contract carried by the script each call sends (`src/exec/gateway.ts`) — its output to a
 file a background job holds instead of the gateway's pipe, `timeout` killing the group,
 `env -i` and the issued names, the cwd a `cd` — so the container keeps nothing of ours
-between calls but files. **The runner is a
+between calls but files. A sandbox lives `system.sandboxSleepMinutes` past the last call,
+whatever runs in it: every call carries the window and the gateway sets it on whichever
+container answered, and the shell's ambient block tells the agent, whose own calls are
+what keep a job alive. **The runner is a
 module** (`runnerFor`, `src/runner.ts`): a session is built from the store, the agent's
 row and a `Host` — the ports a host wires once — so main and an edge function build the
 same session from the same three things, and what main keeps of its own is the `Host`.

@@ -116,6 +116,8 @@ export interface CloudflareSandboxOptions {
   agents: string[];
   locale?: string | null;
   bashTimeoutMs?: number;
+  /** The `system.sandboxSleepMinutes` knob: a sandbox's life after its last call. */
+  sleepMinutes?: number;
 }
 
 /** Where an agent stands in its Cloudflare sandbox: the container's workspace, which is the
@@ -142,10 +144,12 @@ const REMOTE_ENV: Record<string, string> = {
  *  open them finds what the last one left. */
 export function openCloudflareSandbox(
   dir: string,
-  { url, token, agents, locale, bashTimeoutMs }: CloudflareSandboxOptions,
+  { url, token, agents, locale, bashTimeoutMs, sleepMinutes }: CloudflareSandboxOptions,
 ): Sandbox {
   const env = { ...REMOTE_ENV, ...(locale ? { LANG: locale } : {}) };
-  const gateways = new Map(agents.map((id) => [id, gatewayFor(url, token, sandboxIdOf(id))]));
+  const gateways = new Map(
+    agents.map((id) => [id, gatewayFor(url, token, sandboxIdOf(id), sleepMinutes)]),
+  );
   const shells = new Map<string, ExecPlane>();
   return {
     forAgent(agentId) {
@@ -160,6 +164,7 @@ export function openCloudflareSandbox(
               workspace: REMOTE_HOME,
               env: () => env,
               ...(bashTimeoutMs ? { defaultTimeoutMs: bashTimeoutMs } : {}),
+              ...(sleepMinutes ? { sleepMinutes } : {}),
             });
             shells.set(key, shell);
           }

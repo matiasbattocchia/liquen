@@ -499,3 +499,21 @@ Deno.test("system.sandbox: null, or a gateway's https URL when the docs are in t
     await assertRejects(() => readConfig(root), Error, 'needs system.docs: "table"');
   });
 });
+
+Deno.test("system.sandboxSleepMinutes: whole minutes, 10 unless said", async () => {
+  await withDir(async (root) => {
+    const write = (sandboxSleepMinutes: unknown) =>
+      Deno.writeTextFile(
+        `${root}/config.jsonc`,
+        JSON.stringify({ system: { sandboxSleepMinutes } }),
+      );
+    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    assertEquals((await readConfig(root)).system.sandboxSleepMinutes, 10);
+    await write(60);
+    assertEquals((await readConfig(root)).system.sandboxSleepMinutes, 60);
+    for (const bad of [0, 1.5, "10m", null]) {
+      await write(bad);
+      await assertRejects(() => readConfig(root), Error, "sandboxSleepMinutes must be");
+    }
+  });
+});

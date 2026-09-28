@@ -70,10 +70,20 @@ export function sandboxIdOf(agentId: string): string {
   return encodeBase32(new TextEncoder().encode(agentId)).replace(/=+$/, "").toLowerCase();
 }
 
-/** The gateway at `url` for the sandbox `id`, authenticated by `token`. */
-export function gatewayFor(url: string, token: string, id: string): Gateway {
+/** The gateway at `url` for the sandbox `id`, authenticated by `token`. With
+ *  `sleepMinutes`, every call carries how long the sandbox lives after it
+ *  (`x-sleep-after`), which the gateway sets on whichever container answered. */
+export function gatewayFor(
+  url: string,
+  token: string,
+  id: string,
+  sleepMinutes?: number,
+): Gateway {
   const base = `${url.replace(/\/$/, "")}/v1/sandbox/${id}`;
-  const auth = { authorization: `Bearer ${token}` };
+  const auth: Record<string, string> = {
+    authorization: `Bearer ${token}`,
+    ...(sleepMinutes ? { "x-sleep-after": `${sleepMinutes}m` } : {}),
+  };
   const refused = async (what: string, res: Response): Promise<never> => {
     throw new Error(`sandbox gateway: ${what} answered ${res.status}: ${await res.text()}`);
   };
@@ -169,6 +179,10 @@ export interface RemoteShellOptions {
    *  the egress proxy hands user space. */
   env: () => Record<string, string>;
   defaultTimeoutMs?: number;
+  /** How long the sandbox lives after its last call (`system.sandboxSleepMinutes`), said
+   *  in the ambient block: the agent's background jobs and files live only that long once
+   *  it stops calling. */
+  sleepMinutes?: number;
 }
 
 /** The exit code `timeout` answers when it had to kill the command. */
@@ -176,15 +190,15 @@ const TIMED_OUT = 137;
 /** The exit code the script answers when the shell cannot stand where it was. */
 const LOST = 97;
 
-/** One session's shell in a remote sandbox: the same contract as the local one — the
- *  bash tool, its ambient lines, `stand` and `reap` — carried by the script each call
- *  sends. */
 /** The test that a process group still runs something: a member that is not a zombie. The
  *  container's init leaves an orphan unreaped, so a finished job stays in the table as
  *  `Z` until the container goes, and would count as running by its presence alone. */
 const alive = (pgid: string) =>
   `ps -eo pgid=,stat= | awk -v g=${pgid} '$1 == g && $2 !~ /^Z/ { f = 1 } END { exit !f }'`;
 
+/** One session's shell in a remote sandbox: the same contract as the local one — the
+ *  bash tool, its ambient lines, `stand` and `reap` — carried by the script each call
+ *  sends. */
 export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPlane {
   const timeoutMsDefault = opts.defaultTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
   const state: BashState = { cwd: opts.workspace };
@@ -268,6 +282,12 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
         "true",
       ].join("\n");
       const lines = [`cwd: ${state.cwd}`];
+      if (opts.sleepMinutes) {
+        lines.push(
+          `sandbox: stops ${opts.sleepMinutes} min after your last call — its background ` +
+            `jobs and files go with it`,
+        );
+      }
       let said = "";
       try {
         said = (await gateway.exec(probe)).stdout;

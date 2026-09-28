@@ -74,9 +74,11 @@ scopes, its own and its conversation's.
 Agents' shells run on this machine until `system.sandbox` names a sandbox gateway: the
 Worker in `sandbox/cloudflare/`, deployed to your Cloudflare account with `npm run
 deploy` there and its token set with `wrangler secret put SANDBOX_API_KEY`. Each agent
-then gets a Cloudflare sandbox of its own, its workspace scratch that a sleeping
-container does not keep; the same token goes in `.env` as `SANDBOX_API_KEY`. A remote
-sandbox cannot reach files here, so it needs `system.docs: "table"`.
+then gets a Cloudflare sandbox of its own; the same token goes in `.env` as
+`SANDBOX_API_KEY`. A sandbox stops `system.sandboxSleepMinutes` (10) after its agent's last
+call, and its background jobs and workspace files go with it — the agent is told so in
+every turn, and a longer window keeps a long job alive at the price of idle container
+time. A remote sandbox cannot reach files here, so it needs `system.docs: "table"`.
 
 ## Standing wakes
 
