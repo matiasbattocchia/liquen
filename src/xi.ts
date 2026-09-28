@@ -31,6 +31,7 @@ import type {
   AlarmEvent,
   ContactHit,
   Contacts,
+  Conversation,
   Draft,
   Emit,
   Envelope,
@@ -836,6 +837,53 @@ export interface ContactPort {
   }) => Promise<{ name: string; address: string }[]>;
 }
 
+/** Who a rooms leg acts as (§4): the account the act rides — the connection a send there
+ *  would ride — and the agent acting, whose own grant on that account the port prefers,
+ *  the way the dispatcher's token resolver does. */
+export interface RoomsActor {
+  connection: string;
+  agent: string;
+}
+
+/**
+ * A service's rooms — the conversations its API opens and changes — as a port (§9), one
+ * per service that has such an API. The rooms stay the service's: these ask it and hold
+ * nothing; what the log sees of a change is the wire's own line about it, and the mirror
+ * fills the map from there. Each leg answers within its call and keeps no queue, so a
+ * tool result is the outcome and a throw is the failure the caller re-decides on.
+ *
+ * A leg is per ACCOUNT, and a grant is able exactly as far as its consent goes: a leg
+ * the grant lacks the scope for is the leg's own refusal, naming the scope, so an account
+ * signed in before the scope was asked simply cannot until it signs in again. A service
+ * keeps the legs its API has; `conversation` offers on a wire what its port has, and
+ * `send` opens a room there through `open`.
+ *
+ * `members` are addresses on the wire, as `sender.address` spells them. `open` takes a
+ * list: unnamed, the direct room of these members — whether the wire has one for a list
+ * and how long a list it takes is the service's own rule; named, a `group` (private) or a
+ * `channel` (public). It answers the address messages there will carry.
+ */
+export interface RoomsPort {
+  open?: (
+    req: RoomsActor & {
+      members: string[];
+      name?: string;
+      kind: "direct" | "group" | "channel";
+    },
+  ) => Promise<{ address: string; kind?: "direct" | "group" | "channel"; name?: string }>;
+  /** Who is in a room, with the names the wire gives them. */
+  members?: (
+    req: RoomsActor & {
+      conversation: string;
+    },
+  ) => Promise<{ address: string; name?: string }[]>;
+  join?: (req: RoomsActor & { conversation: string }) => Promise<void>;
+  leave?: (req: RoomsActor & { conversation: string }) => Promise<void>;
+  add?: (req: RoomsActor & { conversation: string; members: string[] }) => Promise<void>;
+  remove?: (req: RoomsActor & { conversation: string; members: string[] }) => Promise<void>;
+  rename?: (req: RoomsActor & { conversation: string; name: string }) => Promise<void>;
+}
+
 /** An exec-plane tool: its API spec + its executor. Executors should throw on failure. */
 export interface ExecTool {
   spec: Anthropic.Tool;
@@ -896,6 +944,11 @@ export interface XiPorts {
    *  whatsapp's where the connection is declared. The `contact` tool is offered when any
    *  is here and refuses an account whose service has none. */
   contact?: Record<string, ContactPort>;
+  /** The rooms of the wires (§9), one port per service whose API opens and changes
+   *  conversations — main wires each where the connection is declared. `send` opens a
+   *  room on a wire through it, and `conversation` reaches a wire conversation through
+   *  it; a service with none keeps its rooms to itself. */
+  rooms?: Record<string, RoomsPort>;
   /** The files port (§9): what `send({files})` and a tool's attachments resolve through —
    *  the sandbox's, naming what the agent may attach. Absent (a test): the process's own
    *  filesystem, unscoped. */
@@ -1701,6 +1754,14 @@ interface Aim {
   /** A local room the send opens or reaches: its members, and the row a named room is
    *  recorded in — `create` when this send is what makes it. */
   local?: { members: Party[]; room?: ConversationRow; create?: boolean };
+  /** A room on a wire this send opens through the wire's port (§9), on the account
+   *  named: who is in it and what it is to be. The send opens it once the call is judged,
+   *  so `address` is empty until then. */
+  wire?: {
+    service: string;
+    connection: string;
+    open: { members: string[]; name?: string; kind: "direct" | "group" | "channel" };
+  };
   /** A name several conversations answer to — the caller's error to raise. */
   candidates: Named[];
   /** The account whose address book named the recipient, when one did. */
@@ -1727,17 +1788,19 @@ async function roomNamed(name: string, ports: XiPorts): Promise<ConversationRow 
 const ROOM_ACTIONS = ["show", "join", "leave", "add", "remove", "rename"] as const;
 type RoomAction = typeof ROOM_ACTIONS[number];
 
-/** A local room as the `conversation` tool sees it: its address, its row when it has one
- *  (a direct room has none — its members are its address), and its live members. */
+/** A room as the `conversation` tool sees it: its address, and — local — its row when it
+ *  has one (a direct room has none: its members are its address) and its live members;
+ *  on a wire, the record its rows carry, the people being the port's to list. */
 interface Room {
   address: string;
   row?: ConversationRow;
   members: Party[];
+  wire?: { service: Service; connection: string; kind?: Conversation["kind"]; name?: string };
 }
 
-/** The local room `which` names (§6): a room by its name (`#` or not), a room's address,
- *  or a direct room spelled as its members. A conversation on a wire is not a room here:
- *  its members are the wire's to change. */
+/** The room `which` names (§6): a local room by its name (`#` or not) or its address, a
+ *  direct room spelled as its members — or a conversation the log holds on a wire, by
+ *  its address, which the tool reaches through the wire's port. */
 async function roomFor(which: string, ports: XiPorts): Promise<Room> {
   const live = (await ports.log.conversations()).filter((r) => r.service === "local");
   const want = foldName(which.replace(/^#/, ""));
@@ -1758,21 +1821,113 @@ async function roomFor(which: string, ports: XiPorts): Promise<Room> {
   }
   const [prior] = await ports.log.read({ conversation: which, limit: 1 });
   if (prior && prior.envelope.service !== "local") {
-    throw new Error(
-      `${which} is a conversation on ${prior.envelope.service} — its members are managed there`,
-    );
+    const { service, connection_address: connection, conversation } = prior.envelope;
+    return {
+      address: which,
+      members: [],
+      wire: {
+        service,
+        connection,
+        ...(conversation.kind !== undefined ? { kind: conversation.kind } : {}),
+        ...(conversation.name !== undefined ? { name: conversation.name } : {}),
+      },
+    };
   }
   throw new Error(`no room named "${which}" — \`show\` lists yours and the public channels`);
 }
 
-/** How a room reads back to the model: its name, kind and address, and who is in it. */
-function roomView(room: Room, kind: ConversationRow["kind"] | "direct") {
+/** How a room reads back to the model: its name, kind and address, and who is in it — a
+ *  local room's members as session addresses; a wire's as the wire's addresses, with the
+ *  names the wire gives them, and the account it is on. */
+function roomView(
+  room: Room,
+  kind: NonNullable<Conversation["kind"]>,
+  people?: { address: string; name?: string }[],
+) {
+  if (room.wire) {
+    const names = Object.fromEntries(
+      (people ?? []).flatMap((p) => p.name ? [[p.address, p.name]] : []),
+    );
+    return {
+      ...(room.wire.name !== undefined ? { name: room.wire.name } : {}),
+      kind,
+      address: room.address,
+      connection: room.wire.connection,
+      ...(people ? { members: people.map((p) => p.address) } : {}),
+      ...(Object.keys(names).length > 0 ? { names } : {}),
+    };
+  }
   return {
     ...(room.row ? { name: room.row.name } : {}),
     kind,
     address: room.address,
     members: room.members.map((m) => sessionAddress(m.agentId, m.sessionId)),
   };
+}
+
+/** The `conversation` verbs on a wire (§9): each through the wire's port, as the acting
+ *  agent on the account the conversation is on — the one `send` there rides. The wire
+ *  says the change in a line of its own, which the ingest brings back, so nothing is said
+ *  here. `who` names people the way `contact` takes one — by their address, or the name
+ *  they go by here — and a bare handle nobody has spoken as is taken as an address: the
+ *  line between a name and a handle is the space. */
+async function wireRoom(
+  action: RoomAction,
+  wire: NonNullable<Room["wire"]>,
+  room: Room,
+  args: Record<string, Json>,
+  self: { id: string },
+  ports: XiPorts,
+) {
+  const port = ports.rooms?.[wire.service];
+  if (!port) {
+    throw new Error(
+      `${room.address} is a conversation on ${wire.service} — its members are managed there`,
+    );
+  }
+  const actor: RoomsActor = { connection: wire.connection, agent: self.id };
+  const kind = wire.kind ?? "direct";
+  const leg = <K extends keyof RoomsPort>(k: K): NonNullable<RoomsPort[K]> => {
+    const l = port[k];
+    if (!l) throw new Error(`a conversation on ${wire.service} takes no \`${k}\` from here`);
+    return l;
+  };
+  const people = () =>
+    port.members ? port.members({ ...actor, conversation: room.address }) : undefined;
+  if (action === "show") return roomView(room, kind, await people());
+  if (kind === "direct") {
+    throw new Error(
+      "a direct conversation is its members — to talk with others, send to the other list",
+    );
+  }
+  const named = async (): Promise<string[]> => {
+    const parts = String(args.who ?? "").split(",").map((p) => p.trim()).filter((p) => p);
+    if (parts.length === 0) throw new Error(`\`who\` names whom to ${action}`);
+    const out: string[] = [];
+    for (const p of parts) {
+      const person = await personOn(p, self, ports, wire.connection);
+      if (person) out.push(person.address);
+      else if (/\s/.test(p)) {
+        throw new Error(
+          `nobody named "${p}" has spoken here and no address book of yours has them — ` +
+            "give their address",
+        );
+      } else out.push(p);
+    }
+    return [...new Set(out)];
+  };
+  const at = { ...actor, conversation: room.address };
+  if (action === "join") await leg("join")(at);
+  else if (action === "leave") await leg("leave")(at);
+  else if (action === "add") await leg("add")({ ...at, members: await named() });
+  else if (action === "remove") await leg("remove")({ ...at, members: await named() });
+  else {
+    const to = String(args.name ?? "").replace(/^#/, "").trim();
+    if (!to) throw new Error("`name` is the new name");
+    await leg("rename")({ ...at, name: to });
+    wire.name = to;
+  }
+  return roomView(room, kind, await people());
 }
 
 /**
@@ -1792,6 +1947,7 @@ async function aimOf(
   subject: string,
   self: { id: string; session_id: string },
   ports: XiPorts,
+  via?: { service: string; address: string },
 ): Promise<Aim> {
   const agents = await ports.log.agents();
   const me = { agentId: self.id, sessionId: self.session_id };
@@ -1856,8 +2012,87 @@ async function aimOf(
           "is nobody in the roster",
       );
     }
+    const opened = await wireList(parts, subject, via, self, ports);
+    if (opened) return opened;
   }
   return await namesTo(to, self, ports);
+}
+
+/** A list of people on one wire (§9): a room opened there through the wire's port, on
+ *  the account the model names or the one the people are on. Each part is a person the
+ *  way `contact` takes one — by address, or the name they go by here — and a bare handle
+ *  nobody has spoken as is an address. Unnamed, the direct room of the list, with the
+ *  same cap as a local one; named by `subject`, a group (`ops`) or a channel (`#ops`).
+ *  The opening is the send's own, once the call is judged. `undefined` when no port can
+ *  open it: the list stays whole for the wire, the way a mail to several addresses is
+ *  one conversation. */
+async function wireList(
+  parts: string[],
+  subject: string,
+  via: { service: string; address: string } | undefined,
+  self: { id: string },
+  ports: XiPorts,
+): Promise<Aim | undefined> {
+  const members: string[] = [];
+  const on = new Map<string, { service: string; address: string }>(); // the accounts they are on
+  for (const p of parts) {
+    const person = await personOn(p, self, ports, via?.address);
+    if (person) {
+      members.push(person.address);
+      if (person.spoken) {
+        const { service, connection_address: address } = person.spoken.envelope;
+        on.set(address, { service, address });
+      } else if (person.entry) {
+        const book = person.entry.connection;
+        const c = (await accounts(self, ports)).find((c) => c.address === book);
+        if (c) on.set(c.address, c);
+      }
+    } else if (/\s/.test(p)) {
+      throw new Error(
+        `nobody named "${p}" has spoken here and no address book of yours has them — ` +
+          "give their address",
+      );
+    } else members.push(p);
+  }
+  let account = via;
+  if (!account && on.size > 1) {
+    throw new Error(
+      `${parts.join(", ")} are on ${[...on.keys()].join(" and ")} — a room holds people ` +
+        "on one account; say `connection`",
+    );
+  }
+  account ??= [...on.values()][0];
+  if (!account) {
+    // strangers to every record: the account is the one that can open a room, when
+    // there is exactly one to choose
+    const able = (await accounts(self, ports)).filter((c) => ports.rooms?.[c.service]?.open);
+    if (able.length > 1) {
+      throw new Error(
+        `say \`connection\`: which of your accounts opens the room — ${
+          able.map((c) => c.address).join(", ")
+        }`,
+      );
+    }
+    account = able[0];
+  }
+  if (!account || !ports.rooms?.[account.service]?.open) return undefined;
+  const wire = { service: account.service, connection: account.address };
+  const people = [...new Set(members)];
+  if (!subject) {
+    if (people.length > DIRECT_MAX) {
+      throw new Error(
+        `a direct room holds up to ${DIRECT_MAX} besides you — name it with \`subject\` ` +
+          "to open a group (`ops`) or a channel (`#ops`)",
+      );
+    }
+    return {
+      address: "",
+      wire: { ...wire, open: { members: people, kind: "direct" } },
+      candidates: [],
+    };
+  }
+  const { name, kind } = roomOf(subject);
+  return { address: "", wire: { ...wire, open: { members: people, name, kind } }, candidates: [] };
 }
 
 /** A conversation the log holds, by address: a local room of its own carries its row. */
@@ -1941,6 +2176,70 @@ async function namesTo(
     }
   }
   return { address: to, candidates: found };
+}
+
+/** Somebody `who` names, the way `contact` and a wire room's `who` take one: an address
+ *  that has spoken answers itself (`spoken` is its newest row). A name is looked up the
+ *  way `search from:` looks it up — a person is in two places, the rows they wrote and
+ *  the books of the accounts that have them saved, and both are asked, because a name
+ *  that one place answers once and the other answers with somebody else names two
+ *  people; a book that could not be asked is a stop, since "nobody by that name" is not a
+ *  fact while a book has not said so. Two people wearing the name is refused, never
+ *  picked. Nobody wearing it is `undefined`: whether a bare handle is then an address is
+ *  the caller's own rule. `on` keeps the lookup to one account — the one a room is on —
+ *  so a name worn on another wire is not in the way. */
+async function personOn(
+  who: string,
+  self: { id: string },
+  ports: XiPorts,
+  on?: string,
+): Promise<{ address: string; name?: string; spoken?: Event; entry?: ContactHit } | undefined> {
+  const where = on === undefined ? {} : { connection: on };
+  const spoken = (await ports.log.read({ ...where, from: who, limit: 1 }))[0] ??
+    (await ports.log.read({ ...where, conversation: who, limit: 1 }))[0];
+  if (spoken) return { address: who, spoken };
+  const people = new Map<string, string | undefined>(); // address → the name it wears
+  const rows = new Map<string, Event>(); // address → their newest row, when the log has one
+  const named = await ports.log.read({ ...where, senderName: who, limit: NAME_REACH });
+  for (const e of named) {
+    const at = e.envelope.sender?.address;
+    if (at && !people.has(at)) {
+      people.set(at, e.envelope.sender?.name);
+      rows.set(at, e);
+    }
+  }
+  const saved = await booked(self, ports, who);
+  if (saved?.unreached?.length && (on === undefined || saved.unreached.includes(on))) {
+    throw new Error(
+      `cannot tell who "${who}" is — address book not reached on ${
+        saved.unreached.join(", ")
+      }; give their address, or try again`,
+    );
+  }
+  for (const h of saved?.hits ?? []) {
+    if ((on === undefined || h.connection === on) && !people.has(h.address)) {
+      people.set(h.address, h.name);
+    }
+  }
+  // the name proper wins over a relation's parenthesis (`store/names.ts`)
+  const picked = preferProper(who, [...people].map(([address, name]) => ({ address, name })));
+  if (picked.length > 1) {
+    throw new Error(
+      `"${who}" names ${picked.length} people — say which: ${
+        picked.map(({ address: at, name: n }) => `${n ?? "?"} (${at})`).join(", ")
+      }`,
+    );
+  }
+  if (picked.length === 0) return undefined;
+  const [{ address, name }] = picked;
+  const entry = saved?.hits.find((h) => h.address === address);
+  const newest = rows.get(address);
+  return {
+    address,
+    ...(name !== undefined ? { name } : {}),
+    ...(newest ? { spoken: newest } : {}),
+    ...(entry ? { entry } : {}),
+  };
 }
 
 /** The accounts this agent speaks through (§4): the connections that name it as owner and
@@ -2040,21 +2339,23 @@ async function targetOf(
   const args = (input ?? {}) as { to?: unknown; connection?: unknown };
   // a named account is the target's connection wherever the call goes; a name nobody
   // wears is the call's own error to raise, so here it is simply no scope
-  const named = typeof args.connection === "string" && args.connection !== ""
+  const account = typeof args.connection === "string" && args.connection !== ""
     ? await (async () => {
       try {
-        return (await accountNamed(args.connection as string, self, ports)).address;
+        return await accountNamed(args.connection as string, self, ports);
       } catch {
         return undefined;
       }
     })()
     : undefined;
+  const named = account?.address;
   if (name === "contact") return named === undefined ? undefined : { connection: named };
   if (name === "conversation") {
     const which = (input as { which?: unknown } | null)?.which;
     if (typeof which !== "string" || which.trim() === "") return undefined;
     try {
-      return { connection: "agent", conversation: (await roomFor(which.trim(), ports)).address };
+      const room = await roomFor(which.trim(), ports);
+      return { connection: room.wire?.connection ?? "agent", conversation: room.address };
     } catch {
       return undefined;
     }
@@ -2068,7 +2369,11 @@ async function targetOf(
     const subject = typeof (input as { subject?: unknown })?.subject === "string"
       ? String((input as { subject: string }).subject).trim()
       : "";
-    to = (await aimOf(to, subject, self, ports)).address;
+    const aim = await aimOf(to, subject, self, ports, account);
+    // a room on a wire is opened by the send itself, after the judgement: the account is
+    // known here, the address is not yet
+    if (aim.wire) return { connection: aim.wire.connection };
+    to = aim.address;
   } catch {
     return undefined;
   }
@@ -2234,7 +2539,7 @@ async function execute(
       : await accountNamed(String(args.connection), self, ports);
     // A name is as good as an address (§5) — and `targetOf` resolved the same way, so the
     // rule that judged this call named the conversation the log is about to record.
-    const aimed = await aimOf(to, subject, self, ports);
+    const aimed = await aimOf(to, subject, self, ports, via);
     if (aimed.candidates.length > 0) {
       throw new Error(
         `"${to}" names ${aimed.candidates.length} conversations — say which: ${
@@ -2243,6 +2548,17 @@ async function execute(
       );
     }
     to = aimed.address;
+    // a list on a wire is a room opened now, the call judged (§9): through the wire's
+    // port, on the account, as this agent — and the send lands in what the wire answered,
+    // under the kind and name it gave the room
+    const opened = aimed.wire
+      ? await ports.rooms![aimed.wire.service]!.open!({
+        connection: aimed.wire.connection,
+        agent: self.id,
+        ...aimed.wire.open,
+      })
+      : undefined;
+    if (aimed.wire && opened) to = opened.address;
     // team chat (§6): a local room is its members' — they are enrolled as the SESSIONS they
     // are, and membership is what makes it visible to exactly them (upsert-only and live,
     // so the scoped publish below already passes WITH CHECK). A room of its own is
@@ -2289,6 +2605,8 @@ async function execute(
     // stamped on every row so the window names the room by its newest line
     const kind = local
       ? local.room?.kind ?? ("direct" as const)
+      : opened
+      ? opened.kind ?? aimed.wire!.open.kind
       : prior?.envelope.conversation.kind;
     // a broadcast is fan-out, not a room anyone is in (§3): nothing answers there
     if (kind === "broadcast") throw new Error(`${to} is a broadcast — nobody answers there`);
@@ -2297,7 +2615,7 @@ async function execute(
     // contact the subject names the thread this send opens, and the wire's Re: on a reply
     // is the dispatcher's to spell
     if (
-      !local && prior && subject &&
+      !local && !opened && prior && subject &&
       foldName(subject) !== foldName(prior.envelope.conversation.name ?? "")
     ) {
       throw new Error(
@@ -2307,7 +2625,13 @@ async function execute(
           "a send carries no rename; a new subject is a new conversation: send to the addresses",
       );
     }
-    const name = local?.room ? local.room.name : prior ? prior.envelope.conversation.name : subject;
+    const name = local?.room
+      ? local.room.name
+      : opened
+      ? opened.name ?? aimed.wire!.open.name
+      : prior
+      ? prior.envelope.conversation.name
+      : subject;
     const conversation = {
       address: to,
       ...(kind !== undefined ? { kind } : {}),
@@ -2315,6 +2639,12 @@ async function execute(
     };
     const envelope = via
       ? { service: via.service as Service, connection_address: via.address, conversation }
+      : aimed.wire
+      ? {
+        service: aimed.wire.service as Service,
+        connection_address: aimed.wire.connection,
+        conversation,
+      }
       : prior
       ? {
         service: prior.envelope.service,
@@ -2424,54 +2754,19 @@ async function execute(
     if (verb === "forget" && name !== undefined) {
       throw new Error("`forget` takes no `name` — it removes the entry");
     }
-    // the person: an address that has spoken answers itself. A name is looked up the way
-    // `search from:` looks it up — a person is in two places, the rows they wrote and the
-    // books of the accounts that have them saved, and both are asked, because a name that
-    // one place answers once and the other answers with somebody else names two people.
-    // Neither holding it leaves a bare address — a number the model has and nobody has
-    // heard from yet is exactly what saving is for.
-    const spoken = (await ports.log.read({ from: who, limit: 1 }))[0] ??
-      (await ports.log.read({ conversation: who, limit: 1 }))[0];
-    let address = who;
-    let entry: ContactHit | undefined; // the book that has them, when a book answered
-    if (!spoken) {
-      const people = new Map<string, string | undefined>(); // address → the name it wears
-      const named = await ports.log.read({ senderName: who, limit: NAME_REACH });
-      for (const e of named) {
-        const at = e.envelope.sender?.address;
-        if (at && !people.has(at)) people.set(at, e.envelope.sender?.name);
-      }
-      // a book that could not be asked is a search's footnote and a write's stop: this
-      // call is about to save or remove somebody, and "nobody by that name" is not a
-      // fact while a book has not said so
-      const saved = await booked(self, ports, who);
-      if (saved?.unreached?.length) {
-        throw new Error(
-          `cannot tell who "${who}" is — address book not reached on ${
-            saved.unreached.join(", ")
-          }; give their address, or try again`,
-        );
-      }
-      for (const h of saved?.hits ?? []) if (!people.has(h.address)) people.set(h.address, h.name);
-      // the name proper wins over a relation's parenthesis (`store/names.ts`)
-      const picked = preferProper(who, [...people].map(([address, name]) => ({ address, name })));
-      if (picked.length > 1) {
-        throw new Error(
-          `"${who}" names ${picked.length} people — say which: ${
-            picked.map(({ address: at, name: n }) => `${n ?? "?"} (${at})`).join(", ")
-          }`,
-        );
-      }
-      if (picked.length === 1) {
-        address = picked[0].address;
-        entry = saved?.hits.find((h) => h.address === address);
-      } else if (!/^[+\d][\d\s().-]*$/.test(who)) {
-        throw new Error(
-          `nobody named "${who}" has spoken here and no address book of yours has them — ` +
-            "give their address",
-        );
-      } else address = who.replace(/\D/g, "");
-    }
+    // the person (`personOn`). Nobody wearing the name leaves a bare address — a number
+    // the model has and nobody has heard from yet is exactly what saving is for.
+    const person = await personOn(who, self, ports);
+    let address: string;
+    if (person) address = person.address;
+    else if (!/^[+\d][\d\s().-]*$/.test(who)) {
+      throw new Error(
+        `nobody named "${who}" has spoken here and no address book of yours has them — ` +
+          "give their address",
+      );
+    } else address = who.replace(/\D/g, "");
+    const spoken = person?.spoken;
+    const entry = person?.entry; // the book that has them, when a book answered
     const prior = spoken ?? (await ports.log.read({ conversation: address, limit: 1 }))[0] ??
       (await ports.log.read({ from: address, limit: 1 }))[0];
     let via: { service: string; address: string };
@@ -2531,6 +2826,7 @@ async function execute(
       return { rooms };
     }
     const room = await roomFor(which, ports);
+    if (room.wire) return await wireRoom(action, room.wire, room, args, self, ports);
     const kind = room.row?.kind ?? "direct";
     if (action === "show") return roomView(room, kind);
     if (!room.row) {
@@ -3190,12 +3486,12 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
     },
     {
       name: "conversation",
-      description:
-        "A local room's members and name — the rooms `send` opens with a list of agents. " +
-        "Any member may change it, and the change is said in the room. `show` with no " +
-        "`which` lists your rooms and the public channels; with one, its members. A direct " +
-        "room is its members and takes no change: another list is another room. A " +
-        "conversation on a wire (Slack, WhatsApp, mail) is managed there, not here.",
+      description: "A room's members and name — the rooms `send` opens with a list. Locally, any " +
+        "member may change it, and the change is said in the room; on a wire (Slack, " +
+        "Teams, WhatsApp) the change goes through your account there, and the wire says " +
+        "it. `show` with no `which` lists your local rooms and the public channels; with " +
+        "one, its members. A direct room is its members and takes no change: another " +
+        "list is another room. Mail has no rooms to change.",
       input_schema: {
         type: "object",
         properties: {
@@ -3213,7 +3509,8 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
           },
           who: {
             type: "string",
-            description: "agents, separated by `,` — by id, name or session address (add, remove)",
+            description: "who to add or remove, separated by `,` — locally agents by id, name or " +
+              "session address; on a wire people by `address` or the name they go by here",
           },
           name: { type: "string", description: "the new name (rename)" },
         },

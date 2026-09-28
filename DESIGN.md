@@ -1770,7 +1770,10 @@ with a time bound.
   `rename`. Any member may act, a rename keeps the kind, the last one out closes the room
   (its name freed, its rows kept), and every change is said in the room as the agent's
   own line, so the member just added reads it where it happened. A direct room is its
-  members and takes no change; a wire conversation's members are the wire's.
+  members and takes no change. A wire's rooms are the wire's, reached through its rooms
+  port (§9): `send` to a list of people there opens one on the account, through the port,
+  and the same verbs change it through the same port, as the agent on that account —
+  nothing is said here, the wire says it. A wire with no port keeps its rooms.
   (The Slack membership mirror, landed 2026-08-12, fills the same rows from the wire —
   §4 "the wire fills the map".)
 - **Privacy = a property of the conversation**: `public` (org-readable) | `private`
@@ -2161,7 +2164,7 @@ its SQL side (5 tools: `executeSql`/`getDbSchema`/`sampleTableRows`/`selectAsCsv
 |---|---|---|
 | `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{sent, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — text beside it replies on the wire; `react` lands a glyph on it; `action` names the verb (`create` · `edit` · `delete` · `add` · `remove` — `create` and `add` are what a body and a glyph already mean, and the two mutating ones reach only the account's own messages). **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
 | `search` | control (dedicated) | `search({in?, from?, connection?, before?, after?, text?, limit?, around?})` → the page as a string in the window's grammar (`<conn>`/`<conv>`/`<msg>`, dated), RLS-scoped, closed by the next page's `before` when cut. Clean sugar over the control-plane log read (SELECT / ripgrep). |
-| `conversation` | control (dedicated) | `conversation(action?, which?, who?, name?)` → the room (`name`, `kind`, `address`, `members`), or `{rooms}` for a bare `show`. A local room's members and name (§6): `join` · `leave` · `add` · `remove` · `rename` · `show`; every change is a message in the room. |
+| `conversation` | control (dedicated) | `conversation(action?, which?, who?, name?)` → the room (`name`, `kind`, `address`, `members`), or `{rooms}` for a bare `show`. A room's members and name (§6): `join` · `leave` · `add` · `remove` · `rename` · `show`. Locally every change is a message in the room; on a wire each verb goes through the service's rooms port (`XiPorts.rooms`, one per service whose API has it), as the agent on the account, and the wire says the change. |
 | `bash` | exec + durable-on-files | `bash(cmd)` → `{stdout, stderr, exit}`. The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
 | `read` · `write` · `edit` | durable-on-db | The **database** substrate's primitive, by handle: `read(handle, offset?, limit?)` → the text head-truncated with `aread`'s footer · `write(handle, content)` · `edit(handle, spec)` with `aedit`'s conflict-marker spec. Present only where the docs live in the table (the sandbox can't touch the DB, §9 invariant). The model writes no SQL: each call is a function of the store (`docs_read · docs_write · docs_edit`, the binaries' contracts in PL/pgSQL) that the harness calls with bound parameters under the agent role, so one `NOLOGIN` role serves every agent and the row-level policy is the whole rule. |
 

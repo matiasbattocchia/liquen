@@ -322,8 +322,9 @@ const AGENT: Entry[] = [
     doc: "the tools offered to the model, by name — built-ins and exec tools (bash, MCP) " +
       'alike; null ⇒ every tool the deployment has. Add "send" where the agent has peers ' +
       "or a world to write to — a reply to its own principal is its plain answer, never a " +
-      'call — "conversation" where it has peers and may open rooms with them, and ' +
-      '"contact" where an account keeps an address book the agent may write',
+      'call — "conversation" where it has peers and may open rooms with them, or an ' +
+      'account on a wire whose rooms it may change, and "contact" where an account keeps ' +
+      "an address book the agent may write",
   },
   {
     key: "rules",

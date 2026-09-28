@@ -4390,3 +4390,38 @@ WhatsApp bridge's offline queue, and a message already in the log merges on its
 `external_id` and wakes nobody. Not read back on Slack: an edit or a delete of a message
 the log already had, reactions, and replies to a thread whose root is older than the gap
 (history lists roots only, and a reply moves no root). Both are reachable by `search`.
+
+### The rooms port: a wire's rooms, opened and changed through its own API (2026-09-28) — LANDED
+
+`XiPorts.rooms` is the seam: one `RoomsPort` per service whose API opens and changes
+conversations, with the legs that API has — `open`, `members`, `join`, `leave`, `add`,
+`remove`, `rename` — each answering within its call and keeping no queue, the `contact`
+port's shape. Every leg takes a `RoomsActor`: the connection the act rides and the agent
+acting, so a port posts with the grant the dispatcher would post with. The gate is the
+grant's consent: a leg whose scope the grant lacks refuses by naming the scope, which is
+how an account signed in before the scope was asked stays unable until it signs in
+again. Main wires a port where the connection is declared, as it wires `contact`; the
+runner's host carries it. No service implements one in this entry: the seam lands first,
+and Slack, Teams and WhatsApp plug in one at a time.
+
+Two callers use it. `conversation(which:)` at a conversation the log holds on a wire
+reaches the wire's port instead of refusing: `show` answers the record's name and kind,
+the account, and the people as the port lists them (with the names the wire gives them);
+the verbs go through the port's legs, and a verb the service has no leg for is refused by
+name. Nothing is said in the room — the wire says the change, and the ingest brings that
+line back. `who` names people the way `contact` takes one, by address or by the name they
+go by here, kept to the account the room is on (`personOn`, the resolver `contact` used
+inline, now shared), and a bare handle nobody has spoken as is an address. A direct
+conversation takes no change, on a wire as locally. `send(to:)` at a list of people on
+one wire opens a room there through `open`, unnamed a direct room and named by `subject`
+a group or a channel, on the account the model names or the one the people are on — two
+accounts are refused, and strangers to every record fall to the one account of the
+agent's that can open a room, or ask for `connection`. The room is opened by the send
+itself, after the gate has judged the call: the target a rule sees is the account alone,
+since the room has no address yet, and the send lands under the address, kind and name
+the wire answered. A wire with no port keeps the list whole, the mail case, as before.
+
+The permission target of `conversation` on a wire is the account and the conversation,
+so a rule pinned to either matches; the tool's description and `tools` doc say what a
+wire's rooms take. Not in this entry: the scopes each wire's legs need, which land with
+each port.

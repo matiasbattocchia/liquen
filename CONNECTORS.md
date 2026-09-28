@@ -146,6 +146,32 @@ the phone shows up as the name and the hint on the next line from them. A servic
 address book stamps nothing: every outsider wears `external`, and the tool is not offered
 on its accounts.
 
+### The rooms: the service opens them, the port asks
+
+A service whose API opens and changes conversations — Slack's `conversations.*`, Graph's
+chats and channels, whatsmeow's groups — keeps them, and the connector's port
+(`XiPorts.rooms`, one per service) asks it: `open` for `send` to a list of people there,
+`members` · `join` · `leave` · `add` · `remove` · `rename` for the `conversation` tool. Each
+leg answers within its call and keeps no queue, so the tool result is the whole outcome
+and a failed call is the model's to make again. What the log holds of a change is the
+wire's own line about it — the join, the rename — brought back by the ingest, and the
+membership mirror fills the map from there; the harness says nothing in the room itself.
+
+Every leg is per account: it takes the connection the act rides — the one a `send` there
+would ride — and the agent acting, and posts with the grant the dispatcher would post
+with, the agent's own when the vault holds one. A grant is able exactly as far as its
+consent goes, so a leg whose scope the grant lacks is the leg's own refusal, naming the
+scope; an account signed in before the scope was asked cannot until it signs in again.
+A service keeps the legs its API has and no more; `conversation` refuses the missing
+verb by name, and a service with no port at all keeps its rooms — mail, whose thread is
+its recipients. `members` are the wire's addresses, as `sender.address` spells them:
+the harness resolves a name to one the way `contact` does, kept to the account the room
+is on, and takes a bare handle nobody has spoken as for an address. An unnamed list
+opens the direct room of its members, up to the same cap as a local list, and whether
+the wire has such a room is the service's own rule to refuse; a list named by `subject`
+opens a group (`ops`) or a channel (`#ops`), and the port answers the address, kind and
+name the wire gave it, which is what the send lands under.
+
 ### Outbound media: the pull leg, signed and relative
 
 Most services take a file by **push** — Slack's `files.uploadV2`, Gmail's MIME body: liquen
