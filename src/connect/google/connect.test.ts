@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { APP_PREFIX, connectGoogleApp, localCallback, pickGoogleApp } from "./connect.ts";
+import { APP_PREFIX, appGuide, connectGoogleApp, localCallback, pickGoogleApp } from "./connect.ts";
+import { DEFAULT_SCOPES } from "./config.ts";
 import { doorAddress } from "../door.ts";
 import { openCredentials } from "../../store/credentials.ts";
 
@@ -67,4 +68,16 @@ Deno.test("pick: the only app is the choice; several demand a name; none is an e
     assertEquals((await pickGoogleApp(creds, "cid2")).value.client_id, "cid2");
     await assertRejects(() => pickGoogleApp(creds, "nope"), Error, "no app nope");
   });
+});
+
+Deno.test("app guide: the APIs the scopes reach, every scope, the redirect URI to register", () => {
+  const guide = appGuide(localCallback(8791), DEFAULT_SCOPES);
+  assertStringIncludes(guide, "enable Google Calendar API, Gmail API.");
+  for (const s of DEFAULT_SCOPES) assertStringIncludes(guide, s);
+  assertStringIncludes(guide, "http://localhost:8791/oauth/google/callback");
+  // a scope with no known API still says which API is owed
+  assertStringIncludes(
+    appGuide("x", ["https://www.googleapis.com/auth/youtube"]),
+    "the API behind https://www.googleapis.com/auth/youtube",
+  );
 });

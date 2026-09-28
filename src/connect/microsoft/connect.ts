@@ -36,7 +36,7 @@
 import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag, readConfig } from "../../config.ts";
-import { declared, freePort } from "../declare.ts";
+import { declared, freePort, printNext, startStep } from "../declare.ts";
 import { type DoorAddress, doorAddress, oneShot, openBrowser } from "../door.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
@@ -96,6 +96,45 @@ export function localCallback(oauthPort: number): string {
   return `http://localhost:${oauthPort}/oauth/microsoft/callback`;
 }
 
+/** What the app door prints before it asks for anything: the portal walk, step by step.
+ *  Entra takes a registration's permissions by hand, one checkbox each, so the list is
+ *  the catalog's `scopes` — the very ones a sign-in asks for — and cannot drift from them.
+ *  A sign-in that asks for an admin-only permission nobody has granted stops at an
+ *  "approval required" page for every surface at once, so admin consent is a step. */
+export function appGuide(local: string, scopes: string[]): string {
+  const width = 76;
+  const lines: string[] = [];
+  let line = "";
+  for (const s of scopes) {
+    if (line && line.length + 2 + s.length > width) {
+      lines.push(line);
+      line = "";
+    }
+    line = line ? `${line}  ${s}` : s;
+  }
+  if (line) lines.push(line);
+  return [
+    `1. Register the app: https://entra.microsoft.com → App registrations → New registration.`,
+    `   Supported account types: "this organizational directory only" serves one tenant.`,
+    `   Redirect URI: platform "Web", value:`,
+    `     ${local}`,
+    `   That is where a sign-in from this terminal comes back (the port is`,
+    `   connections.microsoft.oauthPort). A member signing in from elsewhere needs a public`,
+    `   URI: register it too and paste it below.`,
+    `2. Certificates & secrets → New client secret. Copy its VALUE (shown once), not its id.`,
+    `3. API permissions → Add a permission → Microsoft Graph → Delegated permissions, and`,
+    `   tick each of these (connections.microsoft.scopes):`,
+    ...lines.map((l) => `     ${l}`),
+    `4. Still under API permissions: "Grant admin consent for <tenant>", as a Global`,
+    `   Administrator. Every row's status must read granted: ChannelMessage.* are the`,
+    `   tenant admin's alone, and a sign-in asking for one not granted is refused whole.`,
+    `5. Overview: copy the Application (client) ID and the Directory (tenant) ID, and paste`,
+    `   them below. A single-tenant app needs its tenant id; "organizations" is for an app`,
+    `   registered for any work account.`,
+    ``,
+  ].join("\n");
+}
+
 const USAGE = `usage: liquen connect microsoft app
        liquen connect microsoft account [agent] [--org] [--app <client_id>] [--scopes "…"]
 
@@ -130,24 +169,14 @@ if (import.meta.main) {
     try {
       if (verb === "app") {
         const { microsoftConfig } = await import("./config.ts");
-        const { oauthPort: fromCatalog } = await microsoftConfig(root);
+        const { oauthPort: fromCatalog, scopes } = await microsoftConfig(root);
         // the loopback callback is handed to a human who registers it with Entra, so the
         // port is picked HERE, once: free of this machine while the file has nothing to
         // say, and then never again — a declared port is the operator's
         const alreadyDeclared = "microsoft" in (await readConfig(root)).connections;
         const oauthPort = alreadyDeclared ? fromCatalog : freePort(fromCatalog);
         const local = localCallback(oauthPort);
-        console.error(
-          `Register the app at https://entra.microsoft.com → App registrations → New ` +
-            `registration. Under "Redirect URI" pick platform "Web" and register:\n` +
-            `  ${local}\n` +
-            `That is where a sign-in from this terminal comes back (the port is ` +
-            `connections.microsoft.oauthPort), and it is what this door serves unless you ` +
-            `paste a public URI below. A member signing in elsewhere needs one: register ` +
-            `that too, paste it, and their sign-in is served there instead.\n` +
-            `Then "Certificates & secrets" → New client secret: paste its VALUE (shown ` +
-            `once), not its id. The overview page has the client id and the tenant id.\n`,
-        );
+        console.error(appGuide(local, scopes));
         const ask = (label: string): string => {
           const v = prompt(label)?.trim();
           if (!v) {
@@ -158,7 +187,7 @@ if (import.meta.main) {
         };
         const clientId = ask("Application (client) ID:");
         const clientSecret = ask("Client secret value:");
-        const tenant = prompt("Tenant (directory id or domain; empty = organizations):")
+        const tenant = prompt("Directory (tenant) ID or domain (empty = organizations):")
           ?.trim() || "organizations";
         const redirectUri = prompt("Public redirect URI (empty to skip):")?.trim() || undefined;
         if (redirectUri) {
@@ -184,6 +213,10 @@ if (import.meta.main) {
         } finally {
           await docs.close();
         }
+        printNext([
+          "`liquen connect microsoft account <agent>` — sign an account in from this " +
+          "machine's browser (`--org` for the org's shared one)",
+        ]);
       } else if (verb === "account") {
         const { createMicrosoftOAuth } = await import("./oauth.ts");
         const { userInfo } = await import("node:os");
@@ -200,7 +233,7 @@ if (import.meta.main) {
           Deno.exit(2);
         });
         const { microsoftConfig } = await import("./config.ts");
-        const { oauthPort, scopes } = await microsoftConfig(root);
+        const { oauthPort, scopes, ingestPort, notificationUrl } = await microsoftConfig(root);
         const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? scopes;
         const registered = (app.extra?.redirect_uri as string | undefined) ??
           localCallback(oauthPort);
@@ -277,6 +310,17 @@ if (import.meta.main) {
             : "\n✓ connected (deno task status shows the map)",
         );
         await declared(root, SPEC, { oauthPort: door.port });
+        printNext([
+          await startStep(
+            root,
+            "the Microsoft process polls calendar and mail, and agents get $MICROSOFT_GRAPH_TOKEN",
+          ),
+          ...(notificationUrl ? [] : [
+            `Teams: set connections.microsoft.notificationUrl to a public https:// address ` +
+            `(a tunnel or an edge) that forwards to ingestPort ${ingestPort} — Graph pushes ` +
+            `chats and channels there; sends go out without it`,
+          ]),
+        ]);
       } else {
         console.error(USAGE);
         Deno.exit(2);

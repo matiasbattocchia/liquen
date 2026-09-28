@@ -21,6 +21,7 @@ import {
   readConfig,
 } from "../config.ts";
 import { ingestUp } from "./serve.ts";
+import { holder, MAIN, SUPERVISOR } from "../stop.ts";
 
 /** The first port from `want` up that nothing is listening on — the honest test is the
  *  bind itself, since a port is taken by a RUNNING process, not by a config file. So a
@@ -144,4 +145,22 @@ export async function requireIngest(
     }
   }
   throw new Error(sentence);
+}
+
+/** The step that makes a door's writes take effect, phrased for the org as it is now:
+ *  `liquen start` reads the catalog and the vault once, at boot, so a section or a grant a
+ *  door just wrote waits for the next one. An org already up (its supervisor, or a main an
+ *  interface raised) is restarted; one that is down is started. */
+export async function startStep(root: string, what: string): Promise<string> {
+  const dir = `${root}/data`;
+  const up = (await holder(dir, SUPERVISOR)) !== null || (await holder(dir, MAIN)) !== null;
+  return up
+    ? `\`liquen stop\`, then \`liquen start\` — ${what}; the running org read the catalog ` +
+      `and the vault when it booted`
+    : `\`liquen start\` — ${what}`;
+}
+
+/** A door's closing lines: what to do now, in order. */
+export function printNext(steps: string[]): void {
+  if (steps.length) console.error(`\nnext:\n  ${steps.join("\n  ")}`);
 }

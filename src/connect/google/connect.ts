@@ -33,7 +33,7 @@
 import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag, readConfig } from "../../config.ts";
-import { declared, freePort } from "../declare.ts";
+import { declared, freePort, printNext, startStep } from "../declare.ts";
 import { type DoorAddress, doorAddress, oneShot, openBrowser } from "../door.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
@@ -99,6 +99,48 @@ export function localCallback(oauthPort: number): string {
   return `http://localhost:${oauthPort}/oauth/google/callback`;
 }
 
+/** The API a scope reaches, by the scope's first path word: a Google Cloud project answers
+ *  403 for an API it has not enabled, whatever the consent carried. */
+const APIS: Record<string, string> = {
+  calendar: "Google Calendar API",
+  gmail: "Gmail API",
+  drive: "Google Drive API",
+  spreadsheets: "Google Sheets API",
+  documents: "Google Docs API",
+  tasks: "Google Tasks API",
+  contacts: "People API",
+};
+
+/** What the app door prints before it asks for anything: the console walk, step by step.
+ *  The APIs to enable and the scopes to list are read off the catalog's `scopes`, the very
+ *  ones a sign-in asks for, so the page cannot drift from them. */
+export function appGuide(local: string, scopes: string[]): string {
+  const apis = [
+    ...new Set(
+      scopes.flatMap((s) => {
+        const word = /^https:\/\/www\.googleapis\.com\/auth\/([a-z]+)/.exec(s)?.[1];
+        return word ? [APIS[word] ?? `the API behind ${s}`] : [];
+      }),
+    ),
+  ];
+  return [
+    `1. Pick or create a project: https://console.cloud.google.com`,
+    `2. APIs & Services → Library: enable ${apis.join(", ")}.`,
+    `3. Google Auth Platform → Branding: an app name and a support email. Audience:`,
+    `   "Internal" serves your Workspace organization's own accounts. "External" in Testing`,
+    `   signs in only the accounts listed under Test users, and its grants expire in 7 days.`,
+    `4. Data access → Add or remove scopes, and add these (connections.google.scopes):`,
+    ...scopes.map((s) => `     ${s}`),
+    `5. Clients → Create client, type "Web application". Under "Authorized redirect URIs":`,
+    `     ${local}`,
+    `   That is where a sign-in from this terminal comes back (the port is`,
+    `   connections.google.oauthPort). A member signing in from elsewhere needs a public URI:`,
+    `   register it too and paste it below.`,
+    `6. Copy the client ID and the client secret (shown once, at creation) and paste them below.`,
+    ``,
+  ].join("\n");
+}
+
 const USAGE = `usage: liquen connect google app
        liquen connect google account [agent] [--org] [--app <client_id>] [--scopes "…"]
 
@@ -132,7 +174,7 @@ if (import.meta.main) {
     try {
       if (verb === "app") {
         const { googleConfig } = await import("./config.ts");
-        const { oauthPort: fromCatalog } = await googleConfig(root);
+        const { oauthPort: fromCatalog, scopes } = await googleConfig(root);
         // The loopback callback is the whole of this door's addressing, and the line below
         // hands it to a human who registers it with Google. So the port is picked HERE, once:
         // free of whatever else is up on this machine while the file has nothing to say, and
@@ -140,15 +182,7 @@ if (import.meta.main) {
         const alreadyDeclared = "google" in (await readConfig(root)).connections;
         const oauthPort = alreadyDeclared ? fromCatalog : freePort(fromCatalog);
         const local = localCallback(oauthPort);
-        console.error(
-          `Create the client at https://console.cloud.google.com/auth/clients — type "Web ` +
-            `application". Under "Authorized redirect URIs" register:\n` +
-            `  ${local}\n` +
-            `That is where a sign-in from this terminal comes back (the port is ` +
-            `connections.google.oauthPort), and it is what this door serves unless you paste ` +
-            `a public URI below. A member signing in elsewhere needs one: register that too, ` +
-            `paste it, and their sign-in is served there instead.\n`,
-        );
+        console.error(appGuide(local, scopes));
         const ask = (label: string): string => {
           const v = prompt(label)?.trim();
           if (!v) {
@@ -173,6 +207,10 @@ if (import.meta.main) {
         // the number that was just printed, in the file, before any sign-in reads it back —
         // and only now, because a door that wrote nothing promised nothing
         if (!alreadyDeclared) await declared(root, SPEC, { oauthPort });
+        printNext([
+          "`liquen connect google account <agent>` — sign an account in from this machine's " +
+          "browser (`--org` for the org's shared one)",
+        ]);
       } else if (verb === "account") {
         const { createGoogleOAuth } = await import("./oauth.ts");
         const { userInfo } = await import("node:os");
@@ -268,6 +306,12 @@ if (import.meta.main) {
         // what this door SERVED, not what a second bind test thinks is free now: the URI is
         // registered with Google, so the port is a fact by the time we get here
         await declared(root, SPEC, { oauthPort: door.port });
+        printNext([
+          await startStep(
+            root,
+            "the Google process polls calendar and mail, and agents get $GOOGLE_WORKSPACE_CLI_TOKEN",
+          ),
+        ]);
       } else {
         console.error(USAGE);
         Deno.exit(2);

@@ -1,5 +1,12 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { APP_PREFIX, connectMicrosoftApp, localCallback, pickMicrosoftApp } from "./connect.ts";
+import {
+  APP_PREFIX,
+  appGuide,
+  connectMicrosoftApp,
+  localCallback,
+  pickMicrosoftApp,
+} from "./connect.ts";
+import { DEFAULT_SCOPES } from "./config.ts";
 import { doorAddress } from "../door.ts";
 import { openCredentials } from "../../store/credentials.ts";
 
@@ -53,4 +60,13 @@ Deno.test("pick: the only app is the choice; several demand a name; none is an e
     assertStringIncludes(err.message, "--app");
     assertEquals((await pickMicrosoftApp(creds, "cid2")).value.client_id, "cid2");
   });
+});
+
+Deno.test("app guide: the redirect URI to register, every scope a sign-in asks for, admin consent", () => {
+  const guide = appGuide(localCallback(8792), DEFAULT_SCOPES);
+  assertStringIncludes(guide, "http://localhost:8792/oauth/microsoft/callback");
+  // ticked by hand in the portal, so each one the catalog asks for is on the page
+  for (const s of DEFAULT_SCOPES) assertStringIncludes(guide, s);
+  assertStringIncludes(guide, "Grant admin consent");
+  for (const l of guide.split("\n")) assertEquals(l.length <= 92, true, l);
 });

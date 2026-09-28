@@ -44,7 +44,9 @@ import {
   findRoot,
   type MessageEvent,
   orgFlag,
+  printNext,
   requireIngest,
+  startStep,
 } from "../../connector.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
@@ -601,7 +603,7 @@ const USAGE = `usage: liquen connect github app
   [account]     which installation, when the App is installed on several accounts
   --dir <org>   the org, when run from elsewhere
 
-  Every door closes by naming what the org still owes. Knobs: connections.github.`;
+  Every door closes by naming what to do next. Knobs: connections.github.`;
 
 if (import.meta.main) {
   await entry(async () => {
@@ -624,10 +626,12 @@ if (import.meta.main) {
 
     /** What the org still owes after this door — read off the vault, so finishing one door
      *  is where you learn what the next one is. */
-    const owed = async (creds: { list: (p: string) => Promise<CredentialRow[]> }) => {
-      const next = githubNext(githubHave(await creds.list("github:")));
-      if (next.length) console.error(`\nstill to do:\n  ${next.join("\n  ")}`);
-    };
+    const owed = async (
+      creds: { list: (p: string) => Promise<CredentialRow[]> },
+      then: string[] = [],
+    ) => printNext([...githubNext(githubHave(await creds.list("github:"))), ...then]);
+    /** A grant fronts $GH_TOKEN, and a running org's main picked its rows at boot. */
+    const granted = async () => [await startStep(root, "agents get $GH_TOKEN")];
 
     /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
     const lines = Deno.stdin.isTerminal()
@@ -693,7 +697,7 @@ if (import.meta.main) {
           } (installation ${installationId}) → the org`,
         );
         console.error("  (deno task status shows the map)");
-        await owed(creds);
+        await owed(creds, await granted());
       } finally {
         await creds.close();
         await log.close();
@@ -773,7 +777,7 @@ if (import.meta.main) {
       });
       console.error(`\n✓ connected: github user ${login} → ${principal ?? "the org"}`);
       console.error("  (deno task status shows the map)");
-      await owed(creds);
+      await owed(creds, await granted());
     } finally {
       await creds.close();
       await log.close();

@@ -50,7 +50,7 @@ import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
-import { declared, freePort, requireIngest } from "../declare.ts";
+import { declared, freePort, printNext, requireIngest } from "../declare.ts";
 import { type DoorAddress, doorAddress, oneShot, openBrowser } from "../door.ts";
 import { missingScopes, SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
@@ -583,8 +583,7 @@ if (import.meta.main) {
     /** What the org still owes after this door — read off the vault, so finishing one door
      *  is where you learn what the next one is. */
     const owed = async (creds: { list: (p: string) => Promise<CredentialRow[]> }) => {
-      const next = slackNext(slackHave(await creds.list("slack:")));
-      if (next.length) console.error(`\nstill to do:\n  ${next.join("\n  ")}`);
+      printNext(slackNext(slackHave(await creds.list("slack:"))));
     };
 
     /** The grant landed and is stored; what it cannot do is the part worth saying out loud,

@@ -200,7 +200,9 @@ const USAGE =
 
 if (import.meta.main) {
   await entry(async () => {
-    const { findRoot, openStore, orgFlag } = await import("../../connector.ts");
+    const { findRoot, openStore, orgFlag, printNext, startStep } = await import(
+      "../../connector.ts"
+    );
     const org = orgFlag();
     helpFlag(org.args, USAGE);
     const args = parseTokenArgs(org.args);
@@ -238,8 +240,10 @@ if (import.meta.main) {
       const { key, contention } = await connectToken(args, token, { creds });
       console.error(`\n✓ stored: ${key}${args.probe ? ` (probe ${args.probe} answered 2xx)` : ""}`);
       if (contention) console.error(`  but: ${contention}`);
-      else console.error(`  fronted as $${args.env} from the next \`liquen start\``);
       console.error("  (deno task status shows the vault)");
+      if (!contention) {
+        printNext([await startStep(root, `agents get $${args.env}`)]);
+      }
     } finally {
       await creds.close();
     }

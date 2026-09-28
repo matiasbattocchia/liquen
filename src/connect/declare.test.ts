@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { declared, freePort, pickPorts, requireIngest } from "./declare.ts";
+import { declared, freePort, pickPorts, requireIngest, startStep } from "./declare.ts";
+import { claim, SUPERVISOR } from "../stop.ts";
 import { checkPort, type ConnectorSpec, materialize, starterConfig } from "../config.ts";
 
 const spec = (port: number): ConnectorSpec => ({
@@ -181,6 +182,24 @@ Deno.test("requireIngest: it waits — an org started in the next terminal is fo
     } finally {
       clearTimeout(arrives);
       late?.close();
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("startStep: a down org is started, a running one restarted — it read the vault at boot", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${root}/data`);
+    const down = await startStep(root, "agents get $X");
+    assertStringIncludes(down, "`liquen start` — agents get $X");
+    assertEquals(down.includes("liquen stop"), false);
+    const lock = claim(`${root}/data`, SUPERVISOR);
+    try {
+      assertStringIncludes(await startStep(root, "agents get $X"), "`liquen stop`, then");
+    } finally {
+      if ("held" in lock) lock.held.close();
     }
   } finally {
     await Deno.remove(root, { recursive: true });

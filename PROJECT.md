@@ -4186,3 +4186,16 @@ that word is a `message`, the soft stop, and the model decides what to drop.
   descriptions, so `liquen` bare reads as a usage.
 - `lq` is installed as a second name for the same command (`deno install -n lq`); no widely
   used tool holds it.
+
+### Every connect door closes with what to do next (2026-09-28) — LANDED
+
+The Microsoft and Google app doors print the whole portal walk before they ask for
+anything (`appGuide`): Entra's registration, secret, delegated permissions ticked by hand
+and admin consent; Google's project, the APIs its scopes reach, the consent screen's
+audience and the client. Both lists are read off the catalog's `scopes`, the ones a
+sign-in asks for. Every door closes on one `next:` list (`printNext`): the app doors name
+the account door, and a door that wrote a fronted grant (Google, Microsoft, GitHub,
+token) names `liquen start`, or `liquen stop` then `liquen start` when the org is up
+(`startStep`), because main picks the rows it fronts at boot and the supervisor reads the
+catalog once. Microsoft's account door also names `notificationUrl` while it is null.
+Slack's and GitHub's owed pieces moved onto the same heading.
