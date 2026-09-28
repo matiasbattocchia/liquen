@@ -4458,3 +4458,32 @@ people, not ids, wherever they have spoken. Tests: `rooms.test.ts` (the calls ea
 makes, the token each rides, the scope refusal, the channel name), `connect.test.ts`
 (the two lists), `integration.test.ts` (the log naming). Next in the order: Teams rooms,
 then WhatsApp rooms once the bridge has group routes.
+
+### SIGBUS in the org's processes: a file watcher released SQLite's locks (2026-09-28) — LANDED
+
+The org's children died of SIGBUS together, main and WhatsApp most often, a few times a day
+on `../new` (18 in one log; `log.db.corrupt-20260910` may be the same cause, unproven). The
+kernel's lock table showed it: long-lived processes held `log.db` and `log.db-shm` open and
+mapped but no lock on either, and every one of them lost both in the same instant another
+process of the org exited. Reproduced off the org: a SQLite connection beside a
+`Deno.watchFs` on the database's folder (Deno 2.9.6, recursive or not) loses its locks when
+another process exits; without the watch the locks survive. POSIX drops every lock a
+process holds on a file when any descriptor it has on that file closes, and the watch opens
+and closes what changed.
+
+SQLite's WAL coordination between processes is exactly those locks, so a process that lost
+them is invisible: the next one to open the database finds the shared-memory file unclaimed
+and rebuilds it under everyone's mapping (SIGBUS on the next touch), and a connection closing
+takes the exclusive lock and deletes `-wal` and `-shm` as the last one out — seen live with
+five processes running. Google standing down every five minutes on an expired grant made
+the exits frequent.
+
+The tail no longer watches: a subscription polls every `POLL_MS` (300ms), the backstop it
+already had, and a publish wakes the subscriptions of the process that made it at once. The
+wake is not a nicety: the mind moves from step to step on its own writes, and with the poll
+alone a cancel landing in that gap reached a lease whose doorbell subscribed after it, left
+for the heartbeat (6.7s) — three tests caught it. Another process's row waits at most one
+poll. The rule
+is in `store/log.ts` and DESIGN §2: nothing in a process opens the database's files but
+SQLite. Left for later if the poll's cost ever shows: gate it on `PRAGMA data_version`, a
+per-connection counter that moves when another process commits (checked here).

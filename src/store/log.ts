@@ -22,10 +22,10 @@
  *                 received live, and the live row is the richer one.
  *   • read      — an indexed SELECT; filters (and the readable scope, §6) are WHERE clauses,
  *                 so private rows never leave the store.
- *   • subscribe — dir-watch (WAL commits) + a poll backstop. Two cursors: appends on `id`,
- *                 and — only for a subscriber that asked (`updates`) — lifecycle moves on
- *                 `(updated_at, id)`, which is how a dispatcher receives the sweeper's
- *                 re-offer of a failed send.
+ *   • subscribe — a poll every POLL_MS, and a local publish wakes it at once. Two
+ *                 cursors: appends on `id`, and — only for a subscriber that asked
+ *                 (`updates`) — lifecycle moves on `(updated_at, id)`, which is how a
+ *                 dispatcher receives the sweeper's re-offer of a failed send.
  *
  * **The store owns the id** (§3): `id uuid DEFAULT uuidv7()` is the Postgres shape, and this
  * adapter is the same shape — SQLite gets a bound `uuidv7()` function, the column defaults to
@@ -293,7 +293,9 @@ const SQLITE: Dialect = {
   unflagged: (key) => `json_extract(extra, '$.${key}') IS NOT 1`,
   lacks: (key) => `json_extract(extra, '$.${key}') IS NULL`,
 };
-const POLL_MS = 300; // backstop period — fs-watch can drop events under load
+// how often a subscription looks past its cursor: the latency of a row another process
+// wrote. A publish in this process wakes this process's subscriptions at once.
+const POLL_MS = 300;
 /** How many BUSY write-lock waits a commit sits out beyond the engine's own (`busy_timeout`),
  *  and the pause between them. See `commit`. */
 const BUSY_RETRIES = 1;
@@ -550,12 +552,16 @@ export async function openLog(
   const unlock = db.prepare(RELEASE_SQL);
   const owns = db.prepare(OWNS_SQL);
   const cancel = db.prepare(CANCEL_SQL);
+  // this log's live subscriptions: an insert made here wakes them at once, and one made by
+  // another process reaches them at their next poll
+  const tails = new Set<() => void>();
+  const wake = () => tails.forEach((pump) => pump());
   // the lease's doorbell (§2): while this process holds a turn, a `control` row landing from
   // any process has the holder read its mark now, not at its next beat
   const locker = createLocker(
     sqliteLeases(db),
     opts.now,
-    (ring) => tail(dir, db, ring, { law: { sql: "events.type = 'control'", params: {} } }),
+    (ring) => tail(db, tails, ring, { law: { sql: "events.type = 'control'", params: {} } }),
   );
 
   /** One upsert — or, for a PARTLESS draft, one patch (merge-only: nothing stored when the
@@ -704,7 +710,9 @@ export async function openLog(
       Promise.resolve((steers.all(agentId) as { principal: string }[]).map((r) => r.principal)),
 
     async publish(one: Draft | Draft[], opts?: PublishOptions): Promise<Event & Event[]> {
-      return await (commit(one, undefined, opts) as Promise<Event & Event[]>);
+      const out = await (commit(one, undefined, opts) as Promise<Event & Event[]>);
+      wake();
+      return out;
     },
 
     async publishAndRelease(
@@ -712,7 +720,9 @@ export async function openLog(
       lease: Lease,
       opts?: PublishOptions,
     ): Promise<Event & Event[]> {
-      return await (commit(one, lease, opts) as Promise<Event & Event[]>);
+      const out = await (commit(one, lease, opts) as Promise<Event & Event[]>);
+      wake();
+      return out;
     },
 
     admits(law: Law, e: { ts?: string; envelope: Envelope }): Promise<boolean> {
@@ -750,7 +760,7 @@ export async function openLog(
     },
 
     subscribe(listener: Listener, opts: SubscribeOptions = {}): () => void {
-      return tail(dir, db, listener, opts);
+      return tail(db, tails, listener, opts);
     },
 
     setDelivery(id: EventId, patch: DeliveryPatch): Promise<void> {
@@ -1157,7 +1167,13 @@ function migrateV4(db: DatabaseSync) {
   db.exec("PRAGMA user_version = 4");
 }
 
-/* ── tail: watch the dir (WAL commits) + poll backstop, cursored on `id` ──
+/* ── tail: a poll every POLL_MS and a wake on every local publish, cursored on `id` ──
+ *
+ * Nothing in a process may open the database's files but SQLite — a file watcher on their
+ * folder included. POSIX drops every lock a process holds on a file when any descriptor it
+ * has on that file closes, and SQLite's WAL coordination between processes IS those locks:
+ * a process that silently lost them is invisible to the next one, which then rebuilds the
+ * shared-memory file under its mapping (SIGBUS) or deletes the WAL as the last one out.
  *
  * The cursor is the id itself: every row's id is a store-minted UUIDv7, so lexical order is
  * mint order, and mint happens under the write lock — no rowid needed (it was a SQLite-only
@@ -1165,13 +1181,12 @@ function migrateV4(db: DatabaseSync) {
  * id IS a position, even one this log never stored. */
 
 function tail(
-  dir: string,
   db: DatabaseSync,
+  tails: Set<() => void>,
   listener: Listener,
   opts: SubscribeOptions,
 ): () => void {
   let closed = false;
-  let watcher: Deno.FsWatcher | undefined;
   let poll: ReturnType<typeof setTimeout> | undefined;
   let chain: Promise<void> = Promise.resolve();
 
@@ -1225,22 +1240,6 @@ function tail(
     }
   }));
 
-  (async () => {
-    watcher = Deno.watchFs(dir);
-    if (closed) {
-      watcher.close();
-      return;
-    }
-    await pump(); // deliver whatever is already past the cursor (a `from` backlog)
-    for await (const _ of watcher) {
-      if (closed) break;
-      await pump();
-    }
-  })().catch(() => {
-    // watcher torn down / io error — a consumer reconciles via the durable log.
-  });
-
-  // backstop: fs-watch can miss events under load; a slow poll guarantees eventual delivery
   const loop = () => {
     if (closed) return;
     // then(f, f): a rejected `finally` would be a second, unhandled rejection
@@ -1249,11 +1248,14 @@ function tail(
     };
     pump().then(next, next);
   };
-  poll = setTimeout(loop, POLL_MS);
+  loop(); // the first pass delivers whatever is already past the cursor (a `from` backlog)
+  // a local insert's wake: the same pump, off the poll's rhythm, its failure the poll's too
+  const kick = () => void pump().catch(() => {});
+  tails.add(kick);
 
   return () => {
     closed = true;
-    watcher?.close();
+    tails.delete(kick);
     if (poll !== undefined) clearTimeout(poll);
   };
 }

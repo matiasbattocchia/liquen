@@ -233,7 +233,7 @@ export function logSuite(s: Substrate): void {
       const got: Event[] = [];
       const off = log.subscribe((e) => got.push(e));
       // no await between subscribe and publish — the guarantee is that `subscribe()` RETURNING
-      // is the cut, not whenever the watcher happens to arm (a lazy seed loses this one)
+      // is the cut, not whenever the first poll happens to run (a lazy seed loses this one)
       await log.publish(msg("01", "c1", "immediately after"));
       try {
         const t0 = Date.now();
@@ -425,7 +425,7 @@ export function logSuite(s: Substrate): void {
   Deno.test("subscribe delivers events published after subscribe (live)", async () => {
     await withLog(async (log) => {
       const pending = take(log, 2);
-      await new Promise((r) => setTimeout(r, 50)); // let the watcher arm
+      await new Promise((r) => setTimeout(r, 50)); // let the subscription settle
       await log.publish(msg("01", "c1", "a"));
       await log.publish(msg("02", "c1", "b"));
       assertEquals((await pending).map((e) => e.id), ["01", "02"]);
@@ -472,7 +472,7 @@ export function logSuite(s: Substrate): void {
     });
   });
 
-  Deno.test("unsubscribe stops delivery and leaks no watcher", async () => {
+  Deno.test("unsubscribe stops delivery and leaks no poll", async () => {
     await withLog(async (log) => {
       const got: Event[] = [];
       const off = log.subscribe((e) => got.push(e));

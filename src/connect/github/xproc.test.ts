@@ -4,7 +4,7 @@
  * The connection architecture is multi-process: the ingest runs in one process, the harness
  * (`main`) tails the log in another, both over a shared log dir. This asserts that path end to
  * end — a webhook delivered to the ingest PROCESS must wake a `subscribe` in a DIFFERENT
- * process — so the fs-watch propagation `main` relies on can't silently regress.
+ * process — so the cross-process propagation `main` relies on can't silently regress.
  */
 
 import { assertEquals } from "@std/assert";
@@ -87,7 +87,7 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
     await res.body?.cancel();
     assertEquals(res.status, 202);
 
-    // the OTHER process's write must reach our subscriber via fs-watch (bounded wait)
+    // the OTHER process's write must reach our subscriber through its poll (bounded wait)
     const e = await Promise.race([
       got,
       new Promise<never>((_, rej) => {

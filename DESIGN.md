@@ -69,8 +69,11 @@ is a *connection process* like any other: pub/sub on the log + the harness strea
 Two planes:
 
 - **EventLog** — durable, append-only. *The API and the queue.* Producers (webhooks)
-  publish; consumers (dispatchers) subscribe to the log's change feed (fs-watch on files /
-  DB-webhook·Realtime·pgmq·cron on Postgres) — the `publish` is itself the trigger.
+  publish; consumers (dispatchers) subscribe to the log's change feed (a poll on SQLite /
+  DB-webhook·Realtime·pgmq·cron on Postgres) — the `publish` is itself the trigger. On
+  SQLite nothing but SQLite opens the database's files: its WAL coordination between
+  processes is POSIX locks, and a process loses all of its locks on a file the moment any
+  descriptor it holds on that file closes.
 - **Stream** — ephemeral broadcast for token deltas, thinking, checkpoints, turn edges,
   and errors the operator watches. Every kind reaches every tailer, named; what a surface
   shows and what it folds away is its own call. Never stored. Rule: **stream the
@@ -377,8 +380,8 @@ before acquiring would run a duplicate turn.
   transaction (§9). Not a detail: publishing first and releasing after cost us a real bug.
   The wake a turn's inserts fire arrives while the turn *still holds the lease*, so it bounces
   off the lock, and if it was the only wake in flight the obligation strands — measured at
-  ~40% of runs stalling a tool cycle, because `watchFs` latency is *shorter* than the rest of
-  a turn's teardown. Committed together, an observer sees neither or both, so the wake always
+  ~40% of runs stalling a tool cycle, because the wake arrives *sooner* than the rest of a
+  turn's teardown ends. Committed together, an observer sees neither or both, so the wake always
   finds the lease free. This is why the lease lives in the store beside the events: two
   substrates can't share a transaction. Every turn publishes — a model with nothing to
   add still closes with the `SILENCE` sentinel (§5) — so every release re-fires whatever
