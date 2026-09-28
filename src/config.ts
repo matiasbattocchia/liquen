@@ -719,46 +719,128 @@ export async function declareConnection(
   return true;
 }
 
-/** Put one rendered member at the tail of `section`'s block, so the block reads in the
- *  order things were declared and its leading comment stays on top. A surgical text edit,
- *  not a re-render: the file is the operator's, comments and layout included, so the
- *  insertion is the member's own lines inside the existing block, a comma on the member
- *  before it when there is one, and every other byte is left as it was found. The result is
- *  parsed before it lands — a write that would not read back is no write at all. */
-/** Where `"section":` opens at the file's TOP level — depth one in braces — or -1. The
- *  first match in the file is not it: `"agents":` also names the defaults every agent
- *  inherits, one level down under `organization`. */
-function topLevel(raw: string, section: string): number {
-  for (const m of raw.matchAll(new RegExp(`"${section}"\\s*:`, "g"))) {
-    let depth = 0;
-    for (let i = 0; i < m.index; i++) {
-      if (raw[i] === "{") depth++;
-      else if (raw[i] === "}") depth--;
-    }
-    if (depth === 1) return m.index;
-  }
-  return -1;
-}
-
-async function declareIn(root: string, section: string, member: string): Promise<void> {
+/** Take `connections.<name>` out of the file, so `liquen start` spawns nothing for it — the
+ *  inverse of `declareConnection`, and as surgical: the member's own lines go, with the
+ *  comma its departure leaves dangling, and every other byte stays. Knobs the operator set
+ *  under it go too; the file is git-tracked, so the diff keeps them. Returns whether there
+ *  was one. */
+export async function undeclareConnection(root: string, name: string): Promise<boolean> {
+  const before = await readConfig(root); // an unparseable file fails HERE, editing nothing
+  if (!(name in before.connections)) return false;
   const path = `${root}/config.jsonc`;
   const raw = await Deno.readTextFile(path);
+  const [open, close] = block(raw, "connections", path);
+  const inner = raw.slice(open + 1, close);
+  let key = -1;
+  for (const m of inner.matchAll(new RegExp(`"${name}"\\s*:`, "g"))) {
+    if (depthAt(inner, m.index) === 0) key = m.index;
+  }
+  const brace = inner.indexOf("{", key);
+  if (key < 0 || brace < 0) throw new Error(`${path}: connections.${name} is not an object`);
+  let end = brace;
+  for (let depth = 0; end < inner.length; end++) {
+    if (inner[end] === "{") depth++;
+    else if (inner[end] === "}" && --depth === 0) break;
+  }
+  end++;
+  const comma = /^\s*,/.exec(inner.slice(end));
+  if (comma) end += comma[0].length;
+  // the member's whole lines when it has them to itself, so no blank line is left behind
+  const lineStart = inner.lastIndexOf("\n", key - 1) + 1;
+  const start = inner.slice(lineStart, key).trim() === "" ? Math.max(lineStart - 1, 0) : key;
+  let head = inner.slice(0, start);
+  if (!comma) {
+    // it was the last member: the one before it now is, and carries no comma
+    const lines = head.split("\n");
+    const last = lines.findLastIndex((l) => l.trim() !== "" && !l.trim().startsWith("//"));
+    if (last >= 0) lines[last] = lines[last].replace(/,\s*$/, "");
+    head = lines.join("\n");
+  }
+  const edited = raw.slice(0, open + 1) + head + inner.slice(end) + raw.slice(close);
+  await Deno.writeTextFile(path, edited);
+  try {
+    await readConfig(root);
+  } catch (err) {
+    await Deno.writeTextFile(path, raw);
+    throw err;
+  }
+  return true;
+}
+
+/** Brace depth at `at` within `text`, counted from its start. */
+function depthAt(text: string, at: number): number {
+  let depth = 0;
+  for (let i = 0; i < at; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}") depth--;
+  }
+  return depth;
+}
+
+/** The offsets of the braces that open and close a top-level section's block. */
+function block(raw: string, section: string, path: string): [number, number] {
   const at = topLevel(raw, section);
   const open = at < 0 ? -1 : raw.indexOf("{", at);
-  if (open < 0) throw new Error(`${path}: no "${section}" section to declare in`);
+  if (open < 0) throw new Error(`${path}: no "${section}" section`);
   let depth = 0, close = open;
   for (; close < raw.length; close++) {
     if (raw[close] === "{") depth++;
     else if (raw[close] === "}" && --depth === 0) break;
   }
   if (close === raw.length) throw new Error(`${path}: "${section}" is never closed`);
+  return [open, close];
+}
+
+/** Where `"section":` opens at the file's TOP level — depth one in braces — or -1. The
+ *  first match in the file is not it: `"agents":` also names the defaults every agent
+ *  inherits, one level down under `organization`. */
+function topLevel(raw: string, section: string): number {
+  for (const m of raw.matchAll(new RegExp(`"${section}"\\s*:`, "g"))) {
+    if (depthAt(raw, m.index) === 1) return m.index;
+  }
+  return -1;
+}
+
+/** `raw` with one rendered member at the tail of its top-level `section`'s block, so the
+ *  block reads in the order things were declared and its leading comment stays on top. A
+ *  surgical text edit, not a re-render: the file is the operator's, comments and layout
+ *  included, so the insertion is the member's own lines inside the existing block, a comma
+ *  on the member before it when there is one, and every other byte is left as it was
+ *  found. `path` only names the file in a complaint. */
+export function withMember(raw: string, section: string, member: string, path: string): string {
+  const [open, close] = block(raw, section, path);
   // the comma goes on the last MEMBER line — never on a blank or a comment that trails it
   const lines = raw.slice(open + 1, close).trimEnd().split("\n");
   const last = lines.findLastIndex((l) => l.trim() !== "" && !l.trim().startsWith("//"));
-  if (last >= 0) lines[last] += ",";
+  if (last >= 0) {
+    const line = lines[last];
+    const code = line.slice(0, codeEnd(line)).trimEnd();
+    lines[last] = `${code},${line.slice(code.length)}`;
+  }
   const body = `${lines.join("\n")}\n    ${member}\n  `;
-  const edited = raw.slice(0, open + 1) + body + raw.slice(close);
-  await Deno.writeTextFile(path, edited);
+  return raw.slice(0, open + 1) + body + raw.slice(close);
+}
+
+/** Where a line's code ends: at a `//` that opens a comment — outside any string — or at
+ *  the line's end. */
+function codeEnd(line: string): number {
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    if (quoted) {
+      if (line[i] === "\\") i++;
+      else if (line[i] === '"') quoted = false;
+    } else if (line[i] === '"') quoted = true;
+    else if (line[i] === "/" && line[i + 1] === "/") return i;
+  }
+  return line.length;
+}
+
+/** `withMember` on the catalog, parsed before it lands — a write that would not read back
+ *  is no write at all. */
+async function declareIn(root: string, section: string, member: string): Promise<void> {
+  const path = `${root}/config.jsonc`;
+  const raw = await Deno.readTextFile(path);
+  await Deno.writeTextFile(path, withMember(raw, section, member, path));
   try {
     await readConfig(root);
   } catch (err) {

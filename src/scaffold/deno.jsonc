@@ -1,20 +1,48 @@
 // deno.jsonc — the project's own module config. The project ships no runnable code: the
 // CLI is the package, every task runs it, and the org's own connectors/ and processors/
 // import the same package (`@liquen/liquen/connector`). A checkout stands in for the
-// registry with `"links": ["../liquen"]`.
+// registry with `"links": ["../liquen"]`. `liquen update` adds the tasks a newer package
+// ships; a task already here is yours and stays as you wrote it.
 {
   "imports": {
     "@liquen/liquen": "jsr:@liquen/liquen@^0.1.0"
   },
   "tasks": {
-    "start": "deno run -A --env-file=.env @liquen/liquen/start",
-    "stop": "deno run -A @liquen/liquen/stop",
-    "update": "deno run -A @liquen/liquen/update",
-    "cli": "deno run -A --env-file=.env @liquen/liquen/cli",
-    "repl": "deno run -A --env-file=.env @liquen/liquen/repl",
-    "agent": "deno run -A @liquen/liquen/agent",
-    "schedule": "deno run -A --env-file=.env @liquen/liquen/schedule",
-    "connect": "deno run -A --env-file=.env @liquen/liquen/connect",
-    "status": "deno run -A --env-file=.env @liquen/liquen/status"
+    "start": {
+      "command": "deno run -A --env-file=.env @liquen/liquen/start",
+      "description": "run the org — main and every declared connection; -D in the background"
+    },
+    "stop": {
+      "command": "deno run -A @liquen/liquen/stop",
+      "description": "end the run, whoever started it"
+    },
+    "update": {
+      "command": "deno run -A @liquen/liquen/update",
+      "description": "put the org on the newest release, and add the tasks it ships"
+    },
+    "cli": {
+      "command": "deno run -A --env-file=.env @liquen/liquen/cli",
+      "description": "one instruction to an agent, answered on stdout"
+    },
+    "repl": {
+      "command": "deno run -A --env-file=.env @liquen/liquen/repl",
+      "description": "talk to an agent at the terminal"
+    },
+    "agent": {
+      "command": "deno run -A @liquen/liquen/agent",
+      "description": "add a member to the roster"
+    },
+    "schedule": {
+      "command": "deno run -A --env-file=.env @liquen/liquen/schedule",
+      "description": "arm or cancel a standing wake for an agent"
+    },
+    "connect": {
+      "command": "deno run -A --env-file=.env @liquen/liquen/connect",
+      "description": "connect a service to the org, or --remove one"
+    },
+    "status": {
+      "command": "deno run -A --env-file=.env @liquen/liquen/status",
+      "description": "what the org holds — agents, connections, wakes, vault keys"
+    }
   }
 }

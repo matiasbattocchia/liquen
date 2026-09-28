@@ -9,6 +9,7 @@ import {
   orgFlag,
   readConfig,
   starterConfig,
+  undeclareConnection,
 } from "./config.ts";
 
 const SPEC: ConnectorSpec = {
@@ -262,6 +263,28 @@ Deno.test("declareConnection: the grant's own line, every other byte as it was",
     assertEquals(await declareConnection(root, "slack"), false);
     assertEquals(await declareConnection(root, "acme", { port: 5678 }), false);
     assertEquals((await readConfig(root)).connections, { slack: {}, acme: { port: 1234 } });
+  });
+});
+
+Deno.test("undeclareConnection: the member's own lines go, and the file reads as before it", async () => {
+  await withDir(async (root) => {
+    const raw = materialize(starterConfig(), [SPEC]);
+    await Deno.writeTextFile(`${root}/config.jsonc`, raw);
+    await declareConnection(root, "slack");
+    const one = await Deno.readTextFile(`${root}/config.jsonc`);
+    await declareConnection(root, "acme", { port: 1234 });
+    await declareConnection(root, "google", { nested: { a: 1 } });
+
+    // the middle member: its line and its comma
+    assertEquals(await undeclareConnection(root, "acme"), true);
+    assertEquals((await readConfig(root)).connections, { slack: {}, google: { nested: { a: 1 } } });
+    // the last member: the one before it gives up its comma
+    assertEquals(await undeclareConnection(root, "google"), true);
+    assertEquals(await Deno.readTextFile(`${root}/config.jsonc`), one);
+    // the only member: the block is as init wrote it, comments and all
+    assertEquals(await undeclareConnection(root, "slack"), true);
+    assertEquals(await Deno.readTextFile(`${root}/config.jsonc`), raw);
+    assertEquals(await undeclareConnection(root, "slack"), false);
   });
 });
 

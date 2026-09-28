@@ -1,5 +1,40 @@
-import { assertEquals } from "@std/assert";
-import { linked, PACKAGE, pinned } from "./update.ts";
+import { assert, assertEquals } from "@std/assert";
+import { parse } from "@std/jsonc";
+import { linked, PACKAGE, pinned, scaffoldTasks, syncTasks } from "./update.ts";
+
+Deno.test("syncTasks: what the org lacks is added in its own lines; what it has stays its own", async () => {
+  const tmp = Deno.makeTempDirSync();
+  try {
+    const raw = [
+      "// the org",
+      "{",
+      '  "tasks": {',
+      '    "start": "deno run -A --env-file=.env @liquen/liquen/start",',
+      '    "schedule": "deno run -A @liquen/liquen/schedule",',
+      '    "bench": "deno run -A bench.ts" // ours',
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    Deno.writeTextFileSync(`${tmp}/deno.jsonc`, raw);
+    const scaffold = await scaffoldTasks();
+    const { added, differing } = await syncTasks(tmp, scaffold);
+    assertEquals(added, Object.keys(scaffold).filter((n) => n !== "start" && n !== "schedule"));
+    assertEquals(differing.map(([n]) => n), ["schedule"]);
+    const after = Deno.readTextFileSync(`${tmp}/deno.jsonc`);
+    const tasks = (parse(after) as { tasks: Record<string, unknown> }).tasks;
+    assertEquals(tasks.schedule, "deno run -A @liquen/liquen/schedule"); // never rewritten
+    assertEquals(tasks.stop, scaffold.stop);
+    assertEquals(tasks.start, scaffold.start); // the package's command, now described
+    assertEquals(tasks.bench, "deno run -A bench.ts");
+    assert(after.startsWith("// the org\n{\n"), "the comments survive");
+    assert(after.includes('"bench": "deno run -A bench.ts", // ours'));
+    // a second sync has nothing to add
+    assertEquals((await syncTasks(tmp, scaffold)).added, []);
+  } finally {
+    Deno.removeSync(tmp, { recursive: true });
+  }
+});
 
 Deno.test("pinned: the exact version the org's lock resolved the harness to", () => {
   const tmp = Deno.makeTempDirSync();

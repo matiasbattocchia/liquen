@@ -2842,7 +2842,7 @@ comments and an empty roster, `liquen agent <name>` adds one roster entry — `a
 with the identity handles its flags declared (`--name`, `--email`, `--phone`) and null
 for the rest — and `liquen connect` adds the one line a grant earns — `connections.<name>`, the
 subsection that makes `liquen start` spawn that connector — since the map alone never starts
-a process. Git is its history, a human is watching for all three, and boot COMPILES it — the
+a process; `liquen connect --remove` takes it out again with the service's last connection. Git is its history, a human is watching for all three, and boot COMPILES it — the
 roster into registry rows and
 homes, everything else funneled to the deepest function that needs it (main → xi → nu →
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in

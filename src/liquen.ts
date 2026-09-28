@@ -2,6 +2,7 @@
  * liquen.ts — the `liquen` command: the org's `deno task`, said from anywhere inside it.
  *
  *   deno install -g -A -n liquen jsr:@liquen/liquen/liquen
+ *   deno install -g -A -n lq jsr:@liquen/liquen/liquen      the same command, short
  *
  *   liquen                      lists the org's tasks
  *   liquen <task> [args…]       runs one — `liquen start`, `liquen agent ana`

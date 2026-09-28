@@ -4164,3 +4164,25 @@ can still cut the turn it walked in on.
 The hard stop is the door's alone. Ingest reclassifying a principal's "stop" typed on a
 chat surface into a `control` row, which DESIGN promised and nothing built, is dropped:
 that word is a `message`, the soft stop, and the model decides what to drop.
+
+### The command line reads as one (2026-09-28) — LANDED
+
+- `liquen connect --remove <service>:<address>` takes a grant back, the target as `liquen
+  status` prints it (`connect/remove.ts`): the row soft-deleted, its secret out of the vault
+  (`Credentials.delete`, both engines) unless another live connection shares it, and
+  `connections.<service>` out of the catalog with the service's last connection
+  (`undeclareConnection`). A token grant has no row and is removed by its vault key; the
+  harness's own keys (`media:sign`) are no target. Open: the platform's side — a Slack
+  install, a Google grant, a paired WhatsApp device — is still revoked by hand on the
+  platform.
+- `liquen connect` bare prints its usage, naming the org's doors, as `agent`, `schedule` and
+  `cli` already did; the map is `liquen status` alone.
+- `liquen start -D` detaches: the supervisor in its own session, its bytes appended to
+  `data/run/liquen.log`, the prompt back once it holds its lock. On a terminal each process's
+  tag has its own color. Open: the log only grows.
+- Found: an org's task list is frozen at `init`, so `liquen` bare named only the commands of
+  the release it was made from (`~/new` had no `schedule`, `stop` or `update`). `liquen
+  update` now syncs the tasks from the release it lands on, and the scaffold's tasks carry
+  descriptions, so `liquen` bare reads as a usage.
+- `lq` is installed as a second name for the same command (`deno install -n lq`); no widely
+  used tool holds it.

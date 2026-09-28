@@ -168,9 +168,15 @@ Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispat
   env/vault as ever.
 
 The front door is **`liquen connect`** (`deno task connect`, `src/connect/connect.ts`): bare,
-it prints the map (status); `liquen connect <name> [args...]` resolves the shipped services
-first, then `<org>/connectors/<name>/connect.ts`, and runs the door as a child process
-with the remaining args — a name with a slash is taken as a module path. `deno task start`
+it prints its usage, naming every door the org has; `liquen connect <name> [args...]` resolves
+the shipped services first, then `<org>/connectors/<name>/connect.ts`, and runs the door as a
+child process with the remaining args — a name with a slash is taken as a module path.
+`liquen connect --remove <service>:<address>` takes a grant back whichever door wrote it: the
+row soft-deleted (the gate closes, the ingested history stays readable), its secret out of
+the vault unless another live connection shares it, and `connections.<service>` out of the
+catalog with the service's last connection. A token grant, which has no row, is removed by
+its vault key. The platform's side — the app install, the OAuth grant, the paired device —
+is revoked on the platform. `deno task start`
 runs every declared connection the same way: `src/connect/<name>/run.ts` if it ships,
 else `<org>/connectors/<name>/run.ts`.
 

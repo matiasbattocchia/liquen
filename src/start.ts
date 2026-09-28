@@ -26,7 +26,14 @@
  * Every line a child writes arrives stamped — `HH:MM:SS [name] …` — so attribution is
  * the harness's property, not a convention each service must remember: panics and
  * stack traces land tagged too. The stdout/stderr split rides through (stdout is data,
- * stderr is diagnostics). After the boot lines, silence means every process is up.
+ * stderr is diagnostics). After the boot lines, silence means every process is up. On a
+ * terminal each tag has a color of its own, so one process's lines read as a column in the
+ * interleave; piped, or under NO_COLOR, the bytes are plain.
+ *
+ * `-D` runs the same supervisor detached: in a session of its own, its every byte appended
+ * to `data/run/liquen.log`, and the prompt back once the run holds its lock. A refusal
+ * before that — a second start, a catalog boot rejects — is printed from the log with the
+ * code it exited with, so a detached start that failed never reads like one that worked.
  */
 
 import { TextLineStream } from "@std/streams";
@@ -34,6 +41,19 @@ import { findRoot, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
 import { entry, REFUSAL } from "./entry.ts";
 import { claim, holder, MAIN, SUPERVISOR } from "./stop.ts";
 import { RUNNING, SHIPPED } from "./connect/connect.ts";
+import { helpFlag } from "./connect/help.ts";
+
+export const USAGE = `usage: liquen start [-D | --detach] [--dir <org>]
+
+  Run the org: main and one process per declared connection, each restarted when it dies.
+
+  -D, --detach   run in the background, its lines appended to data/run/liquen.log;
+                 \`liquen stop\` ends it
+  --dir <org>    the org, when run from elsewhere`;
+
+/** How long a detached start waits for the run to hold its lock before handing back the
+ *  prompt without that word. */
+const DETACH_WAIT_MS = 15_000;
 
 const RESTART_BASE_MS = 1_000;
 const RESTART_CAP_MS = 60_000;
@@ -71,9 +91,71 @@ export function pause(ms: number, halt: AbortSignal): Promise<void> {
 const enc = new TextEncoder();
 const clock = () => new Date().toLocaleTimeString("en-GB");
 
+/** ANSI foregrounds for the children's tags, handed out in the order the names first speak:
+ *  cyan, green, magenta, blue, yellow, then the bright ones. */
+const PALETTE = [36, 32, 35, 34, 33, 96, 92, 95, 94, 93];
+const tints = new Map<string, number>();
+
+/** A name's tag as a terminal shows it: the supervisor's own bold, each child its color. */
+export function tag(name: string): string {
+  if (name === SUPERVISOR) return `\x1b[1m[${name}]\x1b[22m`;
+  let tint = tints.get(name);
+  if (tint === undefined) tints.set(name, tint = PALETTE[tints.size % PALETTE.length]);
+  return `\x1b[${tint}m[${name}]\x1b[39m`;
+}
+
+const painted = {
+  out: !Deno.noColor && Deno.stdout.isTerminal(),
+  err: !Deno.noColor && Deno.stderr.isTerminal(),
+};
+
 /** One attributed line — the whole observability surface. */
 function stamp(name: string, line: string, err = true): void {
-  (err ? Deno.stderr : Deno.stdout).writeSync(enc.encode(`${clock()} [${name}] ${line}\n`));
+  const text = painted[err ? "err" : "out"]
+    ? `\x1b[2m${clock()}\x1b[22m ${tag(name)} ${line}\n`
+    : `${clock()} [${name}] ${line}\n`;
+  (err ? Deno.stderr : Deno.stdout).writeSync(enc.encode(text));
+}
+
+/** `-D`: this module again, as a child in a session of its own with the shell's redirect
+ *  appending its every byte — its own last words included — to the log. Answers once the
+ *  child holds the supervisor's lock, or with the child's code when it exits first. The
+ *  lock is read, not probed: a probe takes the lock for an instant, and the child's claim
+ *  landing in that instant would refuse. */
+async function detach(root: string): Promise<void> {
+  const log = `${root}/data/run/liquen.log`;
+  const pidFile = `${root}/data/run/${SUPERVISOR}.pid`;
+  await Deno.mkdir(`${root}/data/run`, { recursive: true });
+  const from = await Deno.stat(log).then((s) => s.size, () => 0);
+  const child = new Deno.Command("sh", {
+    args: ["-c", 'exec "$@" >>"$0" 2>&1', log, Deno.execPath(), "run", "-A", import.meta.url],
+    cwd: root,
+    stdin: "null",
+    stdout: "null",
+    stderr: "null",
+    detached: true,
+  }).spawn();
+  let exited: Deno.CommandStatus | null = null;
+  child.status.then((s) => exited = s);
+  const holds = () =>
+    Deno.readTextFile(pidFile).then((t) => Number.parseInt(t, 10) === child.pid, () => false);
+  const deadline = Date.now() + DETACH_WAIT_MS;
+  while (exited === null && !(await holds()) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const status = exited as Deno.CommandStatus | null;
+  if (status !== null) {
+    const file = await Deno.open(log);
+    await file.seek(from, Deno.SeekMode.Start);
+    await file.readable.pipeTo(Deno.stderr.writable, { preventClose: true });
+    Deno.exit(status.signal === null && status.code !== 0 ? status.code : 1);
+  }
+  child.unref();
+  const rel = log.slice(root.length + 1);
+  console.log(
+    (await holds() ? `running as pid ${child.pid}` : `started as pid ${child.pid}`) +
+      ` — its lines go to ${rel}; \`liquen stop\` ends it`,
+  );
 }
 
 async function pump(stream: ReadableStream<Uint8Array>, name: string, err: boolean): Promise<void> {
@@ -114,7 +196,12 @@ export function roster(root: string, connections: Record<string, unknown>): [str
 
 if (import.meta.main) {
   await entry(async () => {
-    const root = findRoot(orgFlag());
+    const org = orgFlag();
+    helpFlag(org.args, USAGE);
+    const background = org.args.some((a) => a === "-D" || a === "--detach");
+    const stray = org.args.find((a) => a !== "-D" && a !== "--detach");
+    if (stray !== undefined) throw new Error(`unknown argument ${stray}\n${USAGE}`);
+    const root = findRoot(org);
     const catalog = await readConfig(root);
     const procs = roster(root, catalog.connections);
     // ONE OF EACH ROLE (stop.ts). The locks are taken after the catalog is read, so a
@@ -122,6 +209,14 @@ if (import.meta.main) {
     // on to drop
     const dir = `${root}/data`;
     await Deno.mkdir(dir, { recursive: true });
+    if (background) {
+      // the probe is safe here, with no child yet to claim; the child checks again for real
+      const pid = await holder(dir, SUPERVISOR);
+      if (pid !== null) {
+        throw new Error(`${root} is already running as pid ${pid} — \`liquen stop\` first`);
+      }
+      return await detach(root);
+    }
     const lock = claim(dir, SUPERVISOR);
     if ("taken" in lock) {
       const who = lock.taken === null ? "" : ` as pid ${lock.taken}`;

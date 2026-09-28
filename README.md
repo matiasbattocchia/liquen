@@ -33,7 +33,12 @@ code of its own, so the package that runs is always the one the org's `deno.json
 
 ```sh
 deno install -g -A -n liquen jsr:@liquen/liquen/liquen
+deno install -g -A -n lq jsr:@liquen/liquen/liquen   # the same command, short: `lq start`
 ```
+
+`liquen start -D` runs the org in the background, its lines appended to
+`data/run/liquen.log`; `liquen stop` ends it either way. `liquen connect --remove
+<service>:<address>` takes a grant back — the target as `liquen status` prints it.
 
 A role is a lock: every process in a run holds `data/run/<role>.pid` while it lives —
 `liquen` the supervisor, `main` the mind. So there is one of each, whoever started it: a
