@@ -45,6 +45,7 @@ import {
   type Draft,
   findRoot,
   ingestAddress,
+  localBase,
   type MessageEvent,
   orgFlag,
   printNext,
@@ -649,9 +650,9 @@ if (import.meta.main) {
 
     if (verb === "app") {
       const { githubConfig } = await import("./config.ts");
-      const { ingestPort, events } = await githubConfig(root);
-      const { publicUrl } = (await readConfig(root)).edge;
-      const webhook = ingestAddress(publicUrl, "github");
+      const { events } = await githubConfig(root);
+      const { edge } = await readConfig(root);
+      const webhook = edge.publicUrl === null ? null : ingestAddress(edge.publicUrl, "github");
       console.error(
         `Register the app (once) — this link fills the form with what this org needs:\n  ${
           appForm(root.split("/").pop() ?? "liquen", events, webhook ?? undefined)
@@ -662,8 +663,10 @@ if (import.meta.main) {
           `  — Webhook secret: a fresh one to paste there and below → ${suggestSecret()}\n` +
           (webhook === null
             ? `  — Webhook URL: this org has no public door (edge.publicUrl), so the webhook\n` +
-              `    stays off; the ingest listens on :${ingestPort} at /, so forward instead:\n` +
-              `      gh webhook forward --repo=<owner/repo> --url=http://localhost:${ingestPort}/\n`
+              `    stays off; the ingest is reached through this machine's edge, so forward:\n` +
+              `      gh webhook forward --repo=<owner/repo> --url=${
+                ingestAddress(localBase(edge.port), "github")
+              }\n`
             : "") +
           `  — Enable Device Flow: tick it, and LEAVE ON expire user authorization tokens\n` +
           `    (that pair is what \`liquen connect github user\` signs a person in with)\n` +

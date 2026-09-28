@@ -7,13 +7,11 @@
  * is a fact about the app and rides on the app's vault row (`liquen connect microsoft app`).
  */
 
-import { checkPort, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
 
 /** `primary` is the account's own calendar (Graph's `/me/calendar`); any other entry is a
  *  calendar id from `/me/calendars`. */
 export const DEFAULT_CALENDARS = ["primary"];
-export const DEFAULT_OAUTH_PORT = 8792;
-export const DEFAULT_INGEST_PORT = 8794;
 /** Identity, the `/me` profile, the calendar, the mailbox read and sent, the member's
  *  chats read and written, the channels of their teams read and written, and the files
  *  a Teams message carries (OneDrive items, shared by reference): the product. Entra
@@ -51,9 +49,6 @@ export const GRANT_HOSTS = ["graph.microsoft.com"];
 
 export interface MicrosoftConfig {
   calendars: string[];
-  oauthPort: number;
-  /** Where Graph's Teams notifications land, behind `<edge.publicUrl>/microsoft/ingest`. */
-  ingestPort: number;
   scopes: string[];
 }
 
@@ -67,20 +62,6 @@ export const SPEC: ConnectorSpec = {
       value: DEFAULT_CALENDARS,
       doc: 'calendars the poll watches on every grant; "primary" = the account\'s own',
       check: checkStrings,
-    },
-    {
-      key: "oauthPort",
-      value: DEFAULT_OAUTH_PORT,
-      doc:
-        "the port the account door binds behind <edge.publicUrl>/microsoft/oauth/callback; with no publicUrl, the loopback callback's own",
-      check: checkPort,
-    },
-    {
-      key: "ingestPort",
-      value: DEFAULT_INGEST_PORT,
-      doc:
-        "where Graph's Teams notifications land, behind <edge.publicUrl>/microsoft/ingest; no publicUrl ⇒ Teams is not subscribed (the gap is still read at boot, sends still go out)",
-      check: checkPort,
     },
     {
       key: "scopes",

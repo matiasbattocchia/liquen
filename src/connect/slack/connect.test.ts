@@ -174,18 +174,13 @@ Deno.test("connect: the manifest's consent comes from the catalog, not the seed"
   assertEquals(open.oauth_config.redirect_urls, ["https://acme.example.com/slack/oauth/callback"]);
 });
 
-Deno.test("slackDoor: the org's https callback is served on the configured port; loopback and http are refused", () => {
-  const d = slackDoor("https://liquen.example/slack/oauth/callback", 8790);
+Deno.test("slackDoor: the org's https callback is the door; loopback and http are refused", () => {
+  const d = slackDoor("https://liquen.example/slack/oauth/callback");
   assertEquals(d.loopback, false);
-  assertEquals(d.port, 8790);
   assertEquals(d.start, "https://liquen.example/slack/oauth/start");
-  assertThrows(() => slackDoor("http://liquen.example/slack/oauth/callback", 8790), Error, "https");
-  assertThrows(
-    () => slackDoor("https://localhost:8790/slack/oauth/callback", 8790),
-    Error,
-    "loopback",
-  );
-  assertThrows(() => slackDoor("https://liquen.example/slack/oauth", 8790), Error, "/callback");
+  assertThrows(() => slackDoor("http://liquen.example/slack/oauth/callback"), Error, "https");
+  assertThrows(() => slackDoor("https://localhost:8787/slack/oauth/callback"), Error, "loopback");
+  assertThrows(() => slackDoor("https://liquen.example/slack/oauth"), Error, "/callback");
 });
 
 Deno.test("connect: the prefill link embeds the manifest for api.slack.com to build from", () => {

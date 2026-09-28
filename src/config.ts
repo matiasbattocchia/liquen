@@ -117,11 +117,12 @@ export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for
 // one window read and no model call, so there is nothing to buy by making it rarer.
 export const TICK_MS = 60_000;
 
-// edge — the org's one public door. Every address a service is handed hangs off ONE
-// base by path, `/<service>/ingest` and `/<service>/oauth/callback`, so the org tells a
-// tunnel one thing: publish `edge.port` at `publicUrl`. The edge process behind that port
-// forwards each path to the service's own port (edge.ts). The same grammar names a
-// function per service on a platform that routes by name, where nothing forwards at all.
+// edge — the org's one door, and its only port. Every address a service is handed hangs
+// off ONE base by path, `/<service>/ingest` and `/<service>/oauth/callback`, so the org
+// tells a tunnel one thing: publish `edge.port` at `publicUrl`. The edge process behind
+// that port forwards each path to the connector's socket under data/run (edge.ts). The
+// same grammar names a function per service on a platform that routes by name, where
+// nothing forwards at all.
 export const DEFAULT_EDGE_PORT = 8787;
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -223,11 +224,7 @@ interface Entry {
   doc: string;
 }
 
-/** Common boot checks for connector entries. */
-export const checkPort = (v: unknown): string | null =>
-  Number.isInteger(v) && (v as number) >= 0 && (v as number) < 65536
-    ? null
-    : "must be a port (1-65535, or 0: bind a free one and announce it)";
+/** A common boot check for connector entries. */
 export const checkStrings = (v: unknown): string | null =>
   Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === "string" && s)
     ? null
@@ -386,13 +383,13 @@ const EDGE: Entry[] = [
     doc: "the org's public https:// base — what a tunnel or a real host in front of edge.port " +
       "answers as; every service's address hangs off it (/<service>/ingest, " +
       "/<service>/oauth/callback), and the doors print the one to register; null ⇒ the " +
-      "org is reached on localhost only",
+      "org is reached at http://localhost:<edge.port> only",
   },
   {
     key: "port",
     value: DEFAULT_EDGE_PORT,
-    doc: "the one port the edge binds and the tunnel publishes — it forwards /<service>/… " +
-      "to that service's own ports; runs only under a publicUrl",
+    doc: "the org's one port: the edge binds it and the tunnel publishes it — it forwards " +
+      "/<service>/… to that connector's socket under data/run",
   },
   {
     key: "tunnel",
@@ -407,8 +404,8 @@ const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
   organization: "this deployment's identity — the clock, the backlog, and every agent's defaults",
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
-  edge: "the org's one public door — the address the world dials, the port the tunnel " +
-    "publishes, and the tunnel",
+  edge: "the org's one door — the address the world dials, the one port the org binds, " +
+    "and the tunnel",
   agents: "the roster: every key is a member — an agent, its folder and its unix user, or " +
     "a person alone (mind: false)",
   connections: "the connectors' knobs — a subsection per connector, validated by its owner",
@@ -417,6 +414,8 @@ const SECTION_DOCS: Record<string, string> = {
 /** An agent's name is also its folder and its Linux user in the container — the charset is
  *  the intersection of what all three accept. */
 export const AGENT_NAME = /^[a-z][a-z0-9-]{0,30}$/;
+/** A connection's name: the first word of its path on the edge and of its socket. */
+export const SERVICE_NAME = /^[a-z][a-z0-9-]*$/;
 
 function fromEntries(entries: Entry[]): Record<string, unknown> {
   return Object.fromEntries(entries.map((e) => [e.key, e.value]));
@@ -590,6 +589,13 @@ export async function readConfig(root: string): Promise<OrgConfig> {
     }
   }
   for (const [name, body] of Object.entries(asObject(found.connections, "connections"))) {
+    if (!SERVICE_NAME.test(name)) {
+      throw new Error(
+        `${path}: connections.${name} — a connection's name is its path on the edge ` +
+          `(/<name>/ingest) and its socket (data/run/<name>.sock): lowercase letters, digits ` +
+          `and dashes, starting with a letter`,
+      );
+    }
     if (typeof body !== "object" || body === null || Array.isArray(body)) {
       throw new Error(
         `${path}: connections.${name} must be an object (a connector's subsection)`,

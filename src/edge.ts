@@ -1,91 +1,92 @@
 /**
- * edge.ts — the org's one public door (DESIGN §9): the address grammar every service is
- * handed, and the process that stands behind it.
+ * edge.ts — the org's one door (DESIGN §9): the address grammar every service is handed,
+ * and the process that stands behind it.
  *
  * A service needs the org's address for two things — where it pushes (a webhook, Graph's
  * notifications, an Events API request URL) and where a sign-in comes back (an OAuth
  * redirect URI) — and every one of those hangs off ONE base by path:
  *
- *   <publicUrl>/<service>/ingest             what the service pushes to
- *   <publicUrl>/<service>/oauth/callback     where its sign-in returns
+ *   <base>/<service>/ingest             what the service pushes to
+ *   <base>/<service>/oauth/callback     where its sign-in returns
  *
- * `edge.publicUrl` is that base, and it is all the org asks of whatever puts it on the
- * internet: publish `edge.port` at that https address. A quick tunnel, a named tunnel, a
- * host's own reverse proxy, a cloud's function router — each does exactly that, so the
- * harness knows none of them by name. With no `publicUrl` the org is reached on localhost
- * only: an ingest at its own port, a sign-in on the loopback callback (`callbackAddress`).
+ * The base is `edge.publicUrl` for a dialer on the internet, and this machine's edge,
+ * `http://localhost:<edge.port>`, for one on this host — a browser here, the whatsmeow
+ * bridge, `gh webhook forward`. `publicUrl` is all the org asks of whatever puts it on
+ * the internet: publish `edge.port` at that https address. A named tunnel, a host's own
+ * reverse proxy, a cloud's function router — each does exactly that, so the harness knows
+ * none of them by name.
  *
- * The process: one listener on `edge.port` forwarding each path to the service's own
- * port, read off the catalog once at boot (the connector's `config.ts` spec names
- * `ingestPort` and `oauthPort`; a connector that declares neither has no door here). An
- * ingest is a server rooted at `/`, so it is handed the path UNDER `/<service>/ingest`; a
- * sign-in door matches by suffix, so it is handed the path as it came. Nothing answering
- * on the port is a 502 that names it — a service whose process is down, or a door nobody
- * is holding open — and a path outside the grammar is a 404.
- *
- * `liquen start` runs this as one more child, only under a `publicUrl`, and `edge.tunnel`
- * beside it when the org runs its own tunnel.
+ * Behind the port the connectors listen on Unix sockets under the org's own folder,
+ * `data/run/<service>.sock` for an ingest and `data/run/<service>-oauth.sock` for a
+ * sign-in door (`socketOf`): the location is the whole address, so a connector declares
+ * nothing to be reachable, and two orgs on one machine never meet. The edge forwards each
+ * path to the socket the grammar names — an ingest is a server rooted at `/`, so it is
+ * handed the path UNDER `/<service>/ingest`; a door matches by suffix, so it is handed
+ * the path as it came. Nothing answering on the socket is a 502 that names it — a service
+ * whose process is down, or a door nobody is holding open — and a path outside the
+ * grammar is a 404. `liquen start` runs the edge as one more child, always, and
+ * `edge.tunnel` beside it when the org runs its own tunnel.
  */
 
-import {
-  checkPort,
-  connectorConfig,
-  type ConnectorSpec,
-  findRoot,
-  orgFlag,
-  readConfig,
-} from "./config.ts";
-import { RUNNING } from "./connect/connect.ts";
+import { findRoot, type OrgConfig, orgFlag, readConfig, SERVICE_NAME } from "./config.ts";
 import { entry } from "./entry.ts";
 
-/** Where a service pushes: `<publicUrl>/<service>/ingest`, or null when the org has no
- *  public address — a service that must dial the org from the internet has nowhere to. */
-export function ingestAddress(publicUrl: string | null, service: string): string | null {
-  return publicUrl === null ? null : `${publicUrl}/${service}/ingest`;
+/** This machine's edge, as a dialer on this host reaches it. */
+export function localBase(port: number): string {
+  return `http://localhost:${port}`;
 }
 
-/** Where a service's sign-in returns, the `redirect_uri` registered and sent: the public
- *  one under `publicUrl`, or the loopback one on the door's own port — this machine's
- *  browser, which Google and Entra permit in plain http. One grammar either way. */
+/** Where a service pushes: `<base>/<service>/ingest`. The base is the one the dialer can
+ *  reach — `edge.publicUrl` from the internet, `localBase` from this host. */
+export function ingestAddress(base: string, service: string): string {
+  return `${base}/${service}/ingest`;
+}
+
+/** Where a service's sign-in returns, the `redirect_uri` registered and sent: under
+ *  `publicUrl` when the org has one — a member signs in from anywhere — else on this
+ *  machine's edge, whose browser Google and Entra permit in plain http. One grammar
+ *  either way. */
 export function callbackAddress(
-  publicUrl: string | null,
+  edge: Pick<OrgConfig["edge"], "publicUrl" | "port">,
   service: string,
-  oauthPort: number,
 ): string {
-  return `${publicUrl ?? `http://localhost:${oauthPort}`}/${service}/oauth/callback`;
+  return `${edge.publicUrl ?? localBase(edge.port)}/${service}/oauth/callback`;
 }
 
-/** What one service's door forwards to: its ingest, its sign-in door, either, or (a
- *  connector that pushes nothing and signs nobody in) neither. */
-export interface Door {
-  ingest?: number;
-  oauth?: number;
+/** The two legs a service may serve. */
+export type Leg = "ingest" | "oauth";
+
+/** The socket a service's leg is served on, under the org's own folder. */
+export function socketOf(root: string, service: string, leg: Leg): string {
+  return `${root}/data/run/${service}${leg === "oauth" ? "-oauth" : ""}.sock`;
 }
 
 /** A path under the grammar: the service, the leg, and the path the leg is handed. */
-export function routeOf(
-  pathname: string,
-): { service: string; leg: keyof Door; rest: string } | null {
-  const m = /^\/([a-z][a-z0-9-]*)\/(ingest|oauth)(\/.*)?$/.exec(pathname);
-  if (!m) return null;
+export function routeOf(pathname: string): { service: string; leg: Leg; rest: string } | null {
+  const m = /^\/([^/]+)\/(ingest|oauth)(\/.*)?$/.exec(pathname);
+  if (!m || !SERVICE_NAME.test(m[1])) return null;
   const [, service, leg, tail = ""] = m;
   return leg === "ingest"
     ? { service, leg: "ingest", rest: tail || "/" }
     : { service, leg: "oauth", rest: pathname };
 }
 
-/** The forwarder over a door table — pure over `fetchApi`, so a test hands it a stub. */
-export function createEdge(
-  doors: Map<string, Door>,
-  fetchApi: typeof fetch = fetch,
-): (req: Request) => Promise<Response> {
+/** The forwarder over the org's sockets. */
+export function createEdge(root: string): (req: Request) => Promise<Response> {
+  const clients = new Map<string, Deno.HttpClient>();
+  const clientFor = (path: string): Deno.HttpClient => {
+    let c = clients.get(path);
+    if (!c) {
+      c = Deno.createHttpClient({ proxy: { transport: "unix", path } });
+      clients.set(path, c);
+    }
+    return c;
+  };
   return async (req) => {
     const url = new URL(req.url);
     const at = routeOf(url.pathname);
     if (!at) return text(404, "no such door");
-    const port = doors.get(at.service)?.[at.leg];
-    if (port === undefined) return text(404, `${at.service} has no ${at.leg} here`);
-    const target = `http://127.0.0.1:${port}${at.rest}${url.search}`;
+    const sock = socketOf(root, at.service, at.leg);
     const headers = new Headers(req.headers);
     headers.set("x-forwarded-host", url.host);
     headers.set("x-forwarded-proto", url.protocol.slice(0, -1));
@@ -94,9 +95,15 @@ export function createEdge(
     const body = req.method === "GET" || req.method === "HEAD" ? null : await req.arrayBuffer();
     let res: Response;
     try {
-      res = await fetchApi(target, { method: req.method, headers, body, redirect: "manual" });
+      res = await fetch(`http://localhost${at.rest}${url.search}`, {
+        method: req.method,
+        headers,
+        body,
+        redirect: "manual",
+        client: clientFor(sock),
+      });
     } catch {
-      return text(502, `${at.service}'s ${at.leg} is not answering on :${port}`);
+      return text(502, `${at.service}'s ${at.leg} is not listening (${sock})`);
     }
     // the leg's answer as it gave it, a sign-in's redirect included; the framing headers
     // are the connection's own and are rewritten by the one that serves this response
@@ -108,42 +115,8 @@ export function createEdge(
   };
 }
 
-/** The doors the catalog declares: for each connection, the ports its connector's spec
- *  names — `ingestPort` and `oauthPort`, read the way the connector reads them. A port
- *  of 0 is one the OS picks and only the announcement knows, so it is no door here. */
-export async function doorsOf(root: string, connections: string[]): Promise<Map<string, Door>> {
-  const doors = new Map<string, Door>();
-  for (const name of connections) {
-    const spec = await specOf(root, name);
-    if (!spec) continue;
-    const ports = spec.entries.filter((e) => e.check === checkPort).map((e) => e.key);
-    const cfg = await connectorConfig<Record<string, number>>(root, spec);
-    const door: Door = {};
-    if (ports.includes("ingestPort") && cfg.ingestPort !== 0) door.ingest = cfg.ingestPort;
-    if (ports.includes("oauthPort") && cfg.oauthPort !== 0) door.oauth = cfg.oauthPort;
-    if (door.ingest !== undefined || door.oauth !== undefined) doors.set(name, door);
-  }
-  return doors;
-}
-
-/** A connector's spec: shipped beside this module, or the org's own under `connectors/`
- *  (CONNECTORS.md — a `config.ts` exporting `SPEC`); none for a connector that ships no
- *  config, or an org's whose folder has none. */
-async function specOf(root: string, name: string): Promise<ConnectorSpec | null> {
-  const url = RUNNING.includes(name)
-    ? new URL(`./connect/${name}/config.ts`, import.meta.url).href
-    : `${root}/connectors/${name}/config.ts`;
-  try {
-    const mod = await import(url) as { SPEC?: ConnectorSpec };
-    return mod.SPEC ?? null;
-  } catch (err) {
-    if (err instanceof TypeError || err instanceof Deno.errors.NotFound) return null;
-    throw err;
-  }
-}
-
-/** Whether `ingestAddress` answers as the service — the whole path checked from the
- *  internet in, without knowing what carries it: an ingest names itself to a GET at its
+/** Whether `address` answers as the service — the whole path checked from where the
+ *  dialer stands, without knowing what carries it: an ingest names itself to a GET at its
  *  root (`serveIngest`), so a tunnel that is down, aimed at another port or in front of
  *  another org each answer with something else. Null when it does; else what it said. */
 export async function reached(address: string, service: string): Promise<string | null> {
@@ -175,24 +148,19 @@ function text(status: number, message: string): Response {
 if (import.meta.main) {
   await entry(async () => {
     const root = findRoot(orgFlag());
-    const { edge, connections } = await readConfig(root);
-    if (edge.publicUrl === null) {
-      throw new Error("edge.publicUrl is null — there is no public address to stand behind");
-    }
-    const doors = await doorsOf(root, Object.keys(connections));
-    const legs = [...doors].flatMap(([name, d]) => [
-      ...(d.ingest !== undefined ? [`/${name}/ingest → :${d.ingest}`] : []),
-      ...(d.oauth !== undefined ? [`/${name}/oauth → :${d.oauth}`] : []),
-    ]);
+    const { edge } = await readConfig(root);
     try {
+      // "::" is every interface of BOTH families: `localhost` is ::1 as much as
+      // 127.0.0.1, and a dialer that resolves it to ::1 first (Go's pure resolver does,
+      // some of the time) would be refused by an IPv4-only listener and lose the batch
       Deno.serve({
         hostname: "::",
         port: edge.port,
         onListen: ({ port }) =>
           console.error(
-            `[edge] ${edge.publicUrl} ← :${port}\n` + legs.map((l) => `[edge]   ${l}`).join("\n"),
+            `[edge] ${edge.publicUrl ?? localBase(port)} ← :${port} → ${root}/data/run/*.sock`,
           ),
-      }, createEdge(doors));
+      }, createEdge(root));
     } catch (err) {
       if (err instanceof Deno.errors.AddrInUse) {
         throw new Error(`port ${edge.port} in use — another org running? set edge.port`);

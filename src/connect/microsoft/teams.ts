@@ -19,7 +19,7 @@
  * is said on stderr.
  *
  * Graph must reach the endpoint over public HTTPS, so it dials the org's public door,
- * `<edge.publicUrl>/microsoft/ingest` (edge.ts), and the ingest binds `ingestPort` behind
+ * `<edge.publicUrl>/microsoft/ingest` (edge.ts), and the ingest serves its socket behind
  * it. A subscription is Graph's record of that address, so one made for another address
  * is deleted and made anew — the sweep compares each record's `url` with the address as
  * it stands. No `publicUrl` means no subscriptions: the dispatch still runs, so the log's
@@ -1424,22 +1424,20 @@ export function teamsWire(deps: TeamsWireDeps): TeamsWire {
 
 /* ── local entries: the ingest (the webhook and the keeper) and the dispatch ────────── */
 
-/** Wire the inbound half over the org's log: read the gap back, serve the webhook on
- *  `ingestPort`, keep the subscriptions alive on the shared cadence. No public address ⇒
- *  the gap is still read, nothing is subscribed, and the half says so once. Returns stop. */
+/** Wire the inbound half over the org's log: read the gap back, serve the webhook behind
+ *  the edge, keep the subscriptions alive on the shared cadence. No public address ⇒ the
+ *  gap is still read, nothing is subscribed, and the half says so once. Returns stop. */
 export async function runIngest(): Promise<() => Promise<void>> {
   const { openStore } = await import("../../store/mod.ts");
   const { createGrantBroker } = await import("../../proxy/grants.ts");
   const { serveIngest } = await import("../serve.ts");
-  const { microsoftConfig } = await import("./config.ts");
   const { runPollIngest } = await import("../poll.ts");
   const { readConfig } = await import("../../config.ts");
   const { ingestAddress } = await import("../../edge.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const store = await openStore(root);
-  const { ingestPort } = await microsoftConfig(root);
-  const notificationUrl = ingestAddress((await readConfig(root)).edge.publicUrl, SERVICE);
+  const { publicUrl } = (await readConfig(root)).edge;
   const log = await store.log();
   const creds = await store.vault();
   const broker = createGrantBroker({ creds });
@@ -1463,7 +1461,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
       ),
   });
   void catchUp.run();
-  if (notificationUrl === null) {
+  if (publicUrl === null) {
     console.error(
       "[ingest] microsoft teams: no edge.publicUrl — Graph has nowhere to push, so no Teams " +
         "subscription is made; the gap is read at boot, and sends still go out",
@@ -1474,6 +1472,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
       await log.close();
     };
   }
+  const notificationUrl = ingestAddress(publicUrl, SERVICE);
   const inflight = new Set<Promise<void>>();
   const handler = createTeamsWebhook({
     publish: log.publish,
@@ -1490,12 +1489,8 @@ export async function runIngest(): Promise<() => Promise<void>> {
       w.then(done, done);
     },
   });
-  const server = serveIngest(
-    "connections.microsoft.ingestPort",
-    ingestPort,
-    handler,
-    (bound) => console.error(`[ingest] microsoft teams serving :${bound} ← ${notificationUrl}`),
-  );
+  const server = await serveIngest(root, SERVICE, handler);
+  console.error(`[ingest] microsoft teams serving ${server.addr.path} ← ${notificationUrl}`);
   const stopKeeper = await runPollIngest(
     SERVICE,
     "teams subscriptions",

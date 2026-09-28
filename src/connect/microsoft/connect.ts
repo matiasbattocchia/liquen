@@ -19,18 +19,17 @@
  *
  * The redirect URI is the org's, not the app row's: `callbackAddress` (edge.ts) — the
  * public door `<edge.publicUrl>/microsoft/oauth/callback` when the org has a public
- * address, else the loopback `http://localhost:<oauthPort>/microsoft/oauth/callback`,
- * which Entra permits in plain http. The app door prints it for the portal's redirect
- * URI field, and a sign-in sends it verbatim as `redirect_uri`, so the string Entra
- * matches against its own list is the one expression. A loopback callback is this
- * machine's browser and names the port the door binds; the public one is reached by a
- * member anywhere, so the command prints the link to send and binds
- * `connections.microsoft.oauthPort` for the edge to forward to.
+ * address, else this machine's edge, `http://localhost:<edge.port>/microsoft/oauth/
+ * callback`, which Entra permits in plain http. The app door prints it for the portal's
+ * redirect URI field, and a sign-in sends it verbatim as `redirect_uri`, so the string
+ * Entra matches against its own list is the one expression. A loopback callback is this
+ * machine's browser, and the command opens it; the public one is reached by a member
+ * anywhere, so the command prints the link to send. Either way the edge forwards the
+ * callback to the door's socket (`serveDoor`), so the org must be running for a sign-in
+ * to land.
  *
  * The app door prints the callback before it asks for anything, so the portal's field
- * can be filled while the registration is still being created; the port is picked free
- * of this machine on the run that has nothing declared yet, written to config.jsonc
- * beside the app row, and from then on read — never picked again.
+ * can be filled while the registration is still being created.
  *
  * Removal is not a door yet: deleting an app or a grant is a deliberate SQL act (§9).
  */
@@ -39,8 +38,8 @@ import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag, readConfig } from "../../config.ts";
 import { callbackAddress, ingestAddress, reachLine } from "../../edge.ts";
-import { declared, freePort, printNext, startStep } from "../declare.ts";
-import { type DoorAddress, doorAddress, oneShot, openBrowser } from "../door.ts";
+import { declared, printNext, requireEdge, startStep } from "../declare.ts";
+import { type DoorAddress, doorAddress, oneShot, openBrowser, serveDoor } from "../door.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
@@ -116,9 +115,8 @@ export function appGuide(callback: string, scopes: string[]): string {
     `   Redirect URI: platform "Web", value:`,
     `     ${callback}`,
     `   That is where a sign-in comes back: the org's public door when edge.publicUrl is`,
-    `   set (a member signs in from anywhere), else this machine's browser on`,
-    `   connections.microsoft.oauthPort. Setting publicUrl later means registering the`,
-    `   public one too.`,
+    `   set (a member signs in from anywhere), else this machine's edge (edge.port).`,
+    `   Setting publicUrl later means registering the public one too.`,
     `2. Certificates & secrets → New client secret. Copy its VALUE (shown once), not its id.`,
     `3. API permissions → Add a permission → Microsoft Graph → Delegated permissions, and`,
     `   tick each of these (connections.microsoft.scopes):`,
@@ -167,14 +165,9 @@ if (import.meta.main) {
     try {
       if (verb === "app") {
         const { microsoftConfig } = await import("./config.ts");
-        const { oauthPort: fromCatalog, scopes } = await microsoftConfig(root);
-        // the loopback callback is handed to a human who registers it with Entra, so the
-        // port is picked HERE, once: free of this machine while the file has nothing to
-        // say, and then never again — a declared port is the operator's
+        const { scopes } = await microsoftConfig(root);
         const { connections, edge } = await readConfig(root);
-        const alreadyDeclared = SERVICE in connections;
-        const oauthPort = alreadyDeclared ? fromCatalog : freePort(fromCatalog);
-        const callback = callbackAddress(edge.publicUrl, SERVICE, oauthPort);
+        const callback = callbackAddress(edge, SERVICE);
         console.error(appGuide(callback, scopes));
         const ask = (label: string): string => {
           const v = prompt(label)?.trim();
@@ -190,7 +183,7 @@ if (import.meta.main) {
           ?.trim() || "organizations";
         const key = await connectMicrosoftApp({ clientId, clientSecret, tenant }, creds);
         console.error(`✓ app stored: ${key} (tenant ${tenant}, callback: ${callback})`);
-        if (!alreadyDeclared) await declared(root, SPEC, { oauthPort });
+        if (!(SERVICE in connections)) await declared(root, SPEC);
         const { seedSkill } = await import("../../store/seed.ts");
         const docs = await store.docs();
         try {
@@ -220,17 +213,18 @@ if (import.meta.main) {
           Deno.exit(2);
         });
         const { microsoftConfig } = await import("./config.ts");
-        const { oauthPort, scopes } = await microsoftConfig(root);
-        const { publicUrl } = (await readConfig(root)).edge;
+        const { scopes } = await microsoftConfig(root);
+        const { edge } = await readConfig(root);
         const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? scopes;
-        const registered = callbackAddress(publicUrl, SERVICE, oauthPort);
+        const registered = callbackAddress(edge, SERVICE);
         let door: DoorAddress;
         try {
-          door = doorAddress(registered, oauthPort);
+          door = doorAddress(registered);
         } catch (e) {
           console.error(e instanceof Error ? e.message : String(e));
           Deno.exit(2);
         }
+        await requireEdge(root);
         const log = await store.log();
         let shortfall: string[] = [];
         const { handler, outcome } = oneShot(createMicrosoftOAuth({
@@ -246,19 +240,11 @@ if (import.meta.main) {
           store: log,
           onGrant: (g) => (shortfall = g.missing),
         }));
-        // the port is registered with Entra now, so a taken one is a conflict a human has
-        // to settle — the door cannot step over it without invalidating the URI it must send
         let server: Deno.HttpServer;
         try {
-          server = Deno.serve({ port: door.port, onListen: () => {} }, handler);
+          server = await serveDoor(root, SERVICE, handler);
         } catch (e) {
-          if (!(e instanceof Deno.errors.AddrInUse)) throw e;
-          console.error(
-            `port ${door.port} is already in use, and it is the port ${door.callback} is ` +
-              `registered on — stop whatever holds it (another org's door, \`deno task ` +
-              `status\`), or register a callback on a free port and set ` +
-              `connections.microsoft.oauthPort to match.`,
-          );
+          console.error(e instanceof Error ? e.message : String(e));
           await log.close();
           Deno.exit(2);
         }
@@ -276,7 +262,7 @@ if (import.meta.main) {
             `Send this link to the person signing in:\n  ${start.href}\n` +
               `It binds the grant to ${agent ? `"${agent}"` : "the org"} and is good for one ` +
               `sign-in, so it goes to exactly one person. This door waits until they finish, ` +
-              `serving ${door.callback} on port ${door.port}.`,
+              `serving ${door.callback}.`,
           );
         }
         const res = await outcome;
@@ -296,10 +282,10 @@ if (import.meta.main) {
               `adds up, so it merges into this grant.`
             : "\n✓ connected (deno task status shows the map)",
         );
-        await declared(root, SPEC, { oauthPort: door.port });
+        await declared(root, SPEC);
         // Teams is push-only, to the org's public door: the address is checked from the
         // internet in while there is a human here to read the answer
-        const push = ingestAddress(publicUrl, SERVICE);
+        const push = edge.publicUrl === null ? null : ingestAddress(edge.publicUrl, SERVICE);
         if (push !== null) console.error(await reachLine(push, SERVICE));
         printNext([
           await startStep(

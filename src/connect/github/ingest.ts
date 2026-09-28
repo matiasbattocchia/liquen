@@ -278,10 +278,10 @@ function text(status: number, message: string): Response {
 
 /* ── local entry: the thin Deno server (the edge wrapper is the same shape) ────────────
  *
- *   deno task run:github        # serves on :8788, publishing into the org log (./data)
+ *   deno task run:github        # serves data/run/github.sock, publishing into the org log
  *   gh webhook forward --repo=you/repo \
  *     --events=issue_comment,pull_request,pull_request_review_comment \
- *     --url=http://localhost:8788/        # dev: add --secret matching the app row's
+ *     --url=http://localhost:8787/github/ingest   # the edge; dev: add --secret (the app row's)
  *
  * The harness (`deno task cli`) on the SAME data root turns a PR comment into a poke.
  * The secret is the app row's (`liquen connect github app` → vault `github:app:<id>`); the
@@ -295,7 +295,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const store = await openStore(root);
-  const { ingestPort: port, events } = await githubConfig(root);
+  const { events } = await githubConfig(root);
   const creds = await store.vault();
   const secret = (await creds.list("github:app:")).find((a) => a.value.webhook_secret)
     ?.value.webhook_secret;
@@ -310,15 +310,12 @@ export async function runIngest(): Promise<() => Promise<void>> {
   }
   const { serveIngest } = await import("../../connector.ts");
   // `log.publish` passed straight through — a wrapper lambda would flatten its overloads
-  const server = serveIngest(
-    "connections.github.ingestPort",
-    port,
+  const server = await serveIngest(
+    root,
+    "github",
     createGithubWebhook({ publish: log.publish, secret, events }),
-    (bound) =>
-      console.error(
-        `[ingest] serving :${bound} → ${dir}/log  (gh webhook forward --url=http://localhost:${bound}/)`,
-      ),
   );
+  console.error(`[ingest] serving ${server.addr.path} → ${dir}/log`);
   return async () => {
     await server.shutdown(); // stop accepting, finish the requests already in
     await log.close();

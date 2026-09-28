@@ -889,12 +889,13 @@ export function slackSocket(
 
 /* ── local entry: Socket Mode carriers (from the vault) or HTTP ─────────────
  *
- *   deno task run:slack       # xapp in the vault → socket mode; else HTTP on :8789
+ *   deno task run:slack       # xapp in the vault → socket mode; else HTTP on
+ *                             # data/run/slack.sock behind the edge
  *
  * Env: none — everything comes from the vault. Socket carriers are the app-level
  * tokens `liquen connect slack app` stored, one socket per app (§4). No carrier ⇒ HTTP
- * mode on connections.slack.ingestPort, verified by the apps' signing secrets (the same
- * door stores them); no app, no server. */
+ * mode, verified by the apps' signing secrets (the same door stores them); no app, no
+ * server. */
 /** The secrets an HTTP-mode server verifies with: every app row's `signing_secret`. None
  *  is a refusal to serve — an unverified Events URL would take any POST as the workspace's
  *  word, `authorizations` included. */
@@ -1031,15 +1032,9 @@ export async function runIngest(): Promise<() => Promise<void>> {
       work.then(done, done);
     },
   });
-  const { slackConfig } = await import("./config.ts");
   const { serveIngest } = await import("../serve.ts");
-  const port = (await slackConfig(root)).ingestPort;
-  const server = serveIngest(
-    "connections.slack.ingestPort",
-    port,
-    handler,
-    (bound) => console.error(`[ingest] HTTP on :${bound} → ${dir}/log (Events API request URL)`),
-  );
+  const server = await serveIngest(root, "slack", handler);
+  console.error(`[ingest] HTTP on ${server.addr.path} → ${dir}/log (Events API request URL)`);
   // Slack retried what it could not deliver for minutes, not for the whole gap: what a
   // restart missed is read back once the door is open
   void catchUp.run();

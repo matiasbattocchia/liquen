@@ -55,14 +55,24 @@ declaring its DEFAULT_s and its `ConnectorSpec`; `connectorConfig` reads the
 merged values — nothing is ever written back. Secrets never enter the file — they live in the vault (slack and github keep
 their app, bot, and grants there) or, for a local bridge, in env (`WA_BRIDGE_TOKEN`).
 
-Two spec keys are addresses the org's edge knows (DESIGN §9, `src/edge.ts`): an
-`ingestPort` is reached at `<edge.publicUrl>/<name>/ingest`, handed the path under it, and
-an `oauthPort` at `<edge.publicUrl>/<name>/oauth/…`, handed the path as it came — so a
-connector that serves its ingest through `serveIngest` and its sign-in door by path
-suffix is on the internet the moment the org is, with nothing to declare. A door hands a
-service that address with `ingestAddress` / `callbackAddress`, and says whether it answers
-with `reachLine`: `serveIngest` makes every ingest name itself to a `GET /` (the middle
-word of its `connections.<name>.ingestPort` knob), which is what the check reads.
+A connector is reached through the org's edge (DESIGN §9, `src/edge.ts`), and it listens
+where it lives: `serveIngest(root, name, handler)` serves the ingest on
+`data/run/<name>.sock`, where the edge forwards `<base>/<name>/ingest` with the prefix
+stripped, and `serveDoor(root, name, handler)` serves a sign-in on
+`data/run/<name>-oauth.sock`, handed `<base>/<name>/oauth/…` as it came — so a connector,
+shipped or the org's own, is on the internet the moment the org is, with nothing to
+declare, no port of its own and nothing to add to the edge. The edge routes by the
+grammar, not by a table, so the connection's name is the route: lowercase letters, digits
+and dashes, starting with a letter, which boot checks. A listener on a TCP port of its own
+is not behind the edge. A sign-in door is `serveDoor` over a handler that answers
+`/start` and `/callback` by suffix, wrapped in `oneShot` so the door returns when the
+first callback lands; `doorAddress` reads the start link off the registered callback and
+says whether it is this machine's browser (`openBrowser`) or a link to send. A door hands a service that address
+with `ingestAddress(base, name)` — `edge.publicUrl` for a dialer on the internet,
+`localBase(edge.port)` for one on this host — or `callbackAddress(edge, name)`, and says
+whether it answers with `reachLine`: `serveIngest` makes every ingest name itself to a
+`GET /`, which is what the check reads. A door that needs the org up first asks
+`requireIngest` (a delivery would be lost) or `requireEdge` (a sign-in comes back to it).
 
 A connector whose CLI should work from agent bash **fronts its grant through the egress
 proxy by declaration, not by code**: the connect door writes two sidecar fields on the
@@ -151,9 +161,9 @@ address is said once, not once per leg. Who says it is the pairing door: the wha
 bridge is one sidecar for many orgs, and `liquen connect whatsapp` registers this org's
 ingest as the session's `webhook_url`, which the bridge keeps with the session and dials
 for everything about it — batches, media, lifecycle, and the relative media path. The
-value is `connections.whatsapp.ingestUrl`, null ⇒ localhost on `ingestPort`, which holds
-whenever the sidecar shares the host; a bridge in a container declares the one it can
-reach.
+value is `connections.whatsapp.ingestUrl`, null ⇒ this machine's edge
+(`http://localhost:<edge.port>/whatsapp/ingest`), which holds whenever the sidecar shares
+the host; a bridge in a container declares the one it can reach.
 
 Three properties come from signing rather than remembering: verification holds no state,
 so the ingest and the dispatch can be different processes; a restart doesn't invalidate a
@@ -487,7 +497,7 @@ so the sweep recreates, `missed` is said on stderr.
 **The carrier.** Graph pushes to a public HTTPS endpoint only — it validates it at
 subscription time (`POST ?validationToken=…`, answered plain within ten seconds) and
 expects a 2xx within three seconds on every notice. So it dials the org's public door,
-`<edge.publicUrl>/microsoft/ingest`, and the ingest serves `ingestPort` behind it: a
+`<edge.publicUrl>/microsoft/ingest`, and the ingest serves its socket behind it: a
 webhook `(Request) => Response` that echoes the handshake, checks each notice's
 `clientState` against the record, acks 202 and reads the message back behind the ack.
 Each record carries the address it was made for, and the sweep deletes and remakes one

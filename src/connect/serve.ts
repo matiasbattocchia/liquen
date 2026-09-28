@@ -1,72 +1,87 @@
 /**
- * serve.ts — the ingest's front door: bind the configured port, or any free one for 0.
- *
- * `ingestPort: 0` is for dialers that can read the announcement — `gh webhook forward`,
- * a test, a dev terminal: the bound port is chosen by the OS and announced on stderr.
- * A configured peer that HOLDS the org's address (the bridge's URL, an Events API
- * request URL) needs a declared port: an auto port re-rolls on every restart.
- *
- * A taken port names its own knob — parallel orgs each declare their own.
+ * serve.ts — a connector's listener: a Unix socket under the org's own folder, where the
+ * edge (edge.ts) forwards the service's path. The location is the whole address, so a
+ * connector declares nothing to be reachable, and two orgs on one machine never meet.
  *
  * Every ingest NAMES ITSELF to a `GET /`: the service's name, plain. The services only
- * ever POST, so the answer costs the handler nothing, and it is what lets the org's public
- * address be checked from the internet in — `<publicUrl>/<service>/ingest` fetched and
- * read (`reached`, edge.ts) tells a tunnel that is down, aimed at another port or standing
- * in front of another org apart from one that works, without knowing which tool it is.
+ * ever POST, so the answer costs the handler nothing, and it is what lets the org's
+ * address be checked from the dialer's side — `<base>/<service>/ingest` fetched and read
+ * (`reached`, edge.ts) tells a tunnel that is down, aimed at another port or standing in
+ * front of another org apart from one that works, without knowing which tool it is.
  */
 
-/** Whether something is already answering on the org's ingest port.
- *
- *  The mirror of `serveIngest`, for the ONE door that needs it: a pairing hands a service
- *  the org's address, and the service dials it from that second on — the whatsmeow bridge
- *  posts the linked phone's history within seconds, and nothing retries it. So that door
- *  asks first, and refuses when the answer is no.
- *
- *  It is a CONNECT, not a bind: the ingest is the thing that binds, so asking the kernel
- *  for the port would only prove that NOBODY holds it. What this proves is the opposite
- *  and exactly as much as the door needs — someone is there. Which process it is, it does
- *  not ask; nothing else in the org wants that port, and a stranger holding it is the
- *  collision `serveIngest` already names.
- *
- *  It probes loopback, where the door runs. `ingestUrl` may name the org by an address
- *  only the service can resolve (a container's host alias), and that address is the
- *  service's to reach, not ours to verify. */
-export async function ingestUp(port: number): Promise<boolean> {
+import { type Leg, socketOf } from "../edge.ts";
+
+/** Whether something answers on the socket. */
+export async function socketUp(path: string): Promise<boolean> {
   try {
-    (await Deno.connect({ hostname: "127.0.0.1", port })).close();
+    (await Deno.connect({ transport: "unix", path })).close();
     return true;
   } catch {
     return false;
   }
 }
 
-/** Serve `handler`, announcing the actually-bound port; a taken port throws naming
- *  `configKey` — `connections.<service>.ingestPort`, whose middle word is the name the
- *  ingest answers a `GET /` with. */
-export function serveIngest(
-  configKey: string,
-  port: number,
+/** Whether this org's ingest for `service` is up.
+ *
+ *  The mirror of `serveIngest`, for the doors that need it: a pairing hands a service the
+ *  org's address, and the service dials it from that second on — the whatsmeow bridge
+ *  posts the linked phone's history within seconds, and nothing retries it. So the door
+ *  asks first, and refuses when the answer is no. A CONNECT, not a bind: the ingest is
+ *  the thing that binds, and what the door needs to know is that someone is there. */
+export function ingestUp(root: string, service: string): Promise<boolean> {
+  return socketUp(socketOf(root, service, "ingest"));
+}
+
+/** A socket path the kernel will take: `sun_path` holds 108 bytes on Linux and 104 on
+ *  macOS, the terminator included. */
+const SOCKET_PATH_MAX = 103;
+
+/** Serve `handler` on the socket. A socket somebody answers on is refused — another
+ *  process of this org already serves it — and a file nobody answers on is a run that
+ *  ended without cleaning up, replaced. */
+export async function serveSocket(
+  path: string,
   handler: (req: Request) => Response | Promise<Response>,
-  announce: (boundPort: number) => void,
-): Deno.HttpServer<Deno.NetAddr> {
-  const service = configKey.split(".")[1];
+): Promise<Deno.HttpServer<Deno.UnixAddr>> {
+  if (path.length > SOCKET_PATH_MAX) {
+    throw new Error(
+      `${path} is ${path.length} bytes, and a socket path holds ${SOCKET_PATH_MAX} — ` +
+        `the org needs a shorter path`,
+    );
+  }
+  if (await socketUp(path)) {
+    throw new Error(`${path} is already served — another process of this org holds it`);
+  }
+  await Deno.mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+  try {
+    await Deno.remove(path);
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  return Deno.serve({ path, onListen: () => {} }, handler);
+}
+
+/** Serve a service's leg at its socket. */
+export function serveLeg(
+  root: string,
+  service: string,
+  leg: Leg,
+  handler: (req: Request) => Response | Promise<Response>,
+): Promise<Deno.HttpServer<Deno.UnixAddr>> {
+  return serveSocket(socketOf(root, service, leg), handler);
+}
+
+/** Serve an ingest at `data/run/<service>.sock`, naming itself to a `GET /` and handing
+ *  everything else to `handler`. */
+export function serveIngest(
+  root: string,
+  service: string,
+  handler: (req: Request) => Response | Promise<Response>,
+): Promise<Deno.HttpServer<Deno.UnixAddr>> {
   const named = (req: Request) =>
     req.method === "GET" && new URL(req.url).pathname === "/"
       ? new Response(service, { headers: { "content-type": "text/plain" } })
       : handler(req);
-  try {
-    // "::" is every interface of BOTH families: the door is registered with a service as
-    // `http://localhost:<port>`, and `localhost` is ::1 as much as 127.0.0.1 — a client
-    // that resolves it to ::1 first (Go's pure resolver does, some of the time) would be
-    // refused by an IPv4-only listener and lose the batch.
-    return Deno.serve(
-      { hostname: "::", port, onListen: ({ port: bound }) => announce(bound) },
-      named,
-    );
-  } catch (err) {
-    if (err instanceof Deno.errors.AddrInUse) {
-      throw new Error(`port ${port} in use — another org running? set ${configKey}`);
-    }
-    throw err;
-  }
+  return serveLeg(root, service, "ingest", named);
 }

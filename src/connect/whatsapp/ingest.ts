@@ -643,10 +643,10 @@ function json(status: number, body: unknown): Response {
 
 /* ── local entry: HTTP server the session's webhook_url points at ─────────────────────
  *
- *   deno task run:whatsapp        # serves :8793 — the address the pairing door registered
+ *   deno task run:whatsapp        # serves data/run/whatsapp.sock behind the edge — the
+ *                                 # address the pairing door registered
  *
- * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN; required); the port is
- * connections.whatsapp.ingestPort. */
+ * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN; required). */
 /** The bridge token the served ingest requires — unset is a refusal to bind: an open
  *  route would take any POST as the bridge's word. */
 export function bridgeTokenOf(env: string | undefined): string {
@@ -677,18 +677,16 @@ export async function runIngest(): Promise<() => Promise<void>> {
       }),
     bridgeToken: bridgeTokenOf(Deno.env.get("WA_BRIDGE_TOKEN")),
   });
-  const { whatsappConfig } = await import("./config.ts");
   const { serveIngest } = await import("../serve.ts");
-  const port = (await whatsappConfig(root)).ingestPort;
   // One door in: the bridge's own address serves the outbound bytes too. `/m/<signed>` is
   // minted by the dispatch process and verified here from the vault's key — the signature
   // IS the authorization, so the route sits BEFORE the bridge-token check.
-  const server = serveIngest(
-    "connections.whatsapp.ingestPort",
-    port,
+  const server = await serveIngest(
+    root,
+    "whatsapp",
     async (req) => await serveMedia(req, dir, () => mediaSecret(creds)) ?? await handler(req),
-    (bound) => console.error(`[ingest] bridge on :${bound} → ${dir}/log`),
   );
+  console.error(`[ingest] bridge → ${server.addr.path} → ${dir}/log`);
   return async () => {
     await server.shutdown(); // stop accepting, finish the requests already in
     await creds.close();

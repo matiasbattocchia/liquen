@@ -2993,35 +2993,33 @@ loudly, the same law as an unknown config key.
   `[exec]`, `[proxy]`), so a supervised line reads `[whatsapp] [dispatch] …` and a standalone
   run's terminal is its own tag. After the boot lines, silence means every process is up;
   process health is stderr, org health is the log (`deno task status`, log.db).
-- **Ports collide only when declared to.** An ingest port is an address something dials, and
-  the dialer sets the rule: a configured peer that holds the org's address (the bridge's
-  URL, an Events API request URL) needs a declared port — parallel orgs each declare their
-  own; a dialer that can read the announcement (`gh webhook forward`, a test, a terminal)
-  can take `ingestPort: 0` — bind any free port and announce it (re-rolled on restart). A
-  taken port fails naming its own knob (`serveIngest`, src/connect/serve.ts). The knob is
-  picked where a human can still hear it: the connect door binds every `checkPort` knob in
-  the connector's spec before writing the subsection, keeps silent when the default is free
-  (the subsection stays empty, the default rules) and declares the next free one out loud
-  when it is not (`declared`, src/connect/declare.ts). The bind is the test, so only a
-  RUNNING sibling moves a port; two orgs installed and never run together still meet at the
-  boot that runs them both, where the failing message is the right one.
+- **One port, and the connectors listen where they live.** The org binds one port,
+  `edge.port`, and nothing else: every connector serves its ingest on a Unix socket under
+  the org's own folder, `data/run/<service>.sock`, and a sign-in door on
+  `data/run/<service>-oauth.sock` while it is open (`socketOf`, src/edge.ts; `serveIngest`,
+  src/connect/serve.ts). The location is the whole address, so a connector declares
+  nothing to be reachable, two orgs on one machine never meet, and a socket somebody
+  already answers on is refused rather than stolen. Whatever dials the org on this host —
+  a browser here, the whatsmeow bridge, `gh webhook forward` — dials the edge,
+  `http://localhost:<edge.port>/<service>/…`, and a door that needs the org up says so in
+  a sentence and waits for it (`requireIngest` · `requireEdge`, src/connect/declare.ts).
 - **One public door, and the tunnel is nobody's business.** Every address a service is
-  handed hangs off one base by path — `<edge.publicUrl>/<service>/ingest` is where it
-  pushes, `<edge.publicUrl>/<service>/oauth/callback` where its sign-in returns
-  (`ingestAddress` · `callbackAddress`, src/edge.ts) — so the org asks one thing of
-  whatever puts it on the internet: publish `edge.port` at that https address. A named
-  tunnel, a host's reverse proxy, a cloud's function router each do exactly that, and the
-  harness knows none of them by name; `edge.tunnel` is an argv `liquen start` keeps alive
-  beside the org for the one that runs here. Behind the port stands the edge process, one
-  more child under a `publicUrl`: it forwards each path to the port the service's own spec
-  declares, an ingest handed the path under its root, a door the path as it came, and
-  answers 502 naming the port when nothing is there. The doors DERIVE the address rather
-  than ask for it — the portal guides print it, Slack's manifest and GitHub's form carry it
-  — and check it from the internet in while a human is there to read the answer: every
-  ingest names itself to a `GET /`, so the fetched string says whether the tunnel is up,
-  aimed at this port and in front of this org. A subscription that records an address
-  (Teams) is remade when the address changes. With no `publicUrl` the org is reached on
-  localhost only: an ingest at its own port, a sign-in on the loopback callback, and what
+  handed hangs off one base by path — `<base>/<service>/ingest` is where it pushes,
+  `<base>/<service>/oauth/callback` where its sign-in returns (`ingestAddress` ·
+  `callbackAddress`, src/edge.ts) — and the base is `edge.publicUrl` from the internet,
+  this machine's edge from this host. So the org asks one thing of whatever puts it on the
+  internet: publish `edge.port` at that https address. A named tunnel, a host's reverse
+  proxy, a cloud's function router each do exactly that, and the harness knows none of
+  them by name; `edge.tunnel` is an argv `liquen start` keeps alive beside the org for the
+  one that runs here. Behind the port stands the edge process, always one child of the
+  supervisor: it forwards each path to the socket the grammar names, an ingest handed the
+  path under its root, a door the path as it came, and answers 502 naming the socket when
+  nothing is there. The doors DERIVE the address rather than ask for it — the portal
+  guides print it, Slack's manifest and GitHub's form carry it — and check it from the
+  internet in while a human is there to read the answer: every ingest names itself to a
+  `GET /`, so the fetched string says whether the tunnel is up, aimed at this port and in
+  front of this org. A subscription that records an address (Teams) is remade when the
+  address changes. With no `publicUrl` the org is reached on localhost only, and what
   needs the internet to dial in — Graph's push, a member's Slack sign-in, a GitHub webhook
   short of `gh webhook forward` — waits for the address to exist, said by the door.
 - **A crash comes back, a refusal does not.** `entry` picks the exit code by the same rule
