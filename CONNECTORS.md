@@ -346,8 +346,14 @@ not take — and a seat the server would not fill is named with the code: on `ad
 call fails naming each, on `open` the group exists and its roster says who is in. A
 removal is resolved against the roster on the bridge, so a LID-addressed group takes it
 under the JID it holds the person by. What the log sees afterwards is what the bridge
-posts of the group: its subject on every line and on a rename; a join or a leave is not
-a line the bridge posts.
+posts of the group: its subject on every line and on a rename, and each roster change
+WhatsApp announces as the group's own line — one `members` data part, `joined` and
+`left` as `{address, name?}`, from whoever made the change (or the first who moved, when
+someone came in by the group's link, `reason: "invite"`: a line with no sender is the
+account speaking). The account's own arrival is one too: added, it alone joined; a group
+made with it in arrives with its founding roster. The line's identity is the change —
+the group, the time, who moved — so a batch posted again merges. An admin seat, a
+description or a setting is no line.
 
 ## 4. Slack — landed; two threads dangling
 

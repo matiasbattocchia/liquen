@@ -53,6 +53,7 @@ import type {
   DeliveryStatus,
   Draft,
   FilePart,
+  Json,
   Lifecycle,
   MediaKind,
   MessageEvent,
@@ -121,7 +122,10 @@ export interface WABatch {
   /** A pushname courtesy: `address` + `extra.name`, a cache hint the messages' own names
    *  have made a fallback. */
   contacts?: { address: string; extra?: { name?: string } }[];
-  groups?: { address: string; name?: string }[];
+  /** A group's subject, and a roster change as WhatsApp announced it: who `joined` (added,
+   *  or in by the group's link — `reason: "invite"`, no `by`), who `left` (went, or was
+   *  taken out), `by` whom, at `timestamp`. The account's own arrival is one too. */
+  groups?: WAGroup[];
   edits?: {
     external_id?: string; // the edit's OWN protocol-message id (newer bridges)
     original_message_id: string;
@@ -140,6 +144,23 @@ export interface WABatch {
     sender_address?: string;
     timestamp: string;
   }[];
+}
+
+export interface WAPerson {
+  address: string;
+  name?: string;
+}
+
+export interface WAGroup {
+  address: string;
+  name?: string;
+  joined?: WAPerson[];
+  left?: WAPerson[];
+  by?: WAPerson;
+  reason?: string;
+  timestamp?: string;
+  muted?: boolean;
+  archived?: boolean;
 }
 
 export interface WASessionEvent {
@@ -258,6 +279,7 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
       ...(batch.edits ?? []).map((e) => mapEdit(e, connection, pushnames, now)),
       ...(batch.revokes ?? []).flatMap((r) => mapRevoke(r, connection, now)),
       ...(batch.statuses ?? []).map((s) => mapStatus(s, connection, now)),
+      ...(batch.groups ?? []).map((g) => mapRoster(g, connection, groupNames, pushnames, now)),
     ].filter((d): d is Draft<MessageEvent> => d !== null);
 
     // the classifier (§3): a sender whose GRANT row names a mind, or whose number is a
@@ -493,6 +515,59 @@ function mapEdit(
       external_id: externalId(e.external_id ?? `edit.${e.original_message_id}.${ts}`),
     },
     parts: [{ type: "text", kind: "text", text }],
+  };
+}
+
+/** A roster change is the group's own line about it (§3): one `members` data part saying
+ *  who joined and who left, from whoever made the change — or, when nobody did it to them,
+ *  the first who moved, since a line with no sender is the account speaking. The account's
+ *  own arrival reads the same way, its own address among the joined. A subject alone is
+ *  no line: it rides the room's name. Its identity is the change itself, so a batch the
+ *  bridge posts again merges. */
+function mapRoster(
+  g: WAGroup,
+  connection: string,
+  groupNames: Map<string, string>,
+  pushnames: Map<string, string>,
+  now: () => string,
+): Draft<MessageEvent> | null {
+  const person = (p: WAPerson): WAPerson => {
+    const name = p.name || pushnames.get(p.address);
+    return { address: p.address, ...(name ? { name } : {}) };
+  };
+  const face = (p: WAPerson): Json =>
+    p.name ? { address: p.address, name: p.name } : { address: p.address };
+  const joined = (g.joined ?? []).filter((p) => p.address).map(person);
+  const left = (g.left ?? []).filter((p) => p.address).map(person);
+  if (!g.address || (!joined.length && !left.length)) return null;
+  const sender = g.by?.address ? person(g.by) : (joined[0] ?? left[0]);
+  const ts = g.timestamp || now();
+  const name = g.name || groupNames.get(g.address);
+  const marks = { ...(g.muted ? { muted: true } : {}), ...(g.archived ? { archived: true } : {}) };
+  const moved = [
+    ...joined.map((p) => `+${p.address}`),
+    ...left.map((p) => `-${p.address}`),
+  ].join("");
+  return {
+    ts,
+    type: "message",
+    envelope: {
+      service: SERVICE,
+      connection_address: connection,
+      conversation: { address: g.address, kind: kindOf(g.address), ...(name ? { name } : {}) },
+      sender,
+      external_id: externalId(`members.${connection}.${g.address}.${ts}.${moved}`),
+    },
+    parts: [{
+      type: "data",
+      kind: "members",
+      data: {
+        ...(joined.length ? { joined: joined.map(face) } : {}),
+        ...(left.length ? { left: left.map(face) } : {}),
+        ...(g.reason ? { reason: g.reason } : {}),
+      },
+    }],
+    ...(Object.keys(marks).length ? { extra: marks } : {}),
   };
 }
 

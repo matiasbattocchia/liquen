@@ -4543,3 +4543,23 @@ makes, the two refusals, the roster naming, the bridge's refusal class); `groups
 on the bridge (the JID rules, the error mapping, the seat failures, the roster
 resolution). Not live-smoked: the bridge running on this machine predates the routes.
 The rooms order the user confirmed — Slack, Teams, WhatsApp — is complete.
+
+### WhatsApp group roster changes reach the log as the group's own line (2026-09-28) — LANDED
+
+whatsmeow announces every roster change (`events.GroupInfo`'s `Join`/`Leave`, and
+`events.JoinedGroup` for the account's own arrival), and the bridge read only the subject
+off it: OpenBSP's contract had no slot for a roster, and OpenBSP keeps none. The bridge
+(`~/open-bsp-whatsmeow`) now posts the change on the `groups` feed — `joined`/`left` in
+canonical digits with the account's name for each, `by`, `reason`, `timestamp`, the
+chat's marks — and OpenBSP, which applies the subject and reads nothing else of an entry,
+is untouched. The same branch now keeps a new subject in the bridge's cache, so messages
+after a rename carry the new name rather than the one the process first fetched.
+
+liquen's ingest maps a change to a `members` data line in the group from whoever made it
+(`mapRoster`), deduped on the change itself. Wire memberships were not the place: a
+WhatsApp conversation is read through the account's own grant, so no membership row moves
+when someone else joins; what the agent lacked was the line. Tests: `ingest.test.ts` (the
+line's shape, a subject alone making none, a retry merging, the link join and the
+account's own arrival); `groups_test.go` on the bridge. Slack's `channel_join` messages
+and Teams' system messages are still dropped at ingest, so on those wires only the
+membership mirror moves.
