@@ -368,6 +368,21 @@ export function logSuite(s: Substrate): void {
     });
   });
 
+  Deno.test("stampKind: every row of the conversation takes the wire's kind; other rooms keep theirs", async () => {
+    await withLog(async (log) => {
+      const kinded = (id: string, conversation: string): MessageEvent => {
+        const m = msg(id, conversation, "hola");
+        m.envelope.conversation.kind = "direct";
+        return m;
+      };
+      await log.publish([kinded("01", "19:abc@thread.v2"), kinded("02", "19:abc@thread.v2")]);
+      await log.publish(kinded("03", "19:x_y@unq.gbl.spaces"));
+      await log.stampKind("local", "19:abc@thread.v2", "group");
+      const kinds = (await log.read()).map((e) => `${e.id}:${e.envelope.conversation.kind}`);
+      assertEquals(kinds, ["01:group", "02:group", "03:direct"]);
+    });
+  });
+
   Deno.test("setDelivery conversation: the wire's filing moves the row, kind and name as given", async () => {
     await withLog(async (log) => {
       await log.publish(msg("01", "ana@x.com,bob@y.com", "hola"));

@@ -4292,3 +4292,56 @@ and webhook already registered — only a fixed hostname works as `publicUrl`. W
 `ingestUrl` stays as it is: the bridge's private address for this org, which may be a
 Docker alias no tunnel ever sees. A door that is a one-shot process (the sign-ins) is not
 checked end to end; the link the human opens fails visibly if the path is down.
+
+### Slack and Teams read the gap back: the log is the cursor (2026-09-28) — LANDED
+
+Neither wire holds what it could not deliver. Slack drops an event that has no socket to
+take it and gives up an HTTP delivery after minutes of retries; Graph retries a notice for
+a few hours and lets a subscription lapse after three days. A laptop closed for a night
+lost every message, join and leave in between, and nothing ever filled it. Now both
+ingests read the gap back from the history APIs, and the CURSOR IS THE LOG: the newest row
+the log holds at the account's anchor is where the listening stopped, the newest row in a
+room is where that room stopped, and the API is asked from there. Nothing new is stored to
+know where to resume, an account with no row at all was never heard and is left alone,
+and a workspace connected an hour ago catches up from its connect note.
+
+Slack (`src/connect/slack/catchup.ts`): at boot on either carrier, and whenever a socket
+comes back after more than five seconds — a `disconnect` refresh now opens the successor
+before the old socket closes (`slackSocket`, the carrier's `onOpen` says how long it was
+down), so a routine refresh leaves no gap and asks for nothing. `users.conversations` on
+the bot's token and every bound user's gives the rooms and, per room, the tokens that see
+it — the delivery's `authorizations`, so the read-back anchors and enrolls as the events
+would; a user token's list is that member's membership now, and the leaves the gap
+swallowed are deleted from it. `conversations.history` from the room's newest row, and
+`conversations.replies` for a thread whose `latest_reply` is newer, through `mapMessage`.
+Every Slack row is now stamped with the message's own time (`slackTime`), live too, so
+the read-back and the live delivery of one message are one row and the batch reads in the
+room's order. Internal apps keep the standard rate limits; a 429 is waited out once.
+
+Teams (`createTeamsCatchUp`): at boot, with or without a public door — the one poll the
+terms allow, once per process — so an org with no `edge.publicUrl` now hears Teams at
+every restart instead of never. Per grant, from its newest Teams row (mail and calendar
+rows share the connection and are filtered out): `/me/chats` newest first by
+`lastMessagePreview`, stopping at the first chat that last spoke before the gap, each
+chat's messages by `lastModifiedDateTime gt` its own newest row; every channel of every
+joined team with `$expand=replies`, walked newest chain first until one that last moved
+before the gap. The mapping the webhook used is hoisted (`teamsMapper`) and shared. A
+message the log already holds is told only what changed on it — its edit when newer than
+the row, else its reactions (the message with `lastEditedDateTime` cleared takes the
+reaction path), else its deletion — and a deletion of a message never heard is nothing.
+
+Teams kinds switch with the user's decision: a group chat is a `group` (a roster people
+are added to under a topic, not a member-defined pair), a meeting's chat stays `group`,
+oneOnOne stays `direct`; a private channel is a `group`, standard and shared channels
+`channel`. `kindOf` reads Graph's `chatType` / `membershipType`, and the directory stamps
+the kind onto every row the place already has the first time it resolves in a process —
+`Log.stampKind(service, conversation, kind)`, an UPDATE on both substrates that moves no
+`updated_at` and wakes nobody — so the rows labelled `direct` before this entry relabel
+themselves as they are met.
+
+The rows are LIVE on both wires, one batch per account, each row at its message's time:
+what is owed is decided by the attention rules and the boot floor exactly as for the
+WhatsApp bridge's offline queue, and a message already in the log merges on its
+`external_id` and wakes nobody. Not read back on Slack: an edit or a delete of a message
+the log already had, reactions, and replies to a thread whose root is older than the gap
+(history lists roots only, and a reply moves no root). Both are reachable by `search`.

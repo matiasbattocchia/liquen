@@ -388,6 +388,16 @@ export async function openPgLog(
       return tail(sql, channel, seeding, listener, opts);
     },
 
+    async stampKind(service, conversation, kind): Promise<void> {
+      await count(
+        sql,
+        `UPDATE events SET conversation_kind = $1::text
+         WHERE service = $2::text AND conversation_address = $3::text
+           AND coalesce(conversation_kind, '') <> $1::text`,
+        [kind, service, conversation],
+      );
+    },
+
     setDelivery(id: EventId, given: DeliveryPatch): Promise<void> {
       const patch = scrub(given);
       return serial(async (tx) => {

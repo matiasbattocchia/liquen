@@ -79,7 +79,7 @@ export const SPEC: ConnectorSpec = {
       key: "ingestPort",
       value: DEFAULT_INGEST_PORT,
       doc:
-        "where Graph's Teams notifications land, behind <edge.publicUrl>/microsoft/ingest; no publicUrl ⇒ Teams is not subscribed (sends still go out)",
+        "where Graph's Teams notifications land, behind <edge.publicUrl>/microsoft/ingest; no publicUrl ⇒ Teams is not subscribed (the gap is still read at boot, sends still go out)",
       check: checkPort,
     },
     {

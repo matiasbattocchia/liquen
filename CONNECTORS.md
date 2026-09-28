@@ -296,7 +296,30 @@ principal as a peer.
 
 ## 4. Slack — landed; two threads dangling
 
-Live smoke passed 2026-08-12 (paste door, alter-ego dispatch, echo merge). Remaining:
+Live smoke passed 2026-08-12 (paste door, alter-ego dispatch, echo merge).
+
+**The gap is read back.** Slack holds nothing for an app that is not connected — an event
+with no socket to take it is gone, an HTTP delivery is retried for a few minutes — so the
+ingest asks the history APIs for what it missed (`src/connect/slack/catchup.ts`): at boot
+on either carrier, and when a socket comes back after more than a blip (a `disconnect`
+refresh hands over to a new socket before the old closes, so it leaves no gap and asks for
+nothing). The log is the cursor: the newest row at the workspace's anchors is where the
+listening stopped, the newest row in a room is where that room stopped, and
+`conversations.history` from there (plus `conversations.replies` for any thread whose last
+reply is newer) is the gap. The rooms come from `users.conversations` on every token the
+workspace has — the bot's, then each bound user's — which are also the delivery's
+`authorizations`, so a room the bot is in anchors to the bot as its events do; a user
+token's room list is that member's membership as the wire holds it now, and the joins and
+leaves the gap swallowed are mirrored from it. One live batch per workspace, each row at
+its message's own time (every Slack row is, live too): a message already in the log
+merges and wakes nobody, the rest is owed under the attention rules and the boot floor.
+A workspace with no row was never heard and is left alone. Not read back: an edit or a
+delete of a message the log already had, reactions, and replies to a thread whose root is
+older than the gap. Internal (customer-built) apps keep the standard rate limits; a
+commercially distributed non-Marketplace app created after 2025-05-29 reads
+`conversations.history` at one call a minute, fifteen messages a call.
+
+Remaining:
 
 - **The mind-alias at ingest** — aliasing the principal's Slack self-DM onto `mind:<agent>`
   requires knowing WHICH `im` is the self-DM. A management step, not derivable from message
@@ -474,9 +497,12 @@ change type, and it needs an Azure subscription and a second token audience.
 
 **The rows.** A notice carries the resource path and nothing else (the rich form needs a
 certificate and shortens the lifetime), so each is one `GET` of the message. A chat is a
-conversation addressed by its id — `direct` when Teams calls it oneOnOne or group, `group`
-when it is a meeting's — named for the other member, the topic, or the other members; a
-channel is `<team id>/<channel id>`, `channel`, named `Team / Channel`. A channel reply is
+conversation addressed by its id — `direct` when Teams calls it oneOnOne, `group` when it
+is a group chat (a roster under a topic) or a meeting's — named for the other member, the
+topic, or the other members; a channel is `<team id>/<channel id>` — `channel` when
+standard or shared, `group` when private — named `Team / Channel`. The kind is asked of
+Graph once per place per process and stamped onto the rows the place already has
+(`stampKind`), so a room labelled before reads as Teams describes it now. A channel reply is
 a `reply` to its root; a chat is flat, and a quoted reply there (`messageReference`) names
 the message it answers. `external_id = teams:<address>:<id>`, so the same message reaching
 two members' subscriptions merges, as does the member's own send with its echo. An edit is
@@ -497,6 +523,20 @@ the channel's own folder (`filesFolder`), or to the account's OneDrive under `li
 an organization view link — and rides as a `reference` attachment whose id is the item's
 eTag GUID; an external link joins the words. The response's `id` and `from.user.id` stamp
 the row.
+
+**The gap is read back.** Graph retries a notice it could not deliver for a few hours and
+a subscription lives three days; past either, the gap is only in the messages. So the
+ingest reads it at boot (`createTeamsCatchUp`), with or without a public door — the one
+poll the terms allow, once per process. Per grant, from the newest Teams row the log holds
+for it (mail and calendar rows share the connection and do not count): `/me/chats` newest
+first with `lastMessagePreview`, stopping at the first chat that last spoke before the
+gap, and each chat's messages by `lastModifiedDateTime gt` its own newest row; then every
+channel of every joined team, roots with `$expand=replies` in the listing's order (newest
+chain first) until a chain that last moved before the gap. Through the same mapping, one
+live batch per grant. A message the log already holds is told only what changed on it:
+its edit when newer than the row, else its reactions, else its deletion; a deletion of a
+message never heard is nothing. A grant with no Teams row was never heard and is left
+alone.
 
 Ceilings: reading is 1 rps per chat or channel; 10,000 Teams subscriptions per tenant
 across all apps.

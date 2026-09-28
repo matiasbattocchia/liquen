@@ -49,6 +49,7 @@ import type {
   Envelope,
   Event,
   EventId,
+  Service,
 } from "../types.ts";
 import { newId } from "./id.ts";
 import {
@@ -270,6 +271,15 @@ export type Log =
      *  `status` stages. An UPDATE — no new row: the append stream never sees it, only a
      *  subscriber that asked for `updates` does (§3, §4). */
     setDelivery(id: EventId, patch: DeliveryPatch): Promise<void>;
+    /** The wire's word on what a conversation IS, applied to every row it already has:
+     *  `kind` is stamped by ingest from a platform fact (§3), and the upsert fills it once,
+     *  so a room the platform describes anew keeps its old label on every earlier row
+     *  until this rewrites them. An UPDATE that wakes nobody. */
+    stampKind(
+      service: Service,
+      conversation: string,
+      kind: NonNullable<Conversation["kind"]>,
+    ): Promise<void>;
     /** Who steers an agent (§4): the entry's list, else the roster when its account is
      *  the org's, else itself. Live — read off the registry and the connections map. */
     principalsOf(agentId: string): Promise<string[]>;
@@ -482,6 +492,12 @@ export async function openLog(
        conversation_name    = CASE WHEN ?7 IS NULL THEN conversation_name ELSE ?9 END,
        updated_at  = ?3
      WHERE id = ?4`,
+  );
+  // `updated_at` stays: a relabel is not a delivery, and the update stream is for those
+  const relabel = db.prepare(
+    `UPDATE events SET conversation_kind = ?1
+     WHERE service = ?2 AND conversation_address = ?3
+       AND coalesce(conversation_kind, '') <> ?1`,
   );
   const byExternal = db.prepare("SELECT id FROM events WHERE external_id = ?");
   const absorb = db.prepare(
@@ -769,6 +785,11 @@ export async function openLog(
         db.exec("ROLLBACK");
         throw err;
       }
+      return Promise.resolve();
+    },
+
+    stampKind(service, conversation, kind): Promise<void> {
+      relabel.run(kind, service, conversation);
       return Promise.resolve();
     },
 

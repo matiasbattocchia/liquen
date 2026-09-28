@@ -951,6 +951,44 @@ Deno.test("slack socket: an envelope is acked only after its delivery landed —
   assertStringIncludes(logged[0], "env-1");
 });
 
+Deno.test("slack socket: a `disconnect` hands over to a new socket before the old closes (no gap); a fallen socket comes back and says how long it was down", async () => {
+  const order: string[] = [];
+  const sockets: WebSocket[] = [];
+  const server = Deno.serve({ port: 0, onListen: () => {} }, (req) => {
+    const { socket, response } = Deno.upgradeWebSocket(req);
+    const n = sockets.push(socket);
+    socket.onopen = () => {
+      order.push(`open:${n}`);
+      // the first socket is asked to refresh; the second is dropped by the far side
+      if (n === 1) socket.send(JSON.stringify({ type: "disconnect", reason: "refresh_requested" }));
+      if (n === 2) setTimeout(() => socket.close(), 50);
+    };
+    socket.onclose = () => order.push(`closed:${n}`);
+    return response;
+  });
+  const opens: (number | null)[] = [];
+  const stop = slackSocket("xapp-1-A1-2-3", () => Promise.resolve(new Response("ok")), {
+    open: () => Promise.resolve(`ws://127.0.0.1:${server.addr.port}/`),
+    onOpen: (down) => opens.push(down),
+  });
+  try {
+    const t0 = Date.now();
+    while (opens.length < 3 && Date.now() - t0 < 5_000) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  } finally {
+    await stop();
+    await server.shutdown();
+  }
+  // the refresh: the second socket opened BEFORE the first closed, and no time was lost;
+  // the drop: the third came back after the reconnect pause, and the pause is what it says
+  assertEquals(order.slice(0, 3), ["open:1", "open:2", "closed:1"]);
+  assertEquals(opens.length, 3);
+  assertEquals(opens[0], null);
+  assertEquals(opens[1], 0);
+  assert(opens[2]! >= 900, `down ${opens[2]}ms`);
+});
+
 Deno.test("HTTP mode: every app's signing secret verifies, and no app means no server", async () => {
   const many = createSlackWebhook({
     publish: (() => Promise.resolve(undefined)) as unknown as Appender["publish"],
