@@ -595,6 +595,29 @@ its edit when newer than the row, else its reactions, else its deletion; a delet
 message never heard is nothing. A grant with no Teams row was never heard and is left
 alone.
 
+**The rooms are the member's** (`src/connect/microsoft/rooms.ts`, the rooms port of §1):
+every leg rides the account's own grant, the token the dispatcher posts with, so the room
+is opened by the grant that speaks in it. `open` with one person and no name is the
+oneOnOne chat of the two, found or made (`POST /chats`); a longer unnamed list is refused,
+since a group chat is made anew on every call and is named by its topic — so a named
+`group` is a group chat under that topic (no `:`, 250 at most), the member first among
+its people. A `channel` lives in a team, so its name is `#Team / Channel`: the team found
+by name among `/me/joinedTeams`, the channel made standard in it (fifty characters, the
+ones Teams keeps out folded away); its people are the team's, and the list reaches those
+of them in the team. `members` pages the chat's or the channel's roster and answers user
+ids with the names Teams shows; `add` is one `POST …/members` a person (a chat member
+sees the whole history), `remove` and `leave` find the membership id on the roster and
+`DELETE` it; `rename` is the chat's topic or the channel's display name. Nobody joins a
+chat or a channel by their own hand on Teams, so the port has no `join`; a standard
+channel's roster is its team's, and Graph refuses a membership leg there in its own
+words. What a leg may do is the grant's consent — `Chat.Create`, `ChatMember.ReadWrite`,
+`Channel.Create`, `ChannelMember.ReadWrite.All`, `ChannelSettings.ReadWrite.All`, all in
+the catalog's default `scopes`, the last four the tenant admin's to consent to — and
+Graph answers a call short of one with a 403 that does not always name it, so the leg's
+refusal names the permission it needs and the remedy: the account signs in again. Main
+wires the port when `connections.microsoft` is declared, over the vault and a grant
+broker of its own.
+
 Ceilings: reading is 1 rps per chat or channel; 10,000 Teams subscriptions per tenant
 across all apps.
 

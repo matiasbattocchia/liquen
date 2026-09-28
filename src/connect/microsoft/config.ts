@@ -13,15 +13,18 @@ import { checkStrings, connectorConfig, type ConnectorSpec } from "../../config.
  *  calendar id from `/me/calendars`. */
 export const DEFAULT_CALENDARS = ["primary"];
 /** Identity, the `/me` profile, the calendar, the mailbox read and sent, the member's
- *  chats read and written, the channels of their teams read and written, and the files
- *  a Teams message carries (OneDrive items, shared by reference): the product. Entra
- *  records consent per permission, so a later ask adds to a grant: each poll or
- *  subscription runs only on a grant whose consent carries the scope it needs
- *  (`mail.ts`, `teams.ts`), and a grant made before a surface joined keeps what it has
- *  and takes the rest on re-consent. `ChannelMessage.Read.All` is granted by a tenant's
- *  admin on the registration, never by the member alone. The Graph permissions are
- *  spelled short; the wire accepts both spellings and the door compares them as one
- *  (`oauth.ts`). */
+ *  chats read and written, the channels of their teams read and written, the files a
+ *  Teams message carries (OneDrive items, shared by reference), and the rooms
+ *  (`rooms.ts`): a chat made, its members added and removed, its topic; a channel made
+ *  in a team, its members and its name. Entra records consent per permission, so a
+ *  later ask adds to a grant: each poll or subscription runs only on a grant whose
+ *  consent carries the scope it needs (`mail.ts`, `teams.ts`), a rooms leg refuses
+ *  naming the one it lacks, and a grant made before a surface joined keeps what it has
+ *  and takes the rest on re-consent. `ChannelMessage.Read.All`, `ChatMember.ReadWrite`
+ *  and the three channel permissions (`Channel.Create`, `ChannelMember.ReadWrite.All`,
+ *  `ChannelSettings.ReadWrite.All`) are granted by a tenant's admin on the registration,
+ *  never by the member alone. The Graph permissions are spelled short; the wire accepts
+ *  both spellings and the door compares them as one (`oauth.ts`). */
 export const DEFAULT_SCOPES = [
   "openid",
   "profile",
@@ -32,12 +35,17 @@ export const DEFAULT_SCOPES = [
   "Mail.Read",
   "Mail.Send",
   "Chat.ReadWrite",
+  "Chat.Create",
+  "ChatMember.ReadWrite",
   "ChatMessage.Send",
   "ChannelMessage.Read.All",
   "ChannelMessage.Send",
   "ChannelMessage.ReadWrite",
   "Team.ReadBasic.All",
   "Channel.ReadBasic.All",
+  "Channel.Create",
+  "ChannelMember.ReadWrite.All",
+  "ChannelSettings.ReadWrite.All",
   "Files.ReadWrite",
 ];
 /** The grant's proxy declaration (§9), written onto every vault row this connector mints:

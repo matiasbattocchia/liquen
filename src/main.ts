@@ -56,6 +56,8 @@ import { whatsappContact } from "./connect/whatsapp/contact.ts";
 import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
 import { slackRooms } from "./connect/slack/rooms.ts";
 import { slackTokenFor } from "./connect/slack/dispatch.ts";
+import { teamsRooms } from "./connect/microsoft/rooms.ts";
+import { createGrantBroker } from "./proxy/grants.ts";
 import { entry } from "./entry.ts";
 import { claim, MAIN } from "./stop.ts";
 import { createMirror } from "./connect/mirror.ts";
@@ -216,11 +218,20 @@ export async function start(
     }
     : undefined;
   // the rooms (§9): one port per service whose API opens and changes conversations, wired
-  // where the connection is declared — slack's over the vault the dispatcher posts with,
-  // so a room is opened by the grant that speaks in it
-  const creds = config.catalog?.connections?.slack ? await store.vault() : undefined;
+  // where the connection is declared, over the vault the dispatcher posts with — so a
+  // room is opened by the grant that speaks in it
+  const roomed = {
+    slack: Boolean(config.catalog?.connections?.slack),
+    microsoft: Boolean(config.catalog?.connections?.microsoft),
+  };
+  const creds = roomed.slack || roomed.microsoft ? await store.vault() : undefined;
   const rooms: XiPorts["rooms"] = creds
-    ? { slack: slackRooms({ tokenFor: slackTokenFor(creds) }) }
+    ? {
+      ...(roomed.slack ? { slack: slackRooms({ tokenFor: slackTokenFor(creds) }) } : {}),
+      ...(roomed.microsoft
+        ? { microsoft: teamsRooms({ broker: createGrantBroker({ creds }), creds }) }
+        : {}),
+    }
     : undefined;
 
   let stopped = false;

@@ -4487,3 +4487,35 @@ poll. The rule
 is in `store/log.ts` and DESIGN §2: nothing in a process opens the database's files but
 SQLite. Left for later if the poll's cost ever shows: gate it on `PRAGMA data_version`, a
 per-connection counter that moves when another process commits (checked here).
+
+### Teams rooms: the port over Graph chats and channels, on the member's own grant (2026-09-28) — LANDED
+
+The second `RoomsPort` (`src/connect/microsoft/rooms.ts`): `open` with one person and no
+name is the oneOnOne chat of the two, found or made through `POST /chats`; a named
+`group` is a group chat under its topic, the member first among its people; a `channel`
+is named `#Team / Channel`, the team found by name among the ones the member is in and a
+standard channel made there. An unnamed list of two or more is refused: a Teams group
+chat is made anew on every call and is named by its topic, so there is no room a list
+finds again the way Slack's mpim or a local direct room is found, and the refusal says to
+name it. `members` pages the roster and answers user ids with Teams' display names;
+`add` posts one member a call (a chat member sees the whole history); `remove` and
+`leave` look the membership id up on the roster and delete it; `rename` is the topic or
+the display name. There is no `join`, since Teams has no way for a member to join a chat
+or a channel by their own hand. Every leg rides the account's own grant through a grant
+broker, as the dispatcher posts, and reads the member's own user id off the grant row.
+
+Graph refuses a call short of its permission with a 403 that does not always name the
+permission, so each leg carries the name of the one it needs and its refusal says it
+with the remedy. The five the port needs — `Chat.Create`, `ChatMember.ReadWrite`,
+`Channel.Create`, `ChannelMember.ReadWrite.All`, `ChannelSettings.ReadWrite.All` — join
+the catalog's default `scopes`; all but `Chat.Create` are the tenant admin's to consent
+to on the registration, which the app guide now says. An org whose `config.jsonc` already
+wrote `scopes` keeps what it wrote, and a grant made under the shorter ask refuses each
+leg by name until it signs in again, consent adding up.
+
+Main wires the port when `connections.microsoft` is declared, over the vault it already
+opens for Slack's, with a grant broker of its own. Tests: `rooms.test.ts` (the calls each
+leg makes and the body each carries, the one-to-one rule, the team lookup, the paged
+roster, the 403 wording, the topic and channel-name folding). Not live-smoked: the
+Teams grant on this machine's org has not been re-consented under the longer ask. Next
+in the order: WhatsApp rooms once the bridge has group routes.
