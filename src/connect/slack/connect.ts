@@ -49,7 +49,15 @@ import { findRoot, orgFlag } from "../../config.ts";
 import { callbackAddress, ingestAddress } from "../../edge.ts";
 import { timedFetch } from "../http.ts";
 import { declared, printNext, requireIngest } from "../declare.ts";
-import { type DoorAddress, doorAddress, oneShot, openBrowser, serveDoor } from "../door.ts";
+import {
+  type DoorAddress,
+  doorAddress,
+  handOut,
+  oneShot,
+  openBrowser,
+  serveDoor,
+  terminalUser,
+} from "../door.ts";
 import { missingScopes, SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
@@ -530,7 +538,6 @@ const USAGE = `usage: liquen connect slack app [--bot] [--user]
 if (import.meta.main) {
   await entry(async () => {
     const { openStore } = await import("../../store/mod.ts");
-    const { userInfo } = await import("node:os");
     const { slackConfig } = await import("./config.ts");
     const { readConfig } = await import("../../config.ts");
 
@@ -551,13 +558,7 @@ if (import.meta.main) {
       else if (rest[i].startsWith("--")) flags.set(rest[i].slice(2), rest[++i] ?? "");
       else positional.push(rest[i]);
     }
-    const me = (): string => {
-      try {
-        return userInfo().username;
-      } catch {
-        return "principal";
-      }
-    };
+    const me = terminalUser;
 
     /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
     const lines = Deno.stdin.isTerminal()
@@ -757,13 +758,7 @@ if (import.meta.main) {
           asked.join("\n  ")
         }\n`,
       );
-      // never opened here: the link binds the grant to a name, and this browser's Slack
-      // login would land under it looking perfectly successful
-      console.error(
-        `Send this link to the person signing in:\n  ${start.href}\n` +
-          `It binds the grant to "${agent}" and is good for one sign-in, so it goes to ` +
-          `exactly one person. This door waits until they finish, serving ${door.callback}.`,
-      );
+      handOut(door, start, agent);
       const res = await outcome;
       await server.shutdown();
       await log.close();

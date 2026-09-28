@@ -8,6 +8,7 @@
  * addressing; the handler is each service's.
  */
 
+import { userInfo } from "node:os";
 import { serveLeg } from "./serve.ts";
 
 /** A handler wrapped for a one-shot door: the first callback — whichever way it went —
@@ -65,6 +66,34 @@ export function serveDoor(
   handler: (req: Request) => Promise<Response>,
 ): Promise<Deno.HttpServer<Deno.UnixAddr>> {
   return serveLeg(root, service, "oauth", handler);
+}
+
+/** The user at this terminal — the agent a door signs in when none is named. */
+export function terminalUser(): string {
+  try {
+    return userInfo().username;
+  } catch {
+    return "principal";
+  }
+}
+
+/** Hand one sign-in's start link to whoever signs in. The person at this terminal — a
+ *  loopback callback, or a grant bound to the terminal's own user — gets it opened in this
+ *  machine's browser. Anyone else gets a link to send: opened here, the one sign-in would
+ *  go to whoever this browser is logged in as, and the grant would land under the name
+ *  meant for someone else. `agent` is who the grant binds to; none is the org. */
+export function handOut(door: DoorAddress, start: URL, agent: string | undefined): void {
+  if (door.loopback || agent === terminalUser()) {
+    console.error(`Open and approve:\n  ${start.href}`);
+    openBrowser(start.href);
+    return;
+  }
+  console.error(
+    `Send this link to the person signing in:\n  ${start.href}\n` +
+      `It binds the grant to ${agent ? `"${agent}"` : "the org"} and is good for one ` +
+      `sign-in, so it goes to exactly one person. This door waits until they finish, ` +
+      `serving ${door.callback}.`,
+  );
 }
 
 /** Open a link in this machine's browser, best effort — the link printed is the real door. */

@@ -32,7 +32,14 @@ import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag, readConfig } from "../../config.ts";
 import { callbackAddress } from "../../edge.ts";
 import { declared, printNext, requireEdge, startStep } from "../declare.ts";
-import { type DoorAddress, doorAddress, oneShot, openBrowser, serveDoor } from "../door.ts";
+import {
+  type DoorAddress,
+  doorAddress,
+  handOut,
+  oneShot,
+  serveDoor,
+  terminalUser,
+} from "../door.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
@@ -184,15 +191,7 @@ if (import.meta.main) {
         ]);
       } else if (verb === "account") {
         const { createGoogleOAuth } = await import("./oauth.ts");
-        const { userInfo } = await import("node:os");
-        const org = flags.has("org");
-        const agent = org ? undefined : positional[0] ?? (() => {
-          try {
-            return userInfo().username;
-          } catch {
-            return "principal";
-          }
-        })();
+        const agent = flags.has("org") ? undefined : positional[0] ?? terminalUser();
         const app = await pickGoogleApp(creds, flags.get("app")).catch((e: Error) => {
           console.error(e.message);
           Deno.exit(2);
@@ -237,19 +236,7 @@ if (import.meta.main) {
           `Connecting a Google account${agent ? ` for "${agent}"` : " (org — ownerless)"} ` +
             `via app ${app.value.client_id}.\nAsking for:\n  ${asked.join("\n  ")}\n`,
         );
-        if (door.loopback) {
-          console.error(`Open and approve:\n  ${start.href}`);
-          openBrowser(start.href);
-        } else {
-          // opening it here would spend the one sign-in on whoever is logged in to this
-          // browser, and the grant would land under the name meant for someone else
-          console.error(
-            `Send this link to the person signing in:\n  ${start.href}\n` +
-              `It binds the grant to ${agent ? `"${agent}"` : "the org"} and is good for one ` +
-              `sign-in, so it goes to exactly one person. This door waits until they finish, ` +
-              `serving ${door.callback}.`,
-          );
-        }
+        handOut(door, start, agent);
         const res = await outcome;
         await server.shutdown();
         await log.close();
