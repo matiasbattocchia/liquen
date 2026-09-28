@@ -4152,3 +4152,41 @@ Open, phase 2 — the proxy as the outbound handler:
 4. Deno trusting Cloudflare's CA in the image (`DENO_CERT`); whether tools that verify
    against their own roots survive interception of every host.
 5. `enableInternet = false` once the handler is the only way out.
+
+### Phase 1 ran: a turn on a Cloudflare sandbox (2026-09-28)
+
+The gateway is deployed at `liquen-sandbox.<account>.workers.dev` (Containers need the
+Workers Paid plan; the first deploy leaves the application `provisioning` for two minutes,
+during which every start fails with `pool error`). The live suite passes on it, and a
+local main with the docs on a scratch Postgres ran turns through it: `read` off the table,
+`bash` in the container, a file written in one turn read back in the next. What the live
+run showed, each now carried by the code:
+
+- Cold start: 2 s from the first exec to its answer. A shell call is 2–5 s round trip
+  from here; `fetch` is 5.5 s, most of it Deno starting.
+- The bridge's exec stream stays open while any child holds the output pipe, so a plain
+  `sleep 30 &` would hold the call for 30 s. The remote shell's script sends the command's
+  output to a log file and reads the file back, so a background job holds the file, and
+  the call returns when the foreground is done.
+- The container's init (`sandbox`, PID 1) does not reap orphans: a finished job stays in
+  the table as a zombie until the container goes. A job is live while its group has a
+  member that is not `Z`; the zombies themselves accumulate for the container's life.
+- `GET /file/<missing>` answers 200 with an empty body, the same as an empty file; an
+  empty read asks `test -f` to tell them apart.
+- An attach (`cli`, `repl`) tells the session's shell to stand where the principal stands,
+  `Deno.cwd()`. That path is on this machine; in the sandbox the shell stands in the
+  workspace whoever is connected.
+- No `/etc/cloudflare/certs` CA is in the container without an outbound handler; Deno and
+  curl reach the world on the system roots.
+- Whether the container sleeps: after 12 minutes without a request, a container with two
+  background `sleep`s running was still up, its files with it — the SDK's `sleepAfter` is
+  `10m` from the last request. Whether a running process holds it awake, or the timer is
+  coarser, is still to be told apart with a longer idle.
+
+**Open, a decision:** the docs-table tools never reached the model. `agent.tools` in the
+scaffold names four (`search`, `schedule`, `cancel`, `bash`), and the offer is filtered by
+that list, so `read`, `write` and `edit` were absent until the scratch org set `tools:
+null`. With the docs on the table, those three are the only way to a doc: an agent without
+them cannot read its own instructions. Either the scaffold's list carries them and the
+catalog refuses a `tools` list lacking them when `docs` is `table`, or the substrate tools
+stand outside the filter as the docs' own reach. Not decided here.
