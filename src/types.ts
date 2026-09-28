@@ -625,6 +625,7 @@ export type ContactResult =
 export interface SearchArgs {
   in?: string; // one conversation: its address, or a name (group's, or a DM's person)
   from?: string; // one sender: their address, or any part of their name
+  connection?: string; // one of the agent's accounts: its name or address, as `send` takes it
   before?: Timestamp; // a bare stamp reads on the org's clock; an offset makes it absolute
   after?: Timestamp;
   text?: string; // one contiguous phrase, case-insensitive substring — no fuzz, no wildcards

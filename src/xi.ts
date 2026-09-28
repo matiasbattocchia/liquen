@@ -2614,12 +2614,14 @@ async function search(
   if (!Number.isInteger(limit) || limit < 1) {
     throw new Error(`limit must be a positive integer, got ${JSON.stringify(args.limit)}`);
   }
-  // the filters narrow by ADDRESS; a name is only ever a way to find one (§6)
+  // the filters narrow by ADDRESS; a name is only ever a way to find one (§6). The account
+  // is the agent's own, named as `send` names it, and an ambiguous name is refused there
   const asked = args.from === undefined ? undefined : String(args.from);
-  const [conversations, spoke, contacts] = await Promise.all([
+  const [conversations, spoke, contacts, account] = await Promise.all([
     rooms(log, args.in === undefined ? undefined : String(args.in)),
     people(log, asked),
     asked === undefined ? undefined : booked(self, ports, asked),
+    args.connection === undefined ? undefined : accountNamed(String(args.connection), self, ports),
   ]);
   // the two places a person can be (§6): the rows they wrote, and the book they are saved
   // in. Both narrow the same filter — so a contact the account saved before they ever
@@ -2639,6 +2641,7 @@ async function search(
   const rows = await log.read({
     ...(conversations ? { conversations } : {}),
     ...(senders ? { senders } : {}),
+    ...(account ? { service: account.service, connection: account.address } : {}),
     before: args.before,
     after: args.after,
     text: args.text,
@@ -2895,6 +2898,11 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
           from: {
             type: "string",
             description: "one sender: their address, or any part of the name they go by",
+          },
+          connection: {
+            type: "string",
+            description: "one of your accounts — a <conn> `name` or `address`: only what " +
+              "rode it",
           },
           before: {
             type: "string",

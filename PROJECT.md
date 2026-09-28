@@ -4199,3 +4199,11 @@ token) names `liquen start`, or `liquen stop` then `liquen start` when the org i
 (`startStep`), because main picks the rows it fronts at boot and the supervisor reads the
 catalog once. Microsoft's account door also names `notificationUrl` while it is null.
 Slack's and GitHub's owed pieces moved onto the same heading.
+
+### `search` narrows to one account (2026-09-28) — LANDED
+
+`search(connection:)` keeps only the rows that rode one of the agent's accounts, named
+the way `send(connection:)` names one (`accountNamed`: the `<conn>` name, any part of it,
+or the address); an account nobody wears, or a name two wear, is the call's error with
+the agent's accounts listed. The store's read already filtered on the connection; the
+tool now exposes it.

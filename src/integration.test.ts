@@ -1787,6 +1787,60 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
   );
 });
 
+Deno.test("search `connection`: one of the agent's accounts, named as send names it, narrows to what rode it", async () => {
+  const old = (
+    connection: { service: "whatsapp" | "slack"; address: string },
+    text: string,
+  ): Draft<MessageEvent> => ({
+    ts: new Date(Date.now() - 40 * 3_600_000).toISOString(),
+    type: "message",
+    envelope: {
+      service: connection.service,
+      connection_address: connection.address,
+      conversation: { address: `${connection.address}:c`, kind: "direct", name: "Gianvito" },
+      sender: { address: "15613518605", name: "Gianvito" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  const phone = { service: "whatsapp" as const, address: "5491100000000" };
+  const slack = { service: "slack" as const, address: "T1:U9" };
+
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "search", input: { connection: "sole" } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { connection: "T1:U9" } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { connection: "gmail" } }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("qué me dijo Gianvito por whatsapp"));
+      await waitFor(async () => (await read("tool_result")).length === 3);
+      const [byName, byAddress, unknown] = (await read("tool_result")) as ToolResultEvent[];
+      // the account's name, any part of it, case aside — and only its rows come back
+      const page = byName.parts[0].data.output as string;
+      assertStringIncludes(page, 'address="5491100000000"');
+      assertEquals(page.match(/<msg /g)?.length, 1);
+      assertStringIncludes(page, "por el teléfono");
+      const other = byAddress.parts[0].data.output as string;
+      assertEquals(other.match(/<msg /g)?.length, 1);
+      assertStringIncludes(other, "por slack");
+      // an account nobody wears is the call's error, the agent's accounts named
+      assertStringIncludes(
+        unknown.parts[0].data.output as string,
+        'no account of yours is called "gmail" — yours: T1:U9, Sole (5491100000000)',
+      );
+    },
+    {},
+    [old(phone, "por el teléfono"), old(slack, "por slack")],
+    {},
+    [{ agentId: "a1", mind: "mind@a1" }],
+    [
+      { ...phone, agentId: "a1", extra: { name: "Sole" } },
+      { ...slack, agentId: "a1" },
+    ],
+  );
+});
+
 Deno.test("search bounds read the org's clock: a bare stamp means the wall the model saw", async () => {
   // two rows straddle 17:00 Buenos Aires (20:00Z). A `before` of "…T17:00" with no offset
   // has to cut between them — not where the harness's own zone would put 17:00.
