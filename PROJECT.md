@@ -4178,10 +4178,13 @@ run showed, each now carried by the code:
   workspace whoever is connected.
 - No `/etc/cloudflare/certs` CA is in the container without an outbound handler; Deno and
   curl reach the world on the system roots.
-- Whether the container sleeps: after 12 minutes without a request, a container with two
-  background `sleep`s running was still up, its files with it — the SDK's `sleepAfter` is
-  `10m` from the last request. Whether a running process holds it awake, or the timer is
-  coarser, is still to be told apart with a longer idle.
+- The container sleeps 10 minutes (`sleepAfter`) after the last request, whatever runs in
+  it: a sandbox given a detached `sleep 3000` and a file, then left without requests for
+  13 minutes, answered the next call from a fresh container, both gone. The SDK counts
+  requests in flight, never processes; an exec whose stream a job holds open counts as in
+  flight, which is how a raw `sleep 1200 &` kept another sandbox up for 26 minutes. So an
+  agent's background job lives only while the agent keeps calling, and a job meant to
+  outlast ten quiet minutes needs `keepAlive` or a caller.
 
 **Open, a decision:** the docs-table tools never reached the model. `agent.tools` in the
 scaffold names four (`search`, `schedule`, `cancel`, `bash`), and the offer is filtered by
