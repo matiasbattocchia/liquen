@@ -452,6 +452,22 @@ Deno.test({
       assertEquals(tailing.events.at(-1)?.id, row.id);
       assertEquals(tailing.statuses.at(-1), { status: "idle", after: row.id });
 
+      // a tail that opens mid-turn starts on the busy edge it missed; one that opens idle
+      // hears nothing until the next edge
+      doors.status("ana", "mind", { status: "busy" });
+      const late = await rawClient(dir);
+      await late.request({ op: "tail" });
+      await late.settle(() => late.statuses.length >= 1);
+      assertEquals(late.statuses, [{ status: "busy" }]);
+      doors.status("ana", "mind", { status: "idle" });
+      const idle = await rawClient(dir);
+      await idle.request({ op: "tail" });
+      doors.emit("ana", "mind", { kind: "text", text: "después" });
+      await idle.settle(() => idle.deltas.length >= 1);
+      assertEquals(idle.statuses, []);
+      late.conn.close();
+      idle.conn.close();
+
       // a hang-up — clean or killed, the same event — leaves the count honest
       tailing.conn.close();
       passive.conn.close();

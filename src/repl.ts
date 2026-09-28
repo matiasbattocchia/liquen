@@ -15,8 +15,10 @@
  *   a gate fires        → an approval card; answer `/{y,n} [once|conv|conn|always|all]
  *                         [reason]` — a scope word makes the verdict STANDING (remembered
  *                         policy, §9); `all` answers every card waiting at once
- *   /cancel             → cut the running turn: a thinking model is hung up on, a running
- *                         tool is killed, and the agent idles until you speak again (§2)
+ *   Ctrl-C (or /cancel) → cut the running turn: a thinking model is hung up on, a running
+ *                         tool is killed, and the agent idles until you speak again (§2).
+ *                         Ctrl-C cuts only while the door says the session is busy; idle,
+ *                         it clears the line, as a shell's does
  *   /quit (or Ctrl-D)   → hang up — the daemon's life is its attachments, not ours
  *
  * The line you type is the REPL's own (`line.ts`): arrows place the cursor and walk the
@@ -84,12 +86,23 @@ await entry(async () => {
   // the newest, `/y cca9a2` the one named, `/y all` the whole pile.
   const pending: string[] = [];
   const waiting = () => pending.length ? `(waiting ${pending.map(shortId).join(" ")}) ` : "";
+  // the session's turn edge, as the door last pushed it
+  let busy = false;
+  const cancel = async () => {
+    const r = await w.request({ op: "control", kind: "cancel", session });
+    write(r.ok ? `${DIM}cancel sent${RESET}\n` : `\n${RED}! ${r.error}${RESET}\n`);
+  };
   const screen = createScreen({
     // the line wears the principal's mark, as its recalled lines do
     head: () => `${waiting()}${YOU} `,
     // and once sent it stands as a recalled line would: the time, the mark, the words
     sent: (line) => `${DIM}${hhmm(new Date().toISOString(), a.timezone)}${RESET} ${YOU} ${line}`,
     recalled: () => recalled.filter((e) => e.type === "message" && !ownVoice(e, me)).map(textOf),
+    interrupt: () => {
+      if (!busy) return false;
+      void cancel();
+      return true;
+    },
   });
   const write = (s: string) => screen.write(s);
   const prompt = () => screen.prompt();
@@ -116,7 +129,11 @@ await entry(async () => {
     },
   });
 
-  const w = wire(conn, { event: p.event, delta: p.delta });
+  const w = wire(conn, {
+    event: p.event,
+    delta: p.delta,
+    status: (s) => busy = s.status === "busy",
+  });
   void w.hangup.then(() => {
     if (!leaving) {
       write(`\n${RED}the daemon hung up${RESET}\n`);
@@ -155,8 +172,7 @@ await entry(async () => {
     if (text === "") continue;
     if (text === "/quit" || text === "/q") break;
     if (text === "/cancel") {
-      const r = await w.request({ op: "control", kind: "cancel", session });
-      write(r.ok ? `${DIM}cancel sent${RESET}\n` : `\n${RED}! ${r.error}${RESET}\n`);
+      await cancel();
       continue;
     }
     if (text.startsWith("/y") || text.startsWith("/n")) {

@@ -482,8 +482,8 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     (`cancel_pending` is **not** a dedicated tool — it decomposes into "stop emitting" +
     the existing kill.)
   - *Hard (harness-mediated, guaranteed)*: a `control` row in the session's room — the
-    door's `control` verb (the REPL's `/cancel`), or a whole-message reserved word ingest
-    reclassifies — fires the running turn's interrupt, which the turn lease carries. What
+    door's `control` verb (the REPL's Ctrl-C while the session is busy, or `/cancel`),
+    or a whole-message reserved word ingest reclassifies — fires the running turn's interrupt, which the turn lease carries. What
     it cuts depends on where the turn is: a **think** has its model request aborted and
     answers nothing; an **act** has its running tools killed (bash: the whole process
     group) and writes **cancelled tool_results** (count toward barriers, `cancelled: true`). Either way the turn closes on
@@ -718,7 +718,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | type | producer *(model→role)* | consumer *(→ LLM role)* | xi | type-specific fields |
 |---|---|---|---|---|
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
-| `control` | the door (typed: `/cancel`) · ingest (reclassified) · xi/nu (the `cancelled` closing) | the principal's: transparent — its consequence renders; the harness's: `<system kind="cancelled">` | the principal's **interrupts** the running turn (§2), never a wake; the harness's closes it — `decide` idles on a trailing one | parts(text: the word) · payload{control: stop · cancel · cancelled} |
+| `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`) · ingest (reclassified) · xi/nu (the `cancelled` closing) | the principal's: transparent — its consequence renders; the harness's: `<system kind="cancelled">` | the principal's **interrupts** the running turn (§2), never a wake; the harness's closes it — `decide` idles on a trailing one | parts(text: the word) · payload{control: stop · cancel · cancelled} |
 | `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
 | `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `<system kind="outcome">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |

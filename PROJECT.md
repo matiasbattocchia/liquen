@@ -4150,3 +4150,13 @@ the thread to a new `direct` conversation today) is its own rework. Open on othe
 services: Slack group DMs need `mpim:write`, channels `channels:manage`; Teams chats
 create under `Chat.ReadWrite`, already asked for; open-bsp-whatsmeow's server exposes no
 group route (whatsmeow underneath has `CreateGroup` and its siblings).
+
+### Ctrl-C in the REPL cancels the running turn (2026-09-28) — LANDED
+
+The REPL follows the door's turn edges (`status` lines, which it read and dropped before):
+Ctrl-C while the session is busy sends the door's `control` cancel, the same request
+`/cancel` makes, and leaves the typed line as it was; while idle it clears the line, as a
+shell's does. The line editor offers Ctrl-C to its surface first (`interrupt`). A tail
+that opens mid-turn gets the busy edge it missed: the door keeps which sessions are
+between a busy and an idle and pushes `busy` on the tail's open, so a REPL attached late
+can still cut the turn it walked in on.
