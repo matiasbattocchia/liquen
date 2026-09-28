@@ -103,7 +103,9 @@ export function createEdge(root: string): (req: Request) => Promise<Response> {
         client: clientFor(sock),
       });
     } catch {
-      return text(502, `${at.service}'s ${at.leg} is not listening (${sock})`);
+      // the path under the org, not the machine's: this answer reaches the internet
+      const where = sock.slice(root.length + 1);
+      return text(502, `${at.service}'s ${at.leg} is not listening (${where})`);
     }
     // the leg's answer as it gave it, a sign-in's redirect included; the framing headers
     // are the connection's own and are rewritten by the one that serves this response
@@ -158,7 +160,7 @@ if (import.meta.main) {
         port: edge.port,
         onListen: ({ port }) =>
           console.error(
-            `[edge] ${edge.publicUrl ?? localBase(port)} ← :${port} → ${root}/data/run/*.sock`,
+            `${edge.publicUrl ?? localBase(port)} ← :${port} → ${root}/data/run/*.sock`,
           ),
       }, createEdge(root));
     } catch (err) {

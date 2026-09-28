@@ -93,7 +93,7 @@ Deno.test("createEdge: forwards to the sockets with query and body, keeps a redi
     assertEquals(down.status, 502);
     assertStringIncludes(
       await down.text(),
-      `microsoft's ingest is not listening (${socketOf(root, "microsoft", "ingest")})`,
+      "microsoft's ingest is not listening (data/run/microsoft.sock)",
     );
 
     const noRoute = await edge(new Request(`${BASE}/`));
