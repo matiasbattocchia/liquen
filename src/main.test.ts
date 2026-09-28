@@ -433,6 +433,103 @@ Deno.test("team chat: a list with a subject opens a room of its own — `#ops` a
   }
 });
 
+Deno.test("team chat: `conversation` adds, renames, lists and leaves — each change said in the room, the last one out closing it (§6)", async () => {
+  // ana's sends go unasked, so the script's steps run in the order written
+  const { root, dir, catalog } = await orgDir({
+    ana: { rules: [{ tool: "*", action: "allow" }] },
+    bo: {},
+    cy: {},
+  });
+  const { transport } = scripted([
+    canned(
+      [{ kind: "tool_use", name: "send", input: { to: "bo", subject: "ops", text: "hola" } }],
+      "tool_use",
+    ),
+    canned([{
+      kind: "tool_use",
+      name: "conversation",
+      input: { action: "add", which: "ops", who: "cy" },
+    }], "tool_use"),
+    canned([{
+      kind: "tool_use",
+      name: "conversation",
+      input: { action: "rename", which: "ops", name: "#ops-q4" },
+    }], "tool_use"),
+    canned([{ kind: "tool_use", name: "conversation", input: { action: "show" } }], "tool_use"),
+    canned([{
+      kind: "tool_use",
+      name: "conversation",
+      input: { action: "remove", which: "ops-q4", who: "bo, cy" },
+    }], "tool_use"),
+    canned([{
+      kind: "tool_use",
+      name: "conversation",
+      input: { action: "leave", which: "ops-q4" },
+    }], "tool_use"),
+    canned([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  // the script is ana's: bo and cy wake on every line said in the room and answer nothing
+  const { transport: quiet } = scripted([]);
+  const byAgent: ModelTransport = (params, emit, meta, signal) =>
+    (JSON.stringify(params.system).includes("self: ana") ? transport : quiet)(
+      params,
+      emit,
+      meta,
+      signal,
+    );
+  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+    transport: byAgent,
+  });
+  try {
+    await main.log.publish(
+      principalMsg("mind@ana", "armá ops con bo, sumá a cy, y después cerralo"),
+    );
+    // six outcomes: the send, then the five room calls
+    await waitFor(async () => (await main.log.read({ types: ["tool_result"] })).length >= 6, 8000);
+    const results = (await main.log.read({ types: ["tool_result"] })) as ToolResultEvent[];
+    const outputs = results.map((r) => r.parts[0].data.output);
+    const [ops] = await main.log.conversations();
+    assertEquals(ops, undefined); // closed: the last one out
+    const row = (await main.log.conversation(
+      "local",
+      "agent",
+      String((outputs[1] as { address: string }).address),
+    ))!;
+    assertEquals([row.name, row.kind], ["ops-q4", "group"]); // renamed, the kind kept, the `#` not a switch
+    // add: cy enrolled; show: the room listed as one of ana's; remove and leave: nobody left
+    assertEquals((outputs[1] as { members: string[] }).members, ["mind@ana", "mind@bo", "mind@cy"]);
+    assertEquals((outputs[3] as { rooms: unknown[] }).rooms, [{
+      name: "ops-q4",
+      kind: "group",
+      address: row.address,
+      members: ["mind@ana", "mind@bo", "mind@cy"],
+      member: true,
+    }]);
+    assertEquals(outputs[5], {
+      name: "ops-q4",
+      kind: "group",
+      address: row.address,
+      members: [],
+      closed: true,
+    });
+    assertEquals(await main.log.membersOf("local", "agent", row.address), []);
+    // every change was said in the room, in ana's voice, under the room's name at the time
+    const said = (await main.log.read({ conversation: row.address, types: ["message"] }))
+      .filter((e) => e.agent?.id === "ana")
+      .map((e) => [(e.parts[0] as { text: string }).text, e.envelope.conversation.name]);
+    assertEquals(said, [
+      ["hola", "ops"],
+      ["added mind@cy", "ops"],
+      ["renamed to ops-q4", "ops-q4"],
+      ["removed mind@bo, mind@cy", "ops-q4"],
+      ["left", "ops-q4"],
+    ]);
+  } finally {
+    await main.stop();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("send anchors to the conversation's own connection — a reply lands where it came from (§4)", async () => {
   const { root, dir, catalog } = await orgDir({ ana: {} });
   const { transport } = scripted([

@@ -181,6 +181,15 @@ export interface Connections {
   ): Promise<ConversationRow | null>;
   /** The live rooms of their own, in (service, connection, name) order. */
   conversations(): Promise<ConversationRow[]>;
+  /** A room's new name. Refuses a local name another live room wears; its kind stays. */
+  renameConversation(
+    service: string,
+    connection: string,
+    address: string,
+    name: string,
+  ): Promise<void>;
+  /** End a room: soft, the rows it holds stay, and its name is free for another. */
+  closeConversation(service: string, connection: string, address: string): Promise<void>;
 }
 
 /** An enrollment as the store holds it: the session resolved, and the stamp that ended
@@ -379,6 +388,14 @@ export function createConnections(db: DatabaseSync): Connections {
     `SELECT service, connection_address, address, name, kind FROM conversations
      WHERE deleted_at IS NULL ${CONVERSATION_ORDER}`,
   );
+  const nameV = db.prepare(
+    `UPDATE conversations SET name = ?, updated_at = ?
+     WHERE service = ? AND connection_address = ? AND address = ? AND deleted_at IS NULL`,
+  );
+  const closeV = db.prepare(
+    `UPDATE conversations SET deleted_at = ?, updated_at = ?
+     WHERE service = ? AND connection_address = ? AND address = ? AND deleted_at IS NULL`,
+  );
   // a row that names no session enrolls the ROUTED one — the wire writers never decide
   const sessionOf = (r: MembershipRow) =>
     r.sessionId ?? routedSession({ service: r.service, connection_address: r.connection });
@@ -502,6 +519,23 @@ export function createConnections(db: DatabaseSync): Connections {
       return Promise.resolve(
         (listV.all() as unknown as ConversationColumns[]).map(conversationOf),
       );
+    },
+
+    renameConversation(service, connection, address, name): Promise<void> {
+      try {
+        nameV.run(name, new Date().toISOString(), service, connection, address);
+      } catch (err) {
+        return Promise.reject(
+          nameTaken(err, { service, connection, address, name, kind: "group" }),
+        );
+      }
+      return Promise.resolve();
+    },
+
+    closeConversation(service, connection, address): Promise<void> {
+      const now = new Date().toISOString();
+      closeV.run(now, now, service, connection, address);
+      return Promise.resolve();
     },
   };
 }

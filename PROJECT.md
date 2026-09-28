@@ -4234,3 +4234,21 @@ reached the root — the last the log holds, or the one answered and never seen 
 subject the name. Attachments already on the shelf stay where they are (a file part's
 URI is absolute); new ones land under the thread's root. Timers armed in a mail
 conversation keep their old address.
+
+### The `conversation` tool: a local room's members and name (2026-09-28) — LANDED
+
+`send` opens rooms and never changes them; `conversation(action, which?, who?, name?)`
+is the verb that does. `show` with no `which` lists the agent's rooms and the public
+channels (each with its members and whether the agent is in it); with one, the room.
+`join` enters a channel (a group needs a member's `add`), `leave` leaves, `add` and
+`remove` take `who` — agents by id, name or session address, `,`-separated, as `send(to:)`
+takes them — and `rename` takes `name`, the kind kept (`#` is what a channel wears, not
+what makes one; `renameConversation` in both engines, the name unique as at creation).
+Any member may act; taking yourself out is `leave`. The last one out closes the room
+(`closeConversation`: soft, the rows stay, the name is free). Every change is said in the
+room as the agent's own line — `added mind@cy`, `renamed to ops-q4`, `left` — so the
+members read it where it happened and the one just added wakes on it; a leave is said
+before the leaving, the one write the law would refuse after. A direct room is its
+members and takes no change; `which` on a wire conversation is refused, its members
+being the wire's. The tool joins the offer the way `send` does: named in an agent's
+`tools`.

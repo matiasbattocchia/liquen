@@ -831,7 +831,7 @@ Deno.test("specsOf: `tools` names what the model sees — unset offers everythin
   const bash = { spec: { name: "bash", description: "", input_schema: { type: "object" } } };
   const ports = { exec: { bash } } as unknown as XiPorts;
   const names = (tools?: string[]) => specsOf(ports, { ...CONFIG, tools }).map((t) => t.name);
-  assertEquals(names(), ["send", "search", "schedule", "cancel", "bash"]);
+  assertEquals(names(), ["send", "search", "schedule", "cancel", "conversation", "bash"]);
   // the coding-agent shape: built-ins and exec filter alike, by name
   assertEquals(names(["search", "schedule", "cancel", "bash"]), [
     "search",
@@ -850,6 +850,7 @@ Deno.test("specsOf: `tools` names what the model sees — unset offers everythin
     "search",
     "schedule",
     "cancel",
+    "conversation",
     "contact",
     "bash",
   ]);

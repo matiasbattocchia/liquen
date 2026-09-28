@@ -873,9 +873,12 @@ export interface XiPorts {
       | "aliases"
       | "connections"
       | "membersOf"
+      | "deleteMemberships"
       | "createConversation"
       | "conversation"
       | "conversations"
+      | "renameConversation"
+      | "closeConversation"
     >
     & Pick<Timers, "arm" | "timers" | "disarm">
     & Pick<Gates, "gates" | "owed">;
@@ -1720,6 +1723,58 @@ async function roomNamed(name: string, ports: XiPorts): Promise<ConversationRow 
   );
 }
 
+/** What the `conversation` tool does. */
+const ROOM_ACTIONS = ["show", "join", "leave", "add", "remove", "rename"] as const;
+type RoomAction = typeof ROOM_ACTIONS[number];
+
+/** A local room as the `conversation` tool sees it: its address, its row when it has one
+ *  (a direct room has none — its members are its address), and its live members. */
+interface Room {
+  address: string;
+  row?: ConversationRow;
+  members: Party[];
+}
+
+/** The local room `which` names (§6): a room by its name (`#` or not), a room's address,
+ *  or a direct room spelled as its members. A conversation on a wire is not a room here:
+ *  its members are the wire's to change. */
+async function roomFor(which: string, ports: XiPorts): Promise<Room> {
+  const live = (await ports.log.conversations()).filter((r) => r.service === "local");
+  const want = foldName(which.replace(/^#/, ""));
+  const row = live.find((r) => foldName(r.name) === want) ?? live.find((r) => r.address === which);
+  if (row) {
+    return {
+      address: row.address,
+      row,
+      members: await ports.log.membersOf("local", row.connection, row.address),
+    };
+  }
+  const direct = parseDirect(which);
+  if (direct) {
+    return {
+      address: directAddress(direct.map((s) => sessionAddress(s.agentId, s.sessionId))),
+      members: direct,
+    };
+  }
+  const [prior] = await ports.log.read({ conversation: which, limit: 1 });
+  if (prior && prior.envelope.service !== "local") {
+    throw new Error(
+      `${which} is a conversation on ${prior.envelope.service} — its members are managed there`,
+    );
+  }
+  throw new Error(`no room named "${which}" — \`show\` lists yours and the public channels`);
+}
+
+/** How a room reads back to the model: its name, kind and address, and who is in it. */
+function roomView(room: Room, kind: ConversationRow["kind"] | "direct") {
+  return {
+    ...(room.row ? { name: room.row.name } : {}),
+    kind,
+    address: room.address,
+    members: room.members.map((m) => sessionAddress(m.agentId, m.sessionId)),
+  };
+}
+
 /**
  * What `to` names, with `subject` weighed for a local list (§4, §5). One resolver for a
  * single recipient and a list: a `,`-separated `to` is tried whole first — a conversation
@@ -1995,6 +2050,15 @@ async function targetOf(
     })()
     : undefined;
   if (name === "contact") return named === undefined ? undefined : { connection: named };
+  if (name === "conversation") {
+    const which = (input as { which?: unknown } | null)?.which;
+    if (typeof which !== "string" || which.trim() === "") return undefined;
+    try {
+      return { connection: "agent", conversation: (await roomFor(which.trim(), ports)).address };
+    } catch {
+      return undefined;
+    }
+  }
   if (name !== "send") return undefined;
   const raw = args.to;
   if (typeof raw !== "string" || raw === "") return undefined;
@@ -2441,6 +2505,131 @@ async function execute(
     return verb === "forget"
       ? { forgot: address, connection: via.address }
       : { saved: address, connection: via.address, ...(wrote.name ? { as: wrote.name } : {}) };
+  }
+  if (name === "conversation") {
+    // a local room's membership and name (§6): what `send` opens, this verb changes. Any
+    // member may act; the change is said in the room, as the agent's own line, so every
+    // member — the one just added first of all — reads it where it happened.
+    const action = String(args.action ?? "show") as RoomAction;
+    if (!ROOM_ACTIONS.includes(action)) {
+      throw new Error(`\`action\` is one of ${ROOM_ACTIONS.join(", ")}, not "${action}"`);
+    }
+    const me: Party = { agentId: self.id, sessionId: self.session_id };
+    const same = (a: Party, b: Party) => a.agentId === b.agentId && a.sessionId === b.sessionId;
+    const which = args.which === undefined ? "" : String(args.which).trim();
+    if (!which) {
+      if (action !== "show") throw new Error("`which` names the room");
+      // the rooms of one's own and the ones anybody may join
+      const rooms = [];
+      for (const row of (await ports.log.conversations()).filter((r) => r.service === "local")) {
+        const members = await ports.log.membersOf("local", row.connection, row.address);
+        const member = members.some((m) => same(m, me));
+        if (member || row.kind === "channel") {
+          rooms.push({ ...roomView({ address: row.address, row, members }, row.kind), member });
+        }
+      }
+      return { rooms };
+    }
+    const room = await roomFor(which, ports);
+    const kind = room.row?.kind ?? "direct";
+    if (action === "show") return roomView(room, kind);
+    if (!room.row) {
+      throw new Error(
+        "a direct room is its members — to talk with others, send to the other list",
+      );
+    }
+    const row = room.row;
+    const member = room.members.some((m) => same(m, me));
+    const label = row.kind === "channel" ? `#${row.name}` : row.name;
+    const enroll = (who: Party[]) =>
+      ports.log.upsertMemberships(who.map((m) => ({
+        service: "local",
+        connection: row.connection,
+        conversation: row.address,
+        agentId: m.agentId,
+        sessionId: m.sessionId,
+      })));
+    const unenroll = (who: Party[]) =>
+      ports.log.deleteMemberships(who.map((m) => ({
+        service: "local",
+        connection: row.connection,
+        conversation: row.address,
+        agentId: m.agentId,
+        sessionId: m.sessionId,
+      })));
+    // `who`, each resolved as a recipient of `send` is: an agent's id, a session, a name
+    const named = async (): Promise<Party[]> => {
+      const parts = String(args.who ?? "").split(",").map((p) => p.trim()).filter((p) => p);
+      if (parts.length === 0) throw new Error(`\`who\` names whom to ${action}`);
+      const agents = await ports.log.agents();
+      return parts.map((p) => {
+        const s = sessionTarget(p, agents);
+        if (!s) throw new Error(`"${p}" is nobody in the roster`);
+        return s;
+      }).filter((s, i, all) => all.findIndex((x) => same(x, s)) === i);
+    };
+    // the change, said in the room in the agent's own voice: after it is made, so the
+    // member just added is woken by it — except a leave, said before the leaving, since
+    // the law refuses the leaver the room's future and the line is the last it writes
+    const say = (note: string) =>
+      ports.log.publish(
+        {
+          ts: new Date().toISOString(),
+          type: "message",
+          payload: { turn_id: use.payload.turn_id, ref_id: use.id },
+          agent: self,
+          envelope: {
+            service: "local",
+            connection_address: row.connection,
+            conversation: { address: row.address, kind: row.kind, name: row.name },
+          },
+          parts: [{ type: "text", kind: "text", text: note }],
+        } satisfies Draft<MessageEvent>,
+      );
+    const spell = (who: Party[]) =>
+      who.map((m) => sessionAddress(m.agentId, m.sessionId)).join(", ");
+    if (action === "join") {
+      if (row.kind !== "channel" && !member) {
+        throw new Error(`${label} is a private group — a member has to add you`);
+      }
+      if (member) return roomView(room, kind);
+      await enroll([me]);
+      room.members.push(me);
+      await say("joined");
+    } else {
+      if (!member) throw new Error(`you are not in ${label}`);
+      if (action === "leave") {
+        await say("left");
+        await unenroll([me]);
+        room.members = room.members.filter((m) => !same(m, me));
+      } else if (action === "add") {
+        const who = (await named()).filter((s) => !room.members.some((m) => same(m, s)));
+        if (who.length === 0) return roomView(room, kind);
+        await enroll(who);
+        room.members.push(...who);
+        await say(`added ${spell(who)}`);
+      } else if (action === "remove") {
+        const who = await named();
+        if (who.some((s) => same(s, me))) throw new Error("to take yourself out, `leave`");
+        const out = who.filter((s) => !room.members.some((m) => same(m, s)));
+        if (out.length > 0) throw new Error(`${spell(out)} not in ${label}`);
+        await unenroll(who);
+        room.members = room.members.filter((m) => !who.some((w) => same(w, m)));
+        await say(`removed ${spell(who)}`);
+      } else {
+        // a rename keeps the kind: `#` is what a channel wears, not what makes one
+        const to = String(args.name ?? "").replace(/^#/, "").trim();
+        if (!to) throw new Error("`name` is the new name");
+        await ports.log.renameConversation("local", row.connection, row.address, to);
+        row.name = to;
+        await say(`renamed to ${to}`);
+      }
+    }
+    // the last one out closes the room: its name is free, its rows stay
+    if (room.members.length === 0) {
+      await ports.log.closeConversation("local", row.connection, row.address);
+    }
+    return { ...roomView(room, kind), ...(room.members.length === 0 ? { closed: true } : {}) };
   }
   if (name === "search") {
     // the bounds are read the way `schedule.at` is (§10): a bare stamp means the org's wall
@@ -2997,6 +3186,37 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
           },
         },
         required: ["id"],
+      },
+    },
+    {
+      name: "conversation",
+      description:
+        "A local room's members and name — the rooms `send` opens with a list of agents. " +
+        "Any member may change it, and the change is said in the room. `show` with no " +
+        "`which` lists your rooms and the public channels; with one, its members. A direct " +
+        "room is its members and takes no change: another list is another room. A " +
+        "conversation on a wire (Slack, WhatsApp, mail) is managed there, not here.",
+      input_schema: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: [...ROOM_ACTIONS],
+            description:
+              "show (default) | join — a public channel | leave — the last one out closes " +
+              "the room | add — `who` joins | remove — `who` leaves | rename — to `name`, " +
+              "the kind kept",
+          },
+          which: {
+            type: "string",
+            description: "the room: its name (`ops`, `#ops`) or its `<conv address>`",
+          },
+          who: {
+            type: "string",
+            description: "agents, separated by `,` — by id, name or session address (add, remove)",
+          },
+          name: { type: "string", description: "the new name (rename)" },
+        },
       },
     },
     ...(writers(ports).length > 0

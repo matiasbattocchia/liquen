@@ -116,6 +116,20 @@ export function connectionsSuite(s: Substrate): void {
         { agentId: "bo", sessionId: "mind" },
       ]);
       assertEquals(await log.membersOf("local", "agent", "0192ghi"), []);
+
+      // a rename keeps the kind, and a taken name is refused the same way
+      await log.renameConversation("local", "agent", "0192abc", "ops-q4");
+      assertEquals((await log.conversation("local", "agent", "0192abc"))?.name, "ops-q4");
+      await assertRejects(
+        () => log.renameConversation("local", "agent", "0192abc", "#all"),
+        Error,
+        'a room named "#all" already exists',
+      );
+      // a closed room keeps its row and frees its name
+      await log.closeConversation("local", "agent", "0192ghi");
+      assertEquals((await log.conversations()).map((r) => r.name), ["ops-q4"]);
+      assertEquals((await log.conversation("local", "agent", "0192ghi"))?.name, "#all");
+      await log.createConversation({ ...ops, address: "0192jkl", name: "#all", kind: "channel" });
     } finally {
       await log.close();
       await store.drop();

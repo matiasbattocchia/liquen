@@ -343,6 +343,29 @@ export function pgConnections(db: Db): Connections {
          WHERE deleted_at IS NULL ${CONVERSATION_ORDER}`,
       )).map(conversationOf);
     },
+    async renameConversation(service, connection, address, name) {
+      try {
+        await count(
+          db,
+          `UPDATE conversations SET name = $1::text, updated_at = $2::text
+           WHERE service = $3::text AND connection_address = $4::text AND address = $5::text
+             AND deleted_at IS NULL`,
+          [name, new Date().toISOString(), service, connection, address],
+        );
+      } catch (err) {
+        throw nameTaken(err, { service, connection, address, name, kind: "group" });
+      }
+    },
+    async closeConversation(service, connection, address) {
+      const now = new Date().toISOString();
+      await count(
+        db,
+        `UPDATE conversations SET deleted_at = $1::text, updated_at = $1::text
+         WHERE service = $2::text AND connection_address = $3::text AND address = $4::text
+           AND deleted_at IS NULL`,
+        [now, service, connection, address],
+      );
+    },
   };
 }
 
