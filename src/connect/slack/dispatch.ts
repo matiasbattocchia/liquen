@@ -23,6 +23,7 @@ import { isExternal, pathOf } from "../../store/media.ts";
 import { DispatchError } from "../errors.ts";
 import { createDispatcher } from "../dispatcher.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
+import type { Credentials } from "../../store/credentials.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../../types.ts";
 import { type Directory, encodeSlackText } from "../mentions.ts";
 import { toSlack } from "../flavor.ts";
@@ -400,6 +401,23 @@ export function slackWire(
 
 /* ── local entry: the wire over the vault's tokens ──────────────────────────────────── */
 
+/** The token resolver (§4, dispatcher-internal): which grant acts for `author` on the
+ *  workspace — the author's own (the alter-ego leg) when the vault holds one, else the
+ *  workspace bot. Vault keys follow the connector's convention (§4). The rooms port
+ *  resolves through the same one, so a room is opened by the grant that posts in it. */
+export function slackTokenFor(
+  creds: Pick<Credentials, "get">,
+): (connection: string, author?: string) => Promise<string> {
+  return async (connection, author) => {
+    const team = teamOf(connection);
+    const user = author ? await creds.get(`slack:${team}:${author}`) : null;
+    const bot = user?.value.token ? null : await creds.get(`slack:${team}:org`);
+    const token = user?.value.token ?? bot?.value.token;
+    if (!token) throw new Error(`no token for connection ${connection}`);
+    return token;
+  };
+}
+
 /** Wire the outbound half over the org's log — resident once it returns (subscribed).
  *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
 export async function runDispatch(): Promise<() => Promise<void>> {
@@ -410,17 +428,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   const log = await store.log();
   const creds = await store.vault();
 
-  // the token resolver (§4, dispatcher-internal): the author's own grant (alter-ego)
-  // → the workspace bot — vault keys follow the connector's convention (§4)
-  const tokenFor = async (connection: string, author?: string): Promise<string> => {
-    const team = teamOf(connection);
-    const user = author ? await creds.get(`slack:${team}:${author}`) : null;
-    const bot = user?.value.token ? null : await creds.get(`slack:${team}:org`);
-    const token = user?.value.token ?? bot?.value.token;
-    if (!token) throw new Error(`no token for connection ${connection}`);
-    return token;
-  };
-  const { post, react, amend } = slackWire({ tokenFor });
+  const { post, react, amend } = slackWire({ tokenFor: slackTokenFor(creds) });
 
   const { logDirectory } = await import("../mentions.ts");
   // the referent's row, by its external id: a reply row's ref names the thread root

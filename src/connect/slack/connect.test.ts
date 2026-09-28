@@ -423,8 +423,21 @@ Deno.test("socket door: the default probe's apps.connections.open call carries a
 
 Deno.test("config: the bot leg reads files — `url_private` answers a sign-in page otherwise", () => {
   assert(DEFAULT_BOT_SCOPES.includes("files:read"));
-  assert(DEFAULT_USER_SCOPES.includes("files:read")); // the user list spreads the bot list
+  assert(DEFAULT_USER_SCOPES.includes("files:read")); // both legs read the same
   assertEquals(new Set(DEFAULT_USER_SCOPES).size, DEFAULT_USER_SCOPES.length); // no duplicates
+  assertEquals(new Set(DEFAULT_BOT_SCOPES).size, DEFAULT_BOT_SCOPES.length);
+  // the rooms port's writes, each under the leg's own name for the act
+  assert(
+    DEFAULT_BOT_SCOPES.includes("channels:manage") &&
+      !DEFAULT_USER_SCOPES.includes("channels:manage"),
+  );
+  assert(
+    DEFAULT_USER_SCOPES.includes("channels:write") &&
+      !DEFAULT_BOT_SCOPES.includes("channels:write"),
+  );
+  for (const s of ["groups:write", "mpim:write", "im:write", "channels:write.invites"]) {
+    assert(DEFAULT_BOT_SCOPES.includes(s) && DEFAULT_USER_SCOPES.includes(s), s);
+  }
 });
 
 Deno.test("bot door: --agent records who speaks through the bot on its row, still nobody's (§4)", async () => {

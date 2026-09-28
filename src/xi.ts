@@ -1892,8 +1892,29 @@ async function wireRoom(
     if (!l) throw new Error(`a conversation on ${wire.service} takes no \`${k}\` from here`);
     return l;
   };
-  const people = () =>
-    port.members ? port.members({ ...actor, conversation: room.address }) : undefined;
+  // the wire's roster is addresses; the names are the ones people go by here — what the
+  // log holds of them, the way `who` finds them — filled in for whoever the wire left bare
+  const people = async () => {
+    if (!port.members) return undefined;
+    const roster = await port.members({ ...actor, conversation: room.address });
+    const bare = roster.filter((p) => !p.name).map((p) => p.address);
+    if (bare.length === 0) return roster;
+    const heard = await ports.log.read({
+      connection: wire.connection,
+      senders: bare,
+      limit: NAME_REACH,
+    });
+    const names = new Map<string, string>();
+    for (const e of heard) {
+      const at = e.envelope.sender?.address;
+      const name = e.envelope.sender?.name;
+      if (at && name && !names.has(at)) names.set(at, name);
+    }
+    return roster.map((p) => {
+      const name = p.name ?? names.get(p.address);
+      return name ? { address: p.address, name } : { address: p.address };
+    });
+  };
   if (action === "show") return roomView(room, kind, await people());
   if (kind === "direct") {
     throw new Error(

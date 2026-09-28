@@ -1199,7 +1199,13 @@ Deno.test("conversation on a wire: every verb goes through the wire's port as th
       }, "slack:1"),
     );
     await log.publish(
-      wireRow("slack", "T1", { address: "D1", kind: "direct" }, { address: "U2" }, "slack:2"),
+      wireRow(
+        "slack",
+        "T1",
+        { address: "D1", kind: "direct" },
+        { address: "U2", name: "Nico" },
+        "slack:2",
+      ),
     );
     await log.publish(
       wireRow(
@@ -1216,10 +1222,11 @@ Deno.test("conversation on a wire: every verb goes through the wire's port as th
       JSON.stringify(e.parts)
     );
     assertEquals(results.length, 7);
-    // show: the record's name and kind, the account, and the people as the port lists them
+    // show: the record's name and kind, the account, and the people as the port lists them —
+    // a member the port left bare named the way the log knows them
     assertStringIncludes(
       results[0],
-      '"name":"ops","kind":"channel","address":"C1","connection":"T1","members":["U1","U2"],"names":{"U1":"Vero"}',
+      '"name":"ops","kind":"channel","address":"C1","connection":"T1","members":["U1","U2"],"names":{"U1":"Vero","U2":"Nico"}',
     );
     assertStringIncludes(results[1], '"members":["U1","U2","U1","U7"]');
     assertStringIncludes(results[2], '"name":"ops-q4"');

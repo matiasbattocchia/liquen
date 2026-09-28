@@ -54,6 +54,8 @@ import {
 import { openLocalSandbox } from "./sandbox.ts";
 import { whatsappContact } from "./connect/whatsapp/contact.ts";
 import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
+import { slackRooms } from "./connect/slack/rooms.ts";
+import { slackTokenFor } from "./connect/slack/dispatch.ts";
 import { entry } from "./entry.ts";
 import { claim, MAIN } from "./stop.ts";
 import { createMirror } from "./connect/mirror.ts";
@@ -213,6 +215,13 @@ export async function start(
       ),
     }
     : undefined;
+  // the rooms (§9): one port per service whose API opens and changes conversations, wired
+  // where the connection is declared — slack's over the vault the dispatcher posts with,
+  // so a room is opened by the grant that speaks in it
+  const creds = config.catalog?.connections?.slack ? await store.vault() : undefined;
+  const rooms: XiPorts["rooms"] = creds
+    ? { slack: slackRooms({ tokenFor: slackTokenFor(creds) }) }
+    : undefined;
 
   let stopped = false;
   // the fan-outs' late half: ports close over `cast`/`castStatus` before the doors exist,
@@ -270,6 +279,7 @@ export async function start(
     transport: (agentId) => stock.get(agentId)!,
     sandbox,
     ...(contact ? { contact } : {}),
+    ...(rooms ? { rooms } : {}),
     onDelta: (agentId, sessionId, d) => cast(agentId, sessionId, d),
     onDecision: (agentId, sessionId, v, cursor, about) =>
       disclose(agentId, sessionId, v, cursor, about),
@@ -541,6 +551,7 @@ export async function start(
       );
       await sandbox.close(); // every shell's jobs reaped, the egress proxy stopped
       await docs.close();
+      await creds?.close();
       await log.close();
     },
   };

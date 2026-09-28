@@ -4425,3 +4425,36 @@ The permission target of `conversation` on a wire is the account and the convers
 so a rule pinned to either matches; the tool's description and `tools` doc say what a
 wire's rooms take. Not in this entry: the scopes each wire's legs need, which land with
 each port.
+
+### Slack rooms: the port over `conversations.*`, opened by the grant that posts (2026-09-28) — LANDED
+
+The first `RoomsPort` (`src/connect/slack/rooms.ts`): `open` is `conversations.open` for
+a direct room and `conversations.create` plus `conversations.invite` for a named one,
+private for a group and public for a channel; `members` pages `conversations.members`;
+`join`, `leave`, `add`, `remove`, `rename` are the method of the same name, a kick one
+person a call. Each leg resolves its token through the dispatcher's own resolver, now
+`slackTokenFor` in `dispatch.ts`, so the grant that opens or changes a room is the one
+that posts in it. Slack's `missing_scope` answer names the scope it needed, and the leg's
+refusal carries that name with the remedy: the account signs in again. Every other named
+refusal — `too_many_users`, `name_taken`, `cant_leave_general` — passes through as the
+wire's word, code 400 as the dispatcher classes it.
+
+The catalog's two scope lists are restructured around the port's writes: the reads are
+one shared list, the bot adds `chat:write`, `channels:manage`, `channels:join`,
+`channels:write.invites`, `groups:write`, `groups:write.invites`, `im:write` and
+`mpim:write`; the user adds `chat:write`, `search:read` and the same writes under the
+user's own names, `channels:write` standing where the bot has `channels:manage` and
+`channels:join`. The lists are defaults: an org whose `config.jsonc` already wrote
+`botScopes` or `userScopes` keeps what it wrote, and a token granted under the shorter ask
+refuses each write by naming its scope until it signs in again (the manifest `liquen
+connect slack app` prints carries the new lists; a bot needs the app reinstalled to the
+workspace).
+
+Main wires the port when `connections.slack` is declared, over the vault, closed with the
+rest at stop. One harness change beside it: a wire's `members` come back as addresses,
+and `conversation(show)` names each the way the log knows them, from the newest line
+they wrote on the account, for whoever the port left bare — so a Slack roster reads as
+people, not ids, wherever they have spoken. Tests: `rooms.test.ts` (the calls each leg
+makes, the token each rides, the scope refusal, the channel name), `connect.test.ts`
+(the two lists), `integration.test.ts` (the log naming). Next in the order: Teams rooms,
+then WhatsApp rooms once the bridge has group routes.

@@ -355,6 +355,27 @@ older than the gap. Internal (customer-built) apps keep the standard rate limits
 commercially distributed non-Marketplace app created after 2025-05-29 reads
 `conversations.history` at one call a minute, fifteen messages a call.
 
+**The rooms are the workspace's** (`src/connect/slack/rooms.ts`, the rooms port of §1):
+`open` is `conversations.open` for a direct room and `conversations.create` plus
+`conversations.invite` for a named one, private when the send named a group and public
+when it named a channel; `members` pages `conversations.members`, and `join`, `leave`,
+`add`, `remove` and `rename` are the method of the same name, a kick one person a call.
+Every leg resolves its token as the dispatcher does (`slackTokenFor`): the agent's own
+grant when the vault holds one, else the workspace bot, so the room is opened by the
+grant that posts in it. A channel's name is given as Slack takes one — lowercase, `-` and
+`_` kept, anything else folded to `-`, eighty at most — and the port answers the name
+Slack kept. What a leg may do is the grant's consent: the bot's writes are
+`channels:manage` and `channels:join` for a public channel, `groups:write` for a private
+one, `im:write` and `mpim:write` for a direct room and the `:write.invites` of the room's
+kind for an invite; a user's are the same acts under `channels:write` in place of the two
+bot names. Both lists are the catalog's defaults (`botScopes`, `userScopes`), and a
+token granted before they were asked answers `missing_scope` at the call, naming the
+scope, which the leg's refusal carries; the account signs in again to grant it. The wire's
+own rules pass through the same way — eight besides the opener in a direct room,
+`#general` lets nobody go, a name already taken. The roster comes back as user ids, and
+the harness names each the way the log knows them, from the lines they wrote on the
+account. Main wires the port when `connections.slack` is declared, over the vault.
+
 Remaining:
 
 - **The mind-alias at ingest** — aliasing the principal's Slack self-DM onto `mind:<agent>`
