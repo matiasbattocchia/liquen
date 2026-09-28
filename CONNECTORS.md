@@ -330,6 +330,25 @@ principal as a peer.
 
 `conversation.kind` from the jid shape (§4): individual → `direct`, group jid → `group`.
 
+**The rooms are the account's** (`src/connect/whatsapp/rooms.ts`, the rooms port of §1),
+over the bridge's `/groups/{session}` routes on the same bearer the dispatcher posts with:
+`open` with a name is `POST /groups/{session}` — a group made under that subject with the
+people in it, the account seated by WhatsApp's own rule — and answers the group's JID and
+the subject the bridge kept; `members` reads the roster (`GET`, canonical digits, the
+name the wire has for each, the admin seats marked); `add` and `remove` post and delete
+on `/members`; `rename` is a `PATCH` of the subject; `leave` a `DELETE` of the group. One
+person unnamed is their own chat, answered without a call; a bare list of two or more is
+refused with the way to name it, and so is `#name`, since WhatsApp makes no channel. No
+`join`: a group is entered by invite, which no address carries. The bridge passes
+WhatsApp's own refusals through as 4xx — 403 when the account is no admin of the group,
+404 for a group it is not in or a person not on the roster, 406 for a subject it will
+not take — and a seat the server would not fill is named with the code: on `add` the
+call fails naming each, on `open` the group exists and its roster says who is in. A
+removal is resolved against the roster on the bridge, so a LID-addressed group takes it
+under the JID it holds the person by. What the log sees afterwards is what the bridge
+posts of the group: its subject on every line and on a rename; a join or a leave is not
+a line the bridge posts.
+
 ## 4. Slack — landed; two threads dangling
 
 Live smoke passed 2026-08-12 (paste door, alter-ego dispatch, echo merge).

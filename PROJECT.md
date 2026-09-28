@@ -4519,3 +4519,27 @@ leg makes and the body each carries, the one-to-one rule, the team lookup, the p
 roster, the 403 wording, the topic and channel-name folding). Not live-smoked: the
 Teams grant on this machine's org has not been re-consented under the longer ask. Next
 in the order: WhatsApp rooms once the bridge has group routes.
+
+### WhatsApp rooms: the port over the bridge's group routes, on the session's own account (2026-09-28) — LANDED
+
+The bridge (`~/open-bsp-whatsmeow`, commit aac58b7) gained six routes at
+`/groups/{session}`: create, read, rename, leave, add members, remove members, each on
+the session its messages ride and each answering when WhatsApp has. Members are canonical
+digits both ways; a removal is resolved against the roster and sent under the JID the
+group holds the person by, so a LID-addressed group is no exception. WhatsApp's own
+refusals pass through as 4xx (its 401 as a 403, since a 401 from the bridge is the
+bearer), and a seat the server would not fill is named with the code and what it means
+for the person — 403 their settings keep strangers from adding them, 409 already in: a
+create keeps the group and lists them under `not_added`, an add fails naming them.
+
+The third `RoomsPort` (`src/connect/whatsapp/rooms.ts`): `open` with a name posts the
+group and answers its JID and subject; one person unnamed is their own chat, answered
+without a call; a bare list of two or more is refused with the way to name it, and so is
+`#name`, since WhatsApp makes no channel. `members`, `add`, `remove`, `rename` and `leave`
+are one call each. No `join`: a group is entered by invite, which no address carries.
+Main wires the port when `connections.whatsapp` is declared, on the bridge and bearer the
+address book already uses; it needs no vault. Tests: `rooms.test.ts` (the calls each leg
+makes, the two refusals, the roster naming, the bridge's refusal class); `groups_test.go`
+on the bridge (the JID rules, the error mapping, the seat failures, the roster
+resolution). Not live-smoked: the bridge running on this machine predates the routes.
+The rooms order the user confirmed — Slack, Teams, WhatsApp — is complete.

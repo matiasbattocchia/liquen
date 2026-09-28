@@ -53,6 +53,7 @@ import {
 } from "./transport/mod.ts";
 import { openLocalSandbox } from "./sandbox.ts";
 import { whatsappContact } from "./connect/whatsapp/contact.ts";
+import { whatsappRooms } from "./connect/whatsapp/rooms.ts";
 import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
 import { slackRooms } from "./connect/slack/rooms.ts";
 import { slackTokenFor } from "./connect/slack/dispatch.ts";
@@ -209,28 +210,27 @@ export async function start(
   // is declared — whatsapp's rides the bridge the dispatcher already talks to, on the same
   // token, and carries both legs: `contact` writes through it, `search` reads through it
   const bridge = config.catalog?.connections?.whatsapp;
+  const bridgeUrl = typeof bridge?.bridgeUrl === "string" ? bridge.bridgeUrl : DEFAULT_BRIDGE_URL;
+  const bridgeToken = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
   const contact: XiPorts["contact"] = bridge
-    ? {
-      whatsapp: whatsappContact(
-        typeof bridge.bridgeUrl === "string" ? bridge.bridgeUrl : DEFAULT_BRIDGE_URL,
-        Deno.env.get("WA_BRIDGE_TOKEN") ?? "",
-      ),
-    }
+    ? { whatsapp: whatsappContact(bridgeUrl, bridgeToken) }
     : undefined;
   // the rooms (§9): one port per service whose API opens and changes conversations, wired
   // where the connection is declared, over the vault the dispatcher posts with — so a
-  // room is opened by the grant that speaks in it
+  // room is opened by the grant that speaks in it; whatsapp's rides the bridge, whose
+  // session is the grant
   const roomed = {
     slack: Boolean(config.catalog?.connections?.slack),
     microsoft: Boolean(config.catalog?.connections?.microsoft),
   };
   const creds = roomed.slack || roomed.microsoft ? await store.vault() : undefined;
-  const rooms: XiPorts["rooms"] = creds
+  const rooms: XiPorts["rooms"] = creds || bridge
     ? {
-      ...(roomed.slack ? { slack: slackRooms({ tokenFor: slackTokenFor(creds) }) } : {}),
-      ...(roomed.microsoft
+      ...(creds && roomed.slack ? { slack: slackRooms({ tokenFor: slackTokenFor(creds) }) } : {}),
+      ...(creds && roomed.microsoft
         ? { microsoft: teamsRooms({ broker: createGrantBroker({ creds }), creds }) }
         : {}),
+      ...(bridge ? { whatsapp: whatsappRooms(bridgeUrl, bridgeToken) } : {}),
     }
     : undefined;
 
