@@ -39,7 +39,7 @@ import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag, readConfig } from "../../config.ts";
 import { callbackAddress, ingestAddress, reachLine } from "../../edge.ts";
-import { declared, printNext, requireEdge, startStep } from "../declare.ts";
+import { declared, printNext, requireEdge } from "../declare.ts";
 import {
   type DoorAddress,
   doorAddress,
@@ -278,16 +278,12 @@ if (import.meta.main) {
         // internet in while there is a human here to read the answer
         const push = edge.publicUrl === null ? null : ingestAddress(edge.publicUrl, SERVICE);
         if (push !== null) console.error(await reachLine(push, SERVICE));
-        printNext([
-          await startStep(
-            root,
-            "the Microsoft process polls calendar and mail, and agents get $MICROSOFT_GRAPH_TOKEN",
-          ),
-          ...(push !== null ? [] : [
+        if (push === null) {
+          printNext([
             "Teams: set edge.publicUrl — Graph pushes chats and channels to " +
             "<publicUrl>/microsoft/ingest, and nowhere else; sends go out without it",
-          ]),
-        ]);
+          ]);
+        }
       } else {
         console.error(USAGE);
         Deno.exit(2);

@@ -39,6 +39,9 @@ deno install -g -A -n lq jsr:@liquen/liquen/liquen   # the same command, short: 
 `liquen start -D` runs the org in the background, its lines appended to
 `data/run/liquen.log`; `liquen stop` ends it either way. `liquen connect --remove
 <service>:<address>` takes a grant back — the target as `liquen status` prints it.
+`liquen reload` has the running org take up an edit to `config.jsonc`: what the edit
+touched restarts, a connection declared since starts, one removed stops. The commands that
+write the file — `liquen connect`, `liquen agent` — reload the org themselves.
 
 A role is a lock: every process in a run holds `data/run/<role>.pid` while it lives —
 `liquen` the supervisor, `main` the mind. So there is one of each, whoever started it: a
@@ -108,9 +111,9 @@ table, and `deno task status` lists what is armed.
 
 A connect door refuses a grant nobody is listening for: a granted service delivers from
 that second on, and a delivery that finds no door is dropped by everyone. So the org runs
-first — `deno task start` — and the doors run against it. On a fresh org the first door
-declares its connection in `config.jsonc` and waits while you restart `start` in the
-other terminal, so it can go on in the same run.
+first — `deno task start` — and the doors run against it. The first door of a service
+declares its connection in `config.jsonc` and reloads the running org, which starts the
+connection's process, and the door goes on once it is up.
 
 ### GitHub (dev-tier: `gh webhook forward`)
 

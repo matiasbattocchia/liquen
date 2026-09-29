@@ -4563,3 +4563,26 @@ line's shape, a subject alone making none, a retry merging, the link join and th
 account's own arrival); `groups_test.go` on the bridge. Slack's `channel_join` messages
 and Teams' system messages are still dropped at ingest, so on those wires only the
 membership mirror moves.
+
+### `liquen reload`: an org takes up its file without a stop (2026-09-28) — LANDED
+
+A connect door ended on "`liquen stop`, then `liquen start`" whenever the org was up
+(`startStep`). The user ruled it out: the org is started before any door runs, so a door
+cannot ask for a stop, not even for a service's first connect. Three things read at boot
+only, and each now reads live. The supervisor re-reads `config.jsonc` on `RELOAD` (SIGUSR2,
+sent by `liquen reload` and by every door that writes the file: `declared`, `liquen agent`,
+`connect --remove`). It restarts a process only when the part of the file that process
+reads changed (`reads`, `plan` in start.ts), starts a newly declared connection, stops a
+removed one, and retries one that refused. Main sets up every service's rooms and
+address-book ports from boot, and `contact` is offered only to an agent holding an account
+whose service keeps an address book. The egress proxy reads the vault at each spawn.
+
+The signal was chosen by elimination. SIGHUP comes from a closing terminal, and it has to
+keep ending a foreground run. SIGUSR1 opens V8's inspector on 127.0.0.1:9229, which the
+end-to-end run caught on the supervisor. Nothing watches the file, so an edit takes effect
+only when `liquen reload` runs. The reload reports nothing back to the caller; the
+supervisor's lines say what moved (`config.jsonc taken up — slack restarted`). Verified by
+hand on a throwaway org: a custom connection declared, edited, left alone, then removed; a
+typo refused with the run untouched; an agent added (main restarted); a refused connection
+retried. `update` still asks for a stop: the supervisor launches children from its own
+package version, so new code needs a new supervisor.

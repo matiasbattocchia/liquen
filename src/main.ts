@@ -206,33 +206,26 @@ export async function start(
     locale: catalog?.organization.locale,
     bashTimeoutMs: catalog?.system.bashTimeoutMs,
   });
-  // the address book (§9): one port per service that keeps one, wired where the connection
-  // is declared — whatsapp's rides the bridge the dispatcher already talks to, on the same
-  // token, and carries both legs: `contact` writes through it, `search` reads through it
-  const bridge = config.catalog?.connections?.whatsapp;
-  const bridgeUrl = typeof bridge?.bridgeUrl === "string" ? bridge.bridgeUrl : DEFAULT_BRIDGE_URL;
+  // the ports stand whether or not a service is connected yet: a leg is only ever reached
+  // through one of the agent's accounts, and a service connected while main runs has its
+  // ports already there
+  //
+  // the address book (§9): one port per service that keeps one — whatsapp's rides the
+  // bridge the dispatcher already talks to, on the same token, and carries both legs:
+  // `contact` writes through it, `search` reads through it
+  const bridge = config.catalog?.connections?.whatsapp?.bridgeUrl;
+  const bridgeUrl = typeof bridge === "string" ? bridge : DEFAULT_BRIDGE_URL;
   const bridgeToken = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
-  const contact: XiPorts["contact"] = bridge
-    ? { whatsapp: whatsappContact(bridgeUrl, bridgeToken) }
-    : undefined;
-  // the rooms (§9): one port per service whose API opens and changes conversations, wired
-  // where the connection is declared, over the vault the dispatcher posts with — so a
-  // room is opened by the grant that speaks in it; whatsapp's rides the bridge, whose
-  // session is the grant
-  const roomed = {
-    slack: Boolean(config.catalog?.connections?.slack),
-    microsoft: Boolean(config.catalog?.connections?.microsoft),
+  const contact: XiPorts["contact"] = { whatsapp: whatsappContact(bridgeUrl, bridgeToken) };
+  // the rooms (§9): one port per service whose API opens and changes conversations, over
+  // the vault the dispatcher posts with — so a room is opened by the grant that speaks in
+  // it; whatsapp's rides the bridge, whose session is the grant
+  const creds = await store.vault();
+  const rooms: XiPorts["rooms"] = {
+    slack: slackRooms({ tokenFor: slackTokenFor(creds) }),
+    microsoft: teamsRooms({ broker: createGrantBroker({ creds }), creds }),
+    whatsapp: whatsappRooms(bridgeUrl, bridgeToken),
   };
-  const creds = roomed.slack || roomed.microsoft ? await store.vault() : undefined;
-  const rooms: XiPorts["rooms"] = creds || bridge
-    ? {
-      ...(creds && roomed.slack ? { slack: slackRooms({ tokenFor: slackTokenFor(creds) }) } : {}),
-      ...(creds && roomed.microsoft
-        ? { microsoft: teamsRooms({ broker: createGrantBroker({ creds }), creds }) }
-        : {}),
-      ...(bridge ? { whatsapp: whatsappRooms(bridgeUrl, bridgeToken) } : {}),
-    }
-    : undefined;
 
   let stopped = false;
   // the fan-outs' late half: ports close over `cast`/`castStatus` before the doors exist,
@@ -562,7 +555,7 @@ export async function start(
       );
       await sandbox.close(); // every shell's jobs reaped, the egress proxy stopped
       await docs.close();
-      await creds?.close();
+      await creds.close();
       await log.close();
     },
   };

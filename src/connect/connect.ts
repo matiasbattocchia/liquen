@@ -15,7 +15,7 @@
 import { findRoot, orgFlag, undeclareConnection } from "../config.ts";
 import { entry, report } from "../entry.ts";
 import { openStore } from "../store/mod.ts";
-import { running } from "../stop.ts";
+import { reload } from "../reload.ts";
 import { removeConnection } from "./remove.ts";
 
 /** The services that ship with the package — each `src/connect/<name>/` a connect door.
@@ -144,11 +144,8 @@ async function remove(root: string, target: string): Promise<void> {
     await creds.close();
     await log.close();
   }
-  // a running process loaded the grant at its start, and the supervisor spawns what the
-  // catalog said then
-  const live = await running(`${root}/data`);
-  if (live.size > 0) {
-    const who = [...live].map(([role, pid]) => `${role} (${pid})`).join(" · ");
-    console.log(`running ${who} — \`liquen stop\` then \`liquen start\` so nothing holds it`);
-  }
+  // the processes read the vault on every use; a connection no longer declared is one the
+  // running org stops
+  const pid = await reload(root);
+  if (pid !== null) console.log(`the running org (pid ${pid}) takes it up`);
 }

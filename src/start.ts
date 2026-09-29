@@ -15,6 +15,13 @@
  * org runs on with whatever is left instead of reprinting one complaint every minute
  * forever. When nothing is left, `liquen start` refuses too, naming who gave up.
  *
+ * The file is read at boot and again on `RELOAD` (`liquen reload`, and every setup door
+ * that writes it): the run is brought in line with the file as it is now. Each process
+ * restarts when the part of the file it reads changed (`reads`), a connection declared
+ * since starts, one no longer declared stops, and one that refused gets another go — the
+ * world it refused may be what the edit changed. A file boot would reject changes nothing:
+ * the supervisor says why and runs on as it was.
+ *
  * One of each role. A run holds `data/run/liquen.pid` for its life and its main holds
  * `data/run/main.pid` (stop.ts) — the locks that make them findable, so `liquen stop` has
  * pids to signal, and a second supervisor, or a start over a mind an interface already
@@ -40,7 +47,7 @@
 import { TextLineStream } from "@std/streams";
 import { findRoot, type OrgConfig, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
 import { entry, REFUSAL } from "./entry.ts";
-import { claim, holder, MAIN, SUPERVISOR } from "./stop.ts";
+import { claim, holder, MAIN, RELOAD, SUPERVISOR } from "./stop.ts";
 import { RUNNING, SHIPPED } from "./connect/connect.ts";
 import { helpFlag } from "./connect/help.ts";
 
@@ -55,6 +62,9 @@ export const USAGE = `usage: liquen start [-D | --detach] [--dir <org>]
 /** How long a detached start waits for the run to hold its lock before handing back the
  *  prompt without that word. */
 const DETACH_WAIT_MS = 15_000;
+
+/** What a start over a running org is told. */
+const RUNNING_HINT = "`liquen reload` takes up an edit to config.jsonc; `liquen stop` ends it";
 
 const RESTART_BASE_MS = 1_000;
 const RESTART_CAP_MS = 60_000;
@@ -209,6 +219,47 @@ export function roster(root: string, cfg: Pick<OrgConfig, "connections" | "edge"
   return procs;
 }
 
+/** The part of the file a process reads, as a reload compares it. Every liquen process
+ *  reads the shared sections (where the store is, the org's clock); main reads the roster
+ *  too, and the WhatsApp bridge's address, because it speaks to the bridge itself (the
+ *  address book, the rooms); a connection reads the edge and its own section; the edge its
+ *  section; the tunnel is its argv. */
+export function reads(name: string, cfg: OrgConfig): string {
+  const { agents, connections, edge, ...shared } = cfg;
+  if (name === "main") {
+    return JSON.stringify({ ...shared, agents, bridge: connections.whatsapp?.bridgeUrl });
+  }
+  if (name === "edge") return JSON.stringify(edge);
+  if (name === "tunnel") return JSON.stringify(edge.tunnel);
+  return JSON.stringify({ ...shared, edge, own: connections[name] });
+}
+
+/** What a process of the run is to a reload: what it read of the file when it started, and
+ *  whether it refused (down for good until a reload gives it another go). */
+export interface Kept {
+  reads: string;
+  refused: boolean;
+}
+
+/** A reload's moves, from what the run keeps to what the file says now: what stops (no
+ *  longer declared), what restarts (its part of the file changed, or it refused), what
+ *  starts (declared since). A process the edit left alone is in none of them. */
+export function plan(
+  kept: Map<string, Kept>,
+  next: Proc[],
+  cfg: OrgConfig,
+): { stop: string[]; restart: Proc[]; start: Proc[] } {
+  const wanted = new Set(next.map((p) => p.name));
+  return {
+    stop: [...kept.keys()].filter((name) => !wanted.has(name)),
+    restart: next.filter((p) => {
+      const one = kept.get(p.name);
+      return one !== undefined && (one.refused || one.reads !== reads(p.name, cfg));
+    }),
+    start: next.filter((p) => !kept.has(p.name)),
+  };
+}
+
 if (import.meta.main) {
   await entry(async () => {
     const org = orgFlag();
@@ -217,7 +268,8 @@ if (import.meta.main) {
     const stray = org.args.find((a) => a !== "-D" && a !== "--detach");
     if (stray !== undefined) throw new Error(`unknown argument ${stray}\n${USAGE}`);
     const root = findRoot(org);
-    const procs = roster(root, await readConfig(root));
+    const cfg = await readConfig(root);
+    const procs = roster(root, cfg);
     // ONE OF EACH ROLE (stop.ts). The locks are taken after the catalog is read, so a
     // manifest this run cannot serve refuses on its own terms and not on a lock it went
     // on to drop
@@ -227,14 +279,14 @@ if (import.meta.main) {
       // the probe is safe here, with no child yet to claim; the child checks again for real
       const pid = await holder(dir, SUPERVISOR);
       if (pid !== null) {
-        throw new Error(`${root} is already running as pid ${pid} — \`liquen stop\` first`);
+        throw new Error(`${root} is already running as pid ${pid} — ${RUNNING_HINT}`);
       }
       return await detach(root);
     }
     const lock = claim(dir, SUPERVISOR);
     if ("taken" in lock) {
       const who = lock.taken === null ? "" : ` as pid ${lock.taken}`;
-      throw new Error(`${root} is already running${who} — \`liquen stop\` first`);
+      throw new Error(`${root} is already running${who} — ${RUNNING_HINT}`);
     }
     // the mind may already be up without a supervisor: an interface that found no daemon
     // raised an ephemeral one. Main refuses the duplicate on its own lock either way — this
@@ -246,14 +298,32 @@ if (import.meta.main) {
           `\`liquen stop\` first`,
       );
     }
+    /** A process the run keeps: its `Kept` facts, the switch that retires it, and its
+     *  keep-alive loop, `down` once that loop has ended (retired, or refused). */
+    interface Held extends Kept {
+      down: boolean;
+      off: AbortController;
+      loop: Promise<void>;
+    }
+    const kept = new Map<string, Held>();
     const live = new Map<string, Deno.ChildProcess>();
-    const refused: string[] = []; // gave up on purpose — the child said why, once
-    const halt = new AbortController();
-    const stopping = () => halt.signal.aborted;
+    let halting = false;
+    let reloading = false;
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    // the run is over once every process is down — stopped, or refused — and no reload is
+    // about to bring one back
+    const settle = () => {
+      if (!reloading && [...kept.values()].every((k) => k.down)) finish();
+    };
 
-    const keepAlive = async ({ name, argv: [cmd, ...args] }: Proc) => {
+    /** Keep one process alive until `off`; true when it refused instead. */
+    const keepAlive = async (
+      { name, argv: [cmd, ...args] }: Proc,
+      off: AbortSignal,
+    ): Promise<boolean> => {
       let failures = 0;
-      while (!stopping()) {
+      while (!off.aborted) {
         const started = Date.now();
         const child = new Deno.Command(cmd, {
           args,
@@ -266,53 +336,122 @@ if (import.meta.main) {
         const status = await child.status;
         await Promise.all(pumps); // the streams end at exit; drain the tail before reporting
         live.delete(name);
-        if (stopping()) return;
+        if (off.aborted) return false;
         const uptime = Date.now() - started;
         // a refusal is a decision about the world, not a stumble in it: the child already
         // said what it wants, and saying it again on a timer teaches nobody anything
         if (!comesBack(status)) {
-          refused.push(name);
-          stamp("liquen", `${name} refused after ${Math.round(uptime / 1000)}s — not retrying`);
-          return;
+          stamp(
+            SUPERVISOR,
+            `${name} refused after ${Math.round(uptime / 1000)}s — down until \`liquen reload\``,
+          );
+          return true;
         }
         failures = uptime >= HEALTHY_MS ? 1 : failures + 1;
         const wait = backoffMs(failures);
         stamp(
-          "liquen",
+          SUPERVISOR,
           // the signal is the whole diagnosis when a child dies quietly: a killed process
           // reports code 0, so the code alone reads like a clean exit
           `${name} exited (${status.signal ?? `code ${status.code}`}) after ` +
             `${Math.round(uptime / 1000)}s — restarting in ${wait / 1000}s`,
         );
-        await pause(wait, halt.signal);
+        await pause(wait, off);
       }
+      return false;
+    };
+
+    const launch = (proc: Proc, cfg: OrgConfig) => {
+      const off = new AbortController();
+      const held: Held = {
+        reads: reads(proc.name, cfg),
+        refused: false,
+        down: false,
+        off,
+        loop: Promise.resolve(),
+      };
+      held.loop = keepAlive(proc, off.signal).then((refused) => {
+        held.refused = refused;
+        held.down = true;
+        settle();
+      });
+      kept.set(proc.name, held);
+    };
+
+    /** End one process: its loop told to stop, its child asked, then made to. Resolves once
+     *  the child is gone, so what replaces it never meets it on a socket or a port. */
+    const retire = async (name: string): Promise<void> => {
+      const held = kept.get(name);
+      if (!held) return;
+      held.off.abort();
+      try {
+        live.get(name)?.kill("SIGTERM");
+      } catch { /* already gone */ }
+      const hammer = setTimeout(() => {
+        try {
+          live.get(name)?.kill("SIGKILL");
+        } catch { /* already gone */ }
+      }, STOP_TIMEOUT_MS);
+      Deno.unrefTimer(hammer); // children all exiting cleanly must let the process end
+      await held.loop;
+      clearTimeout(hammer);
     };
 
     const stop = () => {
-      if (stopping()) return;
-      halt.abort();
-      stamp("liquen", `stopping ${live.size} process(es)`);
-      for (const c of live.values()) {
-        try {
-          c.kill("SIGTERM");
-        } catch { /* already gone */ }
-      }
-      const hammer = setTimeout(() => {
-        for (const c of live.values()) {
-          try {
-            c.kill("SIGKILL");
-          } catch { /* already gone */ }
-        }
-      }, STOP_TIMEOUT_MS);
-      Deno.unrefTimer(hammer); // children all exiting cleanly must let the process end
+      if (halting) return;
+      halting = true;
+      stamp(SUPERVISOR, `stopping ${live.size} process(es)`);
+      for (const name of kept.keys()) void retire(name);
     };
+
+    // one reload at a time, each on the file as it reads when its turn comes
+    let reloads = Promise.resolve();
+    const reload = () => {
+      reloads = reloads.then(async () => {
+        if (halting) return;
+        reloading = true;
+        try {
+          let cfg: OrgConfig;
+          let next: Proc[];
+          try {
+            cfg = await readConfig(root);
+            next = roster(root, cfg);
+          } catch (err) {
+            const why = err instanceof Error ? err.message : String(err);
+            stamp(SUPERVISOR, `config.jsonc not taken up — ${why}; running on as it was`);
+            return;
+          }
+          const moves = plan(kept, next, cfg);
+          await Promise.all([...moves.stop, ...moves.restart.map((p) => p.name)].map(retire));
+          for (const name of moves.stop) kept.delete(name);
+          if (halting) return;
+          for (const proc of [...moves.restart, ...moves.start]) launch(proc, cfg);
+          const said = [
+            ...moves.stop.map((name) => `${name} stopped`),
+            ...moves.restart.map((p) => `${p.name} restarted`),
+            ...moves.start.map((p) => `${p.name} started`),
+          ];
+          stamp(
+            SUPERVISOR,
+            `config.jsonc taken up — ${said.length > 0 ? said.join(" · ") : "nothing changed"}`,
+          );
+        } finally {
+          reloading = false;
+          settle();
+        }
+      });
+    };
+
     Deno.addSignalListener("SIGTERM", stop);
     Deno.addSignalListener("SIGINT", stop);
+    Deno.addSignalListener(RELOAD, reload);
 
-    stamp("liquen", `${procs.map((p) => p.name).join(" · ")} — root ${root}`);
-    await Promise.all(procs.map(keepAlive));
-    // every process is down and at least one meant it — the org has nothing left to run
-    if (!stopping() && refused.length > 0) {
+    stamp(SUPERVISOR, `${procs.map((p) => p.name).join(" · ")} — root ${root}`);
+    for (const proc of procs) launch(proc, cfg);
+    await finished;
+    // every process is down and none was asked to be — each one refused
+    if (!halting) {
+      const refused = [...kept].filter(([, k]) => k.refused).map(([name]) => name);
       throw new Error(`nothing left running — ${refused.join(", ")} refused (said why above)`);
     }
   });

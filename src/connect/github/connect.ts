@@ -52,7 +52,6 @@ import {
   reachLine,
   readConfig,
   requireIngest,
-  startStep,
 } from "../../connector.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
@@ -634,12 +633,8 @@ if (import.meta.main) {
 
     /** What the org still owes after this door — read off the vault, so finishing one door
      *  is where you learn what the next one is. */
-    const owed = async (
-      creds: { list: (p: string) => Promise<CredentialRow[]> },
-      then: string[] = [],
-    ) => printNext([...githubNext(githubHave(await creds.list("github:"))), ...then]);
-    /** A grant fronts $GH_TOKEN, and a running org's main picked its rows at boot. */
-    const granted = async () => [await startStep(root, "agents get $GH_TOKEN")];
+    const owed = async (creds: { list: (p: string) => Promise<CredentialRow[]> }) =>
+      printNext(githubNext(githubHave(await creds.list("github:"))));
 
     /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
     const lines = Deno.stdin.isTerminal()
@@ -714,7 +709,7 @@ if (import.meta.main) {
           } (installation ${installationId}) → the org`,
         );
         console.error("  (deno task status shows the map)");
-        await owed(creds, await granted());
+        await owed(creds);
       } finally {
         await creds.close();
         await log.close();
@@ -794,7 +789,7 @@ if (import.meta.main) {
       });
       console.error(`\n✓ connected: github user ${login} → ${principal ?? "the org"}`);
       console.error("  (deno task status shows the map)");
-      await owed(creds, await granted());
+      await owed(creds);
     } finally {
       await creds.close();
       await log.close();

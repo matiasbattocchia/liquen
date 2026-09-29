@@ -24,7 +24,7 @@ export { checkStrings, connectorConfig, findRoot, orgFlag, readConfig } from "./
 export { callbackAddress, ingestAddress, localBase, reachLine } from "./edge.ts";
 export { entry, report } from "./entry.ts";
 export type { ConnectorSpec } from "./config.ts";
-export { declared, printNext, requireEdge, requireIngest, startStep } from "./connect/declare.ts";
+export { declared, printNext, requireEdge, requireIngest } from "./connect/declare.ts";
 export { DispatchError, failedStatus } from "./connect/errors.ts";
 export { createDispatcher, isOutbound } from "./connect/dispatcher.ts";
 export type { DispatcherDeps, Posted } from "./connect/dispatcher.ts";

@@ -599,8 +599,7 @@ if (import.meta.main) {
     };
 
     const { botScopes, userScopes } = await slackConfig(root);
-    const { connections, edge } = await readConfig(root);
-    const alreadyDeclared = "slack" in connections;
+    const { edge } = await readConfig(root);
 
     if (verb === "app") {
       const pastes = flags.has("bot") || flags.has("user");
@@ -646,8 +645,9 @@ if (import.meta.main) {
           const key = await connectSlackApp({ clientId, clientSecret, signingSecret }, creds);
           console.error(`✓ app stored: ${key}` + (callback ? ` (callback: ${callback})` : ""));
           // only now, because a door that wrote nothing promised nothing (`requireIngest`
-          // already did this when tokens are being pasted)
-          if (!alreadyDeclared && !pastes) await declared(root, SPEC);
+          // already did this when tokens are being pasted); declaring reloads a running org,
+          // which gives an ingest that refused for want of this app another go
+          if (!pastes) await declared(root, SPEC);
         }
 
         const appToken = ask("App-level token (xapp-…):");

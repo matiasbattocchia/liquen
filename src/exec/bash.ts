@@ -48,7 +48,7 @@ export interface BashOptions {
    *  This is the ONLY channel besides the allowlist by which user space learns anything:
    *  the egress proxy's HTTPS_PROXY/SSL_CERT_FILE/placeholder-token land here (§9). Never
    *  put a real secret in it — the whole point is that user space holds only handles. */
-  env?: () => Record<string, string>;
+  env?: () => Promise<Record<string, string>>;
   /** The Linux user every spawn RUNS AS (§9, the container story): user space is not just
    *  an empty pocket but a different owner — the kernel enforces the data classification.
    *  Only meaningful when the harness runs as root; absent, spawns keep the process uid. */
@@ -164,7 +164,7 @@ export function bashTool(opts: BashOptions): ExecTool {
         max_bytes?: number;
       };
       const timeoutMs = timeout !== undefined ? timeout * 1000 : timeoutMsDefault;
-      const env = { ...userSpaceEnv(opts.binPath), ...opts.env?.() };
+      const env = { ...userSpaceEnv(opts.binPath), ...(await opts.env?.()) };
       if (opts.user) {
         // the identity trio follows the uid, not the harness process
         Object.assign(env, { HOME: opts.user.home, USER: opts.user.name, LOGNAME: opts.user.name });
@@ -492,7 +492,7 @@ async function layShims(dir: string): Promise<string> {
 export async function installExecGround(
   dir: string,
   agentId: string,
-  env?: () => Record<string, string>,
+  env?: () => Promise<Record<string, string>>,
   defaultTimeoutMs?: number, // the system.bashTimeoutMs knob, funneled by main
 ): Promise<ExecGround> {
   const workspace = `${dir}/agents/${agentId}`;

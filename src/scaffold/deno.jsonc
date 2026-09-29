@@ -16,6 +16,10 @@
       "command": "deno run -A @liquen/liquen/stop",
       "description": "end the run, whoever started it"
     },
+    "reload": {
+      "command": "deno run -A @liquen/liquen/reload",
+      "description": "the running org takes up an edit to config.jsonc"
+    },
     "update": {
       "command": "deno run -A @liquen/liquen/update",
       "description": "put the org on the newest release, and add the tasks it ships"

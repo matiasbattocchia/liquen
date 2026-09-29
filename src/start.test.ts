@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { backoffMs, comesBack, pause, roster } from "./start.ts";
+import { backoffMs, comesBack, type Kept, pause, plan, reads, roster } from "./start.ts";
 import { REFUSAL } from "./entry.ts";
+import { type OrgConfig, starterConfig } from "./config.ts";
 
 Deno.test("roster: main first, bundled connections resolve, org-local ones probe connectors/", () => {
   const tmp = Deno.makeTempDirSync();
@@ -47,6 +48,66 @@ Deno.test("roster: a declared connection with no run.ts is a boot error", () => 
       Error,
       'connection "ghost"',
     );
+  } finally {
+    Deno.removeSync(tmp, { recursive: true });
+  }
+});
+
+/** An org's catalog: the starter's, with `connections` and `edge` as given. */
+function catalog(over: Partial<OrgConfig> = {}): OrgConfig {
+  return { ...starterConfig(), ...over };
+}
+
+Deno.test("reads: each process restarts on its own part of the file and nothing else", () => {
+  const base = catalog({ connections: { slack: {}, whatsapp: {} } });
+  const changed = (cfg: OrgConfig) =>
+    ["main", "slack", "whatsapp", "edge", "tunnel"].filter((n) => reads(n, base) !== reads(n, cfg));
+  // a connection's own section touches that connection alone
+  assertEquals(changed(catalog({ connections: { slack: { botScopes: [] }, whatsapp: {} } })), [
+    "slack",
+  ]);
+  // the bridge's address is main's too: it speaks to the bridge itself
+  assertEquals(
+    changed(catalog({ connections: { slack: {}, whatsapp: { bridgeUrl: "http://b:1" } } })),
+    ["main", "whatsapp"],
+  );
+  // the roster is main's alone
+  const agents = { ana: { mind: true } } as unknown as OrgConfig["agents"];
+  assertEquals(changed(catalog({ connections: base.connections, agents })), ["main"]);
+  // the edge: every connection reads it, main does not
+  const edge = { ...base.edge, publicUrl: "https://acme.example.com" };
+  assertEquals(changed(catalog({ connections: base.connections, edge })), [
+    "slack",
+    "whatsapp",
+    "edge",
+  ]);
+  // a shared section is every liquen process's
+  const system = { ...base.system, bashTimeoutMs: 1 };
+  assertEquals(changed(catalog({ connections: base.connections, system })), [
+    "main",
+    "slack",
+    "whatsapp",
+  ]);
+});
+
+Deno.test("plan: what the edit touched restarts, what it declared starts, what it dropped stops", () => {
+  const tmp = Deno.makeTempDirSync();
+  try {
+    const before = catalog({ connections: { slack: {}, google: {} } });
+    const kept = new Map<string, Kept>(
+      roster(tmp, before).map((p) => [p.name, { reads: reads(p.name, before), refused: false }]),
+    );
+    // nothing changed: nothing moves
+    assertEquals(plan(kept, roster(tmp, before), before), { stop: [], restart: [], start: [] });
+    // google dropped, whatsapp declared, slack's section edited
+    const after = catalog({ connections: { slack: { botScopes: [] }, whatsapp: {} } });
+    const moves = plan(kept, roster(tmp, after), after);
+    assertEquals(moves.stop, ["google"]);
+    assertEquals(moves.restart.map((p) => p.name), ["slack"]);
+    assertEquals(moves.start.map((p) => p.name), ["whatsapp"]);
+    // a process that refused gets another go, though the file says the same of it
+    kept.set("google", { reads: reads("google", before), refused: true });
+    assertEquals(plan(kept, roster(tmp, before), before).restart.map((p) => p.name), ["google"]);
   } finally {
     Deno.removeSync(tmp, { recursive: true });
   }

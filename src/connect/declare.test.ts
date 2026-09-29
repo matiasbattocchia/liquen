@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { declared, requireEdge, requireIngest, startStep } from "./declare.ts";
+import { declared, requireEdge, requireIngest } from "./declare.ts";
 import { serveIngest } from "./serve.ts";
-import { claim, SUPERVISOR } from "../stop.ts";
+import { claim, RELOAD, SUPERVISOR } from "../stop.ts";
 import { type ConnectorSpec, materialize, starterConfig } from "../config.ts";
 
 const spec: ConnectorSpec = {
@@ -104,20 +104,20 @@ Deno.test("requireEdge: nobody on edge.port is the refusal, the edge up is the g
   }
 });
 
-Deno.test("startStep: a down org is started, a running one restarted — it read the vault at boot", async () => {
-  const root = await Deno.makeTempDir();
+Deno.test("declared: a running org is reloaded — the run's supervisor is sent RELOAD", async () => {
+  const root = await org();
+  let heard = 0;
+  const listener = () => heard++;
+  Deno.addSignalListener(RELOAD, listener);
+  // this process stands in for the run: it holds the supervisor's role
+  const lock = claim(`${root}/data`, SUPERVISOR);
   try {
-    await Deno.mkdir(`${root}/data`);
-    const down = await startStep(root, "agents get $X");
-    assertStringIncludes(down, "`liquen start` — agents get $X");
-    assertEquals(down.includes("liquen stop"), false);
-    const lock = claim(`${root}/data`, SUPERVISOR);
-    try {
-      assertStringIncludes(await startStep(root, "agents get $X"), "`liquen stop`, then");
-    } finally {
-      if ("held" in lock) lock.held.close();
-    }
+    await declared(root, spec);
+    for (let i = 0; i < 50 && heard === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    assertEquals(heard, 1);
   } finally {
+    if ("held" in lock) lock.held.close();
+    Deno.removeSignalListener(RELOAD, listener);
     await Deno.remove(root, { recursive: true });
   }
 });

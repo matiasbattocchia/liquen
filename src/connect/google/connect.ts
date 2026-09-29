@@ -32,7 +32,7 @@ import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag, readConfig } from "../../config.ts";
 import { callbackAddress } from "../../edge.ts";
-import { declared, printNext, requireEdge, startStep } from "../declare.ts";
+import { declared, printNext, requireEdge } from "../declare.ts";
 import {
   type DoorAddress,
   doorAddress,
@@ -254,12 +254,6 @@ if (import.meta.main) {
             : "\n✓ connected (deno task status shows the map)",
         );
         await declared(root, SPEC);
-        printNext([
-          await startStep(
-            root,
-            "the Google process polls calendar and mail, and agents get $GOOGLE_WORKSPACE_CLI_TOKEN",
-          ),
-        ]);
       } else {
         console.error(USAGE);
         Deno.exit(2);

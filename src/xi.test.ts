@@ -845,7 +845,10 @@ Deno.test("specsOf: `tools` names what the model sees — unset offers everythin
     exec: { bash },
     contact: { whatsapp: { write: () => Promise.resolve({}) } },
   } as unknown as XiPorts;
-  assertEquals(specsOf(withBook, { ...CONFIG, tools: undefined }).map((t) => t.name), [
+  const offered = (held: { service: string }[]) =>
+    specsOf(withBook, { ...CONFIG, tools: undefined }, held).map((t) => t.name);
+  assertEquals(offered([{ service: "slack" }]), names());
+  assertEquals(offered([{ service: "slack" }, { service: "whatsapp" }]), [
     "send",
     "search",
     "schedule",

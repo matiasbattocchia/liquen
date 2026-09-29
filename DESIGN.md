@@ -2693,7 +2693,8 @@ true for exec (kernel handles it), false for control (only harness/human authori
      the placeholder's env var and the grant's hosts on the vault row (`extra.env`,
      `extra.hosts`; for a service with no connector, the shipped `token` door writes the
      row from a paste — the tool column of the §4 grid, one row and nothing else), main
-     fronts what's declared PER AGENT — the org's row, or the
+     fronts what's declared PER AGENT, read off the vault at every spawn so a grant stored
+     while the org runs is in the next command's pocket — the org's row, or the
      agent's own, never a peer's (`frontedFor`), so the handle in a pocket names a grant
      its holder has and the audit's agent is the caller — and the swap refuses any dial outside
      the declaration (so a handle can't be aimed at an echo endpoint to read the token
@@ -2862,7 +2863,9 @@ comments and an empty roster, `liquen agent <name>` adds one roster entry — `a
 with the identity handles its flags declared (`--name`, `--email`, `--phone`) and null
 for the rest — and `liquen connect` adds the one line a grant earns — `connections.<name>`, the
 subsection that makes `liquen start` spawn that connector — since the map alone never starts
-a process; `liquen connect --remove` takes it out again with the service's last connection. Git is its history, a human is watching for all three, and boot COMPILES it — the
+a process; `liquen connect --remove` takes it out again with the service's last connection.
+Each of them reloads a running org (`liquen reload`), so what it wrote runs without a stop.
+Git is its history, a human is watching for all three, and boot COMPILES it — the
 roster into registry rows and
 homes, everything else funneled to the deepest function that needs it (main → xi → nu →
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
@@ -3032,9 +3035,22 @@ loudly, the same law as an unknown config key.
   it picks the message: an `Error` the program modeled is a refusal and exits `REFUSAL`
   (2), the runtime's own is a fault and exits 1. The supervisor reads that code (`comesBack`, src/start.ts): a
   fault, a signal or an unasked-for clean exit are restarted with backoff; a refusal is
-  logged once and left down, because a port already held or a key the file got wrong will be
-  held and wrong again a second later. The org keeps running with whatever is left, and
-  `liquen start` refuses when nothing is.
+  logged once and left down until a reload, because a port already held or a key the file
+  got wrong will be held and wrong again a second later. The org keeps running with
+  whatever is left, and `liquen start` refuses when nothing is.
+- **The file is read again on a reload, never by itself.** `liquen reload` — and every
+  setup door that writes `config.jsonc` — reads the file, refuses one boot would reject,
+  and signals the supervisor (`RELOAD`, src/stop.ts), which reads it again and brings the
+  run in line: each process restarts when the part of the file it reads changed (`reads`,
+  src/start.ts — the shared sections for every liquen process, the roster and the WhatsApp
+  bridge's address for main, the edge and its own section for a connection), a connection
+  declared since starts, one no longer declared stops, and one that refused gets another
+  go, since what it refused over may be what the edit changed. Nothing watches the file: a
+  half-made edit restarts nothing, and a file the supervisor cannot take leaves the run as
+  it was. So a connection, a grant or an agent is added to an org that stays up; a stop is
+  only ever the operator's own order. What main offers doesn't hang on the file either —
+  every service's rooms and address-book ports stand from boot, reached only through an
+  account the agent holds — and the grants are the vault's, read at each use.
 - **A role is a lock.** Every process in an org's run takes an exclusive lock on
   `data/run/<role>.pid` for its whole life and writes its pid inside (src/stop.ts):
   `liquen` is the supervisor, `main` is the mind — the tail, the fan-out, the doors —

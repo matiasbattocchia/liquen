@@ -1175,7 +1175,7 @@ async function think(
       events,
       docs,
       docsOn: ports.docs.on,
-      tools: specsOf(ports, config),
+      tools: specsOf(ports, config, await accounts({ id: config.agentId }, ports)),
       config,
       surfaces: surfaces.map(surfaceOf),
       principals: org.principals,
@@ -2272,8 +2272,8 @@ async function accounts(self: { id: string }, ports: XiPorts): Promise<Connectio
   return me ? speaksThrough(me, rows) : rows;
 }
 
-/** The services whose address book this harness can WRITE — what the `contact` tool is
- *  offered on, and which accounts may save somebody. */
+/** The services whose address book this harness can WRITE — which accounts may save
+ *  somebody, and so where the `contact` tool is offered: to an agent with one of them. */
 function writers(ports: XiPorts): string[] {
   return Object.entries(ports.contact ?? {}).filter(([, p]) => p.write).map(([s]) => s);
 }
@@ -3310,7 +3310,14 @@ async function people(log: Pick<Reader, "read">, handle?: string): Promise<strin
   return [...new Set(named.map((e) => e.envelope.sender?.address).filter((a) => !!a))] as string[];
 }
 
-export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
+/** The tools this turn offers. `held` is the agent's accounts: a tool that acts through
+ *  an account's service is offered only to an agent holding one there. */
+export function specsOf(
+  ports: XiPorts,
+  config: AgentConfig,
+  held: Pick<ConnectionRow, "service">[] = [],
+): Anthropic.Tool[] {
+  const booked = writers(ports).some((s) => held.some((c) => c.service === s));
   const all: Anthropic.Tool[] = [
     {
       name: "send",
@@ -3537,7 +3544,7 @@ export function specsOf(ports: XiPorts, config: AgentConfig): Anthropic.Tool[] {
         },
       },
     },
-    ...(writers(ports).length > 0
+    ...(booked
       ? [
         {
           name: "contact",

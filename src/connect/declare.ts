@@ -4,28 +4,32 @@
  * A grant writes the MAP (connections, memberships, the vault); the catalog is what says
  * a PROCESS should run — `liquen start` spawns one child per `connections.<name>`. So the two
  * halves land together: the door that just earned the grant declares the connection, and
- * says so, because the file is git-tracked and the operator is owed the diff.
+ * says so, because the file is git-tracked and the operator is owed the diff. A running
+ * org is reloaded on the spot (reload.ts), so what the door wrote runs without a restart.
  */
 
 import { type ConnectorSpec, declareConnection, readConfig } from "../config.ts";
 import { ingestUp } from "./serve.ts";
 import { socketOf } from "../edge.ts";
-import { holder, MAIN, SUPERVISOR } from "../stop.ts";
+import { reloaded } from "../reload.ts";
 
-/** Declare the service — `decided` is what the door earned — then report what
- *  config.jsonc now holds. A declared section is the operator's and is left as found. */
+/** Declare the service — `decided` is what the door earned — reload the running org, and
+ *  report what config.jsonc now holds. A declared section is the operator's and is left as
+ *  found. The reload also gives a process that refused another go: what it refused over
+ *  (an app not yet in the vault) may be what the door just stored. */
 export async function declared(
   root: string,
   spec: ConnectorSpec,
   decided: Record<string, unknown> = {},
 ): Promise<void> {
   const added = await declareConnection(root, spec.name, decided);
+  const who = await reloaded(root);
   console.error(
     added
       ? `  declared "connections": { "${spec.name}": ${
         JSON.stringify(decided)
-      } } in config.jsonc — \`liquen start\` runs it`
-      : `  config.jsonc already declares "${spec.name}" — \`liquen start\` runs it`,
+      } } in config.jsonc — ${who}`
+      : `  config.jsonc already declares "${spec.name}" — ${who}`,
   );
 }
 
@@ -73,13 +77,14 @@ export async function requireIngest(
   decided: Record<string, unknown> = {},
   waitMs: number = INGEST_WAIT_MS,
 ): Promise<void> {
-  if (!(spec.name in (await readConfig(root)).connections)) await declared(root, spec, decided);
+  const listed = spec.name in (await readConfig(root)).connections;
+  if (!listed || !(await ingestUp(root, spec.name))) await declared(root, spec, decided);
   const sock = socketOf(root, spec.name, "ingest");
   await awaited(
     () => ingestUp(root, spec.name),
     `nothing is listening at ${sock} — ${spec.name}'s ingest is the door the service ` +
-      `delivers to, and what arrives before it opens is lost. Run \`liquen start\` (it runs ` +
-      `${spec.name} now that the file declares it), then this door.`,
+      `delivers to, and what arrives before it opens is lost. \`liquen start\` runs it; on ` +
+      `a running org, the run's lines say why ${spec.name} is down.`,
     spec.name,
     waitMs,
   );
@@ -105,19 +110,6 @@ export async function requireEdge(root: string, waitMs: number = INGEST_WAIT_MS)
     `:${port}`,
     waitMs,
   );
-}
-
-/** The step that makes a door's writes take effect, phrased for the org as it is now:
- *  `liquen start` reads the catalog and the vault once, at boot, so a section or a grant a
- *  door just wrote waits for the next one. An org already up (its supervisor, or a main an
- *  interface raised) is restarted; one that is down is started. */
-export async function startStep(root: string, what: string): Promise<string> {
-  const dir = `${root}/data`;
-  const up = (await holder(dir, SUPERVISOR)) !== null || (await holder(dir, MAIN)) !== null;
-  return up
-    ? `\`liquen stop\`, then \`liquen start\` — ${what}; the running org read the catalog ` +
-      `and the vault when it booted`
-    : `\`liquen start\` — ${what}`;
 }
 
 /** A door's closing lines: what to do now, in order. */
