@@ -16,9 +16,15 @@
  * described lines; thinking stays silent). stderr is failure: the log's error rows and
  * the CLI's own. Exit 0 = idle arrived over our message; 1 = no daemon, a hang-up, or
  * the timeout; 2 = usage.
+ *
+ * A card the agent raises waits in the session on its own — the turn closes around it — so
+ * the transcript ends on `? approve <handle>`, and the answer is another instruction in
+ * the REPL's words: `liquen cli /y <handle>`, `/n <handle> [reason]`, `/y all`, and
+ * `/cancel` to cut a running turn. Steering is said and the CLI exits on the door's reply.
  */
 
-import { attach, resolveAgent, tuneFlags, wire } from "./attach.ts";
+import { answering, attach, resolveAgent, steering, tuneFlags, type Wire, wire } from "./attach.ts";
+import { shortId } from "./render.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { painter } from "./paint.ts";
 import { tailOf } from "./line.ts";
@@ -28,6 +34,39 @@ import { helpFlag } from "./connect/help.ts";
 
 export const USAGE = "usage: liquen cli [--dir <org>] [--agent <name>] [--session <name>] " +
   "[--model <name>] [--effort <level>] [--provider <name>] [--timeout <seconds>] <instruction…>";
+
+/** `/y` · `/n` · `/cancel`, said through the door as the REPL says them: the cards answered
+ *  are the ones still open in the session, and the answer is the exit code — 0 said, 1 the
+ *  door refused, 2 nothing to answer or not a verdict. */
+async function steer(w: Wire, line: string, session: string, open: string[]): Promise<number> {
+  if (line === "/cancel") {
+    const r = await w.request({ op: "control", kind: "cancel", session });
+    if (!r.ok) console.error(String(r.error));
+    else console.log("cancel sent");
+    return r.ok ? 0 : 1;
+  }
+  const a = answering(line, open);
+  if (typeof a === "string") {
+    console.error(a);
+    return 2;
+  }
+  let code = 0;
+  for (const ref of a.refs) {
+    const r = await w.request({
+      op: "permission_response",
+      ref_id: ref,
+      verdict: a.verdict,
+      session,
+    });
+    if (r.ok) {
+      console.log(`${a.verdict.behavior === "allow" ? "allowed" : "denied"} ${shortId(ref)}`);
+    } else {
+      console.error(`${shortId(ref)}: ${r.error}`);
+      code = 1;
+    }
+  }
+  return code;
+}
 
 await entry(async () => {
   const org = orgFlag();
@@ -86,8 +125,11 @@ await entry(async () => {
     if (myId && idleAt >= myId) settle(0);
   };
 
+  // a verdict or a cancel is steering, not a turn: it is said, the CLI says what the door
+  // answered, and it is done — there is no transcript to paint
+  const steers = instruction === "/cancel" || steering(instruction);
   const w = wire(conn, {
-    event: p.event,
+    event: steers ? () => {} : p.event,
     delta: p.delta,
     status: (s) => {
       if (s.status === "idle" && s.after !== undefined) {
@@ -111,6 +153,12 @@ await entry(async () => {
     leaving = true;
     conn.close();
     Deno.exit(1);
+  }
+  if (steers) {
+    leaving = true;
+    const code = await steer(w, instruction, session, t.open ?? []);
+    conn.close();
+    Deno.exit(code);
   }
   const r = await w.request({
     op: "message",

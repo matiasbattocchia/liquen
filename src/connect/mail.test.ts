@@ -468,3 +468,29 @@ Deno.test("mail dispatch: what mail cannot do fails with its class — an edit, 
   assertStringIncludes(String(log.patches[3].patch.status?.error), "nothing to send");
   assertStringIncludes(String(log.patches[4].patch.status?.error), "not a mail");
 });
+
+Deno.test("mail dispatch: an address another wire of the service carries is left queued for it", async () => {
+  const log = fakeLog();
+  let posts = 0;
+  createMailDispatch({
+    service: "microsoft",
+    subscribe: log.subscribe,
+    read: log.read,
+    setDelivery: log.setDelivery,
+    elsewhere: (address) => address.startsWith("19:"),
+    send: () => {
+      posts++;
+      return Promise.resolve();
+    },
+  });
+  const place = (address: string) => ({
+    ...outbound().envelope,
+    service: "microsoft" as const,
+    conversation: { address },
+  });
+  log.push(outbound({ id: "e1", envelope: place("19:abc@thread.v2") }));
+  log.push(outbound({ id: "e2", envelope: place("ana@x.com") }));
+  await settle();
+  assertEquals(posts, 1);
+  assertEquals(log.patches.map((p) => p.id), ["e2"]);
+});

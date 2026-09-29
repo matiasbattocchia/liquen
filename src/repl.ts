@@ -32,14 +32,13 @@
  */
 
 import meta from "../deno.json" with { type: "json" };
-import { attach, resolveAgent, tuneFlags, wire } from "./attach.ts";
+import { answering, attach, resolveAgent, steering, tuneFlags, wire } from "./attach.ts";
 import { createScreen } from "./line.ts";
 import { orgFlag } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { DIM, painter, RED, RESET, YOU } from "./paint.ts";
 import { hhmm, ownVoice, shortId, textOf } from "./render.ts";
 import type { Event } from "./types.ts";
-import { parseVerdict } from "./xi.ts";
 import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
 
@@ -175,32 +174,23 @@ await entry(async () => {
       await cancel();
       continue;
     }
-    if (text.startsWith("/y") || text.startsWith("/n")) {
-      if (pending.length === 0) {
-        write(`${DIM}nothing pending${RESET}\n`);
+    if (steering(text)) {
+      const a = answering(text, pending);
+      if (typeof a === "string") {
+        write(`${DIM}${a}${RESET}\n`);
         continue;
       }
-      // a card named by its handle is answered wherever it stands in the pile; the handle
-      // is lifted out of the line before the verdict is read, so it is not taken for a
-      // reason. `all` takes the pile in the order it was asked; a bare word takes the
-      // newest card, the one whose row is still on screen
-      const words = text.split(/\s+/);
-      const named = pending.find((ref) => words.includes(shortId(ref)));
-      const verdict = parseVerdict(words.filter((w) => !named || w !== shortId(named)).join(" "));
-      if (!verdict) {
-        write(`${DIM}not a verdict — /y[once|conv|conn|always|all] [handle] [reason]${RESET}\n`);
-        continue;
-      }
-      const answered = verdict.every
-        ? pending.splice(0)
-        : named
-        ? pending.splice(pending.indexOf(named), 1)
-        : [pending.pop()!];
-      for (const ref of answered) {
-        const r = await w.request({ op: "permission_response", ref_id: ref, verdict, session });
+      pending.splice(0, pending.length, ...pending.filter((ref) => !a.refs.includes(ref)));
+      for (const ref of a.refs) {
+        const r = await w.request({
+          op: "permission_response",
+          ref_id: ref,
+          verdict: a.verdict,
+          session,
+        });
         if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n`);
       }
-      if (answered.length > 1) write(`${DIM}${answered.length} approvals answered${RESET}\n`);
+      if (a.refs.length > 1) write(`${DIM}${a.refs.length} approvals answered${RESET}\n`);
       continue;
     }
     const r = await w.request({

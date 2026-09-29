@@ -1594,7 +1594,8 @@ async function act(
     // reaches them, so this call has no destination to approve — asking would put a card
     // in front of them whose only outcomes are a message they were already getting and a
     // refusal. Cheap to raise, and the model reads the hint and says the thing instead.
-    const nowhere = await selfSend(name, input, config, ports);
+    const nowhere = await selfSend(name, input, config, ports) ??
+      await unheld(input, self, ports);
     if (nowhere) {
       out.push(await resultOf(use, nowhere, { is_error: true }));
       continue;
@@ -2346,6 +2347,24 @@ async function accountNamed(
   throw new Error(
     `"${handle}" names ${hit.length} of your accounts — say which: ${hit.map(label).join(", ")}`,
   );
+}
+
+/** A call that names an account (`connection`) the agent does not hold, or names two:
+ *  refused before it is gated, with `accountNamed`'s sentence — the account is whose name
+ *  the call goes out in, so there is nothing to approve until the model says which. */
+async function unheld(
+  input: Json,
+  self: { id: string },
+  ports: XiPorts,
+): Promise<string | undefined> {
+  const handle = (input as { connection?: unknown } | null)?.connection;
+  if (typeof handle !== "string" || handle === "") return undefined;
+  try {
+    await accountNamed(handle, self, ports);
+    return undefined;
+  } catch (err) {
+    return (err as Error).message;
+  }
 }
 
 /** Where a call LANDS (§9): a send's destination — the same anchoring read, name

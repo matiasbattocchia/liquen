@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from "@std/assert";
-import { type Reply, tuneFlags, wire } from "./attach.ts";
+import { answering, type Reply, steering, tuneFlags, wire } from "./attach.ts";
 
 Deno.test("tuneFlags: the model flags are spliced out, and a word the harness lacks fails here", () => {
   // the flags leave the argv, so a surface's own parsing sees only its own words
@@ -43,4 +43,25 @@ Deno.test("wire: a request in flight when the daemon hangs up is answered, not l
     } catch { /* already closed under the pump */ }
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("answering: a verdict line picks its cards out of the pile, as every surface reads it", () => {
+  const pile = ["0190aaaa-0000-7000-8000-00000000a1b2", "0190bbbb-0000-7000-8000-00000000c3d4"];
+  const [older, newer] = pile.map((ref) => answering(`/y ${ref.slice(-6)}`, pile));
+  assertEquals(older, { refs: [pile[0]], verdict: { behavior: "allow", scope: "once" } });
+  assertEquals(newer, { refs: [pile[1]], verdict: { behavior: "allow", scope: "once" } });
+  // a bare verdict takes the newest; the handle is never read as the reason
+  assertEquals(answering("/n too early", pile), {
+    refs: [pile[1]],
+    verdict: { behavior: "deny", scope: "once", reason: "too early" },
+  });
+  assertEquals(answering("/n 00a1b2 too early", pile), {
+    refs: [pile[0]],
+    verdict: { behavior: "deny", scope: "once", reason: "too early" },
+  });
+  assertEquals((answering("/y all", pile) as { refs: string[] }).refs, pile);
+  assertEquals(answering("/y 99ffee", pile), "no card 99ffee is waiting");
+  assertEquals(answering("/y", []), "nothing pending");
+  assertEquals(typeof answering("/nope", pile), "string");
+  assertEquals([steering("/y"), steering("/n x"), steering("hello /y")], [true, true, false]);
 });

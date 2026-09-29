@@ -4785,3 +4785,35 @@ at the run's lines. The Slack app door names `slack` once it has stored an app-l
 or a signing secret. `liquen reload <process>…` names them by hand; a name the run has no
 process for is refused with the run's roster, a bad file with boot's own sentence, and the
 run goes on as it was either way.
+
+### The Microsoft end-to-end run: CLI verdicts, unheld accounts, Teams rows (2026-09-29) — LANDED
+
+A run against a fresh tenant (`../new`, `matias@liquendev.onmicrosoft.com`), driven through
+`liquen cli`, turned up three gaps.
+
+- **The CLI answers cards.** Only the REPL had `/y` and `/n`, so a card raised under the CLI
+  waited for a REPL. `liquen cli /y <handle>`, `/n <handle> [reason]`, `/y all` and
+  `/cancel` now say the answer through the door and exit on its reply (`steer` in cli.ts).
+  Both surfaces read the line through one function (`answering` in attach.ts), which also
+  refuses a handle no open card wears; a mistyped handle had been read as the reason and
+  approved the newest card.
+- **An account the agent does not hold is refused before the gate.** The model passed the
+  service name (`connection: "microsoft"`) twice, and `accountNamed` refused it only after
+  the principal had approved. `unheld` in xi.ts runs `accountNamed` ahead of the gate, as
+  `selfSend` does for a send to the principal.
+- **Teams rows were taken by the mail dispatch.** Outlook mail and Teams dispatch in one
+  process and both subscribe to Microsoft's queued rows; mail took a channel post, failed it
+  as "not a mail address", and Teams never saw it queued. The mail dispatch now leaves an
+  address another wire of its service carries (`elsewhere`, `isTeamsAddress`).
+
+Still open from the run:
+
+- Outbound mail from the new tenant does not arrive: Riseup bounced an invite with `550
+  5.7.708 … traffic not accepted from this IP` (a new tenant's sending pool), the mails the
+  log stamps dispatched to Riseup never arrived, and Gmail does not show the reply in its
+  thread.
+- A calendar change Exchange makes on its own (after an edit) is published as an edit
+  identical to the one before it.
+- The WhatsApp mirror labels a CLI message `por repl`.
+- The model, whose shell runs in the caller's directory, did not resolve a skill's path
+  from its home and searched the filesystem for it.

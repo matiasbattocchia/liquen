@@ -26,6 +26,7 @@
 
 import { decodeBase64, encodeBase64 } from "@std/encoding/base64";
 import { APP_PREFIX } from "./connect.ts";
+import { isTeamsAddress } from "./teams.ts";
 import {
   htmlToText,
   MAIL_SYNC,
@@ -356,8 +357,9 @@ export function runIngest(): Promise<() => Promise<void>> {
   );
 }
 
+/** Outlook mail out; a Teams place on the same service is the Teams dispatch's. */
 export function runDispatch(): Promise<() => Promise<void>> {
-  return runMailDispatch(SERVICE, outlookSend);
+  return runMailDispatch(SERVICE, outlookSend, isTeamsAddress);
 }
 
 if (import.meta.main) await entry(async () => [await runIngest(), await runDispatch()]);

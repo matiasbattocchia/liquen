@@ -419,6 +419,9 @@ export interface MailDispatchDeps {
   subscribe: Subscriber["subscribe"];
   read: Reader["read"];
   send: MailSend;
+  /** An address another wire of the same service carries (Teams, beside Outlook mail):
+   *  its rows are that wire's dispatch's, and this one leaves them queued for it. */
+  elsewhere?: (address: string) => boolean;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
   /** The clock the Date header and the mint read. */
   now?: () => string;
@@ -452,7 +455,7 @@ export function createMailDispatch(deps: MailDispatchDeps): () => Promise<void> 
     select: (event) => {
       const connection = event.envelope.connection_address;
       const address = event.envelope.conversation.address;
-      if (!connection || !address) return null;
+      if (!connection || !address || deps.elsewhere?.(address)) return null;
       const parts = event.parts ?? [];
       const text = parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
       const files = parts.filter((p): p is FilePart => p.type === "file");
@@ -554,6 +557,7 @@ export interface MailWireDeps {
 export async function runMailDispatch(
   service: Service,
   wire: (deps: MailWireDeps) => MailSend,
+  elsewhere?: (address: string) => boolean,
 ): Promise<() => Promise<void>> {
   const { openStore } = await import("../store/mod.ts");
   const { createGrantBroker } = await import("../proxy/grants.ts");
@@ -568,6 +572,7 @@ export async function runMailDispatch(
     subscribe: (l, o) => log.subscribe(l, o),
     read: (q) => log.read(q),
     send: wire({ creds, broker, fetchApi: timedFetch }),
+    ...(elsewhere ? { elsewhere } : {}),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onSent: (e, id) =>
       console.error(`[dispatch] sent → ${e.envelope.conversation.address} (${id})`),

@@ -11,7 +11,8 @@ import { TextLineStream } from "@std/streams";
 import { userInfo } from "node:os";
 import { EFFORTS, findRoot, PROVIDERS, readConfig } from "./config.ts";
 import type { Status, Tune } from "./door.ts";
-import type { Delta, Effort, Event } from "./types.ts";
+import { parseVerdict, shortId } from "./render.ts";
+import type { Delta, Effort, Event, PermissionVerdict } from "./types.ts";
 
 // A raised daemon owes the client a bound socket within this window — seeding, the exec
 // planes and the proxy all sit between spawn and bind.
@@ -129,6 +130,35 @@ export interface Reply {
   recalled?: Event[];
   /** `tail`: the asks still open in the session, by the id a verdict names (§9). */
   open?: string[];
+}
+
+/** A line that answers a card rather than speaks: it opens with `/y` or `/n`. */
+export function steering(line: string): boolean {
+  return line.startsWith("/y") || line.startsWith("/n");
+}
+
+/** A card's handle as a verdict line names it: `shortId`'s six hex digits. */
+const HANDLE = /^[0-9a-f]{6}$/;
+
+/** A `/y` or `/n` line, read against the cards `pending` (oldest first): the cards it
+ *  answers and the verdict, or the sentence it is refused with. A card named by its handle
+ *  is answered wherever it stands in the pile; the handle is lifted out of the line before
+ *  the verdict is read, so it is not taken for a reason. A handle no card wears is refused,
+ *  so a card already answered or a mistyped one never lands on another. `all` takes the
+ *  pile in the order it was asked; a bare word takes the newest card. */
+export function answering(
+  line: string,
+  pending: string[],
+): { refs: string[]; verdict: PermissionVerdict } | string {
+  if (pending.length === 0) return "nothing pending";
+  const words = line.trim().split(/\s+/);
+  const named = pending.find((ref) => words.includes(shortId(ref)));
+  const stale = words.find((w) => HANDLE.test(w) && !pending.some((ref) => shortId(ref) === w));
+  if (!named && stale) return `no card ${stale} is waiting`;
+  const verdict = parseVerdict(words.filter((w) => !named || w !== shortId(named)).join(" "));
+  if (!verdict) return "not a verdict — /y[once|conv|conn|always|all] [handle] [reason]";
+  const refs = verdict.every ? [...pending] : [named ?? pending[pending.length - 1]];
+  return { refs, verdict };
 }
 
 export interface Wire {

@@ -1396,6 +1396,39 @@ Deno.test("send at the principal lands nowhere — refused before it is ever gat
   }
 });
 
+Deno.test("send on an account the agent does not hold is refused before it is ever gated", async () => {
+  // gating ON: the principal is never asked to approve a call that cannot run
+  await scenario(
+    [
+      ok(
+        [{
+          kind: "tool_use",
+          name: "send",
+          input: { to: "ana@example.com", connection: "microsoft", text: "hola" },
+        }],
+        "tool_use",
+      ),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("escribile a ana"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+      const [answer] = await read("tool_result") as ToolResultEvent[];
+      assertEquals(answer.parts[0].data.is_error, true);
+      assertStringIncludes(
+        JSON.stringify(answer.parts[0].data.output),
+        'no account of yours is called \\"microsoft\\" — yours: matias@acme.onmicrosoft.com',
+      );
+      assertEquals((await read("permission_request")).length, 0);
+    },
+    { gate: () => "ask" },
+    [],
+    {},
+    [{ agentId: "a1", mind: "mind@a1" }],
+    [{ service: "microsoft", address: "matias@acme.onmicrosoft.com", agentId: "a1" }],
+  );
+});
+
 Deno.test("send at the principal: their number however it was typed, not only as stored", async () => {
   // a handle is written the way a person writes one — `+54 9 11 6754-2610` is the number
   // the wire calls `5491167542610` — so the guard compares handles, never strings
