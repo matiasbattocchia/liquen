@@ -4,7 +4,13 @@
  * else live — verdicts, lock, acts, gates, recovery. The log is the continuation engine.
  */
 
-import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertNotEquals,
+  assertStringIncludes,
+} from "@std/assert";
 import { type AgentConfig, xi, type XiPorts } from "./xi.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { LOCK_TTL_MS } from "./store/lock.ts";
@@ -97,6 +103,10 @@ function fanOut(config: AgentConfig, log: Log, ports: XiPorts): { stop(): Promis
   };
 }
 
+/** The account a scenario's agent holds unless it declares its own: first contact names
+ *  one (`connection: "wa"`), since an address alone does not say which wire it is on. */
+const WA = { service: "whatsapp", address: "5491100000000", extra: { name: "wa" } } as const;
+
 async function scenario(
   script: Anthropic.Message[],
   fn: (t: {
@@ -109,7 +119,7 @@ async function scenario(
   preload: Draft<Event>[] = [], // events in the log before the fan-out starts (recovery)
   ports: Partial<XiPorts> = {}, // what a scenario adds to the agent's ports (a tool, a scope)
   roster: AgentRow[] = [], // the registry as the org declared it — handles included
-  connections: Parameters<Log["upsertConnections"]>[0] = [], // the accounts the roster speaks through
+  connections: Parameters<Log["upsertConnections"]>[0] = [WA], // the accounts the roster speaks through
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -239,7 +249,11 @@ Deno.test("send: directed message + sent result, both cause-linked", async () =>
   await scenario(
     [
       ok(
-        [{ kind: "tool_use", name: "send", input: { to: "wa:mariana", text: "hola!" } }],
+        [{
+          kind: "tool_use",
+          name: "send",
+          input: { to: "wa:mariana", text: "hola!", connection: "wa" },
+        }],
         "tool_use",
       ),
       ok([{ kind: "assistant", text: "le escribí" }], "end_turn"),
@@ -446,7 +460,7 @@ Deno.test("send `connection`: a named account places first contact on its wire",
       name: "send",
       input: { to: "5491199999999", connection: "sole", text: "hola" },
     }], "tool_use"),
-    // the same number, unplaced: the local channel — the log has no record to anchor to
+    // another number, unplaced: refused before the gate — nothing here says which wire
     ok(
       [{ kind: "tool_use", name: "send", input: { to: "5491188888888", text: "hola" } }],
       "tool_use",
@@ -476,12 +490,15 @@ Deno.test("send `connection`: a named account places first contact on its wire",
     const placed = sent.find((e) => e.envelope.conversation.address === "5491199999999");
     assertEquals(placed?.envelope.service, "whatsapp");
     assertEquals(placed?.envelope.connection_address, "5491100000000");
-    const unplaced = sent.find((e) => e.envelope.conversation.address === "5491188888888");
-    assertEquals(unplaced?.envelope.service, "local");
+    assertEquals(sent.some((e) => e.envelope.conversation.address === "5491188888888"), false);
     // the gate saw the account the send would ride — a rule pinned to it matches
     assertEquals(gated[0].target, { connection: "5491100000000", conversation: "5491199999999" });
     const results = await log.read({ types: ["tool_result"] });
-    const refused = String((results[2].parts[0] as { data: { output: string } }).data.output);
+    const output = (i: number) =>
+      String((results[i].parts[0] as { data: { output: string } }).data.output);
+    assertStringIncludes(output(1), "5491188888888 is new here — say `connection`");
+    assertEquals(gated.length, 1); // neither refusal was ever gated
+    const refused = output(2);
     assertStringIncludes(refused, 'no account of yours is called "Zeta"');
     assertStringIncludes(refused, "Sole (5491100000000)");
   } finally {
@@ -553,7 +570,7 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
 Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere else", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }, { agentId: "a2", mind: "mind@a2" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
@@ -568,7 +585,7 @@ Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere 
     ok([{
       kind: "tool_use",
       name: "send",
-      input: { to: "5491188888888", location: pin },
+      input: { to: "mind@a2", location: pin },
     }], "tool_use"),
     // degrees off the globe are refused where the result can say so
     ok([{
@@ -590,7 +607,10 @@ Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere 
       { type: "text", kind: "text", text: "acá estamos" },
       { type: "data", kind: "location", data: pin },
     ]);
-    assertEquals(sent.some((e) => e.envelope.conversation.address === "5491188888888"), false);
+    assertEquals(
+      sent.filter((e) => (e as MessageEvent).parts.some((p) => p.kind === "location")).length,
+      1,
+    );
     const results = await log.read({ types: ["tool_result"] });
     const outputOf = (i: number) =>
       String((results[i].parts[0] as { data: { output: string } }).data.output);
@@ -1429,49 +1449,75 @@ Deno.test("send on an account the agent does not hold is refused before it is ev
   );
 });
 
-Deno.test("send into a calendar is refused before it is ever gated, and nothing is dispatched", async () => {
-  // gating ON: a broadcast has nobody to answer, so there is no destination to approve
-  const account = "matias@acme.onmicrosoft.com";
-  const calendar = "AAMkADcal2";
-  const event: Draft<MessageEvent> = {
+Deno.test("where a send cannot land is refused before the gate: a broadcast, a stranger on no account, the account itself", async () => {
+  const outlook = "matias@acme.onmicrosoft.com";
+  const gmail = "matias@gmail.com";
+  // the primary calendar is addressed at its account's own email; a second one at its id
+  const event = (calendar: string, gid: string): Draft<MessageEvent> => ({
     ts: new Date().toISOString(),
     type: "message",
     envelope: {
       service: "microsoft",
-      connection_address: account,
+      connection_address: outlook,
       conversation: { address: calendar, kind: "broadcast" },
       sender: { address: "ana@acme.com" },
-      external_id: `calendar:${calendar}:ev1`,
+      external_id: `calendar:${calendar}:${gid}`,
     },
-    parts: [{ type: "data", kind: "calendar", data: { gid: "ev1", title: "standup" } }],
-  };
+    parts: [{ type: "data", kind: "calendar", data: { gid, title: "standup" } }],
+  });
+  const sends: Record<string, Json>[] = [
+    // the primary calendar's address, from ANOTHER account: a mailbox, so a mail
+    { to: outlook, connection: gmail, subject: "nota", text: "llego tarde" },
+    // the same address from its own account: the account writing to itself
+    { to: outlook, connection: outlook, subject: "nota", text: "llego tarde" },
+    // a calendar that is not the account: a broadcast, whichever account is named
+    { to: "AAMkADcal2", text: "llego tarde" },
+    { to: "AAMkADcal2", connection: gmail, text: "llego tarde" },
+    // somebody nobody here has written to, on no account
+    { to: "ana@x.com", text: "hola" },
+  ];
+  const gated: Json[] = [];
   await scenario(
     [
-      ok(
-        [{ kind: "tool_use", name: "send", input: { to: calendar, text: "llego tarde" } }],
-        "tool_use",
-      ),
+      ok(sends.map((input) => ({ kind: "tool_use", name: "send", input })), "tool_use"),
       ok([{ kind: "assistant", text: "listo" }], "end_turn"),
     ],
     async ({ publish, read }) => {
-      await publish(principalMsg("avisá en el standup que llego tarde"));
-      await waitFor(async () => (await read("tool_result")).length === 1);
-      const [answer] = await read("tool_result") as ToolResultEvent[];
-      assertEquals(answer.parts[0].data.is_error, true);
-      assertStringIncludes(JSON.stringify(answer.parts[0].data.output), "is a broadcast");
-      assertEquals((await read("permission_request")).length, 0);
-      assertEquals(
-        (await read("message")).filter((e) =>
-          e.agent?.id === "a1" && e.envelope.service !== "local"
-        ).length,
-        0,
+      await publish(principalMsg("probá"));
+      await waitFor(async () => (await read("tool_result")).length === sends.length);
+      const uses = await read("tool_use") as ToolUseEvent[];
+      const results = await read("tool_result") as ToolResultEvent[];
+      const answer = (i: number) =>
+        results.find((r) => r.payload.ref_id === uses[i].id)!.parts[0].data;
+      assertEquals(answer(0).is_error, undefined);
+      assertStringIncludes(String(answer(1).output), `${outlook} is your own account`);
+      assertStringIncludes(String(answer(2).output), "AAMkADcal2 is a broadcast you receive");
+      assertStringIncludes(String(answer(3).output), "AAMkADcal2 is a broadcast you receive");
+      assertStringIncludes(String(answer(4).output), "ana@x.com is new here — say `connection`");
+      // only the mail was ever judged; the rest had nowhere to go
+      assertEquals(gated, [sends[0]]);
+      const sent = (await read("message")).filter((e) =>
+        e.agent?.id === "a1" && e.envelope.service !== "local"
       );
+      assertEquals(
+        sent.map((e) => [e.envelope.service, e.envelope.conversation.address]),
+        [["google", outlook]],
+      );
+      assertNotEquals(sent[0].envelope.conversation.kind, "broadcast");
     },
-    { gate: () => "ask" },
-    [event],
+    {
+      gate: (name, input) => {
+        if (name === "send") gated.push(input);
+        return "allow";
+      },
+    },
+    [event(outlook, "ev1"), event("AAMkADcal2", "ev2")],
     {},
     [{ agentId: "a1", mind: "mind@a1" }],
-    [{ service: "microsoft", address: account, agentId: "a1" }],
+    [
+      { service: "microsoft", address: outlook, agentId: "a1" },
+      { service: "google", address: gmail, agentId: "a1" },
+    ],
   );
 });
 
@@ -1527,7 +1573,10 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
   // allow
   await scenario(
     [
-      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi", connection: "wa" } }],
+        "tool_use",
+      ),
       ok([], "end_turn"),
     ],
     async ({ publish, read }) => {
@@ -1569,7 +1618,10 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
   // deny
   await scenario(
     [
-      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi", connection: "wa" } }],
+        "tool_use",
+      ),
       ok([], "end_turn"),
     ],
     async ({ publish, read }) => {
@@ -1604,7 +1656,11 @@ Deno.test("run and gated share no vocabulary: what ran says `sent`, and only tha
     let output = "";
     await scenario(
       [
-        ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hola" } }], "tool_use"),
+        ok([{
+          kind: "tool_use",
+          name: "send",
+          input: { to: "wa:x", text: "hola", connection: "wa" },
+        }], "tool_use"),
         ok([], "end_turn"),
       ],
       async ({ publish, read }) => {
@@ -1636,7 +1692,10 @@ Deno.test("a pending ask lives in the ANCHOR — state, not transcript (§5)", a
   const log = await openLog(dir);
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
   const script = [
-    ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hola" } }], "tool_use"),
+    ok(
+      [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hola", connection: "wa" } }],
+      "tool_use",
+    ),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ];
   const transport: ModelTransport = (params) => {
@@ -1645,6 +1704,7 @@ Deno.test("a pending ask lives in the ANCHOR — state, not transcript (§5)", a
   };
   const config = { ...CONFIG, gate: (name: string) => name === "send" ? "ask" : "allow" };
   const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  await log.upsertConnections([WA]);
   try {
     await log.publish(principalMsg("mandale"));
     await xi(config, ports); // the turn that calls send
@@ -1666,7 +1726,10 @@ Deno.test("the anchor states the approval state either way — silence is not a 
   const log = await openLog(dir);
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
   const script = [
-    ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hola" } }], "tool_use"),
+    ok(
+      [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hola", connection: "wa" } }],
+      "tool_use",
+    ),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ];
   const transport: ModelTransport = (params) => {
@@ -1676,6 +1739,7 @@ Deno.test("the anchor states the approval state either way — silence is not a 
   const config = { ...CONFIG, gate: (name: string) => name === "send" ? "ask" : "allow" };
   const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
   const anchor = () => JSON.stringify(last?.messages.at(-1)?.content);
+  await log.upsertConnections([WA]);
   try {
     await log.publish(principalMsg("mandale"));
     await xi(config, ports); // nothing has been asked yet: no section
@@ -1693,7 +1757,10 @@ Deno.test("the anchor states the approval state either way — silence is not a 
 Deno.test("a waiting gate does not mute the agent: it answers its principal meanwhile", async () => {
   await scenario(
     [
-      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi", connection: "wa" } }],
+        "tool_use",
+      ),
       ok([{ kind: "assistant", text: "le escribo apenas me des el ok" }], "end_turn"),
       ok([{ kind: "assistant", text: "sí, sigue pendiente" }], "end_turn"),
     ],
@@ -2448,7 +2515,10 @@ Deno.test("the gate answers from a surface: the principal's own /y and /n settle
   // /y — the send goes out
   await scenario(
     [
-      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi", connection: "wa" } }],
+        "tool_use",
+      ),
       ok([], "end_turn"),
     ],
     async ({ publish, read }) => {
@@ -2468,7 +2538,10 @@ Deno.test("the gate answers from a surface: the principal's own /y and /n settle
   // /n <reason> — the refusal reaches the model with the principal's words in it
   await scenario(
     [
-      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi", connection: "wa" } }],
+        "tool_use",
+      ),
       ok([], "end_turn"),
     ],
     async ({ publish, read }) => {
@@ -2491,7 +2564,10 @@ Deno.test("the gate answers from a surface: the principal's own /y and /n settle
   // a word that is NOT a verdict settles nothing — the gate keeps waiting
   await scenario(
     [
-      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi", connection: "wa" } }],
+        "tool_use",
+      ),
       ok([], "end_turn"),
     ],
     async ({ publish, read }) => {
@@ -2535,8 +2611,8 @@ Deno.test("two cards open: a bare /y settles nothing, the quoted one settles its
   await scenario(
     [
       ok([
-        { kind: "tool_use", name: "send", input: { to: "wa:a", text: "uno" } },
-        { kind: "tool_use", name: "send", input: { to: "wa:b", text: "dos" } },
+        { kind: "tool_use", name: "send", input: { to: "wa:a", text: "uno", connection: "wa" } },
+        { kind: "tool_use", name: "send", input: { to: "wa:b", text: "dos", connection: "wa" } },
       ], "tool_use"),
       ok([], "end_turn"),
       ok([], "end_turn"),
@@ -2629,7 +2705,10 @@ Deno.test("the gate answers to a reaction: a thumb ON the card is /y, a thumb do
   });
   const ask = { gate: (name: string) => name === "send" ? "ask" as const : "allow" as const };
   const gated = () => [
-    ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi" } }], "tool_use"),
+    ok(
+      [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi", connection: "wa" } }],
+      "tool_use",
+    ),
     ok([], "end_turn"),
   ];
 
@@ -2699,8 +2778,8 @@ Deno.test("two cards open: `/y all` settles the whole pile in one line (§9)", a
   await scenario(
     [
       ok([
-        { kind: "tool_use", name: "send", input: { to: "wa:a", text: "uno" } },
-        { kind: "tool_use", name: "send", input: { to: "wa:b", text: "dos" } },
+        { kind: "tool_use", name: "send", input: { to: "wa:a", text: "uno", connection: "wa" } },
+        { kind: "tool_use", name: "send", input: { to: "wa:b", text: "dos", connection: "wa" } },
       ], "tool_use"),
       ok([], "end_turn"),
       ok([], "end_turn"),
@@ -2736,10 +2815,16 @@ Deno.test("two cards open: `/y all` settles the whole pile in one line (§9)", a
 Deno.test("a standing verdict is REMEMBERED: /y conv settles that conversation's gate (§9)", async () => {
   await scenario(
     [
-      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "uno" } }], "tool_use"),
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "uno", connection: "wa" } }],
+        "tool_use",
+      ),
       ok([{ kind: "assistant", text: "pedido" }], "end_turn"),
       ok([{ kind: "assistant", text: "enviado" }], "end_turn"),
-      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "dos" } }], "tool_use"),
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "dos", connection: "wa" } }],
+        "tool_use",
+      ),
       ok([{ kind: "assistant", text: "listo" }], "end_turn"),
     ],
     async ({ publish, read }) => {
@@ -2783,10 +2868,16 @@ Deno.test("a standing verdict is REMEMBERED: /y conv settles that conversation's
 Deno.test("a standing verdict is PINNED: the ruled conversation runs, its neighbour asks", async () => {
   await scenario(
     [
-      ok([{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "uno" } }], "tool_use"),
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "uno", connection: "wa" } }],
+        "tool_use",
+      ),
       ok([{ kind: "assistant", text: "pedido" }], "end_turn"),
       ok([{ kind: "assistant", text: "enviado" }], "end_turn"),
-      ok([{ kind: "tool_use", name: "send", input: { to: "wa:y", text: "dos" } }], "tool_use"),
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: "wa:y", text: "dos", connection: "wa" } }],
+        "tool_use",
+      ),
       ok([{ kind: "assistant", text: "pedido de nuevo" }], "end_turn"),
     ],
     async ({ publish, read }) => {
@@ -2835,8 +2926,8 @@ Deno.test("cancel: the agent withdraws one of two asks — and a bare /y settles
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
   const script: Anthropic.Message[] = [
     ok([
-      { kind: "tool_use", name: "send", input: { to: "wa:x", text: "uno" } },
-      { kind: "tool_use", name: "send", input: { to: "wa:y", text: "dos" } },
+      { kind: "tool_use", name: "send", input: { to: "wa:x", text: "uno", connection: "wa" } },
+      { kind: "tool_use", name: "send", input: { to: "wa:y", text: "dos", connection: "wa" } },
     ], "tool_use"),
   ];
   const transport: ModelTransport = (params) => {
@@ -2849,6 +2940,7 @@ Deno.test("cancel: the agent withdraws one of two asks — and a bare /y settles
   });
   const config = { ...CONFIG, gate: (name: string) => name === "send" ? "ask" : "allow" };
   const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  await log.upsertConnections([WA]);
   try {
     await log.publish(says("mandale a los dos"));
     await xi(config, ports); // the turn that calls both sends

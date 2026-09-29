@@ -487,7 +487,9 @@ Deno.test({
   async fn() {
     const { dir, log, mu, down } = await up();
     try {
-      const q = await mu.send({ to: "wa:+34600", text: "mañana a las 10" });
+      // first contact names the account it goes out on
+      await log.upsertConnections([{ service: "whatsapp", address: "34911", agentId: "ana" }]);
+      const q = await mu.send({ to: "wa:+34600", connection: "34911", text: "mañana a las 10" });
       await act(dir, log);
       const [res] = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
       assertEquals(res.payload.ref_id, q.id);

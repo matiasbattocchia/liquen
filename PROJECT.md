@@ -4830,9 +4830,21 @@ Still open from the run:
   addressed at its root; Google Calendar is the landed poll and `gws`; Microsoft runs a
   process; the rooms ports are wired from boot. Two stale comments in `google/oauth.ts`
   went with it.
-- **A send into a broadcast is refused before the gate** (`broadcastAt` in xi.ts, beside
-  `selfSend` and `unheld`): a calendar has nobody to answer, so a card for it could only
-  end in the same refusal.
+- **Where a send cannot land is refused before the gate** (`unreachable` in xi.ts, run
+  again when the send executes):
+  - a broadcast the agent receives — "nobody answers there; to reach its people, send to
+    their addresses";
+  - a stranger on no account — "new here — say `connection`". First contact to a bare
+    address had landed in a local room nobody reads while the tool said `sent: true`;
+  - the account itself — a send from an account to its own address.
+  Every lookup `send` makes of its `to` reads with `broadcasts: false` (ReadQuery, in
+  SQL; `true` reads broadcasts alone). The primary calendar is addressed at its
+  account's own email — Google's `calendarId` for it, so the address in the window is the
+  one `gws` takes — and that string is still a mailbox: from another account it is a
+  mail, from its own a self-send. A message about an event (running late) is a mail the
+  model writes to its people. `contact` and `search` read broadcasts as before.
+  The integration scenarios' agent holds a WhatsApp account, `wa`, which their first
+  sends name.
 
 The Exchange-made calendar change of the Microsoft run came about a minute and a half after
 the agent's create, not after an edit, and was one in five creates. Deduplicating it waits

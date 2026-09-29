@@ -192,6 +192,10 @@ export function build(
   if (q.silenced === false) {
     where.push(["backfill", "muted", "archived"].map(dialect.unflagged).join(" AND "));
   }
+  if (q.broadcasts === false) {
+    where.push("(conversation_kind IS NULL OR conversation_kind <> 'broadcast')");
+  }
+  if (q.broadcasts === true) where.push("conversation_kind = 'broadcast'");
   if (q.copies === false) where.push(dialect.lacks("via"));
   // the law (§6): named bindings, supplied by read() beside the positional ones
   if (q.law !== undefined) where.push(`(${q.law.sql})`);

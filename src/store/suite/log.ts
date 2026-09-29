@@ -615,6 +615,26 @@ export function logSuite(s: Substrate): void {
     });
   });
 
+  Deno.test("read({broadcasts}) splits a broadcast from a room sharing its address", async () => {
+    await withLog(async (log) => {
+      // a calendar wears its account's email, and a mail thread may be filed there too
+      const event = msg("cal1", "ana@x.com", "standup");
+      event.envelope.conversation.kind = "broadcast";
+      await log.publish(event);
+      await log.publish(msg("mail1", "ana@x.com", "hola"));
+      await log.publish(msg("local1", "L1", "sin kind"));
+      assertEquals((await log.read({ conversation: "ana@x.com" })).length, 2);
+      const rooms = await log.read({ broadcasts: false });
+      assertEquals(
+        rooms.map((e) => (e as MessageEvent).parts[0]).map((p) => p.type === "text" && p.text)
+          .sort(),
+        ["hola", "sin kind"],
+      );
+      const casts = await log.read({ conversation: "ana@x.com", broadcasts: true });
+      assertEquals(casts.map((e) => e.envelope.conversation.kind), ["broadcast"]);
+    });
+  });
+
   Deno.test("identity FILLS, never overwrites (§3): first non-empty writer wins", async () => {
     await withLog(async (log) => {
       // the agent's send: authored, senderless (the account speaks through us)

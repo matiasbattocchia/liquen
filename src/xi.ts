@@ -1596,7 +1596,7 @@ async function act(
     // refusal. Cheap to raise, and the model reads the hint and says the thing instead.
     const nowhere = await selfSend(name, input, config, ports) ??
       await unheld(input, self, ports) ??
-      await broadcastAt(name, input, ports);
+      await undeliverable(name, input, self, ports);
     if (nowhere) {
       out.push(await resultOf(use, nowhere, { is_error: true }));
       continue;
@@ -2020,7 +2020,7 @@ async function aimOf(
     const room = await roomNamed(to.replace(/^#/, ""), ports);
     if (room) return { address: room.address, local: { members: [], room }, candidates: [] };
   }
-  if ((await ports.log.read({ conversation: to, limit: 1 })).length > 0) {
+  if ((await ports.log.read({ conversation: to, broadcasts: false, limit: 1 })).length > 0) {
     return await knownRoom(to, ports);
   }
   const parts = to.split(",").map((p) => p.trim()).filter((p) => p !== "");
@@ -2158,10 +2158,14 @@ async function namesTo(
   self: { id: string },
   ports: XiPorts,
 ): Promise<{ address: string; candidates: Named[]; book?: string }> {
-  if ((await ports.log.read({ conversation: to, limit: 1 })).length > 0) {
+  if ((await ports.log.read({ conversation: to, broadcasts: false, limit: 1 })).length > 0) {
     return { address: to, candidates: [] };
   }
-  const named = await ports.log.read({ conversationName: to, limit: NAME_SCAN });
+  const named = await ports.log.read({
+    conversationName: to,
+    broadcasts: false,
+    limit: NAME_SCAN,
+  });
   const people = new Map<string, Named>();
   for (const e of named) {
     const at = e.envelope.conversation.address;
@@ -2368,19 +2372,61 @@ async function unheld(
   }
 }
 
-/** A send into a broadcast (a calendar, a status feed): refused before it is gated, since
- *  nobody answers there and no approval could give the call a destination. */
-async function broadcastAt(name: string, input: Json, ports: XiPorts): Promise<string | undefined> {
+/** A `send` with nowhere to land, judged before the gate with `unreachable`'s sentence — the
+ *  same rule the send runs again when it executes. A `to` or a `connection` that does not
+ *  resolve is the call's own error to raise, so here it is simply no verdict. */
+async function undeliverable(
+  name: string,
+  input: Json,
+  self: { id: string; session_id: string },
+  ports: XiPorts,
+): Promise<string | undefined> {
   if (name !== "send") return undefined;
-  const to = (input as { to?: unknown } | null)?.to;
-  if (typeof to !== "string" || to === "") return undefined;
-  const [prior] = await ports.log.read({ conversation: to, limit: 1 });
-  return prior?.envelope.conversation.kind === "broadcast" ? nobodyAnswers(to) : undefined;
+  const args = (input ?? {}) as { to?: unknown; connection?: unknown; subject?: unknown };
+  if (typeof args.to !== "string" || args.to === "") return undefined;
+  try {
+    const via = typeof args.connection === "string" && args.connection !== ""
+      ? await accountNamed(args.connection, self, ports)
+      : undefined;
+    const subject = typeof args.subject === "string" ? args.subject.trim() : "";
+    const aimed = await aimOf(args.to, subject, self, ports, via);
+    if (aimed.candidates.length > 0 || aimed.local || aimed.wire) return undefined;
+    const book = aimed.book === undefined
+      ? undefined
+      : (await accounts(self, ports)).find((c) => c.address === aimed.book);
+    return await unreachable(aimed.address, via ?? book, self, ports);
+  } catch {
+    return undefined;
+  }
 }
 
-/** The refusal a send into a broadcast gets, before the gate and at execution alike. */
-function nobodyAnswers(to: string): string {
-  return `${to} is a broadcast — nobody answers there`;
+/** Where a send to a wire address cannot go, in the sentence that says why:
+ *  - a BROADCAST the agent receives (a calendar, a list): nobody answers there. A primary
+ *    calendar is addressed at its account's own address, and there that string is the
+ *    account — a mailbox — so it answers to the rules below instead;
+ *  - a STRANGER on no account: first contact is the one send only the model can place, and
+ *    an address's shape does not say which wire (`x@y` is Gmail or Outlook);
+ *  - the account ITSELF: a send from an account to its own address reaches nobody else. */
+async function unreachable(
+  to: string,
+  via: { address: string } | undefined,
+  self: { id: string },
+  ports: XiPorts,
+): Promise<string | undefined> {
+  const [cast] = await ports.log.read({ conversation: to, broadcasts: true, limit: 1 });
+  if (cast && !sameHandle(cast.envelope.conversation.address, cast.envelope.connection_address)) {
+    return `${to} is a broadcast you receive — nobody answers there; to reach its people, ` +
+      "send to their addresses";
+  }
+  const prior = (await ports.log.read({ conversation: to, broadcasts: false, limit: 1 }))[0];
+  const account = via?.address ?? prior?.envelope.connection_address;
+  if (account === undefined) {
+    const yours = (await accounts(self, ports)).map((c) => c.address).join(", ");
+    return `${to} is new here — say \`connection\`: which of your accounts writes to them` +
+      (yours ? ` (yours: ${yours})` : "");
+  }
+  if (sameHandle(to, account)) return `${to} is your own account — a send there reaches only you`;
+  return undefined;
 }
 
 /** Where a call LANDS (§9): a send's destination — the same anchoring read, name
@@ -2434,7 +2480,7 @@ async function targetOf(
   } catch {
     return undefined;
   }
-  const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
+  const prior = (await ports.log.read({ conversation: to, broadcasts: false, limit: 1 }))[0];
   const connection = named ?? prior?.envelope.connection_address;
   return connection !== undefined ? { connection, conversation: to } : { conversation: to };
 }
@@ -2677,13 +2723,19 @@ async function execute(
     if (!via && aimed.book !== undefined) {
       via = (await accounts(self, ports)).find((c) => c.address === aimed.book);
     }
+    // a wire address the send cannot reach — a broadcast, a stranger on no account, the
+    // account itself — is refused here as it was before the gate
+    if (!local && !aimed.wire) {
+      const why = await unreachable(to, via, self, ports);
+      if (why) throw new Error(why);
+    }
     // The tool gave us an address; the envelope is ours to write (§2). The conversation's
     // events ARE its record: complete service · connection · kind from the latest visible
     // one, so a reply carries the envelope its conversation always had — and the SCOPED
     // read bounds anchoring by visibility. A named account overrides the connection and
     // settles the service where there is no record: first contact on a wire is the one
-    // send only the model can place. No events and no account ⇒ the local channel.
-    const prior = (await ports.log.read({ conversation: to, limit: 1 }))[0];
+    // send only the model can place. A local room rides the local channel.
+    const prior = (await ports.log.read({ conversation: to, broadcasts: false, limit: 1 }))[0];
     // a local room's kind and name are its own (the row's; a direct room's is its shape),
     // stamped on every row so the window names the room by its newest line
     const kind = local
@@ -2691,8 +2743,6 @@ async function execute(
       : opened
       ? opened.kind ?? aimed.wire!.open.kind
       : prior?.envelope.conversation.kind;
-    // a broadcast is fan-out, not a room anyone is in (§3): nothing answers there
-    if (kind === "broadcast") throw new Error(nobodyAnswers(to));
     const target = args.re === undefined ? undefined : await referent(ports, to, String(args.re));
     // a wire conversation's name is its record's — a send carries no rename; on first
     // contact the subject names the thread this send opens, and the wire's Re: on a reply

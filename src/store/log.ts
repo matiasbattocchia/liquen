@@ -120,6 +120,10 @@ export interface ReadQuery {
    *  slots on rows that are then thrown away — a window of pure history renders empty.
    *  Omitted ⇒ included, which is what `search` wants: silenced rows are its whole point. */
   silenced?: boolean;
+  /** `false` ⇒ drop rows in a broadcast (a calendar, a status feed); `true` ⇒ only those.
+   *  `send` asks both ways: its destination is never a broadcast, and a primary calendar
+   *  shares its address with the account's own mailbox. Omitted ⇒ both. */
+  broadcasts?: boolean;
   /** Exact match on the wire's artifact id (`envelope.external_id`) — how a dispatcher
    *  finds the row a `re` points at. */
   externalId?: string;
