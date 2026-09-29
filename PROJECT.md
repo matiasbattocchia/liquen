@@ -4614,3 +4614,11 @@ line inherits the room's visibility, the merge on the wire's id, the attention l
 The `conversation` tool's description names the element. Tests: `render.test.ts`,
 `paint.test.ts`, the ingest tests of each wire, Slack's catch-up, `main.test.ts`'s local
 room walk.
+
+### A local room opens with its founding line (2026-09-28) — LANDED
+
+A group or channel `send` makes is born with a `room` line ahead of the message — its
+founding members joined, from the agent that made it — the way a WhatsApp group made with
+the account in it arrives with its roster. A room found by name (the same members again)
+opens nothing; a direct room is its members and has no line. Test: `main.test.ts`'s local
+room walk (two sends to `ops`, one founding line).

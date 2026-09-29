@@ -445,6 +445,11 @@ Deno.test("team chat: `conversation` adds, renames, lists and leaves — each ch
       [{ kind: "tool_use", name: "send", input: { to: "bo", subject: "ops", text: "hola" } }],
       "tool_use",
     ),
+    // the room is found this time, not made: it opens once
+    canned(
+      [{ kind: "tool_use", name: "send", input: { to: "bo", subject: "ops", text: "¿y?" } }],
+      "tool_use",
+    ),
     canned([{
       kind: "tool_use",
       name: "conversation",
@@ -484,8 +489,8 @@ Deno.test("team chat: `conversation` adds, renames, lists and leaves — each ch
     await main.log.publish(
       principalMsg("mind@ana", "armá ops con bo, sumá a cy, y después cerralo"),
     );
-    // six outcomes: the send, then the five room calls
-    await waitFor(async () => (await main.log.read({ types: ["tool_result"] })).length >= 6, 8000);
+    // seven outcomes: the two sends, then the five room calls
+    await waitFor(async () => (await main.log.read({ types: ["tool_result"] })).length >= 7, 8000);
     const results = (await main.log.read({ types: ["tool_result"] })) as ToolResultEvent[];
     const outputs = results.map((r) => r.parts[0].data.output);
     const [ops] = await main.log.conversations();
@@ -493,19 +498,19 @@ Deno.test("team chat: `conversation` adds, renames, lists and leaves — each ch
     const row = (await main.log.conversation(
       "local",
       "agent",
-      String((outputs[1] as { address: string }).address),
+      String((outputs[2] as { address: string }).address),
     ))!;
     assertEquals([row.name, row.kind], ["ops-q4", "group"]); // renamed, the kind kept, the `#` not a switch
     // add: cy enrolled; show: the room listed as one of ana's; remove and leave: nobody left
-    assertEquals((outputs[1] as { members: string[] }).members, ["mind@ana", "mind@bo", "mind@cy"]);
-    assertEquals((outputs[3] as { rooms: unknown[] }).rooms, [{
+    assertEquals((outputs[2] as { members: string[] }).members, ["mind@ana", "mind@bo", "mind@cy"]);
+    assertEquals((outputs[4] as { rooms: unknown[] }).rooms, [{
       name: "ops-q4",
       kind: "group",
       address: row.address,
       members: ["mind@ana", "mind@bo", "mind@cy"],
       member: true,
     }]);
-    assertEquals(outputs[5], {
+    assertEquals(outputs[6], {
       name: "ops-q4",
       kind: "group",
       address: row.address,
@@ -525,7 +530,9 @@ Deno.test("team chat: `conversation` adds, renames, lists and leaves — each ch
         ];
       });
     assertEquals(said, [
+      [{ joined: [{ address: "mind@ana" }, { address: "mind@bo" }] }, "ops"],
       ["hola", "ops"],
+      ["¿y?", "ops"],
       [{ joined: [{ address: "mind@cy" }] }, "ops"],
       [{ name: "ops-q4" }, "ops-q4"],
       [{ left: [{ address: "mind@bo" }, { address: "mind@cy" }] }, "ops-q4"],

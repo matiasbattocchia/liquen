@@ -2610,6 +2610,32 @@ async function execute(
           sessionId: m.sessionId,
         })));
       }
+      // a room made now opens with its own line: its founding members joined, from the
+      // agent that made it — ahead of the message, which is the room's first word
+      if (local.create && local.room) {
+        await ports.log.publish(
+          {
+            ts: new Date().toISOString(),
+            type: "message",
+            payload: { turn_id: use.payload.turn_id, ref_id: use.id },
+            agent: self,
+            envelope: {
+              service: "local",
+              connection_address: local.room.connection,
+              conversation: {
+                address: local.room.address,
+                kind: local.room.kind,
+                name: local.room.name,
+              },
+            },
+            parts: [roomPart({
+              joined: local.members.map((m) => ({
+                address: sessionAddress(m.agentId, m.sessionId),
+              })),
+            })],
+          } satisfies Draft<MessageEvent>,
+        );
+      }
     }
     // somebody only a book knows is written to through the account that keeps them, the
     // way `contact` saves them there: the book that holds them is the account they are on

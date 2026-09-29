@@ -158,7 +158,8 @@ wire's own line about it — the join, the leave, the rename — brought back by
 as one `room` data part (`src/room.ts`: `joined` and `left` as `{address, name?}`, or the
 `name` the room now wears; `<room>` to the model) from whoever made the change, and the
 membership mirror fills the map from there; the harness says nothing in the room itself.
-A local room's change is the same part, said by the `conversation` tool.
+A local room's change is the same part, said by the `conversation` tool, and a room
+`send` makes opens with one naming its founding members.
 
 Every leg is per account: it takes the connection the act rides — the one a `send` there
 would ride — and the agent acting, and posts with the grant the dispatcher would post
