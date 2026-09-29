@@ -33,6 +33,9 @@ export interface Posted {
   id?: string;
   external_id?: string;
   sender?: DeliveryPatch["sender"];
+  /** Where the wire filed it, when the post is what settles that: a mail opening a
+   *  thread is addressed at the id the post minted. */
+  conversation?: DeliveryPatch["conversation"];
 }
 
 export interface DispatcherDeps<W> {
@@ -83,6 +86,7 @@ export function createDispatcher<W>(deps: DispatcherDeps<W>): () => Promise<void
         await deps.setDelivery?.(event.id, {
           ...(posted.external_id !== undefined ? { external_id: posted.external_id } : {}),
           ...(posted.sender ? { sender: posted.sender } : {}),
+          ...(posted.conversation ? { conversation: posted.conversation } : {}),
           status: { state: "dispatched", dispatched_at: new Date().toISOString() },
         });
         deps.onSent?.(event, posted.id);

@@ -24,6 +24,23 @@ export function credentialsSuite(s: Substrate): void {
     }
   });
 
+  /** A deleted secret is gone from every read, and a second delete finds nothing. */
+  Deno.test("delete drops the row, and says whether there was one", async () => {
+    const store = await s.fresh();
+    const creds = await store.vault();
+    try {
+      await creds.put({ key: "token:openai", value: { token: "t" } });
+      await creds.put({ key: "token:openai:ana", value: { token: "u" }, agentId: "ana" });
+      assertEquals(await creds.delete("token:openai"), true);
+      assertEquals(await creds.get("token:openai"), null);
+      assertEquals((await creds.list("token:")).map((r) => r.key), ["token:openai:ana"]);
+      assertEquals(await creds.delete("token:openai"), false);
+    } finally {
+      await creds.close();
+      await store.drop();
+    }
+  });
+
   /** The merge is FIELD-WISE: a top-level field lands whole, replacing what was under it —
    *  a door that rewrites a map (the calendar's cursors) drops a key by leaving it out. */
   Deno.test("put merges by top-level field: a nested object is replaced whole, not merged", async () => {

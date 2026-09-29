@@ -58,7 +58,9 @@ import type {
   MessageEvent,
   Part,
   Payload,
+  RoomMember,
 } from "../../types.ts";
+import { roomPart } from "../../room.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { entry } from "../../entry.ts";
 
@@ -121,7 +123,11 @@ export interface WABatch {
   /** A pushname courtesy: `address` + `extra.name`, a cache hint the messages' own names
    *  have made a fallback. */
   contacts?: { address: string; extra?: { name?: string } }[];
-  groups?: { address: string; name?: string }[];
+  /** A group's subject, and a change as WhatsApp announced it: a new `name` (`renamed`),
+   *  who `joined` (added, or in by the group's link — `reason: "invite"`, no `by`), who
+   *  `left` (went, or was taken out), `by` whom, at `timestamp`. The account's own arrival
+   *  is one too. */
+  groups?: WAGroup[];
   edits?: {
     external_id?: string; // the edit's OWN protocol-message id (newer bridges)
     original_message_id: string;
@@ -140,6 +146,24 @@ export interface WABatch {
     sender_address?: string;
     timestamp: string;
   }[];
+}
+
+export interface WAPerson {
+  address: string;
+  name?: string;
+}
+
+export interface WAGroup {
+  address: string;
+  name?: string;
+  renamed?: boolean;
+  joined?: WAPerson[];
+  left?: WAPerson[];
+  by?: WAPerson;
+  reason?: string;
+  timestamp?: string;
+  muted?: boolean;
+  archived?: boolean;
 }
 
 export interface WASessionEvent {
@@ -258,6 +282,7 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
       ...(batch.edits ?? []).map((e) => mapEdit(e, connection, pushnames, now)),
       ...(batch.revokes ?? []).flatMap((r) => mapRevoke(r, connection, now)),
       ...(batch.statuses ?? []).map((s) => mapStatus(s, connection, now)),
+      ...(batch.groups ?? []).map((g) => mapRoom(g, connection, groupNames, pushnames, now)),
     ].filter((d): d is Draft<MessageEvent> => d !== null);
 
     // the classifier (§3): a sender whose GRANT row names a mind, or whose number is a
@@ -496,6 +521,51 @@ function mapEdit(
   };
 }
 
+/** A room change is the group's own line about it (§3): one `room` data part saying who
+ *  joined, who left, or the subject it now wears, from whoever made the change — or, when
+ *  nobody did it to them, the first who moved, since a line with no sender is the account
+ *  speaking. The account's own arrival reads the same way, its own address among the
+ *  joined. The subject a group is first seen with is no line: it rides the room's name.
+ *  Its identity is the change itself, so a batch the bridge posts again merges. */
+function mapRoom(
+  g: WAGroup,
+  connection: string,
+  groupNames: Map<string, string>,
+  pushnames: Map<string, string>,
+  now: () => string,
+): Draft<MessageEvent> | null {
+  const person = (p: WAPerson): RoomMember => {
+    const name = p.name || pushnames.get(p.address);
+    return { address: p.address, ...(name ? { name } : {}) };
+  };
+  const joined = (g.joined ?? []).filter((p) => p.address).map(person);
+  const left = (g.left ?? []).filter((p) => p.address).map(person);
+  const renamed = g.renamed && g.name ? g.name : undefined;
+  if (!g.address || (!joined.length && !left.length && !renamed)) return null;
+  const sender = g.by?.address ? person(g.by) : (joined[0] ?? left[0]);
+  const ts = g.timestamp || now();
+  const name = g.name || groupNames.get(g.address);
+  const marks = { ...(g.muted ? { muted: true } : {}), ...(g.archived ? { archived: true } : {}) };
+  const change = [
+    ...joined.map((p) => `+${p.address}`),
+    ...left.map((p) => `-${p.address}`),
+    ...(renamed ? [`=${renamed}`] : []),
+  ].join("");
+  return {
+    ts,
+    type: "message",
+    envelope: {
+      service: SERVICE,
+      connection_address: connection,
+      conversation: { address: g.address, kind: kindOf(g.address), ...(name ? { name } : {}) },
+      ...(sender ? { sender } : {}),
+      external_id: externalId(`room.${connection}.${g.address}.${ts}.${change}`),
+    },
+    parts: [roomPart({ joined, left, name: renamed, reason: g.reason })],
+    ...(Object.keys(marks).length ? { extra: marks } : {}),
+  };
+}
+
 /** MERGE-ONLY draft: no `parts` key at all, so the upsert's `json_patch` finds an empty
  *  payload and leaves the stored parts untouched (an array in a patch REPLACES; absence
  *  is the no-op). Out-of-order tolerant like open-bsp's soft references: a revoke or
@@ -643,10 +713,10 @@ function json(status: number, body: unknown): Response {
 
 /* ── local entry: HTTP server the session's webhook_url points at ─────────────────────
  *
- *   deno task run:whatsapp        # serves :8793 — the address the pairing door registered
+ *   deno task run:whatsapp        # serves data/run/whatsapp.sock behind the edge — the
+ *                                 # address the pairing door registered
  *
- * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN; required); the port is
- * connections.whatsapp.ingestPort. */
+ * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN; required). */
 /** The bridge token the served ingest requires — unset is a refusal to bind: an open
  *  route would take any POST as the bridge's word. */
 export function bridgeTokenOf(env: string | undefined): string {
@@ -677,18 +747,16 @@ export async function runIngest(): Promise<() => Promise<void>> {
       }),
     bridgeToken: bridgeTokenOf(Deno.env.get("WA_BRIDGE_TOKEN")),
   });
-  const { whatsappConfig } = await import("./config.ts");
   const { serveIngest } = await import("../serve.ts");
-  const port = (await whatsappConfig(root)).ingestPort;
   // One door in: the bridge's own address serves the outbound bytes too. `/m/<signed>` is
   // minted by the dispatch process and verified here from the vault's key — the signature
   // IS the authorization, so the route sits BEFORE the bridge-token check.
-  const server = serveIngest(
-    "connections.whatsapp.ingestPort",
-    port,
+  const server = await serveIngest(
+    root,
+    "whatsapp",
     async (req) => await serveMedia(req, dir, () => mediaSecret(creds)) ?? await handler(req),
-    (bound) => console.error(`[ingest] bridge on :${bound} → ${dir}/log`),
   );
+  console.error(`[ingest] bridge → ${server.addr.path} → ${dir}/log`);
   return async () => {
     await server.shutdown(); // stop accepting, finish the requests already in
     await creds.close();

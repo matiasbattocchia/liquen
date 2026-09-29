@@ -27,8 +27,8 @@
  *   message              {op, text, sender?, session?}   → the principal's half of the
  *                                                          complex (no turn_id, §3) → {ok, id}
  *   permission_response  {op, ref_id, verdict, session?} → answers a gate → {ok, id}
- *   control              {op, kind, session?}            → the principal's reserved word,
- *                                                          already classified: `cancel`
+ *   control              {op, kind, session?}            → the principal's hard stop,
+ *                                                          typed: `cancel`
  *                                                          cuts the session's running turn
  *                                                          (§2) → {ok, id}
  *   tail          {op, from?, session?, cwd?, recall?,
@@ -161,6 +161,9 @@ export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Do
   const listeners: { listener: Deno.Listener; path: string }[] = [];
   const serving: Promise<void>[] = [];
   const casts = new Map<string, Set<Tailer>>();
+  // the sessions mid-turn, `agent/session`: a tail that opens during a turn starts on its
+  // busy edge, since the edge itself was pushed before the tail existed
+  const running = new Set<string>();
 
   for (const agent of agents) {
     const home = `${dir}/agents/${agent.agentId}`;
@@ -181,7 +184,7 @@ export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Do
       (async () => {
         for await (const conn of listener) {
           conns.add(conn);
-          serve(conn, agent, cast)
+          serve(conn, agent, cast, (session) => running.has(`${agent.agentId}/${session}`))
             .catch((err) => console.error(`[door] ${agent.agentId}:`, err))
             .finally(() => {
               conns.delete(conn);
@@ -201,6 +204,8 @@ export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Do
       }
     },
     status(agentId: string, sessionId: string, line: Status) {
+      if (line.status === "busy") running.add(`${agentId}/${sessionId}`);
+      else running.delete(`${agentId}/${sessionId}`);
       for (const t of casts.get(agentId) ?? []) {
         if (t.session === sessionId) pushStatus(t, line);
       }
@@ -227,7 +232,12 @@ export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Do
  *  {event}/{delta} lines share the wire (every write rides one chain, so lines never
  *  interleave). A framing error is fatal to the connection; a request error is an
  *  `{ok: false}` reply and the loop continues. */
-async function serve(conn: Deno.Conn, agent: DoorAgent, cast: Set<Tailer>) {
+async function serve(
+  conn: Deno.Conn,
+  agent: DoorAgent,
+  cast: Set<Tailer>,
+  busy: (session: string) => boolean,
+) {
   // one run, one synthetic turn (§2): a key no session ever held, so act classifies the
   // run's uses as fresh work — and render welds use to result under it, like any turn's
   const turnId = `job:${newId()}`;
@@ -278,6 +288,7 @@ async function serve(conn: Deno.Conn, agent: DoorAgent, cast: Set<Tailer>) {
     );
     tailer = t;
     cast.add(tailer);
+    if (busy(session)) push({ status: "busy" });
   };
 
   try {

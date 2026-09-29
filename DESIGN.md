@@ -69,8 +69,11 @@ is a *connection process* like any other: pub/sub on the log + the harness strea
 Two planes:
 
 - **EventLog** — durable, append-only. *The API and the queue.* Producers (webhooks)
-  publish; consumers (dispatchers) subscribe to the log's change feed (fs-watch on files /
-  DB-webhook·Realtime·pgmq·cron on Postgres) — the `publish` is itself the trigger.
+  publish; consumers (dispatchers) subscribe to the log's change feed (a poll on SQLite /
+  DB-webhook·Realtime·pgmq·cron on Postgres) — the `publish` is itself the trigger. On
+  SQLite nothing but SQLite opens the database's files: its WAL coordination between
+  processes is POSIX locks, and a process loses all of its locks on a file the moment any
+  descriptor it holds on that file closes.
 - **Stream** — ephemeral broadcast for token deltas, thinking, checkpoints, turn edges,
   and errors the operator watches. Every kind reaches every tailer, named; what a surface
   shows and what it folds away is its own call. Never stored. Rule: **stream the
@@ -377,8 +380,8 @@ before acquiring would run a duplicate turn.
   transaction (§9). Not a detail: publishing first and releasing after cost us a real bug.
   The wake a turn's inserts fire arrives while the turn *still holds the lease*, so it bounces
   off the lock, and if it was the only wake in flight the obligation strands — measured at
-  ~40% of runs stalling a tool cycle, because `watchFs` latency is *shorter* than the rest of
-  a turn's teardown. Committed together, an observer sees neither or both, so the wake always
+  ~40% of runs stalling a tool cycle, because the wake arrives *sooner* than the rest of a
+  turn's teardown ends. Committed together, an observer sees neither or both, so the wake always
   finds the lease free. This is why the lease lives in the store beside the events: two
   substrates can't share a transaction. Every turn publishes — a model with nothing to
   add still closes with the `SILENCE` sentinel (§5) — so every release re-fires whatever
@@ -482,9 +485,8 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     (`cancel_pending` is **not** a dedicated tool — it decomposes into "stop emitting" +
     the existing kill.)
   - *Hard (harness-mediated, guaranteed)*: a `control` row in the session's room — the
-    door's `control` verb (the REPL's `/cancel`), or a whole-message reserved word ingest
-    reclassifies — fires the running turn's interrupt, which the turn lease carries. What
-    it cuts depends on where the turn is: a **think** has its model request aborted and
+    door's `control` verb (the REPL's Ctrl-C while the session is busy, or `/cancel`) —
+    fires the running turn's interrupt, which the turn lease carries. What it cuts depends on where the turn is: a **think** has its model request aborted and
     answers nothing; an **act** has its running tools killed (bash: the whole process
     group) and writes **cancelled tool_results** (count toward barriers, `cancelled: true`). Either way the turn closes on
     the harness's own `control` row — unstamped, `payload.control: "cancelled"`, the text
@@ -494,8 +496,8 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     model reads it as a `<system>` line. **Undirected — affects all the session's
     in-flight work.** The principal's row itself is transparent (§5): their word draws
     nothing; its consequence is what the model reads.
-- **`control` is classified at its source** — the door emits it typed (a button, a slash
-  word), ingest reclassifies a principal's reserved word in self-talk — and xi routes the
+- **`control` is typed at its source** — the door emits it (Ctrl-C, a slash word, a
+  button); a word typed on a chat surface is a `message`, a soft stop — and xi routes the
   type: it starts nothing (the wake table); the store fires the interrupt of the lease held
   in that room.
 
@@ -604,7 +606,7 @@ one peripheral for both.
     stop_reason?      // on a turn's LAST event: the stop, in the harness's vocabulary (decide reads it)
     covers?           // on a summary: [from,to] — the id range the checkpoint stands for
     mentions?         // wire mentions, canonical addresses
-    control?          // ingest-classified reserved word (stop | cancel)
+    control?          // the principal's hard stop, typed at the door (stop | cancel)
   }
   extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, <service> provenance, raw
   status?: {        // delivery lifecycle — ONE mutable json_patch-merged column, never events
@@ -665,11 +667,14 @@ Decisions:
   route on `envelope.service` and target with `connection_address` +
   `conversation.address`. `external_id` is the one prefixed string
   (`slack:T:C:ts`) — a global merge key in one store-wide map, where cross-service
-  uniqueness is the point. The local service names its conversations by session —
-  `mind@<agent>` — and `dm:<sorted session addresses>`. An address is meaningful WITH its envelope (or its `<conv>` element);
-  single-string positions (`send.to`, log filters) rely on addresses not colliding
-  across services — acceptable: platform id spaces (Slack C/D ids, jids, `owner/repo#N`,
-  `@`/`dm:` names) are disjoint in practice.
+  uniqueness is the point. Conversation addresses wear no prefix: the local service names
+  a session's room `mind@<agent>`, a direct room its sorted members joined by `,`
+  (`mind@ana,mind@bo`), and a group or channel by a minted id whose name and kind the
+  `conversations` table holds; a calendar is addressed by its id. An address is
+  meaningful WITH its envelope (or its `<conv>` element); single-string positions
+  (`send.to`, log filters) rely on addresses not colliding across services — acceptable:
+  platform id spaces (Slack C/D ids, jids, `owner/repo#N`, `@` names) are disjoint in
+  practice.
 - **`envelope` is on the base** — every event belongs to a conversation (internal events
   carry the conversation's own coordinates; `visibility` keeps them off the wire).
 - **`payload` vs `extra`, one admission rule**: `payload` is what the event MEANS — the
@@ -715,7 +720,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | type | producer *(model→role)* | consumer *(→ LLM role)* | xi | type-specific fields |
 |---|---|---|---|---|
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
-| `control` | the door (typed: `/cancel`) · ingest (reclassified) · xi/nu (the `cancelled` closing) | the principal's: transparent — its consequence renders; the harness's: `<system kind="cancelled">` | the principal's **interrupts** the running turn (§2), never a wake; the harness's closes it — `decide` idles on a trailing one | parts(text: the word) · payload{control: stop · cancel · cancelled} |
+| `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`) · xi/nu (the `cancelled` closing) | the principal's: transparent — its consequence renders; the harness's: `<system kind="cancelled">` | the principal's **interrupts** the running turn (§2), never a wake; the harness's closes it — `decide` idles on a trailing one | parts(text: the word) · payload{control: stop · cancel · cancelled} |
 | `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
 | `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `<system kind="outcome">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
@@ -731,15 +736,11 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 
 ### Ingest is a classifier (deterministic, no model)
 
-Every inbound passes through ingest, which does identity resolution **and** may reclassify:
+Every inbound passes through ingest, which classifies its AUTHOR — principal, member,
+stranger — and never its words: an inbound is a `message` whatever it says. A "stop" typed on a chat surface is the soft
+stop (§2), a customer's "stop" or "yes" is their own words (an unsubscribe, an answer),
+and a `/y` is read in xi, below.
 
-| outcome | when | produces |
-|---|---|---|
-| pass through | ordinary text | `message` (+ resolved authorship) |
-| `control` | reserved word from the agent's principal in self-talk | `control` + `payload.control` |
-
-- Raw text always preserved (`parts` + `extra.raw`) — misclassification auditable/reversible.
-- **Control vocab (v0)**: `stop`/`cancel`.
 - **The verdict is not ingest's** (landed 2026-08-18): a gate is answered in **xi**, which
   already derives what the log owes and therefore already knows which cards are open. The
   principal's line passes through as an ordinary `message`, and xi reads
@@ -810,8 +811,6 @@ Every inbound passes through ingest, which does identity resolution **and** may 
 - **Scope is parked at `once`** — `/always` · `/never` (per conversation) is the next rung:
   `PermissionVerdict.scope` already carries `always`, and a standing verdict writes into
   that same rule table.
-- A customer typing "stop"/"yes" is **not** reclassified (wrong author/context) — stays a
-  `message` (e.g. "stop" = unsubscribe).
 
 ## 4. Identity, services & the loopback problem
 
@@ -819,12 +818,16 @@ Every inbound passes through ingest, which does identity resolution **and** may 
 riding the grant that reads it (`google`, `microsoft`) on the account's connection:
 ```
 service: "google" · connection: "hi@org" | "matias@org"
-conversation: {address: "customer@x.com", kind: "direct", thread: <subject>}
+conversation: {address: <root Message-ID>, kind: "group", name: <subject>}
 sender: {address: "customer@x.com"} · parts: [text, file(attachments)] · external_id: mail:<Message-ID>
+extra.mail: {to, cc}
 ```
-The conversation is the other parties (every address but the account's, sorted), so a
-first send to a stranger is `send(to: <address>, connection: <account>, subject:)` and a
-reply is `send(re:)` — the thread is the subject, inherited. The mapping is one module for
+A thread is a conversation: a group addressed at its root — the Message-ID of the message
+that opened it, read off `References`/`In-Reply-To`, or the log's own filing of the message
+answered — and named by its subject, its members everyone the thread's rows name. A
+first send is `send(to: <addresses>, connection: <account>, subject:)`, which opens a
+thread the dispatcher files at the id it mints; a send into a thread (`to` its name or
+address, `re` a line) goes to the whole cast under `Re:`. The mapping is one module for
 every mail wire (`connect/mail.ts`). Shared inbox (`hi@org`) = an ownerless grant **every
 agent reads**; personal = that principal's.
 Shared-inbox coordination is left to **coexistence-yield** (an agent that sees another
@@ -844,7 +847,7 @@ ownership) only if double-answers show up.
 - **`conversation.kind` = `direct | group | channel | broadcast`** (landed 2026-08-05,
   column `conversation_kind`; broadcast added 2026-08-11 with the WhatsApp connector):
   *direct* = member-DEFINED identity (Slack im AND mpim — the member set is the address;
-  local `dm:<sorted session addresses>` makes that literal, and it scales to n parties unchanged);
+  a local room's sorted members joined by `,` make that literal, and it scales to n parties unchanged);
   *group* = private room; *channel* = public room (room-defined: identity survives
   membership churn); *broadcast* = fan-out, not a room anyone is in (a WA broadcast list
   — replies land in the individual chats; open-bsp carries `…@broadcast` in production).
@@ -1118,11 +1121,12 @@ The 3×2 grid, each cell real and distinct:
   the CLI prints the manifest prefill link (app creation and app-level tokens have no
   public API; the link is the automation ceiling) and takes what the console shows, the
   OAuth client (`slack:app:<id>`), its signing secret, the xapp socket carrier
-  (`slack:socket:<app id>`), the public redirect URI, and with `--bot`/`--user` the tokens
-  the install issued (`slack:<team>:org`, the dev's own leg). `auth.test` resolves the
-  workspace (a token string never identifies one) before the map writes. A paste serves
-  whoever is at the terminal; `user` serves a member who is not, through the OAuth handler
-  mounted for one sign-in at the app's registered https URI — the link carries the agent
+  (`slack:socket:<app id>`), and with `--bot`/`--user` the tokens the install issued
+  (`slack:<team>:org`, the dev's own leg). `auth.test` resolves the workspace (a token
+  string never identifies one) before the map writes. A paste serves whoever is at the
+  terminal; `user` serves a member who is not, through the OAuth handler mounted for one
+  sign-in at the org's public door (`<edge.publicUrl>/slack/oauth/callback`, which the
+  manifest registers) — the link carries the agent
   name the way Google's does, Slack's verified `authed_user.id` is what the terminal
   reports against it, and the grant lands through the same `landSlackUser` a paste lands
   through. Only user scopes are asked there: the bot is the org's, from the install. Facts
@@ -1268,8 +1272,8 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   model can tie the "Matías" in a room to the one steering it; the value is elided when
   it equals `from` (`<msg from="Sol" agent>`), written when the wire calls them
   something else (`<msg from="Sol R." principal="Sol">`). A mark is an identity, never a
-  session: which hands of an agent are talking is the conversation's business (a `dm:`
-  address names both ends), and on the local service `from` is the session's address,
+  session: which hands of an agent are talking is the conversation's business (a direct
+  room's address names its members), and on the local service `from` is the session's address,
   the one word that wire has. A customer's line carries no mark.
   The reply sits with what it answers. A dead delivery carries
   `status="failed"`; wire mentions ride a `mentions=` attribute. **Two elements, the
@@ -1287,7 +1291,9 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   message's ts (the room that just spoke renders nearest the answer point) —
   cross-conversation interleaving is arrival noise, not meaning; within a conversation,
   event time stands. A message that IS one part — a lone data part or a bare attachment —
-  hoists the envelope onto that part's own element and spends no `<msg>` wrapper.
+  hoists the envelope onto that part's own element and spends no `<msg>` wrapper. A
+  room's change is such a line on every service: `<room>` from whoever made it, carrying
+  who joined, who left, or the name the room now wears.
 - **The address book, and what is still open beside it (outgoing first contact).**
   Everything above serves incoming traffic and replies: the model learns addresses from
   `address=` attributes, and `search` recovers off-window ones. An address the log has
@@ -1750,11 +1756,31 @@ with a time bound.
   the log is the agent's memory (§7): a named session's view stays its own rooms, so its
   prompt holds only its work, while its `search` reaches what the mind reads, the mind's
   own room included.
-  **Local is a team chat**: a local conversation is visible iff you're a member; `send`
-  to a peer agent's NAME canonicalizes to `dm:` + the sorted pair of session addresses
-  and enrolls both ends
-  (the Slack membership mirror, landed 2026-08-12, fills the same rows from the wire —
-  §4 "the wire fills the map").
+  **Local is a team chat**: a local conversation is visible iff you're a member, and
+  `send` is what opens rooms. Its `to` takes one recipient or a `,`-separated list of
+  them, each resolved as one would be — an agent's id, a session address, or the name
+  the roster gives an agent. A list of agents unnamed is a DIRECT room: the sorted
+  members joined by `,`, the sender always among them, up to 8 besides — Slack's group
+  DM size, one rule on every service — so a copy of the address in any order lands in
+  the same room and nobody can write themselves into a room they are not in. Named by
+  `subject`, the list opens a room of its own with a minted address: `ops` a private
+  GROUP, `#ops` a public CHANNEL; the name is unique per org and the `conversations`
+  table holds it, so it may change while every row keyed on the address stays put. A
+  name that exists with these very members is that room; with others, the send is
+  refused and names the address. Every member is enrolled, and enrollment is the whole of
+  waking and writing — a channel's history is every agent's to `search`, its window,
+  wake and writes stay its members'. `send` never manages a room: who joins, who leaves
+  and what it is called after are the `conversation` tool's — `show` (one's rooms and the
+  public channels, or a room's members), `join` (a channel), `leave`, `add`, `remove` and
+  `rename`. Any member may act, a rename keeps the kind, the last one out closes the room
+  (its name freed, its rows kept), and every change is said in the room as the agent's
+  own line, so the member just added reads it where it happened. A direct room is its
+  members and takes no change. A wire's rooms are the wire's, reached through its rooms
+  port (§9): `send` to a list of people there opens one on the account, through the port,
+  and the same verbs change it through the same port, as the agent on that account —
+  nothing is said here, the wire says it. A wire with no port keeps its rooms.
+  (The Slack membership mirror, landed 2026-08-12, fills the same rows from the wire —
+  §4 "the wire fills the map".)
 - **Privacy = a property of the conversation**: `public` (org-readable) | `private`
   (participants + owning agent). Slack native (public channel / DM); WhatsApp by
   **connection ownership** (ownerless org inbox = public; personal book = private);
@@ -1784,12 +1810,12 @@ with a time bound.
   principal-DM + all peer conversations, cross-labeled by envelope: *one coherent mind*
   with general workspace knowledge **and** in-context answers — a human-like alter-ego
   (one mind per principal, not a fragmented tree). Named sessions hold only the rooms
-  they are ENROLLED in — their own room and the `dm:` rooms they are an end of — which
+  they are ENROLLED in — their own room and the rooms they are a member of — which
   is the whole enforcement (§6 memberships on the pair). That is the window and the
   writes; the past is the agent's, one for all its sessions — `search` from any of them
   reads the agent's history (§6), the mind's room and the world routed to it included.
-- **Sessions reach each other the way two agents do**: a `dm:` room both are in
-  (`dm:<sorted session addresses>`), so agent-to-agent contact is a case of one rule. No
+- **Sessions reach each other the way two agents do**: a direct room both are in (the
+  sorted session addresses joined by `,`), so agent-to-agent contact is a case of one rule. No
   tree, no spawn, no inter-session message-passing beyond `send(→envelope)`.
 - **Per session: the turn lock, the window, compaction, its timers.** The lease is
   `turn-<session address>`, so siblings run concurrently; the window is the session's
@@ -2142,7 +2168,8 @@ its SQL side (5 tools: `executeSql`/`getDbSchema`/`sampleTableRows`/`selectAsCsv
 | tool | plane | signature → returns |
 |---|---|---|
 | `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{sent, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — text beside it replies on the wire; `react` lands a glyph on it; `action` names the verb (`create` · `edit` · `delete` · `add` · `remove` — `create` and `add` are what a body and a glyph already mean, and the two mutating ones reach only the account's own messages). **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
-| `search` | control (dedicated) | `search({in?, from?, before?, after?, text?, limit?})` → the page as a string in the window's grammar (`<conn>`/`<conv>`/`<msg>`, dated), RLS-scoped, closed by the next page's `before` when cut. Clean sugar over the control-plane log read (SELECT / ripgrep). |
+| `search` | control (dedicated) | `search({in?, from?, connection?, before?, after?, text?, limit?, around?})` → the page as a string in the window's grammar (`<conn>`/`<conv>`/`<msg>`, dated), RLS-scoped, closed by the next page's `before` when cut. Clean sugar over the control-plane log read (SELECT / ripgrep). |
+| `conversation` | control (dedicated) | `conversation(action?, which?, who?, name?)` → the room (`name`, `kind`, `address`, `members`), or `{rooms}` for a bare `show`. A room's members and name (§6): `join` · `leave` · `add` · `remove` · `rename` · `show`. Locally the tool says each change in the room; on a wire each verb goes through the service's rooms port (`XiPorts.rooms`, one per service whose API has it), as the agent on the account, and the wire says the change. Either way the room holds one `room` data part from whoever made it — `joined`, `left` or the new `name` — rendered `<room>`; a local room `send` makes opens with one, its founding members joined. |
 | `bash` | exec + durable-on-files | `bash(cmd)` → `{stdout, stderr, exit}`. The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
 | `read` · `write` · `edit` | durable-on-db | The **database** substrate's primitive, by handle: `read(handle, offset?, limit?)` → the text head-truncated with `aread`'s footer · `write(handle, content)` · `edit(handle, spec)` with `aedit`'s conflict-marker spec. Present only where the docs live in the table (the sandbox can't touch the DB, §9 invariant). The model writes no SQL: each call is a function of the store (`docs_read · docs_write · docs_edit`, the binaries' contracts in PL/pgSQL) that the harness calls with bound parameters under the agent role, so one `NOLOGIN` role serves every agent and the row-level policy is the whole rule. |
 
@@ -2296,7 +2323,7 @@ Under Postgres the door gives way to RLS — the script client is unchanged.
 **The door is also the attach seam.** An interface — the REPL, a one-turn CLI, whatever
 else — never holds a log handle: it speaks to its agent through the same socket, which
 serves five ops: `call` (above), `message` (the principal's half of the complex, no
-`turn_id`), `control` (the principal's reserved word, typed — `cancel` cuts the session's
+`turn_id`), `control` (the principal's hard stop, typed — `cancel` cuts the session's
 running turn, §2), `permission_response` (a gate answered), and `tail` (the agent's scoped
 view pushed from a cursor, model deltas riding the same wire — `onDelta` is a fan-out over
 the tailers; its `cwd` is where the client stands, and the session's shell starts there for
@@ -2553,7 +2580,10 @@ queued) under main's ticker or a `pg_cron` job, and the named-session routing (`
 under main's raw-log subscription or the trigger — and **xi/nu/mu + the connectors become
 functions** — `(Request) => Response` with injected ports, which the connectors already are
 and which xi is one adapter-swap away from (`log` → Postgres, `lock` → an advisory lock or
-`locks` row). **The exec plane is one provider** (`Sandbox`, `src/sandbox.ts`):
+`locks` row). The platform's function router is the edge there: `edge.publicUrl` is the
+functions base (`https://<ref>.supabase.co/functions/v1`), each connector one function
+named for its service, and the address grammar (§9, `/<service>/ingest`,
+`/<service>/oauth/callback`) holds byte for byte with nothing forwarding at all. **The exec plane is one provider** (`Sandbox`, `src/sandbox.ts`):
 `forAgent(id).session(sid)` is a session's shell and file scope, and the egress proxy
 travels inside it because it exists for bash — the local provider starts it, a remote
 sandbox brings its own, and a host with no exec plane has neither. The remote provider is
@@ -2679,7 +2709,8 @@ true for exec (kernel handles it), false for control (only harness/human authori
      the placeholder's env var and the grant's hosts on the vault row (`extra.env`,
      `extra.hosts`; for a service with no connector, the shipped `token` door writes the
      row from a paste — the tool column of the §4 grid, one row and nothing else), main
-     fronts what's declared PER AGENT — the org's row, or the
+     fronts what's declared PER AGENT, read off the vault at every spawn so a grant stored
+     while the org runs is in the next command's pocket — the org's row, or the
      agent's own, never a peer's (`frontedFor`), so the handle in a pocket names a grant
      its holder has and the audit's agent is the caller — and the swap refuses any dial outside
      the declaration (so a handle can't be aimed at an echo endpoint to read the token
@@ -2848,7 +2879,9 @@ comments and an empty roster, `liquen agent <name>` adds one roster entry — `a
 with the identity handles its flags declared (`--name`, `--email`, `--phone`) and null
 for the rest — and `liquen connect` adds the one line a grant earns — `connections.<name>`, the
 subsection that makes `liquen start` spawn that connector — since the map alone never starts
-a process. Git is its history, a human is watching for all three, and boot COMPILES it — the
+a process; `liquen connect --remove` takes it out again with the service's last connection.
+Each of them reloads a running org (`liquen reload`), so what it wrote runs without a stop.
+Git is its history, a human is watching for all three, and boot COMPILES it — the
 roster into registry rows and
 homes, everything else funneled to the deepest function that needs it (main → xi → nu →
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
@@ -2985,25 +3018,59 @@ loudly, the same law as an unknown config key.
   `[exec]`, `[proxy]`), so a supervised line reads `[whatsapp] [dispatch] …` and a standalone
   run's terminal is its own tag. After the boot lines, silence means every process is up;
   process health is stderr, org health is the log (`deno task status`, log.db).
-- **Ports collide only when declared to.** An ingest port is an address something dials, and
-  the dialer sets the rule: a configured peer that holds the org's address (the bridge's
-  URL, an Events API request URL) needs a declared port — parallel orgs each declare their
-  own; a dialer that can read the announcement (`gh webhook forward`, a test, a terminal)
-  can take `ingestPort: 0` — bind any free port and announce it (re-rolled on restart). A
-  taken port fails naming its own knob (`serveIngest`, src/connect/serve.ts). The knob is
-  picked where a human can still hear it: the connect door binds every `checkPort` knob in
-  the connector's spec before writing the subsection, keeps silent when the default is free
-  (the subsection stays empty, the default rules) and declares the next free one out loud
-  when it is not (`declared`, src/connect/declare.ts). The bind is the test, so only a
-  RUNNING sibling moves a port; two orgs installed and never run together still meet at the
-  boot that runs them both, where the failing message is the right one.
+- **One port, and the connectors listen where they live.** The org binds one port,
+  `edge.port`, and nothing else: every connector serves its ingest on a Unix socket under
+  the org's own folder, `data/run/<service>.sock`, and a sign-in door on
+  `data/run/<service>-oauth.sock` while it is open (`socketOf`, src/edge.ts; `serveIngest`,
+  src/connect/serve.ts). The location is the whole address, so a connector declares
+  nothing to be reachable, two orgs on one machine never meet, and a socket somebody
+  already answers on is refused rather than stolen. Whatever dials the org on this host —
+  a browser here, the whatsmeow bridge, `gh webhook forward` — dials the edge,
+  `http://localhost:<edge.port>/<service>/…`, and a door that needs the org up says so in
+  a sentence and waits for it (`requireIngest` · `requireEdge`, src/connect/declare.ts).
+- **One public door, and the tunnel is nobody's business.** Every address a service is
+  handed hangs off one base by path — `<base>/<service>/ingest` is where it pushes,
+  `<base>/<service>/oauth/callback` where its sign-in returns (`ingestAddress` ·
+  `callbackAddress`, src/edge.ts) — and the base is `edge.publicUrl` from the internet,
+  this machine's edge from this host. So the org asks one thing of whatever puts it on the
+  internet: publish `edge.port` at that https address. A named tunnel, a host's reverse
+  proxy, a cloud's function router each do exactly that, and the harness knows none of
+  them by name; `edge.tunnel` is an argv `liquen start` keeps alive beside the org for the
+  one that runs here. Behind the port stands the edge process, always one child of the
+  supervisor: it forwards each path to the socket the grammar names, an ingest handed the
+  path under its root, a door the path as it came, and answers 502 naming the socket when
+  nothing is there. The doors DERIVE the address rather than ask for it — the portal
+  guides print it, Slack's manifest and GitHub's form carry it — and check it from the
+  internet in while a human is there to read the answer: every ingest names itself to a
+  `GET /`, so the fetched string says whether the tunnel is up, aimed at this port and in
+  front of this org. A subscription that records an address (Teams) is remade when the
+  address changes. With no `publicUrl` the org is reached on localhost only, and what
+  needs the internet to dial in — Graph's push, a member's Slack sign-in, a GitHub webhook
+  short of `gh webhook forward` — waits for the address to exist, said by the door.
 - **A crash comes back, a refusal does not.** `entry` picks the exit code by the same rule
   it picks the message: an `Error` the program modeled is a refusal and exits `REFUSAL`
   (2), the runtime's own is a fault and exits 1. The supervisor reads that code (`comesBack`, src/start.ts): a
   fault, a signal or an unasked-for clean exit are restarted with backoff; a refusal is
-  logged once and left down, because a port already held or a key the file got wrong will be
-  held and wrong again a second later. The org keeps running with whatever is left, and
-  `liquen start` refuses when nothing is.
+  logged once and left down until a reload, because a port already held or a key the file
+  got wrong will be held and wrong again a second later. The org keeps running with
+  whatever is left, and `liquen start` refuses when nothing is.
+- **The file is read again on a reload, never by itself.** `liquen reload` — and every
+  setup door that writes `config.jsonc` — reads the file, refuses one boot would reject,
+  and asks the supervisor over the run's socket (`data/run/liquen.sock`, src/reload.ts),
+  which reads it again and brings the run in line: each process restarts when the part of
+  the file it reads changed (`reads`, src/start.ts — the shared sections for every liquen
+  process, the roster and the WhatsApp bridge's address for main, the edge and its own
+  section for a connection), a connection declared since starts, one no longer declared
+  stops, and one that refused gets another go, since what it refused over may be what the
+  edit changed. The request also NAMES processes to restart whatever the file says of
+  them, for what a process reads once at boot from elsewhere — the Slack app door names
+  its connection when it has stored a carrier, which the ingest picks off the vault as it
+  starts. The supervisor answers with what moved, so the door or the command says it.
+  Nothing watches the file: a half-made edit restarts nothing, and a file the supervisor
+  cannot take leaves the run as it was. So a connection, a grant or an agent is added to an org that stays up; a stop is
+  only ever the operator's own order. What main offers doesn't hang on the file either —
+  every service's rooms and address-book ports stand from boot, reached only through an
+  account the agent holds — and the grants are the vault's, read at each use.
 - **A role is a lock.** Every process in an org's run takes an exclusive lock on
   `data/run/<role>.pid` for its whole life and writes its pid inside (src/stop.ts):
   `liquen` is the supervisor, `main` is the mind — the tail, the fan-out, the doors —

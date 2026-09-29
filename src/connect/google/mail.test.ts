@@ -210,12 +210,8 @@ Deno.test("gmail: history → the message in full → the row; attachments fetch
       envelope: {
         service: "google",
         connection_address: "me@org.com",
-        conversation: {
-          address: "ana@x.com,bob@y.com",
-          kind: "direct",
-          name: "Ana García",
-          thread: "Invoice 42",
-        },
+        // the thread: a reply to a message no log holds is filed at that message's id
+        conversation: { address: "m0@org.com", kind: "group", name: "Invoice 42" },
         sender: { address: "ana@x.com", name: "Ana García" },
         external_id: "mail:m1@x.com",
       },
@@ -227,17 +223,20 @@ Deno.test("gmail: history → the message in full → the row; attachments fetch
           file: { mime_type: "application/pdf", uri: "file:///m/receipt.pdf" },
         },
       ],
-      extra: { google: { thread: "t1" } },
+      extra: {
+        google: { thread: "t1" },
+        mail: { to: [{ address: "me@org.com", name: "Me" }, { address: "bob@y.com" }], cc: [] },
+      },
     });
     assertEquals(saved.length, 1);
-    assertEquals(saved[0].conversation, "ana@x.com,bob@y.com");
+    assertEquals(saved[0].conversation, "m0@org.com");
     assertEquals(new TextDecoder().decode(saved[0].bytes), "%PDF-1.4");
     assertEquals(saved[0].meta, { mime_type: "application/pdf", name: "receipt.pdf" });
     assertEquals(await cursorOf(creds), "5010");
   });
 });
 
-Deno.test("gmail: a SENT message is the account's own hand — the conversation is still the other side", async () => {
+Deno.test("gmail: a SENT message is the account's own hand — a first message, the thread it opens is its own", async () => {
   await withVault(async (creds) => {
     await creds.put({ key: KEY, value: {}, extra: { mail_sync: { [MAILBOX]: "5000" } } });
     const { publish, rows } = captor();
@@ -267,10 +266,13 @@ Deno.test("gmail: a SENT message is the account's own hand — the conversation 
     assertEquals(rows.length, 1);
     assertEquals(rows[0].envelope.sender, { address: "me@org.com" });
     assertEquals(rows[0].envelope.conversation, {
-      address: "ana@x.com",
-      kind: "direct",
-      name: "Ana García",
-      thread: "Invoice 42",
+      address: "u1@org.com",
+      kind: "group",
+      name: "Invoice 42",
+    });
+    assertEquals(rows[0].extra?.mail, {
+      to: [{ address: "ana@x.com", name: "Ana García" }],
+      cc: [],
     });
     assertEquals(rows[0].envelope.external_id, "mail:u1@org.com");
     assertEquals(rows[0].parts, [{ type: "text", kind: "text", text: "Hola Ana" }]);

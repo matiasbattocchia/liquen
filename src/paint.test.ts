@@ -1,6 +1,7 @@
 import { assertEquals } from "@std/assert";
 import { painter, type Surface } from "./paint.ts";
 import { tailOf } from "./line.ts";
+import { roomPart } from "./room.ts";
 import { ownVoice, textOf } from "./render.ts";
 import type { Event, Json, MessageEvent } from "./types.ts";
 
@@ -137,6 +138,15 @@ Deno.test("live: the agent's text opens with a blank line, the time and its mark
   p.delta({ kind: "text", text: "y el de la clínica" });
   p.event(answered("2026-09-11T14:14:00Z", "el tuyo y el de la clínica"));
   assertEquals(plain(screen()), "11 Sep 11:14 • el tuyo y el de la clínica\n\n");
+});
+
+Deno.test("live: the agent's change to a room paints in words, where it went", () => {
+  const { p, screen } = surface();
+  const line = answered("2026-09-11T14:14:00Z", "");
+  line.envelope.conversation = { address: "grp_ops", kind: "group", name: "ops" };
+  line.parts = [roomPart({ joined: [{ address: "mind@cy" }] })];
+  p.event(line);
+  assertEquals(plain(screen()), "11 Sep 11:14 → grp_ops: joined mind@cy\n");
 });
 
 Deno.test("live: markdown streams as styles, a span held until it closes", () => {

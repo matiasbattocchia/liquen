@@ -265,6 +265,104 @@ Deno.test("group subject denormalizes onto messages (same batch and later ones)"
   }
 });
 
+Deno.test("a roster change is the group's own line: who joined and left, from whoever did it", async () => {
+  const { handler, published } = harness();
+  const group = "123-456@g.us";
+  const change = {
+    address: group,
+    joined: [{ address: "5491100000002", name: "Bea" }],
+    left: [{ address: "5491100000003" }],
+    by: { address: "5491100000001", name: "Ana" },
+    timestamp: "2026-09-28T12:00:00Z",
+    muted: true,
+  };
+  await handler(post(
+    "/whatsapp-web-webhook",
+    batch({
+      groups: [{ address: group, name: "Asado" }, change],
+      contacts: [{ address: "5491100000003", extra: { name: "Caro" } }],
+    }),
+  ));
+  await handler(post("/whatsapp-web-webhook", batch({ groups: [change] }))); // posted again
+  assertEquals(published.length, 2, "a subject alone is no line; a change is one");
+  const [line, again] = published as MessageEvent[];
+  assertEquals(line.ts, "2026-09-28T12:00:00Z");
+  assertEquals(line.envelope.conversation, { address: group, kind: "group", name: "Asado" });
+  assertEquals(line.envelope.sender, { address: "5491100000001", name: "Ana" });
+  assertEquals(line.parts, [{
+    type: "data",
+    kind: "room",
+    data: {
+      joined: [{ address: "5491100000002", name: "Bea" }],
+      left: [{ address: "5491100000003", name: "Caro" }],
+    },
+  }]);
+  assertEquals(line.extra, { muted: true });
+  assertEquals(again.envelope.external_id, line.envelope.external_id, "a retry merges");
+});
+
+Deno.test("a rename is a room line with the new name; the subject first seen is none", async () => {
+  const { handler, published } = harness();
+  await handler(post(
+    "/whatsapp-web-webhook",
+    batch({
+      groups: [
+        { address: "123-456@g.us", name: "Asado" },
+        {
+          address: "123-456@g.us",
+          name: "Asado 2",
+          renamed: true,
+          by: { address: "5491100000001", name: "Ana" },
+          timestamp: "2026-09-28T12:00:00Z",
+        },
+      ],
+    }),
+  ));
+  assertEquals(published.length, 1);
+  const [line] = published as MessageEvent[];
+  assertEquals(line.envelope.conversation.name, "Asado 2");
+  assertEquals(line.envelope.sender, { address: "5491100000001", name: "Ana" });
+  assertEquals(line.parts, [{ type: "data", kind: "room", data: { name: "Asado 2" } }]);
+});
+
+Deno.test("a join by the group's link is the joiner's own line; the account's is its own", async () => {
+  const { handler, published } = harness();
+  await handler(post(
+    "/whatsapp-web-webhook",
+    batch({
+      groups: [
+        {
+          address: "123-456@g.us",
+          joined: [{ address: "5491100000002" }],
+          reason: "invite",
+          timestamp: "2026-09-28T12:00:00Z",
+        },
+        {
+          address: "789@g.us",
+          name: "Nuevo",
+          joined: [{ address: "5491100000000" }],
+          by: { address: "5491100000001" },
+          timestamp: "2026-09-28T12:01:00Z",
+        },
+      ],
+    }),
+  ));
+  const [link, added] = published as MessageEvent[];
+  assertEquals(link.envelope.sender, { address: "5491100000002" });
+  assertEquals(link.parts[0], {
+    type: "data",
+    kind: "room",
+    data: { joined: [{ address: "5491100000002" }], reason: "invite" },
+  });
+  assertEquals(added.envelope.conversation.name, "Nuevo");
+  assertEquals(added.envelope.sender, { address: "5491100000001" });
+  assertEquals(added.parts[0], {
+    type: "data",
+    kind: "room",
+    data: { joined: [{ address: "5491100000000" }] },
+  });
+});
+
 Deno.test("a message that names its room feeds the cache: the next bare one is named too", async () => {
   const { handler, published } = harness();
   const group = "123-456@g.us";

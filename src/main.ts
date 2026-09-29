@@ -53,7 +53,12 @@ import {
 } from "./transport/mod.ts";
 import { openCloudflareSandbox, openLocalSandbox } from "./sandbox.ts";
 import { whatsappContact } from "./connect/whatsapp/contact.ts";
+import { whatsappRooms } from "./connect/whatsapp/rooms.ts";
 import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
+import { slackRooms } from "./connect/slack/rooms.ts";
+import { slackTokenFor } from "./connect/slack/dispatch.ts";
+import { teamsRooms } from "./connect/microsoft/rooms.ts";
+import { createGrantBroker } from "./proxy/grants.ts";
 import { entry } from "./entry.ts";
 import { claim, MAIN } from "./stop.ts";
 import { createMirror } from "./connect/mirror.ts";
@@ -210,18 +215,26 @@ export async function start(
       ...planeOptions,
     })
     : await openLocalSandbox(dir, { store, ...planeOptions });
-  // the address book (§9): one port per service that keeps one, wired where the connection
-  // is declared — whatsapp's rides the bridge the dispatcher already talks to, on the same
-  // token, and carries both legs: `contact` writes through it, `search` reads through it
-  const bridge = config.catalog?.connections?.whatsapp;
-  const contact: XiPorts["contact"] = bridge
-    ? {
-      whatsapp: whatsappContact(
-        typeof bridge.bridgeUrl === "string" ? bridge.bridgeUrl : DEFAULT_BRIDGE_URL,
-        Deno.env.get("WA_BRIDGE_TOKEN") ?? "",
-      ),
-    }
-    : undefined;
+  // the ports stand whether or not a service is connected yet: a leg is only ever reached
+  // through one of the agent's accounts, and a service connected while main runs has its
+  // ports already there
+  //
+  // the address book (§9): one port per service that keeps one — whatsapp's rides the
+  // bridge the dispatcher already talks to, on the same token, and carries both legs:
+  // `contact` writes through it, `search` reads through it
+  const bridge = config.catalog?.connections?.whatsapp?.bridgeUrl;
+  const bridgeUrl = typeof bridge === "string" ? bridge : DEFAULT_BRIDGE_URL;
+  const bridgeToken = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
+  const contact: XiPorts["contact"] = { whatsapp: whatsappContact(bridgeUrl, bridgeToken) };
+  // the rooms (§9): one port per service whose API opens and changes conversations, over
+  // the vault the dispatcher posts with — so a room is opened by the grant that speaks in
+  // it; whatsapp's rides the bridge, whose session is the grant
+  const creds = await store.vault();
+  const rooms: XiPorts["rooms"] = {
+    slack: slackRooms({ tokenFor: slackTokenFor(creds) }),
+    microsoft: teamsRooms({ broker: createGrantBroker({ creds }), creds }),
+    whatsapp: whatsappRooms(bridgeUrl, bridgeToken),
+  };
 
   let stopped = false;
   // the fan-outs' late half: ports close over `cast`/`castStatus` before the doors exist,
@@ -279,6 +292,7 @@ export async function start(
     transport: (agentId) => stock.get(agentId)!,
     sandbox,
     ...(contact ? { contact } : {}),
+    ...(rooms ? { rooms } : {}),
     onDelta: (agentId, sessionId, d) => cast(agentId, sessionId, d),
     onDecision: (agentId, sessionId, v, cursor, about) =>
       disclose(agentId, sessionId, v, cursor, about),
@@ -366,8 +380,9 @@ export async function start(
   };
 
   // NAMED sessions (§4): reactive — no standing subscription and no registry. The
-  // trigger's own address names the session to invoke (its room, or a dm: it is an end
-  // of), so main builds a runner on first contact and a quiet session costs nothing.
+  // trigger's own address names the session to invoke (its room, a direct room it is in,
+  // a group it is enrolled in), so main builds a runner on first contact and a quiet
+  // session costs nothing.
   // Bursts bounce off the session's own turn lease; the mind's ladder never applies.
   const named = new Map<string, Runner>();
   const runnerOf = async (agentId: string, sessionId: string) => {
@@ -460,11 +475,13 @@ export async function start(
   // the trigger's address names the session to invoke, and main builds its runner on
   // first contact, so a quiet session costs nothing
   unsubs.push(log.subscribe((e) => {
-    for (const p of route(e)) {
-      runnerOf(p.agentId, p.sessionId)
-        .then((r) => r && invoke(r)(e))
-        .catch((err) => console.error(`[main] ${p.sessionId}@${p.agentId}:`, err));
-    }
+    route(e, log).then((named) => {
+      for (const p of named) {
+        runnerOf(p.agentId, p.sessionId)
+          .then((r) => r && invoke(r)(e))
+          .catch((err) => console.error(`[main] ${p.sessionId}@${p.agentId}:`, err));
+      }
+    }).catch((err) => console.error("[main] route:", err));
   }));
   // the mirror rides the RAW log (§4): it copies between a mind and its alias surfaces, and
   // an agent's own alias conversation is invisible to that agent's scoped port (§6) — the
@@ -547,6 +564,7 @@ export async function start(
       );
       await sandbox.close(); // every shell's jobs reaped, the egress proxy stopped
       await docs.close();
+      await creds.close();
       await log.close();
     },
   };

@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
   connectWhatsApp,
   type WABridgeSessions,
@@ -33,7 +33,7 @@ function harness(bridge: WABridgeSessions, over: Partial<WhatsAppConnectDeps> = 
     bridge,
     principal: "matias",
     organizationId: "acme",
-    webhookUrl: "http://localhost:8794",
+    webhookUrl: "http://localhost:8787/whatsapp/ingest",
     store: {
       upsertConnections: (rows) => {
         connections.push(...rows);
@@ -75,7 +75,7 @@ Deno.test("QR flow: poll to paired writes the owned anchor, membership, and note
   assertEquals(address, "5491100000000");
   assertEquals(creates[0].agent_id, "matias"); // the pairing binds the principal
   assertEquals(creates[0].phone_number, undefined);
-  assertEquals(creates[0].webhook_url, "http://localhost:8794"); // and names THIS org's door
+  assertEquals(creates[0].webhook_url, "http://localhost:8787/whatsapp/ingest"); // and names THIS org's door
   // every visible change surfaced: first QR, the rotation, the paired flip
   assertEquals(states.map((s) => s.qr_code ?? s.status), ["2@qr-one", "2@qr-two", "paired"]);
 
@@ -141,12 +141,10 @@ Deno.test("--org: the pairing binds nobody — an ownerless, credentialed row an
   assertStringIncludes(note.parts[0].type === "text" ? note.parts[0].text : "", "the org");
 });
 
-Deno.test("ingestUrlOf: the declared address, else localhost on the port — never a rolling port", () => {
-  assertEquals(ingestUrlOf({ ingestPort: 8794, ingestUrl: null }), "http://localhost:8794");
+Deno.test("ingestUrlOf: the declared address, else this machine's edge", () => {
+  assertEquals(ingestUrlOf({ ingestUrl: null }, 8787), "http://localhost:8787/whatsapp/ingest");
   assertEquals(
-    ingestUrlOf({ ingestPort: 8794, ingestUrl: "http://host.docker.internal:8794" }),
-    "http://host.docker.internal:8794",
+    ingestUrlOf({ ingestUrl: "http://host.docker.internal:8787/whatsapp/ingest" }, 8787),
+    "http://host.docker.internal:8787/whatsapp/ingest",
   );
-  // 0 re-rolls per restart, and the bridge keeps the address with the session
-  assertThrows(() => ingestUrlOf({ ingestPort: 0, ingestUrl: null }), Error, "ingestPort is 0");
 });

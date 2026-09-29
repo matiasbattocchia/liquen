@@ -6,9 +6,8 @@
  * webhook secret + private key), `github:org` / `github:<principal>` (the identities).
  */
 
-import { checkPort, checkStrings, connectorConfig, type ConnectorSpec } from "../../connector.ts";
+import { checkStrings, connectorConfig, type ConnectorSpec } from "../../connector.ts";
 
-export const DEFAULT_INGEST_PORT = 8788;
 /** The events mapped by default. Others are acknowledged (2xx) but produce nothing. */
 export const DEFAULT_EVENTS = [
   "issue_comment",
@@ -19,7 +18,6 @@ export const DEFAULT_EVENTS = [
 ];
 
 export interface GithubConfig {
-  ingestPort: number;
   events: string[];
 }
 
@@ -27,12 +25,6 @@ export const SPEC: ConnectorSpec = {
   name: "github",
   doc: "github — webhook ingest and comment dispatch",
   entries: [
-    {
-      key: "ingestPort",
-      value: DEFAULT_INGEST_PORT,
-      doc: "where GitHub (or `gh webhook forward`) delivers; 0 = any free port, announced",
-      check: checkPort,
-    },
     {
       key: "events",
       value: DEFAULT_EVENTS,

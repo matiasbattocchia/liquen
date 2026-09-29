@@ -118,6 +118,14 @@ export const DEFAULT_SANDBOX_SLEEP_MINUTES = 10; // the Sandbox SDK's own sleepA
 // one window read and no model call, so there is nothing to buy by making it rarer.
 export const TICK_MS = 60_000;
 
+// edge — the org's one door, and its only port. Every address a service is handed hangs
+// off ONE base by path, `/<service>/ingest` and `/<service>/oauth/callback`, so the org
+// tells a tunnel one thing: publish `edge.port` at `publicUrl`. The edge process behind
+// that port forwards each path to the connector's socket under data/run (edge.ts). The
+// same grammar names a function per service on a platform that routes by name, where
+// nothing forwards at all.
+export const DEFAULT_EDGE_PORT = 8787;
+
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 /** The model providers a transport exists for (transport/mod.ts); `provider: null` ⇒ the first. */
 export const PROVIDERS = ["anthropic", "google"] as const;
@@ -194,6 +202,14 @@ export interface OrgConfig {
      *  interface — the repo ships `processors/qwen-asr/` as one implementation. */
     audio: string | null;
   };
+  edge: {
+    /** The org's public https base; null ⇒ reached on localhost only. */
+    publicUrl: string | null;
+    /** The one port the edge binds — what the tunnel publishes. */
+    port: number;
+    /** The tunnel's argv, supervised by `liquen start`; null ⇒ the operator runs one. */
+    tunnel: string[] | null;
+  };
   /** The roster: every key under `agents` IS an agent — boot compiles the entries into
    *  registry rows and creates the missing home folders (§9). The name is the agent's id,
    *  its folder under `data/agents/`, and its Linux user in the container. */
@@ -211,11 +227,7 @@ interface Entry {
   doc: string;
 }
 
-/** Common boot checks for connector entries. */
-export const checkPort = (v: unknown): string | null =>
-  Number.isInteger(v) && (v as number) >= 0 && (v as number) < 65536
-    ? null
-    : "must be a port (1-65535, or 0: bind a free one and announce it)";
+/** A common boot check for connector entries. */
 export const checkStrings = (v: unknown): string | null =>
   Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === "string" && s)
     ? null
@@ -329,7 +341,9 @@ const AGENT: Entry[] = [
     doc: "the tools offered to the model, by name — built-ins and exec tools (bash, MCP) " +
       'alike; null ⇒ every tool the deployment has. Add "send" where the agent has peers ' +
       "or a world to write to — a reply to its own principal is its plain answer, never a " +
-      'call — and "contact" where an account keeps an address book the agent may write',
+      'call — "conversation" where it has peers and may open rooms with them, or an ' +
+      'account on a wire whose rooms it may change, and "contact" where an account keeps ' +
+      "an address book the agent may write",
   },
   {
     key: "rules",
@@ -382,10 +396,36 @@ const PROCESSORS: Entry[] = [
   },
 ];
 
+const EDGE: Entry[] = [
+  {
+    key: "publicUrl",
+    value: null,
+    doc: "the org's public https:// base — what a tunnel or a real host in front of edge.port " +
+      "answers as; every service's address hangs off it (/<service>/ingest, " +
+      "/<service>/oauth/callback), and the doors print the one to register; null ⇒ the " +
+      "org is reached at http://localhost:<edge.port> only",
+  },
+  {
+    key: "port",
+    value: DEFAULT_EDGE_PORT,
+    doc: "the org's one port: the edge binds it and the tunnel publishes it — it forwards " +
+      "/<service>/… to that connector's socket under data/run",
+  },
+  {
+    key: "tunnel",
+    value: null,
+    doc: 'the command that publishes edge.port at publicUrl, as an argv (["cloudflared", ' +
+      '"tunnel", "run", "acme"]), run and kept alive by `liquen start` beside the org; ' +
+      "null ⇒ something else runs it (systemd, a host's own proxy)",
+  },
+];
+
 const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
   organization: "this deployment's identity — the clock, the backlog, and every agent's defaults",
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
+  edge: "the org's one door — the address the world dials, the one port the org binds, " +
+    "and the tunnel",
   agents: "the roster: every key is a member — an agent, its folder and its unix user, or " +
     "a person alone (mind: false)",
   connections: "the connectors' knobs — a subsection per connector, validated by its owner",
@@ -394,6 +434,8 @@ const SECTION_DOCS: Record<string, string> = {
 /** An agent's name is also its folder and its Linux user in the container — the charset is
  *  the intersection of what all three accept. */
 export const AGENT_NAME = /^[a-z][a-z0-9-]{0,30}$/;
+/** A connection's name: the first word of its path on the edge and of its socket. */
+export const SERVICE_NAME = /^[a-z][a-z0-9-]*$/;
 
 function fromEntries(entries: Entry[]): Record<string, unknown> {
   return Object.fromEntries(entries.map((e) => [e.key, e.value]));
@@ -404,6 +446,7 @@ function defaults(): OrgConfig {
     system: fromEntries(SYSTEM),
     organization: { ...fromEntries(ORG), agents: fromEntries(AGENT) },
     processors: fromEntries(PROCESSORS),
+    edge: fromEntries(EDGE),
     agents: {},
     connections: {},
   } as unknown as OrgConfig;
@@ -523,6 +566,7 @@ export async function readConfig(root: string): Promise<OrgConfig> {
       path,
       "processors",
     ),
+    edge: mergeSection(asObject(found.edge, "edge"), EDGE, path, "edge"),
     agents: {} as Record<string, unknown>,
     connections: {} as Record<string, unknown>,
   };
@@ -565,6 +609,13 @@ export async function readConfig(root: string): Promise<OrgConfig> {
     }
   }
   for (const [name, body] of Object.entries(asObject(found.connections, "connections"))) {
+    if (!SERVICE_NAME.test(name)) {
+      throw new Error(
+        `${path}: connections.${name} — a connection's name is its path on the edge ` +
+          `(/<name>/ingest) and its socket (data/run/<name>.sock): lowercase letters, digits ` +
+          `and dashes, starting with a letter`,
+      );
+    }
     if (typeof body !== "object" || body === null || Array.isArray(body)) {
       throw new Error(
         `${path}: connections.${name} must be an object (a connector's subsection)`,
@@ -638,6 +689,9 @@ export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string
   lines.push("    }", "  },");
   lines.push(`  // ${SECTION_DOCS.processors}`, `  "processors": {`);
   emit("    ", PROCESSORS, cfg.processors as unknown as Record<string, unknown>);
+  lines.push("  },");
+  lines.push(`  // ${SECTION_DOCS.edge}`, `  "edge": {`);
+  emit("    ", EDGE, cfg.edge as unknown as Record<string, unknown>);
   lines.push("  },");
   lines.push(`  // ${SECTION_DOCS.agents}`, `  "agents": {`, `    // ${IDENTITY_DOC}`);
   const agents = Object.entries(cfg.agents);
@@ -738,46 +792,128 @@ export async function declareConnection(
   return true;
 }
 
-/** Put one rendered member at the tail of `section`'s block, so the block reads in the
- *  order things were declared and its leading comment stays on top. A surgical text edit,
- *  not a re-render: the file is the operator's, comments and layout included, so the
- *  insertion is the member's own lines inside the existing block, a comma on the member
- *  before it when there is one, and every other byte is left as it was found. The result is
- *  parsed before it lands — a write that would not read back is no write at all. */
-/** Where `"section":` opens at the file's TOP level — depth one in braces — or -1. The
- *  first match in the file is not it: `"agents":` also names the defaults every agent
- *  inherits, one level down under `organization`. */
-function topLevel(raw: string, section: string): number {
-  for (const m of raw.matchAll(new RegExp(`"${section}"\\s*:`, "g"))) {
-    let depth = 0;
-    for (let i = 0; i < m.index; i++) {
-      if (raw[i] === "{") depth++;
-      else if (raw[i] === "}") depth--;
-    }
-    if (depth === 1) return m.index;
-  }
-  return -1;
-}
-
-async function declareIn(root: string, section: string, member: string): Promise<void> {
+/** Take `connections.<name>` out of the file, so `liquen start` spawns nothing for it — the
+ *  inverse of `declareConnection`, and as surgical: the member's own lines go, with the
+ *  comma its departure leaves dangling, and every other byte stays. Knobs the operator set
+ *  under it go too; the file is git-tracked, so the diff keeps them. Returns whether there
+ *  was one. */
+export async function undeclareConnection(root: string, name: string): Promise<boolean> {
+  const before = await readConfig(root); // an unparseable file fails HERE, editing nothing
+  if (!(name in before.connections)) return false;
   const path = `${root}/config.jsonc`;
   const raw = await Deno.readTextFile(path);
+  const [open, close] = block(raw, "connections", path);
+  const inner = raw.slice(open + 1, close);
+  let key = -1;
+  for (const m of inner.matchAll(new RegExp(`"${name}"\\s*:`, "g"))) {
+    if (depthAt(inner, m.index) === 0) key = m.index;
+  }
+  const brace = inner.indexOf("{", key);
+  if (key < 0 || brace < 0) throw new Error(`${path}: connections.${name} is not an object`);
+  let end = brace;
+  for (let depth = 0; end < inner.length; end++) {
+    if (inner[end] === "{") depth++;
+    else if (inner[end] === "}" && --depth === 0) break;
+  }
+  end++;
+  const comma = /^\s*,/.exec(inner.slice(end));
+  if (comma) end += comma[0].length;
+  // the member's whole lines when it has them to itself, so no blank line is left behind
+  const lineStart = inner.lastIndexOf("\n", key - 1) + 1;
+  const start = inner.slice(lineStart, key).trim() === "" ? Math.max(lineStart - 1, 0) : key;
+  let head = inner.slice(0, start);
+  if (!comma) {
+    // it was the last member: the one before it now is, and carries no comma
+    const lines = head.split("\n");
+    const last = lines.findLastIndex((l) => l.trim() !== "" && !l.trim().startsWith("//"));
+    if (last >= 0) lines[last] = lines[last].replace(/,\s*$/, "");
+    head = lines.join("\n");
+  }
+  const edited = raw.slice(0, open + 1) + head + inner.slice(end) + raw.slice(close);
+  await Deno.writeTextFile(path, edited);
+  try {
+    await readConfig(root);
+  } catch (err) {
+    await Deno.writeTextFile(path, raw);
+    throw err;
+  }
+  return true;
+}
+
+/** Brace depth at `at` within `text`, counted from its start. */
+function depthAt(text: string, at: number): number {
+  let depth = 0;
+  for (let i = 0; i < at; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}") depth--;
+  }
+  return depth;
+}
+
+/** The offsets of the braces that open and close a top-level section's block. */
+function block(raw: string, section: string, path: string): [number, number] {
   const at = topLevel(raw, section);
   const open = at < 0 ? -1 : raw.indexOf("{", at);
-  if (open < 0) throw new Error(`${path}: no "${section}" section to declare in`);
+  if (open < 0) throw new Error(`${path}: no "${section}" section`);
   let depth = 0, close = open;
   for (; close < raw.length; close++) {
     if (raw[close] === "{") depth++;
     else if (raw[close] === "}" && --depth === 0) break;
   }
   if (close === raw.length) throw new Error(`${path}: "${section}" is never closed`);
+  return [open, close];
+}
+
+/** Where `"section":` opens at the file's TOP level — depth one in braces — or -1. The
+ *  first match in the file is not it: `"agents":` also names the defaults every agent
+ *  inherits, one level down under `organization`. */
+function topLevel(raw: string, section: string): number {
+  for (const m of raw.matchAll(new RegExp(`"${section}"\\s*:`, "g"))) {
+    if (depthAt(raw, m.index) === 1) return m.index;
+  }
+  return -1;
+}
+
+/** `raw` with one rendered member at the tail of its top-level `section`'s block, so the
+ *  block reads in the order things were declared and its leading comment stays on top. A
+ *  surgical text edit, not a re-render: the file is the operator's, comments and layout
+ *  included, so the insertion is the member's own lines inside the existing block, a comma
+ *  on the member before it when there is one, and every other byte is left as it was
+ *  found. `path` only names the file in a complaint. */
+export function withMember(raw: string, section: string, member: string, path: string): string {
+  const [open, close] = block(raw, section, path);
   // the comma goes on the last MEMBER line — never on a blank or a comment that trails it
   const lines = raw.slice(open + 1, close).trimEnd().split("\n");
   const last = lines.findLastIndex((l) => l.trim() !== "" && !l.trim().startsWith("//"));
-  if (last >= 0) lines[last] += ",";
+  if (last >= 0) {
+    const line = lines[last];
+    const code = line.slice(0, codeEnd(line)).trimEnd();
+    lines[last] = `${code},${line.slice(code.length)}`;
+  }
   const body = `${lines.join("\n")}\n    ${member}\n  `;
-  const edited = raw.slice(0, open + 1) + body + raw.slice(close);
-  await Deno.writeTextFile(path, edited);
+  return raw.slice(0, open + 1) + body + raw.slice(close);
+}
+
+/** Where a line's code ends: at a `//` that opens a comment — outside any string — or at
+ *  the line's end. */
+function codeEnd(line: string): number {
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    if (quoted) {
+      if (line[i] === "\\") i++;
+      else if (line[i] === '"') quoted = false;
+    } else if (line[i] === '"') quoted = true;
+    else if (line[i] === "/" && line[i + 1] === "/") return i;
+  }
+  return line.length;
+}
+
+/** `withMember` on the catalog, parsed before it lands — a write that would not read back
+ *  is no write at all. */
+async function declareIn(root: string, section: string, member: string): Promise<void> {
+  const path = `${root}/config.jsonc`;
+  const raw = await Deno.readTextFile(path);
+  await Deno.writeTextFile(path, withMember(raw, section, member, path));
   try {
     await readConfig(root);
   } catch (err) {
@@ -842,7 +978,50 @@ function validateOrg(cfg: OrgConfig, path: string): void {
         `(got ${JSON.stringify(sleep)})`,
     );
   }
+  const publicUrl = checkPublicUrl(cfg.edge.publicUrl);
+  if (publicUrl) {
+    throw new Error(
+      `${path}: edge.publicUrl ${publicUrl} (got ${JSON.stringify(cfg.edge.publicUrl)})`,
+    );
+  }
+  if (!(Number.isInteger(cfg.edge.port) && cfg.edge.port > 0 && cfg.edge.port < 65536)) {
+    throw new Error(
+      `${path}: edge.port must be a port (1-65535) — a tunnel publishes a number it was ` +
+        `told (got ${JSON.stringify(cfg.edge.port)})`,
+    );
+  }
+  if (cfg.edge.tunnel !== null) {
+    if (checkStrings(cfg.edge.tunnel)) {
+      throw new Error(
+        `${path}: edge.tunnel must be an argv (["cloudflared", "tunnel", "run", "acme"]) ` +
+          `or null (got ${JSON.stringify(cfg.edge.tunnel)})`,
+      );
+    }
+    if (cfg.edge.publicUrl === null) {
+      throw new Error(`${path}: edge.tunnel publishes edge.publicUrl, and publicUrl is null`);
+    }
+  }
   validateAgent(cfg.organization.agents, `${path}: organization.agents`);
+}
+
+/** What `edge.publicUrl` may hold: null, or an https:// base — an origin, or an origin
+ *  and a path prefix, with nothing after (no query, no fragment, no trailing slash): the
+ *  service paths are appended to it byte for byte. A complaint, or null when fine. */
+export function checkPublicUrl(v: unknown): string | null {
+  if (v === null) return null;
+  if (typeof v !== "string") return "must be null or an https:// URL";
+  let url: URL;
+  try {
+    url = new URL(v);
+  } catch {
+    return "must be null or an https:// URL";
+  }
+  if (url.protocol !== "https:") {
+    return "must be an https:// URL — the services push to nothing else";
+  }
+  if (url.search || url.hash) return "must carry no query or fragment";
+  if (v.endsWith("/")) return "must not end in a slash — /<service>/… is appended to it";
+  return null;
 }
 
 /** What `system.docs` may hold: `files`, or `table` when `system.database` names the

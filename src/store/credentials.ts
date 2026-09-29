@@ -38,6 +38,9 @@ export interface Credentials {
   get(key: string): Promise<CredentialRow | null>;
   /** Rows whose key starts with `prefix` (a literal, not a pattern) — key order. */
   list(prefix: string): Promise<CredentialRow[]>;
+  /** Drop one row — the secret is gone, not stamped. Whether there was one: a key already
+   *  absent is no error. */
+  delete(key: string): Promise<boolean>;
   /** Mint a one-time state for an OAuth flow; `extra` rides along (org, hints). */
   mintState(service: string, extra?: Record<string, unknown>): Promise<string>;
   /** Consume a state exactly once: returns its extra, or null (unknown/used/expired). */
@@ -96,6 +99,7 @@ export async function openCredentials(
   const listC = db.prepare(
     "SELECT * FROM credentials WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
   );
+  const dropC = db.prepare("DELETE FROM credentials WHERE key = ?");
   const putS = db.prepare(
     "INSERT INTO oauth_states (state, service, extra, born) VALUES (?, ?, ?, ?)",
   );
@@ -141,6 +145,10 @@ export async function openCredentials(
     list(prefix: string): Promise<CredentialRow[]> {
       const pattern = prefix.replace(/[\\%_]/g, (c) => `\\${c}`) + "%";
       return Promise.resolve((listC.all(pattern) as RawRow[]).map(rowOf));
+    },
+
+    delete(key: string): Promise<boolean> {
+      return Promise.resolve(Number(dropC.run(key).changes) > 0);
     },
 
     mintState(service, extra): Promise<string> {

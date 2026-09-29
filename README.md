@@ -33,7 +33,16 @@ code of its own, so the package that runs is always the one the org's `deno.json
 
 ```sh
 deno install -g -A -n liquen jsr:@liquen/liquen/liquen
+deno install -g -A -n lq jsr:@liquen/liquen/liquen   # the same command, short: `lq start`
 ```
+
+`liquen start -D` runs the org in the background, its lines appended to
+`data/run/liquen.log`; `liquen stop` ends it either way. `liquen connect --remove
+<service>:<address>` takes a grant back — the target as `liquen status` prints it.
+`liquen reload` has the running org take up an edit to `config.jsonc`: what the edit
+touched restarts, a connection declared since starts, one removed stops, and it prints what
+moved. `liquen reload slack` restarts a process by name besides. The commands that write
+the file — `liquen connect`, `liquen agent` — reload the org themselves.
 
 A role is a lock: every process in a run holds `data/run/<role>.pid` while it lives —
 `liquen` the supervisor, `main` the mind. So there is one of each, whoever started it: a
@@ -61,6 +70,15 @@ edit lands on the agent's next turn without a restart.
 Every knob lives in `config.jsonc` at the project root (the catalog — init
 materializes it, the system never writes it; comments document each key). Env is for
 secrets only. The org is where you run liquen; `--dir <path>` names it from anywhere else.
+
+The org binds one port, `edge.port` (8787): every service is reached through it by path,
+`/<service>/ingest` and `/<service>/oauth/callback`, and the connectors behind it listen
+on sockets under `data/run/`, so nothing else is configured. The org is reached at
+`http://localhost:8787` until `edge.publicUrl` names its public https address — whatever
+a tunnel or a host publishes `edge.port` at; the doors print the address to register
+either way, and `edge.tunnel` holds the tunnel's argv when `liquen start` should run it.
+Without a public address, what needs the internet to dial in (Teams, a member's Slack
+sign-in, a GitHub webhook short of `gh webhook forward`) waits for it.
 
 The store is SQLite under `data/log` until `system.database` names a Postgres database
 (`postgres://user@host:5432/db`, `?schema=` for one schema of it); the password goes in
@@ -103,11 +121,11 @@ table, and `deno task status` lists what is armed.
 
 ## Connections
 
-A connect door refuses a grant nobody is listening for: a granted service delivers from
-that second on, and a delivery that finds no door is dropped by everyone. So the org runs
-first — `deno task start` — and the doors run against it. On a fresh org the first door
-declares its connection in `config.jsonc` and waits while you restart `start` in the
-other terminal, so it can go on in the same run.
+The org runs first — `deno task start` — and the doors run against it. The first door of a
+service declares its connection in `config.jsonc` and reloads the running org, which
+starts the connection's process. A door whose grant makes the service deliver at once —
+a WhatsApp pairing, a GitHub grant — waits for that process to be up before it asks,
+since a delivery that finds no door is dropped by everyone.
 
 ### GitHub (dev-tier: `gh webhook forward`)
 
@@ -120,7 +138,7 @@ deno task start                               # webhook receiver → the log, re
 deno task connect github user --org --token   # a machine user's token → the org
 gh webhook forward --repo=you/repo \
   --events=issue_comment,pull_request,pull_request_review_comment \
-  --url=http://localhost:8788/
+  --url=http://localhost:8787/github/ingest
 ```
 
 An App buys three things a paste cannot: an org token minted hourly with nothing static
@@ -140,9 +158,9 @@ Every door closes by naming what the org still owes, and `--help` explains each 
 1. **One sitting at the console.** The door prints the prefill link and opens it (Slack
    builds the app from [`src/seed/slack-manifest.json`](./src/seed/slack-manifest.json),
    consent lists filled from `connections.slack`), then takes what the console shows,
-   each paste empty to skip: the OAuth client, its signing secret (HTTP ingest only), the
-   app-level token (xapp, the Socket Mode carrier), and a public redirect URI. *Install to
-   Workspace* while you are there, and the flags take the tokens it issued:
+   each paste empty to skip: the OAuth client, its signing secret (HTTP ingest only), and
+   the app-level token (xapp, the Socket Mode carrier). *Install to Workspace* while you
+   are there, and the flags take the tokens it issued:
 
    ```sh
    deno task connect slack app --bot --user   # xoxb → the org's shared identity, xoxp → your own leg
@@ -152,17 +170,20 @@ Every door closes by naming what the org still owes, and `--help` explains each 
    signing secret is HTTP.
 
 2. **Connect a member who is not at this terminal**: Slack redirects to https only, so this
-   needs the public redirect URI from step 1 with a tunnel or a real host in front of
-   `connections.slack.oauthPort`. The door prints a link that binds the grant to `[agent]`
-   and is good for one sign-in; send it to them and the door waits until they finish:
+   needs the org's public door (`edge.publicUrl`, which the manifest of step 1 registers as
+   `<publicUrl>/slack/oauth/callback`). The door prints a link that binds the grant to
+   `[agent]` and is good for one sign-in; send it to them and the door waits until they
+   finish:
 
    ```sh
    deno task connect slack user [agent]
    ```
 
 3. **The connection runs under `deno task start`** — both halves in one process: Socket
-   Mode (or HTTP) in, chat.postMessage out, tokens from the vault. A token landed through
-   a door (1, 2) is picked up on the next start.
+   Mode (or HTTP) in, chat.postMessage out, tokens read from the vault at each use. The
+   app door declares the connection and reloads the org, which starts it. The carrier is
+   chosen when the process starts, so the door has the org restart a running connection
+   when it stores one, and says so when the vault holds neither.
 
    The ingest is one webhook function either way — Socket Mode is just the local carrier;
    an edge deploy serves the same function at the app's Events API request URL.

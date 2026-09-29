@@ -602,21 +602,21 @@ Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere 
   }
 });
 
-Deno.test("send `subject`: a mail's thread rides the envelope; a reply inherits the referent's", async () => {
+Deno.test("send `subject`: a first send names the thread it opens; a send into a thread wears its name, and carries no rename", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "google", address: "me@org.com", agentId: "a1", extra: { name: "Me" } },
   ]);
-  // a mail from Ana already in the log: the wire's row, its thread and its id
+  // a mail from Ana already in the log: the wire's row, in the thread at its root
   const theirs = await log.publish({
     ts: "2026-09-23T10:00:00Z",
     type: "message",
     envelope: {
       service: "google",
       connection_address: "me@org.com",
-      conversation: { address: "ana@x.com", kind: "direct", name: "Ana", thread: "Invoice 42" },
+      conversation: { address: "m0@x.com", kind: "group", name: "Invoice 42" },
       sender: { address: "ana@x.com", name: "Ana" },
       external_id: "mail:m1@x.com",
     },
@@ -631,7 +631,12 @@ Deno.test("send `subject`: a mail's thread rides the envelope; a reply inherits 
     ok([{
       kind: "tool_use",
       name: "send",
-      input: { to: "ana@x.com", text: "paid", re: shortId(theirs!.id) },
+      input: { to: "Invoice 42", text: "paid", re: shortId(theirs!.id) },
+    }], "tool_use"),
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "m0@x.com", subject: "Invoice 43", text: "and the next one" },
     }], "tool_use"),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
@@ -642,18 +647,28 @@ Deno.test("send `subject`: a mail's thread rides the envelope; a reply inherits 
     const sent = (await log.read({ types: ["message"] })).filter((e) =>
       e.agent && e.payload?.turn_id
     );
+    // first contact: the addresses, under the subject — the dispatcher files the thread
     const fresh = sent.find((e) => e.envelope.conversation.address === "bob@y.com");
     assertEquals(fresh?.envelope.service, "google");
     assertEquals(fresh?.envelope.connection_address, "me@org.com");
-    assertEquals(fresh?.envelope.conversation, { address: "bob@y.com", thread: "Lunch" });
-    const reply = sent.find((e) => e.envelope.conversation.address === "ana@x.com");
+    assertEquals(fresh?.envelope.conversation, { address: "bob@y.com", name: "Lunch" });
+    // the thread by its name: its address, kind and name, the referent's line answered
+    const reply = sent.find((e) => e.envelope.conversation.address === "m0@x.com");
     assertEquals(reply?.envelope.conversation, {
-      address: "ana@x.com",
-      kind: "direct",
-      thread: "Invoice 42",
+      address: "m0@x.com",
+      kind: "group",
+      name: "Invoice 42",
     });
     assertEquals(reply?.payload?.action, "reply");
     assertEquals(reply?.payload?.ref_external_id, "mail:m1@x.com");
+    // a subject on a thread that wears another name is refused
+    const results = await log.read({ types: ["tool_result"] });
+    const refused = results.map((r) =>
+      String((r.parts[0] as { data: { output: string } }).data.output)
+    )
+      .find((o) => o.includes("carries no rename"));
+    assertStringIncludes(refused ?? "", 'm0@x.com is "Invoice 42" — a send carries no rename');
+    assertEquals(sent.filter((e) => e.envelope.service === "google").length, 2);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -1074,6 +1089,274 @@ Deno.test("contact: a person is in two places — a name saved on the book is re
     assertStringIncludes(results[1], "Juana (5491166666666)");
     assertStringIncludes(results[2], "address book not reached");
     assertEquals(wrote, [{ connection: "5491100000001", address: "5491155555555", remove: true }]);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** A row on a wire, as an ingest would store it. */
+const wireRow = (
+  service: "slack" | "whatsapp",
+  connection: string,
+  conversation: { address: string; kind?: "direct" | "group" | "channel"; name?: string },
+  sender: { address: string; name?: string },
+  externalId: string,
+): Draft<MessageEvent> => ({
+  ts: new Date().toISOString(),
+  type: "message",
+  envelope: {
+    service,
+    connection_address: connection,
+    external_id: externalId,
+    conversation,
+    sender,
+  },
+  parts: [{ type: "text", kind: "text", text: "hola" }],
+});
+
+Deno.test("conversation on a wire: every verb goes through the wire's port as the agent on the account, `who` names people, and a wire with no port keeps its rooms", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
+    { service: "slack", address: "T1", agentId: "a1", extra: { name: "Acme" } },
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const acted: Record<string, unknown>[] = [];
+  const leg = (name: string) => (req: object) => {
+    acted.push({ [name]: req });
+    return Promise.resolve();
+  };
+  let people: { address: string; name?: string }[] = [{ address: "U1", name: "Vero" }, {
+    address: "U2",
+  }];
+  const rooms: XiPorts["rooms"] = {
+    slack: {
+      members: (req: object) => {
+        acted.push({ members: req });
+        return Promise.resolve(people);
+      },
+      add: (req: { members: string[] }) => {
+        people = [...people, ...req.members.map((address) => ({ address }))];
+        return leg("add")(req);
+      },
+      remove: leg("remove"),
+      rename: leg("rename"),
+      leave: leg("leave"),
+      // no `join`: a leg the service has no API for
+    },
+  };
+  const gated: { target?: { connection?: string; conversation?: string } }[] = [];
+  const { transport } = scripted([
+    ok([{ kind: "tool_use", name: "conversation", input: { which: "C1" } }], "tool_use"),
+    // by the name they go by here, and by a bare handle nobody has spoken as
+    ok([{
+      kind: "tool_use",
+      name: "conversation",
+      input: { action: "add", which: "C1", who: "vero, U7" },
+    }], "tool_use"),
+    ok([{
+      kind: "tool_use",
+      name: "conversation",
+      input: { action: "rename", which: "C1", name: "#ops-q4" },
+    }], "tool_use"),
+    ok(
+      [{ kind: "tool_use", name: "conversation", input: { action: "join", which: "C1" } }],
+      "tool_use",
+    ),
+    // a direct conversation takes no change, on a wire as locally
+    ok([{
+      kind: "tool_use",
+      name: "conversation",
+      input: { action: "add", which: "D1", who: "U7" },
+    }], "tool_use"),
+    // whatsapp has no port here: its rooms are its own
+    ok([{
+      kind: "tool_use",
+      name: "conversation",
+      input: { action: "add", which: "5492616104507-g", who: "U7" },
+    }], "tool_use"),
+    ok(
+      [{ kind: "tool_use", name: "conversation", input: { action: "leave", which: "C1" } }],
+      "tool_use",
+    ),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const config: AgentConfig = {
+    ...CONFIG,
+    gate: (name, _input, target) => {
+      if (name === "conversation") gated.push({ target });
+      return "allow";
+    },
+  };
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, rooms };
+  try {
+    await log.publish(
+      wireRow("slack", "T1", { address: "C1", kind: "channel", name: "ops" }, {
+        address: "U1",
+        name: "Vero",
+      }, "slack:1"),
+    );
+    await log.publish(
+      wireRow(
+        "slack",
+        "T1",
+        { address: "D1", kind: "direct" },
+        { address: "U2", name: "Nico" },
+        "slack:2",
+      ),
+    );
+    await log.publish(
+      wireRow(
+        "whatsapp",
+        "5491100000000",
+        { address: "5492616104507-g", kind: "group", name: "familia" },
+        { address: "5492616104507", name: "vero 🌻" },
+        "whatsapp:1",
+      ),
+    );
+    await log.publish(principalMsg("ordená ops"));
+    for (let i = 0; i < 20; i++) await xi(config, ports);
+    const results = (await log.read({ types: ["tool_result"] })).map((e) =>
+      JSON.stringify(e.parts)
+    );
+    assertEquals(results.length, 7);
+    // show: the record's name and kind, the account, and the people as the port lists them —
+    // a member the port left bare named the way the log knows them
+    assertStringIncludes(
+      results[0],
+      '"name":"ops","kind":"channel","address":"C1","connection":"T1","members":["U1","U2"],"names":{"U1":"Vero","U2":"Nico"}',
+    );
+    assertStringIncludes(results[1], '"members":["U1","U2","U1","U7"]');
+    assertStringIncludes(results[2], '"name":"ops-q4"');
+    assertStringIncludes(results[3], "takes no `join` from here");
+    assertStringIncludes(results[4], "a direct conversation is its members");
+    assertStringIncludes(results[5], "conversation on whatsapp — its members are managed there");
+    assertStringIncludes(results[6], '"address":"C1"');
+    const at = { connection: "T1", agent: "a1", conversation: "C1" };
+    assertEquals(acted.filter((a) => !("members" in a)), [
+      { add: { ...at, members: ["U1", "U7"] } },
+      { rename: { ...at, name: "ops-q4" } },
+      { leave: at },
+    ]);
+    // nothing is said here: the wire says it, and the log holds only what the ingest brought
+    assertEquals((await log.read({ conversation: "C1", types: ["message"] })).length, 1);
+    // the gate saw the account and the conversation, so a rule pinned to either matches
+    assertEquals(gated[0].target, { connection: "T1", conversation: "C1" });
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("send: a list of people on a wire opens a room through the port — unnamed a direct room, named a group or a channel — and lands there; without a port the list stays whole", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
+    { service: "slack", address: "T1", agentId: "a1", extra: { name: "Acme" } },
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const opened: Record<string, unknown>[] = [];
+  let n = 0;
+  const rooms = {
+    slack: {
+      open: (req: { members: string[]; name?: string; kind: string }) => {
+        opened.push(req);
+        if (req.kind === "direct" && req.members.includes("U1")) {
+          return Promise.reject(new Error("mpim: not with this token — missing_scope mpim:write"));
+        }
+        return Promise.resolve({
+          address: `C${++n}`,
+          ...(req.name ? { name: req.name.toLowerCase() } : {}),
+        });
+      },
+    },
+  };
+  const gated: { target?: { connection?: string; conversation?: string } }[] = [];
+  const { transport } = scripted([
+    // two people the log knows on the same account: the account is theirs
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "vero, U2", subject: "#Ops", text: "hola" },
+    }], "tool_use"),
+    // a bare handle nobody has spoken as, placed by the account named
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "U8, U9", connection: "acme", text: "hola" },
+    }], "tool_use"),
+    // the port's own refusal is the send's
+    ok([{ kind: "tool_use", name: "send", input: { to: "vero, U2", text: "hola" } }], "tool_use"),
+    // two people on two accounts are not one room
+    ok(
+      [{ kind: "tool_use", name: "send", input: { to: "vero, 5492616104507", text: "hola" } }],
+      "tool_use",
+    ),
+    // whatsapp has no port here: the list stays whole for the wire, placed by the account
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "5492616104507,5492616104508", connection: "sole", text: "hola" },
+    }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const config: AgentConfig = {
+    ...CONFIG,
+    gate: (name, _input, target) => {
+      if (name === "send") gated.push({ target });
+      return "allow";
+    },
+  };
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, rooms };
+  try {
+    await log.publish(
+      wireRow(
+        "slack",
+        "T1",
+        { address: "D1", kind: "direct" },
+        { address: "U1", name: "Vero" },
+        "slack:1",
+      ),
+    );
+    await log.publish(
+      wireRow("slack", "T1", { address: "D2", kind: "direct" }, { address: "U2" }, "slack:2"),
+    );
+    await log.publish(
+      wireRow(
+        "whatsapp",
+        "5491100000000",
+        { address: "5492616104507", kind: "direct", name: "sole 🌻" },
+        { address: "5492616104507", name: "sole 🌻" },
+        "whatsapp:1",
+      ),
+    );
+    await log.publish(principalMsg("armá ops"));
+    for (let i = 0; i < 16; i++) await xi(config, ports);
+    const results = (await log.read({ types: ["tool_result"] })).map((e) =>
+      JSON.stringify(e.parts)
+    );
+    assertEquals(results.length, 5);
+    assertEquals(opened, [
+      { connection: "T1", agent: "a1", members: ["U1", "U2"], name: "Ops", kind: "channel" },
+      { connection: "T1", agent: "a1", members: ["U8", "U9"], kind: "direct" },
+      { connection: "T1", agent: "a1", members: ["U1", "U2"], kind: "direct" },
+    ]);
+    assertStringIncludes(results[2], "missing_scope mpim:write");
+    assertStringIncludes(results[3], "a room holds people on one account");
+    // the sends landed in what the wire answered, under its kind and name
+    const sent = (await log.read({ types: ["message"] }))
+      .filter((e) => e.agent?.id === "a1" && e.envelope.service !== "local")
+      .map((e) => e.envelope);
+    assertEquals(sent.map((e) => [e.service, e.connection_address, e.conversation]), [
+      ["slack", "T1", { address: "C1", kind: "channel", name: "ops" }],
+      ["slack", "T1", { address: "C2", kind: "direct" }],
+      ["whatsapp", "5491100000000", { address: "5492616104507,5492616104508" }],
+    ]);
+    // judged before the room exists: the gate saw the account, the room had no address yet
+    assertEquals(gated[0].target, { connection: "T1" });
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -1783,6 +2066,60 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
     [
       old("te debo la respuesta"),
       old("dale, mañana", { address: "15613518605", name: "Gianvito" }),
+    ],
+  );
+});
+
+Deno.test("search `connection`: one of the agent's accounts, named as send names it, narrows to what rode it", async () => {
+  const old = (
+    connection: { service: "whatsapp" | "slack"; address: string },
+    text: string,
+  ): Draft<MessageEvent> => ({
+    ts: new Date(Date.now() - 40 * 3_600_000).toISOString(),
+    type: "message",
+    envelope: {
+      service: connection.service,
+      connection_address: connection.address,
+      conversation: { address: `${connection.address}:c`, kind: "direct", name: "Gianvito" },
+      sender: { address: "15613518605", name: "Gianvito" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  const phone = { service: "whatsapp" as const, address: "5491100000000" };
+  const slack = { service: "slack" as const, address: "T1:U9" };
+
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "search", input: { connection: "sole" } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { connection: "T1:U9" } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { connection: "gmail" } }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("qué me dijo Gianvito por whatsapp"));
+      await waitFor(async () => (await read("tool_result")).length === 3);
+      const [byName, byAddress, unknown] = (await read("tool_result")) as ToolResultEvent[];
+      // the account's name, any part of it, case aside — and only its rows come back
+      const page = byName.parts[0].data.output as string;
+      assertStringIncludes(page, 'address="5491100000000"');
+      assertEquals(page.match(/<msg /g)?.length, 1);
+      assertStringIncludes(page, "por el teléfono");
+      const other = byAddress.parts[0].data.output as string;
+      assertEquals(other.match(/<msg /g)?.length, 1);
+      assertStringIncludes(other, "por slack");
+      // an account nobody wears is the call's error, the agent's accounts named
+      assertStringIncludes(
+        unknown.parts[0].data.output as string,
+        'no account of yours is called "gmail" — yours: T1:U9, Sole (5491100000000)',
+      );
+    },
+    {},
+    [old(phone, "por el teléfono"), old(slack, "por slack")],
+    {},
+    [{ agentId: "a1", mind: "mind@a1" }],
+    [
+      { ...phone, agentId: "a1", extra: { name: "Sole" } },
+      { ...slack, agentId: "a1" },
     ],
   );
 });

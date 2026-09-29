@@ -20,6 +20,8 @@
  */
 
 import { MIND } from "../../session.ts";
+import { UNPREFIX } from "../connections.ts";
+import { MAIL_THREADS } from "../events.ts";
 import type { Db, Sql } from "./sql.ts";
 
 /** A text column: byte-ordered. */
@@ -228,6 +230,19 @@ CREATE TABLE IF NOT EXISTS memberships (
   deleted_at           ${T},
   PRIMARY KEY (service, connection_address, conversation_address, agent_id, session_id)
 );
+CREATE TABLE IF NOT EXISTS conversations (
+  service            ${T} NOT NULL,
+  connection_address ${T} NOT NULL,
+  address            ${T} NOT NULL,
+  name               ${T} NOT NULL,
+  kind               ${T} NOT NULL,
+  created_at         ${T} NOT NULL,
+  updated_at         ${T} NOT NULL,
+  deleted_at         ${T},
+  PRIMARY KEY (service, connection_address, address)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS conversations_local_name
+  ON conversations (connection_address, name) WHERE service = 'local' AND deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS timers (
   id           ${T} PRIMARY KEY,
@@ -589,12 +604,22 @@ $f$;
 
 /** The version the DDL creates. A store found below it is raised in place, once, by the
  *  steps between; a store above it was made by a newer liquen, and this one refuses it. */
-export const VERSION = 2;
+export const VERSION = 4;
 
 /** `RAISE[v]` takes a store from version `v` to `v + 1`: the ALTERs the DDL's `IF NOT
  *  EXISTS` cannot express, run before the DDL so the views it replaces find their columns.
  *  A version with no entry is raised by the DDL alone — a table or an index added. */
-const RAISE: Record<number, (tx: Db) => Promise<void>> = {};
+const RAISE: Record<number, (tx: Db) => Promise<void>> = {
+  // v3 — local addresses carry no prefix (§3): a direct room is its members joined by `,`,
+  // a calendar is addressed by its id
+  2: async (tx) => {
+    for (const s of UNPREFIX) await tx.unsafe(s);
+  },
+  // v4 — a mail thread is a group conversation at its root Message-ID (§4)
+  3: async (tx) => {
+    for (const s of MAIL_THREADS("payload ->> 'ref_external_id'")) await tx.unsafe(s);
+  },
+};
 
 /** Open the schema: create it when absent, raise it when behind, and run the DDL — every
  *  table `IF NOT EXISTS`, every function and view `OR REPLACE`, so the definitions are the

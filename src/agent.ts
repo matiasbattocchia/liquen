@@ -6,10 +6,10 @@
  * flags gave and null for the rest; `principals` when `--principal` named who steers it
  * (roster names, repeatable); `mind: false` when `--no-mind` made it a person alone. The
  * name is the member's id, its folder under `data/agents/` and its unix user in the
- * container. The declaration is the only thing boot needs — it compiles the roster into
- * rows and homes at every `liquen start` — but the home is laid HERE too, with the agent's
- * half of the doc cascade (`seedAgent`: `instructions/agent.md`, a memory to write the next
- * by), because the persona is what a person writes between declaring an agent and running
+ * container. The declaration is the only thing boot needs — main compiles the roster into
+ * rows and homes every time it starts, and this door reloads a running org so it does —
+ * but the home is laid HERE too, with the agent's half of the doc cascade (`seedAgent`:
+ * `instructions/agent.md`, a memory to write the next by), because the persona is what a person writes between declaring an agent and running
  * it, and there is nowhere to write it until the folder exists. Seeding never overwrites,
  * so the door and boot are the same call. `--no-mind` makes a person alone: a row, no
  * folder. Runs from anywhere inside the org, or against one named with `--dir`.
@@ -27,6 +27,7 @@ import { seedAgent } from "./store/seed.ts";
 import { openStore } from "./store/mod.ts";
 import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
+import { moved, reload } from "./reload.ts";
 
 export const USAGE =
   "usage: liquen agent [--dir <org>] <name> [--name <full name>] [--email <address>] " +
@@ -90,11 +91,15 @@ if (import.meta.main) {
       ...(rest.mind === false ? ["no mind"] : []),
     ];
     const handles = declared.length > 0 ? ` (${declared.join(", ")})` : "";
+    // the roster is main's to compile, so a running org's main restarts on it
+    const moves = await reload(root);
+    const runs = moves === null
+      ? "`liquen start` runs them."
+      : `The running org took them up: ${moved(moves)}.`;
     const next = rest.mind === false
-      ? "they steer, and no session of theirs will run."
+      ? `they steer, and no session of theirs will run. ${runs}`
       : `data/agents/${name}/ is the workspace; write instructions/agent.md in it to say ` +
-        "who they are (every turn reads it fresh, so it is never too late). `liquen start` " +
-        "runs them.";
+        `who they are (every turn reads it fresh, so it is never too late). ${runs}`;
     console.log(`${root}/config.jsonc: agents.${name}${handles}. ${next}`);
   });
 }

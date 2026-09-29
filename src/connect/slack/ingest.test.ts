@@ -650,6 +650,45 @@ Deno.test("slack: channel_rename is the directory's push leg for rooms — learn
   assertEquals((published[0] as MessageEvent).envelope.conversation.name, "anuncios");
 });
 
+Deno.test("slack: a join, a leave and a rename are the room's own lines — from whoever made them", async () => {
+  const { names, learned } = fakeNames({ "T1:U7": "Ana", "T1:U8": "Bea", "T1:C1": "general" });
+  const { handler, published } = harness(SECRET, undefined, undefined, names);
+  const line = (event: Record<string, unknown>) =>
+    signedReq(messageEvent({
+      event: { type: "message", channel: "C1", channel_type: "channel", ...event },
+    }));
+  await handler(await line({ subtype: "channel_join", user: "U8", inviter: "U7", ts: "1.1" }));
+  await handler(await line({ subtype: "channel_join", user: "U8", ts: "1.2" }));
+  await handler(await line({ subtype: "channel_leave", user: "U8", ts: "1.3" }));
+  await handler(
+    await line({
+      subtype: "channel_name",
+      user: "U7",
+      old_name: "general",
+      name: "ops",
+      ts: "1.4",
+    }),
+  );
+  const [added, joined, left, renamed] = published as MessageEvent[];
+  assertEquals(added.envelope.sender, { address: "U7", name: "Ana" });
+  assertEquals(added.envelope.external_id, "slack:T1:C1:1.1");
+  assertEquals(added.parts, [{
+    type: "data",
+    kind: "room",
+    data: { joined: [{ address: "U8", name: "Bea" }] },
+  }]);
+  assertEquals(joined.envelope.sender, { address: "U8", name: "Bea" });
+  assertEquals(left.parts[0], {
+    type: "data",
+    kind: "room",
+    data: { left: [{ address: "U8", name: "Bea" }] },
+  });
+  assertEquals(renamed.envelope.sender, { address: "U7", name: "Ana" });
+  assertEquals(renamed.envelope.conversation.name, "ops");
+  assertEquals(renamed.parts[0], { type: "data", kind: "room", data: { name: "ops" } });
+  assertEquals(learned, ["T1:C1=ops"]);
+});
+
 Deno.test("slack: no directory ⇒ bare ids — sender unnamed, mentions decode to @<id>", async () => {
   const { handler, published } = harness(SECRET);
   await handler(
@@ -949,6 +988,44 @@ Deno.test("slack socket: an envelope is acked only after its delivery landed —
   assertEquals(wire.order, ["handled:1:500", "handled:2:200", "ack:env-1"]); // ack AFTER the landing
   assertEquals(logged.length, 1); // the refusal is on stderr
   assertStringIncludes(logged[0], "env-1");
+});
+
+Deno.test("slack socket: a `disconnect` hands over to a new socket before the old closes (no gap); a fallen socket comes back and says how long it was down", async () => {
+  const order: string[] = [];
+  const sockets: WebSocket[] = [];
+  const server = Deno.serve({ port: 0, onListen: () => {} }, (req) => {
+    const { socket, response } = Deno.upgradeWebSocket(req);
+    const n = sockets.push(socket);
+    socket.onopen = () => {
+      order.push(`open:${n}`);
+      // the first socket is asked to refresh; the second is dropped by the far side
+      if (n === 1) socket.send(JSON.stringify({ type: "disconnect", reason: "refresh_requested" }));
+      if (n === 2) setTimeout(() => socket.close(), 50);
+    };
+    socket.onclose = () => order.push(`closed:${n}`);
+    return response;
+  });
+  const opens: (number | null)[] = [];
+  const stop = slackSocket("xapp-1-A1-2-3", () => Promise.resolve(new Response("ok")), {
+    open: () => Promise.resolve(`ws://127.0.0.1:${server.addr.port}/`),
+    onOpen: (down) => opens.push(down),
+  });
+  try {
+    const t0 = Date.now();
+    while (opens.length < 3 && Date.now() - t0 < 5_000) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  } finally {
+    await stop();
+    await server.shutdown();
+  }
+  // the refresh: the second socket opened BEFORE the first closed, and no time was lost;
+  // the drop: the third came back after the reconnect pause, and the pause is what it says
+  assertEquals(order.slice(0, 3), ["open:1", "open:2", "closed:1"]);
+  assertEquals(opens.length, 3);
+  assertEquals(opens[0], null);
+  assertEquals(opens[1], 0);
+  assert(opens[2]! >= 900, `down ${opens[2]}ms`);
 });
 
 Deno.test("HTTP mode: every app's signing secret verifies, and no app means no server", async () => {

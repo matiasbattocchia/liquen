@@ -477,7 +477,7 @@ Deno.test("next: the vault says what is owed — an app's three parts are named 
   assertStringIncludes(noApp[1], "no app");
 });
 
-Deno.test("app door: the form link carries the org's own event list, and no webhook", () => {
+Deno.test("app door: the form link carries the org's own event list, and the webhook only where the org has a public door", () => {
   const q = new URL(appForm("acme", ["issues", "pull_request"])).searchParams;
   assertEquals(q.get("name"), "liquen-acme");
   assertEquals(q.getAll("events[]"), ["issues", "pull_request"]);
@@ -487,6 +487,11 @@ Deno.test("app door: the form link carries the org's own event list, and no webh
   assertEquals(q.get("webhook_active"), "false");
   assertEquals(q.get("webhook_url"), null);
   assertEquals(q.get("webhook_secret"), null);
+  const open = new URL(appForm("acme", ["issues"], "https://acme.example.com/github/ingest"))
+    .searchParams;
+  assertEquals(open.get("webhook_active"), "true");
+  assertEquals(open.get("webhook_url"), "https://acme.example.com/github/ingest");
+  assertEquals(open.get("webhook_secret"), null);
 });
 
 Deno.test("app door: a suggested secret is fresh hex, never the same twice", () => {

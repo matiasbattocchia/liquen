@@ -1,12 +1,14 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   bodyOf,
+  createTeamsCatchUp,
   createTeamsDispatch,
   createTeamsKeeper,
   createTeamsWebhook,
   GRAPH,
   idOf,
   isTeamsAddress,
+  kindOf,
   LIFETIME_MS,
   messagePath,
   parseResource,
@@ -126,7 +128,7 @@ const save: SaveFile = (conversation, bytes, meta) => {
 };
 
 const sub = (resource: string, id: string, secret = "s-" + id) => ({
-  [resource]: { id, expires: "2026-09-26T12:00:00.000Z", secret },
+  [resource]: { id, expires: "2026-09-26T12:00:00.000Z", secret, url: URL_ },
 });
 const CHAT_RES = `/users/${OID}/chats/getAllMessages`;
 const CHAN_RES = `/teams/${TEAM}/channels/${CHANNEL}/messages`;
@@ -168,7 +170,7 @@ Deno.test("teams: an address is a chat id or team/channel; a ref is teams:<addre
   assert(isTeamsAddress(CHAT));
   assert(isTeamsAddress(`${TEAM}/${CHANNEL}`));
   assert(!isTeamsAddress("ana@x.com"));
-  assert(!isTeamsAddress("calendar:me@org.com"));
+  assert(!isTeamsAddress("me@org.com"));
   assertEquals(
     shareId("https://onedrive.live.com/redir?resid=1231244193912!12&authKey=1201919!12921!1"),
     "u!aHR0cHM6Ly9vbmVkcml2ZS5saXZlLmNvbS9yZWRpcj9yZXNpZD0xMjMxMjQ0MTkzOTEyITEyJmF1dGhLZXk9MTIwMTkxOSExMjkyMSEx",
@@ -336,6 +338,87 @@ Deno.test("teams webhook: the handshake echoes the token plain; a notice is acke
   });
 });
 
+Deno.test("teams webhook: a member added, a member gone and a rename are the room's own lines; another system event is none", async () => {
+  await withVault(async (creds) => {
+    const { publish, rows } = captor();
+    const system = (id: string, eventDetail: Record<string, unknown>) => ({
+      id,
+      messageType: "systemEventMessage",
+      createdDateTime: `2021-02-02T18:0${id}:00.000Z`,
+      chatId: CHAT,
+      from: null,
+      body: { contentType: "html", content: "<systemEventMessage/>" },
+      eventDetail,
+    });
+    const robin = { id: "u-robin", displayName: "Robin Kline" };
+    let topic = "ops";
+    const fetchApi = graph({
+      [`/chats/${CHAT}/messages/1`]: system("1", {
+        "@odata.type": "#microsoft.graph.membersAddedEventMessageDetail",
+        members: [{ id: "u-bo", displayName: "Bo" }],
+        initiator: { user: robin },
+      }),
+      [`/chats/${CHAT}/messages/2`]: system("2", {
+        "@odata.type": "#microsoft.graph.membersLeftEventMessageDetail",
+        members: [{ id: "u-bo", displayName: "Bo" }],
+        initiator: null,
+      }),
+      [`/chats/${CHAT}/messages/3`]: system("3", {
+        "@odata.type": "#microsoft.graph.chatRenamedEventMessageDetail",
+        chatDisplayName: "ops-q4",
+        initiator: { user: { id: OID, displayName: "Ana" } },
+      }),
+      [`/chats/${CHAT}/messages/4`]: system("4", {
+        "@odata.type": "#microsoft.graph.callEndedEventMessageDetail",
+        initiator: { user: robin },
+      }),
+      [`/chats/${CHAT}`]: () => Response.json({ chatType: "group", topic, members: [] }),
+    });
+    const handler = createTeamsWebhook({
+      publish,
+      creds,
+      broker: createGrantBroker({ creds }),
+      save,
+      fetchApi,
+      now: () => NOW,
+    });
+    await creds.put({ key: KEY, value: {}, extra: { [TEAMS_SUB]: sub(CHAT_RES, "sub-1") } });
+    for (const id of ["1", "2", "3", "4"]) {
+      if (id === "3") topic = "ops-q4";
+      await handler(notice({
+        subscriptionId: "sub-1",
+        clientState: "s-sub-1",
+        changeType: "created",
+        resource: `chats('${CHAT}')/messages('${id}')`,
+      }));
+    }
+    assertEquals(rows.length, 3);
+    const [added, gone, renamed] = rows;
+    assertEquals(added.envelope, {
+      service: "microsoft",
+      connection_address: "ana@contoso.com",
+      conversation: { address: CHAT, kind: "group", name: "ops" },
+      external_id: `teams:${CHAT}:1`,
+      sender: { address: "u-robin", name: "Robin Kline" },
+    });
+    assertEquals(added.ts, "2021-02-02T18:01:00.000Z");
+    assertEquals(added.parts, [{
+      type: "data",
+      kind: "room",
+      data: { joined: [{ address: "u-bo", name: "Bo" }] },
+    }]);
+    assertEquals(gone.envelope.sender, { address: "u-bo", name: "Bo" }); // nobody did it to them
+    assertEquals(gone.parts[0], {
+      type: "data",
+      kind: "room",
+      data: { left: [{ address: "u-bo", name: "Bo" }] },
+    });
+    assertEquals(renamed.agent, { id: "ana" }); // the member renamed it
+    assertEquals(renamed.envelope.conversation.name, "ops-q4");
+    assertEquals(renamed.parts[0], { type: "data", kind: "room", data: { name: "ops-q4" } });
+  });
+});
+
 Deno.test("teams webhook: a channel reply is a reply to its root, addressed team/channel and named Team / Channel; a member's own message wears their stamp", async () => {
   await withVault(async (creds) => {
     const { publish, rows } = captor();
@@ -428,7 +511,8 @@ Deno.test("teams webhook: an edit is its own event, a delete a marked row and a 
       rows[0].envelope.external_id,
       `teams:${CHAT}:7:edit:${Date.parse("2026-09-23T11:05:00Z")}`,
     );
-    assertEquals(rows[0].envelope.conversation, { address: CHAT, kind: "direct", name: "Ops" });
+    // a group chat is a `group`: a roster under a topic, not a member-defined pair
+    assertEquals(rows[0].envelope.conversation, { address: CHAT, kind: "group", name: "Ops" });
 
     served = {
       ...base,
@@ -583,6 +667,7 @@ Deno.test("teams keeper: a first sweep subscribes the member's chats and every c
       id: "sub-1",
       expires: "2026-09-26T11:50:00Z",
       secret: posts[0].clientState as string,
+      url: URL_,
     });
     assertEquals(subs[CHAN_RES].id, "sub-2");
 
@@ -612,7 +697,9 @@ Deno.test("teams keeper: a subscription inside its last day is renewed, an expir
     await creds.put({
       key: KEY,
       value: {},
-      extra: { [TEAMS_SUB]: { [CHAT_RES]: { id: "sub-old", expires: soon, secret: "keep" } } },
+      extra: {
+        [TEAMS_SUB]: { [CHAT_RES]: { id: "sub-old", expires: soon, secret: "keep", url: URL_ } },
+      },
     });
     await keeper.tick();
     assertEquals(calls.filter((c) => c.init?.method === "PATCH").length, 1);
@@ -621,6 +708,7 @@ Deno.test("teams keeper: a subscription inside its last day is renewed, an expir
       id: "sub-old",
       expires: "2026-09-26T11:50:00Z",
       secret: "keep",
+      url: URL_,
     });
 
     await creds.put({
@@ -628,7 +716,7 @@ Deno.test("teams keeper: a subscription inside its last day is renewed, an expir
       value: {},
       extra: {
         [TEAMS_SUB]: {
-          [CHAT_RES]: { id: "sub-old", expires: "2026-09-20T00:00:00Z", secret: "gone" },
+          [CHAT_RES]: { id: "sub-old", expires: "2026-09-20T00:00:00Z", secret: "gone", url: URL_ },
         },
       },
     });
@@ -636,6 +724,45 @@ Deno.test("teams keeper: a subscription inside its last day is renewed, an expir
     subs = subsOf(await creds.get(KEY));
     assertEquals(subs[CHAT_RES].id, "sub-new");
     assert(subs[CHAT_RES].secret !== "gone");
+  });
+  // made for another address: Graph would go on delivering there, so it is deleted and
+  // one for the org's address made in its place, however fresh the old one was
+  await withVault(async (creds) => {
+    const calls: Call[] = [];
+    const fetchApi = graph({
+      "/me/joinedTeams": { value: [] },
+      "DELETE /subscriptions/sub-elsewhere": new Response(null, { status: 204 }),
+      "POST /subscriptions": { id: "sub-here", expirationDateTime: "2026-09-26T11:50:00Z" },
+    }, calls);
+    const keeper = createTeamsKeeper({
+      creds,
+      broker: createGrantBroker({ creds }),
+      notificationUrl: URL_,
+      fetchApi,
+      now: () => NOW,
+    });
+    const fresh = new Date(Date.parse(NOW) + LIFETIME_MS).toISOString();
+    await creds.put({
+      key: KEY,
+      value: {},
+      extra: {
+        [TEAMS_SUB]: {
+          [CHAT_RES]: {
+            id: "sub-elsewhere",
+            expires: fresh,
+            secret: "old",
+            url: "https://old.example/microsoft/ingest",
+          },
+        },
+      },
+    });
+    await keeper.tick();
+    assertEquals(calls.filter((c) => c.init?.method === "DELETE").map((c) => c.path), [
+      "/v1.0/subscriptions/sub-elsewhere",
+    ]);
+    const subs = subsOf(await creds.get(KEY));
+    assertEquals(subs[CHAT_RES].id, "sub-here");
+    assertEquals(subs[CHAT_RES].url, URL_);
   });
   // no Chat scope on the consent: the sweep skips the grant without a verdict
   await withVault(
@@ -985,5 +1112,225 @@ Deno.test("teams wire: a post with a local file uploads it (a channel's folder, 
     }).catch((e) => e);
     assertEquals((err as { code?: number }).code, 404);
     await Deno.remove(dir, { recursive: true });
+  });
+});
+
+/* ── the catch-up ────────────────────────────────────────────────────────────────── */
+
+Deno.test("kindOf: a oneOnOne chat is direct, a group or meeting chat a group; a private channel a group, a standard or shared one a channel", () => {
+  assertEquals(kindOf({ chatType: "oneOnOne" }), "direct");
+  assertEquals(kindOf({ chatType: "group" }), "group");
+  assertEquals(kindOf({ chatType: "meeting" }), "group");
+  assertEquals(kindOf({ membershipType: "private" }), "group");
+  assertEquals(kindOf({ membershipType: "standard" }), "channel");
+  assertEquals(kindOf({ membershipType: "shared" }), "channel");
+});
+
+Deno.test("teams catch-up: the gap since the grant's newest Teams row — chats that spoke since, channel chains that moved since — as one live batch; a held message is told its edit, a new one is created, a reply lands under its root; kinds stamped", async () => {
+  await withVault(async (creds) => {
+    const CHAT2 = "19:7b5c1643d8d74a03afa0af9c02dd0ef2@thread.v2";
+    const CHAT3 = "19:1111_2222@unq.gbl.spaces";
+    const upn = "ana@contoso.com";
+    const held: Event[] = [
+      // a mail row, newer than anything Teams — not a Teams row, so not the gap's edge
+      {
+        id: "m0",
+        ts: "2026-09-28T13:00:00.000Z",
+        type: "message",
+        envelope: {
+          service: "microsoft",
+          connection_address: upn,
+          conversation: { address: "<x@contoso.com>", kind: "group" },
+          external_id: "mail:x",
+        },
+        parts: [],
+      } as unknown as Event,
+      {
+        id: "c1",
+        ts: "2026-09-28T12:00:00.000Z",
+        type: "message",
+        envelope: {
+          service: "microsoft",
+          connection_address: upn,
+          conversation: { address: CHAT, kind: "direct" },
+          external_id: `teams:${CHAT}:1`,
+        },
+        parts: [{ type: "text", kind: "text", text: "old" }],
+      } as Event,
+      {
+        id: "r1",
+        ts: "2026-09-28T11:00:00.000Z",
+        type: "message",
+        envelope: {
+          service: "microsoft",
+          connection_address: upn,
+          conversation: { address: `${TEAM}/${CHANNEL}`, kind: "channel" },
+          external_id: `teams:${TEAM}/${CHANNEL}:r1`,
+        },
+        parts: [{ type: "text", kind: "text", text: "root" }],
+      } as Event,
+    ];
+    const read = (q?: ReadQuery) =>
+      Promise.resolve(
+        held.filter((r) =>
+          (!q?.externalId || r.envelope.external_id === q.externalId) &&
+          (!q?.connection || r.envelope.connection_address === q.connection) &&
+          (!q?.conversation || r.envelope.conversation.address === q.conversation) &&
+          (!q?.filter || q.filter(r))
+        ),
+      );
+    const calls: Call[] = [];
+    const fetchApi = graph({
+      "/me/chats": {
+        value: [
+          { id: CHAT, lastMessagePreview: { createdDateTime: "2026-09-28T12:30:00Z" } },
+          { id: CHAT2, lastMessagePreview: { createdDateTime: "2026-09-28T12:10:00Z" } },
+          // last spoke before the gap: the walk stops here
+          { id: CHAT3, lastMessagePreview: { createdDateTime: "2026-09-28T11:00:00Z" } },
+        ],
+      },
+      [`/chats/${CHAT}/messages`]: (c: Call) => {
+        assertStringIncludes(
+          c.url.search,
+          "lastModifiedDateTime%20gt%202026-09-28T12%3A00%3A00.000Z",
+        );
+        return {
+          value: [
+            {
+              id: "2",
+              messageType: "message",
+              createdDateTime: "2026-09-28T12:30:00Z",
+              lastModifiedDateTime: "2026-09-28T12:30:00Z",
+              from: { user: { id: "u-robin", displayName: "Robin" } },
+              body: { contentType: "text", content: "new" },
+            },
+            {
+              id: "1",
+              messageType: "message",
+              createdDateTime: "2026-09-28T11:50:00Z",
+              lastModifiedDateTime: "2026-09-28T12:20:00Z",
+              lastEditedDateTime: "2026-09-28T12:20:00Z",
+              from: { user: { id: "u-robin", displayName: "Robin" } },
+              body: { contentType: "text", content: "old, fixed" },
+            },
+            // deleted, and never heard: nothing to mark
+            { id: "0", messageType: "message", deletedDateTime: "2026-09-28T12:05:00Z" },
+          ],
+        };
+      },
+      [`/chats/${CHAT}`]: {
+        chatType: "oneOnOne",
+        members: [{ userId: OID, displayName: "Ana" }, { userId: "u-robin", displayName: "Robin" }],
+      },
+      [`/chats/${CHAT2}/messages`]: {
+        value: [{
+          id: "9",
+          messageType: "message",
+          createdDateTime: "2026-09-28T12:10:00Z",
+          lastModifiedDateTime: "2026-09-28T12:10:00Z",
+          from: { user: { id: "u-x", displayName: "X" } },
+          body: { contentType: "text", content: "ops!" },
+        }],
+      },
+      [`/chats/${CHAT2}`]: { chatType: "group", topic: "Ops", members: [] },
+      "/me/joinedTeams": { value: [{ id: TEAM }] },
+      [`/teams/${TEAM}/channels`]: { value: [{ id: CHANNEL }] },
+      [`/teams/${TEAM}`]: { displayName: "Contoso" },
+      [`/teams/${TEAM}/channels/${CHANNEL}`]: { displayName: "leads", membershipType: "private" },
+      [`/teams/${TEAM}/channels/${CHANNEL}/messages`]: {
+        value: [
+          {
+            id: "r1",
+            messageType: "message",
+            createdDateTime: "2026-09-28T10:30:00Z",
+            lastModifiedDateTime: "2026-09-28T11:00:00Z",
+            from: { user: { id: "u-x", displayName: "X" } },
+            body: { contentType: "text", content: "root" },
+            replies: [{
+              id: "p1",
+              replyToId: "r1",
+              messageType: "message",
+              createdDateTime: "2026-09-28T11:30:00Z",
+              lastModifiedDateTime: "2026-09-28T11:30:00Z",
+              from: { user: { id: OID, displayName: "Ana" } },
+              body: { contentType: "text", content: "reply" },
+            }],
+          },
+          // a chain that last moved before the gap: the walk stops here
+          {
+            id: "r0",
+            messageType: "message",
+            createdDateTime: "2026-09-28T09:00:00Z",
+            lastModifiedDateTime: "2026-09-28T09:00:00Z",
+            body: { contentType: "text", content: "older" },
+            replies: [],
+          },
+        ],
+      },
+    }, calls);
+    const { publish, rows } = captor();
+    const stamped: string[] = [];
+    const done: [string, number][] = [];
+    const catchUp = createTeamsCatchUp({
+      publish,
+      read,
+      creds,
+      broker: createGrantBroker({ creds }),
+      store: {
+        upsertMemberships: () => Promise.resolve(),
+        stampKind: (_s, address, kind) => {
+          stamped.push(`${address}=${kind}`);
+          return Promise.resolve();
+        },
+      },
+      save,
+      fetchApi,
+      now: () => NOW,
+      onCaughtUp: (key, n) => done.push([key, n]),
+      onError: (_k, err) => {
+        throw err;
+      },
+    });
+    await catchUp.run();
+
+    assertEquals(done, [[KEY, 4]]);
+    const by = (id: string) => rows.find((r) => r.envelope.external_id === id)!;
+    const fresh = by(`teams:${CHAT}:2`);
+    assertEquals(fresh.ts, "2026-09-28T12:30:00Z");
+    assertEquals(fresh.envelope.conversation, { address: CHAT, kind: "direct", name: "Robin" });
+    assertEquals(fresh.extra, undefined); // live, not history
+    const edit = by(`teams:${CHAT}:1:edit:${Date.parse("2026-09-28T12:20:00Z")}`);
+    assertEquals(edit.payload, { action: "edit", ref_external_id: `teams:${CHAT}:1` });
+    assert(!rows.some((r) => r.envelope.external_id?.startsWith(`teams:${CHAT}:0`)));
+    const ops = by(`teams:${CHAT2}:9`);
+    assertEquals(ops.envelope.conversation, { address: CHAT2, kind: "group", name: "Ops" });
+    const reply = by(`teams:${TEAM}/${CHANNEL}:p1`);
+    assertEquals(reply.payload, {
+      action: "reply",
+      ref_external_id: `teams:${TEAM}/${CHANNEL}:r1`,
+    });
+    assertEquals(reply.envelope.conversation.kind, "group"); // a private channel
+    assertEquals(reply.agent, { id: "ana" });
+    assert(!rows.some((r) => r.envelope.external_id === `teams:${TEAM}/${CHANNEL}:r1`)); // held, unmoved
+    assertEquals(stamped, [`${CHAT}=direct`, `${CHAT2}=group`, `${TEAM}/${CHANNEL}=group`]);
+    assert(!calls.some((c) => c.path.includes(CHAT3))); // never asked
+  });
+});
+
+Deno.test("teams catch-up: a grant with no Teams row was never heard — nothing is asked", async () => {
+  await withVault(async (creds) => {
+    const calls: Call[] = [];
+    const { publish, rows } = captor();
+    const catchUp = createTeamsCatchUp({
+      publish,
+      read: () => Promise.resolve([]),
+      creds,
+      broker: createGrantBroker({ creds }),
+      save,
+      fetchApi: graph({}, calls),
+    });
+    await catchUp.run();
+    assertEquals(calls, []);
+    assertEquals(rows, []);
   });
 });

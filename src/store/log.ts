@@ -22,10 +22,10 @@
  *                 received live, and the live row is the richer one.
  *   • read      — an indexed SELECT; filters (and the readable scope, §6) are WHERE clauses,
  *                 so private rows never leave the store.
- *   • subscribe — dir-watch (WAL commits) + a poll backstop. Two cursors: appends on `id`,
- *                 and — only for a subscriber that asked (`updates`) — lifecycle moves on
- *                 `(updated_at, id)`, which is how a dispatcher receives the sweeper's
- *                 re-offer of a failed send.
+ *   • subscribe — a poll every POLL_MS, and a local publish wakes it at once. Two
+ *                 cursors: appends on `id`, and — only for a subscriber that asked
+ *                 (`updates`) — lifecycle moves on `(updated_at, id)`, which is how a
+ *                 dispatcher receives the sweeper's re-offer of a failed send.
  *
  * **The store owns the id** (§3): `id uuid DEFAULT uuidv7()` is the Postgres shape, and this
  * adapter is the same shape — SQLite gets a bound `uuidv7()` function, the column defaults to
@@ -41,7 +41,16 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import type { CallKind, DeliveryStatus, Draft, Envelope, Event, EventId } from "../types.ts";
+import type {
+  CallKind,
+  Conversation,
+  DeliveryStatus,
+  Draft,
+  Envelope,
+  Event,
+  EventId,
+  Service,
+} from "../types.ts";
 import { newId } from "./id.ts";
 import {
   CANCEL_SQL,
@@ -56,7 +65,7 @@ import {
 } from "./lock.ts";
 import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
-import { type Connections, CONNECTIONS_DDL, createConnections } from "./connections.ts";
+import { type Connections, CONNECTIONS_DDL, createConnections, UNPREFIX } from "./connections.ts";
 import { createTimers, type Timers, TIMERS_DDL } from "./timers.ts";
 import { createGates, type Gates, GATES_DDL } from "./gates.ts";
 import { createSweeper, type Sweeper } from "./sweep.ts";
@@ -69,6 +78,7 @@ import {
   type Dialect,
   eventOf,
   externalOf,
+  MAIL_THREADS,
   offerOf,
   type Row,
   rowOf,
@@ -181,6 +191,10 @@ export interface DeliveryPatch {
    *  so sender-presence means "on the wire", not "echo arrived". Fill-only: the echo's
    *  later merge still contributes what only it knows (the pushname). */
   sender?: { address: string; name?: string };
+  /** The conversation the wire filed the row in, when the post is what decides it (a mail
+   *  opening a thread is addressed at the id it minted): the row MOVES there, its kind
+   *  and name as given. */
+  conversation?: Pick<Conversation, "address" | "kind" | "name">;
 }
 
 /** Capability slices — a consumer can depend on exactly what it's allowed (RLS parity, §6). */
@@ -257,6 +271,15 @@ export type Log =
      *  `status` stages. An UPDATE — no new row: the append stream never sees it, only a
      *  subscriber that asked for `updates` does (§3, §4). */
     setDelivery(id: EventId, patch: DeliveryPatch): Promise<void>;
+    /** The wire's word on what a conversation IS, applied to every row it already has:
+     *  `kind` is stamped by ingest from a platform fact (§3), and the upsert fills it once,
+     *  so a room the platform describes anew keeps its old label on every earlier row
+     *  until this rewrites them. An UPDATE that wakes nobody. */
+    stampKind(
+      service: Service,
+      conversation: string,
+      kind: NonNullable<Conversation["kind"]>,
+    ): Promise<void>;
     /** Who steers an agent (§4): the entry's list, else the roster when its account is
      *  the org's, else itself. Live — read off the registry and the connections map. */
     principalsOf(agentId: string): Promise<string[]>;
@@ -270,7 +293,9 @@ const SQLITE: Dialect = {
   unflagged: (key) => `json_extract(extra, '$.${key}') IS NOT 1`,
   lacks: (key) => `json_extract(extra, '$.${key}') IS NULL`,
 };
-const POLL_MS = 300; // backstop period — fs-watch can drop events under load
+// how often a subscription looks past its cursor: the latency of a row another process
+// wrote. A publish in this process wakes this process's subscriptions at once.
+const POLL_MS = 300;
 /** How many BUSY write-lock waits a commit sits out beyond the engine's own (`busy_timeout`),
  *  and the pause between them. See `commit`. */
 const BUSY_RETRIES = 1;
@@ -463,8 +488,18 @@ export async function openLog(
                              THEN coalesce(?5, sender_address) ELSE sender_address END,
        sender_name    = CASE WHEN coalesce(sender_name, '') = ''
                              THEN coalesce(?6, sender_name) ELSE sender_name END,
+       -- the wire's filing moves the row: a thread opened by this send lives at its id
+       conversation_address = coalesce(?7, conversation_address),
+       conversation_kind    = CASE WHEN ?7 IS NULL THEN conversation_kind ELSE ?8 END,
+       conversation_name    = CASE WHEN ?7 IS NULL THEN conversation_name ELSE ?9 END,
        updated_at  = ?3
      WHERE id = ?4`,
+  );
+  // `updated_at` stays: a relabel is not a delivery, and the update stream is for those
+  const relabel = db.prepare(
+    `UPDATE events SET conversation_kind = ?1
+     WHERE service = ?2 AND conversation_address = ?3
+       AND coalesce(conversation_kind, '') <> ?1`,
   );
   const byExternal = db.prepare("SELECT id FROM events WHERE external_id = ?");
   const absorb = db.prepare(
@@ -517,12 +552,16 @@ export async function openLog(
   const unlock = db.prepare(RELEASE_SQL);
   const owns = db.prepare(OWNS_SQL);
   const cancel = db.prepare(CANCEL_SQL);
+  // this log's live subscriptions: an insert made here wakes them at once, and one made by
+  // another process reaches them at their next poll
+  const tails = new Set<() => void>();
+  const wake = () => tails.forEach((pump) => pump());
   // the lease's doorbell (§2): while this process holds a turn, a `control` row landing from
   // any process has the holder read its mark now, not at its next beat
   const locker = createLocker(
     sqliteLeases(db),
     opts.now,
-    (ring) => tail(dir, db, ring, { law: { sql: "events.type = 'control'", params: {} } }),
+    (ring) => tail(db, tails, ring, { law: { sql: "events.type = 'control'", params: {} } }),
   );
 
   /** One upsert — or, for a PARTLESS draft, one patch (merge-only: nothing stored when the
@@ -671,7 +710,9 @@ export async function openLog(
       Promise.resolve((steers.all(agentId) as { principal: string }[]).map((r) => r.principal)),
 
     async publish(one: Draft | Draft[], opts?: PublishOptions): Promise<Event & Event[]> {
-      return await (commit(one, undefined, opts) as Promise<Event & Event[]>);
+      const out = await (commit(one, undefined, opts) as Promise<Event & Event[]>);
+      wake();
+      return out;
     },
 
     async publishAndRelease(
@@ -679,7 +720,9 @@ export async function openLog(
       lease: Lease,
       opts?: PublishOptions,
     ): Promise<Event & Event[]> {
-      return await (commit(one, lease, opts) as Promise<Event & Event[]>);
+      const out = await (commit(one, lease, opts) as Promise<Event & Event[]>);
+      wake();
+      return out;
     },
 
     admits(law: Law, e: { ts?: string; envelope: Envelope }): Promise<boolean> {
@@ -717,7 +760,7 @@ export async function openLog(
     },
 
     subscribe(listener: Listener, opts: SubscribeOptions = {}): () => void {
-      return tail(dir, db, listener, opts);
+      return tail(db, tails, listener, opts);
     },
 
     setDelivery(id: EventId, patch: DeliveryPatch): Promise<void> {
@@ -743,12 +786,20 @@ export async function openLog(
           id,
           patch.sender?.address ?? null,
           patch.sender?.name ?? null,
+          patch.conversation?.address ?? null,
+          patch.conversation?.kind ?? null,
+          patch.conversation?.name ?? null,
         );
         db.exec("COMMIT");
       } catch (err) {
         db.exec("ROLLBACK");
         throw err;
       }
+      return Promise.resolve();
+    },
+
+    stampKind(service, conversation, kind): Promise<void> {
+      relabel.run(kind, service, conversation);
       return Promise.resolve();
     },
 
@@ -781,6 +832,25 @@ function migrate(db: DatabaseSync) {
   if (v < 9) migrateV9(db);
   if (v < 10) migrateV10(db);
   if (v < 11) migrateV11(db);
+  if (v < 12) migrateV12(db);
+  if (v < 13) migrateV13(db);
+}
+
+/** v13 — a mail thread is a group conversation at its root Message-ID (§4). */
+function migrateV13(db: DatabaseSync) {
+  writing(db, () => {
+    for (const s of MAIL_THREADS("json_extract(payload, '$.ref_external_id')")) db.exec(s);
+    db.exec("PRAGMA user_version = 13");
+  });
+}
+
+/** v12 — local addresses carry no prefix (§3): a direct room is its members joined by `,`,
+ *  a calendar is addressed by its id. */
+function migrateV12(db: DatabaseSync) {
+  writing(db, () => {
+    for (const s of UNPREFIX) db.exec(s);
+    db.exec("PRAGMA user_version = 12");
+  });
 }
 
 /** v11 — an agent's row carries its resolved settings (§9): `agents.settings`, the JSON a
@@ -1097,7 +1167,13 @@ function migrateV4(db: DatabaseSync) {
   db.exec("PRAGMA user_version = 4");
 }
 
-/* ── tail: watch the dir (WAL commits) + poll backstop, cursored on `id` ──
+/* ── tail: a poll every POLL_MS and a wake on every local publish, cursored on `id` ──
+ *
+ * Nothing in a process may open the database's files but SQLite — a file watcher on their
+ * folder included. POSIX drops every lock a process holds on a file when any descriptor it
+ * has on that file closes, and SQLite's WAL coordination between processes IS those locks:
+ * a process that silently lost them is invisible to the next one, which then rebuilds the
+ * shared-memory file under its mapping (SIGBUS) or deletes the WAL as the last one out.
  *
  * The cursor is the id itself: every row's id is a store-minted UUIDv7, so lexical order is
  * mint order, and mint happens under the write lock — no rowid needed (it was a SQLite-only
@@ -1105,13 +1181,12 @@ function migrateV4(db: DatabaseSync) {
  * id IS a position, even one this log never stored. */
 
 function tail(
-  dir: string,
   db: DatabaseSync,
+  tails: Set<() => void>,
   listener: Listener,
   opts: SubscribeOptions,
 ): () => void {
   let closed = false;
-  let watcher: Deno.FsWatcher | undefined;
   let poll: ReturnType<typeof setTimeout> | undefined;
   let chain: Promise<void> = Promise.resolve();
 
@@ -1165,22 +1240,6 @@ function tail(
     }
   }));
 
-  (async () => {
-    watcher = Deno.watchFs(dir);
-    if (closed) {
-      watcher.close();
-      return;
-    }
-    await pump(); // deliver whatever is already past the cursor (a `from` backlog)
-    for await (const _ of watcher) {
-      if (closed) break;
-      await pump();
-    }
-  })().catch(() => {
-    // watcher torn down / io error — a consumer reconciles via the durable log.
-  });
-
-  // backstop: fs-watch can miss events under load; a slow poll guarantees eventual delivery
   const loop = () => {
     if (closed) return;
     // then(f, f): a rejected `finally` would be a second, unhandled rejection
@@ -1189,11 +1248,14 @@ function tail(
     };
     pump().then(next, next);
   };
-  poll = setTimeout(loop, POLL_MS);
+  loop(); // the first pass delivers whatever is already past the cursor (a `from` backlog)
+  // a local insert's wake: the same pump, off the poll's rhythm, its failure the poll's too
+  const kick = () => void pump().catch(() => {});
+  tails.add(kick);
 
   return () => {
     closed = true;
-    watcher?.close();
+    tails.delete(kick);
     if (poll !== undefined) clearTimeout(poll);
   };
 }

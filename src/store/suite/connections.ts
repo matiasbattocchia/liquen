@@ -4,7 +4,7 @@
  * agent keeps what it has seen (events up to the stamp). A rejoin revives.
  */
 
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { aliasOf } from "../connections.ts";
 import type { Substrate } from "./mod.ts";
 
@@ -50,6 +50,86 @@ export function connectionsSuite(s: Substrate): void {
       await log.upsertMemberships([row]); // rejoin revives — the conversation whole again
       assertEquals(await member(), true);
       assertEquals(await member("2100-01-01T00:00:00Z"), true);
+    } finally {
+      await log.close();
+      await store.drop();
+    }
+  });
+
+  Deno.test("conversations: a room of its own — recorded once, read by address, its members the live enrollments", async () => {
+    const store = await s.fresh();
+    const log = await store.open();
+    const ops = {
+      service: "local",
+      connection: "agent",
+      address: "0192abc",
+      name: "ops",
+      kind: "group" as const,
+    };
+    try {
+      await log.createConversation(ops);
+      assertEquals(await log.conversation("local", "agent", "0192abc"), ops);
+      assertEquals(await log.conversation("local", "agent", "nope"), null);
+      // a local name is one room's: the same name at another address is refused
+      await assertRejects(
+        () => log.createConversation({ ...ops, address: "0192def" }),
+        Error,
+        'a room named "ops" already exists',
+      );
+      await log.createConversation({ ...ops, address: "0192ghi", name: "#all", kind: "channel" });
+      assertEquals((await log.conversations()).map((r) => r.name), ["#all", "ops"]);
+
+      await log.upsertMemberships([
+        {
+          service: "local",
+          connection: "agent",
+          conversation: "0192abc",
+          agentId: "bo",
+          sessionId: "mind",
+        },
+        {
+          service: "local",
+          connection: "agent",
+          conversation: "0192abc",
+          agentId: "ana",
+          sessionId: "build",
+        },
+        {
+          service: "local",
+          connection: "agent",
+          conversation: "0192abc",
+          agentId: "cy",
+          sessionId: "mind",
+        },
+      ]);
+      await log.deleteMemberships([
+        {
+          service: "local",
+          connection: "agent",
+          conversation: "0192abc",
+          agentId: "cy",
+          sessionId: "mind",
+        },
+      ]);
+      assertEquals(await log.membersOf("local", "agent", "0192abc"), [
+        { agentId: "ana", sessionId: "build" },
+        { agentId: "bo", sessionId: "mind" },
+      ]);
+      assertEquals(await log.membersOf("local", "agent", "0192ghi"), []);
+
+      // a rename keeps the kind, and a taken name is refused the same way
+      await log.renameConversation("local", "agent", "0192abc", "ops-q4");
+      assertEquals((await log.conversation("local", "agent", "0192abc"))?.name, "ops-q4");
+      await assertRejects(
+        () => log.renameConversation("local", "agent", "0192abc", "#all"),
+        Error,
+        'a room named "#all" already exists',
+      );
+      // a closed room keeps its row and frees its name
+      await log.closeConversation("local", "agent", "0192ghi");
+      assertEquals((await log.conversations()).map((r) => r.name), ["ops-q4"]);
+      assertEquals((await log.conversation("local", "agent", "0192ghi"))?.name, "#all");
+      await log.createConversation({ ...ops, address: "0192jkl", name: "#all", kind: "channel" });
     } finally {
       await log.close();
       await store.drop();

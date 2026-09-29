@@ -286,6 +286,9 @@ export interface ScreenOptions {
    *  when the first line is read, so a surface may still be learning its past while it
    *  builds the screen it will print on. */
   recalled?: () => readonly string[];
+  /** Ctrl-C, offered to the surface before it clears the line: `true` is the surface
+   *  taking it, and the line stays as typed. Default: never taken. */
+  interrupt?: () => boolean;
 }
 
 /** A screen over stdin and stdout: the editor when a terminal is there to edit on, whole
@@ -295,7 +298,8 @@ export function createScreen(opts: ScreenOptions = {}): Screen {
   const head = typeof given === "function" ? given : () => given;
   const recalled = opts.recalled ?? (() => []);
   const sent = opts.sent ?? ((line: string) => head() + line);
-  return Deno.stdin.isTerminal() ? editor(head, recalled, sent) : plain(head);
+  const interrupt = opts.interrupt ?? (() => false);
+  return Deno.stdin.isTerminal() ? editor(head, recalled, sent, interrupt) : plain(head);
 }
 
 const DIM = "\x1b[2m";
@@ -344,6 +348,7 @@ function editor(
   head: () => string,
   recalled: () => readonly string[],
   sent: (line: string) => string,
+  interrupt: () => boolean,
 ): Screen {
   let e: Edit = { text: "", at: 0 };
   let drawn = false;
@@ -463,6 +468,7 @@ function editor(
               redraw();
               continue;
             }
+            if (k.k === "clear" && interrupt()) continue;
             if (k.k === "eof") {
               if (e.text === "") {
                 erase();

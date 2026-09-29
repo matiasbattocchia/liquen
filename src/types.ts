@@ -160,7 +160,19 @@ export type CalendarData = {
 };
 export type CalendarPart = DataPart<"calendar", CalendarData>;
 
-export type Part = TextPart | FilePart | DataPart | SharePart;
+/** A room's change, as the room's own line about it — who joined (added, or in by the
+ *  room's link: `reason: "invite"`), who left (went, or was taken out), or the name it
+ *  now wears. The line's sender is whoever made the change; each person is the address
+ *  the service knows them by and the name it has for them. */
+export type RoomMember = { address: string; name?: string };
+export type RoomPart = DataPart<"room", {
+  joined?: RoomMember[];
+  left?: RoomMember[];
+  name?: string;
+  reason?: string;
+}>;
+
+export type Part = TextPart | FilePart | DataPart | SharePart | RoomPart;
 
 /* ────────────────────────────── envelope ────────────────────────────── */
 // WHICH CONVERSATION. Every event names one — even internal ones (§3).
@@ -208,8 +220,8 @@ export interface Conversation {
   address: string;
   name?: string;
   thread?: string;
-  /** direct = member-defined identity (im AND mpim: the member set IS the address — our
-   *  `dm:<sorted names>` makes that literal) · group = private room · channel = public
+  /** direct = member-defined identity (im AND mpim: the member set IS the address — a
+   *  local room's sorted members joined by `,` make that literal) · group = private room · channel = public
    *  room · broadcast = fan-out, not a room anyone is in (WA broadcast lists — open-bsp
    *  carries them in production). Stamped by ingest from platform facts (Slack types,
    *  WA jid shape) — never derived from counting members (§3). */
@@ -295,7 +307,7 @@ export interface Payload {
    *  wears: `@` a person (the default when absent), `#` a conversation. Unordered —
    *  pair by name, not position. */
   mentions?: { address: string; name?: string; type?: "@" | "#" }[];
-  /** A `control` row's kind: the principal's reserved word (§3 classifier), or the
+  /** A `control` row's kind: the principal's hard stop, typed at the door (§2), or the
    *  harness's `cancelled` acknowledging that it carried one out (§2). */
   control?: ControlKind | "cancelled";
 }
@@ -416,7 +428,7 @@ export interface PermissionVerdict {
   every?: boolean;
 }
 
-/** ingest-classified reserved word from the agent's principal (§3 classifier). */
+/** The principal's hard stop, as the door's `control` verb names it (§2). */
 export type ControlKind = "stop" | "cancel";
 
 /** World text, or the agent's own monologue/send. (`visibility` parked — returns with
@@ -426,8 +438,8 @@ export interface MessageEvent extends EventBase {
   parts: Part[];
 }
 
-/** The hard stop (§2), both halves. The principal's word — the door's verb, or a reserved
- *  word reclassified at ingest — is stamped like a message and fires the running turn's
+/** The hard stop (§2), both halves. The principal's word — the door's verb — is stamped
+ *  like a message and fires the running turn's
  *  interrupt. The harness's `cancelled` is unstamped and closes the turn it cut: its text
  *  is what the model reads, and it is the last row until the principal speaks again. */
 export interface ControlEvent extends EventBase {
@@ -625,6 +637,7 @@ export type ContactResult =
 export interface SearchArgs {
   in?: string; // one conversation: its address, or a name (group's, or a DM's person)
   from?: string; // one sender: their address, or any part of their name
+  connection?: string; // one of the agent's accounts: its name or address, as `send` takes it
   before?: Timestamp; // a bare stamp reads on the org's clock; an offset makes it absolute
   after?: Timestamp;
   text?: string; // one contiguous phrase, case-insensitive substring — no fuzz, no wildcards

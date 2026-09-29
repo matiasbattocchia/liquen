@@ -11,27 +11,43 @@
  * minute, every grant, one subscription over all the member's chats
  * (`/users/<oid>/chats/getAllMessages`) and one per channel of every team the member is
  * in — created when absent, renewed inside its last day, recorded on the grant
- * (`extra.teams_sub`, keyed by the resource path, with the id, the expiry and the secret
- * the notices must echo). A channel subscription is one per channel for the whole app:
- * the first grant to reach it holds it and the others meet a 409, which is not a failure.
- * The lifecycle notices ride the same endpoint: a reauthorization renews, a removal drops
- * the record so the next sweep recreates, a miss is said on stderr.
+ * (`extra.teams_sub`, keyed by the resource path, with the id, the expiry, the secret the
+ * notices must echo and the address it was made for). A channel subscription is one per
+ * channel for the whole app: the first grant to reach it holds it and the others meet a
+ * 409, which is not a failure. The lifecycle notices ride the same endpoint: a
+ * reauthorization renews, a removal drops the record so the next sweep recreates, a miss
+ * is said on stderr.
  *
- * Graph must reach the endpoint over public HTTPS, so `connections.microsoft.notificationUrl`
- * is where it dials — the org's tunnel or its edge — and the ingest binds `ingestPort`
- * behind it. No URL declared means no subscriptions: the dispatch still runs, so the log's
+ * Graph must reach the endpoint over public HTTPS, so it dials the org's public door,
+ * `<edge.publicUrl>/microsoft/ingest` (edge.ts), and the ingest serves its socket behind
+ * it. A subscription is Graph's record of that address, so one made for another address
+ * is deleted and made anew — the sweep compares each record's `url` with the address as
+ * it stands. No `publicUrl` means no subscriptions: the dispatch still runs, so the log's
  * sends reach Teams, and nothing comes back until the address exists.
  *
- * Mapping (§3, §4): a chat is a conversation addressed by its id, `direct` when Teams
- * calls it oneOnOne or group (the member set is the identity), `group` when it is a
- * meeting's; a channel is addressed `<team id>/<channel id>`, `channel`. A channel reply is
- * a `reply` to its root; a chat is flat. `external_id = teams:<address>:<message id>`, so
- * the same message reaching two members' subscriptions merges, and the member's own send
- * merges with its echo. An edit is its own event (`action: edit`, keyed by the edit's
- * time), a delete marks the row and adds a delete event, a reaction is an `add` keyed by
- * who and what, so a notice repeated lands once. The sender is the Teams user id; a sender
- * whose id is a grant's `oid` is that member (`agent.id`). Rows anchor to the grant whose
- * subscription delivered them.
+ * Mapping (§3, §4): a chat is a conversation addressed by its id — `direct` when Teams
+ * calls it oneOnOne, `group` when it is a group chat (a roster people are added to and
+ * removed from, under a topic) or a meeting's; a channel is addressed `<team id>/
+ * <channel id>` — `channel` when standard or shared, `group` when private. The kind is
+ * asked of Graph once per place per process and stamped onto every row the place already
+ * has (`stampKind`), so a room the log labelled before reads as Teams describes it now. A
+ * channel reply is a `reply` to its root; a chat is flat. `external_id = teams:<address>:
+ * <message id>`, so the same message reaching two members' subscriptions merges, and the
+ * member's own send merges with its echo. An edit is its own event (`action: edit`, keyed
+ * by the edit's time), a delete marks the row and adds a delete event, a reaction is an
+ * `add` keyed by who and what, so a notice repeated lands once. The sender is the Teams
+ * user id; a sender whose id is a grant's `oid` is that member (`agent.id`). Rows anchor to
+ * the grant whose subscription delivered them.
+ *
+ * Graph holds a notice it could not deliver for a few hours and a subscription for three
+ * days, and past either the gap is only in the messages themselves. So the ingest READS
+ * THE GAP BACK at boot (`createTeamsCatchUp`), with or without a public door: for every
+ * grant, from the newest Teams row the log holds for it — the chats whose last message is
+ * newer, by `lastModifiedDateTime`; the channels of every team, roots and replies, walked
+ * newest chain first until one is older — through the same mapping, as one live batch per
+ * grant. A message the log already holds is told again only for what changed on it: its
+ * edit when the edit is newer than the row, its reactions otherwise, its deletion. A grant
+ * with no Teams row yet has no gap and is left alone.
  *
  * The body is HTML: `<at>` mentions become `@Name` and `payload.mentions`, an `<emoji>`
  * its glyph, a hosted image (a pasted screenshot) its bytes on the media shelf, and the
@@ -50,7 +66,7 @@ import { createDispatcher } from "../dispatcher.ts";
 import { DispatchError } from "../errors.ts";
 import { claimMentions, type Directory, logDirectory, type NameEntry } from "../mentions.ts";
 import { isExternal, pathOf } from "../../store/media.ts";
-import type { Appender, DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
+import type { Appender, DeliveryPatch, Log, Reader, Subscriber } from "../../store/log.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
@@ -62,7 +78,9 @@ import type {
   MessageEvent,
   Part,
   ReactionPart,
+  RoomMember,
 } from "../../types.ts";
+import { roomPart } from "../../room.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { entry } from "../../entry.ts";
@@ -182,6 +200,14 @@ export interface ChatMessage {
     content?: string | null;
   }[];
   mentions?: { id?: number; mentionText?: string; mentioned?: { user?: TeamsUser | null } }[];
+  /** A `systemEventMessage`'s what-happened: its `@odata.type` names the event. */
+  eventDetail?: {
+    "@odata.type"?: string;
+    members?: TeamsUser[] | null;
+    initiator?: { user?: TeamsUser | null } | null;
+    chatDisplayName?: string | null;
+    channelDisplayName?: string | null;
+  } | null;
   reactions?: { reactionType?: string; user?: { user?: TeamsUser | null } }[];
   [k: string]: unknown;
 }
@@ -194,11 +220,14 @@ interface Notice {
   lifecycleEvent?: string;
 }
 
-/** What a grant records of one subscription. */
+/** What a grant records of one subscription: Graph's id, when it lapses, the secret its
+ *  notices echo, and the address it delivers to — a subscription that names another
+ *  address than the org's delivers nowhere, however fresh. */
 export interface SubRecord {
   id: string;
   expires: string;
   secret: string;
+  url: string;
 }
 
 type Graph = (url: string, init?: RequestInit) => Promise<Response>;
@@ -276,31 +305,40 @@ interface ChatInfo {
   members?: { userId?: string; displayName?: string | null }[];
 }
 
+type Kind = "direct" | "group" | "channel";
+
+/** What a place's kind is settled from: Teams' own word for the chat or the channel. */
+export function kindOf(info: { chatType?: string; membershipType?: string }): Kind {
+  if (info.chatType !== undefined) return info.chatType === "oneOnOne" ? "direct" : "group";
+  return info.membershipType === "private" ? "group" : "channel";
+}
+
+export interface TeamsNames {
+  of(graph: Graph, place: Place, self?: string): Promise<{ kind: Kind; name?: string }>;
+  /** A place renamed: the next `of` asks Graph again. */
+  forget(place: Place): void;
+}
+
 /** A place's kind and name (§3: the service's display facts), asked of Graph once per
  *  place per process and remembered. A oneOnOne chat is named for the other member, a
- *  group chat by its topic or its other members, a channel `Team / Channel`. */
-export function teamsNames(): {
-  of(graph: Graph, place: Place, self?: string): Promise<{
-    kind: NonNullable<MessageEvent["envelope"]["conversation"]["kind"]>;
-    name?: string;
-  }>;
-} {
-  const cache = new Map<string, { kind: "direct" | "group" | "channel"; name?: string }>();
+ *  group chat by its topic or its other members, a channel `Team / Channel`. `stamp` is
+ *  told the kind the first time a place resolves, for the rows the place already has. */
+export function teamsNames(stamp?: (address: string, kind: Kind) => Promise<void>): TeamsNames {
+  const cache = new Map<string, { kind: Kind; name?: string }>();
   return {
     async of(graph, place, self) {
       const key = addressOf(place);
       const hit = cache.get(key);
       if (hit) return hit;
-      let found: { kind: "direct" | "group" | "channel"; name?: string };
+      let found: { kind: Kind; name?: string };
       if (place.kind === "chat") {
         const res = await graph(`${GRAPH}/chats/${enc(place.chat)}?$expand=members`);
         const info = res.ok ? await res.json() as ChatInfo : (await res.body?.cancel(), {});
         const others = (info.members ?? [])
           .filter((m) => m.userId !== self && m.displayName)
           .map((m) => m.displayName as string);
-        const kind = info.chatType === "meeting" ? "group" : "direct";
         const name = info.topic || (others.length ? others.join(", ") : undefined);
-        found = { kind, ...(name ? { name } : {}) };
+        found = { kind: kindOf(info), ...(name ? { name } : {}) };
         if (!res.ok) return found; // unnamed for now; a later message asks again
       } else {
         const [team, channel] = await Promise.all([
@@ -308,15 +346,21 @@ export function teamsNames(): {
           graph(`${GRAPH}/teams/${enc(place.team)}/channels/${enc(place.channel)}`),
         ]);
         const t = team.ok ? await team.json() as { displayName?: string } : {};
-        const c = channel.ok ? await channel.json() as { displayName?: string } : {};
+        const c = channel.ok
+          ? await channel.json() as { displayName?: string; membershipType?: string }
+          : {};
         if (!team.ok) await team.body?.cancel();
         if (!channel.ok) await channel.body?.cancel();
         const name = [t.displayName, c.displayName].filter(Boolean).join(" / ");
-        found = { kind: "channel", ...(name ? { name } : {}) };
+        found = { kind: kindOf(c), ...(name ? { name } : {}) };
         if (!team.ok || !channel.ok) return found;
       }
       cache.set(key, found);
+      await stamp?.(key, found.kind);
       return found;
+    },
+    forget(place) {
+      cache.delete(addressOf(place));
     },
   };
 }
@@ -330,9 +374,9 @@ export interface TeamsWebhookDeps {
    *  against, and whose token reads the message back. */
   creds: Pick<Credentials, "list" | "get" | "put">;
   broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
-  /** The memberships mirror (§4): a member whose subscription delivers a chat is in it.
-   *  Absent ⇒ pure mapping. */
-  store?: Pick<Connections, "upsertMemberships">;
+  /** The memberships mirror (§4): a member whose subscription delivers a chat is in it —
+   *  and the kind stamp, for the rows a place already has. Absent ⇒ pure mapping. */
+  store?: Pick<Connections, "upsertMemberships"> & Partial<Pick<Log, "stampKind">>;
   /** Where attachments and pasted images land. */
   save: SaveFile;
   fetchApi?: typeof fetch;
@@ -340,15 +384,24 @@ export interface TeamsWebhookDeps {
    *  is handed here; absent, the answer waits for the work. */
   track?: (work: Promise<void>) => void;
   now?: () => string;
+  /** The name directory — shared with the catch-up, so a place is asked of Graph once. */
+  names?: TeamsNames;
 }
 
 export type WebhookHandler = (req: Request) => Promise<Response>;
+
+/** The directory as given, or one that stamps kinds through the store. */
+function namesOf(deps: Pick<TeamsWebhookDeps, "store" | "names">): TeamsNames {
+  if (deps.names) return deps.names;
+  const stamp = deps.store?.stampKind?.bind(deps.store);
+  return teamsNames(stamp ? (address, kind) => stamp(SERVICE, address, kind) : undefined);
+}
 
 /** Build the ingest handler. Pure over its deps — call once, serve anywhere. */
 export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
   const now = deps.now ?? (() => new Date().toISOString());
   const fetchApi = deps.fetchApi ?? fetch;
-  const names = teamsNames();
+  const mapMessage = teamsMapper({ names: namesOf(deps), save: deps.save, store: deps.store, now });
 
   return async (req) => {
     if (req.method !== "POST") return text(405, "method not allowed");
@@ -449,18 +502,34 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
       console.error(`[ingest] teams notices missed on ${grant.key} ${resource}`);
     }
   }
+}
 
-  /** The message as rows: the words and files as one row, or the delete pair, or the
-   *  edit event, or one `add` per reaction when the change was a reaction. */
-  async function mapMessage(
-    msg: ChatMessage,
-    at: { place: Place; id: string; root?: string },
-    grant: CredentialRow,
-    grants: CredentialRow[],
-    graph: Graph,
-    changeType: string | undefined,
-  ): Promise<Draft<MessageEvent>[]> {
-    if (!msg.id || (msg.messageType && msg.messageType !== "message")) return [];
+/** What the mapping reads beside the message: the directory, the shelf, the mirror. */
+interface MapperDeps {
+  names: TeamsNames;
+  save: SaveFile;
+  store?: Pick<Connections, "upsertMemberships">;
+  now: () => string;
+}
+
+/** A message as rows: the words and files as one row, or the delete pair, or the edit
+ *  event, or one `add` per reaction when the change was a reaction. `changeType` is the
+ *  notice's word (`created` · `updated` · `deleted`); the catch-up says it from what the
+ *  log holds. Shared by the webhook and the catch-up. */
+export function teamsMapper(deps: MapperDeps): (
+  msg: ChatMessage,
+  at: { place: Place; id: string; root?: string },
+  grant: CredentialRow,
+  grants: CredentialRow[],
+  graph: Graph,
+  changeType: string | undefined,
+) => Promise<Draft<MessageEvent>[]> {
+  const { names, now } = deps;
+  return async (msg, at, grant, grants, graph, changeType) => {
+    if (!msg.id) return [];
+    if (msg.messageType !== undefined && msg.messageType !== "message" && !roomChangeOf(msg)) {
+      return [];
+    }
     const upn = grant.key.slice(GRANT_PREFIX.length);
     const address = addressOf(at.place);
     const ref = teamsRef(address, msg.id);
@@ -491,6 +560,26 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
         envelope: envelope(ref),
         status: { state: "deleted", deleted_at: when },
       } as unknown as Draft<MessageEvent>];
+    }
+
+    // a room's change is the room's own line (§3): who made it, who moved, or the name
+    const change = roomChangeOf(msg);
+    if (change) {
+      if (change.name) names.forget(at.place);
+      const { kind, name } = await names.of(
+        graph,
+        at.place,
+        grant.extra?.oid as string | undefined,
+      );
+      const sender = change.by ?? change.joined?.[0] ?? change.left?.[0];
+      const owner = sender ? whoIs(sender.address, grants) : undefined;
+      return [{
+        ts: msg.createdDateTime ?? ts,
+        type: "message",
+        ...(owner ? { agent: { id: owner } } : {}),
+        envelope: { ...envelope(ref, kind, name), ...(sender ? { sender } : {}) },
+        parts: [roomPart(change)],
+      }];
     }
 
     const from = msg.from?.user ?? undefined;
@@ -590,7 +679,36 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
       },
       parts,
     }];
+  };
+}
+
+/** Graph's system events that change a room, by `@odata.type`: people in, people out. */
+const ROOM_EVENTS: Record<string, "joined" | "left"> = {
+  "#microsoft.graph.membersAddedEventMessageDetail": "joined",
+  "#microsoft.graph.membersJoinedEventMessageDetail": "joined",
+  "#microsoft.graph.membersDeletedEventMessageDetail": "left",
+  "#microsoft.graph.membersLeftEventMessageDetail": "left",
+};
+
+/** A `systemEventMessage` that changes the room — people added or joined, deleted or
+ *  left, the chat or the channel renamed — as the `room` part says it, with who made it
+ *  (Graph's `initiator`). Any other system event is none. */
+function roomChangeOf(
+  msg: ChatMessage,
+): { joined?: RoomMember[]; left?: RoomMember[]; name?: string; by?: RoomMember } | null {
+  if (msg.messageType !== "systemEventMessage" || !msg.eventDetail) return null;
+  const d = msg.eventDetail;
+  const person = (u: TeamsUser): RoomMember[] =>
+    u.id ? [{ address: u.id, ...(u.displayName ? { name: u.displayName } : {}) }] : [];
+  const initiator = d.initiator?.user;
+  const by = initiator ? person(initiator)[0] : undefined;
+  const side = ROOM_EVENTS[d["@odata.type"] ?? ""];
+  if (side) {
+    const moved = (d.members ?? []).flatMap(person);
+    return moved.length ? { [side]: moved, ...(by ? { by } : {}) } : null;
   }
+  const name = d.chatDisplayName ?? d.channelDisplayName;
+  return name ? { name, ...(by ? { by } : {}) } : null;
 }
 
 /** The member a Teams user id names: the grant whose account (`extra.oid`) it is. */
@@ -625,13 +743,223 @@ function text(status: number, message: string): Response {
   return new Response(message, { status, headers: { "content-type": "text/plain" } });
 }
 
+/* ── the catch-up: the gap since the log's newest row, read back at boot ───────────── */
+
+export interface TeamsCatchUpDeps {
+  publish: Appender["publish"];
+  /** The log, read: where the listening stopped, and what a message already is there. */
+  read: Reader["read"];
+  creds: Pick<Credentials, "list">;
+  broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
+  store?: TeamsWebhookDeps["store"];
+  save: SaveFile;
+  fetchApi?: typeof fetch;
+  now?: () => string;
+  names?: TeamsNames;
+  onCaughtUp?: (key: string, published: number) => void;
+  onError?: (key: string, err: unknown) => void;
+}
+
+/** A chat as `/me/chats` lists it with its last message's time. */
+interface ChatListed {
+  id?: string;
+  lastMessagePreview?: { createdDateTime?: string } | null;
+}
+
+/** How many rows back the newest stamp is looked for: rows land in append order and are
+ *  stamped in wire order, and the two disagree only inside a burst. */
+const NEWEST_REACH = 50;
+/** How many pages of one place are walked back at most. */
+const PAGES_CAP = 40;
+/** One wait on a 429, as Graph asks; a second refusal is the grant's failure. */
+const RETRY_AFTER_CAP_MS = 60_000;
+
+/** The catch-up over every grant. `run()` does one sweep (a run that lands while one is
+ *  going joins it); `settle()` waits for the one in flight, if any. */
+export function createTeamsCatchUp(
+  deps: TeamsCatchUpDeps,
+): { run(): Promise<void>; settle(): Promise<void> } {
+  const now = deps.now ?? (() => new Date().toISOString());
+  const fetchApi = deps.fetchApi ?? fetch;
+  const mapMessage = teamsMapper({ names: namesOf(deps), save: deps.save, store: deps.store, now });
+  const at = (iso: string | null | undefined) => (iso ? Date.parse(iso) : 0);
+
+  /** One read, a 429 waited out once; any other refusal is thrown with its status. */
+  const get = async <T>(graph: Graph, url: string): Promise<T> => {
+    for (let attempt = 0;; attempt++) {
+      const res = await graph(url);
+      if (res.status === 429 && attempt === 0) {
+        await res.body?.cancel();
+        const wait = Math.min(
+          Number(res.headers.get("retry-after") ?? 1) * 1000,
+          RETRY_AFTER_CAP_MS,
+        );
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+      if (!res.ok) throw new Error(`teams read ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      return await res.json() as T;
+    }
+  };
+
+  /** The items of a paged listing, page by page, so a walk can stop early. */
+  async function* paged<T>(graph: Graph, url: string): AsyncGenerator<T> {
+    let next: string | undefined = url;
+    for (let i = 0; i < PAGES_CAP && next; i++) {
+      const body: { value?: T[]; "@odata.nextLink"?: string } = await get(graph, next);
+      for (const item of body.value ?? []) yield item;
+      next = body["@odata.nextLink"];
+    }
+  }
+
+  /** The newest stamp among the grant's last Teams rows — of one place, or of any. */
+  const newest = async (upn: string, address?: string): Promise<string | undefined> => {
+    const rows = await deps.read({
+      service: SERVICE,
+      connection: upn,
+      ...(address ? { conversation: address } : {}),
+      types: ["message"],
+      limit: NEWEST_REACH,
+      filter: (e) => isTeamsAddress(e.envelope.conversation.address),
+    });
+    let best: string | undefined;
+    for (const r of rows) if (best === undefined || r.ts > best) best = r.ts;
+    return best;
+  };
+
+  const sweepGrant = async (grant: CredentialRow, grants: CredentialRow[]): Promise<number> => {
+    const upn = grant.key.slice(GRANT_PREFIX.length);
+    const since = await newest(upn);
+    if (since === undefined) return 0; // nothing was ever heard on this grant: no gap
+    const token = await deps.broker.accessTokenFor(deps.broker.issue(grant.key, grant.agentId));
+    if (!token) throw new Error(`no access token for ${grant.key}`);
+    const graph = graphFor(fetchApi, token);
+    const drafts = new Map<string, Draft<MessageEvent>>();
+    const keep = (rows: Draft<MessageEvent>[]) => {
+      for (const d of rows) drafts.set(d.envelope.external_id ?? crypto.randomUUID(), d);
+    };
+    /** A message as the log should now hear it: new, or what changed on it since `from`
+     *  — its edit, else its reactions, else its deletion; a deletion of a message never
+     *  heard is nothing. */
+    const told = async (
+      msg: ChatMessage,
+      place: Place,
+      from: string,
+      root?: string,
+    ): Promise<Draft<MessageEvent>[]> => {
+      if (!msg.id) return [];
+      const ref = teamsRef(addressOf(place), msg.id);
+      const held = (await deps.read({ externalId: ref, types: ["message"] })).length > 0;
+      const where = { place, id: msg.id, root };
+      if (msg.deletedDateTime) {
+        return held ? mapMessage(msg, where, grant, grants, graph, "deleted") : [];
+      }
+      if (!held) return mapMessage(msg, where, grant, grants, graph, "created");
+      const edited = at(msg.lastEditedDateTime) > at(from);
+      return mapMessage(
+        edited ? msg : { ...msg, lastEditedDateTime: null },
+        where,
+        grant,
+        grants,
+        graph,
+        "updated",
+      );
+    };
+
+    if (granted(grant, CHAT_SCOPES)) {
+      // chats newest first, until one last spoke before the gap
+      const listing = `${GRAPH}/me/chats?$expand=lastMessagePreview&$orderby=${
+        enc("lastMessagePreview/createdDateTime desc")
+      }&$top=50`;
+      for await (const chat of paged<ChatListed>(graph, listing)) {
+        const last = chat.lastMessagePreview?.createdDateTime;
+        if (!chat.id || !last) continue;
+        if (at(last) <= at(since)) break;
+        const from = (await newest(upn, chat.id)) ?? since;
+        if (at(last) <= at(from)) continue;
+        const place: Place = { kind: "chat", chat: chat.id };
+        const messages = `${GRAPH}/chats/${enc(chat.id)}/messages?$top=50&$orderby=${
+          enc("lastModifiedDateTime desc")
+        }&$filter=${enc(`lastModifiedDateTime gt ${from}`)}`;
+        for await (const m of paged<ChatMessage>(graph, messages)) keep(await told(m, place, from));
+      }
+    }
+    if (granted(grant, CHANNEL_SCOPES)) {
+      // every channel of every team, its roots newest chain first (the listing's order),
+      // until a chain that last moved before the gap
+      const teams = await collect(
+        paged<{ id?: string }>(graph, `${GRAPH}/me/joinedTeams?$select=id`),
+      );
+      for (const team of teams) {
+        if (!team.id) continue;
+        const channels = await collect(
+          paged<{ id?: string }>(graph, `${GRAPH}/teams/${enc(team.id)}/channels?$select=id`),
+        );
+        for (const c of channels) {
+          if (!c.id) continue;
+          const place: Place = { kind: "channel", team: team.id, channel: c.id };
+          const from = (await newest(upn, addressOf(place))) ?? since;
+          const roots = `${GRAPH}/teams/${enc(team.id)}/channels/${
+            enc(c.id)
+          }/messages?$top=50&$expand=replies`;
+          for await (const root of paged<ChatMessage & { replies?: ChatMessage[] }>(graph, roots)) {
+            const replies = root.replies ?? [];
+            const chain = Math.max(
+              at(root.lastModifiedDateTime),
+              ...replies.map((r) => at(r.lastModifiedDateTime)),
+            );
+            if (chain <= at(from)) break;
+            if (at(root.lastModifiedDateTime) > at(from)) keep(await told(root, place, from));
+            for (const r of replies) {
+              if (at(r.lastModifiedDateTime) > at(from)) keep(await told(r, place, from, root.id));
+            }
+          }
+        }
+      }
+    }
+    if (drafts.size === 0) return 0;
+    return (await deps.publish([...drafts.values()])).length;
+  };
+
+  let inflight: Promise<void> | null = null;
+  const sweep = async () => {
+    const grants = (await deps.creds.list(GRANT_PREFIX)).filter((r) =>
+      !r.key.startsWith(APP_PREFIX)
+    );
+    for (const grant of grants) {
+      if (typeof grant.extra?.oid !== "string" || !grant.extra.oid) continue;
+      if (!granted(grant, [...CHAT_SCOPES, ...CHANNEL_SCOPES])) continue;
+      try {
+        const published = await sweepGrant(grant, grants);
+        deps.onCaughtUp?.(grant.key, published);
+      } catch (err) {
+        deps.onError?.(grant.key, err);
+      }
+    }
+  };
+  return {
+    run(): Promise<void> {
+      inflight ??= sweep().finally(() => (inflight = null));
+      return inflight;
+    },
+    settle: () => inflight ?? Promise.resolve(),
+  };
+}
+
+async function collect<T>(items: AsyncGenerator<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const item of items) out.push(item);
+  return out;
+}
+
 /* ── the keeper: subscriptions alive on every grant, over the shared sweep ─────────── */
 
 export interface TeamsKeeperDeps {
   creds: Pick<Credentials, "list" | "get" | "put">;
   broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
   store?: Pick<Connections, "upsertConnections">;
-  /** Where Graph dials the ingest — the `notificationUrl` and `lifecycleNotificationUrl`. */
+  /** Where Graph dials the ingest — `<edge.publicUrl>/microsoft/ingest`, sent as the
+   *  `notificationUrl` and `lifecycleNotificationUrl` of every subscription made. */
   notificationUrl: string;
   fetchApi?: typeof fetch;
   now?: () => string;
@@ -667,8 +995,16 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
     let touched = 0;
     let changed = false;
     for (const path of paths) {
-      const sub = subs[path];
+      let sub: SubRecord | undefined = subs[path];
       const t = Date.parse(now());
+      // made for another address: Graph would keep delivering there, so it goes, and the
+      // path is one with no subscription from here on
+      if (sub && sub.url !== deps.notificationUrl) {
+        await remove(graph, sub);
+        delete subs[path];
+        sub = undefined;
+        changed = true;
+      }
       if (sub && Date.parse(sub.expires) - t > RENEW_AHEAD_MS) continue;
       if (sub && Date.parse(sub.expires) > t) {
         subs[path] = await renew(graph, sub, now);
@@ -775,7 +1111,18 @@ async function create(
   }
   const made = await res.json() as { id?: string; expirationDateTime?: string };
   if (!made.id) throw new Error(`teams subscribe ${resource}: no id in the answer`);
-  return { id: made.id, expires: made.expirationDateTime ?? expires, secret };
+  return { id: made.id, expires: made.expirationDateTime ?? expires, secret, url: notificationUrl };
+}
+
+/** Delete a subscription; one Graph no longer has is as gone as asked. */
+async function remove(graph: Graph, sub: SubRecord): Promise<void> {
+  const res = await graph(`${GRAPH}/subscriptions/${enc(sub.id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(
+      `teams unsubscribe ${sub.id}: ${res.status} ${(await res.text()).slice(0, 300)}`,
+    );
+  }
+  await res.body?.cancel();
 }
 
 /** Renew a subscription for another lifetime — which also reauthorizes it. */
@@ -1144,37 +1491,64 @@ export function teamsWire(deps: TeamsWireDeps): TeamsWire {
 
 /* ── local entries: the ingest (the webhook and the keeper) and the dispatch ────────── */
 
-/** Wire the inbound half over the org's log: serve the webhook on `ingestPort`, keep the
- *  subscriptions alive on the shared cadence. No `notificationUrl` declared ⇒ nothing is
- *  subscribed and the half says so once. Returns stop. */
+/** Wire the inbound half over the org's log: read the gap back, serve the webhook behind
+ *  the edge, keep the subscriptions alive on the shared cadence. No public address ⇒ the
+ *  gap is still read, nothing is subscribed, and the half says so once. Returns stop. */
 export async function runIngest(): Promise<() => Promise<void>> {
   const { openStore } = await import("../../store/mod.ts");
   const { createGrantBroker } = await import("../../proxy/grants.ts");
   const { serveIngest } = await import("../serve.ts");
-  const { microsoftConfig } = await import("./config.ts");
   const { runPollIngest } = await import("../poll.ts");
+  const { readConfig } = await import("../../config.ts");
+  const { ingestAddress } = await import("../../edge.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const store = await openStore(root);
-  const { ingestPort, notificationUrl } = await microsoftConfig(root);
-  if (!notificationUrl) {
-    console.error(
-      "[ingest] microsoft teams: no connections.microsoft.notificationUrl — Graph has nowhere " +
-        "to push, so no Teams subscription is made; sends still go out",
-    );
-    return () => Promise.resolve();
-  }
+  const { publicUrl } = (await readConfig(root)).edge;
   const log = await store.log();
   const creds = await store.vault();
   const broker = createGrantBroker({ creds });
+  const save = mediaShelf(dir);
+  const names = teamsNames((address, kind) => log.stampKind(SERVICE, address, kind));
+  // the gap first: what Graph stopped telling while nobody listened, before any notice
+  const catchUp = createTeamsCatchUp({
+    publish: log.publish,
+    read: (q) => log.read(q),
+    creds,
+    broker,
+    store: log,
+    save,
+    fetchApi: timedFetch,
+    names,
+    onCaughtUp: (key, n) => n && console.error(`[ingest] ${key}: teams caught up, +${n} row(s)`),
+    onError: (key, err) =>
+      console.error(
+        `[ingest] ${key}: teams catch-up FAILED:`,
+        err instanceof Error ? err.message : err,
+      ),
+  });
+  void catchUp.run();
+  if (publicUrl === null) {
+    console.error(
+      "[ingest] microsoft teams: no edge.publicUrl — Graph has nowhere to push, so no Teams " +
+        "subscription is made; the gap is read at boot, and sends still go out",
+    );
+    return async () => {
+      await catchUp.settle();
+      await creds.close();
+      await log.close();
+    };
+  }
+  const notificationUrl = ingestAddress(publicUrl, SERVICE);
   const inflight = new Set<Promise<void>>();
   const handler = createTeamsWebhook({
     publish: log.publish,
     creds,
     broker,
     store: log,
-    save: mediaShelf(dir),
+    save,
     fetchApi: timedFetch,
+    names,
     track: (w) => {
       inflight.add(w);
       // then(f, f): a rejected `finally` would be a second, unhandled rejection
@@ -1182,12 +1556,8 @@ export async function runIngest(): Promise<() => Promise<void>> {
       w.then(done, done);
     },
   });
-  const server = serveIngest(
-    "connections.microsoft.ingestPort",
-    ingestPort,
-    handler,
-    (bound) => console.error(`[ingest] microsoft teams serving :${bound} ← ${notificationUrl}`),
-  );
+  const server = await serveIngest(root, SERVICE, handler);
+  console.error(`[ingest] microsoft teams serving ${server.addr.path} ← ${notificationUrl}`);
   const stopKeeper = await runPollIngest(
     SERVICE,
     "teams subscriptions",
@@ -1198,6 +1568,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
     await server.shutdown();
     await Promise.allSettled(inflight);
     await stopKeeper();
+    await catchUp.settle();
     await creds.close();
     await log.close();
   };

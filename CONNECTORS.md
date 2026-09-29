@@ -55,6 +55,25 @@ declaring its DEFAULT_s and its `ConnectorSpec`; `connectorConfig` reads the
 merged values — nothing is ever written back. Secrets never enter the file — they live in the vault (slack and github keep
 their app, bot, and grants there) or, for a local bridge, in env (`WA_BRIDGE_TOKEN`).
 
+A connector is reached through the org's edge (DESIGN §9, `src/edge.ts`), and it listens
+where it lives: `serveIngest(root, name, handler)` serves the ingest on
+`data/run/<name>.sock`, where the edge forwards `<base>/<name>/ingest` with the prefix
+stripped, and `serveDoor(root, name, handler)` serves a sign-in on
+`data/run/<name>-oauth.sock`, handed `<base>/<name>/oauth/…` as it came — so a connector,
+shipped or the org's own, is on the internet the moment the org is, with nothing to
+declare, no port of its own and nothing to add to the edge. The edge routes by the
+grammar, not by a table, so the connection's name is the route: lowercase letters, digits
+and dashes, starting with a letter, which boot checks. A listener on a TCP port of its own
+is not behind the edge. A sign-in door is `serveDoor` over a handler that answers
+`/start` and `/callback` by suffix, wrapped in `oneShot` so the door returns when the
+first callback lands; `doorAddress` reads the start link off the registered callback and
+says whether it is this machine's browser (`openBrowser`) or a link to send. A door hands a service that address
+with `ingestAddress(base, name)` — `edge.publicUrl` for a dialer on the internet,
+`localBase(edge.port)` for one on this host — or `callbackAddress(edge, name)`, and says
+whether it answers with `reachLine`: `serveIngest` makes every ingest name itself to a
+`GET /`, which is what the check reads. A door that needs the org up first asks
+`requireIngest` (a delivery would be lost) or `requireEdge` (a sign-in comes back to it).
+
 A connector whose CLI should work from agent bash **fronts its grant through the egress
 proxy by declaration, not by code**: the connect door writes two sidecar fields on the
 credential row — `extra.env`, the env var the placeholder is issued under (what the tool
@@ -127,6 +146,36 @@ the phone shows up as the name and the hint on the next line from them. A servic
 address book stamps nothing: every outsider wears `external`, and the tool is not offered
 on its accounts.
 
+### The rooms: the service opens them, the port asks
+
+A service whose API opens and changes conversations — Slack's `conversations.*`, Graph's
+chats and channels, whatsmeow's groups — keeps them, and the connector's port
+(`XiPorts.rooms`, one per service) asks it: `open` for `send` to a list of people there,
+`members` · `join` · `leave` · `add` · `remove` · `rename` for the `conversation` tool. Each
+leg answers within its call and keeps no queue, so the tool result is the whole outcome
+and a failed call is the model's to make again. What the log holds of a change is the
+wire's own line about it — the join, the leave, the rename — brought back by the ingest
+as one `room` data part (`src/room.ts`: `joined` and `left` as `{address, name?}`, or the
+`name` the room now wears; `<room>` to the model) from whoever made the change, and the
+membership mirror fills the map from there; the harness says nothing in the room itself.
+A local room's change is the same part, said by the `conversation` tool, and a room
+`send` makes opens with one naming its founding members.
+
+Every leg is per account: it takes the connection the act rides — the one a `send` there
+would ride — and the agent acting, and posts with the grant the dispatcher would post
+with, the agent's own when the vault holds one. A grant is able exactly as far as its
+consent goes, so a leg whose scope the grant lacks is the leg's own refusal, naming the
+scope; an account signed in before the scope was asked cannot until it signs in again.
+A service keeps the legs its API has and no more; `conversation` refuses the missing
+verb by name, and a service with no port at all keeps its rooms — mail, whose thread is
+its recipients. `members` are the wire's addresses, as `sender.address` spells them:
+the harness resolves a name to one the way `contact` does, kept to the account the room
+is on, and takes a bare handle nobody has spoken as for an address. An unnamed list
+opens the direct room of its members, up to the same cap as a local list, and whether
+the wire has such a room is the service's own rule to refuse; a list named by `subject`
+opens a group (`ops`) or a channel (`#ops`), and the port answers the address, kind and
+name the wire gave it, which is what the send lands under.
+
 ### Outbound media: the pull leg, signed and relative
 
 Most services take a file by **push** — Slack's `files.uploadV2`, Gmail's MIME body: liquen
@@ -142,9 +191,9 @@ address is said once, not once per leg. Who says it is the pairing door: the wha
 bridge is one sidecar for many orgs, and `liquen connect whatsapp` registers this org's
 ingest as the session's `webhook_url`, which the bridge keeps with the session and dials
 for everything about it — batches, media, lifecycle, and the relative media path. The
-value is `connections.whatsapp.ingestUrl`, null ⇒ localhost on `ingestPort`, which holds
-whenever the sidecar shares the host; a bridge in a container declares the one it can
-reach.
+value is `connections.whatsapp.ingestUrl`, null ⇒ this machine's edge
+(`http://localhost:<edge.port>/whatsapp/ingest`), which holds whenever the sidecar shares
+the host; a bridge in a container declares the one it can reach.
 
 Three properties come from signing rather than remembering: verification holds no state,
 so the ingest and the dispatch can be different processes; a restart doesn't invalidate a
@@ -168,9 +217,15 @@ Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispat
   env/vault as ever.
 
 The front door is **`liquen connect`** (`deno task connect`, `src/connect/connect.ts`): bare,
-it prints the map (status); `liquen connect <name> [args...]` resolves the shipped services
-first, then `<org>/connectors/<name>/connect.ts`, and runs the door as a child process
-with the remaining args — a name with a slash is taken as a module path. `deno task start`
+it prints its usage, naming every door the org has; `liquen connect <name> [args...]` resolves
+the shipped services first, then `<org>/connectors/<name>/connect.ts`, and runs the door as a
+child process with the remaining args — a name with a slash is taken as a module path.
+`liquen connect --remove <service>:<address>` takes a grant back whichever door wrote it: the
+row soft-deleted (the gate closes, the ingested history stays readable), its secret out of
+the vault unless another live connection shares it, and `connections.<service>` out of the
+catalog with the service's last connection. A token grant, which has no row, is removed by
+its vault key. The platform's side — the app install, the OAuth grant, the paired device —
+is revoked on the platform. `deno task start`
 runs every declared connection the same way: `src/connect/<name>/run.ts` if it ships,
 else `<org>/connectors/<name>/run.ts`.
 
@@ -279,9 +334,82 @@ principal as a peer.
 
 `conversation.kind` from the jid shape (§4): individual → `direct`, group jid → `group`.
 
+**The rooms are the account's** (`src/connect/whatsapp/rooms.ts`, the rooms port of §1),
+over the bridge's `/groups/{session}` routes on the same bearer the dispatcher posts with:
+`open` with a name is `POST /groups/{session}` — a group made under that subject with the
+people in it, the account seated by WhatsApp's own rule — and answers the group's JID and
+the subject the bridge kept; `members` reads the roster (`GET`, canonical digits, the
+name the wire has for each, the admin seats marked); `add` and `remove` post and delete
+on `/members`; `rename` is a `PATCH` of the subject; `leave` a `DELETE` of the group. One
+person unnamed is their own chat, answered without a call; a bare list of two or more is
+refused with the way to name it, and so is `#name`, since WhatsApp makes no channel. No
+`join`: a group is entered by invite, which no address carries. The bridge passes
+WhatsApp's own refusals through as 4xx — 403 when the account is no admin of the group,
+404 for a group it is not in or a person not on the roster, 406 for a subject it will
+not take — and a seat the server would not fill is named with the code: on `add` the
+call fails naming each, on `open` the group exists and its roster says who is in. A
+removal is resolved against the roster on the bridge, so a LID-addressed group takes it
+under the JID it holds the person by. What the log sees afterwards is what the bridge
+posts of the group: its subject on every line, and each change WhatsApp announces as
+the group's `room` line (§1) — a rename (`renamed` on the feed, so the subject a group is
+first seen with makes none), who joined, who left — from whoever made it, or the first
+who moved when someone came in by the group's link (`reason: "invite"`): a line with no
+sender is the account speaking. The account's own arrival is one too: added, it alone
+joined; a group made with it in arrives with its founding roster. The line's identity is
+the change — the group, the time, who moved, the name — so a batch posted again merges.
+An admin seat, a description or a setting is no line.
+
 ## 4. Slack — landed; two threads dangling
 
-Live smoke passed 2026-08-12 (paste door, alter-ego dispatch, echo merge). Remaining:
+Live smoke passed 2026-08-12 (paste door, alter-ego dispatch, echo merge).
+
+**The gap is read back.** Slack holds nothing for an app that is not connected — an event
+with no socket to take it is gone, an HTTP delivery is retried for a few minutes — so the
+ingest asks the history APIs for what it missed (`src/connect/slack/catchup.ts`): at boot
+on either carrier, and when a socket comes back after more than a blip (a `disconnect`
+refresh hands over to a new socket before the old closes, so it leaves no gap and asks for
+nothing). The log is the cursor: the newest row at the workspace's anchors is where the
+listening stopped, the newest row in a room is where that room stopped, and
+`conversations.history` from there (plus `conversations.replies` for any thread whose last
+reply is newer) is the gap. The rooms come from `users.conversations` on every token the
+workspace has — the bot's, then each bound user's — which are also the delivery's
+`authorizations`, so a room the bot is in anchors to the bot as its events do; a user
+token's room list is that member's membership as the wire holds it now, and the joins and
+leaves the gap swallowed are mirrored from it. One live batch per workspace, each row at
+its message's own time (every Slack row is, live too): a message already in the log
+merges and wakes nobody, the rest is owed under the attention rules and the boot floor.
+A workspace with no row was never heard and is left alone. Not read back: an edit or a
+delete of a message the log already had, reactions, and replies to a thread whose root is
+older than the gap. Internal (customer-built) apps keep the standard rate limits; a
+commercially distributed non-Marketplace app created after 2025-05-29 reads
+`conversations.history` at one call a minute, fifteen messages a call.
+
+**The rooms are the workspace's** (`src/connect/slack/rooms.ts`, the rooms port of §1):
+`open` is `conversations.open` for a direct room and `conversations.create` plus
+`conversations.invite` for a named one, private when the send named a group and public
+when it named a channel; `members` pages `conversations.members`, and `join`, `leave`,
+`add`, `remove` and `rename` are the method of the same name, a kick one person a call.
+What the room shows of a change is Slack's own message about it — `channel_join` (with
+its `inviter` when someone added them), `channel_leave`, `channel_name` — mapped to the
+`room` line of §1 rather than to words the mover typed, keyed on its `ts` like any row,
+so the catch-up reads a swallowed one back; a rename also teaches the name directory.
+Every leg resolves its token as the dispatcher does (`slackTokenFor`): the agent's own
+grant when the vault holds one, else the workspace bot, so the room is opened by the
+grant that posts in it. A channel's name is given as Slack takes one — lowercase, `-` and
+`_` kept, anything else folded to `-`, eighty at most — and the port answers the name
+Slack kept. What a leg may do is the grant's consent: the bot's writes are
+`channels:manage` and `channels:join` for a public channel, `groups:write` for a private
+one, `im:write` and `mpim:write` for a direct room and the `:write.invites` of the room's
+kind for an invite; a user's are the same acts under `channels:write` in place of the two
+bot names. Both lists are the catalog's defaults (`botScopes`, `userScopes`), and a
+token granted before they were asked answers `missing_scope` at the call, naming the
+scope, which the leg's refusal carries; the account signs in again to grant it. The wire's
+own rules pass through the same way — eight besides the opener in a direct room,
+`#general` lets nobody go, a name already taken. The roster comes back as user ids, and
+the harness names each the way the log knows them, from the lines they wrote on the
+account. Main wires the port when `connections.slack` is declared, over the vault.
+
+Remaining:
 
 - **The mind-alias at ingest** — aliasing the principal's Slack self-DM onto `mind:<agent>`
   requires knowing WHICH `im` is the self-DM. A management step, not derivable from message
@@ -448,19 +576,23 @@ so the sweep recreates, `missed` is said on stderr.
 
 **The carrier.** Graph pushes to a public HTTPS endpoint only — it validates it at
 subscription time (`POST ?validationToken=…`, answered plain within ten seconds) and
-expects a 2xx within three seconds on every notice. So `connections.microsoft.notificationUrl`
-is where Graph dials — the org's tunnel (cloudflared, Tailscale Funnel) or its edge — and
-the ingest serves `ingestPort` behind it: a webhook `(Request) => Response` that echoes
-the handshake, checks each notice's `clientState` against the record, acks 202 and reads
-the message back behind the ack. No URL declared ⇒ nothing is subscribed, the dispatch
-still sends, and the boot says so once. Event Grid is not this carrier: its delivery has
-no `created` change type, and it needs an Azure subscription and a second token audience.
+expects a 2xx within three seconds on every notice. So it dials the org's public door,
+`<edge.publicUrl>/microsoft/ingest`, and the ingest serves its socket behind it: a
+webhook `(Request) => Response` that echoes the handshake, checks each notice's
+`clientState` against the record, acks 202 and reads the message back behind the ack.
+Each record carries the address it was made for, and the sweep deletes and remakes one
+made for another. No `publicUrl` ⇒ nothing is subscribed, the dispatch still sends, and
+the boot says so once. Event Grid is not this carrier: its delivery has no `created`
+change type, and it needs an Azure subscription and a second token audience.
 
 **The rows.** A notice carries the resource path and nothing else (the rich form needs a
 certificate and shortens the lifetime), so each is one `GET` of the message. A chat is a
-conversation addressed by its id — `direct` when Teams calls it oneOnOne or group, `group`
-when it is a meeting's — named for the other member, the topic, or the other members; a
-channel is `<team id>/<channel id>`, `channel`, named `Team / Channel`. A channel reply is
+conversation addressed by its id — `direct` when Teams calls it oneOnOne, `group` when it
+is a group chat (a roster under a topic) or a meeting's — named for the other member, the
+topic, or the other members; a channel is `<team id>/<channel id>` — `channel` when
+standard or shared, `group` when private — named `Team / Channel`. The kind is asked of
+Graph once per place per process and stamped onto the rows the place already has
+(`stampKind`), so a room labelled before reads as Teams describes it now. A channel reply is
 a `reply` to its root; a chat is flat, and a quoted reply there (`messageReference`) names
 the message it answers. `external_id = teams:<address>:<id>`, so the same message reaching
 two members' subscriptions merges, as does the member's own send with its echo. An edit is
@@ -482,6 +614,47 @@ an organization view link — and rides as a `reference` attachment whose id is 
 eTag GUID; an external link joins the words. The response's `id` and `from.user.id` stamp
 the row.
 
+**The gap is read back.** Graph retries a notice it could not deliver for a few hours and
+a subscription lives three days; past either, the gap is only in the messages. So the
+ingest reads it at boot (`createTeamsCatchUp`), with or without a public door — the one
+poll the terms allow, once per process. Per grant, from the newest Teams row the log holds
+for it (mail and calendar rows share the connection and do not count): `/me/chats` newest
+first with `lastMessagePreview`, stopping at the first chat that last spoke before the
+gap, and each chat's messages by `lastModifiedDateTime gt` its own newest row; then every
+channel of every joined team, roots with `$expand=replies` in the listing's order (newest
+chain first) until a chain that last moved before the gap. Through the same mapping, one
+live batch per grant. A message the log already holds is told only what changed on it:
+its edit when newer than the row, else its reactions, else its deletion; a deletion of a
+message never heard is nothing. A grant with no Teams row was never heard and is left
+alone.
+
+**The rooms are the member's** (`src/connect/microsoft/rooms.ts`, the rooms port of §1):
+every leg rides the account's own grant, the token the dispatcher posts with, so the room
+is opened by the grant that speaks in it. `open` with one person and no name is the
+oneOnOne chat of the two, found or made (`POST /chats`); a longer unnamed list is refused,
+since a group chat is made anew on every call and is named by its topic — so a named
+`group` is a group chat under that topic (no `:`, 250 at most), the member first among
+its people. A `channel` lives in a team, so its name is `#Team / Channel`: the team found
+by name among `/me/joinedTeams`, the channel made standard in it (fifty characters, the
+ones Teams keeps out folded away); its people are the team's, and the list reaches those
+of them in the team. `members` pages the chat's or the channel's roster and answers user
+ids with the names Teams shows; `add` is one `POST …/members` a person (a chat member
+sees the whole history), `remove` and `leave` find the membership id on the roster and
+`DELETE` it; `rename` is the chat's topic or the channel's display name. What the room
+shows of a change is Teams' own `systemEventMessage` about it — members added, joined,
+deleted or left, the chat or the channel renamed — mapped to the `room` line of §1 from
+Graph's `initiator` (or the one who moved, when there is none), keyed on the message id;
+a rename makes the place's name asked of Graph again. Any other system event is no row. Nobody joins a
+chat or a channel by their own hand on Teams, so the port has no `join`; a standard
+channel's roster is its team's, and Graph refuses a membership leg there in its own
+words. What a leg may do is the grant's consent — `Chat.Create`, `ChatMember.ReadWrite`,
+`Channel.Create`, `ChannelMember.ReadWrite.All`, `ChannelSettings.ReadWrite.All`, all in
+the catalog's default `scopes`, the last four the tenant admin's to consent to — and
+Graph answers a call short of one with a 403 that does not always name it, so the leg's
+refusal names the permission it needs and the remedy: the account signs in again. Main
+wires the port when `connections.microsoft` is declared, over the vault and a grant
+broker of its own.
+
 Ceilings: reading is 1 rps per chat or channel; 10,000 Teams subscriptions per tenant
 across all apps.
 
@@ -497,7 +670,7 @@ across all apps.
    poll-vs-watch tier asymmetry; converges with (2).
 5. **Microsoft trio** — the door, the Graph skill, the Outlook calendar poll and Outlook
    mail landed on the grammars (3) and (4) share; Teams landed on delegated Graph, pushed
-   to a declared public URL and kept alive by the same sweep.
+   to the org's public door and kept alive by the same sweep.
 
 ## 9. Sources (checked 2026-08-06)
 

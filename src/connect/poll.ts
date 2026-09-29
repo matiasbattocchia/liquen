@@ -23,7 +23,7 @@
  * the broker is already the one code path that touches the secret, and this runs beside it.
  */
 
-import type { Appender } from "../store/log.ts";
+import type { Appender, Reader } from "../store/log.ts";
 import type { CredentialRow, Credentials } from "../store/credentials.ts";
 import type { Connections } from "../store/connections.ts";
 import type { GrantBroker } from "../proxy/grants.ts";
@@ -189,6 +189,9 @@ export function pollingClient(): Deno.HttpClient {
  *  and broker, the resources to poll, and a fetch on the bounded client. */
 export interface PollIngestDeps {
   publish: Appender["publish"];
+  /** The log, read: what a row's place depends on (a mail's thread is where the message it
+   *  answers already is). */
+  read: Reader["read"];
   creds: Credentials;
   broker: GrantBroker;
   store: Pick<Connections, "upsertConnections">;
@@ -234,6 +237,7 @@ export async function runPollIngest(
   const client = pollingClient();
   const poller = create({
     publish: log.publish,
+    read: (q) => log.read(q),
     creds,
     broker,
     store: log,

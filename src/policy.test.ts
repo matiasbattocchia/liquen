@@ -261,25 +261,25 @@ Deno.test("policyFor: the member is the (agent, session) pair — a sibling's ro
     assert(!(await sees(log, mind, at("local", "agent", "build@ana"))));
     assert(!(await sees(log, build, at("local", "agent", "mind@ana"))));
     assert(!(await writes(log, build, at("local", "agent", "mind@ana"))));
-    // …and a DM room both are in is how they reach each other, like two agents
+    // …and a direct room both are in is how they reach each other, like two agents
     await log.upsertMemberships([
       {
         service: "local",
         connection: "agent",
-        conversation: "dm:build@ana:mind@ana",
+        conversation: "build@ana,mind@ana",
         agentId: "ana",
         sessionId: "mind",
       },
       {
         service: "local",
         connection: "agent",
-        conversation: "dm:build@ana:mind@ana",
+        conversation: "build@ana,mind@ana",
         agentId: "ana",
         sessionId: "build",
       },
     ]);
-    assert(await sees(log, mind, at("local", "agent", "dm:build@ana:mind@ana")));
-    assert(await sees(log, build, at("local", "agent", "dm:build@ana:mind@ana")));
+    assert(await sees(log, mind, at("local", "agent", "build@ana,mind@ana")));
+    assert(await sees(log, build, at("local", "agent", "build@ana,mind@ana")));
   });
 });
 

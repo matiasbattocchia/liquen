@@ -259,6 +259,7 @@ const ERROR_STATUS: Record<string, number> = {
   internal: 500,
   resource_exhausted: 429,
   too_many_requests: 429,
+  rate_limit_exceeded: 429,
 };
 const PERMANENT = 400;
 

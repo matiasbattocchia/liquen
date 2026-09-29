@@ -126,6 +126,9 @@ UPDATE events SET
                         THEN coalesce($5::text, sender_address) ELSE sender_address END,
   sender_name    = CASE WHEN coalesce(sender_name, '') = ''
                         THEN coalesce($6::text, sender_name) ELSE sender_name END,
+  conversation_address = coalesce($7::text, conversation_address),
+  conversation_kind    = CASE WHEN $7::text IS NULL THEN conversation_kind ELSE $8::text END,
+  conversation_name    = CASE WHEN $7::text IS NULL THEN conversation_name ELSE $9::text END,
   updated_at     = $3::text
 WHERE id = $4::text`;
 
@@ -385,6 +388,16 @@ export async function openPgLog(
       return tail(sql, channel, seeding, listener, opts);
     },
 
+    async stampKind(service, conversation, kind): Promise<void> {
+      await count(
+        sql,
+        `UPDATE events SET conversation_kind = $1::text
+         WHERE service = $2::text AND conversation_address = $3::text
+           AND coalesce(conversation_kind, '') <> $1::text`,
+        [kind, service, conversation],
+      );
+    },
+
     setDelivery(id: EventId, given: DeliveryPatch): Promise<void> {
       const patch = scrub(given);
       return serial(async (tx) => {
@@ -409,6 +422,9 @@ export async function openPgLog(
           id,
           patch.sender?.address ?? null,
           patch.sender?.name ?? null,
+          patch.conversation?.address ?? null,
+          patch.conversation?.kind ?? null,
+          patch.conversation?.name ?? null,
         ]);
       });
     },

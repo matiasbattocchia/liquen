@@ -82,6 +82,10 @@ export async function openPgCredentials(
       )).map(rowOf);
     },
 
+    async delete(key: string): Promise<boolean> {
+      return await count(sql, "DELETE FROM credentials WHERE key = $1::text", [key]) > 0;
+    },
+
     async mintState(service, extra): Promise<string> {
       await prune();
       const state = crypto.randomUUID();

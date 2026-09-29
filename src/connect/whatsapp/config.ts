@@ -10,35 +10,28 @@
  * hands the bridge that address once (`webhook_url` on `POST /sessions`, kept with the
  * session), and everything the bridge dials for this org — batches, media, session events,
  * the RELATIVE signed media path (`store/media.ts`) — resolves against it. `ingestUrl` is
- * that address as the bridge reaches it; null derives it from `ingestPort` on localhost,
- * which is right whenever the sidecar shares the host.
+ * that address as the bridge reaches it; null derives it from this machine's edge, which
+ * is right whenever the sidecar shares the host.
  */
 
-import { checkPort, connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { ingestAddress, localBase } from "../../edge.ts";
 
-export const DEFAULT_INGEST_PORT = 8793;
 export const DEFAULT_BRIDGE_URL = "http://localhost:8081";
 
 export interface WhatsappConfig {
-  ingestPort: number;
   bridgeUrl: string;
   /** null until `liquen connect whatsapp` declares it (the folder's name) */
   organizationId: string | null;
-  /** null ⇒ `http://localhost:<ingestPort>` — see `ingestUrlOf` */
+  /** null ⇒ `http://localhost:<edge.port>/whatsapp/ingest` — see `ingestUrlOf` */
   ingestUrl: string | null;
 }
 
 /** Where the bridge reaches this org's ingest — what the pairing door registers with the
- *  session. The declared value verbatim, else localhost on the ingest's port: a bridge in
- *  a container, or on another host, is the case that declares one. */
-export function ingestUrlOf(cfg: Pick<WhatsappConfig, "ingestPort" | "ingestUrl">): string {
-  if (cfg.ingestUrl) return cfg.ingestUrl;
-  if (cfg.ingestPort === 0) {
-    throw new Error(
-      "connections.whatsapp.ingestPort is 0 — the bridge keeps the ingest's address with the session, so declare a fixed port or an ingestUrl",
-    );
-  }
-  return `http://localhost:${cfg.ingestPort}`;
+ *  session. The declared value verbatim, else this machine's edge: a bridge in a
+ *  container, or on another host, is the case that declares one. */
+export function ingestUrlOf(cfg: Pick<WhatsappConfig, "ingestUrl">, edgePort: number): string {
+  return cfg.ingestUrl ?? ingestAddress(localBase(edgePort), "whatsapp");
 }
 
 const aString = (v: unknown): string | null =>
@@ -49,13 +42,6 @@ export const SPEC: ConnectorSpec = {
   name: "whatsapp",
   doc: "whatsapp — the whatsmeow bridge's liquen side (ingest, dispatch, pairing)",
   entries: [
-    {
-      key: "ingestPort",
-      value: DEFAULT_INGEST_PORT,
-      doc:
-        "where the bridge POSTs webhook batches — the bridge holds this address, so declare it (0 re-rolls per restart)",
-      check: checkPort,
-    },
     {
       key: "bridgeUrl",
       value: DEFAULT_BRIDGE_URL,
@@ -73,7 +59,7 @@ export const SPEC: ConnectorSpec = {
       key: "ingestUrl",
       value: null,
       doc:
-        "this org's ingest as the bridge reaches it — registered with the session at pairing; null ⇒ http://localhost:<ingestPort>, right when the bridge shares the host",
+        "this org's ingest as the bridge reaches it — registered with the session at pairing; null ⇒ http://localhost:<edge.port>/whatsapp/ingest, right when the bridge shares the host",
       check: aStringOrNull,
     },
   ],

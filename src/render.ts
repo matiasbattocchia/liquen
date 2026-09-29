@@ -826,8 +826,8 @@ function renderMessages(
       };
     }
     let run = cluster.convs.at(-1);
-    // a run is one conversation, one thread: a room's threads (a mailbox's subjects)
-    // print each under its own `<conv thread="…">`
+    // a run is one conversation, one thread: a room's threads print each under their own
+    // `<conv thread="…">`
     if (
       !run || run.conv.address !== e.envelope.conversation.address ||
       (run.conv.thread ?? "") !== (e.envelope.conversation.thread ?? "")

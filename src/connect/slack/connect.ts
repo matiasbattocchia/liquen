@@ -5,25 +5,22 @@
  *         builds the app from it; app creation and app-level tokens have no public API, so
  *         the link is the automation ceiling), then takes what that console shows, each
  *         paste skippable: the OAuth client (id + secret) → vault `slack:app:<client_id>`,
- *         its signing secret (HTTP ingest only), the app-level token (xapp) → vault
+ *         its signing secret (HTTP ingest only), and the app-level token (xapp) → vault
  *         `slack:socket:<app id>` — the Socket Mode carrier, app-scoped, so it keys by the
- *         app id the token carries — and the public redirect URI the user door serves.
- *         With `--bot` and `--user` it also takes the tokens "Install to Workspace" just
- *         issued: xoxb → vault `slack:<team>:org`, the org's shared identity; xoxp → the
- *         dev's own leg, landed exactly as the user door lands one. Which carrier ingest
- *         opens is read off the vault, never chosen here: an xapp row is the socket, a
- *         signing secret is HTTP.
+ *         app id the token carries. With `--bot` and `--user` it also takes the tokens
+ *         "Install to Workspace" just issued: xoxb → vault `slack:<team>:org`, the org's
+ *         shared identity; xoxp → the dev's own leg, landed exactly as the user door lands
+ *         one. Which carrier ingest opens is read off the vault, never chosen here: an
+ *         xapp row is the socket, a signing secret is HTTP.
  *   user  a member's own leg through the OAuth handler (connect/slack/oauth.ts), served for
  *         exactly one sign-in: hand out /start, and the callback lands the grant. Ownership
  *         is decided HERE, at mint time — the agent arg rides `?agent=` — and Slack's
  *         verified `authed_user.id` is what the terminal reports against it. Slack registers
- *         https redirect URLs only, no loopback exception, so this door works only through
- *         the app row's public URI; a dev on their own machine pastes at `app --user`.
- *         That URI's host is something the dev put in front of `connections.slack.oauthPort`
- *         by hand, around the number the app door printed — so the number is picked once,
- *         free of this machine on the run that has nothing declared yet, written to
- *         config.jsonc with the client it was said for, and from then on read, never picked
- *         again. A port taken out from under a registered URI is a refusal, not a new number.
+ *         https redirect URLs only, no loopback exception, so this door is the org's public
+ *         one, `<edge.publicUrl>/slack/oauth/callback` (`callbackAddress`, edge.ts), and
+ *         an org with no public address has no user door — a dev on their own machine
+ *         pastes at `app --user`. The app door fills the manifest's redirect URL from it,
+ *         and the edge forwards the callback to the door's socket (`serveDoor`).
  *
  * Either way THE GRANT WRITES THE MAP, and it is one function (`landSlackUser`) whichever
  * door the token came through:
@@ -49,9 +46,18 @@ import type { Connections } from "../../store/connections.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { findRoot, orgFlag } from "../../config.ts";
+import { callbackAddress, ingestAddress } from "../../edge.ts";
 import { timedFetch } from "../http.ts";
-import { declared, freePort, requireIngest } from "../declare.ts";
-import { type DoorAddress, doorAddress, oneShot, openBrowser } from "../door.ts";
+import { declared, printNext, requireEdge } from "../declare.ts";
+import {
+  type DoorAddress,
+  doorAddress,
+  handOut,
+  oneShot,
+  openBrowser,
+  serveDoor,
+  terminalUser,
+} from "../door.ts";
 import { missingScopes, SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
@@ -192,11 +198,10 @@ export interface SlackApp {
   clientId: string;
   clientSecret: string;
   signingSecret?: string; // verifies HTTP-mode deliveries; socket mode needs none
-  redirectUri?: string; // the public callback registered on the client — where a served sign-in lands
 }
 
 /** Store an OAuth client under its own id (the google app door's twin). The vault's
- *  merge lets a re-paste rotate the secret without losing the sidecar. */
+ *  merge lets a re-paste rotate one secret without losing the other. */
 export async function connectSlackApp(
   app: SlackApp,
   creds: Pick<Credentials, "put">,
@@ -210,24 +215,23 @@ export async function connectSlackApp(
       client_secret: app.clientSecret,
       ...(app.signingSecret ? { signing_secret: app.signingSecret } : {}),
     },
-    ...(app.redirectUri ? { extra: { redirect_uri: app.redirectUri } } : {}),
   });
   return key;
 }
 
-/** The user door's address, from the app row's registered redirect URI. Slack takes https
- *  only and grants loopback no exception, so a URI this door could bind and be reached at
- *  directly does not exist: a loopback or plain-http one is refused at paste time, before
- *  a member's sign-in 404s or trips a certificate warning after consent. */
-export function slackDoor(redirectUri: string, oauthPort: number): DoorAddress {
-  const door = doorAddress(redirectUri, oauthPort);
+/** The user door's address, from the org's redirect URI. Slack takes https only and
+ *  grants loopback no exception, so a URI this door could bind and be reached at directly
+ *  does not exist: a loopback or plain-http one is refused before a member's sign-in 404s
+ *  or trips a certificate warning after consent. */
+export function slackDoor(redirectUri: string): DoorAddress {
+  const door = doorAddress(redirectUri);
   if (!redirectUri.startsWith("https://")) {
     throw new Error(`Slack registers https redirect URLs only: ${redirectUri}`);
   }
   if (door.loopback) {
     throw new Error(
-      `a loopback host cannot carry Slack's https redirect: ${redirectUri} — put a tunnel or ` +
-        `a real host in front of connections.slack.oauthPort and register that`,
+      `a loopback host cannot carry Slack's https redirect: ${redirectUri} — edge.publicUrl ` +
+        `names the org's public address`,
     );
   }
   return door;
@@ -404,15 +408,24 @@ export interface SlackHave {
   app: boolean; // the OAuth client — `slack:app:<client_id>`
   bot: boolean; // the org's identity — `slack:<team>:org`
   appToken: boolean; // the socket carrier, stored beside the bot token
+  signingSecret: boolean; // the HTTP carrier's verification, on an app row
   user: boolean; // at least one principal's own leg — `slack:<team>:<principal>`
 }
 
-/** Sort the vault's slack rows into the four. */
+/** Sort the vault's slack rows into the five. */
 export function slackHave(rows: { key: string; value: Record<string, unknown> }[]): SlackHave {
-  const have: SlackHave = { app: false, bot: false, appToken: false, user: false };
+  const have: SlackHave = {
+    app: false,
+    bot: false,
+    appToken: false,
+    signingSecret: false,
+    user: false,
+  };
   for (const r of rows) {
-    if (r.key.startsWith(APP_PREFIX)) have.app = true;
-    else if (r.key.startsWith(SOCKET_PREFIX)) have.appToken = true;
+    if (r.key.startsWith(APP_PREFIX)) {
+      have.app = true;
+      if (r.value.signing_secret) have.signingSecret = true;
+    } else if (r.key.startsWith(SOCKET_PREFIX)) have.appToken = true;
     else if (r.key.endsWith(":org")) have.bot = true;
     else have.user = true;
   }
@@ -424,9 +437,9 @@ export function slackHave(rows: { key: string; value: Record<string, unknown> }[
  *  (a token is pasted, an app-level token is GENERATED, a grant is approved).
  *
  *  Inbound is the sharp one: ingest reads events over one of two carriers — the app-level
- *  token's socket, or an HTTP request URL on the ingest port — and the second needs a
- *  public address. An org with an identity and no `app_token` receives nothing and is
- *  told so here rather than by silence. */
+ *  token's socket, or an HTTP request URL on the ingest port, verified by the app's
+ *  signing secret, which needs a public address. With neither, the connection refuses to
+ *  start, and this is where that is said rather than in the run's lines alone. */
 export function slackNext(have: SlackHave): string[] {
   const next: string[] = [];
   if (!have.user && !have.bot) {
@@ -441,11 +454,12 @@ export function slackNext(have: SlackHave): string[] {
         "also what an app needs to be installed with bot events)",
     );
   }
-  if (!have.appToken) {
+  if (!have.appToken && !have.signingSecret) {
     next.push(
-      "no socket carrier — Basic Information → App-Level Tokens → Generate Token and " +
-        "Scopes (`connections:write`), pasted at `liquen connect slack app` (without one, " +
-        "ingest needs a PUBLIC request URL)",
+      "nothing to receive events over, so the connection refuses to start — Basic " +
+        "Information → App-Level Tokens → Generate Token and Scopes (`connections:write`), " +
+        "pasted at `liquen connect slack app` (or the app's signing secret there, for events " +
+        "over HTTP at a PUBLIC request URL)",
     );
   }
   if (!have.app) {
@@ -459,13 +473,20 @@ export function slackNext(have: SlackHave): string[] {
 
 /** Fill the manifest's consent lists from the catalog — the seed carries the app's shape
  *  (name, events, socket mode), the config carries what it may do, so the app a door
- *  creates asks for exactly what the user door later requests. */
+ *  creates asks for exactly what the user door later requests — and its redirect URL from
+ *  the org's public door, when there is one: Slack refuses a manifest naming a URL that is
+ *  not https, so an org with no public address registers none. */
 export function withScopes(
   manifest: Record<string, unknown>,
   scopes: { bot: string[]; user: string[] },
+  callback?: string,
 ): Record<string, unknown> {
   const m = structuredClone(manifest) as { oauth_config?: Record<string, unknown> };
-  m.oauth_config = { ...m.oauth_config, scopes: { bot: scopes.bot, user: scopes.user } };
+  m.oauth_config = {
+    ...m.oauth_config,
+    scopes: { bot: scopes.bot, user: scopes.user },
+    ...(callback ? { redirect_urls: [callback] } : {}),
+  };
   return m as Record<string, unknown>;
 }
 
@@ -506,9 +527,7 @@ async function defaultAuthTest(token: string): Promise<AuthTest> {
  *
  *   deno task connect slack app [--bot] [--user]           # the console sitting, pasted
  *   deno task connect slack user [agent] [--app <client_id>] [--scopes "…"]
- *
- * The user door serves its callback on connections.slack.oauthPort — the app door prints that
- * number for the tunnel, and printing it is what fixes it (see the header). */
+ */
 const USAGE = `usage: liquen connect slack app [--bot] [--user]
        liquen connect slack user [agent] [--app <client_id>] [--scopes "…"]
 
@@ -517,19 +536,18 @@ const USAGE = `usage: liquen connect slack app [--bot] [--user]
 
   app     paste what the app's console shows, each empty to skip: the OAuth client (id
           and secret), its signing secret (HTTP ingest only), the app-level token (xapp,
-          the Socket Mode carrier), the public redirect URI the user door serves;
-          --bot also takes the bot token (xoxb, the org's shared identity) and the
-          roster agent that speaks through it; --user also takes your own user token
-          (xoxp) and the agent it belongs to (default: your OS username)
-  user    sign a member in through the app's public redirect URI: [agent]'s own leg
-          (default: your OS username); --app picks the client when the vault holds
+          the Socket Mode carrier); --bot also takes the bot token (xoxb, the org's
+          shared identity) and the roster agent that speaks through it; --user also
+          takes your own user token (xoxp) and the agent it belongs to (default: your
+          OS username)
+  user    sign a member in through the org's public door (edge.publicUrl): [agent]'s own
+          leg (default: your OS username); --app picks the client when the vault holds
           several; --scopes overrides the catalog's (space- or comma-separated)
   --dir <org>   the org, when run from elsewhere`;
 
 if (import.meta.main) {
   await entry(async () => {
     const { openStore } = await import("../../store/mod.ts");
-    const { userInfo } = await import("node:os");
     const { slackConfig } = await import("./config.ts");
     const { readConfig } = await import("../../config.ts");
 
@@ -550,13 +568,7 @@ if (import.meta.main) {
       else if (rest[i].startsWith("--")) flags.set(rest[i].slice(2), rest[++i] ?? "");
       else positional.push(rest[i]);
     }
-    const me = (): string => {
-      try {
-        return userInfo().username;
-      } catch {
-        return "principal";
-      }
-    };
+    const me = terminalUser;
 
     /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
     const lines = Deno.stdin.isTerminal()
@@ -583,8 +595,7 @@ if (import.meta.main) {
     /** What the org still owes after this door — read off the vault, so finishing one door
      *  is where you learn what the next one is. */
     const owed = async (creds: { list: (p: string) => Promise<CredentialRow[]> }) => {
-      const next = slackNext(slackHave(await creds.list("slack:")));
-      if (next.length) console.error(`\nstill to do:\n  ${next.join("\n  ")}`);
+      printNext(slackNext(slackHave(await creds.list("slack:"))));
     };
 
     /** The grant landed and is stored; what it cannot do is the part worth saying out loud,
@@ -597,42 +608,40 @@ if (import.meta.main) {
       );
     };
 
-    const { botScopes, userScopes, oauthPort: fromCatalog } = await slackConfig(root);
-    const alreadyDeclared = "slack" in (await readConfig(root)).connections;
+    const { botScopes, userScopes } = await slackConfig(root);
+    const { edge } = await readConfig(root);
 
     if (verb === "app") {
       const pastes = flags.has("bot") || flags.has("user");
-      // The user door's port is an address the moment it is told: the line printed below
-      // is what the dev puts a tunnel in front of and registers the https URI for. So the
-      // port is picked HERE, once — free of whatever else is up on this machine while the
-      // file has nothing to say — and then never again: a declared port is the operator's,
-      // printed as it stands.
-      const oauthPort = alreadyDeclared ? fromCatalog : freePort(fromCatalog);
-      // a grant makes the workspace deliver from that second on, so the door is the moment
-      // to know somebody is listening (`requireIngest`); the app's own pieces land no grant.
-      // The oauth port rides along so the file gets the number about to be printed, not a
-      // second pick of its own
-      if (pastes) await requireIngest(root, SPEC, { oauthPort });
+      const callback = edge.publicUrl === null ? undefined : callbackAddress(edge, "slack");
       const url = manifestUrl(withScopes(
         JSON.parse(
           await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
         ),
         { bot: botScopes, user: userScopes },
+        callback,
       ));
       console.error(`Create the app (Slack builds it from the manifest):\n  ${url}\n`);
       console.error("Then paste from Basic Information → App Credentials and App-Level Tokens,");
       console.error("and, after Install to Workspace, from OAuth & Permissions. Empty skips.\n");
       console.error(
-        `A member's served sign-in (\`liquen connect slack user\`) answers on port ${oauthPort} ` +
-          `(connections.slack.oauthPort). Put a tunnel or a real host in front of it, register\n` +
-          `  https://<that host>/oauth/slack/callback\n` +
-          `under OAuth & Permissions → Redirect URLs, and paste it below as the public redirect ` +
-          `URI. Your own leg on this machine needs none (\`--user\` pastes it).\n`,
+        edge.publicUrl !== null
+          ? `A member's served sign-in (\`liquen connect slack user\`) comes back to\n` +
+            `  ${callback}\n` +
+            `(the manifest registers it). Events over HTTP instead of the socket land at\n` +
+            `  ${ingestAddress(edge.publicUrl, "slack")}\n` +
+            `(Event Subscriptions → Request URL).\n`
+          : `A member's served sign-in (\`liquen connect slack user\`) needs the org's public ` +
+            `door: set edge.publicUrl and run this door again, so the manifest registers\n` +
+            `  <publicUrl>/slack/oauth/callback\n` +
+            `Your own leg on this machine needs none (\`--user\` pastes it).\n`,
       );
       openBrowser(url);
 
       const creds = await store.vault();
       const log = pastes ? await store.log() : null;
+      let wrote = false;
+      let carrier = false; // a signing secret or an app-level token stored: ingest picks its carrier at boot
       try {
         const clientId = ask("Client ID:");
         if (clientId) {
@@ -642,32 +651,18 @@ if (import.meta.main) {
             Deno.exit(2);
           }
           const signingSecret = ask("Signing secret (HTTP ingest only):");
-          const redirectUri = ask("Public redirect URI (the user door's, https):");
-          if (redirectUri) {
-            try { // a URI the door cannot serve is caught here, not after someone consents
-              slackDoor(redirectUri, oauthPort);
-            } catch (e) {
-              console.error(e instanceof Error ? e.message : String(e));
-              Deno.exit(2);
-            }
-          }
-          const key = await connectSlackApp(
-            { clientId, clientSecret, signingSecret, redirectUri },
-            creds,
-          );
-          console.error(
-            `✓ app stored: ${key}` + (redirectUri ? ` (callback: ${redirectUri})` : ""),
-          );
-          // the number just printed, in the file beside the client it was said for — and
-          // only now, because a door that wrote nothing promised nothing (`requireIngest`
-          // already did this when tokens are being pasted)
-          if (!alreadyDeclared && !pastes) await declared(root, SPEC, { oauthPort });
+          const key = await connectSlackApp({ clientId, clientSecret, signingSecret }, creds);
+          console.error(`✓ app stored: ${key}` + (callback ? ` (callback: ${callback})` : ""));
+          wrote = true;
+          if (signingSecret) carrier = true;
         }
 
         const appToken = ask("App-level token (xapp-…):");
         if (appToken) {
           const { appId } = await connectSlackSocket(appToken, { creds });
           console.error(`✓ socket carrier stored for app ${appId} — ingest reads events over it`);
+          wrote = true;
+          carrier = true;
         }
 
         if (flags.has("bot")) {
@@ -685,6 +680,7 @@ if (import.meta.main) {
               `✓ bot connected: workspace ${team}, bot user ${botUser} → ${agent ?? "the org"}`,
             );
             report(missing, "Reinstall the app to the workspace after adding them.");
+            wrote = true;
           }
         }
 
@@ -701,8 +697,14 @@ if (import.meta.main) {
             });
             console.error(`✓ connected: workspace ${team}, slack user ${user} → ${principal}`);
             report(missing, 'Add them under "User Token Scopes", then "Reinstall to Workspace".');
+            wrote = true;
           }
         }
+        // Slack keeps sending from the install on, whatever this door does, and ingest reads
+        // back what it missed each time it connects; declaring reloads a running org, which
+        // starts the connection or gives one that refused for want of these pieces another
+        // go, and a new carrier restarts a running one, since the carrier is read at boot
+        if (wrote) await declared(root, SPEC, {}, carrier ? [SPEC.name] : []);
         await owed(creds);
         if (pastes) console.error("  (deno task status shows the map)");
       } catch (e) {
@@ -715,12 +717,18 @@ if (import.meta.main) {
       Deno.exit(0);
     }
 
-    // user: a served sign-in. The redirect URI is registered, and its host forwards to the
-    // port the app door printed — the catalog's, as it stands — so the walk is not to move
-    // it: on an org the file does not declare yet (an app row from before the door said
-    // its number) the default is what the dev was told, and what gets written
-    const oauthPort = fromCatalog;
-    await requireIngest(root, SPEC, { oauthPort });
+    // user: a served sign-in through the org's public door
+    if (edge.publicUrl === null) {
+      console.error(
+        `Slack redirects to https only — no loopback — and this org has no public door: ` +
+          `set edge.publicUrl, re-run \`liquen connect slack app\` so the app registers ` +
+          `<publicUrl>/slack/oauth/callback, then this. Your own leg on this machine needs ` +
+          `none: \`liquen connect slack app --user\` pastes it.`,
+      );
+      Deno.exit(2);
+    }
+    const registered = callbackAddress(edge, "slack");
+    await requireEdge(root);
     const { createSlackOAuth } = await import("./oauth.ts");
     const agent = positional[0] ?? me();
     const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? userScopes;
@@ -730,20 +738,9 @@ if (import.meta.main) {
         console.error(e.message);
         Deno.exit(2);
       });
-      const registered = app.extra?.redirect_uri as string | undefined;
-      if (!registered) {
-        console.error(
-          `app ${app.value.client_id} has no public redirect URI, and Slack redirects to https ` +
-            `only — no loopback. Put a tunnel or a real host in front of port ${oauthPort}, ` +
-            `register its https://…/oauth/slack/callback on the app, and paste it at ` +
-            `\`liquen connect slack app\`. Your own leg on this machine needs none: ` +
-            `\`liquen connect slack app --user\` pastes it.`,
-        );
-        Deno.exit(2);
-      }
       let door: DoorAddress;
       try {
-        door = slackDoor(registered, oauthPort);
+        door = slackDoor(registered);
       } catch (e) {
         console.error(e instanceof Error ? e.message : String(e));
         Deno.exit(2);
@@ -762,18 +759,11 @@ if (import.meta.main) {
         store: log,
         onGrant: (g) => (landed = g),
       }));
-      // the port is what the registered URI's host forwards to, so a taken one is a conflict
-      // a human has to settle — the door cannot step over it without going unreachable
       let server: Deno.HttpServer;
       try {
-        server = Deno.serve({ port: door.port, onListen: () => {} }, handler);
+        server = await serveDoor(root, "slack", handler);
       } catch (e) {
-        if (!(e instanceof Deno.errors.AddrInUse)) throw e;
-        console.error(
-          `port ${door.port} is already in use, and it is the port ${door.callback} forwards ` +
-            `to — stop whatever holds it (another org's door, \`deno task status\`), or point ` +
-            `the forwarding at a free port and set connections.slack.oauthPort to match.`,
-        );
+        console.error(e instanceof Error ? e.message : String(e));
         await log.close();
         Deno.exit(2);
       }
@@ -784,14 +774,7 @@ if (import.meta.main) {
           asked.join("\n  ")
         }\n`,
       );
-      // never opened here: the link binds the grant to a name, and this browser's Slack
-      // login would land under it looking perfectly successful
-      console.error(
-        `Send this link to the person signing in:\n  ${start.href}\n` +
-          `It binds the grant to "${agent}" and is good for one sign-in, so it goes to ` +
-          `exactly one person. This door waits until they finish, serving ${door.callback} ` +
-          `on port ${door.port}.`,
-      );
+      handOut(door, start, agent);
       const res = await outcome;
       await server.shutdown();
       await log.close();

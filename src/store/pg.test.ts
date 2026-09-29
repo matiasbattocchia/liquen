@@ -180,11 +180,49 @@ if (url === undefined) {
     const version = async () =>
       await one<number>(sql, "SELECT version AS v FROM schema_version", []);
     try {
-      await (await store.open()).close();
+      const log = await store.open();
+      // mail rows as a store before v4 filed them: by the other party, the subject a thread
+      await log.upsertConnections([{ service: "google", address: "me@org.com" }]);
+      await log.publish([
+        {
+          ts: "2026-09-25T00:00:00Z",
+          type: "message",
+          envelope: {
+            service: "google",
+            connection_address: "me@org.com",
+            conversation: { address: "ana@x.com", kind: "direct", thread: "Invoice 42" },
+            external_id: "mail:m0@org.com",
+          },
+          parts: [{ type: "text", kind: "text", text: "please pay" }],
+        },
+        {
+          ts: "2026-09-25T00:01:00Z",
+          type: "message",
+          payload: { action: "reply", ref_external_id: "mail:m0@org.com" },
+          envelope: {
+            service: "google",
+            connection_address: "me@org.com",
+            conversation: { address: "ana@x.com,bob@y.com", kind: "direct", thread: "Invoice 42" },
+            external_id: "mail:m1@x.com",
+          },
+          parts: [{ type: "text", kind: "text", text: "paid" }],
+        },
+      ]);
+      await log.close();
       assertEquals(await version(), VERSION);
       await sql.unsafe("UPDATE schema_version SET version = 0");
       await (await store.vault()).close(); // either opener raises the store
       assertEquals(await version(), VERSION);
+      // the raise to v4 filed the thread at its root
+      const raised = await store.open();
+      assertEquals(
+        (await raised.read({ types: ["message"] })).map((e) => e.envelope.conversation),
+        [
+          { address: "m0@org.com", kind: "group", name: "Invoice 42" },
+          { address: "m0@org.com", kind: "group", name: "Invoice 42" },
+        ],
+      );
+      await raised.close();
       await sql.unsafe("UPDATE schema_version SET version = $1::integer", [VERSION + 1]);
       await assertRejects(() => store.open(), Error, `schema version ${VERSION + 1}`);
     } finally {

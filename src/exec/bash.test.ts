@@ -80,7 +80,10 @@ Deno.test("bash: the env hook issues extra vars into the spawn (the proxy handof
   const dir = await Deno.makeTempDir();
   try {
     let handle = "mu-grant-first";
-    const bash = bashTool({ workspace: dir, env: () => ({ GOOGLE_WORKSPACE_CLI_TOKEN: handle }) });
+    const bash = bashTool({
+      workspace: dir,
+      env: () => Promise.resolve({ GOOGLE_WORKSPACE_CLI_TOKEN: handle }),
+    });
     const run = async () =>
       String(await bash.execute({ command: "echo $GOOGLE_WORKSPACE_CLI_TOKEN" }, live()));
     assertStringIncludes(await run(), "mu-grant-first");
@@ -243,7 +246,7 @@ Deno.test("bash: an issued LANG stands over the inherited one", async () => {
     await Deno.mkdir(`${dir}/workspace`, { recursive: true });
     const bash = bashTool({
       workspace: `${dir}/workspace`,
-      env: () => ({ LANG: "es_AR.UTF-8" }),
+      env: () => Promise.resolve({ LANG: "es_AR.UTF-8" }),
     });
     const out = String(await bash.execute({ command: 'echo "$LANG"' }, live()));
     assertEquals(out, "es_AR.UTF-8");

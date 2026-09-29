@@ -8,17 +8,14 @@
  * list (`user_scope`) — so the app you create and the consent you request cannot drift.
  */
 
-import { checkPort, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
 
-export const DEFAULT_INGEST_PORT = 8789;
-export const DEFAULT_OAUTH_PORT = 8790;
-/** The BOT is one identity for the whole org: it sees a channel only once invited, so
- *  reading the roster, the history and the names of what it was invited to is the whole
- *  job — the four `:read`s are what `conversations.info` needs to name a room of each
- *  kind — and the attachments included: `files:read` is what lets the bot token fetch a
- *  shared file's `url_private` (the media seam's download); without it Slack answers a
- *  sign-in page. */
-export const DEFAULT_BOT_SCOPES = [
+/** What either leg reads. A token sees a room only once in it, so reading the roster,
+ *  the history and the names of what it is in is the whole job — the four `:read`s are
+ *  what `conversations.info` and `conversations.members` need for a room of each kind —
+ *  and the attachments included: `files:read` is what lets a token fetch a shared file's
+ *  `url_private` (the media seam's download); without it Slack answers a sign-in page. */
+const READ_SCOPES = [
   "channels:history",
   "groups:history",
   "im:history",
@@ -31,21 +28,41 @@ export const DEFAULT_BOT_SCOPES = [
   // the profile email — the handle the classifier scans the roster with (§4)
   "users:read.email",
   "files:read",
+];
+/** The BOT is one identity for the whole org. Its writes are what the rooms port asks
+ *  of it (`rooms.ts`): a public channel is `channels:manage` (create, rename, kick, leave)
+ *  and `channels:join`, a private one `groups:write`, a direct room `im:write` /
+ *  `mpim:write`; an invite is the `:write.invites` of the room's kind. */
+export const DEFAULT_BOT_SCOPES = [
+  ...READ_SCOPES,
   "chat:write",
+  "channels:manage",
+  "channels:join",
+  "channels:write.invites",
+  "groups:write",
+  "groups:write.invites",
+  "im:write",
+  "mpim:write",
 ];
 /** A USER token acts AS that human and therefore sees what they see — and search has no
- *  bot equivalent at all. */
+ *  bot equivalent at all. The rooms port's writes are the same acts under a user's own
+ *  names: `channels:write` is the user side of `channels:manage` and `channels:join`.
+ *  `im:write` is also what the user door calls `conversations.open` with to resolve the
+ *  self-DM: notes-to-self IS the mind on this surface (§4), and without it the binding
+ *  cannot be made. */
 export const DEFAULT_USER_SCOPES = [
-  ...DEFAULT_BOT_SCOPES,
+  ...READ_SCOPES,
+  "chat:write",
   "search:read",
-  // conversations.open, which the user door calls to resolve the self-DM: notes-to-self
-  // IS the mind on this surface (§4), and without this the binding cannot be made
+  "channels:write",
+  "channels:write.invites",
+  "groups:write",
+  "groups:write.invites",
   "im:write",
+  "mpim:write",
 ];
 
 export interface SlackConfig {
-  ingestPort: number;
-  oauthPort: number;
   botScopes: string[];
   userScopes: string[];
 }
@@ -54,19 +71,6 @@ export const SPEC: ConnectorSpec = {
   name: "slack",
   doc: "slack — ingest (HTTP mode) and dispatch",
   entries: [
-    {
-      key: "ingestPort",
-      value: DEFAULT_INGEST_PORT,
-      doc: "the HTTP-mode ingest port (Socket Mode needs none); 0 = any free port, announced",
-      check: checkPort,
-    },
-    {
-      key: "oauthPort",
-      value: DEFAULT_OAUTH_PORT,
-      doc:
-        "the port the user door binds for whatever terminates TLS at the app's redirect URI to forward to",
-      check: checkPort,
-    },
     {
       key: "botScopes",
       value: DEFAULT_BOT_SCOPES,

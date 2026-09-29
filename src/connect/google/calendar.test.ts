@@ -170,7 +170,7 @@ Deno.test("a new event is a create: a plain calendar message keyed on the stable
     assertEquals(row.envelope.connection_address, "ana@example.com");
     // `primary` resolves to its true id — the grant's email (meeting ids copy across
     // attendee calendars, so a grant-relative referent would collide two grants' views)
-    assertEquals(row.envelope.conversation.address, "calendar:ana@example.com");
+    assertEquals(row.envelope.conversation.address, "ana@example.com");
     assertEquals(row.envelope.conversation.kind, "broadcast"); // fan-out, not a room
     assertEquals(row.envelope.external_id, "calendar:ana@example.com:ev1"); // the STABLE referent
     assertEquals(row.payload?.action, undefined); // a create has no action
@@ -297,7 +297,7 @@ Deno.test("a named calendar keeps its own id — only `primary` resolves to the 
       [team],
     ).tick();
 
-    assertEquals(cap.rows[0].envelope.conversation.address, `calendar:${team}`);
+    assertEquals(cap.rows[0].envelope.conversation.address, team);
     assertEquals(cap.rows[0].envelope.external_id, `calendar:${team}:ev9`);
     assertEquals((await syncOf(creds))![team], "t2"); // the cursor keys on the CONFIGURED id
   });

@@ -4227,3 +4227,561 @@ reuse. A file read while off answers "no such file" without starting a container
 Measured live: the stop past the window took 1.1 s, and the note file was gone. The next
 bash call started a new container (a different PID 1 start time) in 4 s, and no restart
 was reported. The exec suite passes against the gateway (68).
+
+### A daily quota is not weather, and a refusal keeps its words (2026-09-27) — LANDED
+
+Found in a chiche run with a child: the builder (`gemini-3.8-flash`, a free-tier key)
+used up its 20 requests per day mid-build. Each wish then sat 123 s and 132 s with no event —
+the Interactions client's own retries on a 429 (5 requests, 8 s apart, measured on a
+local server) under nu's ladder (3 attempts, 5 s and 20 s) — and ended in `429 API error
+occurred: {"httpMeta":…}`, which told the voice nothing, so it went on promising the game.
+The API sends a refusal as an event stream (`event: error`, `data: {"error":{…}}`) the
+SDK does not parse; `explained` in the Google transport reads the server's words from the
+raw body, and `retryable` gives up at once on a quota counted per day (the API says "limit:
+20 requests per day on Free Tier", measured). What stays: the SDK's own 32 s before the
+error reaches nu, since it retries on the status alone.
+
+### Local is a team chat: `send` opens rooms, addresses wear no prefix (2026-09-28) — LANDED
+
+Agents could reach each other one pair at a time — `send(to: "bo")` made the pair's room —
+and nothing could open a room of three. Now `send(to:)` takes a `,`-separated list, each
+part resolved as a single recipient is (an agent's id, a session address, the roster's
+name for an agent — `Laura` reaches agent laura, and a name two agents answer to is
+refused with both named), and the list is a local room: unnamed, a DIRECT room whose
+address is its sorted members joined by `,` (`mind@ana,mind@bo,mind@cy`, the sender always
+in it, up to 8 besides — Slack's `conversations.open` takes 1 to 8 users and adds the
+caller, one rule on every service); with `subject`, a room of its own — `ops` a private
+group, `#ops` a public channel — at a minted address, its name and kind in the new
+`conversations` table (both engines; a local name is unique per org by a partial index),
+every member enrolled. A name that exists with these very members is that room; with
+other members the send is refused and names the address; `subject` on a direct room, or
+one that differs from a room's name, is refused: `send` creates and never manages —
+join, leave and rename are a follow-up verb. A list the roster does not answer to stays
+whole for the wire (a mail to several addresses was already one conversation); one that
+mixes agents and strangers is refused. The whole `to` is tried first — a known conversation,
+a room by its name — so a copied address in any order lands in the same room.
+
+`route` (§4) reads a direct room's members off the address and asks the memberships for a
+group's, so a named session wakes in either; a mind sees a room through its enrollment as
+ever. A channel's history is every agent's to `search` (`historyFor` gained the public
+branch); its window, wake and writes stay its members'. A broadcast (a calendar) is
+refused as a send target.
+
+Conversation addresses wear no prefix anywhere now: `dm:` is gone, and a calendar is
+addressed by its id (its merge key keeps `calendar:`, as every external id keeps its
+service word). Migration v12 (SQLite) and v3 (Postgres) rewrite events, memberships and
+timers in place. A pre-existing org's doc folders under `conversations/dm:…/` and media
+under `conversations/dm_…/` are files the store does not rewrite: rename them by hand,
+`dm:a:b` → `a,b` (media: `dm_a_b` → `a_b`).
+
+Decided along the way, recorded for the follow-ups: `direct` covers im AND mpim (a fixed
+roster, any size, member-defined); `group` and `channel` are rooms whose members change,
+and are what the table is for; `kind` is never counted from members. The table holds
+local rooms only — a wire room's facts ride its events, and a connector gains nothing
+from a copy it cannot keep in sync. Mail threads as groups (a Cc added mid-thread moves
+the thread to a new `direct` conversation today) is its own rework. Open on other
+services: Slack group DMs need `mpim:write`, channels `channels:manage`; Teams chats
+create under `Chat.ReadWrite`, already asked for; open-bsp-whatsmeow's server exposes no
+group route (whatsmeow underneath has `CreateGroup` and its siblings).
+
+### Ctrl-C in the REPL cancels the running turn (2026-09-28) — LANDED
+
+The REPL follows the door's turn edges (`status` lines, which it read and dropped before):
+Ctrl-C while the session is busy sends the door's `control` cancel, the same request
+`/cancel` makes, and leaves the typed line as it was; while idle it clears the line, as a
+shell's does. The line editor offers Ctrl-C to its surface first (`interrupt`). A tail
+that opens mid-turn gets the busy edge it missed: the door keeps which sessions are
+between a busy and an idle and pushes `busy` on the tail's open, so a REPL attached late
+can still cut the turn it walked in on.
+
+The hard stop is the door's alone. Ingest reclassifying a principal's "stop" typed on a
+chat surface into a `control` row, which DESIGN promised and nothing built, is dropped:
+that word is a `message`, the soft stop, and the model decides what to drop.
+
+### The command line reads as one (2026-09-28) — LANDED
+
+- `liquen connect --remove <service>:<address>` takes a grant back, the target as `liquen
+  status` prints it (`connect/remove.ts`): the row soft-deleted, its secret out of the vault
+  (`Credentials.delete`, both engines) unless another live connection shares it, and
+  `connections.<service>` out of the catalog with the service's last connection
+  (`undeclareConnection`). A token grant has no row and is removed by its vault key; the
+  harness's own keys (`media:sign`) are no target. Open: the platform's side — a Slack
+  install, a Google grant, a paired WhatsApp device — is still revoked by hand on the
+  platform.
+- `liquen connect` bare prints its usage, naming the org's doors, as `agent`, `schedule` and
+  `cli` already did; the map is `liquen status` alone.
+- `liquen start -D` detaches: the supervisor in its own session, its bytes appended to
+  `data/run/liquen.log`, the prompt back once it holds its lock. On a terminal each process's
+  tag has its own color. Open: the log only grows.
+- Found: an org's task list is frozen at `init`, so `liquen` bare named only the commands of
+  the release it was made from (`~/new` had no `schedule`, `stop` or `update`). `liquen
+  update` now syncs the tasks from the release it lands on, and the scaffold's tasks carry
+  descriptions, so `liquen` bare reads as a usage.
+- `lq` is installed as a second name for the same command (`deno install -n lq`); no widely
+  used tool holds it.
+
+### Every connect door closes with what to do next (2026-09-28) — LANDED
+
+The Microsoft and Google app doors print the whole portal walk before they ask for
+anything (`appGuide`): Entra's registration, secret, delegated permissions ticked by hand
+and admin consent; Google's project, the APIs its scopes reach, the consent screen's
+audience and the client. Both lists are read off the catalog's `scopes`, the ones a
+sign-in asks for. Every door closes on one `next:` list (`printNext`): the app doors name
+the account door, and a door that wrote a fronted grant (Google, Microsoft, GitHub,
+token) names `liquen start`, or `liquen stop` then `liquen start` when the org is up
+(`startStep`), because main picks the rows it fronts at boot and the supervisor reads the
+catalog once. Microsoft's account door also names `notificationUrl` while it is null.
+Slack's and GitHub's owed pieces moved onto the same heading.
+
+### `search` narrows to one account (2026-09-28) — LANDED
+
+`search(connection:)` keeps only the rows that rode one of the agent's accounts, named
+the way `send(connection:)` names one (`accountNamed`: the `<conn>` name, any part of it,
+or the address); an account nobody wears, or a name two wear, is the call's error with
+the agent's accounts listed. The store's read already filtered on the connection; the
+tool now exposes it.
+
+### A mail thread is a conversation (2026-09-28) — LANDED
+
+A mail conversation was the set of other parties, comma-joined, with the subject a label
+on each row: a Cc added mid-thread moved the thread to another conversation, every thread
+with one person shared a room, and a new subject to the same people opened nothing. Now a
+thread is a `group` addressed at its ROOT, the Message-ID of the message that opened it,
+and named by its subject (`Re:`/`Fwd:` off). `threadRoot` reads the root off a message:
+the conversation the log already files the answered message under, else `References`'
+first id, else `In-Reply-To`, else the message's own id — so a reply joins the thread
+however its client spelled the headers, and a thread the log holds is joined at the log's
+word. Both wires parse `References`; the poll gets the log to read (`PollIngestDeps.read`).
+Every row keeps its recipients (`extra.mail`: To and Cc), and a send into a thread goes to
+the CAST — everyone the thread's rows name but the account, senders included — answering
+the line `re` names or else the thread's latest, under `Re:` its name, with `References`
+root-then-parent. A send to addresses opens a thread: the dispatcher mints the id, and
+the row MOVES to it (`DeliveryPatch.conversation`, both engines), where the replies will
+land. `send(subject:)` names the conversation a first send opens, on mail as on a local
+list; on a conversation that wears another name it is refused — a send carries no rename,
+a new subject is a new thread. `conversation.thread` is stamped by nothing now.
+
+Migration v13 (SQLite) and v4 (Postgres) file every mail row by thread: the reply chain
+walked up through the log (`MAIL_THREADS`, a recursive CTE per engine), the furthest id
+reached the root — the last the log holds, or the one answered and never seen — the
+subject the name. Attachments already on the shelf stay where they are (a file part's
+URI is absolute); new ones land under the thread's root. Timers armed in a mail
+conversation keep their old address.
+
+### The `conversation` tool: a local room's members and name (2026-09-28) — LANDED
+
+`send` opens rooms and never changes them; `conversation(action, which?, who?, name?)`
+is the verb that does. `show` with no `which` lists the agent's rooms and the public
+channels (each with its members and whether the agent is in it); with one, the room.
+`join` enters a channel (a group needs a member's `add`), `leave` leaves, `add` and
+`remove` take `who` — agents by id, name or session address, `,`-separated, as `send(to:)`
+takes them — and `rename` takes `name`, the kind kept (`#` is what a channel wears, not
+what makes one; `renameConversation` in both engines, the name unique as at creation).
+Any member may act; taking yourself out is `leave`. The last one out closes the room
+(`closeConversation`: soft, the rows stay, the name is free). Every change is said in the
+room as the agent's own line — `added mind@cy`, `renamed to ops-q4`, `left` — so the
+members read it where it happened and the one just added wakes on it; a leave is said
+before the leaving, the one write the law would refuse after. A direct room is its
+members and takes no change; `which` on a wire conversation is refused, its members
+being the wire's. The tool joins the offer the way `send` does: named in an agent's
+`tools`.
+
+### One public door: `edge.publicUrl`, the edge process, the tunnel as an argv (2026-09-28) — LANDED
+
+Every address a service is handed now hangs off one base by path: `<edge.publicUrl>/
+<service>/ingest` is where it pushes, `<edge.publicUrl>/<service>/oauth/callback` where
+its sign-in returns (`ingestAddress` · `callbackAddress`, `src/edge.ts`). The org asks one
+thing of whatever puts it on the internet — publish `edge.port` at that https address —
+so cloudflared, ngrok, Tailscale Funnel, a host's nginx and a cloud's function router are
+all the same tool to it, and none is named in the harness. `edge.tunnel` is an argv that
+`liquen start` keeps alive beside the org (a `Proc` is a name and a command now, not a
+module); `edge.port` (8787) is what it publishes. The edge process stands behind that
+port under a `publicUrl`, one more child of the supervisor: it reads each connection's
+spec for `ingestPort` and `oauthPort` and forwards `/<service>/ingest/…` to the ingest
+with the prefix stripped, `/<service>/oauth/…` to the door with the path as it came,
+answering 502 with the port's number when nothing is there. On the edge tier the same
+grammar is a function per service under the functions base, and nothing forwards.
+
+The doors derive the address instead of asking for it. The Google and Microsoft app rows
+lose their pasted `redirect_uri`; the guides print `callbackAddress`, the account doors
+send it, and the loopback callback reads `http://localhost:<oauthPort>/<service>/oauth/
+callback` — the same grammar as the public one, so an app registered before this entry
+needs the new spelling added to its redirect URIs. Slack's manifest carries
+`oauth_config.redirect_urls` when the org has a public door, and the user door refuses
+without one. GitHub's form link turns the webhook on at `<publicUrl>/github/ingest`.
+Teams' `connections.microsoft.notificationUrl` is gone: the keeper dials
+`ingestAddress(publicUrl, "microsoft")`, every subscription record carries the `url` it
+was made for, and one made for another address is deleted and made anew — the gap where a
+changed address never reached a live subscription is closed. Every ingest names itself to
+a `GET /` (`serveIngest`, the middle word of its knob), which is what `reached` reads:
+the GitHub app door and the Microsoft account door fetch the address they just handed
+out and print whether it answered as the service, so a tunnel that is down, aimed at
+another port or in front of another org is said at the terminal, not by a webhook that
+never arrives.
+
+Left out on purpose: capturing the random hostname a quick tunnel prints. It is one
+tool's output format, and it changes on every restart, which breaks every redirect URI
+and webhook already registered — only a fixed hostname works as `publicUrl`. WhatsApp's
+`ingestUrl` stays as it is: the bridge's private address for this org, which may be a
+Docker alias no tunnel ever sees. A door that is a one-shot process (the sign-ins) is not
+checked end to end; the link the human opens fails visibly if the path is down.
+
+### One port: the connectors listen on sockets, the edge always stands (2026-09-28) — LANDED
+
+The org binds one port, `edge.port`, and nothing else. Every connector serves its ingest
+on a Unix socket under the org's own folder, `data/run/<service>.sock`, and a sign-in door
+on `data/run/<service>-oauth.sock` while it is open (`socketOf`, `src/edge.ts`;
+`serveSocket` · `serveIngest` · `serveLeg`, `src/connect/serve.ts`; `serveDoor`,
+`src/connect/door.ts`). The location is the whole address: `ingestPort` and `oauthPort`
+are gone from every connector spec, `checkPort` from the catalog, `freePort` and
+`pickPorts` from the doors, and with them the port-moving lines a door printed on a busy
+machine and the `port in use — set connections.<x>.<knob>` restart loop. Two orgs on one
+machine collide on `edge.port` alone. A socket somebody answers on is refused
+(`already served`), a file nobody answers on is a run that ended and is replaced, and a
+path past `sun_path`'s length is refused in a sentence at bind time.
+
+The edge is one child of the supervisor always, not only under a `publicUrl`, and it
+forwards each path to the socket the grammar names through a Unix-socket HTTP client
+(`Deno.createHttpClient({ proxy: { transport: "unix" } })`, one per socket, cached), so
+its door table and the spec import it needed are gone. Whatever dials the org on this
+host dials the edge: the loopback callback reads `http://localhost:<edge.port>/<service>/
+oauth/callback` (`callbackAddress(edge, service)`), the whatsmeow bridge posts to
+`http://localhost:<edge.port>/whatsapp/ingest` (`ingestUrlOf(cfg, edge.port)`; `ingestUrl`
+still overrides it for a bridge in a container), and `gh webhook forward` targets
+`http://localhost:<edge.port>/github/ingest`. `ingestAddress(base, service)` takes the
+base the dialer can reach — `publicUrl`, or `localBase(port)` — and the callers that need
+the internet (Teams, the Slack Events URL, the GitHub webhook) check `publicUrl` for null
+themselves.
+
+Two doors change order. The Google and Microsoft account doors need the org running,
+because the callback lands on the edge: `requireEdge` (`src/connect/declare.ts`) probes
+`edge.port` and waits the way `requireIngest` waits on the socket, so `liquen start` in
+the next terminal lets the door go on. The loopback redirect URI moved with it, from the
+connector's port to `edge.port`: an app registered before this entry needs
+`http://localhost:8787/<service>/oauth/callback` added to its redirect URIs. Every org's
+`config.jsonc` loses its port keys, because an unknown key is a boot error.
+
+Kept: Slack's Socket Mode and the polls, which go through no socket and no edge; the
+GitHub xproc test now dials the child's socket instead of scraping an announced port.
+
+A custom connector reaches the edge the same way, with nothing to add to it: the edge
+routes by the grammar, so `serveIngest` and `serveDoor` under the connection's name are
+the whole of it. `serveDoor`, `doorAddress`, `oneShot` and `openBrowser` are exported
+through `@liquen/liquen/connector` for an org's own sign-in door, and a connection whose
+name the edge cannot route (`acme_crm`, `Acme`) is a boot error instead of a connector
+that starts and is never reached (`SERVICE_NAME`, `src/config.ts`).
+
+### Slack and Teams read the gap back: the log is the cursor (2026-09-28) — LANDED
+
+Neither wire holds what it could not deliver. Slack drops an event that has no socket to
+take it and gives up an HTTP delivery after minutes of retries; Graph retries a notice for
+a few hours and lets a subscription lapse after three days. A laptop closed for a night
+lost every message, join and leave in between, and nothing ever filled it. Now both
+ingests read the gap back from the history APIs, and the CURSOR IS THE LOG: the newest row
+the log holds at the account's anchor is where the listening stopped, the newest row in a
+room is where that room stopped, and the API is asked from there. Nothing new is stored to
+know where to resume, an account with no row at all was never heard and is left alone,
+and a workspace connected an hour ago catches up from its connect note.
+
+Slack (`src/connect/slack/catchup.ts`): at boot on either carrier, and whenever a socket
+comes back after more than five seconds — a `disconnect` refresh now opens the successor
+before the old socket closes (`slackSocket`, the carrier's `onOpen` says how long it was
+down), so a routine refresh leaves no gap and asks for nothing. `users.conversations` on
+the bot's token and every bound user's gives the rooms and, per room, the tokens that see
+it — the delivery's `authorizations`, so the read-back anchors and enrolls as the events
+would; a user token's list is that member's membership now, and the leaves the gap
+swallowed are deleted from it. `conversations.history` from the room's newest row, and
+`conversations.replies` for a thread whose `latest_reply` is newer, through `mapMessage`.
+Every Slack row is now stamped with the message's own time (`slackTime`), live too, so
+the read-back and the live delivery of one message are one row and the batch reads in the
+room's order. Internal apps keep the standard rate limits; a 429 is waited out once.
+
+Teams (`createTeamsCatchUp`): at boot, with or without a public door — the one poll the
+terms allow, once per process — so an org with no `edge.publicUrl` now hears Teams at
+every restart instead of never. Per grant, from its newest Teams row (mail and calendar
+rows share the connection and are filtered out): `/me/chats` newest first by
+`lastMessagePreview`, stopping at the first chat that last spoke before the gap, each
+chat's messages by `lastModifiedDateTime gt` its own newest row; every channel of every
+joined team with `$expand=replies`, walked newest chain first until one that last moved
+before the gap. The mapping the webhook used is hoisted (`teamsMapper`) and shared. A
+message the log already holds is told only what changed on it — its edit when newer than
+the row, else its reactions (the message with `lastEditedDateTime` cleared takes the
+reaction path), else its deletion — and a deletion of a message never heard is nothing.
+
+Teams kinds switch with the user's decision: a group chat is a `group` (a roster people
+are added to under a topic, not a member-defined pair), a meeting's chat stays `group`,
+oneOnOne stays `direct`; a private channel is a `group`, standard and shared channels
+`channel`. `kindOf` reads Graph's `chatType` / `membershipType`, and the directory stamps
+the kind onto every row the place already has the first time it resolves in a process —
+`Log.stampKind(service, conversation, kind)`, an UPDATE on both substrates that moves no
+`updated_at` and wakes nobody — so the rows labelled `direct` before this entry relabel
+themselves as they are met.
+
+The rows are LIVE on both wires, one batch per account, each row at its message's time:
+what is owed is decided by the attention rules and the boot floor exactly as for the
+WhatsApp bridge's offline queue, and a message already in the log merges on its
+`external_id` and wakes nobody. Not read back on Slack: an edit or a delete of a message
+the log already had, reactions, and replies to a thread whose root is older than the gap
+(history lists roots only, and a reply moves no root). Both are reachable by `search`.
+
+### The rooms port: a wire's rooms, opened and changed through its own API (2026-09-28) — LANDED
+
+`XiPorts.rooms` is the seam: one `RoomsPort` per service whose API opens and changes
+conversations, with the legs that API has — `open`, `members`, `join`, `leave`, `add`,
+`remove`, `rename` — each answering within its call and keeping no queue, the `contact`
+port's shape. Every leg takes a `RoomsActor`: the connection the act rides and the agent
+acting, so a port posts with the grant the dispatcher would post with. The gate is the
+grant's consent: a leg whose scope the grant lacks refuses by naming the scope, which is
+how an account signed in before the scope was asked stays unable until it signs in
+again. Main wires a port where the connection is declared, as it wires `contact`; the
+runner's host carries it. No service implements one in this entry: the seam lands first,
+and Slack, Teams and WhatsApp plug in one at a time.
+
+Two callers use it. `conversation(which:)` at a conversation the log holds on a wire
+reaches the wire's port instead of refusing: `show` answers the record's name and kind,
+the account, and the people as the port lists them (with the names the wire gives them);
+the verbs go through the port's legs, and a verb the service has no leg for is refused by
+name. Nothing is said in the room — the wire says the change, and the ingest brings that
+line back. `who` names people the way `contact` takes one, by address or by the name they
+go by here, kept to the account the room is on (`personOn`, the resolver `contact` used
+inline, now shared), and a bare handle nobody has spoken as is an address. A direct
+conversation takes no change, on a wire as locally. `send(to:)` at a list of people on
+one wire opens a room there through `open`, unnamed a direct room and named by `subject`
+a group or a channel, on the account the model names or the one the people are on — two
+accounts are refused, and strangers to every record fall to the one account of the
+agent's that can open a room, or ask for `connection`. The room is opened by the send
+itself, after the gate has judged the call: the target a rule sees is the account alone,
+since the room has no address yet, and the send lands under the address, kind and name
+the wire answered. A wire with no port keeps the list whole, the mail case, as before.
+
+The permission target of `conversation` on a wire is the account and the conversation,
+so a rule pinned to either matches; the tool's description and `tools` doc say what a
+wire's rooms take. Not in this entry: the scopes each wire's legs need, which land with
+each port.
+
+### Slack rooms: the port over `conversations.*`, opened by the grant that posts (2026-09-28) — LANDED
+
+The first `RoomsPort` (`src/connect/slack/rooms.ts`): `open` is `conversations.open` for
+a direct room and `conversations.create` plus `conversations.invite` for a named one,
+private for a group and public for a channel; `members` pages `conversations.members`;
+`join`, `leave`, `add`, `remove`, `rename` are the method of the same name, a kick one
+person a call. Each leg resolves its token through the dispatcher's own resolver, now
+`slackTokenFor` in `dispatch.ts`, so the grant that opens or changes a room is the one
+that posts in it. Slack's `missing_scope` answer names the scope it needed, and the leg's
+refusal carries that name with the remedy: the account signs in again. Every other named
+refusal — `too_many_users`, `name_taken`, `cant_leave_general` — passes through as the
+wire's word, code 400 as the dispatcher classes it.
+
+The catalog's two scope lists are restructured around the port's writes: the reads are
+one shared list, the bot adds `chat:write`, `channels:manage`, `channels:join`,
+`channels:write.invites`, `groups:write`, `groups:write.invites`, `im:write` and
+`mpim:write`; the user adds `chat:write`, `search:read` and the same writes under the
+user's own names, `channels:write` standing where the bot has `channels:manage` and
+`channels:join`. The lists are defaults: an org whose `config.jsonc` already wrote
+`botScopes` or `userScopes` keeps what it wrote, and a token granted under the shorter ask
+refuses each write by naming its scope until it signs in again (the manifest `liquen
+connect slack app` prints carries the new lists; a bot needs the app reinstalled to the
+workspace).
+
+Main wires the port when `connections.slack` is declared, over the vault, closed with the
+rest at stop. One harness change beside it: a wire's `members` come back as addresses,
+and `conversation(show)` names each the way the log knows them, from the newest line
+they wrote on the account, for whoever the port left bare — so a Slack roster reads as
+people, not ids, wherever they have spoken. Tests: `rooms.test.ts` (the calls each leg
+makes, the token each rides, the scope refusal, the channel name), `connect.test.ts`
+(the two lists), `integration.test.ts` (the log naming). Next in the order: Teams rooms,
+then WhatsApp rooms once the bridge has group routes.
+
+### SIGBUS in the org's processes: a file watcher released SQLite's locks (2026-09-28) — LANDED
+
+The org's children died of SIGBUS together, main and WhatsApp most often, a few times a day
+on `../new` (18 in one log; `log.db.corrupt-20260910` may be the same cause, unproven). The
+kernel's lock table showed it: long-lived processes held `log.db` and `log.db-shm` open and
+mapped but no lock on either, and every one of them lost both in the same instant another
+process of the org exited. Reproduced off the org: a SQLite connection beside a
+`Deno.watchFs` on the database's folder (Deno 2.9.6, recursive or not) loses its locks when
+another process exits; without the watch the locks survive. POSIX drops every lock a
+process holds on a file when any descriptor it has on that file closes, and the watch opens
+and closes what changed.
+
+SQLite's WAL coordination between processes is exactly those locks, so a process that lost
+them is invisible: the next one to open the database finds the shared-memory file unclaimed
+and rebuilds it under everyone's mapping (SIGBUS on the next touch), and a connection closing
+takes the exclusive lock and deletes `-wal` and `-shm` as the last one out — seen live with
+five processes running. Google standing down every five minutes on an expired grant made
+the exits frequent.
+
+The tail no longer watches: a subscription polls every `POLL_MS` (300ms), the backstop it
+already had, and a publish wakes the subscriptions of the process that made it at once. The
+wake is not a nicety: the mind moves from step to step on its own writes, and with the poll
+alone a cancel landing in that gap reached a lease whose doorbell subscribed after it, left
+for the heartbeat (6.7s) — three tests caught it. Another process's row waits at most one
+poll. The rule
+is in `store/log.ts` and DESIGN §2: nothing in a process opens the database's files but
+SQLite. Left for later if the poll's cost ever shows: gate it on `PRAGMA data_version`, a
+per-connection counter that moves when another process commits (checked here).
+
+### Teams rooms: the port over Graph chats and channels, on the member's own grant (2026-09-28) — LANDED
+
+The second `RoomsPort` (`src/connect/microsoft/rooms.ts`): `open` with one person and no
+name is the oneOnOne chat of the two, found or made through `POST /chats`; a named
+`group` is a group chat under its topic, the member first among its people; a `channel`
+is named `#Team / Channel`, the team found by name among the ones the member is in and a
+standard channel made there. An unnamed list of two or more is refused: a Teams group
+chat is made anew on every call and is named by its topic, so there is no room a list
+finds again the way Slack's mpim or a local direct room is found, and the refusal says to
+name it. `members` pages the roster and answers user ids with Teams' display names;
+`add` posts one member a call (a chat member sees the whole history); `remove` and
+`leave` look the membership id up on the roster and delete it; `rename` is the topic or
+the display name. There is no `join`, since Teams has no way for a member to join a chat
+or a channel by their own hand. Every leg rides the account's own grant through a grant
+broker, as the dispatcher posts, and reads the member's own user id off the grant row.
+
+Graph refuses a call short of its permission with a 403 that does not always name the
+permission, so each leg carries the name of the one it needs and its refusal says it
+with the remedy. The five the port needs — `Chat.Create`, `ChatMember.ReadWrite`,
+`Channel.Create`, `ChannelMember.ReadWrite.All`, `ChannelSettings.ReadWrite.All` — join
+the catalog's default `scopes`; all but `Chat.Create` are the tenant admin's to consent
+to on the registration, which the app guide now says. An org whose `config.jsonc` already
+wrote `scopes` keeps what it wrote, and a grant made under the shorter ask refuses each
+leg by name until it signs in again, consent adding up.
+
+Main wires the port when `connections.microsoft` is declared, over the vault it already
+opens for Slack's, with a grant broker of its own. Tests: `rooms.test.ts` (the calls each
+leg makes and the body each carries, the one-to-one rule, the team lookup, the paged
+roster, the 403 wording, the topic and channel-name folding). Not live-smoked: the
+Teams grant on this machine's org has not been re-consented under the longer ask. Next
+in the order: WhatsApp rooms once the bridge has group routes.
+
+### WhatsApp rooms: the port over the bridge's group routes, on the session's own account (2026-09-28) — LANDED
+
+The bridge (`~/open-bsp-whatsmeow`, commit aac58b7) gained six routes at
+`/groups/{session}`: create, read, rename, leave, add members, remove members, each on
+the session its messages ride and each answering when WhatsApp has. Members are canonical
+digits both ways; a removal is resolved against the roster and sent under the JID the
+group holds the person by, so a LID-addressed group is no exception. WhatsApp's own
+refusals pass through as 4xx (its 401 as a 403, since a 401 from the bridge is the
+bearer), and a seat the server would not fill is named with the code and what it means
+for the person — 403 their settings keep strangers from adding them, 409 already in: a
+create keeps the group and lists them under `not_added`, an add fails naming them.
+
+The third `RoomsPort` (`src/connect/whatsapp/rooms.ts`): `open` with a name posts the
+group and answers its JID and subject; one person unnamed is their own chat, answered
+without a call; a bare list of two or more is refused with the way to name it, and so is
+`#name`, since WhatsApp makes no channel. `members`, `add`, `remove`, `rename` and `leave`
+are one call each. No `join`: a group is entered by invite, which no address carries.
+Main wires the port when `connections.whatsapp` is declared, on the bridge and bearer the
+address book already uses; it needs no vault. Tests: `rooms.test.ts` (the calls each leg
+makes, the two refusals, the roster naming, the bridge's refusal class); `groups_test.go`
+on the bridge (the JID rules, the error mapping, the seat failures, the roster
+resolution). Not live-smoked: the bridge running on this machine predates the routes.
+The rooms order the user confirmed — Slack, Teams, WhatsApp — is complete.
+
+### WhatsApp group roster changes reach the log as the group's own line (2026-09-28) — LANDED
+
+whatsmeow announces every roster change (`events.GroupInfo`'s `Join`/`Leave`, and
+`events.JoinedGroup` for the account's own arrival), and the bridge read only the subject
+off it: OpenBSP's contract had no slot for a roster, and OpenBSP keeps none. The bridge
+(`~/open-bsp-whatsmeow`) now posts the change on the `groups` feed — `joined`/`left` in
+canonical digits with the account's name for each, `by`, `reason`, `timestamp`, the
+chat's marks — and OpenBSP, which applies the subject and reads nothing else of an entry,
+is untouched. The same branch now keeps a new subject in the bridge's cache, so messages
+after a rename carry the new name rather than the one the process first fetched.
+
+liquen's ingest maps a change to a `members` data line in the group from whoever made it
+(`mapRoster`), deduped on the change itself. Wire memberships were not the place: a
+WhatsApp conversation is read through the account's own grant, so no membership row moves
+when someone else joins; what the agent lacked was the line. Tests: `ingest.test.ts` (the
+line's shape, a subject alone making none, a retry merging, the link join and the
+account's own arrival); `groups_test.go` on the bridge. Slack's `channel_join` messages
+and Teams' system messages are still dropped at ingest, so on those wires only the
+membership mirror moves.
+
+### `liquen reload`: an org takes up its file without a stop (2026-09-28) — LANDED
+
+A connect door ended on "`liquen stop`, then `liquen start`" whenever the org was up
+(`startStep`). The user ruled it out: the org is started before any door runs, so a door
+cannot ask for a stop, not even for a service's first connect. Three things read at boot
+only, and each now reads live. The supervisor re-reads `config.jsonc` on `RELOAD` (SIGUSR2,
+sent by `liquen reload` and by every door that writes the file: `declared`, `liquen agent`,
+`connect --remove`). It restarts a process only when the part of the file that process
+reads changed (`reads`, `plan` in start.ts), starts a newly declared connection, stops a
+removed one, and retries one that refused. Main sets up every service's rooms and
+address-book ports from boot, and `contact` is offered only to an agent holding an account
+whose service keeps an address book. The egress proxy reads the vault at each spawn.
+
+The signal was chosen by elimination. SIGHUP comes from a closing terminal, and it has to
+keep ending a foreground run. SIGUSR1 opens V8's inspector on 127.0.0.1:9229, which the
+end-to-end run caught on the supervisor. Nothing watches the file, so an edit takes effect
+only when `liquen reload` runs. The reload reports nothing back to the caller; the
+supervisor's lines say what moved (`config.jsonc taken up — slack restarted`). Verified by
+hand on a throwaway org: a custom connection declared, edited, left alone, then removed; a
+typo refused with the run untouched; an agent added (main restarted); a refused connection
+retried. `update` still asks for a stop: the supervisor launches children from its own
+package version, so new code needs a new supervisor.
+
+### A room's change is one `<room>` line on every service (2026-09-28) — LANDED
+
+A join, a leave and a rename now read the same wherever the room is: one message whose
+single data part is `room` (`src/room.ts`, `RoomPart` in types.ts) — `joined`/`left` as
+`{address, name?}`, or the `name` the room now wears — sent by whoever made the change,
+hoisted by render to `<room … data="{joined:[…]}"/>`. The event type is `message`, so the
+line inherits the room's visibility, the merge on the wire's id, the attention ladder and
+`search` with nothing new to teach the store.
+
+- **Slack**: `channel_join` (its `inviter` the sender when someone added them),
+  `channel_leave` and `channel_name` map to the line instead of being dropped; the catch-up
+  reads a swallowed one back through the same mapper, and a rename teaches the directory.
+- **Teams**: `systemEventMessage` with members added, joined, deleted or left, or the chat
+  or channel renamed, maps to the line from Graph's `initiator`; a rename drops the place
+  from the name cache (`TeamsNames.forget`). Other system events are still no row. Not
+  live-checked that change notifications deliver system messages; the catch-up's listing
+  does return them.
+- **WhatsApp**: the ingest's roster line took the same kind, and renames joined it — the
+  bridge marks a subject WhatsApp announced (`renamed`, `~/open-bsp-whatsmeow` f591458)
+  so the subject a group is first seen with makes no line.
+- **Local**: the `conversation` tool says its change as the same part in place of the
+  text notes ("added mind@cy", "renamed to ops-q4"), which rendered as the agent
+  speaking. The terminal paints a room line in words (`roomWords`: `joined mind@cy`).
+
+The `conversation` tool's description names the element. Tests: `render.test.ts`,
+`paint.test.ts`, the ingest tests of each wire, Slack's catch-up, `main.test.ts`'s local
+room walk.
+
+### A local room opens with its founding line (2026-09-28) — LANDED
+
+A group or channel `send` makes is born with a `room` line ahead of the message — its
+founding members joined, from the agent that made it — the way a WhatsApp group made with
+the account in it arrives with its roster. A room found by name (the same members again)
+opens nothing; a direct room is its members and has no line. Test: `main.test.ts`'s local
+room walk (two sends to `ops`, one founding line).
+
+### The Slack doors stop waiting for the ingest (2026-09-28) — LANDED
+
+`liquen connect slack app --bot/--user` and `liquen connect slack user` waited, as their
+first step, for Slack's ingest socket to answer (`requireIngest`). The wait could not be
+met twice over: the app door asked for it before storing the app, and the ingest refuses
+to start without a carrier; and in Socket Mode the ingest dials out and serves no socket,
+so nothing ever answered. It also protected nothing. Slack sends from *Install to
+Workspace* on, before either door runs, a paste only stores a token the process reads at
+each use, and the ingest reads the gap back from history every time it connects. The
+wait stays where the grant itself triggers a one-time delivery: the WhatsApp pairing and
+the GitHub doors.
+
+The app door now declares the connection and reloads the org once it has stored anything
+(`declared`), and its closing lines say when the vault holds neither an app-level token
+nor a signing secret, the one thing without which the connection refuses to start
+(`slackNext`, which now counts a signing secret as a carrier). The user door waits for the
+edge only (`requireEdge`), since the sign-in comes back through it.
+
+The carrier is read when the process starts, and a reload restarted Slack only when its
+config section changed or it refused, so a carrier added to a Slack already running (a
+second app, or a socket where HTTP was) waited for the next start. The reload now travels
+over a socket the supervisor serves, `data/run/liquen.sock`, as a POST of `{ restart:
+string[] }` (`reload`, `runSocket` in reload.ts): the processes named restart whatever the
+file says of them (`plan` takes them), and the answer is what moved, so `liquen reload`
+and every door print it (`the running org took it up: slack restarted`) instead of pointing
+at the run's lines. The Slack app door names `slack` once it has stored an app-level token
+or a signing secret. `liquen reload <process>…` names them by hand; a name the run has no
+process for is refused with the run's roster, a bad file with boot's own sentence, and the
+run goes on as it was either way.

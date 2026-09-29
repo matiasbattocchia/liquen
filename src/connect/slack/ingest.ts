@@ -11,6 +11,13 @@
  * to our HTTP ingest. One pipeline, two transports; the edge tier drops the carrier and
  * keeps the function (§9 deployment tiers).
  *
+ * **Neither carrier holds the gap.** An event with no socket to take it is gone, and an
+ * HTTP delivery is retried for minutes; what a workspace said while nobody listened is in
+ * its history alone, so it is read back from there (catchup.ts) — at boot on either
+ * carrier, and whenever a socket comes back from more than a blip — through this same
+ * mapping, as the events would have carried it. Rows are stamped with the message's own
+ * time (`slackTime`) so the read-back and the live delivery of one message are one row.
+ *
  * Mapping (§3, §4): a message in channel C of team T → a liquen `message` in conversation
  * `C`, `external_id = slack:T:C:<ts>` — Slack's ts is the per-channel message id, so
  * retries, EDITS (`message_changed` carries the same ts), and our own dispatched
@@ -37,12 +44,20 @@
  * hand-rolled API types encode assumptions the API never promised).
  */
 
-import type { MemberJoinedChannelEvent, MemberLeftChannelEvent, SlackEvent } from "@slack/types";
+import type {
+  ChannelJoinMessageEvent,
+  ChannelLeaveMessageEvent,
+  ChannelNameMessageEvent,
+  MemberJoinedChannelEvent,
+  MemberLeftChannelEvent,
+  SlackEvent,
+} from "@slack/types";
+import { roomPart } from "../../room.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
-import type { Conversation, Draft, FilePart, MessageEvent, Part } from "../../types.ts";
+import type { Conversation, Draft, FilePart, MessageEvent, Part, RoomMember } from "../../types.ts";
 import { fromSlack } from "../flavor.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
@@ -381,15 +396,15 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
 
 /* ── mapping: Slack event → a liquen message (channel address + workspace anchor) ── */
 
-interface MapCtx {
+export interface MapCtx {
   now: () => string;
 }
 
-type Store = NonNullable<SlackWebhookDeps["store"]>;
+export type Store = NonNullable<SlackWebhookDeps["store"]>;
 
 /** The delivery's anchor (§4): the BOT's own grant (`<team>:<bot user>`) when the bot
  *  witnessed it, the bare workspace when only personal grants did. */
-function anchorOf(team: string, auths: Authorization[] | undefined): string {
+export function anchorOf(team: string, auths: Authorization[] | undefined): string {
   const bot = auths?.find((a) => a.is_bot && a.user_id);
   return bot ? `${team}:${bot.user_id}` : team;
 }
@@ -460,7 +475,17 @@ const KIND: Record<string, NonNullable<Conversation["kind"]>> = {
   channel: "channel",
 };
 
-async function mapMessage(
+/** A row's time is the message's own: Slack's ts is seconds since the epoch with the
+ *  message's ordinal in the fraction, so the row reads in the order the room saw it
+ *  whether it arrived live or was read back after a gap. */
+export function slackTime(ts: string | undefined, now: () => string): string {
+  const n = Number(ts);
+  return ts && Number.isFinite(n) ? new Date(n * 1000).toISOString() : now();
+}
+
+/** One message of a delivery, as the log takes it. Shared by the event handler and the
+ *  catch-up (catchup.ts), which reads the same shape back from the history API. */
+export async function mapMessage(
   e: Extract<SlackEvent, { type: "message" }>,
   team: string,
   anchor: string,
@@ -477,7 +502,7 @@ async function mapMessage(
   if (e.subtype === "message_deleted") {
     if (!e.deleted_ts || !e.channel) return [];
     const originalId = `slack:${team}:${e.channel}:${e.deleted_ts}`;
-    const ts = ctx.now();
+    const ts = slackTime(e.event_ts, ctx.now);
     return [{
       ts,
       type: "message",
@@ -500,6 +525,12 @@ async function mapMessage(
       },
       status: { state: "deleted", deleted_at: e.event_ts ?? ts },
     } as unknown as Draft<MessageEvent>]; // the stamp is partless by design
+  }
+  if (
+    e.subtype === "channel_join" || e.subtype === "channel_leave" ||
+    e.subtype === "channel_name"
+  ) {
+    return await mapRoomLine(e, team, anchor, authorizations, store, names, ctx);
   }
 
   // plain message, an edit (message_changed nests the new content — its OWN event, the
@@ -584,7 +615,7 @@ async function mapMessage(
     await recordDm(store, anchor, owner, conversation);
   }
   return [{
-    ts: ctx.now(),
+    ts: slackTime(edit ? e.event_ts : m.ts, ctx.now),
     type: "message",
     ...(owner ? { agent: { id: owner } } : {}),
     ...(Object.keys(payload).length ? { payload } : {}),
@@ -618,6 +649,59 @@ async function mapMessage(
         },
       }
       : {}),
+  }];
+}
+
+/** A room's change is the room's own line (§3). Slack says a join, a leave and a rename as
+ *  messages of their own subtypes, whose text ("<@U…> has joined the channel") is Slack's
+ *  wording, not anything the mover typed — so the line is a `room` part, from whoever made
+ *  the change: the inviter who added someone, else the one who moved or renamed. Keyed on
+ *  the message's own ts like any row, so the live delivery and the catch-up's read of it
+ *  merge. A rename also teaches the name directory the room's new name. */
+async function mapRoomLine(
+  e: ChannelJoinMessageEvent | ChannelLeaveMessageEvent | ChannelNameMessageEvent,
+  team: string,
+  anchor: string,
+  authorizations: Authorization[] | undefined,
+  store: Store | undefined,
+  names: SlackNames | undefined,
+  ctx: MapCtx,
+): Promise<Draft<MessageEvent>[]> {
+  if (!e.ts || !e.channel || !e.user) return [];
+  const via = boundUsers(authorizations);
+  const person = async (id: string): Promise<RoomMember> => {
+    const name = await names?.nameOf(team, id, via);
+    return { address: id, ...(name ? { name } : {}) };
+  };
+  const mover = await person(e.user);
+  if (e.subtype === "channel_name" && e.name) names?.learnRoom(team, e.channel, e.name);
+  const part = e.subtype === "channel_join"
+    ? roomPart({ joined: [mover] })
+    : e.subtype === "channel_leave"
+    ? roomPart({ left: [mover] })
+    : roomPart({ name: e.name });
+  const inviter = e.subtype === "channel_join" && e.inviter ? await person(e.inviter) : undefined;
+  const sender = inviter ?? mover;
+  const owner = await memberOf(store, names, team, sender.address, via);
+  const kind = KIND[e.channel_type];
+  const room = await names?.roomOf(team, e.channel, via);
+  return [{
+    ts: slackTime(e.ts, ctx.now),
+    type: "message",
+    ...(owner ? { agent: { id: owner } } : {}),
+    envelope: {
+      service: "slack",
+      connection_address: anchor,
+      conversation: {
+        address: e.channel,
+        ...(kind ? { kind } : {}),
+        ...(room ? { name: room } : {}),
+      },
+      sender,
+      external_id: `slack:${team}:${e.channel}:${e.ts}`,
+    },
+    parts: [part],
+    extra: { slack: { subtype: e.subtype, ...(authorizations ? { authorizations } : {}) } },
   }];
 }
 
@@ -695,6 +779,8 @@ const FRESH_MS = 5 * 60 * 1000;
  *  an error means the far side is unwell and the wait is longer. */
 const RECONNECT_MS = 1_000;
 const RECONNECT_ERROR_MS = 5_000;
+/** A socket back after this long was an outage, not a blip, and the gap is read back. */
+const CATCH_UP_AFTER_MS = 5_000;
 
 async function verify(
   secret: string,
@@ -727,7 +813,7 @@ function timingSafeEqual(a: string, b: string): boolean {
 /* ── the Events API wrapper. `@slack/types` covers the INNER events only (the outer
  *    envelope is Bolt's, not typed by the platform package) — only the fields we read. ── */
 
-interface Authorization {
+export interface Authorization {
   user_id: string;
   is_bot?: boolean;
 }
@@ -761,14 +847,20 @@ async function openSocketUrl(appToken: string): Promise<string> {
 export interface SlackSocketCarrierDeps {
   /** The WebSocket URL for an app-level token; default = apps.connections.open. */
   open?: (appToken: string) => Promise<string>;
+  /** The socket is up: `down` is how long it was closed before this open, in ms, and
+   *  null on the first. Slack holds nothing for a socket that is not there — what the
+   *  workspace said in the gap is only in its history — so this is where the catch-up
+   *  (catchup.ts) is asked for. */
+  onOpen?: (down: number | null) => void;
 }
 
 /** Open the `xapp` socket and feed every events_api envelope to `handler` (built WITHOUT
  *  `track`, so its answer is the outcome) as a synthetic POST. An envelope is acked only
  *  on a 2xx: a refusal or a throw leaves it unacked, logged to stderr, and Slack redelivers
  *  it — the store's external_id upsert makes the redelivery converge. Envelopes that carry
- *  no event (`disconnect`) ack on arrival. Reconnects on disconnect/close. Returns stop:
- *  close the socket, settle the deliveries already being handled. */
+ *  no event ack on arrival; a `disconnect` opens the successor before this socket closes,
+ *  and a socket that falls is reopened after a pause. Returns stop: close the socket,
+ *  settle the deliveries already being handled. */
 export function slackSocket(
   appToken: string,
   handler: WebhookHandler,
@@ -776,6 +868,8 @@ export function slackSocket(
 ): () => Promise<void> {
   let ws: WebSocket | undefined;
   let closed = false;
+  let opened = 0;
+  let downSince: number | null = null;
   const inFlight = new Set<Promise<unknown>>();
   const open = deps.open ?? openSocketUrl;
 
@@ -799,11 +893,22 @@ export function slackSocket(
     );
   };
 
-  const connect = async () => {
+  /** Open a socket; `handover` is the one it replaces — closed once this one is up, so a
+   *  refresh Slack asks for (`disconnect`) leaves no gap: the new socket takes deliveries
+   *  before the old stops. A socket that fell is reconnected after a pause, and the time
+   *  it was down is what `onOpen` is told. */
+  const connect = async (handover?: WebSocket) => {
     if (closed) return;
     try {
       const socket = new WebSocket(await open(appToken));
       ws = socket;
+      socket.onopen = () => {
+        const down = opened === 0 ? null : downSince === null ? 0 : Date.now() - downSince;
+        opened++;
+        downSince = null;
+        handover?.close();
+        deps.onOpen?.(down);
+      };
       socket.onmessage = async (evt) => {
         try {
           const env = JSON.parse(String(evt.data)) as {
@@ -821,7 +926,7 @@ export function slackSocket(
             return;
           }
           if (env.envelope_id) socket.send(JSON.stringify({ envelope_id: env.envelope_id }));
-          if (env.type === "disconnect") socket.close();
+          if (env.type === "disconnect") void connect(socket);
         } catch (err) {
           console.error(
             "[ingest] socket delivery failed:",
@@ -830,9 +935,12 @@ export function slackSocket(
         }
       };
       socket.onclose = () => {
+        if (ws !== socket) return; // handed over: its successor is already up
+        downSince ??= Date.now();
         if (!closed) setTimeout(() => void connect(), RECONNECT_MS);
       };
     } catch (err) {
+      downSince ??= Date.now();
       console.error("[ingest] socket error:", err instanceof Error ? err.message : err);
       if (!closed) setTimeout(() => void connect(), RECONNECT_ERROR_MS);
     }
@@ -848,12 +956,13 @@ export function slackSocket(
 
 /* ── local entry: Socket Mode carriers (from the vault) or HTTP ─────────────
  *
- *   deno task run:slack       # xapp in the vault → socket mode; else HTTP on :8789
+ *   deno task run:slack       # xapp in the vault → socket mode; else HTTP on
+ *                             # data/run/slack.sock behind the edge
  *
  * Env: none — everything comes from the vault. Socket carriers are the app-level
  * tokens `liquen connect slack app` stored, one socket per app (§4). No carrier ⇒ HTTP
- * mode on connections.slack.ingestPort, verified by the apps' signing secrets (the same
- * door stores them); no app, no server. */
+ * mode, verified by the apps' signing secrets (the same door stores them); no app, no
+ * server. */
 /** The secrets an HTTP-mode server verifies with: every app row's `signing_secret`. None
  *  is a refusal to serve — an unverified Events URL would take any POST as the workspace's
  *  word, `authorizations` included. */
@@ -943,15 +1052,34 @@ export async function runIngest(): Promise<() => Promise<void>> {
     await creds.close();
     await log.close();
   };
+  // the gap's reader (catchup.ts): what the workspace said while no carrier was there,
+  // read back from the history APIs with the workspace's own tokens
+  const { createSlackCatchUp, slackLegs } = await import("./catchup.ts");
+  const catchUp = createSlackCatchUp({
+    ...base,
+    read: (q) => log.read(q),
+    legs: async () => slackLegs(await creds.list("slack:"), await log.connections()),
+    onCaughtUp: (team, n) => n && console.error(`[ingest] ${team}: caught up, +${n} row(s)`),
+    onError: (team, err) =>
+      console.error(`[ingest] ${team}: catch-up FAILED:`, err instanceof Error ? err.message : err),
+  });
   if (carriers.length > 0) {
     // socket mode: no signing secret (the xapp IS the authentication) and no `track` —
     // the carrier acks on the handler's answer, and each carrier's stop settles the
-    // deliveries it still has in hand
+    // deliveries it still has in hand. Every open reads the gap back, the first at boot;
+    // a refresh hands over with no gap and asks for nothing
     console.error(`[ingest] socket mode, ${carriers.length} carrier(s) → ${dir}/log`);
     const handler = createSlackWebhook(base);
-    const stops = carriers.map((t) => slackSocket(t, handler));
+    const stops = carriers.map((t) =>
+      slackSocket(t, handler, {
+        onOpen: (down) => {
+          if (down === null || down > CATCH_UP_AFTER_MS) void catchUp.run();
+        },
+      })
+    );
     return async () => {
       await Promise.allSettled(stops.map((stop) => stop()));
+      await catchUp.settle();
       await release();
     };
   }
@@ -971,18 +1099,16 @@ export async function runIngest(): Promise<() => Promise<void>> {
       work.then(done, done);
     },
   });
-  const { slackConfig } = await import("./config.ts");
   const { serveIngest } = await import("../serve.ts");
-  const port = (await slackConfig(root)).ingestPort;
-  const server = serveIngest(
-    "connections.slack.ingestPort",
-    port,
-    handler,
-    (bound) => console.error(`[ingest] HTTP on :${bound} → ${dir}/log (Events API request URL)`),
-  );
+  const server = await serveIngest(root, "slack", handler);
+  console.error(`[ingest] HTTP on ${server.addr.path} → ${dir}/log (Events API request URL)`);
+  // Slack retried what it could not deliver for minutes, not for the whole gap: what a
+  // restart missed is read back once the door is open
+  void catchUp.run();
   return async () => {
     await server.shutdown(); // stop accepting, finish the requests already in
     await Promise.allSettled([...inFlight]);
+    await catchUp.settle();
     await release();
   };
 }

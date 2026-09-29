@@ -31,15 +31,16 @@ import {
   MAIL_SYNC,
   type Mailbox,
   mailbox,
-  mailConversation,
   type MailMessage,
   mailRow,
   type MailSend,
   type MailWireDeps,
   mediaShelf,
   messageId,
+  referencesOf,
   runMailDispatch,
   type SaveFile,
+  threadRoot,
 } from "../mail.ts";
 import {
   createPoller,
@@ -51,7 +52,7 @@ import {
   storeCursor,
 } from "../poll.ts";
 import { DispatchError } from "../errors.ts";
-import type { Appender } from "../../store/log.ts";
+import type { Appender, Reader } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
@@ -108,6 +109,8 @@ interface HistoryPage {
 export interface GmailDeps {
   /** → the EventLog: a mail is an ordinary published event (§3). */
   publish: Appender["publish"];
+  /** The log, read: a reply is filed where the message it answers already is. */
+  read?: Reader["read"];
   /** The vault: grants (the connections + the refresh_token) and the historyId cursor. */
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
@@ -192,8 +195,8 @@ async function pollMailbox(deps: GmailDeps, key: string, agentId?: string): Prom
         if (!inConversation(stub.labelIds)) continue;
         const full = await getMessage(api, stub.id);
         if (!full) continue;
-        const m = await messageOf(api, full, email, deps.save);
-        await deps.publish(mailRow(base, m));
+        const { m, root } = await messageOf(api, full, deps);
+        await deps.publish(mailRow(base, m, root));
         published++;
       }
     }
@@ -210,15 +213,15 @@ function inConversation(labels: string[] = []): boolean {
   return (labels.includes("INBOX") || labels.includes("SENT")) && !labels.includes("DRAFT");
 }
 
-/** A full message → the shared shape, its attachments fetched onto the shelf. */
+/** A full message → the shared shape and its thread, its attachments fetched onto the
+ *  thread's shelf. */
 async function messageOf(
   api: Api,
   full: GmailMessage,
-  account: string,
-  save: SaveFile,
-): Promise<MailMessage> {
+  deps: Pick<GmailDeps, "read" | "save">,
+): Promise<{ m: MailMessage; root: string }> {
   const parsed = parseMessage(full);
-  const conversation = mailConversation(account, parsed).address;
+  const root = await threadRoot(deps.read ? { read: deps.read } : undefined, parsed);
   const files: MailMessage["files"] = [];
   for (const a of parsed.attachments) {
     const res = await api(
@@ -231,10 +234,10 @@ async function messageOf(
     const { data } = await res.json() as { data?: string };
     if (!data) continue;
     files.push(
-      await save(conversation, decodeBase64Url(data), { mime_type: a.mime, name: a.name }),
+      await deps.save(root, decodeBase64Url(data), { mime_type: a.mime, name: a.name }),
     );
   }
-  return { ...parsed, files };
+  return { m: { ...parsed, files }, root };
 }
 
 /** The headers, words and attachment handles of a full message. */
@@ -280,6 +283,7 @@ export function parseMessage(
     cc: parseAddresses(h("Cc")),
     ...(h("Subject") ? { subject: h("Subject") } : {}),
     ...(messageId(h("In-Reply-To")) ? { inReplyTo: messageId(h("In-Reply-To")) } : {}),
+    ...(referencesOf(h("References")).length ? { references: referencesOf(h("References")) } : {}),
     ...(text ? { text } : {}),
     attachments,
     ...(full.threadId ? { extra: { google: { thread: full.threadId } } } : {}),

@@ -4,23 +4,25 @@
  * The connection architecture is multi-process: the ingest runs in one process, the harness
  * (`main`) tails the log in another, both over a shared log dir. This asserts that path end to
  * end — a webhook delivered to the ingest PROCESS must wake a `subscribe` in a DIFFERENT
- * process — so the fs-watch propagation `main` relies on can't silently regress.
+ * process — so the cross-process propagation `main` relies on can't silently regress.
  */
 
 import { assertEquals } from "@std/assert";
 import { TextLineStream } from "@std/streams";
 import type { Event, MessageEvent } from "../../connector.ts";
 import { openLog } from "../../store/log.ts";
+import { socketOf } from "../../edge.ts";
 
-/** Poll the ingest's ping until it answers (the process is up and serving). */
-async function waitReady(port: number, ms = 10_000): Promise<void> {
+/** Poll the ingest's ping over its socket until it answers (the process is up and serving). */
+async function waitReady(client: Deno.HttpClient, ms = 10_000): Promise<void> {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     try {
-      const r = await fetch(`http://localhost:${port}/`, {
+      const r = await fetch("http://localhost/", {
         method: "POST",
         headers: { "x-github-event": "ping" },
         body: "{}",
+        client,
       });
       await r.body?.cancel();
       if (r.ok) return;
@@ -46,11 +48,11 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
   });
 
   // the ingest runs as a SEPARATE OS process over the same org — the org lives where you
-  // run liquen (a cwd, not an env var). `ingestPort: 0` = any free port, read off the
-  // announcement — no bind-and-release race for a parallel suite to steal.
+  // run liquen (a cwd, not an env var) — and serves the org's own socket, so a parallel
+  // suite has nothing to collide on
   await Deno.writeTextFile(
     `${dir}/config.jsonc`,
-    JSON.stringify({ connections: { github: { ingestPort: 0 } } }),
+    JSON.stringify({ connections: { github: {} } }),
   );
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", script],
@@ -58,28 +60,19 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
     stdout: "null",
     stderr: "piped",
   }).spawn();
-  let resolvePort!: (n: number) => void;
-  const announced = new Promise<number>((r) => (resolvePort = r));
-  const drain = (async () => { // scan for the announcement, then keep the pipe from filling
+  const drain = (async () => { // keep the pipe from filling
     const lines = child.stderr.pipeThrough(new TextDecoderStream())
       .pipeThrough(new TextLineStream());
-    for await (const line of lines) {
-      const m = line.match(/serving :(\d+)/);
-      if (m) resolvePort(Number(m[1]));
-    }
+    for await (const _ of lines) { /* diagnostics */ }
   })();
+  const client = Deno.createHttpClient({
+    proxy: { transport: "unix", path: socketOf(dir, "github", "ingest") },
+  });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const port = await Promise.race([
-      announced,
-      new Promise<never>((_, rej) => {
-        timer = setTimeout(() => rej(new Error("ingest never announced its port")), 10_000);
-      }),
-    ]);
-    clearTimeout(timer);
-    await waitReady(port);
-    const res = await fetch(`http://localhost:${port}/`, {
+    await waitReady(client);
+    const res = await fetch("http://localhost/", {
       method: "POST",
       headers: { "x-github-event": "issue_comment", "x-github-delivery": "xp-1" },
       body: JSON.stringify({
@@ -89,11 +82,12 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
         comment: { body: "cross-process hello" },
         sender: { login: "ana" },
       }),
+      client,
     });
     await res.body?.cancel();
     assertEquals(res.status, 202);
 
-    // the OTHER process's write must reach our subscriber via fs-watch (bounded wait)
+    // the OTHER process's write must reach our subscriber through its poll (bounded wait)
     const e = await Promise.race([
       got,
       new Promise<never>((_, rej) => {
@@ -104,6 +98,7 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
     assertEquals((e.parts[0] as { text: string }).text, "cross-process hello");
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    client.close();
     unsub();
     child.kill("SIGKILL");
     await child.status;

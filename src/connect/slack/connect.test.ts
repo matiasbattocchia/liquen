@@ -155,30 +155,32 @@ Deno.test("connect: the manifest's consent comes from the catalog, not the seed"
   ) as { oauth_config?: Record<string, unknown>; settings: Record<string, unknown> };
   // the seed is the app's SHAPE — name, bot user, events, the carrier — and consent is
   // the catalog's alone. A manifest Slack BUILDS from must also carry nothing it would
-  // refuse: a redirect url is knowable only once a public host exists, and a placeholder
-  // fails validation, so the section arrives with the scopes or not at all.
+  // refuse: a redirect url is knowable only once the org has a public door, and a
+  // placeholder fails validation, so it rides only when there is one.
   assertEquals(seed.oauth_config, undefined);
   assertEquals(seed.settings.socket_mode_enabled, true);
 
   const filled = withScopes(seed, { bot: DEFAULT_BOT_SCOPES, user: DEFAULT_USER_SCOPES }) as {
-    oauth_config: { scopes: Record<string, string[]> };
+    oauth_config: { scopes: Record<string, string[]>; redirect_urls?: string[] };
   };
   assertEquals(filled.oauth_config.scopes.bot, DEFAULT_BOT_SCOPES);
   assertEquals(filled.oauth_config.scopes.user, DEFAULT_USER_SCOPES);
+  assertEquals(filled.oauth_config.redirect_urls, undefined);
+  const open = withScopes(
+    seed,
+    { bot: DEFAULT_BOT_SCOPES, user: DEFAULT_USER_SCOPES },
+    "https://acme.example.com/slack/oauth/callback",
+  ) as { oauth_config: { redirect_urls?: string[] } };
+  assertEquals(open.oauth_config.redirect_urls, ["https://acme.example.com/slack/oauth/callback"]);
 });
 
-Deno.test("slackDoor: a public https callback is served on the configured port; loopback and http are refused at paste time", () => {
-  const d = slackDoor("https://liquen.example/oauth/slack/callback", 8790);
+Deno.test("slackDoor: the org's https callback is the door; loopback and http are refused", () => {
+  const d = slackDoor("https://liquen.example/slack/oauth/callback");
   assertEquals(d.loopback, false);
-  assertEquals(d.port, 8790);
-  assertEquals(d.start, "https://liquen.example/oauth/slack/start");
-  assertThrows(() => slackDoor("http://liquen.example/oauth/slack/callback", 8790), Error, "https");
-  assertThrows(
-    () => slackDoor("https://localhost:8790/oauth/slack/callback", 8790),
-    Error,
-    "loopback",
-  );
-  assertThrows(() => slackDoor("https://liquen.example/oauth/slack", 8790), Error, "/callback");
+  assertEquals(d.start, "https://liquen.example/slack/oauth/start");
+  assertThrows(() => slackDoor("http://liquen.example/slack/oauth/callback"), Error, "https");
+  assertThrows(() => slackDoor("https://localhost:8787/slack/oauth/callback"), Error, "loopback");
+  assertThrows(() => slackDoor("https://liquen.example/slack/oauth"), Error, "/callback");
 });
 
 Deno.test("connect: the prefill link embeds the manifest for api.slack.com to build from", () => {
@@ -241,16 +243,10 @@ Deno.test("app door: the client lands under its own id; pick = only one, or by i
     list: (p: string) => Promise.resolve([...rows.values()].filter((r) => r.key.startsWith(p))),
   };
   await assertRejects(() => pickSlackApp(creds), Error, "liquen connect slack app");
-  const key = await connectSlackApp(
-    { clientId: "123.456", clientSecret: "sec", redirectUri: "https://org.example/cb" },
-    creds,
-  );
+  const key = await connectSlackApp({ clientId: "123.456", clientSecret: "sec" }, creds);
   assertEquals(key, "slack:app:123.456");
   assertEquals((await pickSlackApp(creds)).value.client_id, "123.456");
-  assertEquals(
-    (await pickSlackApp(creds, "123.456")).extra?.redirect_uri,
-    "https://org.example/cb",
-  );
+  assertEquals((await pickSlackApp(creds, "123.456")).value.client_secret, "sec");
   await connectSlackApp({ clientId: "789.000", clientSecret: "sec2" }, creds);
   await assertRejects(() => pickSlackApp(creds), Error, "--app"); // several ⇒ pick explicitly
 });
@@ -311,7 +307,9 @@ Deno.test("missingScopes: a token with no scopes on the wire owes the whole ask"
   assertEquals(missingScopes(["a"], ["a", "extra"]), []); // extra reach is not a shortfall
 });
 
-Deno.test("slackHave: the vault's slack rows sort into app, bot, carrier, user", () => {
+const none = { app: false, bot: false, appToken: false, signingSecret: false, user: false };
+
+Deno.test("slackHave: the vault's slack rows sort into app, bot, carriers, user", () => {
   assertEquals(
     slackHave([
       { key: "slack:app:cid", value: { client_id: "cid" } },
@@ -319,43 +317,52 @@ Deno.test("slackHave: the vault's slack rows sort into app, bot, carrier, user",
       { key: "slack:T1:org", value: { token: "xoxb-x" } },
       { key: "slack:T1:matias", value: { token: "xoxp-x" } },
     ]),
-    { app: true, bot: true, appToken: true, user: true },
+    { ...none, app: true, bot: true, appToken: true, user: true },
   );
   // an identity is not a carrier: the two are stored, and asked for, apart
   assertEquals(
     slackHave([{ key: "slack:T1:org", value: { token: "xoxb-x" } }]),
-    { app: false, bot: true, appToken: false, user: false },
+    { ...none, bot: true },
   );
   assertEquals(
     slackHave([{ key: "slack:socket:A1", value: { app_token: "xapp-x" } }]),
-    { app: false, bot: false, appToken: true, user: false },
+    { ...none, appToken: true },
+  );
+  assertEquals(
+    slackHave([{ key: "slack:app:cid", value: { client_id: "cid", signing_secret: "s" } }]),
+    { ...none, app: true, signingSecret: true },
   );
 });
 
 Deno.test("slackNext: a user leg alone is told what inbound still needs", () => {
-  const next = slackNext({ app: false, bot: false, appToken: false, user: true });
+  const next = slackNext({ ...none, user: true });
   assertEquals(next.length, 3); // the bot, the carrier, the oauth client
   assertStringIncludes(next[0], "liquen connect slack app --bot");
+  assertStringIncludes(next[1], "refuses to start");
   assertStringIncludes(next[1], "App-Level Tokens");
   assertStringIncludes(next[1], "PUBLIC request URL"); // the alternative, named
   assertStringIncludes(next[2], "liquen connect slack app");
   assertStringIncludes(next[2], "liquen connect slack user"); // the one door that needs it
 });
 
-Deno.test("slackNext: a bot without its app-level token is told where to generate one", () => {
-  const next = slackNext({ app: true, bot: true, appToken: false, user: false });
+Deno.test("slackNext: a bot without a carrier is told where to generate one", () => {
+  const next = slackNext({ ...none, app: true, bot: true });
   assertEquals(next.length, 1);
   assertStringIncludes(next[0], "App-Level Tokens");
   assertStringIncludes(next[0], "connections:write");
 });
 
+Deno.test("slackNext: a signing secret is a carrier — events over HTTP owe no socket", () => {
+  assertEquals(slackNext({ ...none, app: true, bot: true, signingSecret: true }), []);
+});
+
 Deno.test("slackNext: an app and nothing else is told an app is not a grant", () => {
-  const next = slackNext({ app: true, bot: false, appToken: false, user: false });
+  const next = slackNext({ ...none, app: true });
   assertStringIncludes(next[0], "no identity yet");
 });
 
 Deno.test("slackNext: carrier + both legs owes nothing", () => {
-  assertEquals(slackNext({ app: true, bot: true, appToken: true, user: true }), []);
+  assertEquals(slackNext({ ...none, app: true, bot: true, appToken: true, user: true }), []);
 });
 
 Deno.test("socket door: the app id comes from the token, so one app is one socket", () => {
@@ -427,8 +434,21 @@ Deno.test("socket door: the default probe's apps.connections.open call carries a
 
 Deno.test("config: the bot leg reads files — `url_private` answers a sign-in page otherwise", () => {
   assert(DEFAULT_BOT_SCOPES.includes("files:read"));
-  assert(DEFAULT_USER_SCOPES.includes("files:read")); // the user list spreads the bot list
+  assert(DEFAULT_USER_SCOPES.includes("files:read")); // both legs read the same
   assertEquals(new Set(DEFAULT_USER_SCOPES).size, DEFAULT_USER_SCOPES.length); // no duplicates
+  assertEquals(new Set(DEFAULT_BOT_SCOPES).size, DEFAULT_BOT_SCOPES.length);
+  // the rooms port's writes, each under the leg's own name for the act
+  assert(
+    DEFAULT_BOT_SCOPES.includes("channels:manage") &&
+      !DEFAULT_USER_SCOPES.includes("channels:manage"),
+  );
+  assert(
+    DEFAULT_USER_SCOPES.includes("channels:write") &&
+      !DEFAULT_BOT_SCOPES.includes("channels:write"),
+  );
+  for (const s of ["groups:write", "mpim:write", "im:write", "channels:write.invites"]) {
+    assert(DEFAULT_BOT_SCOPES.includes(s) && DEFAULT_USER_SCOPES.includes(s), s);
+  }
 });
 
 Deno.test("bot door: --agent records who speaks through the bot on its row, still nobody's (§4)", async () => {

@@ -1,3 +1,4 @@
+import { roomPart } from "./room.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
@@ -1520,7 +1521,7 @@ Deno.test("authorship marks (§3, §5): turn_id = self; the stamp alone = princi
   const sibling: MessageEvent = {
     ...base,
     id: "e4",
-    envelope: { ...base.envelope, conversation: { address: "dm:build@ana:mind@ana" } },
+    envelope: { ...base.envelope, conversation: { address: "build@ana,mind@ana" } },
     agent: { id: "ana", session_id: "build" },
     payload: { turn_id: "T3" },
     parts: [{ type: "text", kind: "text", text: "terminé el refactor" }],
@@ -1833,6 +1834,30 @@ Deno.test("a location- or contacts-only message hoists to its kind's element (§
     dump,
     'acá estamos <location data=\\"{latitude:-32.9,longitude:-68.9}\\"/></msg>',
   );
+});
+
+Deno.test("a room's change is its own <room> line, from whoever made it — the agent's too (§5)", () => {
+  const t = "2026-09-28T12:00:00Z";
+  const conv = { address: "123@g.us", kind: "group" as const, name: "Asado" };
+  const added = worldMsg("e1", t, conv, { address: "5491", name: "Ana" }, "");
+  added.parts = [roomPart({ joined: [{ address: "5492", name: "Bea" }] })];
+  const renamed = worldMsg("e2", t, conv, null, "");
+  renamed.parts = [roomPart({ name: "Asado 2" })];
+  const { messages } = render({
+    events: [added, renamed],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t,
+  });
+  const dump = JSON.stringify(messages);
+  assertStringIncludes(
+    dump,
+    '<room id=\\"e1\\" external=\\"Ana\\" address=\\"5491\\" at=\\"28 Sep 12:00\\" ' +
+      "data=\\\"{joined:[{address:'5492',name:'Bea'}]}\\\"/>",
+  );
+  assertStringIncludes(dump, "data=\\\"{name:'Asado 2'}\\\"/>");
+  assert(!dump.includes("<msg"), "a room line hoists — never words in a <msg>");
 });
 
 Deno.test('a reference outside the window says so (§5): re="?", and a delete spells it out', () => {

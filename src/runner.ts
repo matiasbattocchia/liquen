@@ -41,6 +41,7 @@ export interface Host {
   /** The exec plane (§9). Absent: no shell, no ambient lines, no file scope — an edge host. */
   sandbox?: Sandbox;
   contact?: XiPorts["contact"];
+  rooms?: XiPorts["rooms"];
   media?: MediaLoader;
   onDelta?: (agentId: string, sessionId: string, delta: Delta) => void;
   onDecision?: (
@@ -112,6 +113,7 @@ export function runnerFor(
       ...exec,
       ...(box ? { files: box.files, ambient: box.ambient } : {}),
       ...(host.contact ? { contact: host.contact } : {}),
+      ...(host.rooms ? { rooms: host.rooms } : {}),
       ...(host.media ? { media: host.media } : {}),
       ...(host.onDelta ? { onDelta: (d: Delta) => host.onDelta!(agentId, sessionId, d) } : {}),
       ...(host.onDecision

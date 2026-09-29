@@ -233,7 +233,7 @@ export function logSuite(s: Substrate): void {
       const got: Event[] = [];
       const off = log.subscribe((e) => got.push(e));
       // no await between subscribe and publish — the guarantee is that `subscribe()` RETURNING
-      // is the cut, not whenever the watcher happens to arm (a lazy seed loses this one)
+      // is the cut, not whenever the first poll happens to run (a lazy seed loses this one)
       await log.publish(msg("01", "c1", "immediately after"));
       try {
         const t0 = Date.now();
@@ -368,6 +368,39 @@ export function logSuite(s: Substrate): void {
     });
   });
 
+  Deno.test("stampKind: every row of the conversation takes the wire's kind; other rooms keep theirs", async () => {
+    await withLog(async (log) => {
+      const kinded = (id: string, conversation: string): MessageEvent => {
+        const m = msg(id, conversation, "hola");
+        m.envelope.conversation.kind = "direct";
+        return m;
+      };
+      await log.publish([kinded("01", "19:abc@thread.v2"), kinded("02", "19:abc@thread.v2")]);
+      await log.publish(kinded("03", "19:x_y@unq.gbl.spaces"));
+      await log.stampKind("local", "19:abc@thread.v2", "group");
+      const kinds = (await log.read()).map((e) => `${e.id}:${e.envelope.conversation.kind}`);
+      assertEquals(kinds, ["01:group", "02:group", "03:direct"]);
+    });
+  });
+
+  Deno.test("setDelivery conversation: the wire's filing moves the row, kind and name as given", async () => {
+    await withLog(async (log) => {
+      await log.publish(msg("01", "ana@x.com,bob@y.com", "hola"));
+      await log.setDelivery("01", { external_id: "mail:u1@org.com" });
+      assertEquals((await log.read())[0].envelope.conversation.address, "ana@x.com,bob@y.com");
+      await log.setDelivery("01", {
+        conversation: { address: "u1@org.com", kind: "group", name: "Lunch" },
+      });
+      assertEquals((await log.read())[0].envelope.conversation, {
+        address: "u1@org.com",
+        kind: "group",
+        name: "Lunch",
+      });
+      assertEquals((await log.read({ conversation: "u1@org.com" })).length, 1);
+      assertEquals((await log.read({ conversation: "ana@x.com,bob@y.com" })).length, 0);
+    });
+  });
+
   Deno.test("echo race: the echo arrives BEFORE the backfill — setDelivery absorbs it into one row", async () => {
     await withLog(async (log) => {
       // 1. the agent's outbound send — dispatch is posting, no external_id yet
@@ -392,7 +425,7 @@ export function logSuite(s: Substrate): void {
   Deno.test("subscribe delivers events published after subscribe (live)", async () => {
     await withLog(async (log) => {
       const pending = take(log, 2);
-      await new Promise((r) => setTimeout(r, 50)); // let the watcher arm
+      await new Promise((r) => setTimeout(r, 50)); // let the subscription settle
       await log.publish(msg("01", "c1", "a"));
       await log.publish(msg("02", "c1", "b"));
       assertEquals((await pending).map((e) => e.id), ["01", "02"]);
@@ -439,7 +472,7 @@ export function logSuite(s: Substrate): void {
     });
   });
 
-  Deno.test("unsubscribe stops delivery and leaks no watcher", async () => {
+  Deno.test("unsubscribe stops delivery and leaks no poll", async () => {
     await withLog(async (log) => {
       const got: Event[] = [];
       const off = log.subscribe((e) => got.push(e));

@@ -31,8 +31,8 @@ Deno.test("saveMedia: content-named and idempotent — same bytes, same path, on
     assert(a.uri.includes("/conversations/C1/media/"));
     assertEquals(await Deno.readTextFile(new URL(a.uri)), "the same bytes");
     // a conversation address with unsafe chars slugs into a directory name
-    const c = await saveMedia(root, "dm:ana:bo", bytes, { name: "x.pdf" });
-    assert(c.uri.includes("/conversations/dm_ana_bo/media/"));
+    const c = await saveMedia(root, "mind@ana,mind@bo", bytes, { name: "x.pdf" });
+    assert(c.uri.includes("/conversations/mind_ana_mind_bo/media/"));
     assertEquals(c.mime_type, "application/pdf"); // inferred from the name
     // mime params stripped: a WA voice note says `audio/ogg; codecs=opus` — it lands
     // as .ogg (a .bin was unplayable AND invisible to the extension-keyed maps)

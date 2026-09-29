@@ -59,7 +59,8 @@ if (import.meta.main) {
     console.log(
       `${path}: a liquen org. \`liquen agent <name>\` adds an agent; \`liquen start\` runs it.\n` +
         "(`liquen` is the org's `deno task` from anywhere inside it: " +
-        "`deno install -g -A -n liquen jsr:@liquen/liquen/liquen` puts it on the PATH.)",
+        "`deno install -g -A -n liquen jsr:@liquen/liquen/liquen` puts it on the PATH, and " +
+        "`-n lq` again installs the short name.)",
     );
   });
 }

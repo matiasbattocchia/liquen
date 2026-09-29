@@ -79,7 +79,7 @@ export async function openLocalSandbox(
   const localeEnv: Record<string, string> = locale ? { LANG: locale } : {};
   const grounds = new Map<string, ExecGround>();
   for (const agentId of agents) {
-    const userEnv = () => ({ ...proxy.env(agentId), ...localeEnv });
+    const userEnv = async () => ({ ...(await proxy.env(agentId)), ...localeEnv });
     grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashTimeoutMs));
   }
   const shells = new Map<string, ExecPlane>();
@@ -219,7 +219,7 @@ export function openCloudflareSandbox(
  *  or the agent's own, never a peer's. So the handle in an agent's pocket names a grant
  *  that agent holds, and the audit line's agent is the caller. */
 interface ProxyHandle {
-  env: (agentId: string) => Record<string, string>;
+  env: (agentId: string) => Promise<Record<string, string>>;
   close(): Promise<void>;
 }
 
@@ -259,8 +259,10 @@ async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
   const creds = await store.vault();
   const broker = createGrantBroker({ creds });
   const ca = await openCA(dir);
-  const rows = await creds.list("");
-  const fronted = rows.filter((r) => typeof r.extra?.env === "string");
+  // the vault as the last spawn read it: a grant stored while the org runs is fronted from
+  // the next command on, and one removed stops being
+  const read = async () => (await creds.list("")).filter((r) => typeof r.extra?.env === "string");
+  let fronted = await read();
   const proxy = startProxy({
     ca,
     broker,
@@ -275,20 +277,20 @@ async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
     NODE_EXTRA_CA_CERTS: proxy.caPath, // node adds to its own roots — the CA alone suffices
     DENO_CERT: proxy.caPath, // so does deno
   };
-  const pockets = new Map<string, Record<string, string>>();
+  // what each agent was last fronted, so the line is said when it changes
+  const said = new Map<string, string>();
   console.error(`egress proxy on :${proxy.port}`);
   return {
-    env: (agentId) => {
-      let env = pockets.get(agentId);
-      if (!env) {
-        env = { ...base };
-        const fronted = frontedFor(rows, agentId);
-        for (const r of fronted) env[r.extra!.env as string] = broker.issue(r.key, r.agentId);
-        if (fronted.length) {
-          console.error(`[proxy] ${agentId} fronted: ${fronted.map((r) => r.key).join(", ")}`);
-        }
-        pockets.set(agentId, env);
+    env: async (agentId) => {
+      fronted = await read();
+      const env = { ...base };
+      const mine = frontedFor(fronted, agentId);
+      for (const r of mine) env[r.extra!.env as string] = broker.issue(r.key, r.agentId);
+      const keys = mine.map((r) => r.key).join(", ");
+      if (keys !== (said.get(agentId) ?? "")) {
+        console.error(`[proxy] ${agentId} fronted: ${keys || "nothing"}`);
       }
+      said.set(agentId, keys);
       return env;
     },
     async close() {

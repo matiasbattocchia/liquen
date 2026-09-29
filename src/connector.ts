@@ -20,14 +20,17 @@ export { appJwt, createGrantBroker } from "./proxy/grants.ts";
 export type { GrantBroker } from "./proxy/grants.ts";
 export type { Connections } from "./store/connections.ts";
 export { newId } from "./store/id.ts";
-export { checkPort, checkStrings, connectorConfig, findRoot, orgFlag } from "./config.ts";
+export { checkStrings, connectorConfig, findRoot, orgFlag, readConfig } from "./config.ts";
+export { callbackAddress, ingestAddress, localBase, reachLine } from "./edge.ts";
 export { entry, report } from "./entry.ts";
 export type { ConnectorSpec } from "./config.ts";
-export { declared, requireIngest } from "./connect/declare.ts";
+export { declared, printNext, requireEdge, requireIngest } from "./connect/declare.ts";
 export { DispatchError, failedStatus } from "./connect/errors.ts";
 export { createDispatcher, isOutbound } from "./connect/dispatcher.ts";
 export type { DispatcherDeps, Posted } from "./connect/dispatcher.ts";
 export { serveIngest } from "./connect/serve.ts";
+export { doorAddress, oneShot, openBrowser, serveDoor } from "./connect/door.ts";
+export type { DoorAddress } from "./connect/door.ts";
 export { exitOnStop } from "./connect/stop.ts";
 export type {
   Conversation,

@@ -7,23 +7,24 @@
  * is a fact about the app and rides on the app's vault row (`liquen connect microsoft app`).
  */
 
-import { checkPort, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
 
 /** `primary` is the account's own calendar (Graph's `/me/calendar`); any other entry is a
  *  calendar id from `/me/calendars`. */
 export const DEFAULT_CALENDARS = ["primary"];
-export const DEFAULT_OAUTH_PORT = 8792;
-export const DEFAULT_INGEST_PORT = 8794;
 /** Identity, the `/me` profile, the calendar, the mailbox read and sent, the member's
- *  chats read and written, the channels of their teams read and written, and the files
- *  a Teams message carries (OneDrive items, shared by reference): the product. Entra
- *  records consent per permission, so a later ask adds to a grant: each poll or
- *  subscription runs only on a grant whose consent carries the scope it needs
- *  (`mail.ts`, `teams.ts`), and a grant made before a surface joined keeps what it has
- *  and takes the rest on re-consent. `ChannelMessage.Read.All` is granted by a tenant's
- *  admin on the registration, never by the member alone. The Graph permissions are
- *  spelled short; the wire accepts both spellings and the door compares them as one
- *  (`oauth.ts`). */
+ *  chats read and written, the channels of their teams read and written, the files a
+ *  Teams message carries (OneDrive items, shared by reference), and the rooms
+ *  (`rooms.ts`): a chat made, its members added and removed, its topic; a channel made
+ *  in a team, its members and its name. Entra records consent per permission, so a
+ *  later ask adds to a grant: each poll or subscription runs only on a grant whose
+ *  consent carries the scope it needs (`mail.ts`, `teams.ts`), a rooms leg refuses
+ *  naming the one it lacks, and a grant made before a surface joined keeps what it has
+ *  and takes the rest on re-consent. `ChannelMessage.Read.All`, `ChatMember.ReadWrite`
+ *  and the three channel permissions (`Channel.Create`, `ChannelMember.ReadWrite.All`,
+ *  `ChannelSettings.ReadWrite.All`) are granted by a tenant's admin on the registration,
+ *  never by the member alone. The Graph permissions are spelled short; the wire accepts
+ *  both spellings and the door compares them as one (`oauth.ts`). */
 export const DEFAULT_SCOPES = [
   "openid",
   "profile",
@@ -34,12 +35,17 @@ export const DEFAULT_SCOPES = [
   "Mail.Read",
   "Mail.Send",
   "Chat.ReadWrite",
+  "Chat.Create",
+  "ChatMember.ReadWrite",
   "ChatMessage.Send",
   "ChannelMessage.Read.All",
   "ChannelMessage.Send",
   "ChannelMessage.ReadWrite",
   "Team.ReadBasic.All",
   "Channel.ReadBasic.All",
+  "Channel.Create",
+  "ChannelMember.ReadWrite.All",
+  "ChannelSettings.ReadWrite.All",
   "Files.ReadWrite",
 ];
 /** The grant's proxy declaration (§9), written onto every vault row this connector mints:
@@ -51,17 +57,8 @@ export const GRANT_HOSTS = ["graph.microsoft.com"];
 
 export interface MicrosoftConfig {
   calendars: string[];
-  oauthPort: number;
-  ingestPort: number;
-  /** null ⇒ no Teams subscription is made: Graph pushes only to a public HTTPS address */
-  notificationUrl: string | null;
   scopes: string[];
 }
-
-const aUrlOrNull = (v: unknown): string | null =>
-  v === null || (typeof v === "string" && /^https:\/\/\S+$/.test(v))
-    ? null
-    : "must be an https:// URL, or null";
 
 export const SPEC: ConnectorSpec = {
   name: "microsoft",
@@ -73,27 +70,6 @@ export const SPEC: ConnectorSpec = {
       value: DEFAULT_CALENDARS,
       doc: 'calendars the poll watches on every grant; "primary" = the account\'s own',
       check: checkStrings,
-    },
-    {
-      key: "oauthPort",
-      value: DEFAULT_OAUTH_PORT,
-      doc:
-        "the port the account door binds when the app's callback is remote; a loopback one names its own",
-      check: checkPort,
-    },
-    {
-      key: "ingestPort",
-      value: DEFAULT_INGEST_PORT,
-      doc:
-        "where Graph's Teams notifications land, behind notificationUrl; 0 = any free port, announced",
-      check: checkPort,
-    },
-    {
-      key: "notificationUrl",
-      value: null,
-      doc:
-        "the public https:// address Graph pushes Teams notifications to — the org's tunnel or edge in front of ingestPort; null ⇒ Teams is not subscribed (sends still go out)",
-      check: aUrlOrNull,
     },
     {
       key: "scopes",
