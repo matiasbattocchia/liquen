@@ -109,11 +109,11 @@ table, and `deno task status` lists what is armed.
 
 ## Connections
 
-A connect door refuses a grant nobody is listening for: a granted service delivers from
-that second on, and a delivery that finds no door is dropped by everyone. So the org runs
-first — `deno task start` — and the doors run against it. The first door of a service
-declares its connection in `config.jsonc` and reloads the running org, which starts the
-connection's process, and the door goes on once it is up.
+The org runs first — `deno task start` — and the doors run against it. The first door of a
+service declares its connection in `config.jsonc` and reloads the running org, which
+starts the connection's process. A door whose grant makes the service deliver at once —
+a WhatsApp pairing, a GitHub grant — waits for that process to be up before it asks,
+since a delivery that finds no door is dropped by everyone.
 
 ### GitHub (dev-tier: `gh webhook forward`)
 
@@ -168,8 +168,9 @@ Every door closes by naming what the org still owes, and `--help` explains each 
    ```
 
 3. **The connection runs under `deno task start`** — both halves in one process: Socket
-   Mode (or HTTP) in, chat.postMessage out, tokens from the vault. A token landed through
-   a door (1, 2) is picked up on the next start.
+   Mode (or HTTP) in, chat.postMessage out, tokens read from the vault at each use. The
+   app door declares the connection and reloads the org, which starts it; the carrier is
+   chosen when the process starts, and the door says so when the vault holds neither.
 
    The ingest is one webhook function either way — Socket Mode is just the local carrier;
    an edge deploy serves the same function at the app's Events API request URL.

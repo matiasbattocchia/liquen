@@ -307,7 +307,9 @@ Deno.test("missingScopes: a token with no scopes on the wire owes the whole ask"
   assertEquals(missingScopes(["a"], ["a", "extra"]), []); // extra reach is not a shortfall
 });
 
-Deno.test("slackHave: the vault's slack rows sort into app, bot, carrier, user", () => {
+const none = { app: false, bot: false, appToken: false, signingSecret: false, user: false };
+
+Deno.test("slackHave: the vault's slack rows sort into app, bot, carriers, user", () => {
   assertEquals(
     slackHave([
       { key: "slack:app:cid", value: { client_id: "cid" } },
@@ -315,43 +317,52 @@ Deno.test("slackHave: the vault's slack rows sort into app, bot, carrier, user",
       { key: "slack:T1:org", value: { token: "xoxb-x" } },
       { key: "slack:T1:matias", value: { token: "xoxp-x" } },
     ]),
-    { app: true, bot: true, appToken: true, user: true },
+    { ...none, app: true, bot: true, appToken: true, user: true },
   );
   // an identity is not a carrier: the two are stored, and asked for, apart
   assertEquals(
     slackHave([{ key: "slack:T1:org", value: { token: "xoxb-x" } }]),
-    { app: false, bot: true, appToken: false, user: false },
+    { ...none, bot: true },
   );
   assertEquals(
     slackHave([{ key: "slack:socket:A1", value: { app_token: "xapp-x" } }]),
-    { app: false, bot: false, appToken: true, user: false },
+    { ...none, appToken: true },
+  );
+  assertEquals(
+    slackHave([{ key: "slack:app:cid", value: { client_id: "cid", signing_secret: "s" } }]),
+    { ...none, app: true, signingSecret: true },
   );
 });
 
 Deno.test("slackNext: a user leg alone is told what inbound still needs", () => {
-  const next = slackNext({ app: false, bot: false, appToken: false, user: true });
+  const next = slackNext({ ...none, user: true });
   assertEquals(next.length, 3); // the bot, the carrier, the oauth client
   assertStringIncludes(next[0], "liquen connect slack app --bot");
+  assertStringIncludes(next[1], "refuses to start");
   assertStringIncludes(next[1], "App-Level Tokens");
   assertStringIncludes(next[1], "PUBLIC request URL"); // the alternative, named
   assertStringIncludes(next[2], "liquen connect slack app");
   assertStringIncludes(next[2], "liquen connect slack user"); // the one door that needs it
 });
 
-Deno.test("slackNext: a bot without its app-level token is told where to generate one", () => {
-  const next = slackNext({ app: true, bot: true, appToken: false, user: false });
+Deno.test("slackNext: a bot without a carrier is told where to generate one", () => {
+  const next = slackNext({ ...none, app: true, bot: true });
   assertEquals(next.length, 1);
   assertStringIncludes(next[0], "App-Level Tokens");
   assertStringIncludes(next[0], "connections:write");
 });
 
+Deno.test("slackNext: a signing secret is a carrier — events over HTTP owe no socket", () => {
+  assertEquals(slackNext({ ...none, app: true, bot: true, signingSecret: true }), []);
+});
+
 Deno.test("slackNext: an app and nothing else is told an app is not a grant", () => {
-  const next = slackNext({ app: true, bot: false, appToken: false, user: false });
+  const next = slackNext({ ...none, app: true });
   assertStringIncludes(next[0], "no identity yet");
 });
 
 Deno.test("slackNext: carrier + both legs owes nothing", () => {
-  assertEquals(slackNext({ app: true, bot: true, appToken: true, user: true }), []);
+  assertEquals(slackNext({ ...none, app: true, bot: true, appToken: true, user: true }), []);
 });
 
 Deno.test("socket door: the app id comes from the token, so one app is one socket", () => {

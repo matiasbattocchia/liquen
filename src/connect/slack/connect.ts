@@ -48,7 +48,7 @@ import type { Draft, MessageEvent } from "../../types.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { callbackAddress, ingestAddress } from "../../edge.ts";
 import { timedFetch } from "../http.ts";
-import { declared, printNext, requireIngest } from "../declare.ts";
+import { declared, printNext, requireEdge } from "../declare.ts";
 import {
   type DoorAddress,
   doorAddress,
@@ -408,15 +408,24 @@ export interface SlackHave {
   app: boolean; // the OAuth client — `slack:app:<client_id>`
   bot: boolean; // the org's identity — `slack:<team>:org`
   appToken: boolean; // the socket carrier, stored beside the bot token
+  signingSecret: boolean; // the HTTP carrier's verification, on an app row
   user: boolean; // at least one principal's own leg — `slack:<team>:<principal>`
 }
 
-/** Sort the vault's slack rows into the four. */
+/** Sort the vault's slack rows into the five. */
 export function slackHave(rows: { key: string; value: Record<string, unknown> }[]): SlackHave {
-  const have: SlackHave = { app: false, bot: false, appToken: false, user: false };
+  const have: SlackHave = {
+    app: false,
+    bot: false,
+    appToken: false,
+    signingSecret: false,
+    user: false,
+  };
   for (const r of rows) {
-    if (r.key.startsWith(APP_PREFIX)) have.app = true;
-    else if (r.key.startsWith(SOCKET_PREFIX)) have.appToken = true;
+    if (r.key.startsWith(APP_PREFIX)) {
+      have.app = true;
+      if (r.value.signing_secret) have.signingSecret = true;
+    } else if (r.key.startsWith(SOCKET_PREFIX)) have.appToken = true;
     else if (r.key.endsWith(":org")) have.bot = true;
     else have.user = true;
   }
@@ -428,9 +437,9 @@ export function slackHave(rows: { key: string; value: Record<string, unknown> }[
  *  (a token is pasted, an app-level token is GENERATED, a grant is approved).
  *
  *  Inbound is the sharp one: ingest reads events over one of two carriers — the app-level
- *  token's socket, or an HTTP request URL on the ingest port — and the second needs a
- *  public address. An org with an identity and no `app_token` receives nothing and is
- *  told so here rather than by silence. */
+ *  token's socket, or an HTTP request URL on the ingest port, verified by the app's
+ *  signing secret, which needs a public address. With neither, the connection refuses to
+ *  start, and this is where that is said rather than in the run's lines alone. */
 export function slackNext(have: SlackHave): string[] {
   const next: string[] = [];
   if (!have.user && !have.bot) {
@@ -445,11 +454,12 @@ export function slackNext(have: SlackHave): string[] {
         "also what an app needs to be installed with bot events)",
     );
   }
-  if (!have.appToken) {
+  if (!have.appToken && !have.signingSecret) {
     next.push(
-      "no socket carrier — Basic Information → App-Level Tokens → Generate Token and " +
-        "Scopes (`connections:write`), pasted at `liquen connect slack app` (without one, " +
-        "ingest needs a PUBLIC request URL)",
+      "nothing to receive events over, so the connection refuses to start — Basic " +
+        "Information → App-Level Tokens → Generate Token and Scopes (`connections:write`), " +
+        "pasted at `liquen connect slack app` (or the app's signing secret there, for events " +
+        "over HTTP at a PUBLIC request URL)",
     );
   }
   if (!have.app) {
@@ -604,9 +614,6 @@ if (import.meta.main) {
     if (verb === "app") {
       const pastes = flags.has("bot") || flags.has("user");
       const callback = edge.publicUrl === null ? undefined : callbackAddress(edge, "slack");
-      // a grant makes the workspace deliver from that second on, so the door is the moment
-      // to know somebody is listening (`requireIngest`); the app's own pieces land no grant
-      if (pastes) await requireIngest(root, SPEC);
       const url = manifestUrl(withScopes(
         JSON.parse(
           await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
@@ -633,6 +640,7 @@ if (import.meta.main) {
 
       const creds = await store.vault();
       const log = pastes ? await store.log() : null;
+      let wrote = false;
       try {
         const clientId = ask("Client ID:");
         if (clientId) {
@@ -644,16 +652,14 @@ if (import.meta.main) {
           const signingSecret = ask("Signing secret (HTTP ingest only):");
           const key = await connectSlackApp({ clientId, clientSecret, signingSecret }, creds);
           console.error(`✓ app stored: ${key}` + (callback ? ` (callback: ${callback})` : ""));
-          // only now, because a door that wrote nothing promised nothing (`requireIngest`
-          // already did this when tokens are being pasted); declaring reloads a running org,
-          // which gives an ingest that refused for want of this app another go
-          if (!pastes) await declared(root, SPEC);
+          wrote = true;
         }
 
         const appToken = ask("App-level token (xapp-…):");
         if (appToken) {
           const { appId } = await connectSlackSocket(appToken, { creds });
           console.error(`✓ socket carrier stored for app ${appId} — ingest reads events over it`);
+          wrote = true;
         }
 
         if (flags.has("bot")) {
@@ -671,6 +677,7 @@ if (import.meta.main) {
               `✓ bot connected: workspace ${team}, bot user ${botUser} → ${agent ?? "the org"}`,
             );
             report(missing, "Reinstall the app to the workspace after adding them.");
+            wrote = true;
           }
         }
 
@@ -687,8 +694,13 @@ if (import.meta.main) {
             });
             console.error(`✓ connected: workspace ${team}, slack user ${user} → ${principal}`);
             report(missing, 'Add them under "User Token Scopes", then "Reinstall to Workspace".');
+            wrote = true;
           }
         }
+        // Slack keeps sending from the install on, whatever this door does, and ingest reads
+        // back what it missed each time it connects; declaring reloads a running org, which
+        // starts the connection or gives one that refused for want of these pieces another go
+        if (wrote) await declared(root, SPEC);
         await owed(creds);
         if (pastes) console.error("  (deno task status shows the map)");
       } catch (e) {
@@ -712,7 +724,7 @@ if (import.meta.main) {
       Deno.exit(2);
     }
     const registered = callbackAddress(edge, "slack");
-    await requireIngest(root, SPEC);
+    await requireEdge(root);
     const { createSlackOAuth } = await import("./oauth.ts");
     const agent = positional[0] ?? me();
     const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? userScopes;

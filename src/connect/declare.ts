@@ -66,11 +66,11 @@ async function awaited(
  *  else does — a door on a fresh org would otherwise wait for a listener nothing will ever
  *  start. Running the door is the decision, so the file says so from the first run on.
  *
- *  Up, because a grant makes the service deliver from that second on — the whatsmeow
- *  bridge posts the phone's history within seconds of a pairing, an installed Slack app
- *  was sending before the door ran — and a delivery that finds no listener is dropped by
- *  everyone. So the door refuses, in a sentence, rather than take a grant it cannot
- *  receive on. */
+ *  Up, because the grant itself makes the service deliver from that second on — the
+ *  whatsmeow bridge posts the phone's history within seconds of a pairing, once — and a
+ *  delivery that finds no listener is dropped by everyone. So the door refuses, in a
+ *  sentence, rather than take a grant it cannot receive on. A door whose service was
+ *  delivering before it ran, or whose ingest reads a gap back, has nothing to wait for. */
 export async function requireIngest(
   root: string,
   spec: ConnectorSpec,

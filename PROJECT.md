@@ -4622,3 +4622,25 @@ founding members joined, from the agent that made it — the way a WhatsApp grou
 the account in it arrives with its roster. A room found by name (the same members again)
 opens nothing; a direct room is its members and has no line. Test: `main.test.ts`'s local
 room walk (two sends to `ops`, one founding line).
+
+### The Slack doors stop waiting for the ingest (2026-09-28) — LANDED
+
+`liquen connect slack app --bot/--user` and `liquen connect slack user` waited, as their
+first step, for Slack's ingest socket to answer (`requireIngest`). The wait could not be
+met twice over: the app door asked for it before storing the app, and the ingest refuses
+to start without a carrier; and in Socket Mode the ingest dials out and serves no socket,
+so nothing ever answered. It also protected nothing. Slack sends from *Install to
+Workspace* on, before either door runs, a paste only stores a token the process reads at
+each use, and the ingest reads the gap back from history every time it connects. The
+wait stays where the grant itself triggers a one-time delivery: the WhatsApp pairing and
+the GitHub doors.
+
+The app door now declares the connection and reloads the org once it has stored anything
+(`declared`), and its closing lines say when the vault holds neither an app-level token
+nor a signing secret, the one thing without which the connection refuses to start
+(`slackNext`, which now counts a signing secret as a carrier). The user door waits for the
+edge only (`requireEdge`), since the sign-in comes back through it.
+
+Open: the carrier is read when the process starts. A reload restarts Slack only when its
+config section changed or it refused, so a carrier added to a Slack already running (a
+second app, or a socket where HTTP was) is taken up at the next start.
