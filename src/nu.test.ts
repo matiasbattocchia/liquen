@@ -366,7 +366,7 @@ Deno.test("nu: a checkpoint is written under the agent's own prefix — what it 
           kind: "instruction",
           name: "organization",
           load: "always",
-          handle: "../../organization/instructions/organization.md",
+          handle: "/org/data/organization/instructions/organization.md",
         },
         body: "La consulta cuesta $40.000.",
       }],

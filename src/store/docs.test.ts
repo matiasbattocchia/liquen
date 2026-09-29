@@ -154,10 +154,10 @@ Deno.test("non-.md files are ignored; a missing scope lists empty; missing read 
       await docs.read({ agent: "a1" }, { scope: "organization", kind: "skill", name: "ghost" }),
       null,
     );
-    // the handle is the way from the agent's folder: the read takes it as printed
+    // the handle is the file's absolute path: the read takes it as printed, from anywhere
     assertEquals(
       (await docs.list({ agent: "a1" }))[0].header.handle,
-      "../../organization/instructions/x.md",
+      `${root}/organization/instructions/x.md`,
     );
   });
 });

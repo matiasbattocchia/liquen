@@ -28,9 +28,9 @@
  * short-lived access tokens (the credential stays broker-side, §9).
  *
  * Nothing serves these routes standing: a door serves them for the length of one sign-in
- * (`liquen connect google account`). The redirect URI is the app's — `extra.redirect_uri` on
- * the app row, sent verbatim and served at, so the browser Google redirects reaches the same
- * door the link started at, whether that is the dev's own or a member's elsewhere. Both routes are SYNCHRONOUS
+ * (`liquen connect google account`). The redirect URI is the one the door hands in
+ * (`redirectUri`: the org's `callbackAddress`, connect.ts), sent verbatim, so the browser
+ * Google redirects reaches the same door the link started at. Both routes are SYNCHRONOUS
  * request/response (a 302, a page), so whatever fronts them must carry a redirect.
  */
 
@@ -74,8 +74,7 @@ export interface GoogleOAuthDeps {
   now?: () => string;
 }
 
-/** Identity + calendar: the first product. Drive/Gmail arrive by incremental re-consent
- *  through the same door — never by widening this list ahead of a member's ask. */
+/** The door's two routes, `/start` and the callback, as one handler. */
 export type OAuthHandler = (req: Request) => Promise<Response>;
 
 /** Build the two-route handler. Pure over its deps — serve it anywhere synchronous. */

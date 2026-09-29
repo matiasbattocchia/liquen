@@ -175,12 +175,12 @@ Deno.test("mirror fan-out: a logged-out surface gets no copy — the live bindin
   });
 });
 
-Deno.test("mirror fan-out: a REPL-typed principal line CCs tagged with where it was typed", async () => {
+Deno.test("mirror fan-out: a terminal-typed principal line CCs tagged with where it was typed", async () => {
   await withMirror(async ({ publish, inConv, waitFor }) => {
     await publish(mindMsg("hola"));
     await waitFor(async () => (await inConv("D1")).length === 1);
-    assertEquals(textOf((await inConv("D1"))[0]), "`[ana via repl]` hola");
-    assertEquals(textOf((await inConv("549"))[0]), "`[ana via repl]` hola");
+    assertEquals(textOf((await inConv("D1"))[0]), "`[ana via terminal]` hola");
+    assertEquals(textOf((await inConv("549"))[0]), "`[ana via terminal]` hola");
   });
 });
 

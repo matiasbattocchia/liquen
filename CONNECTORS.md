@@ -3,11 +3,21 @@
 *Companion to [DESIGN.md](DESIGN.md) (§3 ingest-as-classifier, §4 identity/credentials, §9
 deployment tiers) and [PROJECT.md](PROJECT.md) (the arc). This file is the per-service map:
 what each connector costs, what it reuses, and where it breaks the mould. Status
-2026-09-23. Landed: GitHub (v0.1 preview), Slack (live smoke passed
-2026-08-12), Google (calendar poll + `gws` grant), Microsoft (the door + the Graph skill).*
+2026-09-29. Landed: GitHub (v0.1 preview), Slack, WhatsApp (the bridge), Google (Gmail in
+and out, the calendar poll, the `gws` grant), Microsoft (Outlook mail in and out, the
+calendar poll, Teams pushed both ways, the Graph skill).*
 
-Services of interest, in scope: **WhatsApp** · **Slack** (done) · **Gmail** ·
-**Google Calendar** · **Microsoft Teams** · **Outlook mail** · **Outlook Calendar**.
+| | Google | Microsoft |
+|---|---|---|
+| Mail in | Gmail history, polled; Sent merges our sends | Inbox and Sent Items deltas, polled; Sent merges our sends |
+| Mail out | new thread, reply to the cast, attachments | the same |
+| Calendar in | `syncToken` poll: create, edit, delete | events delta poll: create, edit, delete |
+| Calendar out | the agent, through `gws` | the agent, through `fetch` and the Graph skill |
+| Chat | — | Teams chats and channels, pushed in, dispatched out |
+| Rooms port | — | Teams chats and channels |
+| Address book | — | — |
+| Files | mail attachments | mail attachments; OneDrive only for Teams files |
+| Agent's tool | `gws` toward `*.googleapis.com` | `fetch` toward `graph.microsoft.com` |
 
 ---
 
@@ -407,7 +417,8 @@ scope, which the leg's refusal carries; the account signs in again to grant it. 
 own rules pass through the same way — eight besides the opener in a direct room,
 `#general` lets nobody go, a name already taken. The roster comes back as user ids, and
 the harness names each the way the log knows them, from the lines they wrote on the
-account. Main wires the port when `connections.slack` is declared, over the vault.
+account. Main wires the port from boot, over the vault, so a workspace connected while it
+runs has its port already there.
 
 Remaining:
 
@@ -425,13 +436,13 @@ Remaining:
 Email is a **service, not a tool** (§4) and it is genuinely conversation-shaped, so it lands
 in the log as one. The rows ride the GRANT — `service: google`, the account's connection —
 the way calendar rows do, so one connection row and one process carry an account whole.
-The conversation is the **other parties**: every address on From/To/Cc but the account's
-own, lower-cased, sorted, comma-joined (`ana@x.com`; `a@x.com,b@y.com` for a group),
-`kind: direct` — member-defined, the mpim rule — with the subject, its `Re:`/`Fwd:`
-prefixes off, as `conversation.thread`; render breaks a run on a thread change, so each
-subject prints as its own `<conv … thread="…">`. `external_id` is `mail:<Message-ID>`, the
-one name a message has on every wire; an inbound `In-Reply-To` is the row's `reply`
-reference. The body is the plain text with its quoted history cut (`stripQuotes`: the
+A **thread is the conversation**: `kind: group`, addressed at its root — the Message-ID of
+the message that opened it, read off `References`/`In-Reply-To`, or the log's own filing
+of the message answered — and named by its subject, `Re:`/`Fwd:` off; its members are
+whoever took part, and each row keeps its To and Cc (`extra.mail`), so a reply reaches the
+whole cast. A first send (`send(to: <addresses>, subject:)`) opens a thread the dispatcher
+files at the id it mints. `external_id` is `mail:<Message-ID>`, the one name a message has
+on every wire; an inbound `In-Reply-To` is the row's `reply` reference. The body is the plain text with its quoted history cut (`stripQuotes`: the
 `On … wrote:` attribution, Outlook's separator, a forwarded header block, a trailing `>`
 block); an HTML-only body is read as words. Attachments are file parts on the media shelf;
 inline images are not attachments. All of that is `src/connect/mail.ts`, shared with
@@ -463,26 +474,28 @@ exemption wording before the org tier.
 
 ## 6. Google Calendar — a tool with an event STREAM, not a conversation
 
-This is the one that does not fit the conversation mould, and it should not be forced into
-it. A calendar event has no sender, no thread, no reply — it is not a message.
+This is the one that does not fit the conversation mould, and it is not forced into it: a
+calendar is fan-out, not a room anyone is in, and an event has no thread and no reply.
 
 **Shape: tool + stream.**
 
-- **Tool** (§8 domain tools / the exec plane): list, create, update, find-free-time.
-  Principal-owned OAuth — the `principal × tool` cell of the §4 credential grid.
-- **Stream**: changes publish into the mind conversation as system-shaped events —
-  "meeting moved", "double-booked", "standup in 10 minutes".
+- **Tool**: the agent's own `gws` in bash, on the grant the proxy fronts — list, create,
+  update, delete, invite. The connector sends nothing to a calendar.
+- **Stream** (`src/connect/google/calendar.ts`, over the shared grammar in
+  `src/connect/calendar.ts` and the poller in `src/connect/poll.ts`): each change is a row
+  in the calendar's own conversation — `kind: broadcast`, addressed at the calendar's true
+  id (`primary` resolves to the grant's address) — voiced by the event's creator. A create
+  is a message keyed `calendar:<cal>:<id>`; an edit is its own row, `action: "edit"` at the
+  create; a cancellation is a delete row plus `deleted_at` on the create. The calendars are
+  `connections.google.calendars`, `primary` by default.
 
-**Can we subscribe to changes as events? Yes — with two caveats.**
-
-1. The notification carries **no data** → re-sync with `syncToken` (incremental sync).
-   Same cursor machinery as Gmail (§2).
-2. **Calendar has NO pull carrier.** Unlike Gmail, `events.watch` requires a publicly
-   reachable HTTPS endpoint with a valid CA cert — self-signed, untrusted, revoked, or
-   hostname-mismatched certs are explicitly rejected. So: **the local tier POLLS with
-   `syncToken`** (cheap — a sync-token query returns nothing when nothing changed) and
-   **the edge tier uses `watch`**. A real tier asymmetry, unlike every other connector, and
-   worth writing into the deployment table (§9).
+**The carrier is a poll.** The cursor is Calendar's `syncToken` (a first run harvests one
+from `events.list` at `timeMin = now` and publishes nothing; a `410` drops it), and the sync
+does not label a change, so it is read off the resource: `cancelled` ⇒ delete, `updated`
+past `created` ⇒ edit, else create. `events.watch` requires a publicly reachable HTTPS
+endpoint with a valid CA cert — self-signed, untrusted, revoked, or hostname-mismatched
+certs are explicitly rejected — so it is the edge tier's carrier for the same map/publish,
+a wake that re-syncs with the token (§2).
 
 **A calendar is an alarm clock.** This item and PROJECT #10 are the same feature seen from
 two sides: "meeting in 10 min" is precisely the open question there — *"what event type
@@ -497,8 +510,8 @@ Entra app registration (client id, secret, the tenant it lives in) into the vaul
 writes the grant — `microsoft:<upn>`, `refresh_token` + `access_token`, fronted to agent
 bash as `MICROSOFT_GRAPH_TOKEN` toward `graph.microsoft.com` alone. The broker refreshes at
 the tenant's token endpoint and keeps the rotated refresh token. The declared section
-runs no process (`RUNNING` in `connect/connect.ts`): until an ingest exists, the connection
-is a credential.
+runs one process (`src/connect/microsoft/run.ts`): the mail and calendar polls, the mail
+dispatch, and Teams in and out.
 
 **The agent's tool is `fetch` and a skill** (`src/seed/system/skills/microsoft-graph.md`,
 laid into `data/system/skills/` by `liquen connect microsoft app`, so an org carries it iff it
@@ -652,8 +665,7 @@ words. What a leg may do is the grant's consent — `Chat.Create`, `ChatMember.R
 the catalog's default `scopes`, the last four the tenant admin's to consent to — and
 Graph answers a call short of one with a 403 that does not always name it, so the leg's
 refusal names the permission it needs and the remedy: the account signs in again. Main
-wires the port when `connections.microsoft` is declared, over the vault and a grant
-broker of its own.
+wires the port from boot, over the vault and a grant broker of its own.
 
 Ceilings: reading is 1 rps per chat or channel; 10,000 Teams subscriptions per tenant
 across all apps.

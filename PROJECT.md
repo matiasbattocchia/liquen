@@ -4817,3 +4817,27 @@ Still open from the run:
 - The WhatsApp mirror labels a CLI message `por repl`.
 - The model, whose shell runs in the caller's directory, did not resolve a skill's path
   from its home and searched the filesystem for it.
+
+### Absolute doc paths, the terminal label, CONNECTORS.md brought to the code (2026-09-29) — LANDED
+
+- **A doc's handle is its absolute path** on the files substrate (`openFileDocs`): the
+  index, an inlined doc's header and the argument `aread` takes are one string that opens
+  from any directory, so a shell standing where `liquen cli` was run finds a skill without
+  searching. `system.md` names the scopes from the home, not from the shell.
+- **The mirror tags a line typed at the door `via terminal`** (`por terminal`): the REPL and
+  `liquen cli` both speak through the door, which cannot tell them apart.
+- **CONNECTORS.md**: a Google-and-Microsoft table heads the file; a mail thread is a group
+  addressed at its root; Google Calendar is the landed poll and `gws`; Microsoft runs a
+  process; the rooms ports are wired from boot. Two stale comments in `google/oauth.ts`
+  went with it.
+- **A send into a broadcast is refused before the gate** (`broadcastAt` in xi.ts, beside
+  `selfSend` and `unheld`): a calendar has nobody to answer, so a card for it could only
+  end in the same refusal.
+
+The Exchange-made calendar change of the Microsoft run came about a minute and a half after
+the agent's create, not after an edit, and was one in five creates. Deduplicating it waits
+for more cases.
+
+Delivery on the new tenant: Outlook shows the sends, and nothing reached Gmail (spam
+included) or Riseup's forward — Microsoft holds the tenant's outbound, which is its own
+limit and not liquen's.

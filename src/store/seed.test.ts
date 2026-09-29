@@ -31,7 +31,10 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
     );
     // the agent doc is the role alone: who and where is the env line (§5)
     assertStringIncludes(byName.get("instructions/agent")!.body!, "What this agent is for");
-    assertEquals(byName.get("instructions/agent")!.header.handle, "instructions/agent.md");
+    assertEquals(
+      byName.get("instructions/agent")!.header.handle,
+      `${root}/agents/alter/instructions/agent.md`,
+    );
     // the kind folders that carry no template stand empty, where a skill or a memory goes
     for (
       const dir of [

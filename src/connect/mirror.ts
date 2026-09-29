@@ -405,8 +405,9 @@ async function ccParts(
   if (!text) return null;
   // a principal's own line, coming back as output on another surface: same tag shape as
   // the voice, naming who typed it and where — the reader there may be another principal
-  // (§4), so the line says which; the REPL when the mind itself is where it landed
-  const where = viaOf(e)?.service ?? "repl";
+  // (§4), so the line says which; the terminal when the mind itself is where it landed —
+  // the REPL and `liquen cli` both speak through the door, which cannot tell them apart
+  const where = viaOf(e)?.service ?? "terminal";
   const sender = e.envelope.sender;
   const who = sender?.address
     ? (await deps.nameOf?.(sender.address)) ?? sender.name ?? sender.address

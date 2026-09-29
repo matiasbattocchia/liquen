@@ -41,7 +41,7 @@ Deno.test("storeAt: the SQLite store's docs are the files under its data root, s
     assertEquals(await docs.bed.laid("agent", "a1", "memories"), true);
     assertEquals(
       (await docs.list({ agent: "a1" })).map((d) => d.header.handle),
-      ["memories/x.md"],
+      [`${dir}/agents/a1/memories/x.md`],
     );
     await docs.close();
   } finally {

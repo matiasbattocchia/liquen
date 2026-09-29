@@ -24,12 +24,12 @@ import type {
   ToolUseEvent,
 } from "./types.ts";
 
-/** A header as the file adapter lists it: the handle is the way from the agent's home. */
+/** A header as the file adapter lists it: the handle is the file's absolute path. */
 const HANDLE_PREFIX: Record<DocScope, string> = {
-  system: "../../system/",
-  organization: "../../organization/",
-  agent: "",
-  conversation: "../../conversations/c1/",
+  system: "/org/data/system/",
+  organization: "/org/data/organization/",
+  agent: "/org/data/agents/a1/",
+  conversation: "/org/data/conversations/c1/",
 };
 
 function doc(
@@ -74,17 +74,17 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
 
   assertEquals(
     prefix.text,
-    "[../../system/base.md]\nSos el alter-ego de Ana.\n\n" +
-      "[../../organization/clinic.md]\nClínica Sur · 9–18h L–V.\n\n" +
-      "[persona.md]\nHablás como Ana: cálida, breve.",
+    "[/org/data/system/base.md]\nSos el alter-ego de Ana.\n\n" +
+      "[/org/data/organization/clinic.md]\nClínica Sur · 9–18h L–V.\n\n" +
+      "[/org/data/agents/a1/persona.md]\nHablás como Ana: cálida, breve.",
   );
   // the rule opens the section, and a pointer wears the handle an inlined doc wears
   assertEquals(
     index.text,
     "\n\n---\n\n# On-demand docs\n\n" +
-      "The path is the doc's own, from your home; `aread` one to read it:\n\n" +
-      "- [../../organization/reschedule.md] reprogramar un turno\n" +
-      "- [../../organization/patients.md] notas de pacientes",
+      "The path is the doc's own; `aread` one to read it:\n\n" +
+      "- [/org/data/organization/reschedule.md] reprogramar un turno\n" +
+      "- [/org/data/organization/patients.md] notas de pacientes",
   );
 });
 
@@ -95,8 +95,8 @@ Deno.test("on the table, the index says what opens a handle: `read`, not the she
     index.text,
     "\n\n---\n\n# On-demand docs\n\n" +
       "The handle is the doc's own; `read` one to read it:\n\n" +
-      "- [../../organization/reschedule.md] reprogramar un turno\n" +
-      "- [../../organization/patients.md] notas de pacientes",
+      "- [/org/data/organization/reschedule.md] reprogramar un turno\n" +
+      "- [/org/data/organization/patients.md] notas de pacientes",
   );
 });
 
@@ -130,7 +130,7 @@ Deno.test("only-bodies ⇒ single block (cached); only-pointers ⇒ single index
 
 Deno.test("a pointer with no description is its handle alone", () => {
   const [index] = renderSystem([doc("organization", "skill", "bare", {})]);
-  assertEquals(index.text.endsWith("- [../../organization/bare.md]"), true);
+  assertEquals(index.text.endsWith("- [/org/data/organization/bare.md]"), true);
 });
 
 Deno.test("empty docs ⇒ empty system", () => {

@@ -215,7 +215,7 @@ function renderIndex(pointers: DocEntry[], on: Env["docs"] = "files"): string {
   });
   const opener = on === "table"
     ? "The handle is the doc's own; `read` one to read it:"
-    : "The path is the doc's own, from your home; `aread` one to read it:";
+    : "The path is the doc's own; `aread` one to read it:";
   return `${opener}\n\n${lines.join("\n")}`;
 }
 

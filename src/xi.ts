@@ -1595,7 +1595,8 @@ async function act(
     // in front of them whose only outcomes are a message they were already getting and a
     // refusal. Cheap to raise, and the model reads the hint and says the thing instead.
     const nowhere = await selfSend(name, input, config, ports) ??
-      await unheld(input, self, ports);
+      await unheld(input, self, ports) ??
+      await broadcastAt(name, input, ports);
     if (nowhere) {
       out.push(await resultOf(use, nowhere, { is_error: true }));
       continue;
@@ -2367,6 +2368,21 @@ async function unheld(
   }
 }
 
+/** A send into a broadcast (a calendar, a status feed): refused before it is gated, since
+ *  nobody answers there and no approval could give the call a destination. */
+async function broadcastAt(name: string, input: Json, ports: XiPorts): Promise<string | undefined> {
+  if (name !== "send") return undefined;
+  const to = (input as { to?: unknown } | null)?.to;
+  if (typeof to !== "string" || to === "") return undefined;
+  const [prior] = await ports.log.read({ conversation: to, limit: 1 });
+  return prior?.envelope.conversation.kind === "broadcast" ? nobodyAnswers(to) : undefined;
+}
+
+/** The refusal a send into a broadcast gets, before the gate and at execution alike. */
+function nobodyAnswers(to: string): string {
+  return `${to} is a broadcast — nobody answers there`;
+}
+
 /** Where a call LANDS (§9): a send's destination — the same anchoring read, name
  *  resolution and peer-name canonicalization `execute` does, so a scoped rule matches the
  *  conversation the log will record — and a contact write's account. Tools that dispatch
@@ -2676,7 +2692,7 @@ async function execute(
       ? opened.kind ?? aimed.wire!.open.kind
       : prior?.envelope.conversation.kind;
     // a broadcast is fan-out, not a room anyone is in (§3): nothing answers there
-    if (kind === "broadcast") throw new Error(`${to} is a broadcast — nobody answers there`);
+    if (kind === "broadcast") throw new Error(nobodyAnswers(to));
     const target = args.re === undefined ? undefined : await referent(ports, to, String(args.re));
     // a wire conversation's name is its record's — a send carries no rename; on first
     // contact the subject names the thread this send opens, and the wire's Re: on a reply

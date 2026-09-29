@@ -31,15 +31,16 @@
  *   <root>/system/**  ·  <root>/organization/**  ·  <root>/agents/<agentId>/**
  *   <root>/conversations/<convId>/**
  * A doc's `name` is its path relative to the scope dir, minus `.md` (so the conventional
- * `instructions/compaction`); its handle is the way to the file from the agent's folder,
- * where its shell stands (`instructions/agent.md`, `../../system/instructions/base.md`),
- * so the handle is also the argument `aread` takes. The columns are the file's YAML
+ * `instructions/compaction`); its handle is the file's absolute path, the argument `aread`
+ * takes wherever the shell stands — an attach puts it in the caller's directory, and a path
+ * counted from anywhere else sends the model looking. The columns are the file's YAML
  * frontmatter, projected. Reads are fresh from disk (multi-process, like the log). On the
  * table (`pg/docs.ts`) this same port is SELECTs over `docs`, the columns projected from
  * the row's text by the same parser — a row with no frontmatter is likewise not listed —
  * and the handle is the row's key, `scope/name`.
  */
 
+import { resolve } from "node:path";
 import { parse as parseYaml } from "@std/yaml";
 import type { AgentId } from "../types.ts";
 
@@ -65,7 +66,7 @@ export interface DocHeader extends DocRef {
   description?: string;
   load: DocLoad;
   /** The adapter's address for the doc — what render prints and what the agent's own read
-   *  takes, one string. Files: the path from the agent's folder to the file. */
+   *  takes, one string. Files: the file's absolute path. */
   handle: string;
 }
 
@@ -86,7 +87,7 @@ export interface Docs {
   list(ctx: DocContext): Promise<DocEntry[]>;
   /** Pull one doc's body on demand (for a pointer), or null if it's gone. */
   read(ctx: DocContext, ref: DocRef): Promise<string | null>;
-  /** What the handles are: paths from the agent's home the shell's `aread` opens, or
+  /** What the handles are: absolute paths the shell's `aread` opens, or
    *  the table's keys its `read` call opens. Absent (a test's stub): files. */
   on?: "files" | "table";
 }
@@ -97,15 +98,14 @@ export function openFileDocs(root: string): Docs {
     on: "files",
     async list(ctx: DocContext): Promise<DocEntry[]> {
       const out: DocEntry[] = [];
-      const home = scopeDir(root, "agent", ctx)!;
       for (const [scope, dir] of scopeDirs(root, ctx)) {
         for (const name of await markdownUnder(dir)) {
-          const path = `${dir}/${name}.md`;
+          const path = resolve(`${dir}/${name}.md`);
           const frontmatter = await readFrontmatter(path);
           if (frontmatter === null) continue; // no frontmatter ⇒ not a doc (workspace file)
           const columns = columnsOf(frontmatter);
           const entry: DocEntry = {
-            header: { scope, name, ...columns, handle: from(home, path) },
+            header: { scope, name, ...columns, handle: path },
           };
           if (columns.load === "always") {
             entry.body = stripFrontmatter(await Deno.readTextFile(path));
@@ -127,15 +127,6 @@ export function openFileDocs(root: string): Docs {
       }
     },
   };
-}
-
-/** The path to `there` as walked from `here` — the shell's own arithmetic, no dependency. */
-function from(here: string, there: string): string {
-  const a = here.split("/").filter(Boolean);
-  const b = there.split("/").filter(Boolean);
-  let i = 0;
-  while (i < a.length && i < b.length && a[i] === b[i]) i++;
-  return [...a.slice(i).map(() => ".."), ...b.slice(i)].join("/");
 }
 
 /** The header columns a doc's frontmatter declares: `kind` (unknown or absent ⇒ `memory`),

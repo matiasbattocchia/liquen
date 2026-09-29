@@ -24,9 +24,9 @@ When nothing is worth saying, reply `<|SILENCE|>` and nothing else.
 
 ## Knowledge
 
-Docs stand under three scopes: your home, which is yours alone; `../../organization/`,
-which everyone here reads and writes; and `../../system/`, which is read-only. A doc
-counts anywhere under its scope.
+Docs stand under three scopes: your home, which is yours alone; the `organization/`
+folder two levels above it, which everyone here reads and writes; and `system/` beside
+that, which is read-only. A doc counts anywhere under its scope.
 
 A `.md` file is a doc when it opens with a header, and an ordinary file when it does not:
 

@@ -1940,13 +1940,13 @@ Registers (same substrate, different rules):
   nu pushes an **always-loaded index** — every doc's `path + description` — plus the
   **bodies of `load:"always"` docs** (persona, core instructions). `load:"lazy"` docs appear
   as index pointers only; **mu pulls a body on demand via the substrate read** (`aread`/`read`
-  — "doc-read = the substrate read", §9). **A doc is named by the way to it from the agent's
-  workspace**, which is where its shell stands: `instructions/agent.md` for its own,
-  `../../organization/instructions/x.md` for a scope above. One handle — the provenance
+  — "doc-read = the substrate read", §9). **A doc is named by its absolute path**, which
+  opens it wherever the shell stands — an attach puts the shell in the caller's directory.
+  One handle — the provenance
   header over an inlined body, the index line, and the argument that opens the file are the
   same string, so nothing has to be translated to be read. The handle is a column of the
-  header (`DocHeader.handle`), the adapter's word: the file adapter counts it from the
-  agent's folder, a table adapter answers the row's key, and render prints what it is
+  header (`DocHeader.handle`), the adapter's word: the file adapter answers the file's
+  absolute path, a table adapter the row's key, and render prints what it is
   given. nu stays dumb (no relevance matching); mu decides
   what to pull. Keeps the prompt (and its cache prefix) lean as doc volume grows.
 - Media lands NATIVE (§5): images/PDFs the model reads directly, everything else a

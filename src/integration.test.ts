@@ -1429,6 +1429,52 @@ Deno.test("send on an account the agent does not hold is refused before it is ev
   );
 });
 
+Deno.test("send into a calendar is refused before it is ever gated, and nothing is dispatched", async () => {
+  // gating ON: a broadcast has nobody to answer, so there is no destination to approve
+  const account = "matias@acme.onmicrosoft.com";
+  const calendar = "AAMkADcal2";
+  const event: Draft<MessageEvent> = {
+    ts: new Date().toISOString(),
+    type: "message",
+    envelope: {
+      service: "microsoft",
+      connection_address: account,
+      conversation: { address: calendar, kind: "broadcast" },
+      sender: { address: "ana@acme.com" },
+      external_id: `calendar:${calendar}:ev1`,
+    },
+    parts: [{ type: "data", kind: "calendar", data: { gid: "ev1", title: "standup" } }],
+  };
+  await scenario(
+    [
+      ok(
+        [{ kind: "tool_use", name: "send", input: { to: calendar, text: "llego tarde" } }],
+        "tool_use",
+      ),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("avisá en el standup que llego tarde"));
+      await waitFor(async () => (await read("tool_result")).length === 1);
+      const [answer] = await read("tool_result") as ToolResultEvent[];
+      assertEquals(answer.parts[0].data.is_error, true);
+      assertStringIncludes(JSON.stringify(answer.parts[0].data.output), "is a broadcast");
+      assertEquals((await read("permission_request")).length, 0);
+      assertEquals(
+        (await read("message")).filter((e) =>
+          e.agent?.id === "a1" && e.envelope.service !== "local"
+        ).length,
+        0,
+      );
+    },
+    { gate: () => "ask" },
+    [event],
+    {},
+    [{ agentId: "a1", mind: "mind@a1" }],
+    [{ service: "microsoft", address: account, agentId: "a1" }],
+  );
+});
+
 Deno.test("send at the principal: their number however it was typed, not only as stored", async () => {
   // a handle is written the way a person writes one — `+54 9 11 6754-2610` is the number
   // the wire calls `5491167542610` — so the guard compares handles, never strings
