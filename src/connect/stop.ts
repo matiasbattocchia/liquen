@@ -1,5 +1,6 @@
 /**
- * stop.ts — a connection's answer to SIGTERM: the shape main gives the same signal.
+ * stop.ts — a connection's halves: which ingests start, and the answer to SIGTERM, the
+ * shape main gives the same signal.
  *
  * A connection process (run.ts) is resident halves — an ingest serving, a dispatcher
  * subscribed. Stopping is: stop taking work, await what is in flight, exit — so the
@@ -8,6 +9,28 @@
  * landed — is bounded by the delivery contract: `send` answers queued, nothing claims
  * delivery before `dispatched_at`, and a restart may duplicate that one message.
  */
+
+/** Start the ingests `connections.<service>.listen` names, in `ingests`' order, and say
+ *  once for each other one that nothing of it reaches the log. Returns their stops. */
+export async function listening<S extends string>(
+  service: string,
+  listen: readonly NoInfer<S>[],
+  ingests: Record<S, () => Promise<() => Promise<void>>>,
+): Promise<(() => Promise<void>)[]> {
+  const stops: (() => Promise<void>)[] = [];
+  for (
+    const [surface, run] of Object.entries(ingests) as [S, () => Promise<() => Promise<void>>][]
+  ) {
+    if (listen.includes(surface)) stops.push(await run());
+    else {
+      console.error(
+        `[ingest] ${service} ${surface}: not listened (connections.${service}.listen) — ` +
+          `nothing of it reaches the log`,
+      );
+    }
+  }
+  return stops;
+}
 
 /** Install SIGTERM/SIGINT handling over each half's stop. A second signal during the
  *  drain exits immediately — the caller asked twice. */

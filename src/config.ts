@@ -233,6 +233,13 @@ export const checkStrings = (v: unknown): string | null =>
     ? null
     : "must be a non-empty array of non-empty strings";
 
+/** A boot check for an entry naming some of `choices`, each at most once — empty is a
+ *  choice too. */
+export const checkAmong = (choices: readonly string[]) => (v: unknown): string | null =>
+  Array.isArray(v) && v.every((s) => choices.includes(s)) && new Set(v).size === v.length
+    ? null
+    : `must be an array of distinct names among ${choices.map((c) => `"${c}"`).join(", ")}`;
+
 /** A connector's catalog — the same shape the harness catalog has, scoped to ONE
  *  `connections.<name>` subsection. Declared in the connector's own `config.ts`. */
 export interface ConnectorSpec {

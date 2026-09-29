@@ -9,13 +9,22 @@
  * held, a config the file got wrong — and the person reading the supervisor's lines is owed
  * the sentence, not the frames. The listeners `entry` leaves behind outlive the boot, so a
  * rejection from the running halves reads the same way.
+ *
+ * `connections.google.listen` picks the ingests; the dispatch runs whatever it says, since
+ * a send needs only the grant.
  */
 
 import { runIngest as runCalendar } from "./calendar.ts";
 import { runDispatch as runMailDispatch, runIngest as runMail } from "./mail.ts";
-import { exitOnStop } from "../stop.ts";
+import { googleConfig } from "./config.ts";
+import { exitOnStop, listening } from "../stop.ts";
+import { findRoot, orgFlag } from "../../config.ts";
 import { entry } from "../../entry.ts";
 
-await entry(async () =>
-  exitOnStop([await runCalendar(), await runMail(), await runMailDispatch()])
-);
+await entry(async () => {
+  const { listen } = await googleConfig(findRoot(orgFlag()));
+  exitOnStop([
+    ...await listening("google", listen, { calendar: runCalendar, mail: runMail }),
+    await runMailDispatch(),
+  ]);
+});

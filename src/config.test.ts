@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
+  checkAmong,
   connectorConfig,
   type ConnectorSpec,
   declareAgent,
@@ -179,6 +180,17 @@ Deno.test("a connector reads its subsection over its defaults; nothing is writte
     const raw = await Deno.readTextFile(`${root}/config.jsonc`);
     assertEquals(raw, JSON.stringify({ connections: { acme: { port: 1234 } } }));
   });
+});
+
+Deno.test("checkAmong: distinct names from its choices, none at all included", () => {
+  const check = checkAmong(["calendar", "mail"]);
+  assertEquals(check(["calendar", "mail"]), null);
+  assertEquals(check(["mail"]), null);
+  assertEquals(check([]), null);
+  const complaint = 'must be an array of distinct names among "calendar", "mail"';
+  assertEquals(check(["mail", "mail"]), complaint);
+  assertEquals(check(["teams"]), complaint);
+  assertEquals(check("mail"), complaint);
 });
 
 Deno.test("a connector's unknown key and failed check are boot errors", async () => {

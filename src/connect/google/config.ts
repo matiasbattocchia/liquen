@@ -4,8 +4,12 @@
  * into `data/config.jsonc` under `connections.google` and are validated at boot.
  */
 
-import { checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { checkAmong, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
 
+/** What the connection can read into the log, each by its own ingest in `run.ts`. */
+export const SURFACES = ["calendar", "mail"] as const;
+export type Surface = typeof SURFACES[number];
+export const DEFAULT_LISTEN: Surface[] = [...SURFACES];
 export const DEFAULT_CALENDARS = ["primary"];
 /** Identity, the calendar, and the mailbox read and sent: the product. The mail poll runs
  *  only on a grant whose consent carries a mail read scope (`mail.ts`), so a grant made
@@ -24,6 +28,7 @@ export const GRANT_ENV = "GOOGLE_WORKSPACE_CLI_TOKEN";
 export const GRANT_HOSTS = ["*.googleapis.com"];
 
 export interface GoogleConfig {
+  listen: Surface[];
   calendars: string[];
   scopes: string[];
 }
@@ -32,6 +37,13 @@ export const SPEC: ConnectorSpec = {
   name: "google",
   doc: "google — the oauth door, the calendar poll, and Gmail in and out",
   entries: [
+    {
+      key: "listen",
+      value: DEFAULT_LISTEN,
+      doc:
+        'what the connection reads into the log: "calendar", "mail"; one left out is still reached through the grant (gws), and sends go out either way',
+      check: checkAmong(SURFACES),
+    },
     {
       key: "calendars",
       value: DEFAULT_CALENDARS,

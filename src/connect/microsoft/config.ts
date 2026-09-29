@@ -7,7 +7,12 @@
  * is a fact about the app and rides on the app's vault row (`liquen connect microsoft app`).
  */
 
-import { checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { checkAmong, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
+
+/** What the connection can read into the log, each by its own ingest in `run.ts`. */
+export const SURFACES = ["calendar", "mail", "teams"] as const;
+export type Surface = typeof SURFACES[number];
+export const DEFAULT_LISTEN: Surface[] = [...SURFACES];
 
 /** `primary` is the account's own calendar (Graph's `/me/calendar`); any other entry is a
  *  calendar id from `/me/calendars`. */
@@ -56,6 +61,7 @@ export const GRANT_ENV = "MICROSOFT_GRAPH_TOKEN";
 export const GRANT_HOSTS = ["graph.microsoft.com"];
 
 export interface MicrosoftConfig {
+  listen: Surface[];
   calendars: string[];
   scopes: string[];
 }
@@ -65,6 +71,13 @@ export const SPEC: ConnectorSpec = {
   doc:
     "microsoft — the Entra oauth door, the Outlook calendar poll, Outlook mail in and out, Teams pushed in and sent out",
   entries: [
+    {
+      key: "listen",
+      value: DEFAULT_LISTEN,
+      doc:
+        'what the connection reads into the log: "calendar", "mail", "teams"; one left out is still reached through the grant, and sends go out either way',
+      check: checkAmong(SURFACES),
+    },
     {
       key: "calendars",
       value: DEFAULT_CALENDARS,

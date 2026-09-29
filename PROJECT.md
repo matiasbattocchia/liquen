@@ -4871,3 +4871,18 @@ limit and not liquen's.
   level, plus the indented lines under it; and the supervisor's own `refused`, `exited`
   and `not taken up`. The refusal sentence a child prints before exiting is not matched —
   the red `refused after` line beneath it points at it.
+
+### What a connection listens to (2026-09-29) — LANDED
+
+`connections.google.listen` (`calendar`, `mail`) and `connections.microsoft.listen`
+(`calendar`, `mail`, `teams`), everything by default, pick the ingests `run.ts` starts; the
+dispatches run whatever it says. The grant's scopes were the only switch, and they serve two
+readers: the poll and the agent's own tool, so an org that reads Gmail through `gws` and
+wants none of it in the log had no way to say so. A surface left out is said once at boot
+(`not listened`). Replies to the agent's mail on an unlistened mailbox wake nobody — the
+agent finds them with its tool or not at all. Teams left out keeps no subscription, and
+Graph pushes into a socket nobody serves until the ones it holds expire.
+
+Open: per-account listening (the org's mailbox in, a member's out) is a vault-row fact the
+connection-wide knob cannot say; and a mailbox read only where the agent has written —
+the threads it took part in — would keep replies without the rest of the inbox.

@@ -19,6 +19,11 @@ calendar poll, Teams pushed both ways, the Graph skill).*
 | Files | mail attachments | mail attachments; OneDrive only for Teams files |
 | Agent's tool | `gws` toward `*.googleapis.com` | `fetch` toward `graph.microsoft.com` |
 
+The "in" rows are the ones `connections.<name>.listen` picks — `calendar` and `mail`, and
+`teams` on Microsoft, all by default. One left out runs no ingest: nothing of it reaches
+the log, the agent still reaches it through its tool on the grant, and the sends still go
+out, since a send needs only the grant.
+
 ---
 
 ## 1. The shape a connector fills
