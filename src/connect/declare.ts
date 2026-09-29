@@ -16,14 +16,17 @@ import { reloaded } from "../reload.ts";
 /** Declare the service — `decided` is what the door earned — reload the running org, and
  *  report what config.jsonc now holds. A declared section is the operator's and is left as
  *  found. The reload also gives a process that refused another go: what it refused over
- *  (an app not yet in the vault) may be what the door just stored. */
+ *  (an app not yet in the vault) may be what the door just stored. `restart` names the
+ *  processes to restart whatever the file says of them — the connection itself, when the
+ *  door stored something its process reads once at boot. */
 export async function declared(
   root: string,
   spec: ConnectorSpec,
   decided: Record<string, unknown> = {},
+  restart: string[] = [],
 ): Promise<void> {
   const added = await declareConnection(root, spec.name, decided);
-  const who = await reloaded(root);
+  const who = await reloaded(root, restart);
   console.error(
     added
       ? `  declared "connections": { "${spec.name}": ${

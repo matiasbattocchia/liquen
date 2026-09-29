@@ -641,6 +641,7 @@ if (import.meta.main) {
       const creds = await store.vault();
       const log = pastes ? await store.log() : null;
       let wrote = false;
+      let carrier = false; // a signing secret or an app-level token stored: ingest picks its carrier at boot
       try {
         const clientId = ask("Client ID:");
         if (clientId) {
@@ -653,6 +654,7 @@ if (import.meta.main) {
           const key = await connectSlackApp({ clientId, clientSecret, signingSecret }, creds);
           console.error(`✓ app stored: ${key}` + (callback ? ` (callback: ${callback})` : ""));
           wrote = true;
+          if (signingSecret) carrier = true;
         }
 
         const appToken = ask("App-level token (xapp-…):");
@@ -660,6 +662,7 @@ if (import.meta.main) {
           const { appId } = await connectSlackSocket(appToken, { creds });
           console.error(`✓ socket carrier stored for app ${appId} — ingest reads events over it`);
           wrote = true;
+          carrier = true;
         }
 
         if (flags.has("bot")) {
@@ -699,8 +702,9 @@ if (import.meta.main) {
         }
         // Slack keeps sending from the install on, whatever this door does, and ingest reads
         // back what it missed each time it connects; declaring reloads a running org, which
-        // starts the connection or gives one that refused for want of these pieces another go
-        if (wrote) await declared(root, SPEC);
+        // starts the connection or gives one that refused for want of these pieces another
+        // go, and a new carrier restarts a running one, since the carrier is read at boot
+        if (wrote) await declared(root, SPEC, {}, carrier ? [SPEC.name] : []);
         await owed(creds);
         if (pastes) console.error("  (deno task status shows the map)");
       } catch (e) {

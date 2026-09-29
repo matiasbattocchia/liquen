@@ -44,12 +44,6 @@ export const SUPERVISOR = "liquen";
 /** The mind: main.ts, bare under the supervisor or ephemeral under an interface. */
 export const MAIN = "main";
 
-/** What `liquen reload` sends the supervisor: read config.jsonc again (start.ts). The one
- *  signal free for it: a terminal that closes sends SIGHUP to a foreground run, and a
- *  hangup ends the run the way it ends any foreground command; SIGUSR1 is the runtime's
- *  own, and opens V8's inspector on 127.0.0.1:9229. */
-export const RELOAD: Deno.Signal = "SIGUSR2";
-
 /** How long a signalled holder gets to let go: the supervisor's own grace, and as long
  *  again for the drain it spends that grace on. */
 const GONE_MS = STOP_TIMEOUT_MS * 2;

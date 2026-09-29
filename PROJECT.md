@@ -4641,6 +4641,14 @@ nor a signing secret, the one thing without which the connection refuses to star
 (`slackNext`, which now counts a signing secret as a carrier). The user door waits for the
 edge only (`requireEdge`), since the sign-in comes back through it.
 
-Open: the carrier is read when the process starts. A reload restarts Slack only when its
+The carrier is read when the process starts, and a reload restarted Slack only when its
 config section changed or it refused, so a carrier added to a Slack already running (a
-second app, or a socket where HTTP was) is taken up at the next start.
+second app, or a socket where HTTP was) waited for the next start. The reload now travels
+over a socket the supervisor serves, `data/run/liquen.sock`, as a POST of `{ restart:
+string[] }` (`reload`, `runSocket` in reload.ts): the processes named restart whatever the
+file says of them (`plan` takes them), and the answer is what moved, so `liquen reload`
+and every door print it (`the running org took it up: slack restarted`) instead of pointing
+at the run's lines. The Slack app door names `slack` once it has stored an app-level token
+or a signing secret. `liquen reload <process>…` names them by hand; a name the run has no
+process for is refused with the run's roster, a bad file with boot's own sentence, and the
+run goes on as it was either way.

@@ -3042,14 +3042,18 @@ loudly, the same law as an unknown config key.
   whatever is left, and `liquen start` refuses when nothing is.
 - **The file is read again on a reload, never by itself.** `liquen reload` — and every
   setup door that writes `config.jsonc` — reads the file, refuses one boot would reject,
-  and signals the supervisor (`RELOAD`, src/stop.ts), which reads it again and brings the
-  run in line: each process restarts when the part of the file it reads changed (`reads`,
-  src/start.ts — the shared sections for every liquen process, the roster and the WhatsApp
-  bridge's address for main, the edge and its own section for a connection), a connection
-  declared since starts, one no longer declared stops, and one that refused gets another
-  go, since what it refused over may be what the edit changed. Nothing watches the file: a
-  half-made edit restarts nothing, and a file the supervisor cannot take leaves the run as
-  it was. So a connection, a grant or an agent is added to an org that stays up; a stop is
+  and asks the supervisor over the run's socket (`data/run/liquen.sock`, src/reload.ts),
+  which reads it again and brings the run in line: each process restarts when the part of
+  the file it reads changed (`reads`, src/start.ts — the shared sections for every liquen
+  process, the roster and the WhatsApp bridge's address for main, the edge and its own
+  section for a connection), a connection declared since starts, one no longer declared
+  stops, and one that refused gets another go, since what it refused over may be what the
+  edit changed. The request also NAMES processes to restart whatever the file says of
+  them, for what a process reads once at boot from elsewhere — the Slack app door names
+  its connection when it has stored a carrier, which the ingest picks off the vault as it
+  starts. The supervisor answers with what moved, so the door or the command says it.
+  Nothing watches the file: a half-made edit restarts nothing, and a file the supervisor
+  cannot take leaves the run as it was. So a connection, a grant or an agent is added to an org that stays up; a stop is
   only ever the operator's own order. What main offers doesn't hang on the file either —
   every service's rooms and address-book ports stand from boot, reached only through an
   account the agent holds — and the grants are the vault's, read at each use.

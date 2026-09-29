@@ -40,8 +40,9 @@ deno install -g -A -n lq jsr:@liquen/liquen/liquen   # the same command, short: 
 `data/run/liquen.log`; `liquen stop` ends it either way. `liquen connect --remove
 <service>:<address>` takes a grant back — the target as `liquen status` prints it.
 `liquen reload` has the running org take up an edit to `config.jsonc`: what the edit
-touched restarts, a connection declared since starts, one removed stops. The commands that
-write the file — `liquen connect`, `liquen agent` — reload the org themselves.
+touched restarts, a connection declared since starts, one removed stops, and it prints what
+moved. `liquen reload slack` restarts a process by name besides. The commands that write
+the file — `liquen connect`, `liquen agent` — reload the org themselves.
 
 A role is a lock: every process in a run holds `data/run/<role>.pid` while it lives —
 `liquen` the supervisor, `main` the mind. So there is one of each, whoever started it: a
@@ -169,8 +170,9 @@ Every door closes by naming what the org still owes, and `--help` explains each 
 
 3. **The connection runs under `deno task start`** — both halves in one process: Socket
    Mode (or HTTP) in, chat.postMessage out, tokens read from the vault at each use. The
-   app door declares the connection and reloads the org, which starts it; the carrier is
-   chosen when the process starts, and the door says so when the vault holds neither.
+   app door declares the connection and reloads the org, which starts it. The carrier is
+   chosen when the process starts, so the door has the org restart a running connection
+   when it stores one, and says so when the vault holds neither.
 
    The ingest is one webhook function either way — Socket Mode is just the local carrier;
    an edge deploy serves the same function at the app's Events API request URL.

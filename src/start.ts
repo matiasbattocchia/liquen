@@ -15,12 +15,16 @@
  * org runs on with whatever is left instead of reprinting one complaint every minute
  * forever. When nothing is left, `liquen start` refuses too, naming who gave up.
  *
- * The file is read at boot and again on `RELOAD` (`liquen reload`, and every setup door
- * that writes it): the run is brought in line with the file as it is now. Each process
+ * The file is read at boot and again on a reload — asked over the run's socket,
+ * `data/run/liquen.sock` (reload.ts), by `liquen reload` and by every setup door that
+ * writes the file: the run is brought in line with the file as it is now. Each process
  * restarts when the part of the file it reads changed (`reads`), a connection declared
- * since starts, one no longer declared stops, and one that refused gets another go — the
- * world it refused may be what the edit changed. A file boot would reject changes nothing:
- * the supervisor says why and runs on as it was.
+ * since starts, one no longer declared stops, one that refused gets another go — the
+ * world it refused may be what the edit changed — and each process the request NAMES
+ * restarts whatever the file says of it, for what it reads once at boot from somewhere
+ * else (a connection's carrier, picked off the vault). The request is answered with what
+ * moved. A file boot would reject changes nothing: the supervisor says why, to the asker
+ * and in its own lines, and runs on as it was.
  *
  * One of each role. A run holds `data/run/liquen.pid` for its life and its main holds
  * `data/run/main.pid` (stop.ts) — the locks that make them findable, so `liquen stop` has
@@ -47,9 +51,11 @@
 import { TextLineStream } from "@std/streams";
 import { findRoot, type OrgConfig, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
 import { entry, REFUSAL } from "./entry.ts";
-import { claim, holder, MAIN, RELOAD, SUPERVISOR } from "./stop.ts";
+import { claim, holder, MAIN, SUPERVISOR } from "./stop.ts";
+import { moved, type Moves, runSocket } from "./reload.ts";
 import { RUNNING, SHIPPED } from "./connect/connect.ts";
 import { helpFlag } from "./connect/help.ts";
+import { serveSocket } from "./connect/serve.ts";
 
 export const USAGE = `usage: liquen start [-D | --detach] [--dir <org>]
 
@@ -242,19 +248,22 @@ export interface Kept {
 }
 
 /** A reload's moves, from what the run keeps to what the file says now: what stops (no
- *  longer declared), what restarts (its part of the file changed, or it refused), what
- *  starts (declared since). A process the edit left alone is in none of them. */
+ *  longer declared), what restarts (its part of the file changed, it refused, or the
+ *  reload named it), what starts (declared since). A process the edit left alone and
+ *  nobody named is in none of them. */
 export function plan(
   kept: Map<string, Kept>,
   next: Proc[],
   cfg: OrgConfig,
+  named: string[] = [],
 ): { stop: string[]; restart: Proc[]; start: Proc[] } {
   const wanted = new Set(next.map((p) => p.name));
   return {
     stop: [...kept.keys()].filter((name) => !wanted.has(name)),
     restart: next.filter((p) => {
       const one = kept.get(p.name);
-      return one !== undefined && (one.refused || one.reads !== reads(p.name, cfg));
+      return one !== undefined &&
+        (one.refused || one.reads !== reads(p.name, cfg) || named.includes(p.name));
     }),
     start: next.filter((p) => !kept.has(p.name)),
   };
@@ -404,51 +413,73 @@ if (import.meta.main) {
       for (const name of kept.keys()) void retire(name);
     };
 
-    // one reload at a time, each on the file as it reads when its turn comes
+    /** Bring the run in line with the file as it reads now, restarting `named` besides;
+     *  what moved. One reload at a time, each on the file as it reads when its turn comes.
+     *  A file that cannot be taken, or a name the run does not have, is refused — thrown
+     *  to the asker, said in the run's lines — and the run goes on as it was. */
     let reloads = Promise.resolve();
-    const reload = () => {
-      reloads = reloads.then(async () => {
-        if (halting) return;
+    const reload = (named: string[]): Promise<Moves> => {
+      const turn = reloads.then(async () => {
+        if (halting) throw new Error("the run is stopping");
         reloading = true;
         try {
-          let cfg: OrgConfig;
-          let next: Proc[];
-          try {
-            cfg = await readConfig(root);
-            next = roster(root, cfg);
-          } catch (err) {
-            const why = err instanceof Error ? err.message : String(err);
-            stamp(SUPERVISOR, `config.jsonc not taken up — ${why}; running on as it was`);
-            return;
+          const cfg = await readConfig(root);
+          const next = roster(root, cfg);
+          const stray = named.filter((name) => !next.some((p) => p.name === name));
+          if (stray.length > 0) {
+            throw new Error(
+              `no process named ${stray.join(", ")} — the run is ` +
+                next.map((p) => p.name).join(" · "),
+            );
           }
-          const moves = plan(kept, next, cfg);
+          const moves = plan(kept, next, cfg, named);
           await Promise.all([...moves.stop, ...moves.restart.map((p) => p.name)].map(retire));
           for (const name of moves.stop) kept.delete(name);
-          if (halting) return;
+          if (halting) throw new Error("the run is stopping");
           for (const proc of [...moves.restart, ...moves.start]) launch(proc, cfg);
-          const said = [
-            ...moves.stop.map((name) => `${name} stopped`),
-            ...moves.restart.map((p) => `${p.name} restarted`),
-            ...moves.start.map((p) => `${p.name} started`),
-          ];
-          stamp(
-            SUPERVISOR,
-            `config.jsonc taken up — ${said.length > 0 ? said.join(" · ") : "nothing changed"}`,
-          );
+          const made: Moves = {
+            stop: moves.stop,
+            restart: moves.restart.map((p) => p.name),
+            start: moves.start.map((p) => p.name),
+          };
+          stamp(SUPERVISOR, `config.jsonc taken up — ${moved(made)}`);
+          return made;
+        } catch (err) {
+          const why = err instanceof Error ? err.message : String(err);
+          stamp(SUPERVISOR, `config.jsonc not taken up — ${why}; running on as it was`);
+          throw err;
         } finally {
           reloading = false;
           settle();
         }
       });
+      reloads = turn.then(() => {}, () => {});
+      return turn;
     };
+
+    // the run's socket: a reload is asked here and answered with what it moved
+    const asked = await serveSocket(runSocket(root), async (req) => {
+      let named: string[];
+      try {
+        const body = req.method === "POST" ? await req.json() : {};
+        named = Array.isArray(body.restart) ? body.restart.map(String) : [];
+      } catch {
+        return new Response("a reload is a POST of { restart: string[] }", { status: 400 });
+      }
+      try {
+        return Response.json(await reload(named));
+      } catch (err) {
+        return new Response(err instanceof Error ? err.message : String(err), { status: 409 });
+      }
+    });
 
     Deno.addSignalListener("SIGTERM", stop);
     Deno.addSignalListener("SIGINT", stop);
-    Deno.addSignalListener(RELOAD, reload);
 
     stamp(SUPERVISOR, `${procs.map((p) => p.name).join(" · ")} — root ${root}`);
     for (const proc of procs) launch(proc, cfg);
     await finished;
+    await asked.shutdown();
     // every process is down and none was asked to be — each one refused
     if (!halting) {
       const refused = [...kept].filter(([, k]) => k.refused).map(([name]) => name);

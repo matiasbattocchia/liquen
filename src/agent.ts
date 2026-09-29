@@ -27,7 +27,7 @@ import { seedAgent } from "./store/seed.ts";
 import { openStore } from "./store/mod.ts";
 import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
-import { reload } from "./reload.ts";
+import { moved, reload } from "./reload.ts";
 
 export const USAGE =
   "usage: liquen agent [--dir <org>] <name> [--name <full name>] [--email <address>] " +
@@ -92,10 +92,10 @@ if (import.meta.main) {
     ];
     const handles = declared.length > 0 ? ` (${declared.join(", ")})` : "";
     // the roster is main's to compile, so a running org's main restarts on it
-    const pid = await reload(root);
-    const runs = pid === null
+    const moves = await reload(root);
+    const runs = moves === null
       ? "`liquen start` runs them."
-      : `The running org (pid ${pid}) takes them up.`;
+      : `The running org took them up: ${moved(moves)}.`;
     const next = rest.mind === false
       ? `they steer, and no session of theirs will run. ${runs}`
       : `data/agents/${name}/ is the workspace; write instructions/agent.md in it to say ` +

@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { declared, requireEdge, requireIngest } from "./declare.ts";
-import { serveIngest } from "./serve.ts";
-import { claim, RELOAD, SUPERVISOR } from "../stop.ts";
+import { serveIngest, serveSocket } from "./serve.ts";
+import { runSocket } from "../reload.ts";
 import { type ConnectorSpec, materialize, starterConfig } from "../config.ts";
 
 const spec: ConnectorSpec = {
@@ -104,20 +104,20 @@ Deno.test("requireEdge: nobody on edge.port is the refusal, the edge up is the g
   }
 });
 
-Deno.test("declared: a running org is reloaded — the run's supervisor is sent RELOAD", async () => {
+Deno.test("declared: a running org is reloaded over the run's socket, restarting what the door names", async () => {
   const root = await org();
-  let heard = 0;
-  const listener = () => heard++;
-  Deno.addSignalListener(RELOAD, listener);
-  // this process stands in for the run: it holds the supervisor's role
-  const lock = claim(`${root}/data`, SUPERVISOR);
+  const asked: string[][] = [];
+  // this process stands in for the run: it answers on the supervisor's socket
+  const server = await serveSocket(runSocket(root), async (req) => {
+    asked.push((await req.json()).restart);
+    return Response.json({ stop: [], restart: [], start: ["acme"] });
+  });
   try {
     await declared(root, spec);
-    for (let i = 0; i < 50 && heard === 0; i++) await new Promise((r) => setTimeout(r, 10));
-    assertEquals(heard, 1);
+    await declared(root, spec, {}, ["acme"]);
+    assertEquals(asked, [[], ["acme"]]);
   } finally {
-    if ("held" in lock) lock.held.close();
-    Deno.removeSignalListener(RELOAD, listener);
+    await server.shutdown();
     await Deno.remove(root, { recursive: true });
   }
 });

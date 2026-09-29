@@ -108,6 +108,11 @@ Deno.test("plan: what the edit touched restarts, what it declared starts, what i
     // a process that refused gets another go, though the file says the same of it
     kept.set("google", { reads: reads("google", before), refused: true });
     assertEquals(plan(kept, roster(tmp, before), before).restart.map((p) => p.name), ["google"]);
+    // a process the reload names restarts whatever the file says of it — once
+    kept.set("google", { reads: reads("google", before), refused: false });
+    const named = plan(kept, roster(tmp, before), before, ["slack", "slack"]);
+    assertEquals(named.restart.map((p) => p.name), ["slack"]);
+    assertEquals(named.start, []);
   } finally {
     Deno.removeSync(tmp, { recursive: true });
   }

@@ -15,7 +15,7 @@
 import { findRoot, orgFlag, undeclareConnection } from "../config.ts";
 import { entry, report } from "../entry.ts";
 import { openStore } from "../store/mod.ts";
-import { reload } from "../reload.ts";
+import { moved, reload } from "../reload.ts";
 import { removeConnection } from "./remove.ts";
 
 /** The services that ship with the package — each `src/connect/<name>/` a connect door.
@@ -146,6 +146,6 @@ async function remove(root: string, target: string): Promise<void> {
   }
   // the processes read the vault on every use; a connection no longer declared is one the
   // running org stops
-  const pid = await reload(root);
-  if (pid !== null) console.log(`the running org (pid ${pid}) takes it up`);
+  const moves = await reload(root);
+  if (moves !== null) console.log(`the running org took it up: ${moved(moves)}`);
 }
