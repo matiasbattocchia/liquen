@@ -37,7 +37,6 @@ import { newId } from "../store/id.ts";
 import { MAX_BYTES, MAX_LINES } from "./truncate.ts";
 import { DEFAULT_BASH_TIMEOUT_MS } from "../config.ts";
 import {
-  ageOf,
   type BashInput,
   bashSpec,
   type BashState,
@@ -180,35 +179,79 @@ export interface RemoteShellOptions {
    *  the egress proxy hands user space. */
   env: () => Record<string, string>;
   defaultTimeoutMs?: number;
-  /** How long the sandbox lives after its last call (`system.sandboxSleepMinutes`), said
-   *  in the ambient block: the agent's background jobs and files live only that long once
-   *  it stops calling. */
-  sleepMinutes?: number;
-  /** When the sandbox's last call closed, from any of the agent's sessions: the idle
-   *  window runs from there (`clocked`). */
-  lastCall?: () => number | undefined;
+  /** The sandbox's life by the harness's clock, shared by every session of its agent; the
+   *  shell without one probes at every step and says nothing of a window. */
+  lease?: Lease;
 }
 
-/** A gateway that keeps when its last call closed. One per sandbox, so every session's
- *  shell on it reads the same clock the container's idle window runs on; a call the
- *  gateway refused never reached the container and does not count. */
-export function clocked(gateway: Gateway): Gateway & { lastCall(): number | undefined } {
-  let last: number | undefined;
-  const stamp = <T>(v: T): T => {
-    last = Date.now();
-    return v;
-  };
+/** A sandbox's life, as the harness keeps it: a bash call starts it, and it stays on while
+ *  one runs and for the window after the last one ended. A step past the window stops it
+ *  (`settle`), so a quiet harness stops nothing: the gateway's own sleep, the same window
+ *  counted from any request, does. Only bash moves the clock — the ambient probe and file
+ *  reads keep the container awake at the gateway but never keep it on here. */
+export interface Lease {
+  readonly minutes: number;
+  /** A bash call is running, or one ended within the window. */
+  on(): boolean;
+  /** A bash call ended within the window: the container holds what the calls left. */
+  warm(): boolean;
+  /** How long until the window closes, counted from the last bash call's end. */
+  leftMs(): number;
+  /** The gateway call of a bash command: in flight it holds the sandbox on, and an answer
+   *  restarts the window. A call the gateway refused never reached the container. */
+  bash<T>(call: () => Promise<T>): Promise<T>;
+  /** Past the window with no call running: the container is stopped, once. */
+  settle(): Promise<void>;
+  /** The container turned out new under a warm lease: what it held is gone. */
+  restarted(): void;
+  /** Counts every restart; a shell says the ones it has not yet said. */
+  restarts(): number;
+  /** Moves at every stop and restart: a job from an earlier generation is gone. */
+  generation(): number;
+}
+
+export function lease(gateway: Gateway, minutes: number, now = Date.now): Lease {
+  const windowMs = minutes * 60_000;
+  let last: number | undefined; // when the last bash call ended; none ⇒ off
+  let running = 0;
+  let restarts = 0;
+  let generation = 0;
+  const warm = () => last !== undefined && now() - last < windowMs;
   return {
-    exec: (script, signal) => gateway.exec(script, signal).then(stamp),
-    read: (path) => gateway.read(path).then(stamp),
-    destroy: () => gateway.destroy(),
-    lastCall: () => last,
+    minutes,
+    on: () => running > 0 || warm(),
+    warm,
+    leftMs: () => running > 0 || last === undefined ? windowMs : windowMs - (now() - last),
+    async bash(call) {
+      running++;
+      try {
+        const answer = await call();
+        last = now();
+        return answer;
+      } finally {
+        running--;
+      }
+    },
+    async settle() {
+      if (running > 0 || last === undefined || warm()) return;
+      last = undefined;
+      generation++;
+      await gateway.destroy().catch(() => {}); // the gateway's own sleep stops it otherwise
+    },
+    restarted() {
+      restarts++;
+      generation++;
+    },
+    restarts: () => restarts,
+    generation: () => generation,
   };
 }
 
-/** The file whose absence tells the ambient probe the container is new since the last
- *  call: the container's own scratch, which a stopped container does not keep. */
+/** The file whose absence tells a call the container is new: the container's own scratch,
+ *  which a stopped container does not keep. Every bash call and probe leaves it. */
 const UP = "/tmp/.liquen-up";
+/** The line a bash call's script opens with when it found no `UP`. */
+const FRESH = "__MU_FRESH__";
 
 /** The exit code `timeout` answers when it had to kill the command. */
 const TIMED_OUT = 137;
@@ -226,27 +269,26 @@ const alive = (pgid: string) =>
  *  sends. */
 export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPlane {
   const timeoutMsDefault = opts.defaultTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
-  /** The sandbox's line in the ambient block: how long ago the last call closed, and what
-   *  the window means — or, when the container is new since that call, that what ran and
-   *  what was written there is gone. */
-  const sleepLine = (last: number | undefined, fresh: boolean): string[] => {
-    const n = opts.sleepMinutes;
-    if (!n) return [];
-    if (last === undefined) {
-      return [
-        `sandbox: stops ${n} min after your last call — its background jobs and files go with it`,
-      ];
-    }
-    if (fresh) {
-      return [
-        `sandbox: restarted since the last call, ${ageOf(last)} ago — its background jobs ` +
-        `and files are gone; it stops ${n} min after a call`,
-      ];
-    }
-    return [
-      `sandbox: last call ${ageOf(last)} ago; it stops ${n} min after one — its background ` +
-      `jobs and files go with it`,
-    ];
+  const { lease } = opts;
+  let generation = lease?.generation() ?? 0;
+  let restarts = lease?.restarts() ?? 0;
+  /** This session's jobs ran in a container the lease has since stopped or seen restart:
+   *  they are gone with it, and a pgid of theirs may name a new process there. */
+  const forgetGone = () => {
+    if (!lease || lease.generation() === generation) return;
+    generation = lease.generation();
+    jobs.clear();
+  };
+  /** The sandbox's line in the ambient block, in the anchor's grammar: when it stops, and
+   *  that jobs and files go with it — or that a restart this session has not yet been told
+   *  of took them. */
+  const sandboxLine = (): string => {
+    const restarted = lease!.restarts() !== restarts;
+    restarts = lease!.restarts();
+    const stops = `stops in ${Math.max(1, Math.ceil(lease!.leftMs() / 60_000))}m`;
+    return restarted
+      ? `sandbox: restarted · ${stops} · earlier jobs and files are gone`
+      : `sandbox: idle · ${stops} · jobs and files go with it`;
   };
   const state: BashState = { cwd: opts.workspace };
   const jobs = new Set<Job>();
@@ -268,6 +310,7 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
       const lines = call.max_lines ?? MAX_LINES;
       const bytes = call.max_bytes ?? MAX_BYTES;
       const script = [
+        `[ -f ${UP} ] || echo ${FRESH}; touch ${UP}`,
         `mkdir -p ${quote(out)}`,
         `cd ${quote(state.cwd)} 2>/dev/null || exit ${LOST}`,
         `env -i ${env} timeout -s KILL ${Math.ceil(timeoutMs / 1000)} ` +
@@ -283,9 +326,13 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
         `exit "$rc"`,
       ].join("\n");
 
+      // a container new under a warm lease restarted behind the harness; under a cold one,
+      // this call is what starts it
+      const warm = lease?.warm() ?? false;
       let end;
       try {
-        end = await gateway.exec(script, signal);
+        const send = () => gateway.exec(script, signal);
+        end = await (lease ? lease.bash(send) : send());
       } catch (err) {
         if (signal.aborted) {
           // the gateway's call is gone, the command is not: kill its group by the id it left
@@ -295,6 +342,11 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
         }
         throw err;
       }
+      if (end.stdout.startsWith(`${FRESH}\n`)) {
+        end = { ...end, stdout: end.stdout.slice(FRESH.length + 1) };
+        if (warm) lease!.restarted();
+      }
+      forgetGone();
       if (end.code === LOST && end.stdout === "") {
         const lost = state.cwd;
         state.cwd = opts.workspace;
@@ -320,9 +372,14 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
   return {
     exec: { bash },
     async ambient() {
+      const lines = [`cwd: ${state.cwd}`];
+      if (lease) {
+        await lease.settle();
+        forgetGone();
+        // off, the probe would be what starts a container: the harness answers alone
+        if (!lease.on()) return [...lines, "sandbox: off · a bash call starts it"];
+      }
       const pgids = [...jobs].map((j) => j.pgid);
-      // read before the probe, which is a call itself: the gap it closes is the one to say
-      const last = opts.lastCall?.();
       const probe = [
         `[ -f ${UP} ] || echo fresh; touch ${UP}`,
         `cd ${quote(state.cwd)} 2>/dev/null || exit 0`,
@@ -331,15 +388,18 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
         ...pgids.map((p) => `${alive(String(p))} && echo "live ${p}"`),
         "true",
       ].join("\n");
-      const lines = [`cwd: ${state.cwd}`];
       let said = "";
       try {
         said = (await gateway.exec(probe)).stdout;
       } catch {
         // the sandbox is unreachable: the ambient block is not where to say so
-        return [...lines, ...sleepLine(last, false)];
+        return lease ? [...lines, sandboxLine()] : lines;
       }
-      lines.push(...sleepLine(last, /^fresh$/m.test(said)));
+      if (lease) {
+        if (/^fresh$/m.test(said) && lease.warm()) lease.restarted();
+        forgetGone();
+        lines.push(sandboxLine());
+      }
       const git = /^git: (.+) · (\d+)$/m.exec(said);
       if (git) {
         const dirty = Number(git[2]);
@@ -361,9 +421,10 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
       state.cwd = path;
     },
     async reap() {
+      forgetGone();
       const pgids = [...jobs].map((j) => j.pgid);
       jobs.clear();
-      if (pgids.length === 0) return;
+      if (pgids.length === 0 || (lease && !lease.on())) return;
       await gateway.exec(pgids.map((p) => `kill -KILL -${p} 2>/dev/null`).join("; ") + "; true")
         .catch(() => {});
     },

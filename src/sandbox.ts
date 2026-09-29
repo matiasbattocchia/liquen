@@ -18,7 +18,15 @@ import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
 import { startProxy } from "./proxy/proxy.ts";
 import { sessionAddress } from "./session.ts";
-import { clocked, gatewayFiles, gatewayFor, remoteShell, sandboxIdOf } from "./exec/gateway.ts";
+import {
+  type Gateway,
+  gatewayFiles,
+  gatewayFor,
+  lease,
+  remoteShell,
+  sandboxIdOf,
+} from "./exec/gateway.ts";
+import { DEFAULT_SANDBOX_SLEEP_MINUTES } from "./config.ts";
 
 /** One session's place in the sandbox: its shell (where it stands, what it left running),
  *  the agent's folder on this ground, and the files port its references resolve through. */
@@ -116,7 +124,7 @@ export interface CloudflareSandboxOptions {
   agents: string[];
   locale?: string | null;
   bashTimeoutMs?: number;
-  /** The `system.sandboxSleepMinutes` knob: a sandbox's life after its last call. */
+  /** The `system.sandboxSleepMinutes` knob: a sandbox's life after its last bash call. */
   sleepMinutes?: number;
 }
 
@@ -137,24 +145,27 @@ const REMOTE_ENV: Record<string, string> = {
 
 /** The Cloudflare provider: ONE SANDBOX PER AGENT behind the gateway at `url`
  *  (`sandbox/cloudflare/`), ONE SHELL PER SESSION on it (§9). The sandbox is named by the
- *  agent's id and started by the first call that reaches it; its workspace is the agent's
- *  folder, scratch that a sleeping container does not keep — the docs are in the table. A
- *  file the agent attaches is copied onto the conversation's media shelf under `dir`.
- *  Closing reaps every shell's jobs and leaves the sandboxes standing: the next process to
- *  open them finds what the last one left. */
+ *  agent's id, started by its first bash call and kept by one lease its sessions share
+ *  (`lease`); its workspace is the agent's folder, scratch that a stopped container does
+ *  not keep — the docs are in the table. A file the agent attaches is copied onto the
+ *  conversation's media shelf under `dir`. Closing reaps every shell's jobs and leaves the
+ *  sandboxes to the gateway's sleep. */
 export function openCloudflareSandbox(
   dir: string,
   { url, token, agents, locale, bashTimeoutMs, sleepMinutes }: CloudflareSandboxOptions,
 ): Sandbox {
   const env = { ...REMOTE_ENV, ...(locale ? { LANG: locale } : {}) };
-  const gateways = new Map(
-    agents.map((id) => [id, clocked(gatewayFor(url, token, sandboxIdOf(id), sleepMinutes))]),
-  );
+  const minutes = sleepMinutes ?? DEFAULT_SANDBOX_SLEEP_MINUTES;
+  const sandboxes = new Map(agents.map((id) => {
+    const gateway = gatewayFor(url, token, sandboxIdOf(id), minutes);
+    return [id, { gateway, lease: lease(gateway, minutes) }];
+  }));
   const shells = new Map<string, ExecPlane>();
   return {
     forAgent(agentId) {
-      const gateway = gateways.get(agentId);
-      if (!gateway) throw new Error(`agent ${agentId}: no sandbox opened for it`);
+      const sandbox = sandboxes.get(agentId);
+      if (!sandbox) throw new Error(`agent ${agentId}: no sandbox opened for it`);
+      const { gateway, lease } = sandbox;
       return {
         session(sessionId) {
           const key = sessionAddress(agentId, sessionId);
@@ -164,12 +175,16 @@ export function openCloudflareSandbox(
               workspace: REMOTE_HOME,
               env: () => env,
               ...(bashTimeoutMs ? { defaultTimeoutMs: bashTimeoutMs } : {}),
-              ...(sleepMinutes ? { sleepMinutes } : {}),
-              lastCall: gateway.lastCall,
+              lease,
             });
             shells.set(key, shell);
           }
-          const files = gatewayFiles(gateway, {
+          // off, the container and what it held are gone: a read there would start a new one
+          const reading: Gateway = {
+            ...gateway,
+            read: (path) => lease.on() ? gateway.read(path) : Promise.resolve(null),
+          };
+          const files = gatewayFiles(reading, {
             home: REMOTE_HOME,
             dataDir: dir,
             conversation: key,

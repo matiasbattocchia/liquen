@@ -2562,10 +2562,15 @@ Cloudflare's (`openCloudflareSandbox`): one sandbox per agent behind a gateway W
 contract carried by the script each call sends (`src/exec/gateway.ts`) — its output to a
 file a background job holds instead of the gateway's pipe, `timeout` killing the group,
 `env -i` and the issued names, the cwd a `cd` — so the container keeps nothing of ours
-between calls but files. A sandbox lives `system.sandboxSleepMinutes` past the last call,
-whatever runs in it: every call carries the window and the gateway sets it on whichever
-container answered, and the shell's ambient block tells the agent, whose own calls are
-what keep a job alive. **The runner is a
+between calls but files. The harness keeps each sandbox's life (`lease`): the agent's
+first bash call starts it, and it stays on while a call runs and for
+`system.sandboxSleepMinutes` after the last one ended, whatever else runs in it. Only
+bash moves that clock. The ambient probe runs at each step while the sandbox is on and
+never while it is off, since a request is what starts a container; the first step past the
+window stops the container. The gateway holds the same window counted from any request,
+carried on every call and set on whichever container answered, so a harness that goes
+quiet or dies still leaves nothing running. The ambient block tells the agent the
+countdown, and its own bash calls are what keep a job alive. **The runner is a
 module** (`runnerFor`, `src/runner.ts`): a session is built from the store, the agent's
 row and a `Host` — the ports a host wires once — so main and an edge function build the
 same session from the same three things, and what main keeps of its own is the `Host`.

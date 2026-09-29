@@ -180,7 +180,7 @@ export interface OrgConfig {
     database: string | null; // null ⇒ SQLite in data/log; a Postgres URL ⇒ that database
     docs: "files" | "table"; // where the docs live: files under data/, or the store's docs table
     sandbox: string | null; // null ⇒ agents' shells on this machine; a URL ⇒ that gateway's
-    sandboxSleepMinutes: number; // a gateway sandbox's life after its last call
+    sandboxSleepMinutes: number; // a gateway sandbox's life after its last bash call
   };
   organization: {
     timezone: string; // the ORG's clock — every stamp, cron and sleep span reads it (§5)
@@ -284,8 +284,10 @@ const SYSTEM: Entry[] = [
   {
     key: "sandboxSleepMinutes",
     value: DEFAULT_SANDBOX_SLEEP_MINUTES,
-    doc: "how long a gateway sandbox lives after its agent's last call: then the container " +
-      "stops, and its background jobs and workspace files go with it (the agent is told)",
+    doc: "how long a gateway sandbox lives after its agent's last bash call: the next step " +
+      "past it stops the container, or the gateway does that long after its last request " +
+      "when the harness is quiet; its background jobs and workspace files go with it (the " +
+      "agent is told)",
   },
 ];
 

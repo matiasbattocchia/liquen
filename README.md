@@ -75,10 +75,12 @@ Agents' shells run on this machine until `system.sandbox` names a sandbox gatewa
 Worker in `sandbox/cloudflare/`, deployed to your Cloudflare account with `npm run
 deploy` there and its token set with `wrangler secret put SANDBOX_API_KEY`. Each agent
 then gets a Cloudflare sandbox of its own; the same token goes in `.env` as
-`SANDBOX_API_KEY`. A sandbox stops `system.sandboxSleepMinutes` (10) after its agent's last
-call, and its background jobs and workspace files go with it — the agent is told so in
-every turn, and a longer window keeps a long job alive at the price of idle container
-time. A remote sandbox cannot reach files here, so it needs `system.docs: "table"`.
+`SANDBOX_API_KEY`. An agent's first bash call starts its sandbox, and it stops
+`system.sandboxSleepMinutes` (10) after the last one; its background jobs and workspace
+files go with it. The agent sees the countdown at every step, so it keeps a long job alive
+by checking on it, and a longer window does the same at the price of idle container time.
+If this machine goes quiet, the gateway stops the sandbox on its own after the same window.
+A remote sandbox cannot reach files here, so it needs `system.docs: "table"`.
 
 ## Standing wakes
 

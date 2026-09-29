@@ -6,10 +6,10 @@ import {
   assertThrows,
 } from "@std/assert";
 import {
-  clocked,
   type Gateway,
   gatewayFiles,
   gatewayFor,
+  lease,
   parseExecStream,
   quote,
   remoteShell,
@@ -216,56 +216,91 @@ cases("a file the agent attaches lands on the conversation's shelf", async (shel
   }
 });
 
-Deno.test("the ambient block says when the last call closed, the window, and a restart", async () => {
+/** A gateway that counts what reaches it, and a clock the case moves by hand. */
+function counted() {
+  const inner = localGateway();
+  const calls = { exec: 0, destroy: 0 };
+  const gateway: Gateway = {
+    exec: (script, signal) => (calls.exec++, inner.exec(script, signal)),
+    read: (path) => inner.read(path),
+    destroy: () => (calls.destroy++, Promise.resolve()),
+  };
+  let t = 1_000_000;
+  return { gateway, calls, now: () => t, pass: (minutes: number) => t += minutes * 60_000 };
+}
+
+Deno.test("lease: a bash answer starts the window, a step past it stops the sandbox once", async () => {
+  const { gateway, calls, now, pass } = counted();
+  const l = lease(gateway, 10, now);
+  assertEquals([l.on(), l.warm()], [false, false]);
+  await assertRejects(() => l.bash(() => Promise.reject(new Error("exec answered 502"))));
+  assertEquals(l.on(), false, "a refused call never reached a container");
+  let release!: () => void;
+  const running = l.bash(() => new Promise<void>((r) => release = r));
+  assertEquals([l.on(), l.warm()], [true, false]);
+  pass(30);
+  await l.settle();
+  assertEquals(calls.destroy, 0, "a running call holds the sandbox on");
+  release();
+  await running;
+  pass(9);
+  assertEquals([l.on(), l.warm(), l.leftMs()], [true, true, 60_000]);
+  await l.settle();
+  assertEquals(calls.destroy, 0);
+  pass(1);
+  const before = l.generation();
+  await l.settle();
+  await l.settle();
+  assertEquals([calls.destroy, l.on(), l.generation()], [1, false, before + 1]);
+});
+
+Deno.test("the ambient block: off without a probe, idle with its countdown, a restart said once", async () => {
   const workspace = await Deno.makeTempDir();
-  let last: number | undefined;
-  const shell = remoteShell(localGateway(), {
+  const { gateway, calls, now, pass } = counted();
+  const l = lease(gateway, 10, now);
+  const shell = remoteShell(gateway, {
     workspace,
     env: () => ({ PATH: "/usr/bin:/bin" }),
-    sleepMinutes: 10,
-    lastCall: () => last,
+    lease: l,
   });
   const line = async () => (await shell.ambient())[1];
   try {
+    assertEquals(await line(), "sandbox: off · a bash call starts it");
+    assertEquals(calls.exec, 0, "off, nothing reaches the gateway");
+    await run(shell, { command: "sleep 30 & echo started" });
+    assertEquals(await line(), "sandbox: idle · stops in 10m · jobs and files go with it");
+    pass(4);
+    assertEquals(await line(), "sandbox: idle · stops in 6m · jobs and files go with it");
+    pass(1);
     assertEquals(
       await line(),
-      "sandbox: stops 10 min after your last call — its background jobs and files go with it",
+      "sandbox: idle · stops in 5m · jobs and files go with it",
+      "the probe keeps nothing on",
     );
-    last = Date.now() - 8 * 60_000;
+    assertStringIncludes((await shell.ambient()).join("\n"), "background — 1 job:");
+    await Deno.remove("/tmp/.liquen-up"); // the container a restart brings has none
     assertEquals(
       await line(),
-      "sandbox: last call 8m ago; it stops 10 min after one — its background jobs and files " +
-        "go with it",
+      "sandbox: restarted · stops in 5m · earlier jobs and files are gone",
     );
-    await Deno.remove("/tmp/.liquen-up"); // the container a sleep replaces has none
-    last = Date.now() - 14 * 60_000;
+    assertEquals((await shell.ambient()).some((l) => l.startsWith("background")), false);
+    assertEquals(await line(), "sandbox: idle · stops in 5m · jobs and files go with it");
+    await Deno.remove("/tmp/.liquen-up");
+    assertEquals(await run(shell, { command: "echo again" }), "again", "the marker is no output");
     assertEquals(
       await line(),
-      "sandbox: restarted since the last call, 14m ago — its background jobs and files are " +
-        "gone; it stops 10 min after a call",
+      "sandbox: restarted · stops in 10m · earlier jobs and files are gone",
     );
+    pass(10);
+    assertEquals(await line(), "sandbox: off · a bash call starts it");
+    assertEquals(calls.destroy, 1);
+    await Deno.remove("/tmp/.liquen-up"); // the stop took it: a new start is no restart
+    await run(shell, { command: "true" });
+    assertEquals(await line(), "sandbox: idle · stops in 10m · jobs and files go with it");
   } finally {
+    await shell.reap();
     await Deno.remove(workspace, { recursive: true });
   }
-});
-
-Deno.test("clocked: a call the gateway answered stamps the clock, a refused one does not", async () => {
-  let refuse = false;
-  const gateway = clocked({
-    ...localGateway(),
-    exec: () =>
-      refuse
-        ? Promise.reject(new Error("sandbox gateway: exec answered 502"))
-        : Promise.resolve({ stdout: "", stderr: "", code: 0 }),
-  });
-  assertEquals(gateway.lastCall(), undefined);
-  const before = Date.now();
-  await gateway.exec("true");
-  const stamped = gateway.lastCall()!;
-  assert(stamped >= before);
-  refuse = true;
-  await assertRejects(() => gateway.exec("true"), Error, "502");
-  assertEquals(gateway.lastCall(), stamped);
 });
 
 Deno.test("gatewayFor: every call carries the token and the sandbox's sleep", async () => {

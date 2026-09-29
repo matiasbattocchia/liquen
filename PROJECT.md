@@ -4200,3 +4200,30 @@ null`. With the docs on the table, those three are the only way to a doc: an age
 them cannot read its own instructions. Either the scaffold's list carries them and the
 catalog refuses a `tools` list lacking them when `docs` is `table`, or the substrate tools
 stand outside the filter as the docs' own reach. Not decided here.
+
+### The harness keeps the sandbox's life (2026-09-28)
+
+The ambient probe was a gateway call at every step, so a busy agent's sandbox never slept
+even when the agent had stopped using it, and an agent that only chatted started a
+container at its first step. Now main holds a lease per sandbox (`lease` in
+`src/exec/gateway.ts`), and one knob sets two limits:
+
+- **Soft, main's.** The agent's first bash call starts the sandbox. Only bash moves the
+  clock: the sandbox is on while a call runs and for `system.sandboxSleepMinutes` after
+  the last one ended. The probe runs only while it is on, and the first step past the
+  window stops the container (the bridge's `DELETE`). There is no timer: a quiet agent
+  takes no step, and the gateway's limit covers that.
+- **Hard, the gateway's.** The same window rides every request as `x-sleep-after`, counted
+  from any request, probes included. It is never earlier than main's, so it only acts when
+  main is quiet or gone, up to three minutes late (the SDK's alarm).
+
+The anchor says `sandbox: off · a bash call starts it`, `sandbox: idle · stops in 6m ·
+jobs and files go with it`, or, once per session, `sandbox: restarted · stops in 6m ·
+earlier jobs and files are gone`. A restart is a container found without the `/tmp`
+marker while the lease is warm, by a bash call or the probe; a start after main's own stop
+is none. A stop or a restart forgets the sessions' jobs, whose pgids a new container may
+reuse. A file read while off answers "no such file" without starting a container.
+
+Measured live: the stop past the window took 1.1 s, and the note file was gone. The next
+bash call started a new container (a different PID 1 start time) in 4 s, and no restart
+was reported. The exec suite passes against the gateway (68).
