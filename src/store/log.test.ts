@@ -208,3 +208,46 @@ Deno.test("publish outlasts a writer holding the lock past the busy timeout (slo
     await holder.status;
   });
 });
+
+Deno.test("the health check waits out a lock another process holds on the file", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    // an EXCLUSIVE lock on a rollback-journal file shuts out readers too, as a sibling
+    // replaying a WAL does at boot
+    const holder = new Deno.Command(Deno.execPath(), {
+      args: [
+        "eval",
+        `import { DatabaseSync } from "node:sqlite";
+       const db = new DatabaseSync("${dir}/log.db");
+       db.exec("BEGIN EXCLUSIVE; CREATE TABLE held (x)");
+       console.log("held");
+       await new Promise((r) => setTimeout(r, 1_000));
+       db.exec("COMMIT");
+       db.close();`,
+      ],
+      stdout: "piped",
+      stderr: "inherit",
+    }).spawn();
+    const reader = holder.stdout.getReader();
+    await reader.read(); // "held"
+    reader.releaseLock();
+    await holder.stdout.cancel();
+    const log = await openLog(dir);
+    await log.close();
+    await holder.status;
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a file that is not a database is refused as corrupt, naming the engine's reason", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(`${dir}/log.db`, "not a database, just words ".repeat(200));
+    const err = await openLog(dir).then(() => undefined, (e: Error) => e);
+    assert(err instanceof Error && !(err instanceof Deno.errors.Busy));
+    assert(err.message.includes("is corrupt (file is not a database)"), err.message);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

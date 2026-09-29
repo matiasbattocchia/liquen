@@ -40,7 +40,8 @@
  * stack traces land tagged too. The stdout/stderr split rides through (stdout is data,
  * stderr is diagnostics). After the boot lines, silence means every process is up. On a
  * terminal each tag has a color of its own, so one process's lines read as a column in the
- * interleave; piped, or under NO_COLOR, the bytes are plain.
+ * interleave, and a line reporting a failure is red, so it stands out of every column;
+ * piped, or under NO_COLOR, the bytes are plain.
  *
  * `-D` runs the same supervisor detached: in a session of its own, its every byte appended
  * to `data/run/liquen.log`, and the prompt back once the run holds its lock. A refusal
@@ -126,10 +127,21 @@ const painted = {
   err: !Deno.noColor && Deno.stderr.isTerminal(),
 };
 
+/** A line that reports a failure, by what failures print: the harness's own `FAILED` and
+ *  `failed`, an error's `SomeError:` head, a stack frame, a Go panic, and the error levels
+ *  of the Go loggers a tunnel writes with (`ERR`, `FTL`). */
+const FAILURE = /\bFAILED\b|\bfailed\b|\b\w*Error:|^\s+at |\bpanic:|\b(ERR|FTL)\b/;
+
+/** Whether a child's line is a failure: one by `FAILURE`, or an indented line under one —
+ *  the rest of a trace or a cause the runtime printed beneath it. */
+export function failing(line: string, under: boolean): boolean {
+  return FAILURE.test(line) || (under && /^\s/.test(line));
+}
+
 /** One attributed line — the whole observability surface. */
-function stamp(name: string, line: string, err = true): void {
+function stamp(name: string, line: string, err = true, failure = false): void {
   const text = painted[err ? "err" : "out"]
-    ? `\x1b[2m${clock()}\x1b[22m ${tag(name)} ${line}\n`
+    ? `\x1b[2m${clock()}\x1b[22m ${tag(name)} ${failure ? `\x1b[31m${line}\x1b[39m` : line}\n`
     : `${clock()} [${name}] ${line}\n`;
   (err ? Deno.stderr : Deno.stdout).writeSync(enc.encode(text));
 }
@@ -177,7 +189,8 @@ async function detach(root: string): Promise<void> {
 
 async function pump(stream: ReadableStream<Uint8Array>, name: string, err: boolean): Promise<void> {
   const lines = stream.pipeThrough(new TextDecoderStream()).pipeThrough(new TextLineStream());
-  for await (const line of lines) stamp(name, line, err);
+  let under = false;
+  for await (const line of lines) stamp(name, line, err, under = failing(line, under));
 }
 
 /** One process of the org's run: its tag, and the command that is it. */
@@ -353,6 +366,8 @@ if (import.meta.main) {
           stamp(
             SUPERVISOR,
             `${name} refused after ${Math.round(uptime / 1000)}s — down until \`liquen reload\``,
+            true,
+            true,
           );
           return true;
         }
@@ -364,6 +379,8 @@ if (import.meta.main) {
           // reports code 0, so the code alone reads like a clean exit
           `${name} exited (${status.signal ?? `code ${status.code}`}) after ` +
             `${Math.round(uptime / 1000)}s — restarting in ${wait / 1000}s`,
+          true,
+          true,
         );
         await pause(wait, off);
       }
@@ -446,7 +463,7 @@ if (import.meta.main) {
           return made;
         } catch (err) {
           const why = err instanceof Error ? err.message : String(err);
-          stamp(SUPERVISOR, `config.jsonc not taken up — ${why}; running on as it was`);
+          stamp(SUPERVISOR, `config.jsonc not taken up — ${why}; running on as it was`, true, true);
           throw err;
         } finally {
           reloading = false;

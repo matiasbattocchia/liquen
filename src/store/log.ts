@@ -332,13 +332,20 @@ export async function openLog(
   // A log that cannot be read must say so once, in a sentence naming itself. Every child
   // of the org opens this file, so a corrupt one otherwise arrives as four stack traces
   // every few seconds, none of them saying which file or what to do about it — and the
-  // supervisor restarts them forever (live, 2026-09-10: a page count outrunning the file
-  // by 17MB, under bcachefs). `.recover` rebuilds what is still there.
+  // supervisor restarts them forever. `.recover` rebuilds what is still there.
+  // Every child opens it at the same instant, and the first to open a WAL left by an
+  // unclean stop replays it under a lock: the check waits that out like any read, and a
+  // lock still held past the wait is a fault the supervisor retries, never corruption.
+  db.exec("PRAGMA busy_timeout=5000;");
   let health: string | undefined;
   try {
     health = (db.prepare("PRAGMA quick_check(1)").get() as { quick_check: string }).quick_check;
-  } catch {
-    health = undefined; // too broken to even ask
+  } catch (err) {
+    if (isBusy(err)) {
+      db.close();
+      throw new Deno.errors.Busy(`the log at ${dir}/${DB_FILE} stayed locked: ${err}`);
+    }
+    health = err instanceof Error ? err.message : undefined;
   }
   if (health !== "ok") {
     db.close();
@@ -349,8 +356,7 @@ export async function openLog(
     );
   }
   db.exec(
-    `PRAGMA busy_timeout=5000;
-     PRAGMA journal_mode=WAL;
+    `PRAGMA journal_mode=WAL;
      PRAGMA synchronous=NORMAL;
      CREATE TABLE IF NOT EXISTS events (
        id     TEXT PRIMARY KEY DEFAULT (uuidv7()),  -- uuidv7: identity AND append order

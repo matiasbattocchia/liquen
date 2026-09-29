@@ -1,7 +1,27 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { backoffMs, comesBack, type Kept, pause, plan, reads, roster } from "./start.ts";
+import { backoffMs, comesBack, failing, type Kept, pause, plan, reads, roster } from "./start.ts";
 import { REFUSAL } from "./entry.ts";
 import { type OrgConfig, starterConfig } from "./config.ts";
+
+Deno.test("failing: a failure and the indented trace under it, and nothing else", () => {
+  const lines: [string, boolean][] = [
+    ["[ingest] google:battox@gmail.com mailbox: +1 mail", false],
+    ["[dispatch] FAILED → 5491133585694: Error: cannot reach localhost:8081 — refused", true],
+    ["    at file:///home/matias/liquen/src/connect/http.ts:62:33", true],
+    ["    at async Object.send (file:///src/connect/whatsapp/dispatch.ts:267:17)", true],
+    ["[dispatch] google mail: watching /home/matias/new/data/log for outbound sends", false],
+    ["TypeError: Cannot read properties of undefined (reading 'id')", true],
+    ["the tick's sweep pass failed: boom", true],
+    ["2026-09-29T18:36:23Z INF Starting tunnel tunnelID=85a80195", false],
+    ["  an indented line under nothing", false],
+    ["2026-09-29T18:36:23Z ERR failed to serve tunnel connection", true],
+    ["  the cause, indented under it", true],
+  ];
+  let under = false;
+  for (const [line, want] of lines) {
+    assertEquals(under = failing(line, under), want, line);
+  }
+});
 
 Deno.test("roster: main first, bundled connections resolve, org-local ones probe connectors/", () => {
   const tmp = Deno.makeTempDirSync();

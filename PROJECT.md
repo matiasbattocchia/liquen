@@ -4853,3 +4853,21 @@ for more cases.
 Delivery on the new tenant: Outlook shows the sends, and nothing reached Gmail (spam
 included) or Riseup's forward — Microsoft holds the tenant's outbound, which is its own
 limit and not liquen's.
+
+### A boot race read as a corrupt log; failures in red (2026-09-29) — LANDED
+
+- **The log's health check waits for locks like any read** (`openLog`): `busy_timeout` is
+  set before `quick_check`. Every child of a start opens `log.db` at once, and the first to
+  open a WAL left by an unclean stop replays it under a lock that shuts readers out; the
+  check ran with no busy handler, took the `SQLITE_BUSY` as a throw, and reported the file
+  "corrupt (unreadable)". On `../new` the Microsoft process lost that race and refused
+  until reload while `integrity_check` said `ok` and its three siblings ran on the same
+  file. A lock still held past the wait is now `Deno.errors.Busy` — a fault the supervisor
+  retries — and a check that throws for another reason names the engine's message ("file
+  is not a database") instead of "unreadable". The corruption the check was written for
+  (2026-09-10: a page count outrunning the file by 17MB, under bcachefs) still refuses.
+- **`liquen start` paints failures red** on a terminal: a child's line with `FAILED`,
+  `failed`, a `…Error:` head, a stack frame, a Go `panic:` or a tunnel's `ERR`/`FTL`
+  level, plus the indented lines under it; and the supervisor's own `refused`, `exited`
+  and `not taken up`. The refusal sentence a child prints before exiting is not matched —
+  the red `refused after` line beneath it points at it.
