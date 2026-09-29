@@ -513,16 +513,23 @@ Deno.test("team chat: `conversation` adds, renames, lists and leaves — each ch
       closed: true,
     });
     assertEquals(await main.log.membersOf("local", "agent", row.address), []);
-    // every change was said in the room, in ana's voice, under the room's name at the time
+    // every change was said in the room as its own line, from ana, under the room's name at
+    // the time
     const said = (await main.log.read({ conversation: row.address, types: ["message"] }))
       .filter((e) => e.agent?.id === "ana")
-      .map((e) => [(e.parts[0] as { text: string }).text, e.envelope.conversation.name]);
+      .map((e) => {
+        const p = e.parts[0];
+        return [
+          p.type === "text" ? p.text : p.type === "data" ? p.data : p.type,
+          e.envelope.conversation.name,
+        ];
+      });
     assertEquals(said, [
       ["hola", "ops"],
-      ["added mind@cy", "ops"],
-      ["renamed to ops-q4", "ops-q4"],
-      ["removed mind@bo, mind@cy", "ops-q4"],
-      ["left", "ops-q4"],
+      [{ joined: [{ address: "mind@cy" }] }, "ops"],
+      [{ name: "ops-q4" }, "ops-q4"],
+      [{ left: [{ address: "mind@bo" }, { address: "mind@cy" }] }, "ops-q4"],
+      [{ left: [{ address: "mind@ana" }] }, "ops-q4"],
     ]);
   } finally {
     await main.stop();

@@ -48,11 +48,18 @@ import type {
   Delta,
   Event,
   EventId,
+  Part,
   PermissionRequestEvent,
   PermissionResponseEvent,
+  RoomPart,
   SessionRef,
   ToolResultEvent,
 } from "./types.ts";
+import { roomWords } from "./room.ts";
+
+/** A room's change, in the words a painted line reads — none for any other part. */
+const roomLine = (p: Part): string[] =>
+  p.type === "data" && p.kind === "room" ? [roomWords(p as RoomPart)] : [];
 import { tailOf } from "./line.ts";
 
 export const DIM = "\x1b[2m";
@@ -151,8 +158,8 @@ export function painter(s: Surface): Painter {
     switch (e.type) {
       case "message": {
         const via = (e.extra?.via ?? undefined) as { service?: string } | undefined;
-        const text = e.parts.filter((p) => p.type === "text")
-          .map((p) => (p as { text: string }).text).join(" ");
+        const text = e.parts.flatMap((p) => p.type === "text" ? [p.text] : roomLine(p))
+          .join(" ");
         if (!self) {
           // the principal spoke — locally it's already on screen; through a mind-alias
           // surface (§4) the mirror's copy is the only sighting, so paint it, tagged
@@ -284,7 +291,7 @@ export function painter(s: Surface): Painter {
     for (const e of events) {
       switch (e.type) {
         case "message": {
-          const text = textOf(e);
+          const text = [textOf(e), ...e.parts.flatMap(roomLine)].filter((t) => t).join(" ");
           if (text === "" || silent(e)) continue;
           gap();
           if (ownVoice(e, s.session)) put(`${stamp(e.ts)}${AGENT} ${renderMarkdown(text)}`);

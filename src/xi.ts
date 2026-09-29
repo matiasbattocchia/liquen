@@ -72,6 +72,7 @@ import { LeaseLost, type Locker } from "./store/lock.ts";
 import { sameHandle, speaksThrough } from "./store/roster.ts";
 import { foldName, namesMatch, preferProper } from "./store/names.ts";
 import { newId } from "./store/id.ts";
+import { roomPart } from "./room.ts";
 import type { ConversationRow } from "./store/connections.ts";
 import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
@@ -1867,8 +1868,8 @@ function roomView(
 
 /** The `conversation` verbs on a wire (§9): each through the wire's port, as the acting
  *  agent on the account the conversation is on — the one `send` there rides. The wire
- *  says the change in a line of its own, which the ingest brings back, so nothing is said
- *  here. `who` names people the way `contact` takes one — by their address, or the name
+ *  says the change in a line of its own, which the ingest brings back as the room's
+ *  `room` line, so nothing is said here. `who` names people the way `contact` takes one — by their address, or the name
  *  they go by here — and a bare handle nobody has spoken as is taken as an address: the
  *  line between a name and a handle is the space. */
 async function wireRoom(
@@ -2824,8 +2825,8 @@ async function execute(
   }
   if (name === "conversation") {
     // a local room's membership and name (§6): what `send` opens, this verb changes. Any
-    // member may act; the change is said in the room, as the agent's own line, so every
-    // member — the one just added first of all — reads it where it happened.
+    // member may act; the change is said in the room as its `room` line, from the agent,
+    // so every member — the one just added first of all — reads it where it happened.
     const action = String(args.action ?? "show") as RoomAction;
     if (!ROOM_ACTIONS.includes(action)) {
       throw new Error(`\`action\` is one of ${ROOM_ACTIONS.join(", ")}, not "${action}"`);
@@ -2885,10 +2886,11 @@ async function execute(
         return s;
       }).filter((s, i, all) => all.findIndex((x) => same(x, s)) === i);
     };
-    // the change, said in the room in the agent's own voice: after it is made, so the
-    // member just added is woken by it — except a leave, said before the leaving, since
-    // the law refuses the leaver the room's future and the line is the last it writes
-    const say = (note: string) =>
+    // the change, said in the room as the room's own line, from the agent that made it:
+    // after it is made, so the member just added is woken by it — except a leave, said
+    // before the leaving, since the law refuses the leaver the room's future and the line
+    // is the last it writes
+    const say = (change: Parameters<typeof roomPart>[0]) =>
       ports.log.publish(
         {
           ts: new Date().toISOString(),
@@ -2900,11 +2902,12 @@ async function execute(
             connection_address: row.connection,
             conversation: { address: row.address, kind: row.kind, name: row.name },
           },
-          parts: [{ type: "text", kind: "text", text: note }],
+          parts: [roomPart(change)],
         } satisfies Draft<MessageEvent>,
       );
-    const spell = (who: Party[]) =>
-      who.map((m) => sessionAddress(m.agentId, m.sessionId)).join(", ");
+    const people = (who: Party[]) =>
+      who.map((m) => ({ address: sessionAddress(m.agentId, m.sessionId) }));
+    const spell = (who: Party[]) => people(who).map((m) => m.address).join(", ");
     if (action === "join") {
       if (row.kind !== "channel" && !member) {
         throw new Error(`${label} is a private group — a member has to add you`);
@@ -2912,11 +2915,11 @@ async function execute(
       if (member) return roomView(room, kind);
       await enroll([me]);
       room.members.push(me);
-      await say("joined");
+      await say({ joined: people([me]) });
     } else {
       if (!member) throw new Error(`you are not in ${label}`);
       if (action === "leave") {
-        await say("left");
+        await say({ left: people([me]) });
         await unenroll([me]);
         room.members = room.members.filter((m) => !same(m, me));
       } else if (action === "add") {
@@ -2924,7 +2927,7 @@ async function execute(
         if (who.length === 0) return roomView(room, kind);
         await enroll(who);
         room.members.push(...who);
-        await say(`added ${spell(who)}`);
+        await say({ joined: people(who) });
       } else if (action === "remove") {
         const who = await named();
         if (who.some((s) => same(s, me))) throw new Error("to take yourself out, `leave`");
@@ -2932,14 +2935,14 @@ async function execute(
         if (out.length > 0) throw new Error(`${spell(out)} not in ${label}`);
         await unenroll(who);
         room.members = room.members.filter((m) => !who.some((w) => same(w, m)));
-        await say(`removed ${spell(who)}`);
+        await say({ left: people(who) });
       } else {
         // a rename keeps the kind: `#` is what a channel wears, not what makes one
         const to = String(args.name ?? "").replace(/^#/, "").trim();
         if (!to) throw new Error("`name` is the new name");
         await ports.log.renameConversation("local", row.connection, row.address, to);
         row.name = to;
-        await say(`renamed to ${to}`);
+        await say({ name: to });
       }
     }
     // the last one out closes the room: its name is free, its rows stay
@@ -3515,9 +3518,10 @@ export function specsOf(
     {
       name: "conversation",
       description: "A room's members and name — the rooms `send` opens with a list. Locally, any " +
-        "member may change it, and the change is said in the room; on a wire (Slack, " +
-        "Teams, WhatsApp) the change goes through your account there, and the wire says " +
-        "it. `show` with no `which` lists your local rooms and the public channels; with " +
+        "member may change it; on a wire (Slack, Teams, WhatsApp) the change goes through " +
+        "your account there. Every change, yours or anybody's, reaches the room as a " +
+        "`<room>` line from whoever made it: who joined, who left, the new name. " +
+        "`show` with no `which` lists your local rooms and the public channels; with " +
         "one, its members. A direct room is its members and takes no change: another " +
         "list is another room. Mail has no rooms to change.",
       input_schema: {

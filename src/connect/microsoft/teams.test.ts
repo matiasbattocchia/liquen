@@ -338,6 +338,87 @@ Deno.test("teams webhook: the handshake echoes the token plain; a notice is acke
   });
 });
 
+Deno.test("teams webhook: a member added, a member gone and a rename are the room's own lines; another system event is none", async () => {
+  await withVault(async (creds) => {
+    const { publish, rows } = captor();
+    const system = (id: string, eventDetail: Record<string, unknown>) => ({
+      id,
+      messageType: "systemEventMessage",
+      createdDateTime: `2021-02-02T18:0${id}:00.000Z`,
+      chatId: CHAT,
+      from: null,
+      body: { contentType: "html", content: "<systemEventMessage/>" },
+      eventDetail,
+    });
+    const robin = { id: "u-robin", displayName: "Robin Kline" };
+    let topic = "ops";
+    const fetchApi = graph({
+      [`/chats/${CHAT}/messages/1`]: system("1", {
+        "@odata.type": "#microsoft.graph.membersAddedEventMessageDetail",
+        members: [{ id: "u-bo", displayName: "Bo" }],
+        initiator: { user: robin },
+      }),
+      [`/chats/${CHAT}/messages/2`]: system("2", {
+        "@odata.type": "#microsoft.graph.membersLeftEventMessageDetail",
+        members: [{ id: "u-bo", displayName: "Bo" }],
+        initiator: null,
+      }),
+      [`/chats/${CHAT}/messages/3`]: system("3", {
+        "@odata.type": "#microsoft.graph.chatRenamedEventMessageDetail",
+        chatDisplayName: "ops-q4",
+        initiator: { user: { id: OID, displayName: "Ana" } },
+      }),
+      [`/chats/${CHAT}/messages/4`]: system("4", {
+        "@odata.type": "#microsoft.graph.callEndedEventMessageDetail",
+        initiator: { user: robin },
+      }),
+      [`/chats/${CHAT}`]: () => Response.json({ chatType: "group", topic, members: [] }),
+    });
+    const handler = createTeamsWebhook({
+      publish,
+      creds,
+      broker: createGrantBroker({ creds }),
+      save,
+      fetchApi,
+      now: () => NOW,
+    });
+    await creds.put({ key: KEY, value: {}, extra: { [TEAMS_SUB]: sub(CHAT_RES, "sub-1") } });
+    for (const id of ["1", "2", "3", "4"]) {
+      if (id === "3") topic = "ops-q4";
+      await handler(notice({
+        subscriptionId: "sub-1",
+        clientState: "s-sub-1",
+        changeType: "created",
+        resource: `chats('${CHAT}')/messages('${id}')`,
+      }));
+    }
+    assertEquals(rows.length, 3);
+    const [added, gone, renamed] = rows;
+    assertEquals(added.envelope, {
+      service: "microsoft",
+      connection_address: "ana@contoso.com",
+      conversation: { address: CHAT, kind: "group", name: "ops" },
+      external_id: `teams:${CHAT}:1`,
+      sender: { address: "u-robin", name: "Robin Kline" },
+    });
+    assertEquals(added.ts, "2021-02-02T18:01:00.000Z");
+    assertEquals(added.parts, [{
+      type: "data",
+      kind: "room",
+      data: { joined: [{ address: "u-bo", name: "Bo" }] },
+    }]);
+    assertEquals(gone.envelope.sender, { address: "u-bo", name: "Bo" }); // nobody did it to them
+    assertEquals(gone.parts[0], {
+      type: "data",
+      kind: "room",
+      data: { left: [{ address: "u-bo", name: "Bo" }] },
+    });
+    assertEquals(renamed.agent, { id: "ana" }); // the member renamed it
+    assertEquals(renamed.envelope.conversation.name, "ops-q4");
+    assertEquals(renamed.parts[0], { type: "data", kind: "room", data: { name: "ops-q4" } });
+  });
+});
+
 Deno.test("teams webhook: a channel reply is a reply to its root, addressed team/channel and named Team / Channel; a member's own message wears their stamp", async () => {
   await withVault(async (creds) => {
     const { publish, rows } = captor();

@@ -650,6 +650,45 @@ Deno.test("slack: channel_rename is the directory's push leg for rooms — learn
   assertEquals((published[0] as MessageEvent).envelope.conversation.name, "anuncios");
 });
 
+Deno.test("slack: a join, a leave and a rename are the room's own lines — from whoever made them", async () => {
+  const { names, learned } = fakeNames({ "T1:U7": "Ana", "T1:U8": "Bea", "T1:C1": "general" });
+  const { handler, published } = harness(SECRET, undefined, undefined, names);
+  const line = (event: Record<string, unknown>) =>
+    signedReq(messageEvent({
+      event: { type: "message", channel: "C1", channel_type: "channel", ...event },
+    }));
+  await handler(await line({ subtype: "channel_join", user: "U8", inviter: "U7", ts: "1.1" }));
+  await handler(await line({ subtype: "channel_join", user: "U8", ts: "1.2" }));
+  await handler(await line({ subtype: "channel_leave", user: "U8", ts: "1.3" }));
+  await handler(
+    await line({
+      subtype: "channel_name",
+      user: "U7",
+      old_name: "general",
+      name: "ops",
+      ts: "1.4",
+    }),
+  );
+  const [added, joined, left, renamed] = published as MessageEvent[];
+  assertEquals(added.envelope.sender, { address: "U7", name: "Ana" });
+  assertEquals(added.envelope.external_id, "slack:T1:C1:1.1");
+  assertEquals(added.parts, [{
+    type: "data",
+    kind: "room",
+    data: { joined: [{ address: "U8", name: "Bea" }] },
+  }]);
+  assertEquals(joined.envelope.sender, { address: "U8", name: "Bea" });
+  assertEquals(left.parts[0], {
+    type: "data",
+    kind: "room",
+    data: { left: [{ address: "U8", name: "Bea" }] },
+  });
+  assertEquals(renamed.envelope.sender, { address: "U7", name: "Ana" });
+  assertEquals(renamed.envelope.conversation.name, "ops");
+  assertEquals(renamed.parts[0], { type: "data", kind: "room", data: { name: "ops" } });
+  assertEquals(learned, ["T1:C1=ops"]);
+});
+
 Deno.test("slack: no directory ⇒ bare ids — sender unnamed, mentions decode to @<id>", async () => {
   const { handler, published } = harness(SECRET);
   await handler(

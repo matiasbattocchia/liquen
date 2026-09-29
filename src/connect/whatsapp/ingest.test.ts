@@ -291,7 +291,7 @@ Deno.test("a roster change is the group's own line: who joined and left, from wh
   assertEquals(line.envelope.sender, { address: "5491100000001", name: "Ana" });
   assertEquals(line.parts, [{
     type: "data",
-    kind: "members",
+    kind: "room",
     data: {
       joined: [{ address: "5491100000002", name: "Bea" }],
       left: [{ address: "5491100000003", name: "Caro" }],
@@ -299,6 +299,30 @@ Deno.test("a roster change is the group's own line: who joined and left, from wh
   }]);
   assertEquals(line.extra, { muted: true });
   assertEquals(again.envelope.external_id, line.envelope.external_id, "a retry merges");
+});
+
+Deno.test("a rename is a room line with the new name; the subject first seen is none", async () => {
+  const { handler, published } = harness();
+  await handler(post(
+    "/whatsapp-web-webhook",
+    batch({
+      groups: [
+        { address: "123-456@g.us", name: "Asado" },
+        {
+          address: "123-456@g.us",
+          name: "Asado 2",
+          renamed: true,
+          by: { address: "5491100000001", name: "Ana" },
+          timestamp: "2026-09-28T12:00:00Z",
+        },
+      ],
+    }),
+  ));
+  assertEquals(published.length, 1);
+  const [line] = published as MessageEvent[];
+  assertEquals(line.envelope.conversation.name, "Asado 2");
+  assertEquals(line.envelope.sender, { address: "5491100000001", name: "Ana" });
+  assertEquals(line.parts, [{ type: "data", kind: "room", data: { name: "Asado 2" } }]);
 });
 
 Deno.test("a join by the group's link is the joiner's own line; the account's is its own", async () => {
@@ -327,14 +351,14 @@ Deno.test("a join by the group's link is the joiner's own line; the account's is
   assertEquals(link.envelope.sender, { address: "5491100000002" });
   assertEquals(link.parts[0], {
     type: "data",
-    kind: "members",
+    kind: "room",
     data: { joined: [{ address: "5491100000002" }], reason: "invite" },
   });
   assertEquals(added.envelope.conversation.name, "Nuevo");
   assertEquals(added.envelope.sender, { address: "5491100000001" });
   assertEquals(added.parts[0], {
     type: "data",
-    kind: "members",
+    kind: "room",
     data: { joined: [{ address: "5491100000000" }] },
   });
 });

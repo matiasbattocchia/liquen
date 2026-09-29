@@ -160,7 +160,19 @@ export type CalendarData = {
 };
 export type CalendarPart = DataPart<"calendar", CalendarData>;
 
-export type Part = TextPart | FilePart | DataPart | SharePart;
+/** A room's change, as the room's own line about it — who joined (added, or in by the
+ *  room's link: `reason: "invite"`), who left (went, or was taken out), or the name it
+ *  now wears. The line's sender is whoever made the change; each person is the address
+ *  the service knows them by and the name it has for them. */
+export type RoomMember = { address: string; name?: string };
+export type RoomPart = DataPart<"room", {
+  joined?: RoomMember[];
+  left?: RoomMember[];
+  name?: string;
+  reason?: string;
+}>;
+
+export type Part = TextPart | FilePart | DataPart | SharePart | RoomPart;
 
 /* ────────────────────────────── envelope ────────────────────────────── */
 // WHICH CONVERSATION. Every event names one — even internal ones (§3).

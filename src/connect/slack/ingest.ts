@@ -44,12 +44,20 @@
  * hand-rolled API types encode assumptions the API never promised).
  */
 
-import type { MemberJoinedChannelEvent, MemberLeftChannelEvent, SlackEvent } from "@slack/types";
+import type {
+  ChannelJoinMessageEvent,
+  ChannelLeaveMessageEvent,
+  ChannelNameMessageEvent,
+  MemberJoinedChannelEvent,
+  MemberLeftChannelEvent,
+  SlackEvent,
+} from "@slack/types";
+import { roomPart } from "../../room.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
-import type { Conversation, Draft, FilePart, MessageEvent, Part } from "../../types.ts";
+import type { Conversation, Draft, FilePart, MessageEvent, Part, RoomMember } from "../../types.ts";
 import { fromSlack } from "../flavor.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
@@ -518,6 +526,12 @@ export async function mapMessage(
       status: { state: "deleted", deleted_at: e.event_ts ?? ts },
     } as unknown as Draft<MessageEvent>]; // the stamp is partless by design
   }
+  if (
+    e.subtype === "channel_join" || e.subtype === "channel_leave" ||
+    e.subtype === "channel_name"
+  ) {
+    return await mapRoomLine(e, team, anchor, authorizations, store, names, ctx);
+  }
 
   // plain message, an edit (message_changed nests the new content — its OWN event, the
   // original row untouched), or a file share (file_share is a plain message carrying
@@ -635,6 +649,59 @@ export async function mapMessage(
         },
       }
       : {}),
+  }];
+}
+
+/** A room's change is the room's own line (§3). Slack says a join, a leave and a rename as
+ *  messages of their own subtypes, whose text ("<@U…> has joined the channel") is Slack's
+ *  wording, not anything the mover typed — so the line is a `room` part, from whoever made
+ *  the change: the inviter who added someone, else the one who moved or renamed. Keyed on
+ *  the message's own ts like any row, so the live delivery and the catch-up's read of it
+ *  merge. A rename also teaches the name directory the room's new name. */
+async function mapRoomLine(
+  e: ChannelJoinMessageEvent | ChannelLeaveMessageEvent | ChannelNameMessageEvent,
+  team: string,
+  anchor: string,
+  authorizations: Authorization[] | undefined,
+  store: Store | undefined,
+  names: SlackNames | undefined,
+  ctx: MapCtx,
+): Promise<Draft<MessageEvent>[]> {
+  if (!e.ts || !e.channel || !e.user) return [];
+  const via = boundUsers(authorizations);
+  const person = async (id: string): Promise<RoomMember> => {
+    const name = await names?.nameOf(team, id, via);
+    return { address: id, ...(name ? { name } : {}) };
+  };
+  const mover = await person(e.user);
+  if (e.subtype === "channel_name" && e.name) names?.learnRoom(team, e.channel, e.name);
+  const part = e.subtype === "channel_join"
+    ? roomPart({ joined: [mover] })
+    : e.subtype === "channel_leave"
+    ? roomPart({ left: [mover] })
+    : roomPart({ name: e.name });
+  const inviter = e.subtype === "channel_join" && e.inviter ? await person(e.inviter) : undefined;
+  const sender = inviter ?? mover;
+  const owner = await memberOf(store, names, team, sender.address, via);
+  const kind = KIND[e.channel_type];
+  const room = await names?.roomOf(team, e.channel, via);
+  return [{
+    ts: slackTime(e.ts, ctx.now),
+    type: "message",
+    ...(owner ? { agent: { id: owner } } : {}),
+    envelope: {
+      service: "slack",
+      connection_address: anchor,
+      conversation: {
+        address: e.channel,
+        ...(kind ? { kind } : {}),
+        ...(room ? { name: room } : {}),
+      },
+      sender,
+      external_id: `slack:${team}:${e.channel}:${e.ts}`,
+    },
+    parts: [part],
+    extra: { slack: { subtype: e.subtype, ...(authorizations ? { authorizations } : {}) } },
   }];
 }
 

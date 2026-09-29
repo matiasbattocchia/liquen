@@ -154,8 +154,11 @@ chats and channels, whatsmeow's groups — keeps them, and the connector's port
 `members` · `join` · `leave` · `add` · `remove` · `rename` for the `conversation` tool. Each
 leg answers within its call and keeps no queue, so the tool result is the whole outcome
 and a failed call is the model's to make again. What the log holds of a change is the
-wire's own line about it — the join, the rename — brought back by the ingest, and the
+wire's own line about it — the join, the leave, the rename — brought back by the ingest
+as one `room` data part (`src/room.ts`: `joined` and `left` as `{address, name?}`, or the
+`name` the room now wears; `<room>` to the model) from whoever made the change, and the
 membership mirror fills the map from there; the harness says nothing in the room itself.
+A local room's change is the same part, said by the `conversation` tool.
 
 Every leg is per account: it takes the connection the act rides — the one a `send` there
 would ride — and the agent acting, and posts with the grant the dispatcher would post
@@ -346,14 +349,14 @@ not take — and a seat the server would not fill is named with the code: on `ad
 call fails naming each, on `open` the group exists and its roster says who is in. A
 removal is resolved against the roster on the bridge, so a LID-addressed group takes it
 under the JID it holds the person by. What the log sees afterwards is what the bridge
-posts of the group: its subject on every line and on a rename, and each roster change
-WhatsApp announces as the group's own line — one `members` data part, `joined` and
-`left` as `{address, name?}`, from whoever made the change (or the first who moved, when
-someone came in by the group's link, `reason: "invite"`: a line with no sender is the
-account speaking). The account's own arrival is one too: added, it alone joined; a group
-made with it in arrives with its founding roster. The line's identity is the change —
-the group, the time, who moved — so a batch posted again merges. An admin seat, a
-description or a setting is no line.
+posts of the group: its subject on every line, and each change WhatsApp announces as
+the group's `room` line (§1) — a rename (`renamed` on the feed, so the subject a group is
+first seen with makes none), who joined, who left — from whoever made it, or the first
+who moved when someone came in by the group's link (`reason: "invite"`): a line with no
+sender is the account speaking. The account's own arrival is one too: added, it alone
+joined; a group made with it in arrives with its founding roster. The line's identity is
+the change — the group, the time, who moved, the name — so a batch posted again merges.
+An admin seat, a description or a setting is no line.
 
 ## 4. Slack — landed; two threads dangling
 
@@ -385,6 +388,10 @@ commercially distributed non-Marketplace app created after 2025-05-29 reads
 `conversations.invite` for a named one, private when the send named a group and public
 when it named a channel; `members` pages `conversations.members`, and `join`, `leave`,
 `add`, `remove` and `rename` are the method of the same name, a kick one person a call.
+What the room shows of a change is Slack's own message about it — `channel_join` (with
+its `inviter` when someone added them), `channel_leave`, `channel_name` — mapped to the
+`room` line of §1 rather than to words the mover typed, keyed on its `ts` like any row,
+so the catch-up reads a swallowed one back; a rename also teaches the name directory.
 Every leg resolves its token as the dispatcher does (`slackTokenFor`): the agent's own
 grant when the vault holds one, else the workspace bot, so the room is opened by the
 grant that posts in it. A channel's name is given as Slack takes one — lowercase, `-` and
@@ -632,7 +639,11 @@ ones Teams keeps out folded away); its people are the team's, and the list reach
 of them in the team. `members` pages the chat's or the channel's roster and answers user
 ids with the names Teams shows; `add` is one `POST …/members` a person (a chat member
 sees the whole history), `remove` and `leave` find the membership id on the roster and
-`DELETE` it; `rename` is the chat's topic or the channel's display name. Nobody joins a
+`DELETE` it; `rename` is the chat's topic or the channel's display name. What the room
+shows of a change is Teams' own `systemEventMessage` about it — members added, joined,
+deleted or left, the chat or the channel renamed — mapped to the `room` line of §1 from
+Graph's `initiator` (or the one who moved, when there is none), keyed on the message id;
+a rename makes the place's name asked of Graph again. Any other system event is no row. Nobody joins a
 chat or a channel by their own hand on Teams, so the port has no `join`; a standard
 channel's roster is its team's, and Graph refuses a membership leg there in its own
 words. What a leg may do is the grant's consent — `Chat.Create`, `ChatMember.ReadWrite`,

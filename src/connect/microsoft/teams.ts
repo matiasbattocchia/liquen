@@ -78,7 +78,9 @@ import type {
   MessageEvent,
   Part,
   ReactionPart,
+  RoomMember,
 } from "../../types.ts";
+import { roomPart } from "../../room.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { entry } from "../../entry.ts";
@@ -198,6 +200,14 @@ export interface ChatMessage {
     content?: string | null;
   }[];
   mentions?: { id?: number; mentionText?: string; mentioned?: { user?: TeamsUser | null } }[];
+  /** A `systemEventMessage`'s what-happened: its `@odata.type` names the event. */
+  eventDetail?: {
+    "@odata.type"?: string;
+    members?: TeamsUser[] | null;
+    initiator?: { user?: TeamsUser | null } | null;
+    chatDisplayName?: string | null;
+    channelDisplayName?: string | null;
+  } | null;
   reactions?: { reactionType?: string; user?: { user?: TeamsUser | null } }[];
   [k: string]: unknown;
 }
@@ -305,6 +315,8 @@ export function kindOf(info: { chatType?: string; membershipType?: string }): Ki
 
 export interface TeamsNames {
   of(graph: Graph, place: Place, self?: string): Promise<{ kind: Kind; name?: string }>;
+  /** A place renamed: the next `of` asks Graph again. */
+  forget(place: Place): void;
 }
 
 /** A place's kind and name (§3: the service's display facts), asked of Graph once per
@@ -346,6 +358,9 @@ export function teamsNames(stamp?: (address: string, kind: Kind) => Promise<void
       cache.set(key, found);
       await stamp?.(key, found.kind);
       return found;
+    },
+    forget(place) {
+      cache.delete(addressOf(place));
     },
   };
 }
@@ -511,7 +526,10 @@ export function teamsMapper(deps: MapperDeps): (
 ) => Promise<Draft<MessageEvent>[]> {
   const { names, now } = deps;
   return async (msg, at, grant, grants, graph, changeType) => {
-    if (!msg.id || (msg.messageType && msg.messageType !== "message")) return [];
+    if (!msg.id) return [];
+    if (msg.messageType !== undefined && msg.messageType !== "message" && !roomChangeOf(msg)) {
+      return [];
+    }
     const upn = grant.key.slice(GRANT_PREFIX.length);
     const address = addressOf(at.place);
     const ref = teamsRef(address, msg.id);
@@ -542,6 +560,26 @@ export function teamsMapper(deps: MapperDeps): (
         envelope: envelope(ref),
         status: { state: "deleted", deleted_at: when },
       } as unknown as Draft<MessageEvent>];
+    }
+
+    // a room's change is the room's own line (§3): who made it, who moved, or the name
+    const change = roomChangeOf(msg);
+    if (change) {
+      if (change.name) names.forget(at.place);
+      const { kind, name } = await names.of(
+        graph,
+        at.place,
+        grant.extra?.oid as string | undefined,
+      );
+      const sender = change.by ?? change.joined?.[0] ?? change.left?.[0];
+      const owner = sender ? whoIs(sender.address, grants) : undefined;
+      return [{
+        ts: msg.createdDateTime ?? ts,
+        type: "message",
+        ...(owner ? { agent: { id: owner } } : {}),
+        envelope: { ...envelope(ref, kind, name), ...(sender ? { sender } : {}) },
+        parts: [roomPart(change)],
+      }];
     }
 
     const from = msg.from?.user ?? undefined;
@@ -642,6 +680,35 @@ export function teamsMapper(deps: MapperDeps): (
       parts,
     }];
   };
+}
+
+/** Graph's system events that change a room, by `@odata.type`: people in, people out. */
+const ROOM_EVENTS: Record<string, "joined" | "left"> = {
+  "#microsoft.graph.membersAddedEventMessageDetail": "joined",
+  "#microsoft.graph.membersJoinedEventMessageDetail": "joined",
+  "#microsoft.graph.membersDeletedEventMessageDetail": "left",
+  "#microsoft.graph.membersLeftEventMessageDetail": "left",
+};
+
+/** A `systemEventMessage` that changes the room — people added or joined, deleted or
+ *  left, the chat or the channel renamed — as the `room` part says it, with who made it
+ *  (Graph's `initiator`). Any other system event is none. */
+function roomChangeOf(
+  msg: ChatMessage,
+): { joined?: RoomMember[]; left?: RoomMember[]; name?: string; by?: RoomMember } | null {
+  if (msg.messageType !== "systemEventMessage" || !msg.eventDetail) return null;
+  const d = msg.eventDetail;
+  const person = (u: TeamsUser): RoomMember[] =>
+    u.id ? [{ address: u.id, ...(u.displayName ? { name: u.displayName } : {}) }] : [];
+  const initiator = d.initiator?.user;
+  const by = initiator ? person(initiator)[0] : undefined;
+  const side = ROOM_EVENTS[d["@odata.type"] ?? ""];
+  if (side) {
+    const moved = (d.members ?? []).flatMap(person);
+    return moved.length ? { [side]: moved, ...(by ? { by } : {}) } : null;
+  }
+  const name = d.chatDisplayName ?? d.channelDisplayName;
+  return name ? { name, ...(by ? { by } : {}) } : null;
 }
 
 /** The member a Teams user id names: the grant whose account (`extra.oid`) it is. */

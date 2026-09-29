@@ -170,7 +170,7 @@ Deno.test("slack catch-up: the gap is read back per room from the log's newest r
   });
   await catchUp.run();
 
-  assertEquals(done, [["T1", 4]]);
+  assertEquals(done, [["T1", 5]]);
   assertEquals(log.batches.length, 1); // one batch per workspace
   const by = (id: string) => log.batches[0].find((d) => d.envelope.external_id === id)!;
   const root = by("slack:T1:C1:1790598600.000100");
@@ -192,7 +192,10 @@ Deno.test("slack catch-up: the gap is read back per room from the log's newest r
   });
   const priv = by("slack:T1:C2:1790598610.000000");
   assertEquals(priv.envelope.conversation.kind, "group");
-  assert(!log.batches[0].some((d) => d.envelope.external_id?.endsWith("1790598660.000000"))); // a join is no message
+  // a join the gap swallowed is read back as the room's own line
+  assertEquals(by("slack:T1:C1:1790598660.000000").parts, [
+    { type: "data", kind: "room", data: { joined: [{ address: "U9" }] } },
+  ]);
   // ana's token lists her rooms: joined C1 and D1, left C9 (the C1 messages' own
   // passive leg enrolls her there again — the same row)
   assertEquals([...new Set(upserts.map((m) => m.conversation))], ["C1", "D1"]);

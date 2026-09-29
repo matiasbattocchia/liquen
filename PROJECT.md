@@ -4586,3 +4586,31 @@ hand on a throwaway org: a custom connection declared, edited, left alone, then 
 typo refused with the run untouched; an agent added (main restarted); a refused connection
 retried. `update` still asks for a stop: the supervisor launches children from its own
 package version, so new code needs a new supervisor.
+
+### A room's change is one `<room>` line on every service (2026-09-28) — LANDED
+
+A join, a leave and a rename now read the same wherever the room is: one message whose
+single data part is `room` (`src/room.ts`, `RoomPart` in types.ts) — `joined`/`left` as
+`{address, name?}`, or the `name` the room now wears — sent by whoever made the change,
+hoisted by render to `<room … data="{joined:[…]}"/>`. The event type is `message`, so the
+line inherits the room's visibility, the merge on the wire's id, the attention ladder and
+`search` with nothing new to teach the store.
+
+- **Slack**: `channel_join` (its `inviter` the sender when someone added them),
+  `channel_leave` and `channel_name` map to the line instead of being dropped; the catch-up
+  reads a swallowed one back through the same mapper, and a rename teaches the directory.
+- **Teams**: `systemEventMessage` with members added, joined, deleted or left, or the chat
+  or channel renamed, maps to the line from Graph's `initiator`; a rename drops the place
+  from the name cache (`TeamsNames.forget`). Other system events are still no row. Not
+  live-checked that change notifications deliver system messages; the catch-up's listing
+  does return them.
+- **WhatsApp**: the ingest's roster line took the same kind, and renames joined it — the
+  bridge marks a subject WhatsApp announced (`renamed`, `~/open-bsp-whatsmeow` f591458)
+  so the subject a group is first seen with makes no line.
+- **Local**: the `conversation` tool says its change as the same part in place of the
+  text notes ("added mind@cy", "renamed to ops-q4"), which rendered as the agent
+  speaking. The terminal paints a room line in words (`roomWords`: `joined mind@cy`).
+
+The `conversation` tool's description names the element. Tests: `render.test.ts`,
+`paint.test.ts`, the ingest tests of each wire, Slack's catch-up, `main.test.ts`'s local
+room walk.
