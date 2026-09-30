@@ -4944,5 +4944,7 @@ or its thread's other rows kept; every mail thread becomes `direct`. Outlook row
 kept a `conversationId` and stay at their root Message-ID, so an old Outlook thread splits
 once: its next message lands at the `conversationId`.
 
-Open: the `conversationId` lookup is not checked against a live tenant, nor whether
-Exchange files a MIME reply in its parent's conversation. Postgres run: 103 passed.
+Checked on the liquendev tenant (a draft made and deleted, nothing sent): a reply MIME
+carrying only `In-Reply-To`/`References` is filed in its parent's `conversationId`, both as
+a draft and as the reply `sendMail` sent on 09-29; the draft answers with that
+`conversationId` and keeps the Message-ID the MIME wore. Postgres run: 103 passed.
