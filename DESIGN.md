@@ -819,7 +819,7 @@ and a `/y` is read in xi, below.
 riding the grant that reads it (`google`, `microsoft`) on the account's connection:
 ```
 service: "google" · connection: "hi@org" | "matias@org"
-conversation: {address: <the mailbox's thread id>, kind: "direct", name: <subject>}
+conversation: {address: <the mailbox's thread id>, kind: "group", name: <subject>}
 sender: {address: "customer@x.com"} · parts: [text, file(attachments)]
 external_id: mail:<account>:<Message-ID>
 extra.mail: {to, cc, replyTo?, references?}
@@ -827,8 +827,9 @@ extra.mail: {to, cc, replyTo?, references?}
 A thread is a conversation addressed by the id its mailbox files it under — Gmail's
 `threadId`, Graph's `conversationId` — so the log's thread is the one the account's inbox
 shows, and a thread two accounts hold is two conversations, each answered from its own.
-It is `direct`, the group DM's shape: its members are whoever the latest message went to,
-and someone added later sees only what a message carries to them. Its name is the subject,
+It is a `group`: the mailbox's id is its identity, so a Cc added mid-thread leaves it one
+conversation. Membership is per message — its members are whoever the latest message went
+to, and someone added later sees only what a message carries to them. Its name is the subject,
 reply and forward prefixes off. A message is keyed per mailbox, since each mailbox keeps a
 copy of its own. A first send is `send(to: <addresses>, connection: <account>, subject:)`,
 which opens a thread; a send into a thread (`to` its name or address) is a reply-all to its
@@ -855,8 +856,8 @@ ownership) only if double-answers show up.
   column `conversation_kind`; broadcast added 2026-08-11 with the WhatsApp connector):
   *direct* = member-DEFINED identity (Slack im AND mpim — the member set is the address;
   a local room's sorted members joined by `,` make that literal, and it scales to n parties unchanged);
-  *group* = private room; *channel* = public room (room-defined: identity survives
-  membership churn); *broadcast* = fan-out, not a room anyone is in (a WA broadcast list
+  *group* = private room (a mail thread too: the mailbox's id is its identity); *channel* =
+  public room (room-defined: identity survives membership churn); *broadcast* = fan-out, not a room anyone is in (a WA broadcast list
   — replies land in the individual chats; open-bsp carries `…@broadcast` in production).
   Stamped by INGEST from platform facts (Slack conversation types, WA jid shape) — never
   derived from counting members. Parked idea: a "public direct" (members write, anyone

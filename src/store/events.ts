@@ -356,11 +356,11 @@ export interface MailSql {
   thread: string;
 }
 
-/** The statements that take the log's mail to the shape connect/mail.ts writes: a message
- *  keyed per mailbox (`mail:<account>:<Message-ID>`, and every `ref_external_id` naming
- *  one likewise), a Gmail row filed at its `threadId` — a row that kept none, at the one its
- *  thread's other rows kept — and every mail thread `direct`. An Outlook row kept no
- *  `conversationId` and stays at its root Message-ID. */
+/** The statements that key the log's mail per mailbox and file it where the mailbox does: a
+ *  message keyed `mail:<account>:<Message-ID>` (and every `ref_external_id` naming one
+ *  likewise), a Gmail row filed at its `threadId` — a row that kept none, at the one its
+ *  thread's other rows kept. An Outlook row kept no `conversationId` and stays at its root
+ *  Message-ID. `MAIL_GROUPS` runs after them. */
 export const MAIL_MAILBOXES = (sql: MailSql): string[] => [
   `UPDATE events
       SET external_id = 'mail:' || lower(connection_address) || ':' || substr(external_id, 6)
@@ -385,12 +385,17 @@ export const MAIL_MAILBOXES = (sql: MailSql): string[] => [
       AND (${sql.thread} IS NOT NULL OR EXISTS (SELECT 1 FROM gmail_threads g
             WHERE g.conn = events.connection_address AND g.old = events.conversation_address))`,
   `DROP TABLE gmail_threads`,
+];
+
+/** The statements that stamp every mail thread `group` (§4), each row of it — an agent's
+ *  send still unconfirmed, whose `external_id` is not yet a mail key, included. */
+export const MAIL_GROUPS: string[] = [
   `CREATE TEMPORARY TABLE mail_threads AS
      SELECT DISTINCT connection_address AS conn, conversation_address AS address
        FROM events
       WHERE external_id LIKE 'mail:%'`,
   `UPDATE events
-      SET conversation_kind = 'direct'
+      SET conversation_kind = 'group'
     WHERE type = 'message' AND EXISTS (SELECT 1 FROM mail_threads t
             WHERE t.conn = events.connection_address AND t.address = events.conversation_address)`,
   `DROP TABLE mail_threads`,

@@ -218,7 +218,7 @@ Deno.test("outlook mail: a listed id is read back as text with its headers → t
         service: "microsoft",
         connection_address: "ana@contoso.com",
         // the thread: the conversation Exchange files the message in
-        conversation: { address: "AAQk42", kind: "direct", name: "Invoice 42" },
+        conversation: { address: "AAQk42", kind: "group", name: "Invoice 42" },
         sender: { address: "bob@y.com", name: "Bob Ross" },
         external_id: "mail:ana@contoso.com:m1@x.com",
       },

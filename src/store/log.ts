@@ -78,6 +78,7 @@ import {
   type Dialect,
   eventOf,
   externalOf,
+  MAIL_GROUPS,
   MAIL_MAILBOXES,
   MAIL_THREADS,
   offerOf,
@@ -846,10 +847,18 @@ function migrate(db: DatabaseSync) {
   if (v < 12) migrateV12(db);
   if (v < 13) migrateV13(db);
   if (v < 14) migrateV14(db);
+  if (v < 15) migrateV15(db);
 }
 
-/** v14 — a mail is keyed per mailbox and filed in the thread its mailbox names, a thread
- *  `direct` (§4). */
+/** v15 — a mail thread is a `group` (§4): the mailbox's id names it, whoever it reaches. */
+function migrateV15(db: DatabaseSync) {
+  writing(db, () => {
+    for (const s of MAIL_GROUPS) db.exec(s);
+    db.exec("PRAGMA user_version = 15");
+  });
+}
+
+/** v14 — a mail is keyed per mailbox and filed in the thread its mailbox names (§4). */
 function migrateV14(db: DatabaseSync) {
   writing(db, () => {
     const sql = {

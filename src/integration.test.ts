@@ -636,7 +636,7 @@ Deno.test("send `subject`: a first send names the thread it opens; a send into a
     envelope: {
       service: "google",
       connection_address: "me@org.com",
-      conversation: { address: "t1", kind: "direct", name: "Invoice 42" },
+      conversation: { address: "t1", kind: "group", name: "Invoice 42" },
       sender: { address: "ana@x.com", name: "Ana" },
       external_id: "mail:me@org.com:m1@x.com",
     },
@@ -676,7 +676,7 @@ Deno.test("send `subject`: a first send names the thread it opens; a send into a
     const reply = sent.find((e) => e.envelope.conversation.address === "t1");
     assertEquals(reply?.envelope.conversation, {
       address: "t1",
-      kind: "direct",
+      kind: "group",
       name: "Invoice 42",
     });
     assertEquals(reply?.payload?.action, "reply");
@@ -711,7 +711,7 @@ Deno.test("send: one address on two accounts is two conversations — `connectio
       envelope: {
         service: "microsoft",
         connection_address: account,
-        conversation: { address: "AAQk7", kind: "direct", name: "Offsite" },
+        conversation: { address: "AAQk7", kind: "group", name: "Offsite" },
         sender: { address: "ana@x.com", name: "Ana" },
         external_id: `mail:${account}:m1@x.com`,
       },

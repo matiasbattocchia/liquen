@@ -50,7 +50,7 @@ eats it.
 
 Mail and Teams are conversations of yours, not Graph calls: what arrives in the account's
 Inbox and what leaves its Sent Items, the member's chats and the channels of their teams,
-are in your log as `<conv>` lines on the account (a mail thread as a direct conversation
+are in your log as `<conv>` lines on the account (a mail thread as a group conversation
 named by its subject, a chat by its id, a channel by `Team / Channel`), and you write them
 with `send` — `to` a thread's name or address to answer in it, which reaches everyone its
 latest message went to; `to` addresses with `subject` to open one; `re` to quote a

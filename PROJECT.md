@@ -4948,3 +4948,20 @@ Checked on the liquendev tenant (a draft made and deleted, nothing sent): a repl
 carrying only `In-Reply-To`/`References` is filed in its parent's `conversationId`, both as
 a draft and as the reply `sendMail` sent on 09-29; the draft answers with that
 `conversationId` and keeps the Message-ID the MIME wore. Postgres run: 103 passed.
+
+### A mail thread is a `group` (2026-09-30) — LANDED
+
+A mail thread was `kind: direct`, which contradicted the kind's own definition: a direct
+conversation is its member set, the address spelling it, while a thread is addressed by the
+id its mailbox files it under, keeps that id when someone is Cc'd in, and is named by its
+subject — a room-defined identity, the shape of a `group`. Per-message membership (whoever
+the latest message went to) is who sees what, not what the conversation is. Addressing a
+thread by its participants and carrying the mailbox id in `conversation.thread` was weighed
+and dropped: the address would change mid-thread whenever the recipients did, and the
+subject, the conversation's name, would clash across two threads between the same people.
+
+What changes with the kind: a person's name no longer finds every thread they wrote in
+(a direct chat goes by the other side's name; a thread goes by its subject, and `from`
+finds a person), and a subjectless thread stays unnamed instead of taking its sender's name.
+Migration (SQLite v15, Postgres v6): every row of a mail thread, an unconfirmed send
+included, is stamped `group`.

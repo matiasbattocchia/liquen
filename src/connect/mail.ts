@@ -13,14 +13,16 @@
  *
  * A THREAD is a conversation (DESIGN §4), addressed by the id the MAILBOX files it under —
  * Gmail's `threadId`, Graph's `conversationId` — so a thread in the log is the thread the
- * account's own inbox shows. It is `kind: direct`, the shape of a group DM: its members
- * are whoever the latest message went to, and someone added later sees only what a message
- * carries to them. Its name is the subject with the reply and forward prefixes off. The
+ * account's own inbox shows. It is `kind: group`: the mailbox's id names it whoever it
+ * reaches, so a Cc added mid-thread keeps it one conversation. Its members are whoever the
+ * latest message went to, and someone added later sees only what a message carries to
+ * them. Its name is the subject with the reply and forward prefixes off. The
  * recipients of every message ride the row (`extra.mail`: To, Cc, Reply-To, and the
  * `References` it carried), so a reply reaches the thread's members without the wire being
  * asked: a reply-all to the latest message whose recipients the log knows.
  *
- * `external_id` is `mail:<Message-ID>` — the RFC 5322 id. Our own sends mint theirs, and
+ * `external_id` is `mail:<account>:<Message-ID>` — the RFC 5322 id, keyed per mailbox,
+ * since each mailbox keeps a copy of its own. Our own sends mint theirs, and
  * the copy the mailbox keeps in Sent comes back through the poll as the echo that MERGES
  * into the row it left from (§4). The wire answers a send with the thread it filed the
  * message in, and the row moves there when that is not where it stood: a first send, whose
@@ -153,7 +155,7 @@ const THREAD_REACH = 50;
 /** The conversation a message belongs to: the mailbox's thread, named by its subject. */
 export function mailConversation(thread: string, m: Pick<MailMessage, "subject">): Conversation {
   const name = threadOf(m.subject);
-  return { address: thread, kind: "direct", ...(name ? { name } : {}) };
+  return { address: thread, kind: "group", ...(name ? { name } : {}) };
 }
 
 /** Whether an address is a recipient list: one or more addresses, comma-joined. */

@@ -441,7 +441,7 @@ Remaining:
 Email is a **service, not a tool** (§4) and it is genuinely conversation-shaped, so it lands
 in the log as one. The rows ride the GRANT — `service: google`, the account's connection —
 the way calendar rows do, so one connection row and one process carry an account whole.
-A **thread is the conversation**: `kind: direct`, addressed by the id the mailbox files it
+A **thread is the conversation**: `kind: group`, addressed by the id the mailbox files it
 under (Gmail's `threadId`, Graph's `conversationId`), named by its subject with the reply
 and forward prefixes off in the languages clients localize them into. Its members are
 whoever the latest message went to, and each row keeps its addressing (`extra.mail`: To,

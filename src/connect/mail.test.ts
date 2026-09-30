@@ -70,13 +70,13 @@ Deno.test("mail: the participants are the other parties, lower-cased and sorted;
   assertEquals(twice, [{ address: "bob@y.com", name: "Bob" }]);
 });
 
-Deno.test("mail: a thread is a direct conversation at the mailbox's thread id, named by its subject", () => {
+Deno.test("mail: a thread is a group conversation at the mailbox's thread id, named by its subject", () => {
   assertEquals(mailConversation("t1", { subject: "Re: Invoice 42" }), {
     address: "t1",
-    kind: "direct",
+    kind: "group",
     name: "Invoice 42",
   });
-  assertEquals(mailConversation("t1", {}), { address: "t1", kind: "direct" });
+  assertEquals(mailConversation("t1", {}), { address: "t1", kind: "group" });
   assertEquals(referencesOf("<m0@org.com>\r\n <m1@x.com>"), ["m0@org.com", "m1@x.com"]);
   assertEquals(referencesOf(undefined), []);
 });
@@ -172,7 +172,7 @@ Deno.test("mail: the row — sender the From, quotes cut, files as parts, a repl
     envelope: {
       service: "google",
       connection_address: ME,
-      conversation: { address: "t1", kind: "direct", name: "Invoice 42" },
+      conversation: { address: "t1", kind: "group", name: "Invoice 42" },
       sender: ANA,
       external_id: "mail:me@org.com:m1@x.com",
     },
@@ -411,7 +411,7 @@ Deno.test("mail dispatch: a send to addresses opens a thread — a MIME to them 
   assertEquals(log.patches[0].patch.status?.state, "dispatched");
   assertEquals(log.patches[0].patch.conversation, {
     address: "t7",
-    kind: "direct",
+    kind: "group",
     name: "Invoice 42",
   });
 });
@@ -437,7 +437,7 @@ Deno.test("mail dispatch: a wire that cannot name the thread it opened leaves th
   await settle();
   assertEquals(log.patches[0].patch.conversation, {
     address: w.sent[0].out.messageId,
-    kind: "direct",
+    kind: "group",
   });
 });
 
@@ -472,7 +472,7 @@ const intoThread = (id: string, ref?: string) =>
     ...(ref ? { payload: { action: "reply", ref_external_id: ref } } : {}),
     envelope: {
       ...outbound().envelope,
-      conversation: { address: "t9", kind: "direct", name: "Invoice 42" },
+      conversation: { address: "t9", kind: "group", name: "Invoice 42" },
     },
   });
 
@@ -601,7 +601,7 @@ Deno.test("mail dispatch: a reply the wire files in another thread moves there",
   await settle();
   assertEquals(log.patches[0].patch.conversation, {
     address: "t10",
-    kind: "direct",
+    kind: "group",
     name: "Invoice 42",
   });
 });

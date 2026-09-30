@@ -71,7 +71,7 @@ Deno.test("migrate v6: a pre-sessions log settles on the pair vocabulary (§4, �
   }
 });
 
-Deno.test("migrate v13: mail rows are filed by thread — the reply chain walked to its root, the subject the name (then v14: keyed per mailbox, direct)", async () => {
+Deno.test("migrate v13: mail rows are filed by thread — the reply chain walked to its root, the subject the name (then v14: keyed per mailbox)", async () => {
   const dir = await Deno.makeTempDir();
   const first = await openLog(dir);
   const mail = (
@@ -130,12 +130,12 @@ Deno.test("migrate v13: mail rows are filed by thread — the reply chain walked
     );
     const me = "mail:me@org.com:";
     assertEquals(filed, {
-      [`${me}m0@org.com`]: { address: "m0@org.com", kind: "direct", name: "Invoice 42" },
-      [`${me}m1@x.com`]: { address: "m0@org.com", kind: "direct", name: "Invoice 42" },
-      [`${me}m2@y.com`]: { address: "m0@org.com", kind: "direct", name: "Invoice 42" },
-      [`${me}m3@z.com`]: { address: "old@z.com", kind: "direct", name: "Quote" },
-      [`${me}m4@x.com`]: { address: "m4@x.com", kind: "direct", name: "Lunch" },
-      [`${me}m5@x.com`]: { address: "m5@x.com", kind: "direct" },
+      [`${me}m0@org.com`]: { address: "m0@org.com", kind: "group", name: "Invoice 42" },
+      [`${me}m1@x.com`]: { address: "m0@org.com", kind: "group", name: "Invoice 42" },
+      [`${me}m2@y.com`]: { address: "m0@org.com", kind: "group", name: "Invoice 42" },
+      [`${me}m3@z.com`]: { address: "old@z.com", kind: "group", name: "Quote" },
+      [`${me}m4@x.com`]: { address: "m4@x.com", kind: "group", name: "Lunch" },
+      [`${me}m5@x.com`]: { address: "m5@x.com", kind: "group" },
       "whatsapp:w1": { address: "ana@x.com", kind: "direct", thread: "not mail" },
     });
   } finally {
@@ -144,7 +144,7 @@ Deno.test("migrate v13: mail rows are filed by thread — the reply chain walked
   }
 });
 
-Deno.test("migrate v14: mail is keyed per mailbox and filed at the Gmail thread its rows kept, every mail thread direct", async () => {
+Deno.test("migrate v14: mail is keyed per mailbox and filed at the Gmail thread its rows kept", async () => {
   const dir = await Deno.makeTempDir();
   const first = await openLog(dir);
   const row = (
@@ -204,14 +204,73 @@ Deno.test("migrate v14: mail is keyed per mailbox and filed at the Gmail thread 
       rows.map((e) => [e.envelope.external_id, e.envelope.conversation]),
     );
     assertEquals(filed, {
-      "mail:me@org.com:m0@x.com": { address: "t1", kind: "direct", name: "Invoice 42" },
-      "mail:me@org.com:u1@org.com": { address: "t1", kind: "direct", name: "Invoice 42" },
-      "mail:me@corp.com:m5@y.com": { address: "m5@y.com", kind: "direct", name: "Invoice 42" },
+      "mail:me@org.com:m0@x.com": { address: "t1", kind: "group", name: "Invoice 42" },
+      "mail:me@org.com:u1@org.com": { address: "t1", kind: "group", name: "Invoice 42" },
+      "mail:me@corp.com:m5@y.com": { address: "m5@y.com", kind: "group", name: "Invoice 42" },
       "teams:c1": { address: "19:abc@thread.v2", kind: "group", name: "Invoice 42" },
       "gcal:e1": { address: "me@org.com", kind: "broadcast" },
     });
     const reply = rows.find((e) => e.envelope.external_id === "mail:me@org.com:u1@org.com");
     assertEquals(reply?.payload?.ref_external_id, "mail:me@org.com:m0@x.com");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate v15: every mail thread is a group, a send not yet confirmed in it too; a direct chat stays direct", async () => {
+  const dir = await Deno.makeTempDir();
+  const first = await openLog(dir);
+  const row = (
+    service: "google" | "microsoft" | "whatsapp",
+    account: string,
+    external: string | undefined,
+    address: string,
+    text: string,
+  ): Draft<MessageEvent> => ({
+    ts: "2026-09-30T10:00:00.000Z",
+    type: "message",
+    envelope: {
+      service,
+      connection_address: account,
+      conversation: { address, kind: "direct", name: "Invoice 42" },
+      ...(external ? { external_id: external } : {}),
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  await first.upsertConnections([
+    { service: "google", address: "me@org.com" },
+    { service: "microsoft", address: "me@corp.com" },
+    { service: "whatsapp", address: "549" },
+  ]);
+  await first.publish([
+    row("google", "me@org.com", "mail:me@org.com:m0@x.com", "t1", "inbound"),
+    {
+      ...row("google", "me@org.com", undefined, "t1", "queued"),
+      agent: { id: "a1", session_id: "mind" },
+    },
+    row("microsoft", "me@corp.com", "mail:me@corp.com:m5@y.com", "AAQk5", "outlook"),
+    row("microsoft", "me@corp.com", "teams:c1", "19:a_b@unq.gbl.spaces", "teams"),
+    row("whatsapp", "549", "whatsapp:w1", "5491100000000", "whatsapp"),
+  ]);
+  await first.close();
+  const db = new DatabaseSync(`${dir}/log.db`);
+  db.exec("PRAGMA user_version = 14");
+  db.close();
+
+  const log = await openLog(dir); // reopening IS the migration
+  try {
+    const rows = await log.read({ types: ["message"] });
+    const kinds = Object.fromEntries(
+      rows.map((e) => [(e.parts[0] as { text: string }).text, e.envelope.conversation.kind]),
+    );
+    assertEquals(kinds, {
+      inbound: "group",
+      queued: "group",
+      outlook: "group",
+      teams: "direct",
+      whatsapp: "direct",
+    });
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

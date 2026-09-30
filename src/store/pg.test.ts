@@ -215,12 +215,13 @@ if (url === undefined) {
       await (await store.vault()).close(); // either opener raises the store
       assertEquals(await version(), VERSION);
       // the raise to v4 filed the thread at its root, the raise to v5 at the Gmail thread its
-      // rows kept — a row that kept none follows its thread — `direct`, keyed per mailbox
+      // rows kept — a row that kept none follows its thread — keyed per mailbox, and the
+      // raise to v6 made the thread a `group`
       const raised = await store.open();
       const rows = await raised.read({ types: ["message"] });
       assertEquals(rows.map((e) => e.envelope.conversation), [
-        { address: "t1", kind: "direct", name: "Invoice 42" },
-        { address: "t1", kind: "direct", name: "Invoice 42" },
+        { address: "t1", kind: "group", name: "Invoice 42" },
+        { address: "t1", kind: "group", name: "Invoice 42" },
       ]);
       assertEquals(rows.map((e) => e.envelope.external_id), [
         "mail:me@org.com:m0@org.com",

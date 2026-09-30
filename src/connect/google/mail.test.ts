@@ -213,7 +213,7 @@ Deno.test("gmail: history → the message in full → the row; attachments fetch
         service: "google",
         connection_address: "me@org.com",
         // the thread: the one Gmail files the message in
-        conversation: { address: "t1", kind: "direct", name: "Invoice 42" },
+        conversation: { address: "t1", kind: "group", name: "Invoice 42" },
         sender: { address: "ana@x.com", name: "Ana García" },
         external_id: "mail:me@org.com:m1@x.com",
       },
@@ -273,7 +273,7 @@ Deno.test("gmail: a SENT message is the account's own hand, in the thread Gmail 
     assertEquals(rows[0].envelope.sender, { address: "me@org.com" });
     assertEquals(rows[0].envelope.conversation, {
       address: "t9",
-      kind: "direct",
+      kind: "group",
       name: "Invoice 42",
     });
     assertEquals(rows[0].extra?.mail, {
