@@ -184,6 +184,39 @@ Deno.test("live: the principal's line through a wire is dated and marked like a 
   assertEquals(plain(screen()), "11 Sep 11:13 ❯ [via whatsapp] buen día\n");
 });
 
+Deno.test("live: a line typed on this surface is not painted twice", () => {
+  const typed = ["hola"];
+  const { p, screen } = surface({
+    typed: (t) => typed.includes(t) && typed.splice(typed.indexOf(t), 1).length > 0,
+  });
+  p.event(asked("2026-09-11T14:13:00Z", "hola"));
+  assertEquals(plain(screen()), "");
+  assertEquals(typed, []);
+});
+
+Deno.test("live: a line another attachment sent for the principal is painted", () => {
+  const { p, screen } = surface({ typed: () => false });
+  p.event(asked("2026-09-11T14:13:00Z", "hacé que el arquero salte"));
+  assertEquals(plain(screen()), "11 Sep 11:13 ❯ hacé que el arquero salte\n");
+});
+
+Deno.test("live: another attachment's line closes the agent's block, which reopens marked", () => {
+  const { p, screen } = surface({ typed: () => false });
+  p.delta({ kind: "text", text: "miro el juego" });
+  p.event(asked("2026-09-11T14:13:00Z", "mostrame lo que tengas"));
+  p.delta({ kind: "text", text: "acá está" });
+  assertEquals(
+    plain(screen()),
+    "11 Sep 11:14 • miro el juego\n\n11 Sep 11:13 ❯ mostrame lo que tengas\n\n11 Sep 11:14 • acá está",
+  );
+});
+
+Deno.test("live: a surface that lists no typed lines paints none of the principal's", () => {
+  const { p, screen } = surface();
+  p.event(asked("2026-09-11T14:13:00Z", "hola"));
+  assertEquals(plain(screen()), "");
+});
+
 Deno.test("live: text after a tool line is a block of its own, marked again", () => {
   const { p, screen } = surface();
   p.delta({ kind: "text", text: "miro el calendario" });

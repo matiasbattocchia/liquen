@@ -123,7 +123,8 @@ export function bashSpec(timeoutMsDefault: number): ExecTool["spec"] {
       "File helpers on PATH: aread <path> [offset] [limit] [maxBytes]; on an image or PDF it " +
       "attaches the file itself, so you see it · " +
       "awrite <path> (content on stdin/heredoc) · " +
-      "aedit <path> (conflict-marker blocks on stdin: <<<<<<< old ======= new >>>>>>>) · " +
+      "aedit <path> (conflict-marker blocks on stdin, each marker on a line of its own: " +
+      "<<<<<<<, the old text, =======, the new text, >>>>>>>) · " +
       "fetch [-X METHOD] [-H 'k: v'] [-d BODY|@-] [-i] [-o PATH] URL [limit] [maxBytes] for HTTP: " +
       "a status outside 2xx fails, JSON prints pretty, the body is head-truncated like aread " +
       "(-o saves it whole); an API's credential is the $VAR the environment holds, sent as a " +

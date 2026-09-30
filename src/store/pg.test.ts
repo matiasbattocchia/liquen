@@ -553,6 +553,8 @@ if (url === undefined) {
       ["a  \nb\nc  \n", spec(["a", "A"], ["c", "C"])], // mixed: the span's end takes the line's whitespace
       ["x\ny", "<<<<<<<\r\nx\r\n=======\r\nX\r\n>>>>>>>\r\n"], // a CRLF spec
       ["abc", "no markers"],
+      ["abc", "<<<<<<< old\nb\n=======\nB\n>>>>>>> new"], // git's labelled markers
+      ["<<<<<<< HEAD\nx", "<<<<<<<\n<<<<<<< HEAD\n=======\nkept\n>>>>>>>"], // a label as text
       ["abc", "<<<<<<<\nold"],
       ["abc", ""],
       ["abc", spec(["", "x"])], // an empty old text

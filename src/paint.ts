@@ -92,6 +92,11 @@ export interface Surface {
   clock?: () => Date; // now, for the stamp a live block opens with; tests hand a fixed one
   onGate?(ref: string): void;
   onGateSettled?(ref: string): void;
+  /** Whether a principal's line in the home room is one this surface typed and already
+   *  shows, taking it off the surface's list. Another attachment speaking for the same
+   *  principal (a voice front, a second REPL) sends lines the screen has never shown, and
+   *  those are painted. Absent: every principal line is the surface's own. */
+  typed?(text: string): boolean;
 }
 
 export interface Painter {
@@ -161,13 +166,16 @@ export function painter(s: Surface): Painter {
         const text = e.parts.flatMap((p) => p.type === "text" ? [p.text] : roomLine(p))
           .join(" ");
         if (!self) {
-          // the principal spoke — locally it's already on screen; through a mind-alias
-          // surface (§4) the mirror's copy is the only sighting, so paint it, tagged
-          if (via && e.envelope.conversation.address === s.home) {
-            s.gap();
-            s.write(`${stamp(e.ts)}${YOU} ${CYAN}[via ${via.service}]${RESET} ${text}`);
-            s.prompt();
-          }
+          // the principal spoke. Through a mind-alias surface (§4) the mirror's copy is the
+          // only sighting, so it is painted, tagged; in the home room, a line this surface
+          // typed is already on screen, and one another attachment sent is painted here
+          if (e.envelope.conversation.address !== s.home) return;
+          if (!via && (!s.typed || s.typed(text))) return;
+          settle();
+          s.gap();
+          const wire = via ? `${CYAN}[via ${via.service}]${RESET} ` : "";
+          s.write(`${stamp(e.ts)}${YOU} ${wire}${text}`);
+          s.prompt();
           return;
         }
         if (via) return; // an alias CC is plumbing — its mind original already painted

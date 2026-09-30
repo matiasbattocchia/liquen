@@ -21,7 +21,19 @@ export interface Edit {
   new: string;
 }
 
-/** Parse a conflict-marker spec. Throws on malformed input. */
+/** The spec's shape, as every malformed-spec error shows it. */
+const SHAPE = "a block is <<<<<<< on a line of its own, the old text, =======, the new " +
+  "text, >>>>>>>";
+
+const malformed = (why: string, head = "malformed spec") => new Error(`${head}: ${why}; ${SHAPE}`);
+
+/** A marker line: the marker alone, or git's form with a label after a space
+ *  (`<<<<<<< old`, `>>>>>>> new`). */
+const marks = (line: string, marker: string) => line === marker || line.startsWith(`${marker} `);
+
+/** Parse a conflict-marker spec. Throws on malformed input. A labelled marker opens or
+ *  closes a block only where a bare one would; anywhere else it is text of the block,
+ *  so a file holding git's conflict markers can still be edited. */
 export function parseEdits(spec: string): Edit[] {
   const lines = spec.replaceAll("\r\n", "\n").split("\n");
   const edits: Edit[] = [];
@@ -29,26 +41,26 @@ export function parseEdits(spec: string): Edit[] {
   let oldLines: string[] = [];
   let newLines: string[] = [];
   for (const line of lines) {
-    if (line === "<<<<<<<") {
-      if (mode !== "outside") throw new Error("malformed spec: unexpected <<<<<<<");
+    if (line === "<<<<<<<" || (mode === "outside" && marks(line, "<<<<<<<"))) {
+      if (mode !== "outside") throw malformed("unexpected <<<<<<<");
       mode = "old";
       oldLines = [];
       newLines = [];
     } else if (line === "=======") {
-      if (mode !== "old") throw new Error("malformed spec: ======= outside a block");
+      if (mode !== "old") throw malformed("======= outside a block");
       mode = "new";
-    } else if (line === ">>>>>>>") {
-      if (mode !== "new") throw new Error("malformed spec: >>>>>>> outside a block");
+    } else if (line === ">>>>>>>" || (mode === "new" && marks(line, ">>>>>>>"))) {
+      if (mode !== "new") throw malformed(">>>>>>> outside a block");
       edits.push({ old: oldLines.join("\n"), new: newLines.join("\n") });
       mode = "outside";
     } else if (mode === "old") oldLines.push(line);
     else if (mode === "new") newLines.push(line);
     else if (line.trim() !== "") {
-      throw new Error(`malformed spec: text outside a block: ${line.slice(0, 40)}`);
+      throw malformed(`text outside a block: ${line.slice(0, 40)}`);
     }
   }
-  if (mode !== "outside") throw new Error("malformed spec: unterminated block");
-  if (edits.length === 0) throw new Error("empty spec: no edit blocks found");
+  if (mode !== "outside") throw malformed("unterminated block");
+  if (edits.length === 0) throw malformed("no edit blocks found", "empty spec");
   return edits;
 }
 

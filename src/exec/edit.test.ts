@@ -19,6 +19,21 @@ Deno.test("parse: malformed specs throw", () => {
   assertThrows(() => parseEdits(""), Error, "empty spec");
 });
 
+Deno.test("parse: a malformed spec's error shows the shape it wants", () => {
+  assertThrows(() => parseEdits("no markers"), Error, "<<<<<<< on a line of its own");
+});
+
+Deno.test("parse: git's labelled markers open and close a block", () => {
+  assertEquals(parseEdits("<<<<<<< old\na\n=======\nb\n>>>>>>> new"), [{ old: "a", new: "b" }]);
+});
+
+Deno.test("parse: a labelled opening marker inside a block is its text", () => {
+  assertEquals(
+    parseEdits("<<<<<<<\n<<<<<<< HEAD\n=======\nkept\n>>>>>>>"),
+    [{ old: "<<<<<<< HEAD", new: "kept" }],
+  );
+});
+
 Deno.test("apply: exact replacement", () => {
   assertEquals(applyEdits("hello world", [{ old: "world", new: "mundo" }]), "hello mundo");
 });

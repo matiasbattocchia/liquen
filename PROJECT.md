@@ -4886,3 +4886,25 @@ Graph pushes into a socket nobody serves until the ones it holds expire.
 Open: per-account listening (the org's mailbox in, a member's out) is a vault-row fact the
 connection-wide knob cannot say; and a mailbox read only where the agent has written —
 the threads it took part in — would keep replies without the rest of the inbox.
+
+### A second front's lines show in the REPL; aedit takes git's markers (2026-09-29) — LANDED
+
+From chiche's run `noquis` (vibes `log/2026-09-29T22-52-58`), where a REPL sat on the same
+session as chiche's voice:
+
+- **The REPL painted none of the voice's messages.** Both attach as the same principal,
+  and the painter dropped every live principal line in the home room as already on
+  screen. A surface now lists what it typed (`Surface.typed`), and a principal line it
+  did not type is painted as `❯`. The REPL lists a line before sending it and matches the
+  echo by its words: the door's event arrived 3 ms before its answer to the request. The
+  CLI lists nothing and paints as before.
+- **aedit refused `<<<<<<< old`**, git's labelled form, and its error did not say what
+  it wanted: the builder (Gemini Flash) spent about 100 s and then 50 s reading
+  `afs.ts` and `exec/edit.ts` to find out. The bash tool's description had put the
+  shape on one line, `<<<<<<< old ======= new >>>>>>>`, which reads as a marker labelled
+  `old`; it and the docs `edit` tool now say each marker stands on a line of its own, with
+  the old text and the new between them. A label after a marker is accepted where a
+  bare marker would open or close a block (elsewhere it is the block's text, so a file
+  holding conflict markers can still be edited), and every malformed-spec error ends with
+  the shape. `docs_edit` does the same; the parity test covers both new cases (Postgres
+  run: 103 passed).

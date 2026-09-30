@@ -492,6 +492,7 @@ LANGUAGE plpgsql VOLATILE AS $f$
 DECLARE
   r record; raw text; bom text := ''; crlf boolean; content text;
   olds text[] := '{}'; news text[] := '{}'; mode text := 'outside';
+  shape text := 'a block is <<<<<<< on a line of its own, the old text, =======, the new text, >>>>>>>';
   cur_old text[]; cur_new text[]; line text; n integer; i integer;
   missed boolean := false; base text; use_old text[];
   lines text[]; kept text[] := '{}'; kept_len integer[] := '{}'; orig_len integer[] := '{}';
@@ -511,26 +512,26 @@ BEGIN
   END IF;
   -- parse
   FOREACH line IN ARRAY string_to_array(replace(spec, E'\\r\\n', E'\\n'), E'\\n') LOOP
-    IF line = '<<<<<<<' THEN
-      IF mode <> 'outside' THEN RAISE EXCEPTION 'malformed spec: unexpected <<<<<<<'; END IF;
+    IF line = '<<<<<<<' OR (mode = 'outside' AND left(line, 8) = '<<<<<<< ') THEN
+      IF mode <> 'outside' THEN RAISE EXCEPTION 'malformed spec: unexpected <<<<<<<; %', shape; END IF;
       mode := 'old'; cur_old := '{}'; cur_new := '{}';
     ELSIF line = '=======' THEN
-      IF mode <> 'old' THEN RAISE EXCEPTION 'malformed spec: ======= outside a block'; END IF;
+      IF mode <> 'old' THEN RAISE EXCEPTION 'malformed spec: ======= outside a block; %', shape; END IF;
       mode := 'new';
-    ELSIF line = '>>>>>>>' THEN
-      IF mode <> 'new' THEN RAISE EXCEPTION 'malformed spec: >>>>>>> outside a block'; END IF;
+    ELSIF line = '>>>>>>>' OR (mode = 'new' AND left(line, 8) = '>>>>>>> ') THEN
+      IF mode <> 'new' THEN RAISE EXCEPTION 'malformed spec: >>>>>>> outside a block; %', shape; END IF;
       olds := olds || array_to_string(cur_old, E'\\n');
       news := news || array_to_string(cur_new, E'\\n');
       mode := 'outside';
     ELSIF mode = 'old' THEN cur_old := cur_old || line;
     ELSIF mode = 'new' THEN cur_new := cur_new || line;
     ELSIF line !~ '^\\s*$' THEN
-      RAISE EXCEPTION 'malformed spec: text outside a block: %', left(line, 40);
+      RAISE EXCEPTION 'malformed spec: text outside a block: %; %', left(line, 40), shape;
     END IF;
   END LOOP;
-  IF mode <> 'outside' THEN RAISE EXCEPTION 'malformed spec: unterminated block'; END IF;
+  IF mode <> 'outside' THEN RAISE EXCEPTION 'malformed spec: unterminated block; %', shape; END IF;
   n := coalesce(array_length(olds, 1), 0);
-  IF n = 0 THEN RAISE EXCEPTION 'empty spec: no edit blocks found'; END IF;
+  IF n = 0 THEN RAISE EXCEPTION 'empty spec: no edit blocks found; %', shape; END IF;
   -- normalize the text: BOM off, CRLF to LF
   IF left(raw, 1) = chr(65279) THEN bom := chr(65279); content := substr(raw, 2);
   ELSE content := raw; END IF;

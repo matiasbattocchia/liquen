@@ -84,6 +84,10 @@ await entry(async () => {
   // change — never in the transcript: `(waiting cca9a2 ee63f4) ❯`. A bare `/y` answers
   // the newest, `/y cca9a2` the one named, `/y all` the whole pile.
   const pending: string[] = [];
+  // the lines typed here and not yet seen coming back from the tail: the screen already
+  // shows them. The door's event can arrive before its answer to the request, so a line
+  // is listed before it is sent, and matched by its words
+  const typed: string[] = [];
   const waiting = () => pending.length ? `(waiting ${pending.map(shortId).join(" ")}) ` : "";
   // the session's turn edge, as the door last pushed it
   let busy = false;
@@ -125,6 +129,11 @@ await entry(async () => {
     onGateSettled: (ref) => {
       const i = pending.indexOf(ref);
       if (i >= 0) pending.splice(i, 1);
+    },
+    typed: (text) => {
+      const i = typed.indexOf(text);
+      if (i >= 0) typed.splice(i, 1);
+      return i >= 0;
     },
   });
 
@@ -193,13 +202,17 @@ await entry(async () => {
       if (a.refs.length > 1) write(`${DIM}${a.refs.length} approvals answered${RESET}\n`);
       continue;
     }
+    typed.push(text);
     const r = await w.request({
       op: "message",
       text,
       sender: { address: a.username, name: a.username },
       session,
     });
-    if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n`);
+    if (!r.ok) {
+      typed.splice(typed.lastIndexOf(text), 1);
+      write(`\n${RED}! ${r.error}${RESET}\n`);
+    }
   }
 
   leaving = true;
