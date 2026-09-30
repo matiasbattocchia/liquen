@@ -22,7 +22,6 @@ export interface Row {
   connection_address: string | null;
   conversation_address: string | null;
   conversation_name: string | null;
-  conversation_thread: string | null;
   conversation_kind: string | null;
   session_id: string | null;
   sender_address: string | null;
@@ -64,7 +63,6 @@ export function rowOf(e: Draft) {
     connection_address: envelope.connection_address ?? null,
     conversation_address: envelope.conversation?.address ?? null,
     conversation_name: envelope.conversation?.name ?? null,
-    conversation_thread: envelope.conversation?.thread ?? null,
     conversation_kind: envelope.conversation?.kind ?? null,
     session_id: e.agent?.session_id ?? null,
     sender_address: envelope.sender?.address ?? null,
@@ -92,7 +90,6 @@ export function eventOf(r: Row): Event {
       address: r.conversation_address ?? "",
       ...(r.conversation_name ? { name: r.conversation_name } : {}),
       ...(r.conversation_kind ? { kind: r.conversation_kind as Conversation["kind"] } : {}),
-      ...(r.conversation_thread ? { thread: r.conversation_thread } : {}),
     },
     ...(r.sender_address
       ? { sender: { address: r.sender_address, ...(r.sender_name ? { name: r.sender_name } : {}) } }
@@ -400,3 +397,7 @@ export const MAIL_GROUPS: string[] = [
             WHERE t.conn = events.connection_address AND t.address = events.conversation_address)`,
   `DROP TABLE mail_threads`,
 ];
+
+/** The statement that takes `conversation_thread` off the log: a thread is a reply chain
+ *  inside its conversation, carried by each message's `ref_external_id` (§3). */
+export const DROP_THREAD = `ALTER TABLE events DROP COLUMN conversation_thread`;

@@ -181,7 +181,8 @@ if (url === undefined) {
       await one<number>(sql, "SELECT version AS v FROM schema_version", []);
     try {
       const log = await store.open();
-      // mail rows as a store before v4 filed them: by the other party, the subject a thread
+      // mail rows as a store before v4 filed them: by the other party, the subject in
+      // `conversation_thread` (added below, once the rows are in)
       await log.upsertConnections([{ service: "google", address: "me@org.com" }]);
       await log.publish([
         {
@@ -190,7 +191,7 @@ if (url === undefined) {
           envelope: {
             service: "google",
             connection_address: "me@org.com",
-            conversation: { address: "ana@x.com", kind: "direct", thread: "Invoice 42" },
+            conversation: { address: "ana@x.com", kind: "direct" },
             external_id: "mail:m0@org.com",
           },
           parts: [{ type: "text", kind: "text", text: "please pay" }],
@@ -203,7 +204,7 @@ if (url === undefined) {
           envelope: {
             service: "google",
             connection_address: "me@org.com",
-            conversation: { address: "ana@x.com,bob@y.com", kind: "direct", thread: "Invoice 42" },
+            conversation: { address: "ana@x.com,bob@y.com", kind: "direct" },
             external_id: "mail:m1@x.com",
           },
           parts: [{ type: "text", kind: "text", text: "paid" }],
@@ -211,12 +212,24 @@ if (url === undefined) {
       ]);
       await log.close();
       assertEquals(await version(), VERSION);
+      await sql.unsafe("ALTER TABLE events ADD COLUMN conversation_thread text");
+      await sql.unsafe("UPDATE events SET conversation_thread = 'Invoice 42'");
       await sql.unsafe("UPDATE schema_version SET version = 0");
       await (await store.vault()).close(); // either opener raises the store
       assertEquals(await version(), VERSION);
       // the raise to v4 filed the thread at its root, the raise to v5 at the Gmail thread its
-      // rows kept — a row that kept none follows its thread — keyed per mailbox, and the
-      // raise to v6 made the thread a `group`
+      // rows kept — a row that kept none follows its thread — keyed per mailbox, the raise
+      // to v6 made the thread a `group`, and the raise to v7 took the subject's old column off
+      assertEquals(
+        await one<number>(
+          sql,
+          "SELECT count(*)::integer AS v FROM information_schema.columns " +
+            "WHERE table_schema = $1::text AND table_name = 'events' " +
+            "AND column_name = 'conversation_thread'",
+          [store.schema],
+        ),
+        0,
+      );
       const raised = await store.open();
       const rows = await raised.read({ types: ["message"] });
       assertEquals(rows.map((e) => e.envelope.conversation), [

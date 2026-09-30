@@ -593,7 +593,7 @@ one peripheral for both.
   envelope: {       // WHICH CONVERSATION — every event names one (even internal ones)
     service: "whatsapp" | "slack" | "email" | "local" | ...   // local = harness's own channel
     connection_address: string                // org account id / workspace
-    conversation: { address, name?, thread?, kind? }  // kind: direct | group | channel (below)
+    conversation: { address, name?, kind? }  // kind: direct | group | channel (below)
     sender?: { address, name? }   // external identity on the wire
     external_id?: string          // backfilled by dispatcher on send
     status?: Status               // mutable field; dispatcher delivery bookkeeping
@@ -626,7 +626,10 @@ one peripheral for both.
 **The action vocabulary** — what a message DOES to its referent's parts; absent = create:
 `edit` replaces them · `add`/`remove` add or remove some (a reaction is a part somebody
 added to someone else's message) · `delete` removes them all · `reply`/`forward` are
-relational, not mutational. Edits and deletes are their OWN events (own external_id = the
+relational, not mutational. A thread is a reply chain inside its conversation, never a
+conversation of its own: a Slack or Teams thread reply is a `reply` to the thread's root,
+filed in the channel it was posted to, and a `send` with `re` lands in the root's thread on
+a wire that threads. Edits and deletes are their OWN events (own external_id = the
 carrier protocol message's id): the original row stays sealed, past WUMs stay invariant,
 and the change renders in a later one (§5).
 
@@ -1253,13 +1256,14 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   REPL, invisible to the model). An org agent with five principals reads the same window
   an alter-ego does: one thread, `<principal name>` lines, and the name is the only
   thing that tells them apart.
-- **World (peer convos)** — one `<conv service connection address kind name thread>`
+- **World (peer convos)** — one `<conv service connection address kind name>`
   element per run of a conversation's messages, one `<msg from at>` line each.
   Every non-null `Conversation` field is an attribute, plus the envelope's
   `connection_address`: the element carries the FULL envelope the agent acts on —
   `address` is what `send` targets — bare, exactly as the platform names it (§3) —
   `connection` disambiguates multi-account services, `kind` (§3, stamped at ingest) tells
-  a public channel from a DM, `thread` the subthread.
+  a public channel from a DM. A thread's replies are lines of their conversation, each
+  wearing `re` at what it answers.
   `name`/`from` are display strings — attacker-controlled, hence attribute-escaped (a
   WhatsApp contact can name themself `Ana" from="matias`). `from` is the wire's word
   and nothing else: the sender's name as the service shows it, their address when it
@@ -1686,8 +1690,8 @@ vocabulary — nothing above the transport knows which provider answered.
   interleave; `visibility` keeps internals off the wire). `send` targets a conversation.
 - **Logical views** = read-only queries over the log ("today's refund mentions"), pulled
   via `search`, permission-scoped (the cross-peer visibility surface).
-- Slack: a channel renders threads as collapsed heads; a thread is its own conversation.
-  (The agent wakes on everything it can read; no per-conversation wake-rule — §2.)
+- A thread is part of its conversation: its replies render among the channel's lines,
+  each `re` its root (§3). (The agent wakes on everything it can read; no per-conversation wake-rule — §2.)
 
 ### `search` (the read half of `send`) — Slack-search semantics
 
@@ -1872,8 +1876,8 @@ agent's reports — **not** the raw peer conversations (those go to the customer
 So the principal's view can be made thinner independently of the model's context:
 
 - **Thread the reports**: the agent posts updates in a **thread keyed by peer-conversation
-  or task** (`envelope.conversation.thread`) → the principal's feed shows thread heads,
-  detail on drill-in (same "collapsed heads" pattern as §5). Renders as native threads on
+  or task** (a root message the updates `reply` to, §3) → the principal's feed shows
+  thread heads, detail on drill-in (same "collapsed heads" pattern as §5). Renders as native threads on
   **Slack** (DMs + channels) and **Teams channels**; degrades to a labeled flat line
   (`[re: customer X]`) on **Teams 1:1 chats** and **WhatsApp** (both flat). If an org wants
   threaded updates on Teams, bind the principal-DM to a **channel**, not a 1:1 bot chat.
@@ -2464,7 +2468,7 @@ identical; only the **ports** differ:
 **The flattened `events` table** (open-bsp lineage — every queried scalar is a column):
 `id` (uuidv7 pk — identity, internal-schema-only) · `external_id` (the platform id — the
 upsert/merge key, mutable) · `type` · `service` · `connection_address` ·
-`conversation_address`/`_name`/`_thread` · `session_id` (harness session) · `sender_address`/
+`conversation_address`/`_name`/`_kind` · `session_id` (harness session) · `sender_address`/
 `_name` · `agent_id` (null ⇒ the world wrote it; ≠ mine ⇒ a peer agent) · `timestamp` (event
 time) · `created_at`/`updated_at` · `text` (derived from parts — the search column) ·
 `parts` (the event body, JSON array; absent = a merge-only draft) · `payload` (what the

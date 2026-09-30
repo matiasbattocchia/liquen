@@ -71,26 +71,31 @@ Deno.test("migrate v6: a pre-sessions log settles on the pair vocabulary (§4, �
   }
 });
 
-Deno.test("migrate v13: mail rows are filed by thread — the reply chain walked to its root, the subject the name (then v14: keyed per mailbox)", async () => {
+Deno.test("migrate v13: mail rows are filed by thread — the reply chain walked to its root, the subject the name (then v14: keyed per mailbox; v16: the subject's old column gone)", async () => {
   const dir = await Deno.makeTempDir();
   const first = await openLog(dir);
+  // a store at v12 kept a mail's subject in `conversation_thread`
+  const subjects: Record<string, string> = {};
   const mail = (
     id: string,
     address: string,
-    thread: string | undefined,
+    subject: string | undefined,
     ref?: string,
-  ): Draft<MessageEvent> => ({
-    ts: "2026-08-30T10:00:00.000Z",
-    type: "message",
-    ...(ref ? { payload: { action: "reply", ref_external_id: `mail:${ref}` } } : {}),
-    envelope: {
-      service: "google",
-      connection_address: "me@org.com",
-      conversation: { address, kind: "direct", name: "Ana", ...(thread ? { thread } : {}) },
-      external_id: `mail:${id}`,
-    },
-    parts: [{ type: "text", kind: "text", text: id }],
-  });
+  ): Draft<MessageEvent> => {
+    if (subject) subjects[`mail:${id}`] = subject;
+    return {
+      ts: "2026-08-30T10:00:00.000Z",
+      type: "message",
+      ...(ref ? { payload: { action: "reply", ref_external_id: `mail:${ref}` } } : {}),
+      envelope: {
+        service: "google",
+        connection_address: "me@org.com",
+        conversation: { address, kind: "direct", name: "Ana" },
+        external_id: `mail:${id}`,
+      },
+      parts: [{ type: "text", kind: "text", text: id }],
+    };
+  };
   await first.upsertConnections([
     { service: "google", address: "me@org.com" },
     { service: "whatsapp", address: "549" },
@@ -111,14 +116,18 @@ Deno.test("migrate v13: mail rows are filed by thread — the reply chain walked
       envelope: {
         service: "whatsapp",
         connection_address: "549",
-        conversation: { address: "ana@x.com", kind: "direct", thread: "not mail" },
+        conversation: { address: "ana@x.com", kind: "direct" },
         external_id: "whatsapp:w1",
       },
       parts: [{ type: "text", kind: "text", text: "hola" }],
     },
   ]);
+  subjects["whatsapp:w1"] = "not mail";
   await first.close();
   const db = new DatabaseSync(`${dir}/log.db`);
+  db.exec("ALTER TABLE events ADD COLUMN conversation_thread TEXT");
+  const keep = db.prepare("UPDATE events SET conversation_thread = ? WHERE external_id = ?");
+  for (const [key, subject] of Object.entries(subjects)) keep.run(subject, key);
   db.exec("PRAGMA user_version = 12");
   db.close();
 
@@ -136,8 +145,14 @@ Deno.test("migrate v13: mail rows are filed by thread — the reply chain walked
       [`${me}m3@z.com`]: { address: "old@z.com", kind: "group", name: "Quote" },
       [`${me}m4@x.com`]: { address: "m4@x.com", kind: "group", name: "Lunch" },
       [`${me}m5@x.com`]: { address: "m5@x.com", kind: "group" },
-      "whatsapp:w1": { address: "ana@x.com", kind: "direct", thread: "not mail" },
+      "whatsapp:w1": { address: "ana@x.com", kind: "direct" },
     });
+    // v16 took the column off
+    const after = new DatabaseSync(`${dir}/log.db`);
+    const cols = after.prepare("SELECT name FROM pragma_table_info('events')").all()
+      .map((c) => (c as { name: string }).name);
+    after.close();
+    assert(!cols.includes("conversation_thread"));
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

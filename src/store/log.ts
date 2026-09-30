@@ -76,6 +76,7 @@ import {
   build,
   cutOf,
   type Dialect,
+  DROP_THREAD,
   eventOf,
   externalOf,
   MAIL_GROUPS,
@@ -368,7 +369,6 @@ export async function openLog(
        connection_address     TEXT,
        conversation_address TEXT,
        conversation_name    TEXT,
-       conversation_thread  TEXT,
        conversation_kind    TEXT,              -- direct | group | channel (ingest-stamped, §3)
        session_id           TEXT,              -- harness session (agent authorship)
        sender_address       TEXT,
@@ -419,10 +419,10 @@ export async function openLog(
 
   const upsert = db.prepare(
     `INSERT INTO events (id, external_id, type, service, connection_address,
-       conversation_address, conversation_name, conversation_thread, conversation_kind, session_id,
+       conversation_address, conversation_name, conversation_kind, session_id,
        sender_address, sender_name, agent_id, timestamp, created_at, updated_at,
        text, parts, payload, extra, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(external_id) WHERE external_id IS NOT NULL DO UPDATE SET
        -- a BACKFILL (extra.backfill — an import of history) FILLS, never overwrites: the
        -- row it meets was written live, and live is the richer view (a history file part
@@ -455,8 +455,6 @@ export async function openLog(
                              THEN excluded.conversation_address ELSE events.conversation_address END,
        conversation_name    = CASE WHEN coalesce(events.conversation_name, '') = ''
                              THEN excluded.conversation_name ELSE events.conversation_name END,
-       conversation_thread  = CASE WHEN coalesce(events.conversation_thread, '') = ''
-                             THEN excluded.conversation_thread ELSE events.conversation_thread END,
        conversation_kind    = CASE WHEN coalesce(events.conversation_kind, '') = ''
                              THEN excluded.conversation_kind ELSE events.conversation_kind END,
        agent_id   = CASE WHEN events.agent_id IS NULL THEN excluded.agent_id
@@ -604,7 +602,6 @@ export async function openLog(
       r.connection_address,
       r.conversation_address,
       r.conversation_name,
-      r.conversation_thread,
       r.conversation_kind,
       r.session_id,
       r.sender_address,
@@ -848,6 +845,22 @@ function migrate(db: DatabaseSync) {
   if (v < 13) migrateV13(db);
   if (v < 14) migrateV14(db);
   if (v < 15) migrateV15(db);
+  if (v < 16) migrateV16(db);
+}
+
+/** Whether the `events` table has a column: a store the current DDL created lacks the ones
+ *  a migration removes, and holds no row a step over them would move. */
+function hasColumn(db: DatabaseSync, name: string): boolean {
+  return db.prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = ?").get(name) !==
+    undefined;
+}
+
+/** v16 — a thread is a reply chain inside its conversation (§3): `conversation_thread` goes. */
+function migrateV16(db: DatabaseSync) {
+  writing(db, () => {
+    if (hasColumn(db, "conversation_thread")) db.exec(DROP_THREAD);
+    db.exec("PRAGMA user_version = 16");
+  });
 }
 
 /** v15 — a mail thread is a `group` (§4): the mailbox's id names it, whoever it reaches. */
@@ -874,7 +887,9 @@ function migrateV14(db: DatabaseSync) {
 /** v13 — a mail thread is a group conversation at its root Message-ID (§4). */
 function migrateV13(db: DatabaseSync) {
   writing(db, () => {
-    for (const s of MAIL_THREADS("json_extract(payload, '$.ref_external_id')")) db.exec(s);
+    if (hasColumn(db, "conversation_thread")) {
+      for (const s of MAIL_THREADS("json_extract(payload, '$.ref_external_id')")) db.exec(s);
+    }
     db.exec("PRAGMA user_version = 13");
   });
 }

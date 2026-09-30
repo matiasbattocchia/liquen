@@ -826,12 +826,8 @@ function renderMessages(
       };
     }
     let run = cluster.convs.at(-1);
-    // a run is one conversation, one thread: a room's threads print each under their own
-    // `<conv thread="…">`
-    if (
-      !run || run.conv.address !== e.envelope.conversation.address ||
-      (run.conv.thread ?? "") !== (e.envelope.conversation.thread ?? "")
-    ) {
+    // a run is one conversation: a thread's replies are its lines, tied to their root by `re`
+    if (!run || run.conv.address !== e.envelope.conversation.address) {
       run = { conv: namedRoom(e, names), lines: [] };
       cluster.convs.push(run);
       const earlier = elisions.earlier.get(e);
@@ -1157,7 +1153,6 @@ function conversationEl(c: { conv: Conversation; lines: string[] }): string {
     ...(c.conv.kind ? [`kind="${c.conv.kind}"`] : []),
     ...(c.conv.name ? [`name="${escAttr(c.conv.name)}"`] : []),
     `address="${escAttr(c.conv.address)}"`,
-    ...(c.conv.thread ? [`thread="${escAttr(c.conv.thread)}"`] : []),
   ];
   return `<conv ${attrs.join(" ")}>\n${c.lines.join("\n")}\n</conv>`;
 }
@@ -1250,10 +1245,7 @@ export function renderHits(
       clusters.push(cluster);
     }
     let run = cluster.convs.at(-1);
-    if (
-      !run || run.conv.address !== e.envelope.conversation.address ||
-      (run.conv.thread ?? "") !== (e.envelope.conversation.thread ?? "")
-    ) {
+    if (!run || run.conv.address !== e.envelope.conversation.address) {
       run = { conv: namedRoom(e, names), lines: [] };
       cluster.convs.push(run);
     } else if (adjacent && last && !adjacent(last, e)) run.lines.push(GAP);

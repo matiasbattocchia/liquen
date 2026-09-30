@@ -4965,3 +4965,19 @@ What changes with the kind: a person's name no longer finds every thread they wr
 finds a person), and a subjectless thread stays unnamed instead of taking its sender's name.
 Migration (SQLite v15, Postgres v6): every row of a mail thread, an unconfirmed send
 included, is stamped `group`.
+
+### `conversation.thread` is gone (2026-09-30) — LANDED
+
+A thread is a property of a message, not of a conversation: a Slack or Teams thread reply
+is a `reply` to the thread's root (`ref_external_id`), filed in the channel it was posted
+to, and it renders among the channel's lines wearing `re`; the dispatchers find the wire
+thread from `re`. Mail threads are conversations in their own right, addressed by the
+mailbox's id. Nothing had stamped `conversation.thread` since mail moved its subject into
+the name (SQLite v13, Postgres v4), yet render still opened a new `<conv thread="…">` run
+whenever it changed and DESIGN still said a Slack thread was its own conversation.
+
+Removed: the `Conversation.thread` field, the column, render's per-thread run and
+attribute. The deferred "thread the reports" idea keys on a root message instead.
+Migration (SQLite v16, Postgres v7): the column is dropped. A fresh SQLite store is
+created without it, so the v13 step, which read the old subject out of it, runs only on a
+store that still has it.

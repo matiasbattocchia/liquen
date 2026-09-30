@@ -68,12 +68,12 @@ const CURSOR_ROWS = 64; // a filtered read's batch: the walk stops within one of
 
 const UPSERT = `
 INSERT INTO events (id, external_id, type, service, connection_address,
-  conversation_address, conversation_name, conversation_thread, conversation_kind, session_id,
+  conversation_address, conversation_name, conversation_kind, session_id,
   sender_address, sender_name, agent_id, timestamp, created_at, updated_at,
   text, parts, payload, extra, status)
 VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text, $8::text,
-  $9::text, $10::text, $11::text, $12::text, $13::text, $14::text, $15::text, $15::text,
-  $16::text, $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb)
+  $9::text, $10::text, $11::text, $12::text, $13::text, $14::text, $14::text,
+  $15::text, $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb)
 ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET
   parts      = CASE WHEN flag(excluded.extra, 'backfill')
                     THEN coalesce(events.parts, excluded.parts)
@@ -95,8 +95,6 @@ ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET
                         THEN excluded.conversation_address ELSE events.conversation_address END,
   conversation_name    = CASE WHEN coalesce(events.conversation_name, '') = ''
                         THEN excluded.conversation_name ELSE events.conversation_name END,
-  conversation_thread  = CASE WHEN coalesce(events.conversation_thread, '') = ''
-                        THEN excluded.conversation_thread ELSE events.conversation_thread END,
   conversation_kind    = CASE WHEN coalesce(events.conversation_kind, '') = ''
                         THEN excluded.conversation_kind ELSE events.conversation_kind END,
   agent_id   = coalesce(events.agent_id, excluded.agent_id),
@@ -229,7 +227,6 @@ export async function openPgLog(
       r.connection_address,
       r.conversation_address,
       r.conversation_name,
-      r.conversation_thread,
       r.conversation_kind,
       r.session_id,
       r.sender_address,

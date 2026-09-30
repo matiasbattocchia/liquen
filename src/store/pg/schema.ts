@@ -21,7 +21,7 @@
 
 import { MIND } from "../../session.ts";
 import { UNPREFIX } from "../connections.ts";
-import { MAIL_GROUPS, MAIL_MAILBOXES, MAIL_THREADS } from "../events.ts";
+import { DROP_THREAD, MAIL_GROUPS, MAIL_MAILBOXES, MAIL_THREADS } from "../events.ts";
 import type { Db, Sql } from "./sql.ts";
 
 /** A text column: byte-ordered. */
@@ -128,7 +128,6 @@ CREATE TABLE IF NOT EXISTS events (
   connection_address   ${T},
   conversation_address ${T},
   conversation_name    ${T},
-  conversation_thread  ${T},
   conversation_kind    ${T},
   session_id           ${T},
   sender_address       ${T},
@@ -605,7 +604,7 @@ $f$;
 
 /** The version the DDL creates. A store found below it is raised in place, once, by the
  *  steps between; a store above it was made by a newer liquen, and this one refuses it. */
-export const VERSION = 6;
+export const VERSION = 7;
 
 /** `RAISE[v]` takes a store from version `v` to `v + 1`: the ALTERs the DDL's `IF NOT
  *  EXISTS` cannot express, run before the DDL so the views it replaces find their columns.
@@ -633,6 +632,10 @@ const RAISE: Record<number, (tx: Db) => Promise<void>> = {
   // v6 — a mail thread is a `group` (§4): the mailbox's id names it, whoever it reaches
   5: async (tx) => {
     for (const s of MAIL_GROUPS) await tx.unsafe(s);
+  },
+  // v7 — a thread is a reply chain inside its conversation (§3): `conversation_thread` goes
+  6: async (tx) => {
+    await tx.unsafe(DROP_THREAD);
   },
 };
 
