@@ -15,7 +15,7 @@
 
 import type { ExecOutcome, ExecTool } from "../xi.ts";
 import { type AgentUser, agentUser, own, ownTree } from "./user.ts";
-import type { Json } from "../types.ts";
+import type { BinDir, Json } from "../types.ts";
 import { newId } from "../store/id.ts";
 import { MEDIA_MARK } from "../store/media.ts";
 import { MAX_BYTES, MAX_LINES, truncateTail } from "./truncate.ts";
@@ -120,15 +120,25 @@ export function bashSpec(timeoutMsDefault: number): ExecTool["spec"] {
       "on each other; every separate call is a full round-trip. Calls in one turn run at " +
       "once, each from the same directory, so give each its own cd; the cwd: line under now: " +
       "is where your next call starts. " +
-      "File helpers on PATH: aread <path> [offset] [limit] [maxBytes]; on an image or PDF it " +
-      "attaches the file itself, so you see it · " +
-      "awrite <path> (content on stdin/heredoc) · " +
-      "aedit <path> (conflict-marker blocks on stdin, each marker on a line of its own: " +
-      "<<<<<<<, the old text, =======, the new text, >>>>>>>) · " +
-      "fetch [-X METHOD] [-H 'k: v'] [-d BODY|@-] [-i] [-o PATH] URL [limit] [maxBytes] for HTTP: " +
-      "a status outside 2xx fails, JSON prints pretty, the body is head-truncated like aread " +
-      "(-o saves it whole); an API's credential is the $VAR the environment holds, sent as a " +
-      'header (-H "Authorization: Bearer $VAR"). ' +
+      "Four helpers on PATH do the everyday jobs better than their habitual counterparts; " +
+      "reach for them first. " +
+      "aread <path> [offset] [limit] [maxBytes], over cat/head/sed -n: it shows a file from " +
+      "its TOP with a footer naming the offset to continue from, where a cat through this " +
+      "tool keeps only the last lines and a long file loses its beginning; on an image or PDF " +
+      "it attaches the file itself, so you see it, and a binary answers with its size, not " +
+      "mojibake. " +
+      "awrite <path> (content on stdin/heredoc), over cat >/echo >: it creates parent dirs " +
+      "and replaces the file atomically, keeping its mode. " +
+      "aedit <path>, over sed -i/perl -pi: conflict-marker blocks on stdin, each marker on a " +
+      "line of its own (<<<<<<<, the old text, =======, the new text, >>>>>>>); the old text " +
+      "is literal, never a regex, and an edit whose old text is missing or matches twice " +
+      "fails and says which, where sed changes nothing or too much in silence; the file is " +
+      "locked for the edit and replaced atomically. " +
+      "fetch [-X METHOD] [-H 'k: v'] [-d BODY|@-] [-i] [-o PATH] URL [limit] [maxBytes], over " +
+      "curl/wget: a status outside 2xx fails the call, where curl -s exits 0 on a 404; JSON " +
+      "prints pretty, the body is head-truncated like aread (-o saves it whole); an API's " +
+      "credential is the $VAR the environment holds, sent as a header " +
+      '(-H "Authorization: Bearer $VAR"). ' +
       "rg and fd are available for search when installed.",
     input_schema: {
       type: "object",
@@ -380,6 +390,9 @@ export interface ExecPlane {
    *  directory the agent cannot stand in is refused here — at the attach — and the shell
    *  never moves. The shell's own `cd`s stick from there as ever. */
   stand(path?: string): Promise<void>;
+  /** The programs the org's folder puts on PATH, by directory in PATH order — the prefix
+   *  lists them after the docs (§5). */
+  bins?(): Promise<BinDir[]>;
 }
 
 /** One AGENT's ground (§9): the workspace, the PATH cascade, the uid — prepared once.
@@ -511,6 +524,26 @@ async function layShims(dir: string): Promise<string> {
   return bin;
 }
 
+/** The executables in each directory, sorted; a directory with none is left out. Read
+ *  fresh on every turn, so a program installed mid-session is listed on the next one. */
+export async function binsIn(dirs: string[]): Promise<BinDir[]> {
+  const out: BinDir[] = [];
+  for (const dir of dirs) {
+    const names: string[] = [];
+    try {
+      for await (const entry of Deno.readDir(dir)) {
+        if (entry.isDirectory) continue;
+        const stat = await Deno.stat(`${dir}/${entry.name}`).catch(() => undefined);
+        if (stat?.isFile && ((stat.mode ?? 0) & 0o111) !== 0) names.push(entry.name);
+      }
+    } catch (err) {
+      if (!(err instanceof Deno.errors.NotFound)) throw err;
+    }
+    if (names.length > 0) out.push({ dir, names: names.sort() });
+  }
+  return out;
+}
+
 /** Prepare ONE agent's ground: its workspace, PATH shims, uid. The workspace IS
  *  the agent's own folder — `agents/<id>`, the same tree its docs and memories live in —
  *  because a shell is not org furniture: two agents sharing a cwd share half-written files,
@@ -541,7 +574,8 @@ export async function installExecGround(
 ): Promise<ExecGround> {
   const workspace = `${dir}/agents/${agentId}`;
   const shipped = await layShims(dir);
-  const binPath = `${shipped}:${dir}/organization/bin:${workspace}/bin`;
+  const binDirs = [shipped, `${dir}/organization/bin`, `${workspace}/bin`];
+  const binPath = binDirs.join(":");
   await Deno.mkdir(workspace, { recursive: true });
   await Deno.mkdir(`${dir}/organization/bin`, { recursive: true });
   await Deno.mkdir(`${workspace}/bin`, { recursive: true });
@@ -567,6 +601,7 @@ export async function installExecGround(
           }),
         },
         ambient: () => bashAmbient(state, jobs),
+        bins: () => binsIn(binDirs),
         async stand(path?: string) {
           if (path === undefined) {
             state.cwd = workspace;

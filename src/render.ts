@@ -17,9 +17,11 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { INLINE_CAP, inlineable, isExternal, type MediaBlock, pathOf } from "./store/media.ts"; // pure helpers — no I/O
 import { MIND, routedSession } from "./session.ts";
+import { clipEnd } from "./exec/truncate.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import type {
   AlarmEvent,
+  BinDir,
   ControlEvent,
   Conversation,
   DataPart,
@@ -108,7 +110,15 @@ export interface Env {
   /** What a doc's handle opens with: `aread` from the shell on files, the `read` tool on
    *  the table (§9). Absent: files. */
   docs?: "files" | "table";
+  /** The programs the org's folder puts on PATH, by directory. */
+  bins?: BinDir[];
 }
+
+/** What the programs listing says above the directories: they were put there for this
+ *  org's work, so one that does the job is the tool for it. */
+const BINS_NOTE = "These programs are on your PATH from this org's folder, put there for its " +
+  "work. When one does the job, use it over a general-purpose tool; `<name> --help` says " +
+  "how, for any that takes it.";
 
 /** What a configured processor means to the model, said once above the kinds. */
 const PROCESSORS_NOTE = "Media of these kinds is made readable for you automatically, as a " +
@@ -178,6 +188,11 @@ export function renderSystem(docs: DocEntry[], env: Env = {}): TextBlockParam[] 
 
   const pointers = ordered.filter((d) => d.body === undefined);
   if (pointers.length > 0) add(`# On-demand docs\n\n${renderIndex(pointers, env.docs)}`);
+
+  if (env.bins?.length) {
+    const dirs = env.bins.map((b) => `- ${b.dir}: ${b.names.join(", ")}`);
+    add(`# Programs\n\n${BINS_NOTE}\n\n${dirs.join("\n")}`);
+  }
 
   // the facts close the prefix, under the words that spend them
   const body = envBody(env);
@@ -720,6 +735,10 @@ function renderMessages(
     const shown = target !== undefined && rendered.has(target.id);
     return { attr: ` re="${shown ? shortId(target.id) : "?"}"`, target, shown };
   };
+  // the room's own references: a principal's line points by `ref_id`, at a row of the room
+  const byId = new Map(window.map((e) => [e.id, e]));
+  const principalLine = (e: MessageEvent) =>
+    principalEl(e, who, zone, e.payload?.ref_id ? byId.get(e.payload.ref_id) : undefined);
   let cur: { role: Role; content: ContentBlockParam[] } | null = null;
 
   // a trailing message's inlineable attachments → real API blocks. Local bytes become
@@ -895,7 +914,7 @@ function renderMessages(
       if (isSelf(e, me)) {
         placeOwn(bodyOf(e, zone)); // bare: the agent's own voice
       } else if (saidVerdict(e, isCard) === undefined) {
-        place("user", { type: "text", text: principalEl(e, who, zone) }); // a verdict line is
+        place("user", { type: "text", text: principalLine(e) }); // a verdict line is
         // steering, not conversation — the gate consumed it, so it draws no block
       }
     } else {
@@ -972,8 +991,8 @@ function renderMessages(
       if (isSelf(e, me) && e.envelope.conversation.address === here) {
         placeOwn(bodyOf(e, zone)); // mid-chain assistant text
       } else if (e.envelope.conversation.address === here) {
-        if (parseVerdict(textOf(e)) === undefined) {
-          place("user", { type: "text", text: principalEl(e, who, zone) });
+        if (saidVerdict(e, isCard) === undefined) {
+          place("user", { type: "text", text: principalLine(e) });
         }
       } else {
         world(e);
@@ -1694,12 +1713,16 @@ function mediaMarker(p: FilePart, head = ""): string {
  *  bare text. Every voice in the user role wears a tag render writes and escapes — the
  *  world, the harness, the summary, the principal — so the model reads who is speaking off
  *  the element's shape, and bare text is the model's own voice alone. Composed like a
- *  world line (escaped text, then markers), stamped with the org clock. */
-function principalEl(e: MessageEvent, roster: Roster, zone?: string): string {
+ *  world line (escaped text, then markers), stamped with the org clock. A reaction is a
+ *  `<reaction>` inside it, and since the room's lines wear no ids, `on` quotes the line it
+ *  lands on (`target`, the row its `ref_id` names). */
+function principalEl(e: MessageEvent, roster: Roster, zone?: string, target?: Event): string {
+  const r = e.parts.find((p): p is ReactionPart => p.type === "data" && p.kind === "reaction");
   const body = [
     escText(textOf(e)),
     ...filesOf(e).map((p) => mediaMarker(p)),
     ...datasOf(e).map((p) => dataEl(p, "", zone)),
+    ...(r ? [reactionOn(r, e.payload?.action === "remove", target)] : []),
   ].filter((s) => s.length > 0).join("\n");
   // `name` is the roster's word for them (§4): the sender's address is a username — the
   // door's, or the one the mirror wrote from the binding — and the roster names it. With
@@ -1712,6 +1735,18 @@ function principalEl(e: MessageEvent, roster: Roster, zone?: string): string {
     }"`
     : "";
   return `<principal${name} at="${hhmm(e.ts, zone)}">${body}</principal>`;
+}
+
+/** How much of the line a principal's reaction lands on `on` quotes — enough to tell two
+ *  reports apart. */
+const ON_QUOTE = 80;
+
+function reactionOn(r: ReactionPart, removed: boolean, target?: Event): string {
+  const said = target ? textOf(target).replace(/\s+/g, " ").trim() : "";
+  const quote = said.length > ON_QUOTE ? `${clipEnd(said, ON_QUOTE - 1)}…` : said;
+  const on = quote ? ` on="${escAttr(quote)}"` : "";
+  const glyph = r.data.unicode ?? r.data.name ?? "";
+  return `<reaction${on}${removed ? ' action="remove"' : ""}>${escText(glyph)}</reaction>`;
 }
 
 /** A message's body as plain text: its words, then one marker per attachment, then one

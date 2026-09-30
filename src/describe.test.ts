@@ -154,13 +154,21 @@ Deno.test("nameResolver: the directory shows both halves — who, and which", as
   const byAddress = await nameResolver(read as never, [
     { name: "send", input: { to: "5492616104507" } },
   ]);
-  assertEquals(byAddress("5492616104507"), { name: "Verónica Sesto", address: "5492616104507" });
+  assertEquals(byAddress("5492616104507"), {
+    name: "Verónica Sesto",
+    address: "5492616104507",
+    kind: "direct",
+  });
 
   // …and a NAME renders the same, so the card says where the send will LAND, not what was typed
   const byName = await nameResolver(read as never, [
     { name: "send", input: { to: "Verónica Sesto" } },
   ]);
-  assertEquals(byName("Verónica Sesto"), { name: "Verónica Sesto", address: "5492616104507" });
+  assertEquals(byName("Verónica Sesto"), {
+    name: "Verónica Sesto",
+    address: "5492616104507",
+    kind: "direct",
+  });
 
   // a name two conversations answer to promises nothing — the send refuses it with the list
   const ambiguous = await nameResolver(read as never, [{
@@ -181,6 +189,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
     conversation: "Conversación",
     last: "Último mensaje",
     subject: "Asunto",
+    react: "Reacción",
     reply: "Respuesta",
     files: "Adjuntos",
     location: "Ubicación",
@@ -215,5 +224,25 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
     ),
     "**Conversación**: ana@x.com\n\n**Asunto**: Factura 42\n\n**Respuesta**:\nHola Ana\n\n" +
       "**Adjuntos**: 1",
+  );
+  // a reaction in a group: the glyph is a row under the line it lands on, and the group
+  // goes by its name — its address is the platform's key and tells the approver nothing
+  assertEquals(
+    describeSendCard(
+      {
+        conversation: {
+          name: "✨Somos una gran familia✨",
+          address: "5492612514663-1476670948@g.us",
+          kind: "group",
+        },
+        last: { text: "Eeee yo quiero el de los mosquitos 🤪🤭", at: "30 Sep 16:46" },
+        react: "🤣",
+        files: 0,
+      },
+      labels,
+    ),
+    "**Conversación**: ✨Somos una gran familia✨\n\n" +
+      "**Último mensaje** (30 Sep 16:46):\nEeee yo quiero el de los mosquitos 🤪🤭\n\n" +
+      "**Reacción**: 🤣",
   );
 });

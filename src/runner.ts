@@ -112,6 +112,7 @@ export function runnerFor(
       transport: host.transport(agentId),
       ...exec,
       ...(box ? { files: box.files, ambient: box.ambient } : {}),
+      ...(box?.bins ? { bins: box.bins } : {}),
       ...(host.contact ? { contact: host.contact } : {}),
       ...(host.rooms ? { rooms: host.rooms } : {}),
       ...(host.media ? { media: host.media } : {}),

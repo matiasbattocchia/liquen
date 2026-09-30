@@ -22,14 +22,28 @@
  * the anchor's pending list, the mirror's tool line.
  */
 
-import type { Event, Json, SendPreview, ToolCall } from "./types.ts";
+import type { Conversation, Event, Json, SendPreview, ToolCall } from "./types.ts";
 import type { Reader } from "./store/log.ts";
 import { clipEnd } from "./exec/truncate.ts";
 
-/** An addressed argument → who it reaches: the name a human knows them by and the address
- *  the call will actually land on. Resolution needs a directory (the log, the window), so it
- *  is supplied by the caller; unresolved ⇒ the argument stands as written. */
-export type Resolve = (addressed: string) => { name: string; address: string } | undefined;
+/** An addressed argument → who it reaches: the name a human knows them by, the address
+ *  the call will actually land on, and the conversation's kind. Resolution needs a
+ *  directory (the log, the window), so it is supplied by the caller; unresolved ⇒ the
+ *  argument stands as written. */
+export type Resolve = (addressed: string) => Landing | undefined;
+
+export interface Landing {
+  name: string;
+  address: string;
+  kind?: Conversation["kind"];
+}
+
+/** Whether a person reads anything in the address: a number or a mailbox names someone,
+ *  and tells two namesakes apart; a group's or a channel's is the platform's key alone, so
+ *  the name is the whole of what a human can check. */
+export function addressReads(kind?: Conversation["kind"]): boolean {
+  return kind !== "group" && kind !== "channel";
+}
 
 /** The arguments that carry a wire address, and so are offered to `resolve`: `send(to:)` —
  *  the one a human weighs before approving — `search(in:/from:)`, which name the
@@ -91,12 +105,12 @@ const BUILTIN: Record<string, Describe> = {
  *  it, so a card never reads as text alone when files or a pin ride along. Labels are
  *  the surface's tongue; the values are the call's. */
 export function describeSendCard(p: SendPreview, labels: SendCardLabels): string {
-  const who = p.conversation.name
-    ? `${p.conversation.name} <${p.conversation.address}>`
-    : p.conversation.address;
+  const { name, address, kind } = p.conversation;
+  const who = !name ? address : addressReads(kind) ? `${name} <${address}>` : name;
   const rows = [`**${labels.conversation}**: ${who}`];
   if (p.last) rows.push(`**${labels.last}** (${p.last.at}):\n${p.last.text}`);
   if (p.subject) rows.push(`**${labels.subject}**: ${p.subject}`);
+  if (p.react) rows.push(`**${labels.react}**: ${p.react}`);
   if (p.text) rows.push(`**${labels.reply}**:\n${p.text}`);
   const extras = [
     ...(p.files > 0 ? [`**${labels.files}**: ${p.files}`] : []),
@@ -110,6 +124,7 @@ export interface SendCardLabels {
   conversation: string;
   last: string;
   subject: string;
+  react: string;
   reply: string;
   files: string;
   location: string;
@@ -127,16 +142,21 @@ function generic(input: Json, opts: DescribeOpts): string {
 }
 
 /** An addressed argument prints as the name a human knows it by — `in: Sprinters Friends`,
- *  not `in: 1203…@g.us`. The CARD adds the address, because approving is choosing a person
- *  and two Verónicas read alike until the number is there; a glance (the tool trace, the
- *  pending line) is not deciding anything and keeps the name alone. Anything unresolved or
- *  unaddressed stands as written: a name nothing answers to is still what the model asked
- *  for. */
+ *  not `in: 1203…@g.us`. The CARD adds the address where it reads (`addressReads`),
+ *  because approving is choosing a person and two Verónicas read alike until the number is
+ *  there; a glance (the tool trace, the pending line) is not deciding anything and keeps the
+ *  name alone. Anything unresolved or unaddressed stands as written: a name nothing answers
+ *  to is still what the model asked for. */
 function named(key: string, v: Json, opts: DescribeOpts): Json {
   if (typeof v !== "string" || !ADDRESSED.has(key)) return v;
   const who = opts.resolve?.(v);
   if (who === undefined) return v;
-  return opts.full ? `${who.name} (${who.address})` : who.name;
+  return opts.full ? landing(who) : who.name;
+}
+
+/** `Name (address)`, or the name alone where the address reads as nothing. */
+function landing(who: Landing): string {
+  return addressReads(who.kind) ? `${who.name} (${who.address})` : who.name;
 }
 
 /** Where a call LANDS: each addressed argument that resolved, as `Name (address)` — the
@@ -147,7 +167,7 @@ export function landings(call: ToolCall, resolve: Resolve): string[] {
   for (const [k, v] of Object.entries(argsOf(call.input))) {
     if (!ADDRESSED.has(k) || typeof v !== "string") continue;
     const who = resolve(v);
-    if (who) out.push(`${who.name} (${who.address})`);
+    if (who) out.push(landing(who));
   }
   return out;
 }
@@ -168,24 +188,29 @@ const NAME_REACH = 200;
  *  several conversations answer to resolves to none of them: the send refuses it with the
  *  list, and the card has nothing to promise. */
 export async function nameResolver(read: Reader["read"], calls: ToolCall[]): Promise<Resolve> {
-  const shown = new Map<string, { name: string; address: string }>();
+  const shown = new Map<string, Landing>();
   for (const { input } of calls) {
     for (const [k, v] of Object.entries(argsOf(input))) {
       if (!ADDRESSED.has(k) || typeof v !== "string" || v === "" || shown.has(v)) continue;
       const rows = await read({ conversation: v, limit: NAME_REACH });
       if (rows.length > 0) {
         const name = nameIn(rows);
-        if (name) shown.set(v, { name, address: v });
+        if (name) shown.set(v, { name, address: v, ...kindIn(rows) });
         continue;
       }
       const named = await read({ conversationName: v, limit: NAME_REACH });
       const at = [...new Set(named.map((r) => r.envelope.conversation.address))];
       if (at.length === 1 && at[0] !== undefined) {
-        shown.set(v, { name: nameIn(named) ?? v, address: at[0] });
+        shown.set(v, { name: nameIn(named) ?? v, address: at[0], ...kindIn(named) });
       }
     }
   }
   return (value) => shown.get(value);
+}
+
+function kindIn(rows: Event[]): Pick<Landing, "kind"> {
+  const kind = rows.find((r) => r.envelope.conversation.kind)?.envelope.conversation.kind;
+  return kind ? { kind } : {};
 }
 
 /** What a conversation goes by: its own name wins (a group's title); a direct chat carries

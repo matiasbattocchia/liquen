@@ -401,13 +401,21 @@ export interface PermissionAsk {
   send?: SendPreview;
 }
 
+/** One directory of the agent's PATH under the org's folder, and the programs in it. */
+export interface BinDir {
+  dir: string;
+  names: string[];
+}
+
 export interface SendPreview {
-  conversation: { name?: string; address: string };
+  conversation: { name?: string; address: string; kind?: Conversation["kind"] };
   /** The line the send answers: the referent when it replies, else the other side's
    *  last word in that conversation. `at` is already on the org's clock. */
   last?: { text: string; at: string };
   /** The thread the send opens (`send(subject:)`) — a mail's Subject line. */
   subject?: string;
+  /** The glyph a `send(react:)` puts on the line `last` quotes. */
+  react?: string;
   text?: string;
   files: number;
   location?: string;

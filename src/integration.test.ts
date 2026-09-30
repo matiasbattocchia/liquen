@@ -555,7 +555,7 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
     const [req] = await log.read({ types: ["permission_request"] });
     assert(req.type === "permission_request");
     assertEquals(req.parts[0].data.send, {
-      conversation: { name: "Carlos", address: "5492616560401" },
+      conversation: { name: "Carlos", address: "5492616560401", kind: "direct" },
       last: { text: "hola, tienen turno?", at: "23 Sep 16:42" },
       text: "hola Carlos!\n\nlunes o miércoles",
       files: 2,

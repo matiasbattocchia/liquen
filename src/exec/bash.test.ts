@@ -61,6 +61,24 @@ Deno.test("bash: PATH widens by scope — the agent's own bin cannot shadow the 
   });
 });
 
+Deno.test("bash: bins lists each PATH directory's executables in PATH order", async () => {
+  const dir = await Deno.makeTempDir();
+  const plane = (await installExecGround(dir, "a1")).shell();
+  try {
+    await Deno.writeTextFile(`${dir}/organization/bin/gws`, "#!/bin/sh\n");
+    await Deno.chmod(`${dir}/organization/bin/gws`, 0o755);
+    // a plain file is not a program, and the agent's empty bin is left out
+    await Deno.writeTextFile(`${dir}/system/bin/log.db`, "");
+    assertEquals(await plane.bins!(), [
+      { dir: `${dir}/system/bin`, names: ["aedit", "aread", "awrite", "fetch"] },
+      { dir: `${dir}/organization/bin`, names: ["gws"] },
+    ]);
+  } finally {
+    await plane.reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("bash: user space starts with an empty pocket — the harness env never leaks", async () => {
   Deno.env.set("MU_TEST_SECRET", "xoxp-leak");
   try {

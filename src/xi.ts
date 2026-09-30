@@ -77,7 +77,7 @@ import type { ConversationRow } from "./store/connections.ts";
 import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./store/media.ts";
-import type { FilePart, LocationPart, SendPreview } from "./types.ts";
+import type { BinDir, FilePart, LocationPart, SendPreview } from "./types.ts";
 import { directAddress, MIND, parseDirect, parseSession, sessionAddress } from "./session.ts";
 import {
   bookEl,
@@ -969,6 +969,7 @@ export interface XiPorts {
     about: About[],
   ) => void;
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
+  bins?: () => Promise<BinDir[]>; // the org folder's programs on PATH, for the prefix (§5)
 }
 
 /** How coarse the window's floor is: the grid the oldest kept event snaps DOWN to. */
@@ -1176,6 +1177,7 @@ async function think(
       events,
       docs,
       docsOn: ports.docs.on,
+      ...(ports.bins ? { bins: await ports.bins() } : {}),
       tools: specsOf(ports, config, await accounts({ id: config.agentId }, ports)),
       config,
       surfaces: surfaces.map(surfaceOf),
@@ -3182,9 +3184,14 @@ async function sendPreviewOf(
     ? a.location as Record<string, unknown>
     : undefined;
   return {
-    conversation: { ...(who ? { name: who.name } : {}), address },
+    conversation: {
+      ...(who ? { name: who.name } : {}),
+      address,
+      ...(who?.kind ? { kind: who.kind } : {}),
+    },
     ...(answered && lastText ? { last: { text: lastText, at: hhmm(answered.ts, zone) } } : {}),
     ...(typeof a.subject === "string" && a.subject ? { subject: a.subject } : {}),
+    ...(typeof a.react === "string" && a.react ? { react: a.react } : {}),
     ...(typeof a.text === "string" && a.text ? { text: a.text } : {}),
     files,
     ...(loc

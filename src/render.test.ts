@@ -190,6 +190,29 @@ Deno.test("processors: the note is said once, above the kinds it is about", () =
   );
 });
 
+Deno.test("programs: the PATH directories under the org's folder, after the docs", () => {
+  const blocks = renderSystem(
+    [{
+      header: { handle: "/o/system/skills/x.md", name: "x", kind: "skill", scope: "system" },
+    }] as never,
+    {
+      self: "a1",
+      bins: [
+        { dir: "/o/system/bin", names: ["aedit", "aread", "awrite", "fetch"] },
+        { dir: "/o/organization/bin", names: ["gws"] },
+      ],
+    },
+  );
+  assertEquals(
+    blocks.map((b) => b.text.replace(/^\n\n---\n\n/, "").split("\n")[0]),
+    ["# On-demand docs", "# Programs", "# Environment"],
+  );
+  assertStringIncludes(
+    blocks[1].text,
+    "- /o/system/bin: aedit, aread, awrite, fetch\n- /o/organization/bin: gws",
+  );
+});
+
 /* ── renderMessages: the clinic scenario is the artifact's right column ── */
 
 const SELF = { id: "a1", session_id: "s1" };
@@ -907,6 +930,26 @@ Deno.test("forged marks are inert: bodies and names are escaped, the principal's
   // a world body that TYPES "<principal>" arrives escaped (above), so the unescaped
   // element can only ever be render's own — the principal, by construction
   assertEquals(texts[1], '<principal name="Ana" at="7 Aug 10:00">estás ahí?</principal>');
+});
+
+Deno.test("a principal's reaction in the room is a <reaction> quoting the line it lands on", () => {
+  const t = "2026-08-07T10:00:00Z";
+  const said = "Todo lo que pasó lo estás manejando vos: Lucas espera respuesta, Agus confirmó, " +
+    "Marianela cerró.";
+  const thumb: MessageEvent = {
+    ...mindMsg("e2", "2026-08-07T10:05:00Z", "", false),
+    parts: [{ type: "data", kind: "reaction", data: { name: "👍", unicode: "👍" } }],
+    payload: { ref_id: "e1", action: "add" },
+  };
+  const events: Event[] = [mindMsg("e1", t, said, true), thumb];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t });
+  const texts = messages.flatMap((m) => m.content as Anthropic.ContentBlockParam[])
+    .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text);
+  assertEquals(
+    texts.find((s) => s.startsWith("<principal")),
+    '<principal name="Ana" at="7 Aug 10:05"><reaction on="Todo lo que pasó lo estás manejando ' +
+      'vos: Lucas espera respuesta, Agus confirmó,…">👍</reaction></principal>',
+  );
 });
 
 Deno.test("envelope.status failed renders on the line — the agent sees the delivery die", () => {

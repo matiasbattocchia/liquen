@@ -14,6 +14,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   AgentId,
+  BinDir,
   Draft,
   Emit,
   Event,
@@ -99,6 +100,9 @@ export interface TurnInput {
   /** What the docs' handles open with: the shell's `aread` on files, the `read` tool on
    *  the table (§9). Absent: files. */
   docsOn?: "files" | "table";
+  /** The programs the org's folder puts on PATH — the prefix's `# Programs` (§5). Absent:
+   *  no shell. */
+  bins?: BinDir[];
   tools: Anthropic.Tool[]; // the registry's specs
   config: TurnConfig;
   /** The surfaces the agent speaks through — the prefix's `## Connections` (§5). Stable
@@ -186,6 +190,7 @@ function turnOf(input: TurnInput, transport: ModelTransport) {
     connections: input.surfaces,
     processors: input.processors,
     docs: input.docsOn,
+    bins: input.bins,
   };
 
   return { session, here, turnId, attempt, env };
