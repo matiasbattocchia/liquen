@@ -115,6 +115,8 @@ const FULL = {
       { name: "Subject", value: "Re: Invoice 42" },
       { name: "Message-ID", value: "<m1@x.com>" },
       { name: "In-Reply-To", value: "<m0@org.com>" },
+      { name: "References", value: "<m0@org.com>" },
+      { name: "Reply-To", value: "Billing <billing@x.com>" },
     ],
     parts: [
       {
@@ -206,14 +208,14 @@ Deno.test("gmail: history → the message in full → the row; attachments fetch
     assertEquals(rows[0], {
       ts: "2026-09-21T14:13:20.000Z",
       type: "message",
-      payload: { action: "reply", ref_external_id: "mail:m0@org.com" },
+      payload: { action: "reply", ref_external_id: "mail:me@org.com:m0@org.com" },
       envelope: {
         service: "google",
         connection_address: "me@org.com",
-        // the thread: a reply to a message no log holds is filed at that message's id
-        conversation: { address: "m0@org.com", kind: "group", name: "Invoice 42" },
+        // the thread: the one Gmail files the message in
+        conversation: { address: "t1", kind: "direct", name: "Invoice 42" },
         sender: { address: "ana@x.com", name: "Ana García" },
-        external_id: "mail:m1@x.com",
+        external_id: "mail:me@org.com:m1@x.com",
       },
       parts: [
         { type: "text", kind: "text", text: "Paid today." },
@@ -224,19 +226,23 @@ Deno.test("gmail: history → the message in full → the row; attachments fetch
         },
       ],
       extra: {
-        google: { thread: "t1" },
-        mail: { to: [{ address: "me@org.com", name: "Me" }, { address: "bob@y.com" }], cc: [] },
+        mail: {
+          to: [{ address: "me@org.com", name: "Me" }, { address: "bob@y.com" }],
+          cc: [],
+          replyTo: [{ address: "billing@x.com", name: "Billing" }],
+          references: ["m0@org.com"],
+        },
       },
     });
     assertEquals(saved.length, 1);
-    assertEquals(saved[0].conversation, "m0@org.com");
+    assertEquals(saved[0].conversation, "t1");
     assertEquals(new TextDecoder().decode(saved[0].bytes), "%PDF-1.4");
     assertEquals(saved[0].meta, { mime_type: "application/pdf", name: "receipt.pdf" });
     assertEquals(await cursorOf(creds), "5010");
   });
 });
 
-Deno.test("gmail: a SENT message is the account's own hand — a first message, the thread it opens is its own", async () => {
+Deno.test("gmail: a SENT message is the account's own hand, in the thread Gmail filed it in", async () => {
   await withVault(async (creds) => {
     await creds.put({ key: KEY, value: {}, extra: { mail_sync: { [MAILBOX]: "5000" } } });
     const { publish, rows } = captor();
@@ -266,15 +272,15 @@ Deno.test("gmail: a SENT message is the account's own hand — a first message, 
     assertEquals(rows.length, 1);
     assertEquals(rows[0].envelope.sender, { address: "me@org.com" });
     assertEquals(rows[0].envelope.conversation, {
-      address: "u1@org.com",
-      kind: "group",
+      address: "t9",
+      kind: "direct",
       name: "Invoice 42",
     });
     assertEquals(rows[0].extra?.mail, {
       to: [{ address: "ana@x.com", name: "Ana García" }],
       cc: [],
     });
-    assertEquals(rows[0].envelope.external_id, "mail:u1@org.com");
+    assertEquals(rows[0].envelope.external_id, "mail:me@org.com:u1@org.com");
     assertEquals(rows[0].parts, [{ type: "text", kind: "text", text: "Hola Ana" }]);
   });
 });
@@ -305,7 +311,7 @@ Deno.test("gmail: a 404 on the start id drops the cursor; a message gone between
   });
 });
 
-Deno.test("gmail: parseMessage — an HTML-only body becomes words; a bare Gmail id stands in for a missing Message-ID", () => {
+Deno.test("gmail: parseMessage — an HTML-only body becomes words; the Gmail id stands in for a missing Message-ID and thread", () => {
   const m = parseMessage({
     id: "g7",
     internalDate: "1790000000000",
@@ -319,10 +325,12 @@ Deno.test("gmail: parseMessage — an HTML-only body becomes words; a bare Gmail
     },
   });
   assertEquals(m.id, "g7");
+  assertEquals(m.thread, "g7");
   assertEquals(m.text, "Hola\nAna");
   assertEquals(m.from, { address: "ana@x.com" });
   assertEquals(m.to, []);
   assertEquals(m.attachments, []);
+  assertEquals("replyTo" in m, false);
   assertEquals("extra" in m, false);
 });
 
@@ -341,7 +349,7 @@ Deno.test("gmail: parseAddresses — quoted names, bare addresses, commas inside
   assertEquals(parseAddresses("undisclosed-recipients:;"), []);
 });
 
-Deno.test("gmail send: the MIME rides as raw, threaded by the referent's thread", async () => {
+Deno.test("gmail send: the MIME rides as raw into the thread it answers in; the answer names the thread Gmail filed it in", async () => {
   await withVault(async (creds) => {
     const calls: Call[] = [];
     const send = gmailSend({
@@ -349,17 +357,22 @@ Deno.test("gmail send: the MIME rides as raw, threaded by the referent's thread"
       broker: createGrantBroker({ creds }),
       fetchApi: gmail({ "/messages/send": { id: "g10", threadId: "t9" } }, calls),
     });
-    const re = { extra: { google: { thread: "t9" } } } as unknown as MessageEvent;
-    await send({ connection: "me@org.com", agentId: "me" }, "From: <me@org.com>\r\n\r\nhi\r\n", re);
+    const mime = "From: <me@org.com>\r\n\r\nhi\r\n";
+    const filed = await send({ connection: "me@org.com", agentId: "me" }, {
+      mime,
+      messageId: "u1@org.com",
+      thread: "t9",
+    });
+    assertEquals(filed, { thread: "t9" });
     assertEquals(calls.length, 1);
     assertEquals(calls[0].init?.method, "POST");
     const body = JSON.parse(String(calls[0].init?.body));
     assertEquals(body, {
-      raw: encodeBase64Url(new TextEncoder().encode("From: <me@org.com>\r\n\r\nhi\r\n")),
+      raw: encodeBase64Url(new TextEncoder().encode(mime)),
       threadId: "t9",
     });
     // a fresh send names no thread
-    await send({ connection: "me@org.com" }, "x");
+    await send({ connection: "me@org.com" }, { mime: "x", messageId: "u2@org.com" });
     assertEquals(JSON.parse(String(calls[1].init?.body)), {
       raw: encodeBase64Url(new TextEncoder().encode("x")),
     });
@@ -369,7 +382,8 @@ Deno.test("gmail send: the MIME rides as raw, threaded by the referent's thread"
       broker: createGrantBroker({ creds }),
       fetchApi: gmail({ "/messages/send": new Response("forbidden", { status: 403 }) }),
     });
-    const err = await refused({ connection: "me@org.com" }, "x").catch((e) => e);
+    const err = await refused({ connection: "me@org.com" }, { mime: "x", messageId: "u3@org.com" })
+      .catch((e) => e);
     assert(err instanceof Error);
     assertStringIncludes(err.message, "HTTP 403");
     assertEquals((err as { code?: number }).code, 403);

@@ -636,9 +636,9 @@ Deno.test("send `subject`: a first send names the thread it opens; a send into a
     envelope: {
       service: "google",
       connection_address: "me@org.com",
-      conversation: { address: "m0@x.com", kind: "group", name: "Invoice 42" },
+      conversation: { address: "t1", kind: "direct", name: "Invoice 42" },
       sender: { address: "ana@x.com", name: "Ana" },
-      external_id: "mail:m1@x.com",
+      external_id: "mail:me@org.com:m1@x.com",
     },
     parts: [{ type: "text", kind: "text", text: "please pay" }],
   });
@@ -656,7 +656,7 @@ Deno.test("send `subject`: a first send names the thread it opens; a send into a
     ok([{
       kind: "tool_use",
       name: "send",
-      input: { to: "m0@x.com", subject: "Invoice 43", text: "and the next one" },
+      input: { to: "t1", subject: "Invoice 43", text: "and the next one" },
     }], "tool_use"),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
@@ -673,22 +673,88 @@ Deno.test("send `subject`: a first send names the thread it opens; a send into a
     assertEquals(fresh?.envelope.connection_address, "me@org.com");
     assertEquals(fresh?.envelope.conversation, { address: "bob@y.com", name: "Lunch" });
     // the thread by its name: its address, kind and name, the referent's line answered
-    const reply = sent.find((e) => e.envelope.conversation.address === "m0@x.com");
+    const reply = sent.find((e) => e.envelope.conversation.address === "t1");
     assertEquals(reply?.envelope.conversation, {
-      address: "m0@x.com",
-      kind: "group",
+      address: "t1",
+      kind: "direct",
       name: "Invoice 42",
     });
     assertEquals(reply?.payload?.action, "reply");
-    assertEquals(reply?.payload?.ref_external_id, "mail:m1@x.com");
+    assertEquals(reply?.payload?.ref_external_id, "mail:me@org.com:m1@x.com");
     // a subject on a thread that wears another name is refused
     const results = await log.read({ types: ["tool_result"] });
     const refused = results.map((r) =>
       String((r.parts[0] as { data: { output: string } }).data.output)
     )
       .find((o) => o.includes("carries no rename"));
-    assertStringIncludes(refused ?? "", 'm0@x.com is "Invoice 42" — a send carries no rename');
+    assertStringIncludes(refused ?? "", 't1 is "Invoice 42" — a send carries no rename');
     assertEquals(sent.filter((e) => e.envelope.service === "google").length, 2);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("send: one address on two accounts is two conversations — `connection` says which, and `re` points only within it", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
+    { service: "microsoft", address: "me@org.com", agentId: "a1" },
+    { service: "microsoft", address: "me@corp.com", agentId: "a1" },
+  ]);
+  // the same thread in both mailboxes: each copy its own row, under its own account's key
+  const copy = (account: string) =>
+    log.publish({
+      ts: "2026-09-23T10:00:00Z",
+      type: "message",
+      envelope: {
+        service: "microsoft",
+        connection_address: account,
+        conversation: { address: "AAQk7", kind: "direct", name: "Offsite" },
+        sender: { address: "ana@x.com", name: "Ana" },
+        external_id: `mail:${account}:m1@x.com`,
+      },
+      parts: [{ type: "text", kind: "text", text: "who's in?" }],
+    });
+  await copy("me@org.com");
+  const corp = await copy("me@corp.com");
+  const { transport } = scripted([
+    ok([{ kind: "tool_use", name: "send", input: { to: "AAQk7", text: "me" } }], "tool_use"),
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "AAQk7", connection: "me@corp.com", text: "me", re: shortId(corp!.id) },
+    }], "tool_use"),
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "AAQk7", connection: "me@org.com", text: "me too", re: shortId(corp!.id) },
+    }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("contestá"));
+    for (let i = 0; i < 12; i++) await xi(CONFIG, ports);
+    const sent = (await log.read({ types: ["message"] })).filter((e) =>
+      e.agent && e.payload?.turn_id && e.envelope.service === "microsoft"
+    );
+    const outputs = (await log.read({ types: ["tool_result"] })).map((r) =>
+      String((r.parts[0] as { data: { output: unknown } }).data.output)
+    );
+    // no account named: refused, the accounts named
+    assert(
+      outputs.some((o) =>
+        o.includes("AAQk7 is a conversation on me@org.com and me@corp.com — say `connection`")
+      ),
+    );
+    // the named account's copy, the referent on it
+    assertEquals(sent.length, 1);
+    assertEquals(sent[0].envelope.connection_address, "me@corp.com");
+    assertEquals(sent[0].payload?.ref_external_id, "mail:me@corp.com:m1@x.com");
+    // the other account's line is not in this account's conversation
+    assert(outputs.some((o) => o.includes(`no message "${shortId(corp!.id)}" in AAQk7`)));
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

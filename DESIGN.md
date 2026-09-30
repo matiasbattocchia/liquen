@@ -819,18 +819,24 @@ and a `/y` is read in xi, below.
 riding the grant that reads it (`google`, `microsoft`) on the account's connection:
 ```
 service: "google" · connection: "hi@org" | "matias@org"
-conversation: {address: <root Message-ID>, kind: "group", name: <subject>}
-sender: {address: "customer@x.com"} · parts: [text, file(attachments)] · external_id: mail:<Message-ID>
-extra.mail: {to, cc}
+conversation: {address: <the mailbox's thread id>, kind: "direct", name: <subject>}
+sender: {address: "customer@x.com"} · parts: [text, file(attachments)]
+external_id: mail:<account>:<Message-ID>
+extra.mail: {to, cc, replyTo?, references?}
 ```
-A thread is a conversation: a group addressed at its root — the Message-ID of the message
-that opened it, read off `References`/`In-Reply-To`, or the log's own filing of the message
-answered — and named by its subject, its members everyone the thread's rows name. A
-first send is `send(to: <addresses>, connection: <account>, subject:)`, which opens a
-thread the dispatcher files at the id it mints; a send into a thread (`to` its name or
-address, `re` a line) goes to the whole cast under `Re:`. The mapping is one module for
-every mail wire (`connect/mail.ts`). Shared inbox (`hi@org`) = an ownerless grant **every
-agent reads**; personal = that principal's.
+A thread is a conversation addressed by the id its mailbox files it under — Gmail's
+`threadId`, Graph's `conversationId` — so the log's thread is the one the account's inbox
+shows, and a thread two accounts hold is two conversations, each answered from its own.
+It is `direct`, the group DM's shape: its members are whoever the latest message went to,
+and someone added later sees only what a message carries to them. Its name is the subject,
+reply and forward prefixes off. A message is keyed per mailbox, since each mailbox keeps a
+copy of its own. A first send is `send(to: <addresses>, connection: <account>, subject:)`,
+which opens a thread; a send into a thread (`to` its name or address) is a reply-all to its
+latest message — Reply-To in place of the sender when it names one — under `Re:`, and `re`
+quotes a line without changing who it goes to. The wire answers with the thread it filed
+the send in, and the row stands there. The mapping is one module for every mail wire
+(`connect/mail.ts`). Shared inbox (`hi@org`) = an ownerless grant **every agent reads**;
+personal = that principal's.
 Shared-inbox coordination is left to **coexistence-yield** (an agent that sees another
 already replied stays quiet) — observe whether they self-coordinate; patch (assignment/
 ownership) only if double-answers show up.

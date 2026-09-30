@@ -2400,6 +2400,36 @@ async function undeliverable(
   }
 }
 
+/** How many of a conversation's latest rows are read to tell which accounts it is on. */
+const ACCOUNT_REACH = 20;
+
+/** A conversation's record for a send (§4): its latest row on the account the call names,
+ *  or — naming none — on the one account it is on. One address on two accounts (a mail
+ *  thread both mailboxes hold) is two conversations, each answered from its own account,
+ *  and which one is meant is the model's to say. */
+async function recordOf(
+  to: string,
+  via: { address: string } | undefined,
+  ports: XiPorts,
+): Promise<Event | undefined> {
+  const rows = await ports.log.read({
+    conversation: to,
+    broadcasts: false,
+    limit: ACCOUNT_REACH,
+    ...(via ? { connection: via.address } : {}),
+  });
+  if (!via) {
+    const on = [...new Set(rows.map((r) => r.envelope.connection_address))];
+    if (on.length > 1) {
+      throw new Error(
+        `${to} is a conversation on ${on.join(" and ")} — say \`connection\`: which of ` +
+          "your accounts answers there",
+      );
+    }
+  }
+  return rows.at(-1);
+}
+
 /** Where a send to a wire address cannot go, in the sentence that says why:
  *  - a BROADCAST the agent receives (a calendar, a list): nobody answers there. A primary
  *    calendar is addressed at its account's own address, and there that string is the
@@ -2418,7 +2448,7 @@ async function unreachable(
     return `${to} is a broadcast you receive — nobody answers there; to reach its people, ` +
       "send to their addresses";
   }
-  const prior = (await ports.log.read({ conversation: to, broadcasts: false, limit: 1 }))[0];
+  const prior = await recordOf(to, via, ports);
   const account = via?.address ?? prior?.envelope.connection_address;
   if (account === undefined) {
     const yours = (await accounts(self, ports)).map((c) => c.address).join(", ");
@@ -2480,7 +2510,9 @@ async function targetOf(
   } catch {
     return undefined;
   }
-  const prior = (await ports.log.read({ conversation: to, broadcasts: false, limit: 1 }))[0];
+  // an address on two accounts with none named is the call's own error to raise; here it
+  // is simply no connection
+  const prior = await recordOf(to, account, ports).catch(() => undefined);
   const connection = named ?? prior?.envelope.connection_address;
   return connection !== undefined ? { connection, conversation: to } : { conversation: to };
 }
@@ -2735,7 +2767,7 @@ async function execute(
     // read bounds anchoring by visibility. A named account overrides the connection and
     // settles the service where there is no record: first contact on a wire is the one
     // send only the model can place. A local room rides the local channel.
-    const prior = (await ports.log.read({ conversation: to, broadcasts: false, limit: 1 }))[0];
+    const prior = await recordOf(to, via, ports);
     // a local room's kind and name are its own (the row's; a direct room's is its shape),
     // stamped on every row so the window names the room by its newest line
     const kind = local
@@ -2743,7 +2775,9 @@ async function execute(
       : opened
       ? opened.kind ?? aimed.wire!.open.kind
       : prior?.envelope.conversation.kind;
-    const target = args.re === undefined ? undefined : await referent(ports, to, String(args.re));
+    const target = args.re === undefined
+      ? undefined
+      : await referent(ports, to, String(args.re), prior?.envelope.connection_address);
     // a wire conversation's name is its record's — a send carries no rename; on first
     // contact the subject names the thread this send opens, and the wire's Re: on a reply
     // is the dispatcher's to spell
@@ -3184,9 +3218,15 @@ function locationPartOf(raw: unknown): LocationPart {
   };
 }
 
-async function referent(ports: XiPorts, conversation: string, re: string): Promise<Event> {
+async function referent(
+  ports: XiPorts,
+  conversation: string,
+  re: string,
+  connection?: string,
+): Promise<Event> {
   const matches = await ports.log.read({
     conversation,
+    ...(connection !== undefined ? { connection } : {}),
     limit: REF_REACH,
     filter: (e) => shortId(e.id) === re,
   });

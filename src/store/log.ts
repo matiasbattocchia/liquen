@@ -78,6 +78,7 @@ import {
   type Dialect,
   eventOf,
   externalOf,
+  MAIL_MAILBOXES,
   MAIL_THREADS,
   offerOf,
   type Row,
@@ -844,6 +845,21 @@ function migrate(db: DatabaseSync) {
   if (v < 11) migrateV11(db);
   if (v < 12) migrateV12(db);
   if (v < 13) migrateV13(db);
+  if (v < 14) migrateV14(db);
+}
+
+/** v14 — a mail is keyed per mailbox and filed in the thread its mailbox names, a thread
+ *  `direct` (§4). */
+function migrateV14(db: DatabaseSync) {
+  writing(db, () => {
+    const sql = {
+      ref: "json_extract(payload, '$.ref_external_id')",
+      setRef: (value: string) => `json_set(payload, '$.ref_external_id', ${value})`,
+      thread: "json_extract(extra, '$.google.thread')",
+    };
+    for (const s of MAIL_MAILBOXES(sql)) db.exec(s);
+    db.exec("PRAGMA user_version = 14");
+  });
 }
 
 /** v13 — a mail thread is a group conversation at its root Message-ID (§4). */

@@ -20,9 +20,12 @@
  * words (`htmlToText`). Attachments are the parts with a filename, fetched by
  * `attachmentId`; a part disposed `inline` is not one.
  *
- * Sending is `messages.send` with the MIME as `raw` and, for a reply, the referent's
- * `threadId` (kept as the row's `extra.google.thread`): Gmail files a message into a thread
- * by that id together with the `References` header the MIME already carries.
+ * A message's thread is its `threadId`, the conversation the row is filed in.
+ *
+ * Sending is `messages.send` with the MIME as `raw` and, for a reply, the thread's
+ * `threadId`: Gmail files a message into a thread by that id together with the
+ * `References` header the MIME already carries and a subject that matches, and answers
+ * with the `threadId` it filed the message in.
  */
 
 import { decodeBase64Url, encodeBase64Url } from "@std/encoding/base64url";
@@ -40,7 +43,6 @@ import {
   referencesOf,
   runMailDispatch,
   type SaveFile,
-  threadRoot,
 } from "../mail.ts";
 import {
   createPoller,
@@ -52,7 +54,7 @@ import {
   storeCursor,
 } from "../poll.ts";
 import { DispatchError } from "../errors.ts";
-import type { Appender, Reader } from "../../store/log.ts";
+import type { Appender } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
@@ -109,8 +111,6 @@ interface HistoryPage {
 export interface GmailDeps {
   /** → the EventLog: a mail is an ordinary published event (§3). */
   publish: Appender["publish"];
-  /** The log, read: a reply is filed where the message it answers already is. */
-  read?: Reader["read"];
   /** The vault: grants (the connections + the refresh_token) and the historyId cursor. */
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
@@ -195,8 +195,7 @@ async function pollMailbox(deps: GmailDeps, key: string, agentId?: string): Prom
         if (!inConversation(stub.labelIds)) continue;
         const full = await getMessage(api, stub.id);
         if (!full) continue;
-        const { m, root } = await messageOf(api, full, deps);
-        await deps.publish(mailRow(base, m, root));
+        await deps.publish(mailRow(base, await messageOf(api, full, deps)));
         published++;
       }
     }
@@ -213,17 +212,15 @@ function inConversation(labels: string[] = []): boolean {
   return (labels.includes("INBOX") || labels.includes("SENT")) && !labels.includes("DRAFT");
 }
 
-/** A full message → the shared shape and its thread, its attachments fetched onto the
- *  thread's shelf. */
+/** A full message → the shared shape, its attachments fetched onto its thread's shelf. */
 async function messageOf(
   api: Api,
   full: GmailMessage,
-  deps: Pick<GmailDeps, "read" | "save">,
-): Promise<{ m: MailMessage; root: string }> {
-  const parsed = parseMessage(full);
-  const root = await threadRoot(deps.read ? { read: deps.read } : undefined, parsed);
+  deps: Pick<GmailDeps, "save">,
+): Promise<MailMessage> {
+  const { attachments, ...parsed } = parseMessage(full);
   const files: MailMessage["files"] = [];
-  for (const a of parsed.attachments) {
+  for (const a of attachments) {
     const res = await api(
       `/messages/${encodeURIComponent(full.id!)}/attachments/${encodeURIComponent(a.id)}`,
     );
@@ -234,10 +231,10 @@ async function messageOf(
     const { data } = await res.json() as { data?: string };
     if (!data) continue;
     files.push(
-      await deps.save(root, decodeBase64Url(data), { mime_type: a.mime, name: a.name }),
+      await deps.save(parsed.thread, decodeBase64Url(data), { mime_type: a.mime, name: a.name }),
     );
   }
-  return { m: { ...parsed, files }, root };
+  return { ...parsed, files };
 }
 
 /** The headers, words and attachment handles of a full message. */
@@ -275,18 +272,20 @@ export function parseMessage(
   const ts = Number.isFinite(ms) && full.internalDate
     ? new Date(ms).toISOString()
     : new Date(h("Date") ?? Date.now()).toISOString();
+  const replyTo = parseAddresses(h("Reply-To"));
   return {
     id: messageId(h("Message-ID")) ?? full.id!,
+    thread: full.threadId ?? full.id!,
     ts,
     ...(from ? { from } : {}),
     to: parseAddresses(h("To")),
     cc: parseAddresses(h("Cc")),
+    ...(replyTo.length ? { replyTo } : {}),
     ...(h("Subject") ? { subject: h("Subject") } : {}),
     ...(messageId(h("In-Reply-To")) ? { inReplyTo: messageId(h("In-Reply-To")) } : {}),
     ...(referencesOf(h("References")).length ? { references: referencesOf(h("References")) } : {}),
     ...(text ? { text } : {}),
     attachments,
-    ...(full.threadId ? { extra: { google: { thread: full.threadId } } } : {}),
   };
 }
 
@@ -339,13 +338,13 @@ async function getMessage(api: Api, id: string): Promise<GmailMessage | undefine
 
 /* ── the send: messages.send with the MIME as raw ─────────────────────────────────── */
 
-/** The wire's send for a grant: the MIME as `raw`, threaded by the referent's thread. */
+/** The wire's send for a grant: the MIME as `raw`, into the thread it answers in; the
+ *  answer names the thread Gmail filed it in. */
 export function gmailSend(deps: MailWireDeps): MailSend {
-  return async ({ connection, agentId }, mime, re) => {
+  return async ({ connection, agentId }, { mime, thread }) => {
     const key = `${GRANT_PREFIX}${connection}`;
     const token = await deps.broker.accessTokenFor(deps.broker.issue(key, agentId));
     if (!token) throw new DispatchError(`no access token for ${key}`, 401);
-    const thread = (re?.extra?.google as { thread?: string } | undefined)?.thread;
     const res = await deps.fetchApi(`${GMAIL}/messages/send`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -360,7 +359,8 @@ export function gmailSend(deps: MailWireDeps): MailSend {
         res.status,
       );
     }
-    await res.body?.cancel();
+    const sent = await res.json().catch(() => ({})) as { threadId?: string };
+    return sent.threadId ? { thread: sent.threadId } : {};
   };
 }
 

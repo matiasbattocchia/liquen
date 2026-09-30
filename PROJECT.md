@@ -4908,3 +4908,40 @@ session as chiche's voice:
   holding conflict markers can still be edited), and every malformed-spec error ends with
   the shape. `docs_edit` does the same; the parity test covers both new cases (Postgres
   run: 103 passed).
+
+### Mail threads are the mailbox's, `direct`, answered reply-all (2026-09-30) — LANDED
+
+A review of how mail is threaded and answered found the reply's recipients the worst of it:
+
+- **A reply went to everyone the thread ever named.** The cast was the union of every
+  row's From, To and Cc, so a thread that branched (a private answer, a dropped Cc, a
+  forward whose `References` filed it in the thread) had the agent write the dropped
+  people back in. A reply is now a reply-all to the thread's latest message whose
+  recipients the log knows, with Reply-To answering for the sender (Reply-To was never
+  read before). `re` picks the line answered (`In-Reply-To`) and nothing else: an email
+  thread is shaped like a group DM, so it is `kind: direct`, its members whoever the
+  latest message went to.
+- **The thread was ours, not the mailbox's.** A thread was addressed at a root
+  Message-ID read off `References[0]`, else the parent's filing in the log, which split
+  threads whose clients cut `References` and depended on the order messages arrived in.
+  It is now Gmail's `threadId` and Graph's `conversationId`. Gmail's send answers with the
+  thread it filed the message in; Outlook's `sendMail` answers nothing, so the send asks
+  for the Sent copy by Message-ID (`Mail.Read`, a few tries over ~7 s) to learn its
+  `conversationId`. A copy that has not landed by then leaves a new thread's row at its
+  Message-ID.
+- **One message in two mailboxes was one row.** `external_id` was `mail:<Message-ID>` and
+  is unique log-wide, so the second account's copy merged into the first and kept the
+  first's thread and account. It is `mail:<account>:<Message-ID>`. The dispatch reads the
+  thread and the referent on the sending account only, and `send` to an address two
+  accounts share, without `connection`, is refused with both accounts named.
+- **Localized prefixes** (`RV:`, `RES:`, `ENC:`, `TR:`, `WG:`, `Antw:`, `Doorst:`, `R:`,
+  `I:`, `Rif:`) now come off the name, so `RV: Factura` and `Factura` are one name.
+
+Migration (SQLite v14, Postgres v5): mail keys and every `ref_external_id` naming one are
+re-keyed by account; a Gmail row moves to the `threadId` it kept in `extra.google.thread`,
+or its thread's other rows kept; every mail thread becomes `direct`. Outlook rows never
+kept a `conversationId` and stay at their root Message-ID, so an old Outlook thread splits
+once: its next message lands at the `conversationId`.
+
+Open: the `conversationId` lookup is not checked against a live tenant, nor whether
+Exchange files a MIME reply in its parent's conversation. Postgres run: 103 passed.

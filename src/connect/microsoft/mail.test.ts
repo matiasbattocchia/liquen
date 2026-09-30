@@ -103,11 +103,13 @@ async function syncOf(
 const MSG = {
   id: "AAMk1",
   internetMessageId: "<m1@x.com>",
-  subject: "RE: Invoice 42",
+  conversationId: "AAQk42",
+  subject: "RV: Invoice 42",
   body: { contentType: "text", content: "Paid today.\r\n\r\nOn Tue Me wrote:\r\n> pay\r\n" },
   from: { emailAddress: { name: "Bob Ross", address: "Bob@Y.com" } },
   toRecipients: [{ emailAddress: { name: "Ana", address: "ana@contoso.com" } }],
   ccRecipients: [{ emailAddress: { address: "carl@z.com" } }],
+  replyTo: [{ emailAddress: { name: "Desk", address: "desk@y.com" } }],
   sentDateTime: "2026-09-23T10:00:00Z",
   receivedDateTime: "2026-09-23T10:00:05Z",
   hasAttachments: true,
@@ -179,8 +181,9 @@ Deno.test("outlook mail: a listed id is read back as text with its headers → t
       },
       "/mailFolders/sentitems/messages/delta": { value: [], "@odata.deltaLink": SENT },
       "/messages/AAMk1": (url: URL) => {
-        assertStringIncludes(url.searchParams.get("$select") ?? "", "internetMessageHeaders");
-        assertStringIncludes(url.searchParams.get("$select") ?? "", "body");
+        for (const field of ["internetMessageHeaders", "body", "conversationId", "replyTo"]) {
+          assertStringIncludes(url.searchParams.get("$select") ?? "", field);
+        }
         return MSG;
       },
       "/messages/AAMk1/attachments": {
@@ -210,14 +213,14 @@ Deno.test("outlook mail: a listed id is read back as text with its headers → t
     assertEquals(rows[0], {
       ts: "2026-09-23T10:00:00Z",
       type: "message",
-      payload: { action: "reply", ref_external_id: "mail:m0@contoso.com" },
+      payload: { action: "reply", ref_external_id: "mail:ana@contoso.com:m0@contoso.com" },
       envelope: {
         service: "microsoft",
         connection_address: "ana@contoso.com",
-        // the thread: a reply to a message no log holds is filed at that message's id
-        conversation: { address: "m0@contoso.com", kind: "group", name: "Invoice 42" },
+        // the thread: the conversation Exchange files the message in
+        conversation: { address: "AAQk42", kind: "direct", name: "Invoice 42" },
         sender: { address: "bob@y.com", name: "Bob Ross" },
-        external_id: "mail:m1@x.com",
+        external_id: "mail:ana@contoso.com:m1@x.com",
       },
       parts: [
         { type: "text", kind: "text", text: "Paid today." },
@@ -231,11 +234,12 @@ Deno.test("outlook mail: a listed id is read back as text with its headers → t
         mail: {
           to: [{ address: "ana@contoso.com", name: "Ana" }],
           cc: [{ address: "carl@z.com" }],
+          replyTo: [{ address: "desk@y.com", name: "Desk" }],
         },
       },
     });
     assertEquals(saved.length, 1);
-    assertEquals(saved[0].conversation, "m0@contoso.com");
+    assertEquals(saved[0].conversation, "AAQk42");
     assertEquals(new TextDecoder().decode(saved[0].bytes), "%PDF-1.4");
     assertEquals(
       (await syncOf(creds))?.inbox,
@@ -269,7 +273,7 @@ Deno.test("outlook mail: a draft and a message gone between list and read publis
   });
 });
 
-Deno.test("outlook mail: parseMessage — an HTML body the wire insisted on becomes words; the Graph id stands in for a missing Message-ID", () => {
+Deno.test("outlook mail: parseMessage — an HTML body the wire insisted on becomes words; the Graph id stands in for a missing Message-ID and conversation", () => {
   const m = parseMessage({
     id: "AAMk9",
     body: { contentType: "html", content: "<p>Hola<br>Ana</p>" },
@@ -278,6 +282,7 @@ Deno.test("outlook mail: parseMessage — an HTML body the wire insisted on beco
   }, () => NOW);
   assertEquals(m, {
     id: "AAMk9",
+    thread: "AAMk9",
     ts: "2026-09-23T10:00:05Z",
     from: { address: "bob@y.com" },
     to: [],
@@ -286,21 +291,57 @@ Deno.test("outlook mail: parseMessage — an HTML body the wire insisted on beco
   });
 });
 
-Deno.test("outlook send: the MIME rides sendMail as base64 text; a refusal carries its class", async () => {
+Deno.test("outlook send: the MIME rides sendMail as base64 text, then the Sent copy names its conversation; a refusal carries its class", async () => {
   await withVault(async (creds) => {
     const calls: Call[] = [];
+    const waits: number[] = [];
+    let asks = 0;
     const send = outlookSend({
       creds,
       broker: createGrantBroker({ creds }),
-      fetchApi: graph({ "/sendMail": new Response(null, { status: 202 }) }, calls),
+      sleep: (ms) => {
+        waits.push(ms);
+        return Promise.resolve();
+      },
+      fetchApi: graph({
+        "/sendMail": new Response(null, { status: 202 }),
+        // the copy lands on the second ask
+        "/messages": (url: URL) => {
+          assertEquals(url.searchParams.get("$filter"), "internetMessageId eq '<u1@contoso.com>'");
+          assertEquals(url.searchParams.get("$select"), "conversationId");
+          return { value: ++asks < 2 ? [] : [{ conversationId: "AAQk42" }] };
+        },
+      }, calls),
     });
     const mime = "From: <ana@contoso.com>\r\n\r\nhi\r\n";
-    await send({ connection: "ana@contoso.com", agentId: "ana" }, mime);
-    assertEquals(calls.length, 1);
+    const filed = await send({ connection: "ana@contoso.com", agentId: "ana" }, {
+      mime,
+      messageId: "u1@contoso.com",
+      thread: "AAQk42",
+    });
+    assertEquals(filed, { thread: "AAQk42" });
+    assertEquals(calls.length, 3);
     assertEquals(calls[0].init?.method, "POST");
     assertEquals(calls[0].headers.get("content-type"), "text/plain");
     assertEquals(calls[0].headers.get("authorization"), "Bearer eyJ.fresh");
     assertEquals(new TextDecoder().decode(decodeBase64(String(calls[0].init?.body))), mime);
+    assertEquals(calls[1].headers.get("authorization"), "Bearer eyJ.fresh");
+    assertEquals(waits, [500, 1000]);
+
+    // a copy that never lands: the send stands, its thread unsaid
+    const unsaid = outlookSend({
+      creds,
+      broker: createGrantBroker({ creds }),
+      sleep: () => Promise.resolve(),
+      fetchApi: graph({
+        "/sendMail": new Response(null, { status: 202 }),
+        "/messages": new Response("busy", { status: 503 }),
+      }),
+    });
+    assertEquals(
+      await unsaid({ connection: "ana@contoso.com" }, { mime, messageId: "u2@contoso.com" }),
+      {},
+    );
 
     const refused = outlookSend({
       creds,
@@ -309,7 +350,8 @@ Deno.test("outlook send: the MIME rides sendMail as base64 text; a refusal carri
         "/sendMail": new Response('{"error":"ErrorAccessDenied"}', { status: 403 }),
       }),
     });
-    const err = await refused({ connection: "ana@contoso.com" }, mime).catch((e) => e);
+    const err = await refused({ connection: "ana@contoso.com" }, { mime, messageId: "u3@c.com" })
+      .catch((e) => e);
     assert(err instanceof Error);
     assertStringIncludes(err.message, "HTTP 403");
     assertEquals((err as { code?: number }).code, 403);

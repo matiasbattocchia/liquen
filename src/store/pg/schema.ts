@@ -21,7 +21,7 @@
 
 import { MIND } from "../../session.ts";
 import { UNPREFIX } from "../connections.ts";
-import { MAIL_THREADS } from "../events.ts";
+import { MAIL_MAILBOXES, MAIL_THREADS } from "../events.ts";
 import type { Db, Sql } from "./sql.ts";
 
 /** A text column: byte-ordered. */
@@ -605,7 +605,7 @@ $f$;
 
 /** The version the DDL creates. A store found below it is raised in place, once, by the
  *  steps between; a store above it was made by a newer liquen, and this one refuses it. */
-export const VERSION = 4;
+export const VERSION = 5;
 
 /** `RAISE[v]` takes a store from version `v` to `v + 1`: the ALTERs the DDL's `IF NOT
  *  EXISTS` cannot express, run before the DDL so the views it replaces find their columns.
@@ -619,6 +619,17 @@ const RAISE: Record<number, (tx: Db) => Promise<void>> = {
   // v4 — a mail thread is a group conversation at its root Message-ID (§4)
   3: async (tx) => {
     for (const s of MAIL_THREADS("payload ->> 'ref_external_id'")) await tx.unsafe(s);
+  },
+  // v5 — a mail is keyed per mailbox and filed in the thread its mailbox names, a thread
+  // `direct` (§4)
+  4: async (tx) => {
+    const sql = {
+      ref: "payload ->> 'ref_external_id'",
+      setRef: (value: string) =>
+        `jsonb_set(payload, '{ref_external_id}', to_jsonb((${value})::text))`,
+      thread: "extra -> 'google' ->> 'thread'",
+    };
+    for (const s of MAIL_MAILBOXES(sql)) await tx.unsafe(s);
   },
 };
 

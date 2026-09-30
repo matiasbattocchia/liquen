@@ -317,11 +317,11 @@ export function storedAs(
   } as Event;
 }
 
-/** A mail thread is a `group` conversation addressed at its root Message-ID and named by
- *  its subject (connect/mail.ts). The statements that file every mail row so: each row's
- *  reply chain is walked up through the log (`ref_external_id`), and the furthest id it
- *  reaches — the last one the log holds, or the one it answers and the log never saw — is
- *  the root. `ref` is the engine's expression for the payload's `ref_external_id`. */
+/** The statements that file every mail row as a `group` at its thread's root Message-ID,
+ *  named by its subject: each row's reply chain is walked up through the log
+ *  (`ref_external_id`), and the furthest id it reaches — the last one the log holds, or the
+ *  one it answers and the log never saw — is the root. `MAIL_MAILBOXES` runs after them.
+ *  `ref` is the engine's expression for the payload's `ref_external_id`. */
 export const MAIL_THREADS = (ref: string): string[] => [
   `CREATE TEMPORARY TABLE mail_roots AS
      WITH RECURSIVE up(id, at, ref, depth) AS (
@@ -344,4 +344,54 @@ export const MAIL_THREADS = (ref: string): string[] => [
           conversation_thread = NULL
     WHERE id IN (SELECT id FROM mail_roots)`,
   `DROP TABLE mail_roots`,
+];
+
+/** How an engine spells the JSON a mail migration reads and writes. */
+export interface MailSql {
+  /** The payload's `ref_external_id`, as text. */
+  ref: string;
+  /** The payload with its `ref_external_id` set to the text expression `value`. */
+  setRef: (value: string) => string;
+  /** The Gmail `threadId` a row's `extra.google.thread` kept, as text. */
+  thread: string;
+}
+
+/** The statements that take the log's mail to the shape connect/mail.ts writes: a message
+ *  keyed per mailbox (`mail:<account>:<Message-ID>`, and every `ref_external_id` naming
+ *  one likewise), a Gmail row filed at its `threadId` — a row that kept none, at the one its
+ *  thread's other rows kept — and every mail thread `direct`. An Outlook row kept no
+ *  `conversationId` and stays at its root Message-ID. */
+export const MAIL_MAILBOXES = (sql: MailSql): string[] => [
+  `UPDATE events
+      SET external_id = 'mail:' || lower(connection_address) || ':' || substr(external_id, 6)
+    WHERE external_id LIKE 'mail:%' AND connection_address IS NOT NULL
+      AND external_id NOT LIKE 'mail:' || lower(connection_address) || ':%'`,
+  `UPDATE events
+      SET payload = ${
+    sql.setRef(`'mail:' || lower(connection_address) || ':' || substr(${sql.ref}, 6)`)
+  }
+    WHERE ${sql.ref} LIKE 'mail:%' AND connection_address IS NOT NULL
+      AND ${sql.ref} NOT LIKE 'mail:' || lower(connection_address) || ':%'`,
+  `CREATE TEMPORARY TABLE gmail_threads AS
+     SELECT connection_address AS conn, conversation_address AS old, min(${sql.thread}) AS thread
+       FROM events
+      WHERE service = 'google' AND ${sql.thread} IS NOT NULL
+      GROUP BY connection_address, conversation_address`,
+  `UPDATE events
+      SET conversation_address = coalesce(${sql.thread},
+            (SELECT thread FROM gmail_threads g
+              WHERE g.conn = events.connection_address AND g.old = events.conversation_address))
+    WHERE service = 'google' AND type = 'message'
+      AND (${sql.thread} IS NOT NULL OR EXISTS (SELECT 1 FROM gmail_threads g
+            WHERE g.conn = events.connection_address AND g.old = events.conversation_address))`,
+  `DROP TABLE gmail_threads`,
+  `CREATE TEMPORARY TABLE mail_threads AS
+     SELECT DISTINCT connection_address AS conn, conversation_address AS address
+       FROM events
+      WHERE external_id LIKE 'mail:%'`,
+  `UPDATE events
+      SET conversation_kind = 'direct'
+    WHERE type = 'message' AND EXISTS (SELECT 1 FROM mail_threads t
+            WHERE t.conn = events.connection_address AND t.address = events.conversation_address)`,
+  `DROP TABLE mail_threads`,
 ];

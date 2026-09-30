@@ -441,13 +441,16 @@ Remaining:
 Email is a **service, not a tool** (§4) and it is genuinely conversation-shaped, so it lands
 in the log as one. The rows ride the GRANT — `service: google`, the account's connection —
 the way calendar rows do, so one connection row and one process carry an account whole.
-A **thread is the conversation**: `kind: group`, addressed at its root — the Message-ID of
-the message that opened it, read off `References`/`In-Reply-To`, or the log's own filing
-of the message answered — and named by its subject, `Re:`/`Fwd:` off; its members are
-whoever took part, and each row keeps its To and Cc (`extra.mail`), so a reply reaches the
-whole cast. A first send (`send(to: <addresses>, subject:)`) opens a thread the dispatcher
-files at the id it mints. `external_id` is `mail:<Message-ID>`, the one name a message has
-on every wire; an inbound `In-Reply-To` is the row's `reply` reference. The body is the plain text with its quoted history cut (`stripQuotes`: the
+A **thread is the conversation**: `kind: direct`, addressed by the id the mailbox files it
+under (Gmail's `threadId`, Graph's `conversationId`), named by its subject with the reply
+and forward prefixes off in the languages clients localize them into. Its members are
+whoever the latest message went to, and each row keeps its addressing (`extra.mail`: To,
+Cc, Reply-To, `References`), so a reply is a reply-all to the thread's latest message the
+log knows the recipients of, Reply-To answering for the sender. A first send
+(`send(to: <addresses>, subject:)`) opens a thread, and the row moves to the one the wire
+filed it in. `external_id` is `mail:<account>:<Message-ID>`: each mailbox holding a
+message keeps its own copy, in its own thread. An inbound `In-Reply-To` is the row's
+`reply` reference. The body is the plain text with its quoted history cut (`stripQuotes`: the
 `On … wrote:` attribution, Outlook's separator, a forwarded header block, a trailing `>`
 block); an HTML-only body is read as words. Attachments are file parts on the media shelf;
 inline images are not attachments. All of that is `src/connect/mail.ts`, shared with
@@ -461,9 +464,9 @@ Outlook: a mail connector is its wire, nothing more.
 - **Dispatch**: `messages.send` with a MIME the harness authors (`raw`), its `Message-ID`
   minted in the account's domain, so the send stamps its own `external_id` and the SENT
   copy comes back through the poll as the echo that MERGES (§4). A reply carries
-  `In-Reply-To`/`References` and the referent's `threadId` (`extra.google.thread`); a new
-  thread is `send(subject:)`. Mail has no edit, delete or reaction: those sends fail with
-  a 400 rather than vanish.
+  `In-Reply-To`/`References` and the thread's `threadId`; the send answers with the
+  `threadId` Gmail filed it in. A new thread is `send(subject:)`. Mail has no edit, delete
+  or reaction: those sends fail with a 400 rather than vanish.
 - **Scopes**: `gmail.readonly` + `gmail.send` in the defaults; the poll runs only on a grant
   whose recorded consent carries a read scope, so a grant from before mail keeps its
   calendar and takes mail on re-consent.
@@ -547,14 +550,19 @@ them.
 Delta queries and polling are within Outlook's terms. **Mail** is `/me/mailFolders/<folder>
 /messages/delta` on Inbox and Sent Items — the two sides of every conversation — one
 deltaLink per folder on the grant, asked for ids alone and each id read back in full with
-`internetMessageHeaders` (the `In-Reply-To` a reply threads by comes only on a single
-message's read) and the body as text (`Prefer: outlook.body-content-type`); a first run
+`internetMessageHeaders` (the `In-Reply-To` and `References` come only on a single
+message's read), its `conversationId` the thread it is filed in, and the body as text
+(`Prefer: outlook.body-content-type`); a first run
 asks `$filter=receivedDateTime ge now` and publishes nothing; an `@removed` is a message
 leaving the folder, not one unsaid, and publishes nothing; attachments come with their
 bytes in the folder's `attachments` listing, `isInline` ones left out. Sending is `POST
 /me/sendMail` with the MIME itself as the base64 body: Exchange threads by the `References`
 header and keeps its copy in Sent Items, where the poll finds it under the Message-ID the
-MIME already wore. The mapping is `src/connect/mail.ts`, shared with Gmail (§5).
+MIME already wore. `sendMail` answers with nothing, so the send then asks
+`/me/messages?$filter=internetMessageId eq '<id>'` for that copy's `conversationId` — the
+thread Exchange filed it in — a few times over the seconds the copy takes to land, under
+`Mail.Read`; a copy that has not landed leaves a new thread's row at its Message-ID. The
+mapping is `src/connect/mail.ts`, shared with Gmail (§5).
 
 For the **calendar** the feed is the events delta — `/beta/me/calendar/events/delta
 ?startDateTime=now`, the one Graph feed that runs from a point forward, unbounded, and

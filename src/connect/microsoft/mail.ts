@@ -19,9 +19,14 @@
  * sender's, never markup. Attachments are the folder's `fileAttachment`s, their bytes in
  * the listing; an `isInline` one is not an attachment.
  *
+ * A message's thread is its `conversationId`, the conversation the row is filed in.
+ *
  * Sending is `POST /me/sendMail` with the MIME itself as the body, base64: Exchange files
  * the message by the `References` header the MIME carries and keeps its copy in Sent
- * Items, where the poll finds it under the Message-ID the MIME already wore.
+ * Items, where the poll finds it under the Message-ID the MIME already wore. `sendMail`
+ * answers with nothing, so the send then asks the mailbox for that copy by its
+ * Message-ID — `Mail.Read` is enough — to learn the `conversationId` Exchange filed it
+ * under, waiting out the moment the copy takes to land.
  */
 
 import { decodeBase64, encodeBase64 } from "@std/encoding/base64";
@@ -40,7 +45,6 @@ import {
   referencesOf,
   runMailDispatch,
   type SaveFile,
-  threadRoot,
 } from "../mail.ts";
 import {
   createPoller,
@@ -52,7 +56,7 @@ import {
   storeCursor,
 } from "../poll.ts";
 import { DispatchError } from "../errors.ts";
-import type { Appender, Reader } from "../../store/log.ts";
+import type { Appender } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
@@ -81,11 +85,13 @@ interface Recipient {
 export interface GraphMessage {
   id?: string;
   internetMessageId?: string;
+  conversationId?: string;
   subject?: string;
   body?: { contentType?: string; content?: string };
   from?: Recipient;
   toRecipients?: Recipient[];
   ccRecipients?: Recipient[];
+  replyTo?: Recipient[];
   sentDateTime?: string;
   receivedDateTime?: string;
   hasAttachments?: boolean;
@@ -115,11 +121,13 @@ interface DeltaPage {
 
 const SELECT = [
   "internetMessageId",
+  "conversationId",
   "subject",
   "body",
   "from",
   "toRecipients",
   "ccRecipients",
+  "replyTo",
   "sentDateTime",
   "receivedDateTime",
   "hasAttachments",
@@ -130,8 +138,6 @@ const SELECT = [
 export interface OutlookMailDeps {
   /** → the EventLog: a mail is an ordinary published event (§3). */
   publish: Appender["publish"];
-  /** The log, read: a reply is filed where the message it answers already is. */
-  read?: Reader["read"];
   /** The vault: grants (the connections + the refresh_token) and the deltaLink cursors. */
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
@@ -200,8 +206,7 @@ async function pollFolder(
       if (item["@removed"]) return;
       const msg = await getMessage(graph, item.id!);
       if (!msg || msg.isDraft) return;
-      const { m, root } = await messageOf(graph, msg, deps, now);
-      await deps.publish(mailRow(base, m, root));
+      await deps.publish(mailRow(base, await messageOf(graph, msg, deps, now)));
       published++;
     });
   } catch (err) {
@@ -215,16 +220,14 @@ async function pollFolder(
   return published;
 }
 
-/** A read message → the shared shape and its thread, its attachments fetched onto the
- *  thread's shelf. */
+/** A read message → the shared shape, its attachments fetched onto its thread's shelf. */
 async function messageOf(
   graph: Graph,
   msg: GraphMessage,
-  deps: Pick<OutlookMailDeps, "read" | "save">,
+  deps: Pick<OutlookMailDeps, "save">,
   now: () => string,
-): Promise<{ m: MailMessage; root: string }> {
+): Promise<MailMessage> {
   const parsed = parseMessage(msg, now);
-  const root = await threadRoot(deps.read ? { read: deps.read } : undefined, parsed);
   const files: MailMessage["files"] = [];
   if (msg.hasAttachments && msg.id) {
     const res = await graph(`${GRAPH}/messages/${encodeURIComponent(msg.id)}/attachments`);
@@ -234,7 +237,7 @@ async function messageOf(
         if (a["@odata.type"] !== "#microsoft.graph.fileAttachment" || a.isInline) continue;
         if (!a.contentBytes) continue;
         files.push(
-          await deps.save(root, decodeBase64(a.contentBytes), {
+          await deps.save(parsed.thread, decodeBase64(a.contentBytes), {
             mime_type: a.contentType,
             name: a.name,
           }),
@@ -242,7 +245,7 @@ async function messageOf(
       }
     } else await res.body?.cancel(); // the message still lands; the files are the wire's to hold
   }
-  return { m: { ...parsed, files }, root };
+  return { ...parsed, files };
 }
 
 /** The headers and words of a read message. */
@@ -260,12 +263,15 @@ export function parseMessage(msg: GraphMessage, now: () => string): Omit<MailMes
     : undefined;
   const inReplyTo = messageId(header("In-Reply-To"));
   const references = referencesOf(header("References"));
+  const replyTo = boxes(msg.replyTo);
   return {
     id: messageId(msg.internetMessageId) ?? msg.id!,
+    thread: msg.conversationId ?? msg.id!,
     ts: msg.sentDateTime ?? msg.receivedDateTime ?? now(),
     ...(from ? { from } : {}),
     to: boxes(msg.toRecipients),
     cc: boxes(msg.ccRecipients),
+    ...(replyTo.length ? { replyTo } : {}),
     ...(msg.subject ? { subject: msg.subject } : {}),
     ...(inReplyTo ? { inReplyTo } : {}),
     ...(references.length ? { references } : {}),
@@ -325,15 +331,25 @@ async function getMessage(graph: Graph, id: string): Promise<GraphMessage | unde
 
 /* ── the send: sendMail with the MIME as the body ─────────────────────────────────── */
 
-/** The wire's send for a grant: the MIME itself, base64, to `sendMail`. */
-export function outlookSend(deps: MailWireDeps): MailSend {
-  return async ({ connection, agentId }, mime) => {
+/** How long the send waits, between asks, for the Sent copy to land: Exchange files it
+ *  within a second or two of `sendMail` answering. */
+export const FILED_WAITS_MS = [500, 1000, 2000, 4000];
+
+/** The wire's send for a grant: the MIME itself, base64, to `sendMail`; then the Sent
+ *  copy's `conversationId`, the thread Exchange filed it in. A copy that has not landed by
+ *  the last ask leaves the thread unsaid. */
+export function outlookSend(
+  deps: MailWireDeps & { sleep?: (ms: number) => Promise<void> },
+): MailSend {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  return async ({ connection, agentId }, { mime, messageId }) => {
     const key = `${GRANT_PREFIX}${connection}`;
     const token = await deps.broker.accessTokenFor(deps.broker.issue(key, agentId));
     if (!token) throw new DispatchError(`no access token for ${key}`, 401);
+    const authorization = `Bearer ${token}`;
     const res = await deps.fetchApi(`${GRAPH}/sendMail`, {
       method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "text/plain" },
+      headers: { authorization, "content-type": "text/plain" },
       body: encodeBase64(new TextEncoder().encode(mime)),
     });
     if (!res.ok) {
@@ -343,6 +359,25 @@ export function outlookSend(deps: MailWireDeps): MailSend {
       );
     }
     await res.body?.cancel();
+    // the message is sent: from here nothing fails the send, a lookup only names its thread
+    const q = new URLSearchParams({
+      $filter: `internetMessageId eq '<${messageId.replaceAll("'", "''")}>'`,
+      $select: "conversationId",
+    });
+    for (const wait of FILED_WAITS_MS) {
+      await sleep(wait);
+      try {
+        const found = await deps.fetchApi(`${GRAPH}/messages?${q}`, { headers: { authorization } });
+        if (!found.ok) {
+          await found.body?.cancel();
+          continue;
+        }
+        const { value } = await found.json() as { value?: { conversationId?: string }[] };
+        const thread = value?.find((m) => m.conversationId)?.conversationId;
+        if (thread) return { thread };
+      } catch { /* the next ask */ }
+    }
+    return {};
   };
 }
 

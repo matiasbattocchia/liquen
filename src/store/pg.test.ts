@@ -194,6 +194,7 @@ if (url === undefined) {
             external_id: "mail:m0@org.com",
           },
           parts: [{ type: "text", kind: "text", text: "please pay" }],
+          extra: { google: { thread: "t1" } },
         },
         {
           ts: "2026-09-25T00:01:00Z",
@@ -213,15 +214,19 @@ if (url === undefined) {
       await sql.unsafe("UPDATE schema_version SET version = 0");
       await (await store.vault()).close(); // either opener raises the store
       assertEquals(await version(), VERSION);
-      // the raise to v4 filed the thread at its root
+      // the raise to v4 filed the thread at its root, the raise to v5 at the Gmail thread its
+      // rows kept — a row that kept none follows its thread — `direct`, keyed per mailbox
       const raised = await store.open();
-      assertEquals(
-        (await raised.read({ types: ["message"] })).map((e) => e.envelope.conversation),
-        [
-          { address: "m0@org.com", kind: "group", name: "Invoice 42" },
-          { address: "m0@org.com", kind: "group", name: "Invoice 42" },
-        ],
-      );
+      const rows = await raised.read({ types: ["message"] });
+      assertEquals(rows.map((e) => e.envelope.conversation), [
+        { address: "t1", kind: "direct", name: "Invoice 42" },
+        { address: "t1", kind: "direct", name: "Invoice 42" },
+      ]);
+      assertEquals(rows.map((e) => e.envelope.external_id), [
+        "mail:me@org.com:m0@org.com",
+        "mail:me@org.com:m1@x.com",
+      ]);
+      assertEquals(rows[1].payload?.ref_external_id, "mail:me@org.com:m0@org.com");
       await raised.close();
       await sql.unsafe("UPDATE schema_version SET version = $1::integer", [VERSION + 1]);
       await assertRejects(() => store.open(), Error, `schema version ${VERSION + 1}`);

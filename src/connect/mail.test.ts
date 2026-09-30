@@ -2,21 +2,24 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { decodeBase64 } from "@std/encoding/base64";
 import {
   buildMime,
-  cast,
   createMailDispatch,
   htmlToText,
   isMailAddress,
   mailbox,
   mailConversation,
+  type MailOut,
+  mailRef,
   mailRow,
   messageId,
+  messageIdOf,
   mintMessageId,
   participants,
   referencesOf,
+  referencesTo,
+  replyAll,
   rfcDate,
   stripQuotes,
   threadOf,
-  threadRoot,
 } from "./mail.ts";
 import type { DeliveryPatch, ReadQuery, Subscriber } from "../store/log.ts";
 import type { Draft, Event, EventId, MessageEvent } from "../types.ts";
@@ -34,7 +37,19 @@ Deno.test("mail: a Message-ID sheds its brackets; a thread sheds its Re:/Fwd: pr
   assertEquals(threadOf("Re: Re: Invoice 42"), "Invoice 42");
   assertEquals(threadOf("Fwd: RE: hola"), "hola");
   assertEquals(threadOf("AW: Rechnung"), "Rechnung");
-  assertEquals(threadOf("Rear window"), "Rear window"); // a word that starts with re is not a prefix
+  // the localized forms: Spanish and Portuguese Outlook, French, German, Dutch, Italian
+  assertEquals(threadOf("RV: Factura"), "Factura");
+  assertEquals(threadOf("RE: RV: Factura"), "Factura");
+  assertEquals(threadOf("RES: ENC: Proposta"), "Proposta");
+  assertEquals(threadOf("TR: Devis"), "Devis");
+  assertEquals(threadOf("WG: Angebot"), "Angebot");
+  assertEquals(threadOf("Antw: Doorst: Offerte"), "Offerte");
+  assertEquals(threadOf("R: I: Rif: Preventivo"), "Preventivo");
+  assertEquals(threadOf("Re[2]: hola"), "hola");
+  // a word that starts like a prefix, with no colon after it, is the subject
+  assertEquals(threadOf("Rear window"), "Rear window");
+  assertEquals(threadOf("Tres amigos"), "Tres amigos");
+  assertEquals(threadOf("Informe: septiembre"), "Informe: septiembre");
   assertEquals(threadOf("  "), undefined);
   assertEquals(threadOf(undefined), undefined);
 });
@@ -55,47 +70,71 @@ Deno.test("mail: the participants are the other parties, lower-cased and sorted;
   assertEquals(twice, [{ address: "bob@y.com", name: "Bob" }]);
 });
 
-Deno.test("mail: a thread is a group at its root, named by its subject", () => {
-  assertEquals(mailConversation("m0@org.com", { subject: "Re: Invoice 42" }), {
-    address: "m0@org.com",
-    kind: "group",
+Deno.test("mail: a thread is a direct conversation at the mailbox's thread id, named by its subject", () => {
+  assertEquals(mailConversation("t1", { subject: "Re: Invoice 42" }), {
+    address: "t1",
+    kind: "direct",
     name: "Invoice 42",
   });
-  assertEquals(mailConversation("m0@org.com", {}), { address: "m0@org.com", kind: "group" });
+  assertEquals(mailConversation("t1", {}), { address: "t1", kind: "direct" });
   assertEquals(referencesOf("<m0@org.com>\r\n <m1@x.com>"), ["m0@org.com", "m1@x.com"]);
   assertEquals(referencesOf(undefined), []);
 });
 
-Deno.test("mail: threadRoot — the log's filing of the answered message, else References' first, else In-Reply-To, else the message's own id", async () => {
-  const filed = {
-    read: (q?: ReadQuery) =>
-      Promise.resolve(
-        q?.externalId === "mail:m1@x.com"
-          ? [{ envelope: { conversation: { address: "root@org.com" } } } as Event]
-          : [],
-      ),
-  };
-  const m = { id: "m2@x.com", inReplyTo: "m1@x.com", references: ["m0@org.com", "m1@x.com"] };
-  // the log knows the parent: its thread, however the headers spell it
-  assertEquals(await threadRoot(filed, m), "root@org.com");
-  // the log does not: the headers' root
-  assertEquals(await threadRoot(undefined, m), "m0@org.com");
-  assertEquals(await threadRoot(filed, { ...m, inReplyTo: "gone@x.com" }), "m0@org.com");
-  assertEquals(await threadRoot(undefined, { id: "m2@x.com", inReplyTo: "m1@x.com" }), "m1@x.com");
-  // a first message opens its own thread
-  assertEquals(await threadRoot(filed, { id: "m2@x.com" }), "m2@x.com");
+Deno.test("mail: a message is keyed per mailbox — the same Message-ID in two accounts is two keys", () => {
+  assertEquals(mailRef("Me@Org.com", "m1@x.com"), "mail:me@org.com:m1@x.com");
+  assert(mailRef(ME, "m1@x.com") !== mailRef("me@corp.com", "m1@x.com"));
+  assertEquals(messageIdOf(ME, "mail:me@org.com:m1@x.com"), "m1@x.com");
+  // another account's key, a key of another wire, nothing: no Message-ID of this account
+  assertEquals(messageIdOf(ME, "mail:me@corp.com:m1@x.com"), undefined);
+  assertEquals(messageIdOf(ME, "slack:T:C:1.2"), undefined);
+  assertEquals(messageIdOf(ME, undefined), undefined);
 });
 
-Deno.test("mail: the cast of a thread is everyone its rows name but the account — senders, To and Cc", () => {
-  const rows = [
-    {
-      envelope: { sender: { address: "ana@x.com", name: "Ana García" } },
-      extra: { mail: { to: [mailbox(ME)], cc: [mailbox("carl@z.com")] } },
-    },
-    { envelope: { sender: { address: ME } }, extra: { mail: { to: [ANA, BOB], cc: [] } } },
-    { envelope: {} }, // a row that kept no recipients names nobody
-  ] as unknown as MessageEvent[];
-  assertEquals(cast(ME, rows), [ANA, BOB, mailbox("carl@z.com")]);
+Deno.test("mail: a reply-all is the message's Reply-To in place of its sender, its To and Cc — the account never", () => {
+  const row = (sender: string | undefined, mail: unknown) =>
+    ({
+      envelope: sender
+        ? { sender: mailbox(sender, sender === "ana@x.com" ? "Ana García" : undefined) }
+        : {},
+      extra: { mail },
+    }) as unknown as MessageEvent;
+  // theirs: the sender, To and Cc
+  assertEquals(
+    replyAll(ME, row("ana@x.com", { to: [mailbox(ME), BOB], cc: [mailbox("carl@z.com")] })),
+    [ANA, BOB, mailbox("carl@z.com")],
+  );
+  // a Reply-To answers for the sender: a list, a no-reply sender, a form
+  assertEquals(
+    replyAll(
+      ME,
+      row("noreply@x.com", { to: [mailbox(ME)], cc: [], replyTo: [mailbox("desk@x.com")] }),
+    ),
+    [mailbox("desk@x.com")],
+  );
+  // ours: whoever it went to
+  assertEquals(replyAll(ME, row(ME, { to: [ANA], cc: [BOB] })), [ANA, BOB]);
+  // a row that kept neither a sender nor recipients names nobody
+  assertEquals(replyAll(ME, { envelope: {} } as unknown as MessageEvent), []);
+});
+
+Deno.test("mail: a reply's References are the parent's own, then the parent", () => {
+  const parent = (mail: unknown, ref?: string) =>
+    ({
+      envelope: {},
+      ...(ref ? { payload: { action: "reply", ref_external_id: ref } } : {}),
+      extra: { mail },
+    }) as unknown as MessageEvent;
+  assertEquals(
+    referencesTo(ME, parent({ to: [], cc: [], references: ["m0@org.com"] }), "m1@x.com"),
+    ["m0@org.com", "m1@x.com"],
+  );
+  // a parent that kept no References: the message it answered stands in for them
+  assertEquals(
+    referencesTo(ME, parent({ to: [], cc: [] }, "mail:me@org.com:m0@org.com"), "m1@x.com"),
+    ["m0@org.com", "m1@x.com"],
+  );
+  assertEquals(referencesTo(ME, parent({ to: [], cc: [] }), "m1@x.com"), ["m1@x.com"]);
 });
 
 Deno.test("mail: a mail address is one or more addresses comma-joined, nothing else", () => {
@@ -107,33 +146,35 @@ Deno.test("mail: a mail address is one or more addresses comma-joined, nothing e
   assert(!isMailAddress(""));
 });
 
-Deno.test("mail: the row — sender the From, quotes cut, files as parts, a reply pointing at its referent, the recipients kept", () => {
+Deno.test("mail: the row — sender the From, quotes cut, files as parts, a reply pointing at its referent, the addressing kept", () => {
   const row = mailRow({ service: "google", connection_address: ME }, {
     id: "m1@x.com",
+    thread: "t1",
     ts: "2026-09-23T10:00:00.000Z",
     from: ANA,
     to: [mailbox(ME)],
     cc: [BOB],
+    replyTo: [mailbox("desk@x.com")],
     subject: "Re: Invoice 42",
     inReplyTo: "m0@org.com",
+    references: ["m0@org.com"],
     text: "Paid today.\n\nOn Tue, Sep 22, 2026 at 9:00 AM Me <me@org.com> wrote:\n> Please pay",
     files: [{
       type: "file",
       kind: "document",
       file: { mime_type: "application/pdf", uri: "file:///r.pdf" },
     }],
-    extra: { google: { thread: "t1" } },
-  }, "m0@org.com");
+  });
   assertEquals(row, {
     ts: "2026-09-23T10:00:00.000Z",
     type: "message",
-    payload: { action: "reply", ref_external_id: "mail:m0@org.com" },
+    payload: { action: "reply", ref_external_id: "mail:me@org.com:m0@org.com" },
     envelope: {
       service: "google",
       connection_address: ME,
-      conversation: { address: "m0@org.com", kind: "group", name: "Invoice 42" },
+      conversation: { address: "t1", kind: "direct", name: "Invoice 42" },
       sender: ANA,
-      external_id: "mail:m1@x.com",
+      external_id: "mail:me@org.com:m1@x.com",
     },
     parts: [
       { type: "text", kind: "text", text: "Paid today." },
@@ -143,19 +184,28 @@ Deno.test("mail: the row — sender the From, quotes cut, files as parts, a repl
         file: { mime_type: "application/pdf", uri: "file:///r.pdf" },
       },
     ],
-    extra: { google: { thread: "t1" }, mail: { to: [mailbox(ME)], cc: [BOB] } },
+    extra: {
+      mail: {
+        to: [mailbox(ME)],
+        cc: [BOB],
+        replyTo: [mailbox("desk@x.com")],
+        references: ["m0@org.com"],
+      },
+    },
   });
   // no words, no payload: a bare attachment
   const bare = mailRow({ service: "microsoft", connection_address: ME }, {
     id: "m2@x.com",
+    thread: "c2",
     ts: "2026-09-23T10:00:00.000Z",
     to: [mailbox(ME)],
     cc: [],
     files: [],
-  }, "m2@x.com");
+  });
   assertEquals(bare.parts, []);
   assertEquals("payload" in bare, false);
   assertEquals("sender" in bare.envelope, false);
+  assertEquals(bare.extra, { mail: { to: [mailbox(ME)], cc: [] } });
 });
 
 Deno.test("mail: stripQuotes cuts at the attribution, the separator, the header block or the > tail", () => {
@@ -280,10 +330,12 @@ function fakeLog(queued: Event[] = [], rows: Event[] = []) {
     subscribe,
     read: (q?: ReadQuery) =>
       Promise.resolve(
-        q?.externalId
-          ? rows.filter((r) => r.envelope.external_id === q.externalId)
-          : q?.conversation
-          ? rows.filter((r) => r.envelope.conversation.address === q.conversation)
+        q?.externalId || q?.conversation
+          ? rows.filter((r) =>
+            (!q.externalId || r.envelope.external_id === q.externalId) &&
+            (!q.conversation || r.envelope.conversation.address === q.conversation) &&
+            (!q.connection || r.envelope.connection_address === q.connection)
+          )
           : queued,
       ),
     push: (e: Draft) => deliver?.({ ...e, id: e.id ?? newId() } as Event),
@@ -312,23 +364,28 @@ const outbound = (over: Partial<MessageEvent> = {}): Draft<MessageEvent> => ({
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
-Deno.test("mail dispatch: a send to addresses opens a thread — a MIME to them under the subject, the row moved to the minted id", async () => {
+/** A wire's send that records what it was handed and answers with `filed`. */
+function wire(filed: { thread?: string } = {}) {
+  const sent: { grant: { connection: string; agentId?: string }; out: MailOut }[] = [];
+  return {
+    sent,
+    send: (grant: { connection: string; agentId?: string }, out: MailOut) => {
+      sent.push({ grant, out });
+      return Promise.resolve(filed);
+    },
+  };
+}
+
+Deno.test("mail dispatch: a send to addresses opens a thread — a MIME to them under the subject, the row moved to the thread the wire filed it in", async () => {
   const log = fakeLog();
-  const sent: {
-    grant: { connection: string; agentId?: string };
-    mime: string;
-    re?: MessageEvent;
-  }[] = [];
+  const w = wire({ thread: "t7" });
   createMailDispatch({
     service: "google",
     subscribe: log.subscribe,
     read: log.read,
     setDelivery: log.setDelivery,
     now: () => "2026-09-23T12:00:00.000Z",
-    send: (grant, mime, re) => {
-      sent.push({ grant, mime, re });
-      return Promise.resolve();
-    },
+    send: w.send,
   });
   log.push(outbound({
     id: "e1",
@@ -338,96 +395,215 @@ Deno.test("mail dispatch: a send to addresses opens a thread — a MIME to them 
     },
   }));
   await settle();
-  assertEquals(sent.length, 1);
-  assertEquals(sent[0].grant, { connection: ME, agentId: "a1" });
-  assertEquals(sent[0].re, undefined);
+  assertEquals(w.sent.length, 1);
+  assertEquals(w.sent[0].grant, { connection: ME, agentId: "a1" });
+  const { mime, messageId, thread } = w.sent[0].out;
+  assertEquals(thread, undefined);
   assertStringIncludes(
-    sent[0].mime,
+    mime,
     `From: <${ME}>\r\nTo: <ana@x.com>, <bob@y.com>\r\nSubject: Invoice 42\r\n`,
   );
-  assert(!sent[0].mime.includes("References:"));
-  const id = /Message-ID: <([^>]+)>/.exec(sent[0].mime)![1];
-  assert(id.endsWith("@org.com"));
-  assertEquals(log.patches[0].patch.external_id, `mail:${id}`);
+  assert(!mime.includes("References:"));
+  assertStringIncludes(mime, `Message-ID: <${messageId}>`);
+  assert(messageId.endsWith("@org.com"));
+  assertEquals(log.patches[0].patch.external_id, `mail:${ME}:${messageId}`);
   assertEquals(log.patches[0].patch.sender, { address: ME });
   assertEquals(log.patches[0].patch.status?.state, "dispatched");
-  // the thread this send opened is addressed at its id, where the replies will land
   assertEquals(log.patches[0].patch.conversation, {
-    address: id,
-    kind: "group",
+    address: "t7",
+    kind: "direct",
     name: "Invoice 42",
   });
 });
 
-Deno.test("mail dispatch: a send into a thread goes to its cast, answering the line named or else the latest, under Re: its name", async () => {
-  const theirs = (id: string, ts: string, from = ANA, cc = [BOB]) =>
-    ({
-      ...mailRow({ service: "google", connection_address: ME }, {
-        id,
-        ts,
-        from,
-        to: [mailbox(ME)],
-        cc,
-        subject: "Fwd: Invoice 42",
-        inReplyTo: "m0@org.com",
-        text: "please pay",
-        files: [],
-        extra: { google: { thread: "t9" } },
-      }, "m0@org.com"),
-      id: `e-${id}`,
-    }) as Event;
+Deno.test("mail dispatch: a wire that cannot name the thread it opened leaves the row at the minted id", async () => {
+  const log = fakeLog();
+  const w = wire();
+  createMailDispatch({
+    service: "microsoft",
+    subscribe: log.subscribe,
+    read: log.read,
+    setDelivery: log.setDelivery,
+    send: w.send,
+  });
+  log.push(outbound({
+    id: "e1",
+    envelope: {
+      ...outbound().envelope,
+      service: "microsoft",
+      conversation: { address: "ana@x.com" },
+    },
+  }));
+  await settle();
+  assertEquals(log.patches[0].patch.conversation, {
+    address: w.sent[0].out.messageId,
+    kind: "direct",
+  });
+});
+
+/** A message in `account`'s thread `t9`, as the ingest files it. */
+const inThread = (
+  id: string,
+  ts: string,
+  m: { from?: typeof ANA; to?: (typeof ANA)[]; cc?: (typeof ANA)[]; replyTo?: (typeof ANA)[] },
+  account = ME,
+) =>
+  ({
+    ...mailRow({ service: "google", connection_address: account }, {
+      id,
+      thread: "t9",
+      ts,
+      from: m.from ?? ANA,
+      to: m.to ?? [mailbox(account)],
+      cc: m.cc ?? [],
+      ...(m.replyTo ? { replyTo: m.replyTo } : {}),
+      subject: "Fwd: Invoice 42",
+      inReplyTo: "m0@org.com",
+      references: ["m0@org.com"],
+      text: "please pay",
+      files: [],
+    }),
+    id: `e-${account}-${id}`,
+  }) as Event;
+
+const intoThread = (id: string, ref?: string) =>
+  outbound({
+    id,
+    ...(ref ? { payload: { action: "reply", ref_external_id: ref } } : {}),
+    envelope: {
+      ...outbound().envelope,
+      conversation: { address: "t9", kind: "direct", name: "Invoice 42" },
+    },
+  });
+
+Deno.test("mail dispatch: a send into a thread is a reply-all to its latest message, under Re: its name — `re` quotes, the members stay", async () => {
   const log = fakeLog([], [
-    theirs("m1@x.com", "2026-09-23T11:00:00Z"),
-    theirs("m2@x.com", "2026-09-23T11:30:00Z", mailbox("carl@z.com", "Carl"), []),
+    // Ana wrote to the account, Bob and Carl in Cc
+    inThread("m1@x.com", "2026-09-23T11:00:00Z", { cc: [BOB, mailbox("carl@z.com", "Carl")] }),
+    // Bob answered only Ana and the account: Carl is no longer in the thread
+    inThread("m2@y.com", "2026-09-23T11:30:00Z", { from: BOB, to: [mailbox(ME), ANA] }),
   ]);
-  const sent: { mime: string; re?: MessageEvent }[] = [];
+  const w = wire({ thread: "t9" });
   createMailDispatch({
     service: "google",
     subscribe: log.subscribe,
     read: log.read,
     setDelivery: log.setDelivery,
-    send: (_g, mime, re) => {
-      sent.push({ mime, re });
-      return Promise.resolve();
-    },
+    send: w.send,
   });
-  // `re` names the line answered
-  log.push(outbound({
-    id: "e1",
-    payload: { action: "reply", ref_external_id: "mail:m1@x.com" },
-    envelope: {
-      ...outbound().envelope,
-      conversation: { address: "m0@org.com", kind: "group", name: "Invoice 42" },
-    },
-  }));
-  // no `re`: the thread's latest line is the one answered
-  log.push(outbound({
-    id: "e2",
-    envelope: {
-      ...outbound().envelope,
-      conversation: { address: "m0@org.com", kind: "group", name: "Invoice 42" },
-    },
-  }));
+  // `re` quotes Ana's first message
+  log.push(intoThread("e1", `mail:${ME}:m1@x.com`));
+  // no `re`: the answer is to the latest
+  log.push(intoThread("e2"));
   await settle();
-  assertEquals(sent.length, 2);
-  // the cast: everyone the thread's rows name, the account never, a Cc dropped later still in
+  assertEquals(w.sent.length, 2);
+  for (const { out } of w.sent) {
+    // the members: the latest message's — Carl, dropped from it, is not written to
+    assertStringIncludes(
+      out.mime,
+      "To: =?utf-8?B?QW5hIEdhcmPDrWE=?= <ana@x.com>, <bob@y.com>\r\nSubject: Re: Invoice 42\r\n",
+    );
+    assert(!out.mime.includes("carl@z.com"));
+    assertEquals(out.thread, "t9");
+  }
   assertStringIncludes(
-    sent[0].mime,
-    'To: =?utf-8?B?QW5hIEdhcmPDrWE=?= <ana@x.com>, <bob@y.com>, "Carl" <carl@z.com>\r\nSubject: Re: Invoice 42\r\n',
-  );
-  assertStringIncludes(
-    sent[0].mime,
+    w.sent[0].out.mime,
     "In-Reply-To: <m1@x.com>\r\nReferences: <m0@org.com> <m1@x.com>\r\n",
   );
-  assertEquals(sent[0].re?.id, "e-m1@x.com");
-  assertEquals(sent[0].re?.extra?.google, { thread: "t9" });
   assertStringIncludes(
-    sent[1].mime,
-    "In-Reply-To: <m2@x.com>\r\nReferences: <m0@org.com> <m2@x.com>\r\n",
+    w.sent[1].out.mime,
+    "In-Reply-To: <m2@y.com>\r\nReferences: <m0@org.com> <m2@y.com>\r\n",
   );
-  assertEquals(sent[1].re?.id, "e-m2@x.com");
-  // a thread stays where it is: the row is not moved
-  assertEquals(log.patches[0].patch.conversation, undefined);
+  // the wire filed them where they stand: the rows are not moved
+  assertEquals(log.patches.map((p) => p.patch.conversation), [undefined, undefined]);
+});
+
+Deno.test("mail dispatch: a Reply-To answers for its sender; our own message not yet echoed is passed over for the one before it", async () => {
+  const ours = {
+    ...intoThread("e0"),
+    envelope: {
+      ...intoThread("e0").envelope,
+      external_id: `mail:${ME}:u1@org.com`,
+      sender: { address: ME },
+      status: "dispatched",
+    },
+    ts: "2026-09-23T11:40:00Z",
+  } as Event;
+  const log = fakeLog([], [
+    inThread("m1@x.com", "2026-09-23T11:00:00Z", {
+      from: mailbox("noreply@x.com"),
+      replyTo: [mailbox("desk@x.com", "Desk")],
+      cc: [BOB],
+    }),
+    ours,
+  ]);
+  const w = wire();
+  createMailDispatch({
+    service: "google",
+    subscribe: log.subscribe,
+    read: log.read,
+    setDelivery: log.setDelivery,
+    send: w.send,
+  });
+  log.push(intoThread("e1"));
+  await settle();
+  const { mime } = w.sent[0].out;
+  assertStringIncludes(mime, 'To: <bob@y.com>, "Desk" <desk@x.com>\r\n');
+  assert(!mime.includes("noreply@x.com"));
+  // the answer is still to the latest line, ours
+  assertStringIncludes(mime, "In-Reply-To: <u1@org.com>\r\n");
+});
+
+Deno.test("mail dispatch: a thread is the account's — another mailbox's copy of it is neither read nor answered", async () => {
+  const log = fakeLog([], [
+    inThread("m1@x.com", "2026-09-23T11:00:00Z", { cc: [BOB] }),
+    // the same thread id on another account: its members are not this thread's
+    inThread("m2@y.com", "2026-09-23T11:30:00Z", {
+      from: mailbox("zed@q.com"),
+      to: [mailbox("me@corp.com")],
+    }, "me@corp.com"),
+  ]);
+  const w = wire();
+  createMailDispatch({
+    service: "google",
+    subscribe: log.subscribe,
+    read: log.read,
+    setDelivery: log.setDelivery,
+    send: w.send,
+  });
+  log.push(intoThread("e1"));
+  // `re` naming the other mailbox's copy is refused
+  log.push(intoThread("e2", "mail:me@corp.com:m2@y.com"));
+  await settle();
+  assertEquals(w.sent.length, 1);
+  assertStringIncludes(
+    w.sent[0].out.mime,
+    "To: =?utf-8?B?QW5hIEdhcmPDrWE=?= <ana@x.com>, <bob@y.com>\r\n",
+  );
+  assertStringIncludes(w.sent[0].out.mime, "In-Reply-To: <m1@x.com>\r\n");
+  assert(!w.sent[0].out.mime.includes("zed@q.com"));
+  const refused = log.patches.find((p) => p.id === "e2")!;
+  assertEquals(refused.patch.status?.state, "failed");
+  assertStringIncludes(String(refused.patch.status?.error), "not a mail of this account");
+});
+
+Deno.test("mail dispatch: a reply the wire files in another thread moves there", async () => {
+  const log = fakeLog([], [inThread("m1@x.com", "2026-09-23T11:00:00Z", {})]);
+  const w = wire({ thread: "t10" });
+  createMailDispatch({
+    service: "google",
+    subscribe: log.subscribe,
+    read: log.read,
+    setDelivery: log.setDelivery,
+    send: w.send,
+  });
+  log.push(intoThread("e1"));
+  await settle();
+  assertEquals(log.patches[0].patch.conversation, {
+    address: "t10",
+    kind: "direct",
+    name: "Invoice 42",
+  });
 });
 
 Deno.test("mail dispatch: what mail cannot do fails with its class — an edit, a reaction, a non-mail address, an empty send", async () => {
@@ -440,7 +616,7 @@ Deno.test("mail dispatch: what mail cannot do fails with its class — an edit, 
     setDelivery: log.setDelivery,
     send: () => {
       posts++;
-      return Promise.resolve();
+      return Promise.resolve({});
     },
   });
   log.push(outbound({ id: "e1", payload: { action: "edit", ref_external_id: "mail:m1@x.com" } }));
@@ -480,7 +656,7 @@ Deno.test("mail dispatch: an address another wire of the service carries is left
     elsewhere: (address) => address.startsWith("19:"),
     send: () => {
       posts++;
-      return Promise.resolve();
+      return Promise.resolve({});
     },
   });
   const place = (address: string) => ({

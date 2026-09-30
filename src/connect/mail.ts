@@ -11,22 +11,21 @@
  * GRANT's service (`google`, `microsoft`) on the grant's connection, the way calendar rows
  * do, so one connection row and one process carry an account whole.
  *
- * A THREAD is a conversation (DESIGN §4): `kind: group`, its members whoever has taken
- * part, its name the subject with the `Re:`/`Fwd:` prefixes off, its address the thread's
- * ROOT — the Message-ID of the message that opened it, the one name a thread has in every
- * mailbox and on every wire. `threadRoot` reads it off a message: the conversation the
- * log already files the answered message under, else the first id of `References`, else
- * `In-Reply-To`, else the message's own id, which is what makes it a thread's first. The
- * recipients of every message ride the row (`extra.mail`: To and Cc), so a reply reaches
- * the whole cast without the wire being asked.
+ * A THREAD is a conversation (DESIGN §4), addressed by the id the MAILBOX files it under —
+ * Gmail's `threadId`, Graph's `conversationId` — so a thread in the log is the thread the
+ * account's own inbox shows. It is `kind: direct`, the shape of a group DM: its members
+ * are whoever the latest message went to, and someone added later sees only what a message
+ * carries to them. Its name is the subject with the reply and forward prefixes off. The
+ * recipients of every message ride the row (`extra.mail`: To, Cc, Reply-To, and the
+ * `References` it carried), so a reply reaches the thread's members without the wire being
+ * asked: a reply-all to the latest message whose recipients the log knows.
  *
- * `external_id` is `mail:<Message-ID>` — the RFC 5322 id. Our own sends mint theirs, so a
- * reply threads with `In-Reply-To`/`References` alone, and the copy the mailbox keeps in
- * Sent comes back through the poll as the echo that MERGES into the row it left from
- * (§4). A first send opens a thread: the address `send(to:)` gave is the recipients,
- * comma-joined, and the row moves to the minted id, the root the replies will name. An
- * inbound `In-Reply-To` is the row's `reply` reference: the window shows which line it
- * answers.
+ * `external_id` is `mail:<Message-ID>` — the RFC 5322 id. Our own sends mint theirs, and
+ * the copy the mailbox keeps in Sent comes back through the poll as the echo that MERGES
+ * into the row it left from (§4). The wire answers a send with the thread it filed the
+ * message in, and the row moves there when that is not where it stood: a first send, whose
+ * address was the recipients, comma-joined, lands in the thread it opened. An inbound
+ * `In-Reply-To` is the row's `reply` reference: the window shows which line it answers.
  *
  * A message's words are the part's `text`: the plain body, its quoted history cut off
  * (`stripQuotes` — a reply carries the whole thread below it, and the log already holds
@@ -61,11 +60,15 @@ export interface Mailbox {
 export interface MailMessage {
   /** The RFC 5322 Message-ID, angle brackets off. */
   id: string;
+  /** The mailbox's id for the thread the message is filed in. */
+  thread: string;
   /** When it was sent (the wire's stamp). */
   ts: string;
   from?: Mailbox;
   to: Mailbox[];
   cc: Mailbox[];
+  /** Where the sender asks replies to go, in place of From. */
+  replyTo?: Mailbox[];
   subject?: string;
   /** The Message-ID this one answers, angle brackets off. */
   inReplyTo?: string;
@@ -85,9 +88,17 @@ export function messageId(header?: string): string | undefined {
   return bare || undefined;
 }
 
-/** The log's key for a message. */
-export function mailRef(id: string): string {
-  return `mail:${id}`;
+/** The log's key for a message in `account`'s mailbox. A Message-ID names the message on
+ *  every wire, and each mailbox holding it keeps a copy of its own — filed in its own
+ *  thread, answered from that account — so the key is the pair. */
+export function mailRef(account: string, id: string): string {
+  return `mail:${account.toLowerCase()}:${id}`;
+}
+
+/** The Message-ID a key of `account`'s names; `undefined` for any other key. */
+export function messageIdOf(account: string, ref: string | undefined): string | undefined {
+  const prefix = `mail:${account.toLowerCase()}:`;
+  return ref?.startsWith(prefix) ? ref.slice(prefix.length) : undefined;
 }
 
 /** A mailbox, its address lower-cased: the wire is case-insensitive about addresses in
@@ -97,10 +108,16 @@ export function mailbox(address: string, name?: string): Mailbox {
   return { address: address.trim().toLowerCase(), ...(clean ? { name: clean } : {}) };
 }
 
+/** The reply and forward prefixes mail clients write, across the languages they localize
+ *  them into: English `Re`/`Fw`/`Fwd`, German `AW`/`WG`, Nordic `SV`/`VS`, Spanish `RV`,
+ *  Portuguese `RES`/`ENC`, French `TR`, Dutch `Antw`/`Doorst`, Italian `R`/`I`/`Rif`. */
+const PREFIXES =
+  /^(\s*(re|fwd?|aw|wg|sv|vs|rv|res|enc|tr|antw|doorst|rif|r|i)\s*(\[\d+\])?\s*:\s*)+/i;
+
 /** The reply and forward prefixes off a subject, so every message of a thread names it the
  *  same way. */
 export function threadOf(subject?: string): string | undefined {
-  const t = (subject ?? "").replace(/^(\s*(re|fw|fwd|aw|sv|vs)\s*(\[\d+\])?\s*:\s*)+/i, "").trim();
+  const t = (subject ?? "").replace(PREFIXES, "").trim();
   return t || undefined;
 }
 
@@ -129,27 +146,14 @@ export function referencesOf(header?: string): string[] {
   return (header ?? "").split(/\s+/).map((h) => messageId(h)).filter((id): id is string => !!id);
 }
 
-/** How many messages of a thread the cast is read off. */
-const THREAD_REACH = 200;
+/** How many of a thread's latest messages a reply looks through for one whose recipients
+ *  the log knows. */
+const THREAD_REACH = 50;
 
-/** The thread a message belongs to, as its root id (header). The log's word first: the
- *  message it answers is already filed, and a thread the log holds is joined however the
- *  client spelled its headers. */
-export async function threadRoot(
-  read: Pick<Reader, "read"> | undefined,
-  m: Pick<MailMessage, "id" | "inReplyTo" | "references">,
-): Promise<string> {
-  if (m.inReplyTo && read) {
-    const [parent] = await read.read({ externalId: mailRef(m.inReplyTo), types: ["message"] });
-    if (parent) return parent.envelope.conversation.address;
-  }
-  return m.references?.[0] ?? m.inReplyTo ?? m.id;
-}
-
-/** The conversation a message belongs to: the thread at `root`, named by its subject. */
-export function mailConversation(root: string, m: Pick<MailMessage, "subject">): Conversation {
+/** The conversation a message belongs to: the mailbox's thread, named by its subject. */
+export function mailConversation(thread: string, m: Pick<MailMessage, "subject">): Conversation {
   const name = threadOf(m.subject);
-  return { address: root, kind: "group", ...(name ? { name } : {}) };
+  return { address: thread, kind: "direct", ...(name ? { name } : {}) };
 }
 
 /** Whether an address is a recipient list: one or more addresses, comma-joined. */
@@ -158,55 +162,79 @@ export function isMailAddress(address: string): boolean {
   return parts.length > 0 && parts.every((p) => /^[^\s@,<>:]+@[^\s@,<>:]+$/.test(p));
 }
 
-/** The recipients a row keeps (`extra.mail`): who the message went to besides its sender. */
+/** The addressing a row keeps (`extra.mail`): who the message went to besides its sender,
+ *  where its sender asked replies to go, and the `References` it carried, root first. */
 export interface MailExtra {
   to: Mailbox[];
   cc: Mailbox[];
+  replyTo?: Mailbox[];
+  references?: string[];
 }
 
-/** One message → its row in the thread at `root`: sender the From, the words and the files
- *  its parts, a reply pointing at the message it answers, the recipients kept. Harness-
- *  derived like every wire row: no `agent`. */
+/** One message → its row in its thread: sender the From, the words and the files its
+ *  parts, a reply pointing at the message it answers, the addressing kept. Harness-derived
+ *  like every wire row: no `agent`. */
 export function mailRow(
   base: { service: Service; connection_address: string },
   m: MailMessage,
-  root: string,
 ): Draft<MessageEvent> {
   const text = stripQuotes(m.text ?? "");
   const parts: MessageEvent["parts"] = [
     ...(text ? [{ type: "text", kind: "text", text } as const] : []),
     ...m.files,
   ];
-  const mail: MailExtra = { to: m.to, cc: m.cc };
+  const mail: MailExtra = {
+    to: m.to,
+    cc: m.cc,
+    ...(m.replyTo?.length ? { replyTo: m.replyTo } : {}),
+    ...(m.references?.length ? { references: m.references } : {}),
+  };
   return {
     ts: m.ts,
     type: "message",
-    ...(m.inReplyTo ? { payload: { action: "reply", ref_external_id: mailRef(m.inReplyTo) } } : {}),
+    ...(m.inReplyTo
+      ? {
+        payload: {
+          action: "reply",
+          ref_external_id: mailRef(base.connection_address, m.inReplyTo),
+        },
+      }
+      : {}),
     envelope: {
       ...base,
-      conversation: mailConversation(root, m),
+      conversation: mailConversation(m.thread, m),
       ...(m.from ? { sender: m.from } : {}),
-      external_id: mailRef(m.id),
+      external_id: mailRef(base.connection_address, m.id),
     },
     parts,
     extra: { ...m.extra, mail },
   };
 }
 
-/** Everyone a thread's rows name — senders, To and Cc — but the account: the cast a reply
- *  goes to, one entry per address, sorted, named by whichever row carried a name. */
-export function cast(account: string, rows: readonly MessageEvent[]): Mailbox[] {
-  const to: Mailbox[] = [];
-  const cc: Mailbox[] = [];
-  for (const e of rows) {
-    const mail = e.extra?.mail as Partial<MailExtra> | undefined;
-    if (e.envelope.sender?.address) {
-      to.push(mailbox(e.envelope.sender.address, e.envelope.sender.name));
-    }
-    to.push(...(mail?.to ?? []));
-    cc.push(...(mail?.cc ?? []));
-  }
-  return participants(account, { to, cc });
+/** The addressing a row kept, when it kept any: a row the wire has not echoed back yet
+ *  (our own send, just dispatched) knows no recipients. */
+function mailOf(e: MessageEvent): MailExtra | undefined {
+  const mail = e.extra?.mail as MailExtra | undefined;
+  return mail && Array.isArray(mail.to) ? mail : undefined;
+}
+
+/** A reply-all to one message, as `account`: its Reply-To in place of its sender when it
+ *  names one, its To and Cc, the account never. One entry per address, sorted. */
+export function replyAll(account: string, e: MessageEvent): Mailbox[] {
+  const mail = mailOf(e);
+  const sender = e.envelope.sender?.address
+    ? [mailbox(e.envelope.sender.address, e.envelope.sender.name)]
+    : [];
+  const answer = mail?.replyTo?.length ? mail.replyTo : sender;
+  return participants(account, { to: [...answer, ...(mail?.to ?? [])], cc: mail?.cc ?? [] });
+}
+
+/** The `References` a reply to `parent` (Message-ID `id`, in `account`'s mailbox) carries:
+ *  the parent's own, else the message it answered, then the parent. */
+export function referencesTo(account: string, parent: MessageEvent, id: string): string[] {
+  const answered = messageIdOf(account, parent.payload?.ref_external_id);
+  const own = mailOf(parent)?.references ?? (answered ? [answered] : []);
+  return [...new Set([...own, id])];
 }
 
 /* ── the words: quotes off, markup off ─────────────────────────────────────────────── */
@@ -405,14 +433,21 @@ function wrap76(b64: string): string {
 
 /* ── the dispatch loop: the log's outbound mail onto the wire ──────────────────────── */
 
-/** Put one message on the wire as `grant` (the account, and whose hand). `re` is the row
- *  it answers, when the wire wants to know (Gmail threads by it). Throws to fail the send —
+/** One message for the wire: the MIME, the Message-ID it wears, and — for a reply — the
+ *  mailbox's id for the thread it goes into. */
+export interface MailOut {
+  mime: string;
+  messageId: string;
+  thread?: string;
+}
+
+/** Put one message on the wire as `grant` (the account, and whose hand), answering with
+ *  the thread the mailbox filed it in when the wire can say. Throws to fail the send —
  *  `DispatchError` carries the class. */
 export type MailSend = (
   grant: { connection: string; agentId?: string },
-  mime: string,
-  re?: MessageEvent,
-) => Promise<void>;
+  out: MailOut,
+) => Promise<{ thread?: string }>;
 
 export interface MailDispatchDeps {
   service: Service;
@@ -438,11 +473,13 @@ interface Work {
 }
 
 /** Wire dispatch to the log — the shared loop (`dispatcher.ts`) with one leg: a message is
- *  a MIME the wire sends. A send into a thread the log holds goes to the thread's cast,
- *  answering the line `re` named or else the thread's latest, under `Re:` its name; a send
- *  to addresses opens a thread, and the row moves to the id minted for it. Mail has no
- *  edit, delete or reaction, so those sends fail with the sentence rather than vanish.
- *  Returns stop. */
+ *  a MIME the wire sends. A send into a thread the account's log holds goes to the
+ *  thread's members — a reply-all to its latest message whose recipients the log knows —
+ *  under `Re:` its name. `re` quotes: it names the line answered (`In-Reply-To`), and
+ *  without it the answer is to the thread's latest; either way the members are the
+ *  same. A send to addresses opens a thread. The row moves to the thread the wire filed it
+ *  in, when that is not where it stood. Mail has no edit, delete or reaction, so those
+ *  sends fail with the sentence rather than vanish. Returns stop. */
 export function createMailDispatch(deps: MailDispatchDeps): () => Promise<void> {
   const now = deps.now ?? (() => new Date().toISOString());
   return createDispatcher<Work>({
@@ -467,14 +504,17 @@ export function createMailDispatch(deps: MailDispatchDeps): () => Promise<void> 
       if (action && action !== "reply") {
         throw new DispatchError(`mail cannot ${action} a message once sent`, 400);
       }
-      // the thread this send lands in: the mail rows the log files at its address, newest
-      // first — none, and the address is who it opens one with
+      // the thread this send lands in: the mail rows the account's log files at its
+      // address, newest first — none, and the address is who it opens one with
       const thread = (await deps.read({
+        connection: work.connection,
         conversation: work.address,
         types: ["message"],
         limit: THREAD_REACH,
       }) as MessageEvent[])
-        .filter((e) => e.id !== event.id && e.envelope.external_id?.startsWith("mail:"))
+        .filter((e) =>
+          e.id !== event.id && messageIdOf(work.connection, e.envelope.external_id) !== undefined
+        )
         .reverse();
       if (thread.length === 0 && !isMailAddress(work.address)) {
         throw new DispatchError(`${work.address} is not a mail address`, 400);
@@ -482,20 +522,26 @@ export function createMailDispatch(deps: MailDispatchDeps): () => Promise<void> 
       // the referent: the message this one answers — the line named, else the thread's last
       let re: MessageEvent | undefined;
       if (work.ref) {
-        if (!work.ref.startsWith("mail:")) {
-          throw new DispatchError("the message replied to is not a mail", 400);
+        if (messageIdOf(work.connection, work.ref) === undefined) {
+          throw new DispatchError("the message replied to is not a mail of this account", 400);
         }
-        [re] = (await deps.read({ externalId: work.ref, types: ["message"] })) as MessageEvent[];
+        [re] = (await deps.read({
+          connection: work.connection,
+          externalId: work.ref,
+          types: ["message"],
+        })) as MessageEvent[];
       } else re = thread[0];
       const name = event.envelope.conversation.name;
       const subject = thread.length ? (name ? `Re: ${name}` : undefined) : name;
+      // the members: whoever the latest message the log knows the recipients of went to
+      const latest = thread.find((e) => mailOf(e) !== undefined);
       const to = thread.length
-        ? cast(work.connection, thread)
+        ? (latest ? replyAll(work.connection, latest) : [])
         : work.address.split(",").map((a) => mailbox(a));
       if (to.length === 0) throw new DispatchError("the thread has nobody to answer", 400);
-      // the headers a thread is filed by: the root the thread is addressed at, then the parent
-      const parent = re?.envelope.external_id?.slice("mail:".length);
-      const references = parent ? [...new Set([work.address, parent])] : [];
+      // the headers a reply is threaded by: the parent, and the chain the parent carried
+      const parent = messageIdOf(work.connection, re?.envelope.external_id);
+      const references = re && parent ? referencesTo(work.connection, re, parent) : [];
       // local files ride as attachments; an external link joins the words as a line
       const files: Outgoing["files"] = [];
       const links: string[] = [];
@@ -525,14 +571,22 @@ export function createMailDispatch(deps: MailDispatchDeps): () => Promise<void> 
         text,
         files,
       });
-      await deps.send({ connection: work.connection, agentId: event.agent?.id }, mime, re);
-      // the id is ours, so the row carries it before the Sent copy comes back to merge —
-      // and a thread opened here is filed at it, where the replies will land
+      const filed = await deps.send({ connection: work.connection, agentId: event.agent?.id }, {
+        mime,
+        messageId: id,
+        ...(thread.length ? { thread: work.address } : {}),
+      });
+      // the id is ours, so the row carries it before the Sent copy comes back to merge. The
+      // row stands where the mailbox filed it: a thread opened here is the one the wire
+      // answered, and a wire that cannot say leaves it at the minted id
+      const at = filed.thread ?? (thread.length ? work.address : id);
       return {
         id,
-        external_id: mailRef(id),
+        external_id: mailRef(work.connection, id),
         sender: { address: work.connection },
-        ...(thread.length === 0 ? { conversation: mailConversation(id, { subject }) } : {}),
+        ...(at !== work.address
+          ? { conversation: mailConversation(at, { subject: name ?? subject }) }
+          : {}),
       };
     },
   });
