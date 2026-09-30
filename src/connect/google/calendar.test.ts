@@ -161,12 +161,16 @@ Deno.test("a new event is a create: a plain calendar message keyed on the stable
     const cap = captor();
     await poller(creds, (input) => {
       assertEquals(new URL(String(input)).searchParams.get("syncToken"), "tok1");
-      return Promise.resolve(jsonResponse({ items: [created], nextSyncToken: "tok2" }));
+      // an events.list names the calendar beside its items
+      return Promise.resolve(
+        jsonResponse({ summary: "Ana Pérez", items: [created], nextSyncToken: "tok2" }),
+      );
     }, cap.publish).tick();
 
     assertEquals(cap.rows.length, 1);
     const row = cap.rows[0];
     assertEquals(row.envelope.service, "google");
+    assertEquals(row.envelope.conversation.name, "Ana Pérez"); // the calendar's display name
     assertEquals(row.envelope.connection_address, "ana@example.com");
     // `primary` resolves to its true id — the grant's email (meeting ids copy across
     // attendee calendars, so a grant-relative referent would collide two grants' views)

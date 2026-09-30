@@ -670,7 +670,8 @@ Decisions:
   uniqueness is the point. Conversation addresses wear no prefix: the local service names
   a session's room `mind@<agent>`, a direct room its sorted members joined by `,`
   (`mind@ana,mind@bo`), and a group or channel by a minted id whose name and kind the
-  `conversations` table holds; a calendar is addressed by its id. An address is
+  `conversations` table holds; a calendar is addressed by its id and named by its display
+  name. An address is
   meaningful WITH its envelope (or its `<conv>` element); single-string positions
   (`send.to`, log filters) rely on addresses not colliding across services — acceptable:
   platform id spaces (Slack C/D ids, jids, `owner/repo#N`, `@` names) are disjoint in

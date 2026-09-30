@@ -167,8 +167,10 @@ async function pollCalendar(
   const upn = key.slice(GRANT_PREFIX.length);
   // `primary` is an ALIAS, not an identity — its true id is the grant's address. The API is
   // still called by the configured alias; only what we publish resolves.
-  const conversation = calendarConversation(calendarId === "primary" ? upn : calendarId);
-  const base = { service: SERVICE, connection_address: upn, conversation };
+  const address = calendarId === "primary" ? upn : calendarId;
+  // the delta feed does not carry the calendar's name: one read, the first time a change
+  // has a row to publish
+  let name: Promise<string | undefined> | undefined;
   let published = 0;
   let link: string | undefined;
   try {
@@ -177,6 +179,12 @@ async function pollCalendar(
         ? { id: item.id!, change: "delete" as const, ts: now() }
         : await changeOf(graph, item.id!, now);
       if (!change) return;
+      name ??= getCalendarName(graph, calendarId);
+      const base = {
+        service: SERVICE,
+        connection_address: upn,
+        conversation: calendarConversation(address, await name),
+      };
       for (const draft of calendarRows(base, change)) await deps.publish(draft);
       published++;
     });
@@ -303,6 +311,21 @@ async function round(
     next = page["@odata.nextLink"];
   }
   return undefined;
+}
+
+/** The calendar's display name — `primary` is the account's default calendar. */
+async function getCalendarName(
+  graph: (url: string, headers?: Record<string, string>) => Promise<Response>,
+  calendarId: string,
+): Promise<string | undefined> {
+  const calendar = calendarId === "primary"
+    ? "calendar"
+    : `calendars/${encodeURIComponent(calendarId)}`;
+  const res = await graph(`${GRAPH}/v1.0/me/${calendar}?$select=name`);
+  if (!res.ok) {
+    throw new Error(`calendar name ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  }
+  return (await res.json() as { name?: string }).name;
 }
 
 /** The event behind a listed id, in UTC with a text body; `undefined` when it is gone. */

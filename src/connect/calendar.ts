@@ -23,9 +23,9 @@
  * `sender` is the event's organizer (the line's `from`), NO `agent` (the transcriber's trick
  * to keep a broker-authored row off the wire — dispatch wants `agent` — and out of fan-in, §4).
  *
- * The conversation is the calendar's id, kind `broadcast`: a calendar is fan-out, not a
- * room anyone is in, so render wears no voice on a senderless line (a tombstone has no
- * organizer). `<calendar>` is the calendar's TRUE id — the service's alias for the account's
+ * The conversation is the calendar's id, named by the calendar's display name, kind
+ * `broadcast`: a calendar is fan-out, not a room anyone is in, so render wears no voice on a
+ * senderless line (a tombstone has no organizer). `<calendar>` is the calendar's TRUE id — the service's alias for the account's
  * own calendar (`primary`) resolves to the grant's address, because meeting ids COPY across
  * attendee calendars (the organizer's id lands in every copy) and `external_id` is globally
  * unique in the log: a grant-relative referent would collapse two grants' views of one
@@ -62,9 +62,10 @@ export interface CalendarChange {
   text?: string;
 }
 
-/** The conversation a calendar's changes land in. `calendar` is the TRUE id. */
-export function calendarConversation(calendar: string): Conversation {
-  return { address: calendar, kind: "broadcast" };
+/** The conversation a calendar's changes land in. `calendar` is the TRUE id; `name` is the
+ *  calendar's display name, when the service gave one. */
+export function calendarConversation(calendar: string, name?: string): Conversation {
+  return { address: calendar, kind: "broadcast", ...(name ? { name } : {}) };
 }
 
 /** One change → the rows it means, in the action language (§3). */

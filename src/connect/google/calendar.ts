@@ -68,6 +68,8 @@ export interface CalendarEvent {
 }
 
 interface EventsList {
+  /** The CALENDAR's title — every page of an events.list carries it beside the items. */
+  summary?: string;
   items?: CalendarEvent[];
   nextPageToken?: string;
   nextSyncToken?: string;
@@ -129,8 +131,7 @@ async function pollCalendar(
   const email = key.slice(GRANT_PREFIX.length);
   // `primary` is an ALIAS, not an identity — its true calendarId is the grant's email. The
   // API is still called by the configured alias; only what we publish resolves.
-  const conversation = calendarConversation(calendarId === "primary" ? email : calendarId);
-  const base = { service: SERVICE, connection_address: email, conversation };
+  const address = calendarId === "primary" ? email : calendarId;
   let pageToken: string | undefined;
   let nextSyncToken: string | undefined;
   let published = 0;
@@ -145,6 +146,11 @@ async function pollCalendar(
       }
       throw err;
     }
+    const base = {
+      service: SERVICE,
+      connection_address: email,
+      conversation: calendarConversation(address, page.summary),
+    };
     for (const item of page.items ?? []) {
       if (!item.id) continue;
       for (const draft of calendarRows(base, changeOf(item, now))) await deps.publish(draft);

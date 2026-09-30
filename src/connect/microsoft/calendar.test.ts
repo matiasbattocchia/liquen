@@ -48,7 +48,10 @@ async function withVault(
 
 type Call = { url: URL; headers: Headers };
 
-/** A Graph that answers the delta by URL and a detail read by event id. */
+const CALENDAR_NAME = "Work";
+
+/** A Graph that answers the delta by URL, a detail read by event id, and the calendar's
+ *  own read with its display name. */
 function graph(
   delta: (url: URL) => unknown | Response,
   events: Record<string, unknown> = {},
@@ -57,6 +60,9 @@ function graph(
   return ((input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
     calls.push({ url, headers: new Headers(init?.headers) });
+    if (/^\/v1\.0\/me\/calendars?(\/[^/]+)?$/.test(url.pathname)) {
+      return Promise.resolve(Response.json({ name: CALENDAR_NAME }));
+    }
     const m = url.pathname.match(/^\/v1\.0\/me\/events\/(.+)$/);
     if (m) {
       const ev = events[decodeURIComponent(m[1])];
@@ -194,6 +200,10 @@ Deno.test("a new event is a create: the deltaLink is fetched as it is, the event
     // `primary` resolves to its true id — the grant's address
     assertEquals(row.envelope.conversation.address, "ana@contoso.com");
     assertEquals(row.envelope.conversation.kind, "broadcast");
+    // the delta names no calendar: its display name is one read of the calendar itself
+    assertEquals(row.envelope.conversation.name, CALENDAR_NAME);
+    assertEquals(calls[2].url.pathname, "/v1.0/me/calendar");
+    assertEquals(calls[2].url.searchParams.get("$select"), "name");
     assertEquals(row.envelope.external_id, "calendar:ana@contoso.com:AAMk1"); // the STABLE referent
     assertEquals(row.payload?.action, undefined);
     assertEquals(row.envelope.sender, { address: "ana@contoso.com", name: "Ana" }); // organizer
@@ -273,7 +283,7 @@ Deno.test("an edit is action:edit referencing the create; the original stays sea
   });
 });
 
-Deno.test("a removal is action:delete + a merge-only deleted_at stamp — and reads nothing back", async () => {
+Deno.test("a removal is action:delete + a merge-only deleted_at stamp — and reads no event back", async () => {
   await withVault(async (creds) => {
     await seeded(creds);
     const calls: Call[] = [];
@@ -291,7 +301,8 @@ Deno.test("a removal is action:delete + a merge-only deleted_at stamp — and re
       cap.publish,
     ).tick();
 
-    assertEquals(calls.length, 1, "a removed id has no event to read");
+    assertEquals(calls.length, 2, "a removed id has no event to read — only the calendar's name");
+    assertEquals(calls[1].url.pathname, "/v1.0/me/calendar");
     assertEquals(cap.rows.length, 2); // the delete event + the merge-only stamp
     const del = cap.rows[0];
     assertEquals(del.payload?.action, "delete");
@@ -385,6 +396,7 @@ Deno.test("a named calendar is asked by id and keeps it — only `primary` resol
       [team],
     ).tick();
     assertEquals(cap.rows[0].envelope.conversation.address, team);
+    assertEquals(cap.rows[0].envelope.conversation.name, CALENDAR_NAME);
     assertEquals(cap.rows[0].envelope.external_id, `calendar:${team}:AAMk9`);
     assertEquals((await syncOf(creds))![team], `${link}b`); // the cursor keys on the CONFIGURED id
   });
