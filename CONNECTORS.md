@@ -556,13 +556,12 @@ message's read), its `conversationId` the thread it is filed in, and the body as
 asks `$filter=receivedDateTime ge now` and publishes nothing; an `@removed` is a message
 leaving the folder, not one unsaid, and publishes nothing; attachments come with their
 bytes in the folder's `attachments` listing, `isInline` ones left out. Sending is `POST
-/me/sendMail` with the MIME itself as the base64 body: Exchange threads by the `References`
-header and keeps its copy in Sent Items, where the poll finds it under the Message-ID the
-MIME already wore. `sendMail` answers with nothing, so the send then asks
-`/me/messages?$filter=internetMessageId eq '<id>'` for that copy's `conversationId` — the
-thread Exchange filed it in — a few times over the seconds the copy takes to land, under
-`Mail.Read`; a copy that has not landed leaves a new thread's row at its Message-ID. The
-mapping is `src/connect/mail.ts`, shared with Gmail (§5).
+/me/messages` with the MIME itself as the base64 body, which makes a draft — Exchange files
+it by the `References` header, and the answer carries its `conversationId`, the thread the
+row stands in — then `POST /me/messages/<id>/send`; a draft the send refuses is deleted.
+The draft needs `Mail.ReadWrite` beside `Mail.Send`, and a grant without it fails the send
+naming the scope. The copy in Sent Items comes back through the poll under the Message-ID
+the MIME already wore. The mapping is `src/connect/mail.ts`, shared with Gmail (§5).
 
 For the **calendar** the feed is the events delta — `/beta/me/calendar/events/delta
 ?startDateTime=now`, the one Graph feed that runs from a point forward, unbounded, and

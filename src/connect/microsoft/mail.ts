@@ -21,12 +21,11 @@
  *
  * A message's thread is its `conversationId`, the conversation the row is filed in.
  *
- * Sending is `POST /me/sendMail` with the MIME itself as the body, base64: Exchange files
- * the message by the `References` header the MIME carries and keeps its copy in Sent
- * Items, where the poll finds it under the Message-ID the MIME already wore. `sendMail`
- * answers with nothing, so the send then asks the mailbox for that copy by its
- * Message-ID — `Mail.Read` is enough — to learn the `conversationId` Exchange filed it
- * under, waiting out the moment the copy takes to land.
+ * Sending is two calls: `POST /me/messages` with the MIME itself as the body, base64,
+ * makes a draft — Exchange files it by the `References` header the MIME carries, and
+ * answers with the draft's `conversationId`, the thread the message is in — then
+ * `POST /me/messages/<id>/send` sends it. The draft needs `Mail.ReadWrite`. The copy in
+ * Sent Items comes back through the poll under the Message-ID the MIME already wore.
  */
 
 import { decodeBase64, encodeBase64 } from "@std/encoding/base64";
@@ -331,53 +330,43 @@ async function getMessage(graph: Graph, id: string): Promise<GraphMessage | unde
 
 /* ── the send: sendMail with the MIME as the body ─────────────────────────────────── */
 
-/** How long the send waits, between asks, for the Sent copy to land: Exchange files it
- *  within a second or two of `sendMail` answering. */
-export const FILED_WAITS_MS = [500, 1000, 2000, 4000];
-
-/** The wire's send for a grant: the MIME itself, base64, to `sendMail`; then the Sent
- *  copy's `conversationId`, the thread Exchange filed it in. A copy that has not landed by
- *  the last ask leaves the thread unsaid. */
-export function outlookSend(
-  deps: MailWireDeps & { sleep?: (ms: number) => Promise<void> },
-): MailSend {
-  const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-  return async ({ connection, agentId }, { mime, messageId }) => {
+/** The wire's send for a grant: the MIME itself, base64, made a draft — which names the
+ *  conversation Exchange filed it in — and the draft sent. A draft the send refuses is
+ *  deleted, so a retry leaves none behind. */
+export function outlookSend(deps: MailWireDeps): MailSend {
+  return async ({ connection, agentId }, { mime }) => {
     const key = `${GRANT_PREFIX}${connection}`;
     const token = await deps.broker.accessTokenFor(deps.broker.issue(key, agentId));
     if (!token) throw new DispatchError(`no access token for ${key}`, 401);
     const authorization = `Bearer ${token}`;
-    const res = await deps.fetchApi(`${GRAPH}/sendMail`, {
+    const made = await deps.fetchApi(`${GRAPH}/messages`, {
       method: "POST",
       headers: { authorization, "content-type": "text/plain" },
       body: encodeBase64(new TextEncoder().encode(mime)),
     });
-    if (!res.ok) {
+    if (!made.ok) {
       throw new DispatchError(
-        `graph sendMail: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`,
-        res.status,
+        `graph draft: HTTP ${made.status} ${(await made.text()).slice(0, 300)}` +
+          (made.status === 403 ? " — sending needs Mail.ReadWrite on the grant" : ""),
+        made.status,
       );
     }
-    await res.body?.cancel();
-    // the message is sent: from here nothing fails the send, a lookup only names its thread
-    const q = new URLSearchParams({
-      $filter: `internetMessageId eq '<${messageId.replaceAll("'", "''")}>'`,
-      $select: "conversationId",
+    const draft = await made.json() as { id?: string; conversationId?: string };
+    if (!draft.id) throw new DispatchError("graph draft: no id in the answer", 502);
+    const draftUrl = `${GRAPH}/messages/${encodeURIComponent(draft.id)}`;
+    const sent = await deps.fetchApi(`${draftUrl}/send`, {
+      method: "POST",
+      headers: { authorization },
     });
-    for (const wait of FILED_WAITS_MS) {
-      await sleep(wait);
-      try {
-        const found = await deps.fetchApi(`${GRAPH}/messages?${q}`, { headers: { authorization } });
-        if (!found.ok) {
-          await found.body?.cancel();
-          continue;
-        }
-        const { value } = await found.json() as { value?: { conversationId?: string }[] };
-        const thread = value?.find((m) => m.conversationId)?.conversationId;
-        if (thread) return { thread };
-      } catch { /* the next ask */ }
+    if (!sent.ok) {
+      const why = `graph send: HTTP ${sent.status} ${(await sent.text()).slice(0, 300)}`;
+      await deps.fetchApi(draftUrl, { method: "DELETE", headers: { authorization } })
+        .then((r) => r.body?.cancel())
+        .catch(() => {});
+      throw new DispatchError(why, sent.status);
     }
-    return {};
+    await sent.body?.cancel();
+    return draft.conversationId ? { thread: draft.conversationId } : {};
   };
 }
 

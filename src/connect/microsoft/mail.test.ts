@@ -291,26 +291,15 @@ Deno.test("outlook mail: parseMessage — an HTML body the wire insisted on beco
   });
 });
 
-Deno.test("outlook send: the MIME rides sendMail as base64 text, then the Sent copy names its conversation; a refusal carries its class", async () => {
+Deno.test("outlook send: the MIME, base64, is made a draft that names its conversation, then the draft is sent", async () => {
   await withVault(async (creds) => {
     const calls: Call[] = [];
-    const waits: number[] = [];
-    let asks = 0;
     const send = outlookSend({
       creds,
       broker: createGrantBroker({ creds }),
-      sleep: (ms) => {
-        waits.push(ms);
-        return Promise.resolve();
-      },
       fetchApi: graph({
-        "/sendMail": new Response(null, { status: 202 }),
-        // the copy lands on the second ask
-        "/messages": (url: URL) => {
-          assertEquals(url.searchParams.get("$filter"), "internetMessageId eq '<u1@contoso.com>'");
-          assertEquals(url.searchParams.get("$select"), "conversationId");
-          return { value: ++asks < 2 ? [] : [{ conversationId: "AAQk42" }] };
-        },
+        "/messages": Response.json({ id: "AAMk7", conversationId: "AAQk42" }, { status: 201 }),
+        "/messages/AAMk7/send": new Response(null, { status: 202 }),
       }, calls),
     });
     const mime = "From: <ana@contoso.com>\r\n\r\nhi\r\n";
@@ -320,40 +309,49 @@ Deno.test("outlook send: the MIME rides sendMail as base64 text, then the Sent c
       thread: "AAQk42",
     });
     assertEquals(filed, { thread: "AAQk42" });
-    assertEquals(calls.length, 3);
-    assertEquals(calls[0].init?.method, "POST");
+    assertEquals(calls.map((c) => [c.init?.method, c.url.pathname]), [
+      ["POST", "/v1.0/me/messages"],
+      ["POST", "/v1.0/me/messages/AAMk7/send"],
+    ]);
     assertEquals(calls[0].headers.get("content-type"), "text/plain");
-    assertEquals(calls[0].headers.get("authorization"), "Bearer eyJ.fresh");
     assertEquals(new TextDecoder().decode(decodeBase64(String(calls[0].init?.body))), mime);
-    assertEquals(calls[1].headers.get("authorization"), "Bearer eyJ.fresh");
-    assertEquals(waits, [500, 1000]);
+    for (const c of calls) assertEquals(c.headers.get("authorization"), "Bearer eyJ.fresh");
+  });
+});
 
-    // a copy that never lands: the send stands, its thread unsaid
-    const unsaid = outlookSend({
+Deno.test("outlook send: a draft refused names the scope; a draft the send refuses is deleted", async () => {
+  await withVault(async (creds) => {
+    const mime = "From: <ana@contoso.com>\r\n\r\nhi\r\n";
+    const out = { mime, messageId: "u1@contoso.com" };
+    // a grant without Mail.ReadWrite makes no draft
+    const bare = outlookSend({
       creds,
       broker: createGrantBroker({ creds }),
-      sleep: () => Promise.resolve(),
       fetchApi: graph({
-        "/sendMail": new Response(null, { status: 202 }),
-        "/messages": new Response("busy", { status: 503 }),
+        "/messages": new Response('{"error":"ErrorAccessDenied"}', { status: 403 }),
       }),
     });
-    assertEquals(
-      await unsaid({ connection: "ana@contoso.com" }, { mime, messageId: "u2@contoso.com" }),
-      {},
-    );
+    const denied = await bare({ connection: "ana@contoso.com" }, out).catch((e) => e);
+    assert(denied instanceof Error);
+    assertStringIncludes(denied.message, "HTTP 403");
+    assertStringIncludes(denied.message, "Mail.ReadWrite");
+    assertEquals((denied as { code?: number }).code, 403);
 
+    const calls: Call[] = [];
     const refused = outlookSend({
       creds,
       broker: createGrantBroker({ creds }),
       fetchApi: graph({
-        "/sendMail": new Response('{"error":"ErrorAccessDenied"}', { status: 403 }),
-      }),
+        "/messages": Response.json({ id: "AAMk8", conversationId: "AAQk9" }, { status: 201 }),
+        "/messages/AAMk8/send": new Response("quota", { status: 429 }),
+        "/messages/AAMk8": new Response(null, { status: 204 }),
+      }, calls),
     });
-    const err = await refused({ connection: "ana@contoso.com" }, { mime, messageId: "u3@c.com" })
-      .catch((e) => e);
+    const err = await refused({ connection: "ana@contoso.com" }, out).catch((e) => e);
     assert(err instanceof Error);
-    assertStringIncludes(err.message, "HTTP 403");
-    assertEquals((err as { code?: number }).code, 403);
+    assertStringIncludes(err.message, "HTTP 429");
+    assertEquals((err as { code?: number }).code, 429);
+    assertEquals(calls.at(-1)?.init?.method, "DELETE");
+    assertEquals(calls.at(-1)?.url.pathname, "/v1.0/me/messages/AAMk8");
   });
 });

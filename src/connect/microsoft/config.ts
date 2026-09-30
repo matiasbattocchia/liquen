@@ -17,7 +17,8 @@ export const DEFAULT_LISTEN: Surface[] = [...SURFACES];
 /** `primary` is the account's own calendar (Graph's `/me/calendar`); any other entry is a
  *  calendar id from `/me/calendars`. */
 export const DEFAULT_CALENDARS = ["primary"];
-/** Identity, the `/me` profile, the calendar, the mailbox read and sent, the member's
+/** Identity, the `/me` profile, the calendar, the mailbox read and written (a send is a
+ *  draft made from the MIME, then sent: the draft names its conversation), the member's
  *  chats read and written, the channels of their teams read and written, the files a
  *  Teams message carries (OneDrive items, shared by reference), and the rooms
  *  (`rooms.ts`): a chat made, its members added and removed, its topic; a channel made
@@ -37,7 +38,7 @@ export const DEFAULT_SCOPES = [
   "offline_access",
   "User.Read",
   "Calendars.ReadWrite",
-  "Mail.Read",
+  "Mail.ReadWrite",
   "Mail.Send",
   "Chat.ReadWrite",
   "Chat.Create",

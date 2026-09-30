@@ -73,7 +73,7 @@ message, new times on an event); `DELETE` removes.
 ## What a 403 means
 
 The grant carries only the permissions the account holder approved at sign-in:
-`Mail.Read`, `Mail.Send`, `Calendars.ReadWrite`, `Chat.ReadWrite`, `ChannelMessage.Send`,
+`Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `Chat.ReadWrite`, `ChannelMessage.Send`,
 `ChannelMessage.Read.All`… A 403 with `Authorization_RequestDenied` or `AccessDenied`
 means the grant lacks the one this call needs; say which, and the person who connected
 the account can approve it. Reading channel messages is a permission a tenant's admins

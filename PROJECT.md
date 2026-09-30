@@ -4925,10 +4925,11 @@ A review of how mail is threaded and answered found the reply's recipients the w
   Message-ID read off `References[0]`, else the parent's filing in the log, which split
   threads whose clients cut `References` and depended on the order messages arrived in.
   It is now Gmail's `threadId` and Graph's `conversationId`. Gmail's send answers with the
-  thread it filed the message in; Outlook's `sendMail` answers nothing, so the send asks
-  for the Sent copy by Message-ID (`Mail.Read`, a few tries over ~7 s) to learn its
-  `conversationId`. A copy that has not landed by then leaves a new thread's row at its
-  Message-ID.
+  thread it filed the message in. Outlook's `sendMail` answers nothing, so an Outlook send
+  makes a draft from the MIME (`POST /me/messages`), whose answer carries its
+  `conversationId`, and sends the draft. That needs `Mail.ReadWrite`, which replaces
+  `Mail.Read` in the default scopes; an existing grant takes it on re-consent, and until
+  then its sends fail naming the scope.
 - **One message in two mailboxes was one row.** `external_id` was `mail:<Message-ID>` and
   is unique log-wide, so the second account's copy merged into the first and kept the
   first's thread and account. It is `mail:<account>:<Message-ID>`. The dispatch reads the

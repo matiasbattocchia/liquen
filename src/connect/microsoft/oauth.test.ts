@@ -23,7 +23,7 @@ const TOKENS: MicrosoftTokens = {
   access_token: "eyJ.short",
   refresh_token: "0.AAA.long",
   expires_in: 3599,
-  scope: "User.Read Calendars.ReadWrite Mail.Read Mail.Send Chat.ReadWrite Chat.Create " +
+  scope: "User.Read Calendars.ReadWrite Mail.ReadWrite Mail.Send Chat.ReadWrite Chat.Create " +
     "ChatMember.ReadWrite ChatMessage.Send ChannelMessage.Read.All ChannelMessage.Send " +
     "ChannelMessage.ReadWrite Team.ReadBasic.All Channel.ReadBasic.All Channel.Create " +
     "ChannelMember.ReadWrite.All ChannelSettings.ReadWrite.All Files.ReadWrite",
