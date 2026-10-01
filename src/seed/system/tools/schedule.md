@@ -1,3 +1,7 @@
+---
+kind: tool
+---
+
 Wake yourself later with a note. At the time you set, the note arrives as an alarm in this
 conversation and you decide then what to do about it; nothing is executed for you. Write the
 note to your future self, who will read it cold: say the thing to do, not `as discussed`. Use

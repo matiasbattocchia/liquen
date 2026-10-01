@@ -1,3 +1,7 @@
+---
+kind: tool
+---
+
 Search the message log: every conversation your agent can read, whichever session you are,
 including everything older than your window. Every filter narrows, and none is required: `in`
 with `after`/`before` and no `text` reads a stretch of a conversation as it happened. The

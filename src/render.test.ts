@@ -107,6 +107,15 @@ Deno.test("one cache breakpoint, on the last — an HOUR, since docs change when
   assertEquals(blocks.at(-1)!.cache_control, { type: "ephemeral", ttl: "1h" });
 });
 
+Deno.test("a tool doc is neither inlined nor indexed: its words ride the request's tools", () => {
+  const docs = [
+    ...clinicDocs(),
+    doc("system", "tool", "tools/send", {}),
+    doc("system", "tool", "tools/bash", { load: "always" }, "Run a bash command."),
+  ];
+  assertEquals(renderSystem(docs), renderSystem(clinicDocs()));
+});
+
 Deno.test("kind is the major sort key, then cascade scope, then name", () => {
   // an agent-scope instruction must precede an org-scope skill (instruction < skill)
   const docs = [

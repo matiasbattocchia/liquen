@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
-import { checkToolDocs, type ToolShape, worded, wordedAll } from "./tooldoc.ts";
+import { checkToolDocs, toolDocName, type ToolShape, worded, wordedAll } from "./tooldoc.ts";
 import { OWN_TOOLS } from "./xi.ts";
 import { bashShape } from "./exec/bash.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
@@ -66,7 +66,7 @@ Deno.test("worded: any disagreement with the schema is an error naming the file"
   const fails = (text: string, msg: string) =>
     assertStringIncludes(
       assertThrows(() => worded(PIN, text), Error).message,
-      `system/instructions/tools/pin.md: ${msg}`,
+      `system/tools/pin.md: ${msg}`,
     );
   fails("A pin.\n\n- at: x\n- limit: y", "no item for `place`");
   fails("A pin.\n\n- at: x\n- limit: y\n- place: z\n- color: w", "`color` is not a parameter");
@@ -85,7 +85,7 @@ Deno.test("wordedAll: a missing doc is named", async () => {
   await assertRejects(
     () => wordedAll([PIN], () => Promise.resolve(null)),
     Error,
-    "system/instructions/tools/pin.md is missing",
+    "system/tools/pin.md is missing",
   );
 });
 
@@ -95,7 +95,7 @@ Deno.test("the seeded docs word every builtin tool, the numbers filled from code
     await seedOrg(onFiles(root));
     const docs = openFileDocs(root);
     const read = (name: string) =>
-      docs.read({ agent: "a" }, { scope: "system", kind: "instruction", name });
+      docs.read({ agent: "a" }, { scope: "system", kind: "tool", name });
     const shapes = [...OWN_TOOLS, bashShape(120_000), ...Object.values(DOC_TOOLS)];
     await checkToolDocs(shapes, read);
     const tools = await wordedAll(shapes, read);
@@ -105,6 +105,12 @@ Deno.test("the seeded docs word every builtin tool, the numbers filled from code
     assertStringIncludes(bash.description!, "\n- aedit, over sed -i/perl -pi:");
     const search = tools.find((t) => t.name === "search")!;
     assertStringIncludes(search.description!, "(50 unless you set `limit`)");
+    // each file declares itself a tool doc, one per shape
+    const listed = (await docs.list({ agent: "a" })).filter((d) => d.header.kind === "tool");
+    assertEquals(
+      listed.map((d) => d.header.name).sort(),
+      shapes.map((s) => toolDocName(s.spec.name)).sort(),
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
   }

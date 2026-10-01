@@ -2,7 +2,7 @@
  * store/docs.ts — the Docs port (read side): substrate access to the doc cascade.
  *
  * The durable, human/agent-authored side of the substrate (DESIGN §8): instructions, skills,
- * memory, and tool (MCP) config, across four scopes:
+ * memory, and tools (a builtin's words, an MCP registration), across four scopes:
  *
  *   system → org → agent → conversation
  *

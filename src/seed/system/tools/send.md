@@ -1,3 +1,7 @@
+---
+kind: tool
+---
+
 Dispatch a message to an external world conversation (<conv>). Note: this tool is not needed
 for internal user-assistant conversations (<principal>); you must not use send to refer to a
 principal because they are present in this same conversation.

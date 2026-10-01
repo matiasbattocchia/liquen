@@ -56,7 +56,10 @@ const FIXTURE_TOOLS: Record<string, string> = {
 async function docsAt(root: string) {
   await seedOrg(onFiles(root));
   for (const [name, words] of Object.entries(FIXTURE_TOOLS)) {
-    await Deno.writeTextFile(`${root}/system/instructions/tools/${name}.md`, `${words}\n`);
+    await Deno.writeTextFile(
+      `${root}/system/tools/${name}.md`,
+      `---\nkind: tool\n---\n\n${words}\n`,
+    );
   }
   return openFileDocs(root);
 }

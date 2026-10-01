@@ -1,10 +1,10 @@
 /**
  * tooldoc.ts — a builtin tool's words (DESIGN §9): what the model reads about a tool lives
- * in `system/instructions/tools/<name>.md`, editable like any instruction; the code holds
+ * in `system/tools/<name>.md`, a doc of `kind: tool`, editable like any doc; the code holds
  * the schema the handler reads — names, types, enums, what is required — and no words.
  *
- * The file has no frontmatter, so the docs index never lists it; the harness reads it by
- * name each turn. Its last block, after a blank line, is one item per parameter:
+ * Render lays no tool doc out; the harness reads each by name every turn. After the
+ * frontmatter, the last block, after a blank line, is one item per parameter:
  *
  *   - name: what it is
  *     a wrapped line continues the item above it
@@ -34,7 +34,7 @@ export interface ToolShape {
 export type ToolDocReader = (name: string) => Promise<string | null>;
 
 /** Where a tool's words live, relative to the system scope. */
-export const toolDocName = (tool: string) => `instructions/tools/${tool}`;
+export const toolDocName = (tool: string) => `tools/${tool}`;
 
 const fileOf = (tool: string) => `system/${toolDocName(tool)}.md`;
 

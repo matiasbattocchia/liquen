@@ -15,7 +15,7 @@
  * by hand; `install`'s rule is what makes all three the same call.
  *
  * The system templates sit in the tree they install into — `system/<kind>/<name>.md` — so
- * an org may symlink `system/instructions/` or `system/skills/` at the checkout's folder and
+ * an org may symlink `system/instructions/`, `system/tools/` or `system/skills/` at the checkout's folder and
  * read the harness's words live, new files included. A skill that teaches one connector's
  * service sits there too, and is laid by that connector's door (`seedSkill`), not by boot:
  * an org has it iff it connected the service. The org and agent templates are flat,
@@ -85,8 +85,8 @@ export function onFiles(root: string): Seedbed {
 /** One doc to lay: scope, owner, name, template. */
 type Template = [DocScope, string, string, string];
 
-/** The builtin tools whose words are docs (tooldoc.ts), one file each under
- *  `system/instructions/tools/`. */
+/** The builtin tools whose words are docs (tooldoc.ts), one `kind: tool` file each under
+ *  `system/tools/`. */
 const TOOL_DOCS = [
   "send",
   "search",
@@ -131,8 +131,8 @@ export async function seedOrg(bed: Seedbed): Promise<void> {
     ...TOOL_DOCS.map((tool): Template => [
       "system",
       "",
-      `instructions/tools/${tool}`,
-      `system/instructions/tools/${tool}.md`,
+      `tools/${tool}`,
+      `system/tools/${tool}.md`,
     ]),
     ["system", "", "skills/workflows", "system/skills/workflows.md"],
     ["system", "", "skills/transcribe-audio", "system/skills/transcribe-audio.md"],

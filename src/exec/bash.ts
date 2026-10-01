@@ -106,7 +106,7 @@ function userSpaceEnv(binPath?: string): Record<string, string> {
 }
 
 /** The bash tool's schema and the numbers its doc names — the same contract wherever the
- *  shell runs; its words are `system/instructions/tools/bash.md` (tooldoc.ts). */
+ *  shell runs; its words are `system/tools/bash.md` (tooldoc.ts). */
 export function bashShape(timeoutMsDefault: number): ToolShape {
   return {
     spec: {

@@ -49,7 +49,7 @@ type MessageParam = Anthropic.MessageParam;
 type ContentBlockParam = Anthropic.ContentBlockParam;
 type Role = "user" | "assistant";
 
-const KIND_ORDER: DocKind[] = ["instruction", "skill", "memory", "tool"];
+const KIND_ORDER: DocKind[] = ["instruction", "skill", "memory"];
 const SCOPE_ORDER: DocScope[] = ["system", "organization", "agent", "conversation"];
 
 /**
@@ -181,7 +181,8 @@ function envBody(env: Env): string | undefined {
 const RULE = "\n\n---\n\n";
 
 export function renderSystem(docs: DocEntry[], env: Env = {}): TextBlockParam[] {
-  const ordered = [...docs].sort(byCascade);
+  // a tool doc is the tool's words, which the request's `tools` carry (tooldoc.ts)
+  const ordered = docs.filter((d) => d.header.kind !== "tool").sort(byCascade);
   const blocks: TextBlockParam[] = [];
   const add = (text: string) =>
     blocks.push({ type: "text", text: (blocks.length ? RULE : "") + text.trimEnd() });

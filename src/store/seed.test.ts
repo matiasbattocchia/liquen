@@ -15,6 +15,18 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
       "system/instruction/instructions/system",
       "system/skill/skills/transcribe-audio",
       "system/skill/skills/workflows",
+      ...[
+        "bash",
+        "cancel",
+        "contact",
+        "conversation",
+        "edit",
+        "read",
+        "schedule",
+        "search",
+        "send",
+        "write",
+      ].map((t) => `system/tool/tools/${t}`),
     ]);
     const byName = new Map(docs.map((d) => [d.header.name, d]));
     assert(byName.get("instructions/system")!.body); // always ⇒ inlined, whatever it says

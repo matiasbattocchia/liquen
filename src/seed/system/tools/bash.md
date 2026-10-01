@@ -1,3 +1,7 @@
+---
+kind: tool
+---
+
 Run a bash command. The working directory PERSISTS between calls like a terminal (cd once, it
 sticks), but shell/env state (exported vars, activated venvs) does not, so re-export or chain
 those. stdout+stderr merged; output truncated to the last {{max_lines}} lines / {{max_kb}}KB

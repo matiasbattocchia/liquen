@@ -2010,8 +2010,9 @@ names the text it replaces, and text that is no longer there matches nothing.
 
 - **Setup is conversational**: the principal tells the agent "set up my calendar" → the
   agent runs an MCP-setup flow. The chat *is* the config UI (no dedicated UI).
-- **`docs.kind: "tool"`** = an MCP registration (per-scope), loaded by nu into the tool
-  registry — config, not rendered content.
+- **`docs.kind: "tool"`** = what a tool is to the model, never rendered as a doc: a
+  builtin's words (§9, read by name each turn) and an MCP registration (per-scope), loaded
+  by nu into the tool registry as config.
 - **Credentials in a table the agent cannot read** (RLS deny-all; its own accessor on
   SQLite). `docs.kind=tool` holds non-secret config + a `credential_key` into the vault
   (§4); nu/gateway resolves the token at call time
@@ -2200,11 +2201,11 @@ the FULL form (the card: approving is judging exactly what will be said). `send`
 own, and what it adds is the one thing no generic rule can know — a NAME where the wire has
 an address: `send(to: Vivian, text: …)`, the address standing when nothing names it.
 
-**A tool's words are a FILE** — `system/instructions/tools/<name>.md` (seeded, one per
-builtin tool, `src/tooldoc.ts`), editable like any instruction and the words' only source;
-the code holds the schema the handler reads (names, types, enums, `required`) and no
-prose. Like the checkpoint prompt it carries no frontmatter, so it is never indexed: each
-turn reads it by name. The file is the description, then a last block with one item per
+**A tool's words are a DOC** — `system/tools/<name>.md`, `kind: tool` (seeded, one per
+builtin tool, `src/tooldoc.ts`), editable like any doc and the words' only source; the
+code holds the schema the handler reads (names, types, enums, `required`) and no prose.
+Render lays no tool doc out — its words reach the model as the request's `tools` — and
+each turn reads it by name. After the frontmatter, the file is the description, then a last block with one item per
 parameter (`- name: what it is`, an object's fields indented under it); `{{name}}` stands
 for a number the code holds — a cap, a default — filled from the tool's `vars`. The file
 and the schema must agree item for item: boot checks every builtin's file and refuses to

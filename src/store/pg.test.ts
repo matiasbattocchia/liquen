@@ -467,6 +467,18 @@ if (url === undefined) {
         "system/instruction/instructions/system",
         "system/skill/skills/transcribe-audio",
         "system/skill/skills/workflows",
+        ...[
+          "bash",
+          "cancel",
+          "contact",
+          "conversation",
+          "edit",
+          "read",
+          "schedule",
+          "search",
+          "send",
+          "write",
+        ].map((t) => `system/tool/tools/${t}`),
       ]);
       assertEquals(
         listed.find((d) => d.header.name === "instructions/agent")!.header.handle,

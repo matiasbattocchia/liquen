@@ -1,3 +1,7 @@
+---
+kind: tool
+---
+
 A room's members and name — the rooms `send` opens with a list. Locally, any member may
 change it; on a wire (Slack, Teams, WhatsApp) the change goes through your account there.
 Every change, yours or anybody's, reaches the room as a `<room>` line from whoever made it:

@@ -42,10 +42,10 @@ Write the positive property. If the rejected design is genuinely worth recording
 - `PROJECT.md` — dated entries: what landed, what an incident showed, what is still open.
   Connector minutiae and incident reports live here, never in `DESIGN.md`.
 - Agent-facing instructions are the templates in `src/seed/`. A running org holds its live
-  copies under `data/system/instructions/`, seeded write-if-absent at boot, so a template
-  edit reaches an existing org only through its live copy; verify the two agree with
-  `diff -q`. An org on this machine may instead symlink `data/system/instructions/` and
-  `data/system/skills/` at the checkout's `src/seed/system/` folders and read them live.
+  copies under `data/system/` (`instructions/`, `tools/`, `skills/`), seeded write-if-absent
+  at boot, so a template edit reaches an existing org only through its live copy; verify the
+  two agree with `diff -q`. An org on this machine may instead symlink those folders at the
+  checkout's `src/seed/system/` folders and read them live.
 
 ## Configuration
 

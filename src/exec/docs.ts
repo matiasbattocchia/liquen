@@ -6,7 +6,7 @@
  * as three tool calls, each answering the line the binary prints. The model writes no
  * SQL; every call is a function of the store the harness invokes under the agent role,
  * and what the agent may reach is the table's policy (`store/pg/schema.ts`). Their words
- * are `system/instructions/tools/{read,write,edit}.md` (tooldoc.ts).
+ * are `system/tools/{read,write,edit}.md` (tooldoc.ts).
  */
 
 import type { DocCalls } from "../store/pg/docs.ts";

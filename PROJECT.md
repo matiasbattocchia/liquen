@@ -4985,7 +4985,8 @@ store that still has it.
 ### A tool's words are a doc (2026-10-01) — LANDED
 
 Every builtin tool's description and parameter lines moved out of code into
-`system/instructions/tools/<name>.md` — `send`, `search`, `schedule`, `cancel`,
+`system/tools/<name>.md`, a doc of `kind: tool` that render leaves out of the system prompt
+— `send`, `search`, `schedule`, `cancel`,
 `conversation`, `contact`, `bash`, and the db substrate's `read`/`write`/`edit` — so an org
 tunes how a tool reads the way it tunes `system.md`. The code keeps the schema; the file is
 prose, then one `- name: …` item per parameter; `{{max_lines}}`-style placeholders take the
@@ -4995,8 +4996,8 @@ breaks and a line per helper on the way; the words are otherwise the ones code h
 
 Open: seeding is write-if-absent per folder and `update` never re-lays, so a release that
 adds a parameter meets an org's older copy at boot as `no item for \`x\``, named, and the
-operator adds the line. Orgs that symlink `system/instructions/` at a checkout read the
-new files live.
+operator adds the line. Orgs that symlink `system/tools/` at a checkout read the new files
+live.
 
 ### A series is one event wearing its rule; an occurrence wears its series (2026-10-01) — LANDED
 

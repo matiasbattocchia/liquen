@@ -1,3 +1,7 @@
+---
+kind: tool
+---
+
 Save someone in your account's address book — from then on their lines wear `contact` with
 that name instead of `external`, and the account's other devices see it too. `who` is who: an
 <conv> `address`, or the name they go by here. `name` is what they are saved as; omit it and

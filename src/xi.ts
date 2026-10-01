@@ -1178,13 +1178,13 @@ async function think(
       docs,
       docsOn: ports.docs.on,
       ...(ports.bins ? { bins: await ports.bins() } : {}),
-      // each tool's words are its doc (tooldoc.ts), read fresh like any instruction
+      // each tool's words are its doc (tooldoc.ts), read fresh like any doc
       tools: await wordedAll(
         specsOf(ports, config, await accounts({ id: config.agentId }, ports)),
         (name) =>
           ports.docs.read({ agent: config.agentId, conversation: home }, {
             scope: "system",
-            kind: "instruction",
+            kind: "tool",
             name,
           }),
       ),
@@ -3481,7 +3481,7 @@ async function people(log: Pick<Reader, "read">, handle?: string): Promise<strin
 }
 
 /** The harness's own tools, as schemas: what the model reads about each is its
- *  `system/instructions/tools/` doc (tooldoc.ts). */
+ *  `system/tools/` doc (tooldoc.ts). */
 export const OWN_TOOLS: ToolShape[] = [
   {
     spec: {

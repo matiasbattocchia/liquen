@@ -207,7 +207,7 @@ export async function start(
         bashShape(catalog?.system.bashTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS),
         ...Object.values(DOC_TOOLS),
       ],
-      (name) => docs.read(ctx, { scope: "system", kind: "instruction", name }),
+      (name) => docs.read(ctx, { scope: "system", kind: "tool", name }),
     );
   }
   // one transport per provider, shared by every agent declared on it; a test's scripted
