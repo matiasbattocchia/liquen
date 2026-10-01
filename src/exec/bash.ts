@@ -530,17 +530,16 @@ async function layShims(dir: string): Promise<string> {
   return bin;
 }
 
-/** The executables in each of `dirs` under `root`, sorted, each directory named as the
- *  scopes are (`organization/bin`); a directory with none is left out. Read fresh on every
- *  turn, so a program installed mid-session is listed on the next one. */
-export async function binsIn(root: string, dirs: string[]): Promise<BinDir[]> {
+/** The executables in each directory, sorted; a directory with none is left out. Read
+ *  fresh on every turn, so a program installed mid-session is listed on the next one. */
+export async function binsIn(dirs: string[]): Promise<BinDir[]> {
   const out: BinDir[] = [];
   for (const dir of dirs) {
     const names: string[] = [];
     try {
-      for await (const entry of Deno.readDir(`${root}/${dir}`)) {
+      for await (const entry of Deno.readDir(dir)) {
         if (entry.isDirectory) continue;
-        const stat = await Deno.stat(`${root}/${dir}/${entry.name}`).catch(() => undefined);
+        const stat = await Deno.stat(`${dir}/${entry.name}`).catch(() => undefined);
         if (stat?.isFile && ((stat.mode ?? 0) & 0o111) !== 0) names.push(entry.name);
       }
     } catch (err) {
@@ -581,8 +580,8 @@ export async function installExecGround(
 ): Promise<ExecGround> {
   const workspace = `${dir}/agents/${agentId}`;
   const shipped = await layShims(dir);
-  const binDirs = ["system/bin", "organization/bin", `agents/${agentId}/bin`];
-  const binPath = [shipped, `${dir}/organization/bin`, `${workspace}/bin`].join(":");
+  const binDirs = [shipped, `${dir}/organization/bin`, `${workspace}/bin`];
+  const binPath = binDirs.join(":");
   await Deno.mkdir(workspace, { recursive: true });
   await Deno.mkdir(`${dir}/organization/bin`, { recursive: true });
   await Deno.mkdir(`${workspace}/bin`, { recursive: true });
@@ -609,7 +608,7 @@ export async function installExecGround(
         },
         cwd: () => state.cwd,
         ambient: () => bashAmbient(state, jobs),
-        bins: () => binsIn(dir, binDirs),
+        bins: () => binsIn(binDirs),
         async stand(path?: string) {
           if (path === undefined) {
             state.cwd = workspace;

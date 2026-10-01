@@ -70,8 +70,8 @@ Deno.test("bash: bins lists each PATH directory's executables in PATH order", as
     // a plain file is not a program, and the agent's empty bin is left out
     await Deno.writeTextFile(`${dir}/system/bin/log.db`, "");
     assertEquals(await plane.bins!(), [
-      { dir: "system/bin", names: ["aedit", "aread", "awrite", "fetch"] },
-      { dir: "organization/bin", names: ["gws"] },
+      { dir: `${dir}/system/bin`, names: ["aedit", "aread", "awrite", "fetch"] },
+      { dir: `${dir}/organization/bin`, names: ["gws"] },
     ]);
   } finally {
     await plane.reap();

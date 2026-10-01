@@ -198,8 +198,8 @@ Deno.test("programs: the PATH directories under the org's folder, after the docs
     {
       self: "a1",
       bins: [
-        { dir: "system/bin", names: ["aedit", "aread", "awrite", "fetch"] },
-        { dir: "organization/bin", names: ["gws"] },
+        { dir: "/o/system/bin", names: ["aedit", "aread", "awrite", "fetch"] },
+        { dir: "/o/organization/bin", names: ["gws"] },
       ],
     },
   );
@@ -209,7 +209,7 @@ Deno.test("programs: the PATH directories under the org's folder, after the docs
   );
   assertStringIncludes(
     blocks[1].text,
-    "- system/bin: aedit, aread, awrite, fetch\n- organization/bin: gws",
+    "- /o/system/bin: aedit, aread, awrite, fetch\n- /o/organization/bin: gws",
   );
 });
 

@@ -401,8 +401,7 @@ export interface PermissionAsk {
   send?: SendPreview;
 }
 
-/** One directory of the agent's PATH, named from the org's folder (`organization/bin`),
- *  and the programs in it. */
+/** One directory of the agent's PATH under the org's folder, and the programs in it. */
 export interface BinDir {
   dir: string;
   names: string[];
