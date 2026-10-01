@@ -17,19 +17,26 @@ function fake(status: number, body: string, headers: Record<string, string> = {}
   return { impl, seen };
 }
 
-/** `run` with stdout captured: what the shim prints is the whole of what the model sees. */
+/** `run` with stdout and stderr captured: what the shim prints is the whole of what the
+ *  model sees. `raw` is what `-o -` streamed. */
 async function captured(
   argv: string[],
   impl: typeof fetch,
-): Promise<{ code: number; out: string }> {
+): Promise<{ code: number; out: string; err: string; raw: Uint8Array }> {
   const lines: string[] = [];
-  const log = console.log;
+  const errs: string[] = [];
+  const chunks: Uint8Array[] = [];
+  const sink = new WritableStream<Uint8Array>({ write: (c) => void chunks.push(c) });
+  const { log, error } = console;
   console.log = (...a: unknown[]) => lines.push(a.map(String).join(" "));
+  console.error = (...a: unknown[]) => errs.push(a.map(String).join(" "));
   try {
-    const code = await run(argv, impl);
-    return { code, out: lines.join("\n") };
+    const code = await run(argv, impl, sink);
+    const raw = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    chunks.reduce((at, c) => (raw.set(c, at), at + c.length), 0);
+    return { code, out: lines.join("\n"), err: errs.join("\n"), raw };
   } finally {
-    console.log = log;
+    Object.assign(console, { log, error });
   }
 }
 
@@ -145,14 +152,32 @@ Deno.test("run: -o saves the whole body and says so; a transport failure is one 
   const down = (() => {
     throw new Error("cannot reach h — connection refused");
   }) as unknown as typeof fetch;
-  const errs: string[] = [];
-  const error = console.error;
-  console.error = (...a: unknown[]) => errs.push(a.map(String).join(" "));
-  try {
-    assertEquals((await captured(["https://h/"], down)).code, 1);
-  } finally {
-    console.error = error;
-  }
-  assertEquals(errs, ["cannot reach h — connection refused"]);
+  const failed = await captured(["https://h/"], down);
+  assertEquals(failed.code, 1);
+  assertEquals(failed.err, "cannot reach h — connection refused");
   await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("run: -o - streams the body as served, whole, and nothing else on stdout", async () => {
+  const big = JSON.stringify({ items: Array.from({ length: 5000 }, (_, i) => ({ i })) });
+  const { impl } = fake(200, big, { "content-type": "application/json" });
+  const { code, out, err, raw } = await captured(["-o", "-", "https://h/api"], impl);
+  assertEquals(code, 0);
+  assertEquals(out, "");
+  assertEquals(err, "");
+  assertEquals(new TextDecoder().decode(raw), big);
+
+  const page = fake(200, "<p>hi", { "content-type": "text/html" });
+  const headed = await captured(["-i", "-o", "-", "https://h/"], page.impl);
+  assertEquals(new TextDecoder().decode(headed.raw), "<p>hi");
+  assertEquals(headed.err, "HTTP 200\ncontent-type: text/html");
+});
+
+Deno.test("run: -o - on a failure leaves stdout empty and says the status on stderr", async () => {
+  const { impl } = fake(404, '{"error":"no such thing"}', { "content-type": "application/json" });
+  const { code, out, err, raw } = await captured(["-o", "-", "https://h/api"], impl);
+  assertEquals(code, 1);
+  assertEquals(out, "");
+  assertEquals(raw.length, 0);
+  assertEquals(err, 'HTTP 404\n{\n  "error": "no such thing"\n}');
 });

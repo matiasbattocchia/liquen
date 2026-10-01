@@ -2257,7 +2257,7 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   `awrite` commit via **temp + fsync + rename** — crash/disconnect-atomic, mode-preserving.
   Cross-turn concurrency needs no lock: the conflict-block match IS the optimistic guard (a
   colleague's change → no match → re-read).
-- **`fetch [-X METHOD] [-H 'k: v']… [-d BODY|@-|@FILE] [-i] [-o PATH] URL [limit] [maxBytes]`**
+- **`fetch [-X METHOD] [-H 'k: v']… [-d BODY|@-|@FILE] [-i] [-o PATH|-] URL [limit] [maxBytes]`**
   — HTTP as a binary, credential-blind: the credential boundary is the egress proxy
   (below), so the call needs nothing of main's, and an agent reaches an API by sending the
   `$VAR` handle its environment holds as a header. What it adds over a raw client is the
@@ -2273,7 +2273,11 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   No script runs, so the server's bytes are all there is: on a client-rendered page the
   data scripts are often the only copy of the content, and executable code, styles and
   hidden elements are what is dropped. `-o` keeps the HTML as served, so a truncated
-  page's footer names the size overrides for reading further as text. Transport
+  page's footer names the size overrides for reading further as text. The read
+  discipline is for a model reading the answer; `-o -`, curl's spelling, is the answer
+  for a program: on a 2xx the bytes as served, whole, on stdout (`fetch -o - URL | jq`),
+  and on any other status an empty stdout with the status and body on stderr, so the
+  consumer fails on nothing rather than parsing an error page. Transport
   failures are sentences (`cannot reach <host> — …`). The shim trusts the org's bundle
   (`system/ca-bundle.pem`) and dials through the proxy the environment names, so a
   fronted grant's handle is swapped on the way out like any other client's.

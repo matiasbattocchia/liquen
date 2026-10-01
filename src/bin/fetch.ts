@@ -8,11 +8,11 @@
  * the proxy does the rest — and what it adds over a raw client is the discipline an agent
  * needs from a read of the world:
  *
- *   fetch [-X METHOD] [-H 'k: v']… [-d BODY | -d @- | -d @FILE] [-i] [-o PATH] URL [limit] [maxBytes]
+ *   fetch [-X METHOD] [-H 'k: v']… [-d BODY | -d @- | -d @FILE] [-i] [-o PATH|-] URL [limit] [maxBytes]
  *
- *   • a status outside 2xx is a FAILURE: the status and the body on stdout, exit 1 — the
- *     `is_error` path bash already defines, so a 500 is the model's self-correction and
- *     never a silent 0
+ *   • a status outside 2xx is a FAILURE: the status and the body on stdout (stderr under
+ *     `-o -`), exit 1 — the `is_error` path bash already defines, so a 500 is the model's
+ *     self-correction and never a silent 0
  *   • the body is HEAD-truncated under aread's rule (2000 lines / 50KB, the two positional
  *     overrides in aread's order) — a response is a read, so its beginning is the useful
  *     end; `-o` saves the whole thing for `aread` to page
@@ -25,6 +25,11 @@
  *   • `-d` implies POST and a JSON content-type unless a header says otherwise; `@-` is
  *     the body on stdin (heredoc-friendly, like awrite), `@FILE` a file's
  *   • `-i` prints the status line and the headers before the body
+ *   • `-o -` is the body for a program, curl's spelling: on a 2xx the bytes as served go to
+ *     stdout, whole, so `fetch -o - URL | jq` reads valid JSON; any other status leaves
+ *     stdout empty and says the status and the body on stderr, under the read discipline,
+ *     exit 1, so the consumer fails on nothing rather than on an error page. `-i` with it
+ *     puts the status and headers on stderr
  *
  * Transport failures are sentences (`said`, connect/http.ts): `cannot reach <host> — …`,
  * `no answer from <host> within …`, printed as one line like every refusal.
@@ -52,7 +57,7 @@ export interface FetchArgs {
 }
 
 const USAGE =
-  "usage: fetch [-X METHOD] [-H 'k: v']... [-d BODY|@-|@FILE] [-i] [-o PATH] URL [limit] [maxBytes]";
+  "usage: fetch [-X METHOD] [-H 'k: v']... [-d BODY|@-|@FILE] [-i] [-o PATH|-] URL [limit] [maxBytes]";
 
 /** curl's spelling for the flags an agent already knows, and aread's for the numbers. */
 export function parseArgs(argv: string[]): FetchArgs {
@@ -131,13 +136,15 @@ export interface Answer {
   bytes: Uint8Array;
 }
 
+/** The status line and the headers, as `-i` shows them. */
+const statusBlock = (a: Answer) =>
+  [`HTTP ${a.status}`, ...[...a.headers].map(([k, v]) => `${k}: ${v}`)].join("\n");
+
 /** Render one answer for the turn: status + headers when asked, then the body under the
  *  read discipline. Pure over the answer, so the shape is testable without a socket. */
 export function render(args: FetchArgs, a: Answer): string {
   const mime = (a.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-  const head = args.include
-    ? [`HTTP ${a.status}`, ...[...a.headers].map(([k, v]) => `${k}: ${v}`)].join("\n") + "\n\n"
-    : "";
+  const head = args.include ? statusBlock(a) + "\n\n" : "";
   if (a.bytes.length === 0) return `${head}[HTTP ${a.status} — no body]`;
   if (mime && !textual(mime) && (isBytes(mime) || /octet-stream/.test(mime))) {
     return `${head}[${mime} · ${a.bytes.length} bytes — save it: fetch -o <path> ${args.url}]`;
@@ -160,14 +167,19 @@ export function render(args: FetchArgs, a: Answer): string {
   return head + t.text + footer;
 }
 
-/** Entry for the shim. `fetchImpl` is injectable for tests; the default is the global
- *  fetch, bounded and said. */
+/** A status outside 2xx: the status first, whether or not `-i` already shows it. */
+const failure = (args: FetchArgs, a: Answer) =>
+  args.include ? render(args, a) : `HTTP ${a.status}\n${render(args, a)}`;
+
+/** Entry for the shim. `fetchImpl` and `stdout` (where `-o -` writes) are injectable for
+ *  tests; the defaults are the global fetch, bounded and said, and the process's stdout. */
 export async function run(
   argv: string[],
   fetchImpl: typeof fetch = said(
     withTimeout((input, init) => fetch(input, init), FETCH_TIMEOUT_MS),
     FETCH_TIMEOUT_MS,
   ),
+  stdout: WritableStream<Uint8Array> = Deno.stdout.writable,
 ): Promise<number> {
   try {
     const args = parseArgs(argv);
@@ -178,6 +190,18 @@ export async function run(
     }
     const res = await fetchImpl(args.url, { method: args.method, headers, body });
     const bytes = new Uint8Array(await res.arrayBuffer());
+    if (args.out === "-") {
+      const answer = { status: res.status, headers: res.headers, bytes };
+      if (!res.ok) {
+        console.error(failure(args, answer));
+        return 1;
+      }
+      if (args.include) console.error(statusBlock(answer));
+      const writer = stdout.getWriter();
+      await writer.write(bytes);
+      writer.releaseLock();
+      return 0;
+    }
     if (args.out) {
       const dir = args.out.replace(/\/[^/]*$/, "");
       // a refusal is left to the write: `/dev` can't even be looked at without --allow-all,
@@ -188,9 +212,7 @@ export async function run(
       return res.ok ? 0 : 1;
     }
     const answer = { status: res.status, headers: res.headers, bytes };
-    console.log(
-      res.ok || args.include ? render(args, answer) : `HTTP ${res.status}\n${render(args, answer)}`,
-    );
+    console.log(res.ok ? render(args, answer) : failure(args, answer));
     return res.ok ? 0 : 1;
   } catch (err) {
     report(err);

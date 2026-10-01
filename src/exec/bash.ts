@@ -134,12 +134,13 @@ export function bashSpec(timeoutMsDefault: number): ExecTool["spec"] {
       "is literal, never a regex, and an edit whose old text is missing or matches twice " +
       "fails and says which, where sed changes nothing or too much in silence; the file is " +
       "locked for the edit and replaced atomically. " +
-      "fetch [-X METHOD] [-H 'k: v'] [-d BODY|@-] [-i] [-o PATH] URL [limit] [maxBytes], over " +
+      "fetch [-X METHOD] [-H 'k: v'] [-d BODY|@-] [-i] [-o PATH|-] URL [limit] [maxBytes], over " +
       "curl/wget: a status outside 2xx fails the call, where curl -s exits 0 on a 404; JSON " +
       "prints pretty; an HTML page reads as text with absolute links, followed by the JSON " +
       "data scripts it carries (no script runs, so on a client-rendered page those are " +
       "often the content); the body is head-truncated like aread (-o saves it whole, as " +
-      "served); an API's " +
+      "served; -o - writes it whole to stdout for a program: fetch -o - URL | jq …); " +
+      "an API's " +
       "credential is the $VAR the environment holds, sent as a header " +
       '(-H "Authorization: Bearer $VAR"). ' +
       "rg and fd are available for search when installed.",
