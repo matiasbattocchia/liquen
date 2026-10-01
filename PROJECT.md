@@ -5035,7 +5035,7 @@ dedupes. Verified on a tenant: a master with two deleted occurrences lands as an
 `Prefer`; a "this and following" split lands beside them as the old master's `UNTIL` and a
 new master.
 
-### An edit wears its diff; an event wears its organizer (2026-10-01) — DECIDED
+### An edit wears its diff; an event wears its organizer (2026-10-01) — LANDED
 
 An edit row is the whole trimmed event again, so a reader whose window no longer holds the
 earlier row sees the current state only, and a master edit that adds a date to `exdates`
@@ -5061,8 +5061,13 @@ does not say which date went. Decided, both wires, in the shared `connect/calend
   unsaved, which is the trust signal for a line a stranger can place. An RSVP stays voiced by
   the organizer; the diff says who replied.
 
-Open before building: how the connector learns an event's previous state — reading its last
-row back from the log, or a copy of its own.
+The previous state is read back from the log: `lastState` asks the calendar's conversation
+for the event's latest create or edit row (a delete's handle is no state) and the diff is
+against its part. The poller holds no copy of its own, so a restart changes nothing, and a
+master Graph re-lists with nothing mapped moved — an exception re-read on the master's
+stamp, a change key — diffs empty and lands no row. The part carries the diff as `diff`
+beside `data` (`DataPart.diff`, any kind); render prints it ahead of `data` in the same
+literal, clocks included.
 
 ### The checkpoint request is the think's (2026-10-01) — LANDED
 

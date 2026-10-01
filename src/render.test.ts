@@ -16,6 +16,7 @@ import {
 } from "./render.ts";
 import type { DocEntry, DocKind, DocLoad, DocScope } from "./store/docs.ts";
 import type {
+  CalendarPart,
   Event,
   Json,
   MessageEvent,
@@ -1813,6 +1814,9 @@ Deno.test("calendar changes render hoisted: <calendar data=…>, ISO values as c
     { action: "edit", ref_external_id: "calendar:battox@gmail.com:ev1" },
     ana,
   );
+  (edit.parts[0] as CalendarPart).diff = {
+    start: { old: "2026-08-24T18:00:00Z", new: "2026-08-24T19:00:00Z" },
+  };
   // a tombstone: no creator (no voice), its whole content the service-side handle
   const del = cal("e3", { gid: "ev1" }, {
     action: "delete",
@@ -1835,10 +1839,11 @@ Deno.test("calendar changes render hoisted: <calendar data=…>, ISO values as c
     '<calendar id=\\"e1\\" external=\\"Ana\\" address=\\"ana@example.com\\" at=\\"24 Aug 12:00\\" ' +
       "data=\\\"{gid:'ev1',title:'Natación',start:'24 Aug 18:00',loc:'Club Náutico'}\\\"/>",
   );
-  // edit: the new content, pointing at the create it supersedes
+  // edit: what moved first, as clocks too, then the whole it left, pointing at the create
   assertStringIncludes(
     dump,
     '<calendar id=\\"e2\\" external=\\"Ana\\" address=\\"ana@example.com\\" at=\\"24 Aug 12:00\\" re=\\"e1\\" action=\\"edit\\" ' +
+      "diff=\\\"{start:{old:'24 Aug 18:00',new:'24 Aug 19:00'}}\\\" " +
       "data=\\\"{gid:'ev1',title:'Natación',start:'24 Aug 19:00',loc:'Club Náutico'}\\\"/>",
   );
   // delete: no id (nothing points at one), no from (a tombstone has no creator — and the

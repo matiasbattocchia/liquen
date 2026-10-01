@@ -2,7 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { createMicrosoftCalendar } from "./calendar.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
-import type { Appender } from "../../store/log.ts";
+import type { Appender, Reader } from "../../store/log.ts";
 import type { CalendarPart, Draft, Event, MessageEvent } from "../../types.ts";
 
 const KEY = "microsoft:ana@contoso.com";
@@ -19,6 +19,17 @@ function captor(): { publish: Appender["publish"]; rows: Draft<MessageEvent>[] }
     return Promise.resolve(Array.isArray(e) ? e.map(one) : one(e));
   }) as Appender["publish"];
   return { publish, rows };
+}
+
+/** The captured rows read back the way the store reads: the predicate over every row, the
+ *  newest `limit` kept. */
+function readerOf(rows: Draft<MessageEvent>[]): Reader["read"] {
+  return (q = {}) => {
+    const hits = rows.filter((r) => r.parts !== undefined).filter((r) =>
+      q.filter?.(r as Event) ?? true
+    );
+    return Promise.resolve((q.limit ? hits.slice(-q.limit) : hits) as Event[]);
+  };
 }
 
 /** A vault with one fresh microsoft grant (no refresh needed) + its app row. */
@@ -80,9 +91,11 @@ function poller(
   fetchApi: typeof fetch,
   publish: Appender["publish"] = captor().publish,
   calendars?: string[],
+  read?: Reader["read"],
 ): { tick(): Promise<void> } {
   return createMicrosoftCalendar({
     publish,
+    read,
     creds,
     broker: createGrantBroker({ creds }),
     calendars,
@@ -281,6 +294,45 @@ Deno.test("an edit is action:edit referencing the create; the original stays sea
     const data = (row.parts[0] as CalendarPart).data;
     assertEquals(data.title, "Natación (movida)");
     assertEquals(data.start, "2026-09-24T19:00:00Z");
+  });
+});
+
+Deno.test("an attendee's reply is an edit of the organizer's copy: read against the event's last row, its diff says who replied; a master re-listed with nothing moved publishes nothing", async () => {
+  await withVault(async (creds) => {
+    await seeded(creds);
+    const cap = captor();
+    const read = readerOf(cap.rows);
+    const listed = (tok: string) => () => ({
+      value: [{ id: "AAMk1" }],
+      "@odata.deltaLink": `${DELTA}?$deltatoken=${tok}`,
+    });
+    await poller(creds, graph(listed("d2"), { AAMk1: CREATED }), cap.publish, undefined, read)
+      .tick();
+    const replied = {
+      ...CREATED,
+      attendees: CREATED.attendees.map((a) =>
+        a.emailAddress.address === "luis@contoso.com"
+          ? { ...a, status: { response: "accepted", time: "2026-09-23T12:00:00Z" } }
+          : a
+      ),
+      lastModifiedDateTime: "2026-09-23T12:00:00Z",
+    };
+    await poller(creds, graph(listed("d3"), { AAMk1: replied }), cap.publish, undefined, read)
+      .tick();
+    assertEquals(cap.rows.length, 2);
+    const row = cap.rows[1];
+    assertEquals(row.payload?.action, "edit");
+    assertEquals(row.envelope.sender, { address: "ana@contoso.com", name: "Ana" }); // the organizer
+    const part = row.parts[0] as CalendarPart;
+    assertEquals(part.diff, {
+      invitees: [{ email: "luis@contoso.com", status: { old: "needsAction", new: "accepted" } }],
+    });
+    assertEquals(part.data.invitees![0].status, "accepted");
+    // listed again with only its change key moved: nothing mapped, no row, cursor advanced
+    const same = { ...replied, lastModifiedDateTime: "2026-09-23T13:00:00Z", changeKey: "def==" };
+    await poller(creds, graph(listed("d4"), { AAMk1: same }), cap.publish, undefined, read).tick();
+    assertEquals(cap.rows.length, 2);
+    assertStringIncludes((await syncOf(creds))!.primary, "d4");
   });
 });
 

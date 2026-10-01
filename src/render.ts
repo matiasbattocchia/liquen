@@ -1451,15 +1451,18 @@ function msgLine(
 /** A data part's element (§5): the part's KIND names the tag — `<location>`, `<contacts>`,
  *  `<calendar>` — one code path for every kind a connector ships, present or future. The
  *  connector already pruned `data` at ingest (it is the only party that knows the wire), so
- *  the whole object rides a `data` attribute as a compact TS literal; the part's own `text`
+ *  the whole object rides a `data` attribute as a compact TS literal, a `diff` the connector
+ *  wrote (an edit's moves, in `data`'s shape) ahead of it in the same literal; the part's own `text`
  *  (genuinely human words, a caption) is the body, and no text means self-closing. `head`
  *  carries hoisted envelope attributes when the part IS the whole message, empty when it
  *  rides inline as a marker beside text. Every part shape makes `kind` mandatory (types.ts);
  *  a malformed row without one falls back to the part's `type`. */
 function dataEl(p: DataPart, head: string, zone?: string): string {
   const tag = p.kind || p.type;
+  // what an edit changed comes first: the reader learns the move, then the whole it left
   const attrs = [
     ...(head ? [head] : []),
+    ...(p.diff !== undefined ? [`diff="${escAttr(tsLiteral(p.diff, zone))}"`] : []),
     ...(p.data !== undefined ? [`data="${escAttr(tsLiteral(p.data, zone))}"`] : []),
   ].join(" ");
   const text = typeof p.text === "string" && p.text.length ? p.text : "";

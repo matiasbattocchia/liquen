@@ -33,6 +33,7 @@ import {
   calendarConversation,
   calendarRows,
   createOrEdit,
+  lastState,
 } from "../calendar.ts";
 import {
   createPoller,
@@ -42,7 +43,7 @@ import {
   runPollIngest,
   storeCursor,
 } from "../poll.ts";
-import type { Appender } from "../../store/log.ts";
+import type { Appender, Reader } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
@@ -68,6 +69,8 @@ export interface CalendarEvent {
   start?: { dateTime?: string; date?: string };
   end?: { dateTime?: string; date?: string };
   creator?: { email?: string; displayName?: string };
+  /** Whoever holds the meeting — on a shared calendar's own event, the calendar itself. */
+  organizer?: { email?: string; displayName?: string };
   attendees?: { email?: string; displayName?: string; responseStatus?: string }[];
   /** A master's rule: RFC 5545 lines (`RRULE:…`, also `EXDATE:…`/`RDATE:…` on an import). */
   recurrence?: string[];
@@ -89,6 +92,9 @@ interface EventsList {
 export interface GoogleWebhookDeps {
   /** → the EventLog: a calendar change is an ordinary published event (§3). */
   publish: Appender["publish"];
+  /** The log, read: the event as it last landed, which an edit's diff is against. Absent,
+   *  every edit carries the whole event alone. */
+  read?: Reader["read"];
   /** The vault: grants (the connections + the refresh_token) and the syncToken cursor. */
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
@@ -164,8 +170,13 @@ async function pollCalendar(
     };
     for (const item of page.items ?? []) {
       if (!item.id) continue;
-      for (const draft of calendarRows(base, changeOf(item, now))) await deps.publish(draft);
-      published++;
+      const change = changeOf(item, now);
+      const was = change.change === "edit" && deps.read
+        ? await lastState(deps.read, base, change.id)
+        : undefined;
+      const rows = calendarRows(base, change, was);
+      for (const draft of rows) await deps.publish(draft);
+      if (rows.length) published++;
     }
     pageToken = page.nextPageToken;
     nextSyncToken = page.nextSyncToken ?? nextSyncToken;
@@ -181,20 +192,28 @@ function changeOf(item: CalendarEvent, now: () => string): CalendarChange {
   const id = item.id!;
   const ts = item.updated ?? now();
   if (item.status === "cancelled") return { id, change: "delete", ts, data: handle(item) };
+  // the organizer is the line's voice — `from` in render, findable by name in search: an
+  // invitation from another account reads as that account. A shared calendar's own event
+  // names the calendar as its organizer, and a calendar is nobody: its creator speaks.
+  const org = item.organizer?.email && !isCalendar(item.organizer.email)
+    ? item.organizer
+    : item.creator;
   return {
     id,
     change: createOrEdit(item.created, item.updated),
     ts,
-    // the creator is the line's voice — `from` in render, findable by name in search
-    sender: item.creator?.email
-      ? {
-        address: item.creator.email,
-        ...(item.creator.displayName ? { name: item.creator.displayName } : {}),
-      }
+    sender: org?.email
+      ? { address: org.email, ...(org.displayName ? { name: org.displayName } : {}) }
       : undefined,
     data: pruned(item),
     text: item.description || undefined,
   };
+}
+
+/** A calendar's id as an address: every calendar that is not an account's own (a shared
+ *  one, a resource, a holiday feed) is `@<kind>.calendar.google.com`. */
+function isCalendar(email: string): boolean {
+  return /\.calendar\.google\.com$/i.test(email);
 }
 
 /** What of a resource is WORTH the agent's tokens: the wire resource pruned to the canonical

@@ -2,7 +2,7 @@ import { assert, assertEquals } from "@std/assert";
 import { createGoogleWebhook } from "./calendar.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
-import type { Appender } from "../../store/log.ts";
+import type { Appender, Reader } from "../../store/log.ts";
 import type { ConnectionRow, Connections } from "../../store/connections.ts";
 import type { CalendarPart, Draft, Event, MessageEvent } from "../../types.ts";
 
@@ -19,6 +19,17 @@ function captor(): { publish: Appender["publish"]; rows: Draft<MessageEvent>[] }
     return Promise.resolve(Array.isArray(e) ? e.map(one) : one(e));
   }) as Appender["publish"];
   return { publish, rows };
+}
+
+/** The captured rows read back the way the store reads: the predicate over every row, the
+ *  newest `limit` kept. */
+function readerOf(rows: Draft<MessageEvent>[]): Reader["read"] {
+  return (q = {}) => {
+    const hits = rows.filter((r) => r.parts !== undefined).filter((r) =>
+      q.filter?.(r as Event) ?? true
+    );
+    return Promise.resolve((q.limit ? hits.slice(-q.limit) : hits) as Event[]);
+  };
 }
 
 /** A vault with one fresh google grant (no refresh needed) + an app row. */
@@ -48,9 +59,11 @@ function poller(
   publish: Appender["publish"] = captor().publish,
   calendars?: string[],
   store?: Pick<Connections, "upsertConnections">,
+  read?: Reader["read"],
 ): { tick(): Promise<void> } {
   return createGoogleWebhook({
     publish,
+    read,
     creds,
     broker: createGrantBroker({ creds }),
     store,
@@ -226,6 +239,83 @@ Deno.test("an edit is action:edit referencing the create; the original stays sea
     const data = (row.parts[0] as CalendarPart).data;
     assertEquals(data.title, "Natación (movida)"); // the new content rides the edit
     assertEquals(data.start, "2026-08-24T19:00:00Z");
+    assertEquals((row.parts[0] as CalendarPart).diff, undefined); // no log to diff against
+  });
+});
+
+Deno.test("an edit read against the event's last row wears a diff in the data's shape; one that moves nothing mapped publishes nothing", async () => {
+  await withVault(async (creds) => {
+    await poller(creds, () => Promise.resolve(jsonResponse({ items: [], nextSyncToken: "tok1" })))
+      .tick(); // seed
+    const created = {
+      id: "ev1",
+      status: "confirmed",
+      summary: "Natación",
+      description: "traer antiparras",
+      created: "2026-08-24T10:00:00Z",
+      updated: "2026-08-24T10:00:00Z",
+      start: { dateTime: "2026-08-24T18:00:00Z" },
+      end: { dateTime: "2026-08-24T19:00:00Z" },
+      creator: { email: "ana@example.com" },
+      attendees: [{ email: "luis@example.com", responseStatus: "needsAction" }],
+    };
+    const cap = captor();
+    const read = readerOf(cap.rows);
+    const page = (items: unknown[], tok: string) => () =>
+      Promise.resolve(jsonResponse({ items, nextSyncToken: tok }));
+    await poller(creds, page([created], "tok2"), cap.publish, undefined, undefined, read).tick();
+    // Luis accepts, the start moves, the description changes, the reminder policy changes
+    const edited = {
+      ...created,
+      updated: "2026-08-24T12:00:00Z",
+      description: "traer toalla",
+      start: { dateTime: "2026-08-24T19:00:00Z" },
+      attendees: [{ email: "luis@example.com", responseStatus: "accepted" }],
+      reminders: { useDefault: false },
+    };
+    await poller(creds, page([edited], "tok3"), cap.publish, undefined, undefined, read).tick();
+    assertEquals(cap.rows.length, 2);
+    const part = cap.rows[1].parts[0] as CalendarPart;
+    assertEquals(part.diff, {
+      start: { old: "2026-08-24T18:00:00Z", new: "2026-08-24T19:00:00Z" },
+      invitees: [{ email: "luis@example.com", status: { old: "needsAction", new: "accepted" } }],
+      text: { old: "traer antiparras" },
+    });
+    assertEquals(part.text, "traer toalla");
+    assertEquals(part.data.start, "2026-08-24T19:00:00Z"); // the whole event rides beside it
+    // only the reminder policy moves: nothing the shape maps, so no row
+    const quiet = { ...edited, updated: "2026-08-24T13:00:00Z", reminders: { useDefault: true } };
+    await poller(creds, page([quiet], "tok4"), cap.publish, undefined, undefined, read).tick();
+    assertEquals(cap.rows.length, 2);
+    assertEquals((await syncOf(creds))!.primary, "tok4"); // the cursor still moved
+  });
+});
+
+Deno.test("the organizer is the voice — an invitation from another account reads as that account; a shared calendar organizing its own event speaks as its creator", async () => {
+  await withVault(async (creds) => {
+    await poller(creds, () => Promise.resolve(jsonResponse({ items: [], nextSyncToken: "tok1" })))
+      .tick(); // seed
+    const stamp = { created: "2026-08-24T10:00:00Z", updated: "2026-08-24T10:00:00Z" };
+    const invited = {
+      id: "ev1",
+      ...stamp,
+      creator: { email: "ana@example.com", displayName: "Ana" },
+      organizer: { email: "bo@partner.com", displayName: "Bo" },
+    };
+    const own = {
+      id: "ev2",
+      ...stamp,
+      creator: { email: "ana@example.com", displayName: "Ana" },
+      organizer: { email: "team@group.calendar.google.com", displayName: "Equipo" },
+    };
+    const cap = captor();
+    await poller(
+      creds,
+      () => Promise.resolve(jsonResponse({ items: [invited, own], nextSyncToken: "tok2" })),
+      cap.publish,
+    ).tick();
+    assertEquals(cap.rows[0].envelope.sender, { address: "bo@partner.com", name: "Bo" });
+    assertEquals(cap.rows[1].envelope.sender, { address: "ana@example.com", name: "Ana" });
   });
 });
 

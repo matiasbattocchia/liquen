@@ -46,6 +46,7 @@ import {
   calendarConversation,
   calendarRows,
   createOrEdit,
+  lastState,
 } from "../calendar.ts";
 import {
   createPoller,
@@ -55,7 +56,7 @@ import {
   runPollIngest,
   storeCursor,
 } from "../poll.ts";
-import type { Appender } from "../../store/log.ts";
+import type { Appender, Reader } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { GrantBroker } from "../../proxy/grants.ts";
@@ -147,6 +148,9 @@ const SELECT = [
 export interface MicrosoftCalendarDeps {
   /** → the EventLog: a calendar change is an ordinary published event (§3). */
   publish: Appender["publish"];
+  /** The log, read: the event as it last landed, which an edit's diff is against. Absent,
+   *  every edit carries the whole event alone. */
+  read?: Reader["read"];
   /** The vault: grants (the connections + the refresh_token) and the deltaLink cursor. */
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
@@ -224,10 +228,16 @@ async function pollCalendar(
         connection_address: upn,
         conversation: calendarConversation(address, await name),
       };
+      let landed = 0;
       for (const change of changes) {
-        for (const draft of calendarRows(base, change)) await deps.publish(draft);
+        const was = change.change === "edit" && deps.read
+          ? await lastState(deps.read, base, change.id)
+          : undefined;
+        const rows = calendarRows(base, change, was);
+        for (const draft of rows) await deps.publish(draft);
+        landed += rows.length;
       }
-      published++;
+      if (landed) published++;
     });
   } catch (err) {
     if (err instanceof DeltaGone) {
@@ -266,7 +276,8 @@ function change(id: string, item: GraphEvent, now: () => string): CalendarChange
     id,
     change: createOrEdit(item.createdDateTime, item.lastModifiedDateTime),
     ts,
-    // the organizer is the line's voice — `from` in render, findable by name in search
+    // the organizer is the line's voice — `from` in render, findable by name in search: an
+    // invitation from another account reads as that account
     sender: org?.address
       ? { address: org.address, ...(org.name ? { name: org.name } : {}) }
       : undefined,

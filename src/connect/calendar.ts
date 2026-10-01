@@ -13,8 +13,12 @@
  *   create   a plain message carrying the resource; `external_id` = the STABLE referent
  *            `calendar:<cal>:<id>` (the event's identity across versions — the
  *            address bare, the key wearing the service word every external id does).
- *   edit     its own event, `action:"edit"` + `ref_external_id` at the create, new content;
- *            the create row stays sealed (a `:<ts>`-versioned external_id dedupes replays).
+ *   edit     its own event, `action:"edit"` + `ref_external_id` at the create, the whole
+ *            event again and, beside it, a `diff` in the data's shape of what moved since
+ *            the event's last row in the log (`lastState`, `calendarDiff`); the create row
+ *            stays sealed (a `:<ts>`-versioned external_id dedupes replays). An edit that
+ *            moves nothing the shape maps (an attachment, a reminder) publishes nothing;
+ *            one whose event has no earlier row carries the whole event alone.
  *   delete   its own event, `action:"delete"` + ref, its part the bare `{gid}` handle (the
  *            action is the meaning; the gid keeps the gone event fetchable) — a cancelled
  *            occurrence's handle also says which series and which date (`series`, `was`) —
@@ -40,12 +44,16 @@
 
 import type {
   CalendarData,
+  CalendarDiff,
+  CalendarInvitee,
   CalendarPart,
   Conversation,
   Draft,
   MessageEvent,
+  Moved,
   Service,
 } from "../types.ts";
+import type { Reader } from "../store/log.ts";
 
 /** Where a grant keeps its calendar cursors (`cursorFor`/`storeCursor`, poll.ts). */
 export const CALENDAR_SYNC = "calendar_sync";
@@ -72,14 +80,113 @@ export function calendarConversation(calendar: string, name?: string): Conversat
   return { address: calendar, kind: "broadcast", ...(name ? { name } : {}) };
 }
 
-/** One change → the rows it means, in the action language (§3). */
+/** The event as its last row holds it: the pruned shape and the description. */
+export interface CalendarState {
+  data: CalendarData;
+  text?: string;
+}
+
+/** The calendar a change lands in: the row envelope every row of it shares. */
+export interface CalendarBase {
+  service: Service;
+  connection_address: string;
+  conversation: Conversation;
+}
+
+/** The merge key of an event's rows (§3): the service word every external id wears, the
+ *  calendar's id, the event's — the address bare. An edit's own key is this and its stamp. */
+export function referentOf(base: CalendarBase, id: string): string {
+  return `calendar:${base.conversation.address}:${id}`;
+}
+
+/** The event as the log last saw it — its create, or the latest edit of it — read back off
+ *  the calendar's conversation; `undefined` when the log holds no row of it (an event from
+ *  before the poller's window, a delete's handle being no state). */
+export async function lastState(
+  read: Reader["read"],
+  base: CalendarBase,
+  id: string,
+): Promise<CalendarState | undefined> {
+  const ref = referentOf(base, id);
+  const [row] = await read({
+    service: base.service,
+    connection: base.connection_address,
+    conversation: base.conversation.address,
+    types: ["message"],
+    limit: 1,
+    filter: (e) => {
+      const { envelope, payload } = e as MessageEvent;
+      return payload?.action === undefined
+        ? envelope.external_id === ref
+        : payload.action === "edit" && payload.ref_external_id === ref;
+    },
+  }) as MessageEvent[];
+  const part = row?.parts.find((p): p is CalendarPart =>
+    p.type === "data" && p.kind === "calendar"
+  );
+  if (!part) return undefined;
+  return { data: part.data, ...(part.text ? { text: part.text } : {}) };
+}
+
+/** A field's move, or nothing when it stands. */
+function moved<T>(old: T | undefined, now: T | undefined): Moved<T> | undefined {
+  if (old === now) return undefined;
+  return { ...(old !== undefined ? { old } : {}), ...(now !== undefined ? { new: now } : {}) };
+}
+
+/** An invitee's identity across versions: the address, or the name where there is none. */
+function identity(inv: CalendarInvitee): string | undefined {
+  return inv.email ?? inv.name;
+}
+
+/** What `now` changed since `was`, in the data's shape (`CalendarDiff`, types.ts); nothing
+ *  when every mapped field stands. */
+export function calendarDiff(was: CalendarState, now: CalendarState): CalendarDiff | undefined {
+  const diff: CalendarDiff = {};
+  for (const k of ["title", "start", "end", "loc", "rrule", "series", "was"] as const) {
+    const m = moved(was.data[k], now.data[k]);
+    if (m) diff[k] = m;
+  }
+  const before = was.data.exdates ?? [];
+  const after = now.data.exdates ?? [];
+  const exdates = [
+    ...before.filter((d) => !after.includes(d)).map((d) => ({ old: d })),
+    ...after.filter((d) => !before.includes(d)).map((d) => ({ new: d })),
+  ];
+  if (exdates.length) diff.exdates = exdates;
+  const invitees: NonNullable<CalendarDiff["invitees"]> = [];
+  const kept = new Map((was.data.invitees ?? []).map((inv) => [identity(inv), inv]));
+  for (const inv of now.data.invitees ?? []) {
+    const old = kept.get(identity(inv));
+    if (!old) {
+      invitees.push({ new: inv });
+      continue;
+    }
+    kept.delete(identity(inv));
+    const name = moved(old.name, inv.name);
+    const status = moved(old.status, inv.status);
+    if (!name && !status) continue;
+    invitees.push({
+      ...(inv.email ? { email: inv.email } : {}),
+      ...(name ? { name } : inv.email ? {} : { name: inv.name }),
+      ...(status ? { status } : {}),
+    });
+  }
+  for (const old of kept.values()) invitees.push({ old });
+  if (invitees.length) diff.invitees = invitees;
+  if ((was.text ?? "") !== (now.text ?? "")) diff.text = { old: was.text ?? "" };
+  return Object.keys(diff).length ? diff : undefined;
+}
+
+/** One change → the rows it means, in the action language (§3). `was` is the event as the
+ *  log last saw it, which an edit diffs against; absent, the edit carries the whole event
+ *  alone. */
 export function calendarRows(
-  base: { service: Service; connection_address: string; conversation: Conversation },
+  base: CalendarBase,
   c: CalendarChange,
+  was?: CalendarState,
 ): Draft<MessageEvent>[] {
-  // the merge key wears the service word every external id does (§3): the calendar's id,
-  // then the event's — the address is bare
-  const ref = `calendar:${base.conversation.address}:${c.id}`;
+  const ref = referentOf(base, c.id);
   const { ts } = c;
   if (c.change === "delete") {
     return [
@@ -108,24 +215,23 @@ export function calendarRows(
   }
   const withSender = { ...base, sender: c.sender };
   // structure in `data`, the organizer's prose in `text` — never the same words twice
-  const parts: MessageEvent["parts"] = [
-    {
-      type: "data",
-      kind: "calendar",
-      data: c.data ?? { gid: c.id },
-      ...(c.text ? { text: c.text } : {}),
-    } satisfies CalendarPart,
-  ];
+  const now: CalendarState = { data: c.data ?? { gid: c.id }, ...(c.text ? { text: c.text } : {}) };
+  const part: CalendarPart = { type: "data", kind: "calendar", ...now };
   if (c.change === "edit") {
+    if (was) {
+      const diff = calendarDiff(was, now);
+      if (!diff) return [];
+      part.diff = diff;
+    }
     return [{
       ts,
       type: "message",
       payload: { action: "edit", ref_external_id: ref },
       envelope: { ...withSender, external_id: `${ref}:${ts}` },
-      parts,
+      parts: [part],
     }];
   }
-  return [{ ts, type: "message", envelope: { ...withSender, external_id: ref }, parts }];
+  return [{ ts, type: "message", envelope: { ...withSender, external_id: ref }, parts: [part] }];
 }
 
 /** A resource whose last-modified stamp trails its creation by more than this was edited —

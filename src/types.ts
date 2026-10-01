@@ -107,6 +107,9 @@ export interface DataPart<K extends string = string, T = Json> {
   kind: K;
   data: T;
   text?: string;
+  /** What an edit changed, in `data`'s own shape (a connector's diff of this version against
+   *  the one before); render shows it ahead of `data`. */
+  diff?: Json;
 }
 
 /**
@@ -165,13 +168,39 @@ export type CalendarData = {
   exdates?: string[];
   series?: string;
   was?: string;
-  invitees?: {
-    name?: string;
-    email?: string;
-    status?: "needsAction" | "accepted" | "declined" | "tentative";
-  }[];
+  invitees?: CalendarInvitee[];
 };
-export type CalendarPart = DataPart<"calendar", CalendarData>;
+export type CalendarInvitee = {
+  name?: string;
+  email?: string;
+  status?: "needsAction" | "accepted" | "declined" | "tentative";
+};
+
+/** A field's move: what it was and what it is, either side absent when the field appeared
+ *  or went. */
+export type Moved<T> = { old?: T; new?: T };
+
+/** What an edit changed, in `CalendarData`'s shape. A plain field is its move; a list holds
+ *  one entry per entry that moved: an exdate added or removed goes whole under `new` or
+ *  `old`, and so does an invitee, while an invitee that stayed keeps its identity plain
+ *  (`email`, or `name` where there is none) and wears the move on what changed. The
+ *  description is the part's text, so `text` carries only what it was. */
+export type CalendarDiff = {
+  title?: Moved<string>;
+  start?: Moved<string>;
+  end?: Moved<string>;
+  loc?: Moved<string>;
+  rrule?: Moved<string>;
+  series?: Moved<string>;
+  was?: Moved<string>;
+  exdates?: Moved<string>[];
+  invitees?: (
+    | Moved<CalendarInvitee>
+    | { email?: string; name?: string | Moved<string>; status?: Moved<CalendarInvitee["status"]> }
+  )[];
+  text?: { old: string };
+};
+export type CalendarPart = DataPart<"calendar", CalendarData> & { diff?: CalendarDiff };
 
 /** A room's change, as the room's own line about it — who joined (added, or in by the
  *  room's link: `reason: "invite"`), who left (went, or was taken out), or the name it
