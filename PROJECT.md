@@ -5029,5 +5029,8 @@ exception is published as its own change, series and original start on it, a can
 as a delete. So on Outlook a cancelled occurrence reads as the series minus a date, and on
 Google as a delete of the occurrence — each wire's own truth, a date either way. An
 exception's rows key on its own stamp, so a master listed again re-reads them and the log
-dedupes. Verified against the docs; the expanded exceptions' honouring of the UTC/text
-`Prefer` is to be confirmed on a tenant (a zoned clock would stay named, not break).
+dedupes. Verified on a tenant: a master with two deleted occurrences lands as an edit whose
+`exdates` holds both dates; an occurrence moved an hour lands as its own create with
+`series` and `was`, its clock a `Z` instant, so the expanded exceptions honour the UTC/text
+`Prefer`; a "this and following" split lands beside them as the old master's `UNTIL` and a
+new master.
