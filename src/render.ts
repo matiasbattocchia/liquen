@@ -116,9 +116,17 @@ export interface Env {
 
 /** What the programs listing says above the directories: they were put there for this
  *  org's work, so one that does the job is the tool for it. */
-const BINS_NOTE = "These programs are on your PATH from this org's folder, put there for its " +
-  "work. When one does the job, use it over a general-purpose tool; `<name> --help` says " +
-  "how, for any that takes it.";
+const BINS_NOTE = "These programs are on your PATH, put there for this org's work. When one " +
+  "does the job, use it over a general-purpose tool. A usage under one is how to call it; " +
+  "for the others, `<name> --help` says how, for any that takes it.";
+
+/** A directory in the docs index's shape — its path in brackets, then what it holds — and
+ *  under it, the usage of each program that ships one. */
+const binLines = (b: BinDir): string =>
+  [
+    `- [${b.dir}] ${b.programs.map((p) => p.name).join(", ")}`,
+    ...b.programs.flatMap((p) => p.usage ? [`  - ${p.usage}`] : []),
+  ].join("\n");
 
 /** What a configured processor means to the model, said once above the kinds. */
 const PROCESSORS_NOTE = "Media of these kinds is made readable for you automatically, as a " +
@@ -189,10 +197,7 @@ export function renderSystem(docs: DocEntry[], env: Env = {}): TextBlockParam[] 
   const pointers = ordered.filter((d) => d.body === undefined);
   if (pointers.length > 0) add(`# On-demand docs\n\n${renderIndex(pointers, env.docs)}`);
 
-  if (env.bins?.length) {
-    const dirs = env.bins.map((b) => `- ${b.dir}: ${b.names.join(", ")}`);
-    add(`# Programs\n\n${BINS_NOTE}\n\n${dirs.join("\n")}`);
-  }
+  if (env.bins?.length) add(`# Programs\n\n${BINS_NOTE}\n\n${env.bins.map(binLines).join("\n")}`);
 
   // the facts close the prefix, under the words that spend them
   const body = envBody(env);

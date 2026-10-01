@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { bashTool, installExecGround, type Job } from "./bash.ts";
+import { bashTool, installExecGround, type Job, shippedAt } from "./bash.ts";
 
 const live = () => new AbortController().signal;
 
@@ -70,9 +70,20 @@ Deno.test("bash: bins lists each PATH directory's executables in PATH order", as
     // a plain file is not a program, and the agent's empty bin is left out
     await Deno.writeTextFile(`${dir}/system/bin/log.db`, "");
     assertEquals(await plane.bins!(), [
-      { dir: `${dir}/system/bin`, names: ["aedit", "aread", "awrite", "fetch"] },
-      { dir: `${dir}/organization/bin`, names: ["gws"] },
+      // the harness's own carry their usage from the source; nothing is run to learn it
+      shippedAt(`${dir}/system/bin`),
+      { dir: `${dir}/organization/bin`, programs: [{ name: "gws" }] },
     ]);
+    assertEquals(shippedAt("/b").programs.map((p) => p.name), [
+      "aedit",
+      "aread",
+      "awrite",
+      "fetch",
+    ]);
+    assertEquals(
+      shippedAt("/b").programs[1].usage,
+      "aread <path> [offset] [limit] [maxBytes]",
+    );
   } finally {
     await plane.reap();
     await Deno.remove(dir, { recursive: true });

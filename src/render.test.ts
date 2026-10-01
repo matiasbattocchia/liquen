@@ -198,8 +198,14 @@ Deno.test("programs: the PATH directories under the org's folder, after the docs
     {
       self: "a1",
       bins: [
-        { dir: "/o/system/bin", names: ["aedit", "aread", "awrite", "fetch"] },
-        { dir: "/o/organization/bin", names: ["gws"] },
+        {
+          dir: "/o/system/bin",
+          programs: [{ name: "aread", usage: "aread <path>" }, {
+            name: "fetch",
+            usage: "fetch URL",
+          }],
+        },
+        { dir: "/o/organization/bin", programs: [{ name: "gws" }] },
       ],
     },
   );
@@ -207,9 +213,11 @@ Deno.test("programs: the PATH directories under the org's folder, after the docs
     blocks.map((b) => b.text.replace(/^\n\n---\n\n/, "").split("\n")[0]),
     ["# On-demand docs", "# Programs", "# Environment"],
   );
+  // the docs index's shape, each shipped program's usage under its directory
   assertStringIncludes(
     blocks[1].text,
-    "- /o/system/bin: aedit, aread, awrite, fetch\n- /o/organization/bin: gws",
+    "- [/o/system/bin] aread, fetch\n  - aread <path>\n  - fetch URL\n" +
+      "- [/o/organization/bin] gws",
   );
 });
 

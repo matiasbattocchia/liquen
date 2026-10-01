@@ -11,7 +11,7 @@
  * with no exec plane has no proxy either, and a remote sandbox brings its own.
  */
 
-import { type ExecGround, type ExecPlane, installExecGround } from "./exec/bash.ts";
+import { type ExecGround, type ExecPlane, installExecGround, shippedAt } from "./exec/bash.ts";
 import { type Files, localFiles } from "./store/media.ts";
 import type { Store } from "./store/mod.ts";
 import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
@@ -133,6 +133,9 @@ export interface CloudflareSandboxOptions {
  *  agent's alone, since the sandbox is. */
 export const REMOTE_HOME = "/workspace";
 
+/** Where the sandbox image lays the harness's programs (`sandbox/cloudflare/Dockerfile`). */
+const REMOTE_SHIPPED = "/usr/local/bin";
+
 /** The environment a remote shell runs with, alone: the container's own tools, the agent's
  *  `bin/` first, as the local PATH cascade puts the narrowest scope first. */
 const REMOTE_ENV: Record<string, string> = {
@@ -196,6 +199,7 @@ export function openCloudflareSandbox(
             // the place an attach names is the principal's, on this machine: no address
             // in the sandbox, so the shell stands in the workspace whoever is connected
             stand: () => shell.stand(undefined),
+            bins: () => Promise.resolve([shippedAt(REMOTE_SHIPPED)]),
             home: REMOTE_HOME,
             files,
           };

@@ -401,10 +401,11 @@ export interface PermissionAsk {
   send?: SendPreview;
 }
 
-/** One directory of the agent's PATH under the org's folder, and the programs in it. */
+/** One directory of the agent's PATH, and the programs in it; a program the harness ships
+ *  carries its usage. */
 export interface BinDir {
   dir: string;
-  names: string[];
+  programs: { name: string; usage?: string }[];
 }
 
 export interface SendPreview {

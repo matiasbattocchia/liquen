@@ -20,6 +20,7 @@ import { newId } from "../store/id.ts";
 import { MEDIA_MARK } from "../store/media.ts";
 import { MAX_BYTES, MAX_LINES, truncateTail } from "./truncate.ts";
 import { DEFAULT_BASH_TIMEOUT_MS } from "../config.ts";
+import { USAGE } from "../bin/usage.ts";
 
 /** A background job the agent left running: its process group + a hint of what it is. */
 export interface Job {
@@ -120,21 +121,20 @@ export function bashSpec(timeoutMsDefault: number): ExecTool["spec"] {
       "on each other; every separate call is a full round-trip. Calls in one turn run at " +
       "once, each from the same directory, so give each its own cd; the cwd: line under now: " +
       "is where your next call starts. " +
-      "Four helpers on PATH do the everyday jobs better than their habitual counterparts; " +
-      "reach for them first. " +
-      "aread <path> [offset] [limit] [maxBytes], over cat/head/sed -n: it shows a file from " +
+      "Four helpers on PATH, their usage listed under # Programs, do the everyday jobs " +
+      "better than their habitual counterparts; reach for them first. " +
+      "aread, over cat/head/sed -n: it shows a file from " +
       "its TOP with a footer naming the offset to continue from, where a cat through this " +
       "tool keeps only the last lines and a long file loses its beginning; on an image or PDF " +
       "it attaches the file itself, so you see it, and a binary answers with its size, not " +
       "mojibake. " +
-      "awrite <path> (content on stdin/heredoc), over cat >/echo >: it creates parent dirs " +
+      "awrite, over cat >/echo >: it creates parent dirs " +
       "and replaces the file atomically, keeping its mode. " +
-      "aedit <path>, over sed -i/perl -pi: conflict-marker blocks on stdin, each marker on a " +
-      "line of its own (<<<<<<<, the old text, =======, the new text, >>>>>>>); the old text " +
+      "aedit, over sed -i/perl -pi: the old text " +
       "is literal, never a regex, and an edit whose old text is missing or matches twice " +
       "fails and says which, where sed changes nothing or too much in silence; the file is " +
       "locked for the edit and replaced atomically. " +
-      "fetch [-X METHOD] [-H 'k: v'] [-d BODY|@-] [-i] [-o PATH|-] URL [limit] [maxBytes], over " +
+      "fetch, over " +
       "curl/wget: a status outside 2xx fails the call, where curl -s exits 0 on a 404; JSON " +
       "prints pretty; an HTML page reads as text with absolute links, followed by the JSON " +
       "data scripts it carries (no script runs, so on a client-rendered page those are " +
@@ -531,9 +531,11 @@ async function layShims(dir: string): Promise<string> {
   return bin;
 }
 
-/** The executables in each directory, sorted; a directory with none is left out. Read
- *  fresh on every turn, so a program installed mid-session is listed on the next one. */
-export async function binsIn(dirs: string[]): Promise<BinDir[]> {
+/** The executables in each directory, sorted; a directory with none is left out. Those in
+ *  `shipped`, the harness's own, carry their usage from the package's source — nothing on
+ *  PATH is ever run to describe it. Read fresh on every turn, so a program installed
+ *  mid-session is listed on the next one. */
+export async function binsIn(dirs: string[], shipped?: string): Promise<BinDir[]> {
   const out: BinDir[] = [];
   for (const dir of dirs) {
     const names: string[] = [];
@@ -546,9 +548,19 @@ export async function binsIn(dirs: string[]): Promise<BinDir[]> {
     } catch (err) {
       if (!(err instanceof Deno.errors.NotFound)) throw err;
     }
-    if (names.length > 0) out.push({ dir, names: names.sort() });
+    if (names.length === 0) continue;
+    const programs = names.sort().map((name) =>
+      dir === shipped && USAGE[name] ? { name, usage: USAGE[name] } : { name }
+    );
+    out.push({ dir, programs });
   }
   return out;
+}
+
+/** The harness's own programs where an image lays them rather than a boot: every one of
+ *  them, with its usage. */
+export function shippedAt(dir: string): BinDir {
+  return { dir, programs: Object.keys(USAGE).sort().map((name) => ({ name, usage: USAGE[name] })) };
 }
 
 /** Prepare ONE agent's ground: its workspace, PATH shims, uid. The workspace IS
@@ -609,7 +621,7 @@ export async function installExecGround(
         },
         cwd: () => state.cwd,
         ambient: () => bashAmbient(state, jobs),
-        bins: () => binsIn(binDirs),
+        bins: () => binsIn(binDirs, shipped),
         async stand(path?: string) {
           if (path === undefined) {
             state.cwd = workspace;

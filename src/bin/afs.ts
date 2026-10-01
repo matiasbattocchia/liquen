@@ -25,6 +25,7 @@ import { applyEdits, parseEdits } from "../exec/edit.ts";
 import { truncateHead } from "../exec/truncate.ts";
 import { isBytes, looksBinary, MEDIA_MARK, mimeOf, sniffMime } from "../store/media.ts";
 import { report } from "../entry.ts";
+import { USAGE } from "./usage.ts";
 
 /** The first bytes of a file (the sniffing window) — never the whole thing. */
 async function headOf(path: string, n = 1024): Promise<Uint8Array> {
@@ -174,7 +175,7 @@ async function commit(path: string, content: string): Promise<void> {
 export async function run(args: string[]): Promise<number> {
   const [cmd, path, ...rest] = args;
   try {
-    if (!path) throw new Error("usage: afs read|write|edit <path> [args]");
+    if (!path) throw new Error(`usage: ${USAGE[`a${cmd}`] ?? "afs read|write|edit <path> [args]"}`);
     if (cmd === "read") {
       const [offset, limit, maxBytes] = rest.map((n) => n === undefined ? undefined : Number(n));
       console.log(await read(path, offset, limit, maxBytes));

@@ -40,6 +40,7 @@ import { said, withTimeout } from "../connect/http.ts";
 import { MAX_BYTES, MAX_LINES, truncateHead } from "../exec/truncate.ts";
 import { isBytes } from "../store/media.ts";
 import { htmlToText } from "./html.ts";
+import { USAGE as PROGRAMS } from "./usage.ts";
 
 /** One call's bound, headers to body. Under bash's own default cap (120s), so a stalled
  *  origin is named by this binary rather than by the turn's timeout. */
@@ -56,8 +57,7 @@ export interface FetchArgs {
   maxBytes?: number;
 }
 
-const USAGE =
-  "usage: fetch [-X METHOD] [-H 'k: v']... [-d BODY|@-|@FILE] [-i] [-o PATH|-] URL [limit] [maxBytes]";
+const USAGE = `usage: ${PROGRAMS.fetch}`;
 
 /** curl's spelling for the flags an agent already knows, and aread's for the numbers. */
 export function parseArgs(argv: string[]): FetchArgs {
