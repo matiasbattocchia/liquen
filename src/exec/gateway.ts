@@ -140,18 +140,24 @@ export function parseExecStream(text: string): GatewayExec {
 }
 
 /** The files port over a remote sandbox (§9): a reference is a path in the agent's folder
- *  there — relative to it, or absolute under it — and resolving one moves its bytes onto the
+ *  there — relative to where the shell stands (`cwd`, else the folder), or absolute, and
+ *  either way under the folder — and resolving one moves its bytes onto the
  *  conversation's media shelf under `dataDir`, content-named, so the part it answers is a
  *  local file every reader already takes and the snapshot is of bytes that never change.
  *  A link passes through untouched. */
 export function gatewayFiles(
   gateway: Gateway,
-  { home, dataDir, conversation }: { home: string; dataDir: string; conversation: string },
+  { home, cwd, dataDir, conversation }: {
+    home: string;
+    cwd?: () => string;
+    dataDir: string;
+    conversation: string;
+  },
 ): Files {
   return {
     async resolve(ref) {
       if (isExternal(ref)) return filePartOf(ref);
-      const path = posix.resolve(home, pathOf(ref));
+      const path = posix.resolve(cwd?.() ?? home, pathOf(ref));
       if (path !== home && !path.startsWith(`${home}/`)) {
         throw new Error(`${ref}: outside your files — attach from your folder`);
       }
@@ -371,6 +377,7 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
 
   return {
     exec: { bash },
+    cwd: () => state.cwd,
     async ambient() {
       const lines = [`cwd: ${state.cwd}`];
       if (lease) {

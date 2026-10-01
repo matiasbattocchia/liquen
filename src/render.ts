@@ -156,7 +156,7 @@ function envBody(env: Env): string | undefined {
     env.phone && `phone: ${env.phone}`,
   ]);
   const where = facts([
-    env.home && `home: ${env.home}`,
+    env.home && `workspace: ${env.home}`,
     env.timezone && `timezone: ${env.timezone}`,
     env.locale && `locale: ${env.locale}`,
   ]);

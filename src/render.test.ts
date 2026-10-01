@@ -151,7 +151,7 @@ Deno.test("the env section: who the agent is on one line, where it stands on the
     blocks.at(-1)!.text,
     "\n\n---\n\n# Environment\n\n" +
       "self: a1 · name: Ana · email: ana@x.io · phone: +549\n" +
-      "home: /data/agents/a1 · timezone: America/Argentina/Buenos_Aires · locale: es_AR.UTF-8",
+      "workspace: /data/agents/a1 · timezone: America/Argentina/Buenos_Aires · locale: es_AR.UTF-8",
   );
   const [partial] = renderSystem([], { timezone: "UTC" }); // only the facts that are set
   assertEquals(partial.text, "# Environment\n\ntimezone: UTC");
@@ -198,8 +198,8 @@ Deno.test("programs: the PATH directories under the org's folder, after the docs
     {
       self: "a1",
       bins: [
-        { dir: "/o/system/bin", names: ["aedit", "aread", "awrite", "fetch"] },
-        { dir: "/o/organization/bin", names: ["gws"] },
+        { dir: "system/bin", names: ["aedit", "aread", "awrite", "fetch"] },
+        { dir: "organization/bin", names: ["gws"] },
       ],
     },
   );
@@ -209,7 +209,7 @@ Deno.test("programs: the PATH directories under the org's folder, after the docs
   );
   assertStringIncludes(
     blocks[1].text,
-    "- /o/system/bin: aedit, aread, awrite, fetch\n- /o/organization/bin: gws",
+    "- system/bin: aedit, aread, awrite, fetch\n- organization/bin: gws",
   );
 });
 

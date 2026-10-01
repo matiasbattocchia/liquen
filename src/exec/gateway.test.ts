@@ -211,6 +211,16 @@ cases("a file the agent attaches lands on the conversation's shelf", async (shel
     assertEquals((await files.snapshot(part))?.media_type, "image/png");
     await assertRejects(() => files.resolve("gone.png"), Error, "no such file");
     await assertRejects(() => files.resolve("/etc/passwd"), Error, "outside your files");
+    // with the shell's cwd, a relative reference is from where the shell stands
+    await run(shell, { command: "mkdir -p shots && cp pic.png shots/b.png && cd shots" });
+    const standing = gatewayFiles(place.gateway, {
+      home: place.workspace,
+      cwd: shell.cwd,
+      dataDir,
+      conversation: "ada",
+    });
+    assertEquals((await standing.resolve("b.png")).file.name, "b.png");
+    await assertRejects(() => standing.resolve("../../etc/passwd"), Error, "outside your files");
   } finally {
     await Deno.remove(dataDir, { recursive: true });
   }

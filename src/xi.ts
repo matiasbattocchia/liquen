@@ -3537,8 +3537,8 @@ export function specsOf(
             type: "array",
             items: { type: "string" },
             description:
-              "file paths to attach. A relative path resolves from your home, never from your " +
-              "shell's cwd, which may have moved",
+              "file paths to attach. A relative path resolves from your shell's cwd, the " +
+              "cwd: line under now:",
           },
           location: {
             type: "object",

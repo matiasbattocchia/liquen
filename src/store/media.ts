@@ -250,12 +250,14 @@ async function verify(secret: string, payload: string, mac: string): Promise<boo
 
 const encode = (s: string): BufferSource => new TextEncoder().encode(s) as BufferSource;
 
-/** Where an agent's file references may point (§9 data classification): `home` is what a
- *  relative path is from — the agent's own folder — and `roots` are the directories a
- *  reference may resolve INTO, symlinks followed first, so a link is judged by where it
- *  points. The same ground the agent's uid can read; the harness reads no further. */
+/** Where an agent's file references may point (§9 data classification): a relative path
+ *  is from `cwd` — where the session's shell stands, the anchor's `cwd:` line — else from
+ *  `home`, the agent's own folder; `roots` are the directories a reference may resolve
+ *  INTO, symlinks followed first, so a link is judged by where it points. The same ground
+ *  the agent's uid can read; the harness reads no further. */
 export interface FileScope {
   home: string;
+  cwd?: () => string;
   roots: string[];
 }
 
@@ -298,7 +300,9 @@ export async function filePartOf(ref: string, scope?: FileScope): Promise<FilePa
       file: { mime_type: mime, uri: ref, ...(name && name !== "/" ? { name } : {}) },
     };
   }
-  const abs = scope ? await Deno.realPath(resolve(scope.home, pathOf(ref))) : resolve(pathOf(ref));
+  const abs = scope
+    ? await Deno.realPath(resolve(scope.cwd?.() ?? scope.home, pathOf(ref)))
+    : resolve(pathOf(ref));
   if (scope && !scope.roots.some((root) => abs === root || abs.startsWith(`${root}/`))) {
     throw new Error(
       `${ref}: outside your files — attach from your folder, the org's, or the media store`,

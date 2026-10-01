@@ -84,10 +84,11 @@ export async function openLocalSandbox(
   }
   const shells = new Map<string, ExecPlane>();
   const homeOf = (agentId: string) => `${dir}/agents/${agentId}`;
-  const filesOf = (agentId: string): Files => {
+  const filesOf = (agentId: string, shell: ExecPlane): Files => {
     const home = homeOf(agentId);
     return localFiles({
       home,
+      cwd: shell.cwd,
       roots: [home, `${dir}/organization`, `${dir}/system`, `${dir}/conversations`],
     });
   };
@@ -103,7 +104,7 @@ export async function openLocalSandbox(
             shell = ground.shell();
             shells.set(key, shell);
           }
-          return { ...shell, home: homeOf(agentId), files: filesOf(agentId) };
+          return { ...shell, home: homeOf(agentId), files: filesOf(agentId, shell) };
         },
       };
     },
@@ -186,6 +187,7 @@ export function openCloudflareSandbox(
           };
           const files = gatewayFiles(reading, {
             home: REMOTE_HOME,
+            cwd: shell.cwd,
             dataDir: dir,
             conversation: key,
           });

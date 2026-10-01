@@ -293,6 +293,13 @@ Deno.test("localFiles: a scoped reference resolves from the agent's home and sta
       (await files.resolve("https://example.com/a.pdf")).file.uri,
       "https://example.com/a.pdf",
     );
+    // with a shell, relative is from where it stands, and the roots judge it all the same
+    let cwd = `${home}/notes`;
+    const shelled = localFiles({ home, cwd: () => cwd, roots: [home, `${tmp}/organization`] });
+    assertEquals((await shelled.resolve("plan.md")).file.uri, `file://${home}/notes/plan.md`);
+    cwd = `${tmp}/organization`;
+    assertEquals((await shelled.resolve("shared.csv")).file.name, "shared.csv");
+    await assertRejects(() => shelled.resolve("../log/log.db"), Error, "outside");
   } finally {
     await Deno.remove(tmp, { recursive: true });
   }
