@@ -4981,3 +4981,22 @@ attribute. The deferred "thread the reports" idea keys on a root message instead
 Migration (SQLite v16, Postgres v7): the column is dropped. A fresh SQLite store is
 created without it, so the v13 step, which read the old subject out of it, runs only on a
 store that still has it.
+
+### A series is one event wearing its rule; an occurrence wears its series (2026-10-01) — LANDED
+
+Both calendar wires list a recurring series as its master, and the canonical shape kept
+nothing of the recurrence: a weekly standup read as a one-off on its first date, and an
+occurrence that departed from the rule (`<masterId>_<originalStart>` on Google, an
+`exception` on Graph) read as an edit or delete of a referent nobody could place. Three
+optional fields on `CalendarData`: `rrule`, the master's rule as RFC 5545 RRULE text
+(Google's `RRULE:` line as it comes; Graph's pattern and range rendered — a relative pattern
+is `BYDAY` with `BYSETPOS`, a range that ends is `UNTIL` as a date or `COUNT`); on an
+occurrence, `series` (the master's `gid`) and `was` (the start the rule gave it). A delete's
+handle carries `series` and `was` beside `gid`, so a cancelled occurrence says which date
+went. The log holds the series, never its expansion: a day's view is a fetch
+(`calendarView` on Graph, `singleEvents=true` on Google). An occurrence's rows still ref its
+own referent, which has no create — the dangling tolerance the log already has.
+
+Open: whether a change to one occurrence puts its master into Graph's `/beta` events delta
+is unverified on a tenant; an occurrence edited or cancelled on Outlook may not reach the
+log at all.

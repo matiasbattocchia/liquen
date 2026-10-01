@@ -16,10 +16,13 @@
  *   edit     its own event, `action:"edit"` + `ref_external_id` at the create, new content;
  *            the create row stays sealed (a `:<ts>`-versioned external_id dedupes replays).
  *   delete   its own event, `action:"delete"` + ref, its part the bare `{gid}` handle (the
- *            action is the meaning; the gid keeps the gone event fetchable), plus a
- *            merge-only `status.deleted_at` on the create row.
- * An edit or delete of an event from before the poller's window is a dangling ref — the soft
- * reference the log already tolerates for out-of-order revokes. Every row is harness-derived:
+ *            action is the meaning; the gid keeps the gone event fetchable) — a cancelled
+ *            occurrence's handle also says which series and which date (`series`, `was`) —
+ *            plus a merge-only `status.deleted_at` on the create row.
+ * A series is one event, its master; an occurrence that departs from the rule is an event of
+ * its own whose referent has no create (the master's stands for the series), so its rows ref
+ * it dangling. An edit or delete of an event from before the poller's window dangles the same
+ * way — the soft reference the log already tolerates for out-of-order revokes. Every row is harness-derived:
  * `sender` is the event's organizer (the line's `from`), NO `agent` (the transcriber's trick
  * to keep a broker-authored row off the wire — dispatch wants `agent` — and out of fan-in, §4).
  *
@@ -56,7 +59,8 @@ export interface CalendarChange {
   ts: string;
   /** The organizer — the line's voice. A delete carries none. */
   sender?: { address: string; name?: string };
-  /** The pruned resource; a delete carries none. */
+  /** The pruned resource; a delete carries at most the handle (`gid`, and `series`/`was`
+   *  on a cancelled occurrence). */
   data?: CalendarData;
   /** The organizer's prose (the description) — the part's `text`, never a data field. */
   text?: string;
@@ -84,9 +88,12 @@ export function calendarRows(
         type: "message",
         payload: { action: "delete", ref_external_id: ref },
         envelope: { ...base, external_id: `${ref}:cancelled` },
-        // `{gid}` is the delete's whole content: the service-side id that keeps the event
-        // fetchable after the `re` referent scrolls out of the window
-        parts: [{ type: "data", kind: "calendar", data: { gid: c.id } } satisfies CalendarPart],
+        // the handle is the delete's whole content: the service-side id that keeps the event
+        // fetchable after the `re` referent scrolls out of the window, and on an occurrence
+        // the series and the date it stood on
+        parts: [
+          { type: "data", kind: "calendar", data: c.data ?? { gid: c.id } } satisfies CalendarPart,
+        ],
       },
       // merge-only: no `parts` key, so the upsert leaves the sealed original untouched and
       // only the lifecycle stamp lands (a create from before our window has no row — the

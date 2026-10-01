@@ -335,6 +335,131 @@ Deno.test("an organizer's cancellation lands on the attendee's copy as isCancell
   });
 });
 
+/** One event read back under `id`, pruned. */
+async function prunedOf(
+  creds: Awaited<ReturnType<typeof openCredentials>>,
+  id: string,
+  event: unknown,
+): Promise<{ data: CalendarPart["data"]; calls: Call[] }> {
+  const calls: Call[] = [];
+  const cap = captor();
+  await poller(
+    creds,
+    graph(() => ({ value: [{ id }], "@odata.deltaLink": `${DELTA}?$deltatoken=d2` }), {
+      [id]: event,
+    }, calls),
+    cap.publish,
+  ).tick();
+  return { data: (cap.rows[0].parts[0] as CalendarPart).data, calls };
+}
+
+Deno.test("a series is its master: the first occurrence's times and Graph's pattern and range rendered as `rrule`", async () => {
+  await withVault(async (creds) => {
+    await seeded(creds);
+    const { data, calls } = await prunedOf(creds, "AAMkS", {
+      ...CREATED,
+      id: "AAMkS",
+      subject: "Standup",
+      type: "seriesMaster",
+      recurrence: {
+        pattern: {
+          type: "weekly",
+          interval: 1,
+          daysOfWeek: ["tuesday", "thursday"],
+          firstDayOfWeek: "sunday",
+        },
+        range: {
+          type: "endDate",
+          startDate: "2026-09-24",
+          endDate: "2026-12-31",
+          recurrenceTimeZone: "UTC",
+        },
+      },
+    });
+    assertStringIncludes(calls[1].url.searchParams.get("$select")!, "recurrence");
+    assertEquals(data.rrule, "FREQ=WEEKLY;UNTIL=20261231;BYDAY=TU,TH;WKST=SU");
+    assertEquals(data.start, "2026-09-24T18:00:00Z");
+    assertEquals(data.series, undefined);
+  });
+});
+
+Deno.test("every pattern type renders: relative ones as BYDAY with BYSETPOS, a numbered range as COUNT, an unending one as nothing", async () => {
+  await withVault(async (creds) => {
+    await seeded(creds);
+    const cases: [unknown, string][] = [
+      [{
+        pattern: { type: "daily", interval: 3 },
+        range: { type: "numbered", numberOfOccurrences: 10 },
+      }, "FREQ=DAILY;INTERVAL=3;COUNT=10"],
+      [{
+        pattern: { type: "absoluteMonthly", interval: 1, dayOfMonth: 15 },
+        range: { type: "noEnd" },
+      }, "FREQ=MONTHLY;BYMONTHDAY=15"],
+      [{
+        pattern: { type: "relativeMonthly", interval: 2, daysOfWeek: ["tuesday"], index: "second" },
+        range: { type: "noEnd" },
+      }, "FREQ=MONTHLY;INTERVAL=2;BYDAY=TU;BYSETPOS=2"],
+      [{
+        pattern: { type: "absoluteYearly", interval: 1, month: 7, dayOfMonth: 9 },
+        range: { type: "noEnd" },
+      }, "FREQ=YEARLY;BYMONTH=7;BYMONTHDAY=9"],
+      [{
+        pattern: {
+          type: "relativeYearly",
+          interval: 1,
+          month: 11,
+          daysOfWeek: ["thursday"],
+          index: "last",
+        },
+        range: { type: "noEnd" },
+      }, "FREQ=YEARLY;BYMONTH=11;BYDAY=TH;BYSETPOS=-1"],
+    ];
+    for (const [recurrence, want] of cases) {
+      const { data } = await prunedOf(creds, "AAMkS", {
+        ...CREATED,
+        type: "seriesMaster",
+        recurrence,
+      });
+      assertEquals(data.rrule, want);
+    }
+  });
+});
+
+Deno.test("an exception wears its series and the start the rule gave it; cancelled, its delete's handle says the same", async () => {
+  await withVault(async (creds) => {
+    await seeded(creds);
+    const exception = {
+      ...CREATED,
+      id: "AAMkX",
+      type: "exception",
+      seriesMasterId: "AAMkS",
+      originalStart: "2026-10-01T18:00:00.0000000Z",
+      start: { dateTime: "2026-10-01T19:00:00.0000000", timeZone: "UTC" },
+      lastModifiedDateTime: "2026-09-25T12:00:00Z",
+    };
+    const { data } = await prunedOf(creds, "AAMkX", exception);
+    assertEquals(data.series, "AAMkS");
+    assertEquals(data.was, "2026-10-01T18:00:00Z");
+    assertEquals(data.start, "2026-10-01T19:00:00Z");
+    assertEquals(data.rrule, undefined);
+
+    const cap = captor();
+    await poller(
+      creds,
+      graph(() => ({ value: [{ id: "AAMkX" }], "@odata.deltaLink": `${DELTA}?$deltatoken=d3` }), {
+        AAMkX: { ...exception, isCancelled: true },
+      }),
+      cap.publish,
+    ).tick();
+    assertEquals(cap.rows[0].payload?.action, "delete");
+    assertEquals((cap.rows[0].parts[0] as CalendarPart).data, {
+      gid: "AAMkX",
+      series: "AAMkS",
+      was: "2026-10-01T18:00:00Z",
+    });
+  });
+});
+
 Deno.test("an id gone between the list and the read is skipped; the cursor still advances", async () => {
   await withVault(async (creds) => {
     await seeded(creds);

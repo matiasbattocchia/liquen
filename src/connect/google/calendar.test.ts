@@ -257,6 +257,99 @@ Deno.test("a cancellation is action:delete + a merge-only deleted_at stamp on th
   });
 });
 
+Deno.test("a series is its master: the first occurrence's times and the RRULE line as `rrule`", async () => {
+  await withVault(async (creds) => {
+    await poller(creds, () => Promise.resolve(jsonResponse({ items: [], nextSyncToken: "tok1" })))
+      .tick(); // seed
+    const cap = captor();
+    await poller(creds, () =>
+      Promise.resolve(jsonResponse({
+        items: [{
+          id: "ser1",
+          status: "confirmed",
+          summary: "Standup",
+          created: "2026-08-24T10:00:00Z",
+          updated: "2026-08-24T10:00:00Z",
+          start: { dateTime: "2026-08-25T09:00:00Z" },
+          end: { dateTime: "2026-08-25T09:15:00Z" },
+          recurrence: [
+            "EXDATE;TZID=America/Argentina/Buenos_Aires:20260901T060000",
+            "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20261231T235959Z",
+          ],
+        }],
+        nextSyncToken: "tok2",
+      })), cap.publish).tick();
+
+    assertEquals(cap.rows.length, 1);
+    const row = cap.rows[0];
+    assertEquals(row.payload?.action, undefined); // one create stands for the series
+    assertEquals(row.envelope.external_id, "calendar:ana@example.com:ser1");
+    assertEquals((row.parts[0] as CalendarPart).data, {
+      gid: "ser1",
+      title: "Standup",
+      start: "2026-08-25T09:00:00Z",
+      end: "2026-08-25T09:15:00Z",
+      rrule: "FREQ=WEEKLY;BYDAY=TU;UNTIL=20261231T235959Z", // the rule's value, nothing else of the lines
+    });
+  });
+});
+
+Deno.test("an occurrence that departs from the rule is its own event wearing `series` and `was` — moved, it is an edit; cancelled, a delete whose handle says which date", async () => {
+  await withVault(async (creds) => {
+    await poller(creds, () => Promise.resolve(jsonResponse({ items: [], nextSyncToken: "tok1" })))
+      .tick(); // seed
+    const cap = captor();
+    await poller(creds, () =>
+      Promise.resolve(jsonResponse({
+        items: [
+          {
+            id: "ser1_20260901T090000Z",
+            status: "confirmed",
+            summary: "Standup",
+            created: "2026-08-24T10:00:00Z", // the master's: an instance inherits it
+            updated: "2026-08-28T15:00:00Z",
+            start: { dateTime: "2026-09-01T10:00:00Z" },
+            end: { dateTime: "2026-09-01T10:15:00Z" },
+            recurringEventId: "ser1",
+            originalStartTime: { dateTime: "2026-09-01T09:00:00Z" },
+          },
+          {
+            id: "ser1_20260908T090000Z",
+            status: "cancelled",
+            recurringEventId: "ser1",
+            originalStartTime: { dateTime: "2026-09-08T09:00:00Z" },
+          },
+        ],
+        nextSyncToken: "tok2",
+      })), cap.publish).tick();
+
+    assertEquals(cap.rows.length, 3);
+    const moved = cap.rows[0];
+    assertEquals(moved.payload?.action, "edit");
+    // its own referent — the master's create stands for the series, so this one dangles
+    assertEquals(moved.payload?.ref_external_id, "calendar:ana@example.com:ser1_20260901T090000Z");
+    assertEquals((moved.parts[0] as CalendarPart).data, {
+      gid: "ser1_20260901T090000Z",
+      series: "ser1",
+      was: "2026-09-01T09:00:00Z",
+      title: "Standup",
+      start: "2026-09-01T10:00:00Z",
+      end: "2026-09-01T10:15:00Z",
+    });
+    const gone = cap.rows[1];
+    assertEquals(gone.payload?.action, "delete");
+    assertEquals((gone.parts[0] as CalendarPart).data, {
+      gid: "ser1_20260908T090000Z",
+      series: "ser1",
+      was: "2026-09-08T09:00:00Z",
+    }); // the handle names the series and the date — the whole meaning of the cancellation
+    assertEquals(
+      cap.rows[2].envelope.external_id,
+      "calendar:ana@example.com:ser1_20260908T090000Z",
+    );
+  });
+});
+
 Deno.test("a 410 drops the cursor so the next tick re-bootstraps", async () => {
   await withVault(async (creds) => {
     let call = 0;

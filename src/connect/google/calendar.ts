@@ -13,11 +13,17 @@
  * cursor is Calendar's `syncToken`; a first run harvests one from an `events.list` bounded
  * at `timeMin = now`, a `410 Gone` (token aged out) drops it. Calendar's sync doesn't LABEL
  * the change, so `classify` reads it off the resource: `cancelled` ⇒ delete, `updated` past
- * `created` ⇒ edit, else create. Two shapes land as dangling-but-tolerated refs: a cancelled
- * INSTANCE of a recurring event (`<masterId>_<ts>` — the master was the create), and a
- * re-cancellation after a restore (the restore is an edit that leaves `deleted_at` standing;
- * the second delete dedupes on `:cancelled` — un-delete has no verb here, same as the wire
- * services).
+ * `created` ⇒ edit, else create.
+ *
+ * A series is its master, listed without `singleEvents`: the first occurrence's times and
+ * the `RRULE` line of `recurrence`. An occurrence that departs from the rule is listed as
+ * its own resource, `<masterId>_<originalStart>` with `recurringEventId` and
+ * `originalStartTime`; it inherits the master's `created`, so it reads as an edit (or, when
+ * `cancelled`, a delete) of a referent that has no create — a dangling ref the log tolerates.
+ * A "this and following" split is an edit of the old master (its rule gains `UNTIL`) and a
+ * create of a new one (`<masterId>_R<date>`). A re-cancellation after a restore dangles the
+ * same way (the restore is an edit that leaves `deleted_at` standing; the second delete
+ * dedupes on `:cancelled` — un-delete has no verb here, same as the wire services).
  */
 
 import { DEFAULT_CALENDARS } from "./config.ts";
@@ -63,6 +69,11 @@ export interface CalendarEvent {
   end?: { dateTime?: string; date?: string };
   creator?: { email?: string; displayName?: string };
   attendees?: { email?: string; displayName?: string; responseStatus?: string }[];
+  /** A master's rule: RFC 5545 lines (`RRULE:…`, also `EXDATE:…`/`RDATE:…` on an import). */
+  recurrence?: string[];
+  /** An occurrence's master, and the start the rule gave it. */
+  recurringEventId?: string;
+  originalStartTime?: { dateTime?: string; date?: string };
   htmlLink?: string;
   [k: string]: unknown;
 }
@@ -169,7 +180,7 @@ async function pollCalendar(
 function changeOf(item: CalendarEvent, now: () => string): CalendarChange {
   const id = item.id!;
   const ts = item.updated ?? now();
-  if (item.status === "cancelled") return { id, change: "delete", ts };
+  if (item.status === "cancelled") return { id, change: "delete", ts, data: handle(item) };
   return {
     id,
     change: createOrEdit(item.created, item.updated),
@@ -192,13 +203,17 @@ function changeOf(item: CalendarEvent, now: () => string): CalendarChange {
  *  reminder policy, html links — stops here. Google's `responseStatus` vocabulary IS the
  *  canonical PARTSTAT set, so it passes through the whitelist unchanged. */
 function pruned(item: CalendarEvent): CalendarData {
-  const out: CalendarData = { gid: item.id! };
+  const out = handle(item);
   if (item.summary) out.title = item.summary;
   const start = item.start?.dateTime ?? item.start?.date;
   if (start) out.start = start;
   const end = item.end?.dateTime ?? item.end?.date;
   if (end) out.end = end;
   if (item.location) out.loc = item.location;
+  // the rule is the RRULE line's value; a tombstone of an occurrence is its own delete row,
+  // so the import-only exception lines add nothing the log does not already say
+  const rules = (item.recurrence ?? []).filter((l) => l.startsWith("RRULE:"));
+  if (rules.length) out.rrule = rules.map((l) => l.slice("RRULE:".length)).join("\n");
   const invitees = (item.attendees ?? []).map((a) => {
     const inv: NonNullable<CalendarData["invitees"]>[number] = {};
     if (a.displayName) inv.name = a.displayName;
@@ -210,6 +225,16 @@ function pruned(item: CalendarEvent): CalendarData {
     return inv;
   }).filter((inv) => Object.keys(inv).length > 0);
   if (invitees.length) out.invitees = invitees;
+  return out;
+}
+
+/** The event's handle: its id, and on an occurrence the series it belongs to and the start
+ *  the rule gave it — what a tombstone carries, what every fuller shape starts from. */
+function handle(item: CalendarEvent): CalendarData {
+  const out: CalendarData = { gid: item.id! };
+  if (item.recurringEventId) out.series = item.recurringEventId;
+  const was = item.originalStartTime?.dateTime ?? item.originalStartTime?.date;
+  if (was) out.was = was;
   return out;
 }
 
