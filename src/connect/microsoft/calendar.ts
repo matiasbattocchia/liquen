@@ -24,6 +24,11 @@
  * `lastModifiedDateTime` past `createdDateTime` ⇒ edit, else create. An attendee's reply
  * modifies the organizer's copy, so it reads as an edit — the same as on Google.
  *
+ * A series is its master (`type: seriesMaster`): the first occurrence's times and a
+ * structured `recurrence` (a pattern and a range), rendered here as the RRULE text the
+ * canonical shape carries. An event read back as an `occurrence` or `exception` wears its
+ * `seriesMasterId` and `originalStart`.
+ *
  * Times are asked in UTC (`Prefer: outlook.timezone`) and published as instants (`…Z`); an
  * all-day event is published as its dates, the shape Google's `date` has. The body is asked
  * as text, so the part's `text` is the organizer's prose and never markup.
@@ -74,7 +79,29 @@ export interface GraphEvent {
   }[];
   createdDateTime?: string;
   lastModifiedDateTime?: string;
+  type?: string; // "singleInstance" | "occurrence" | "exception" | "seriesMaster"
+  recurrence?: Recurrence;
+  seriesMasterId?: string;
+  originalStart?: string;
   [k: string]: unknown;
+}
+
+/** Graph's structured rule: how often, and for how long. */
+interface Recurrence {
+  pattern?: {
+    type?: string; // daily | weekly | absoluteMonthly | relativeMonthly | absoluteYearly | relativeYearly
+    interval?: number;
+    month?: number;
+    dayOfMonth?: number;
+    daysOfWeek?: string[]; // "monday" … "sunday"
+    firstDayOfWeek?: string;
+    index?: string; // first | second | third | fourth | last
+  };
+  range?: {
+    type?: string; // endDate | noEnd | numbered
+    endDate?: string; // a date
+    numberOfOccurrences?: number;
+  };
 }
 
 /** What the delta feed lists per event: an id, or an id under `@removed`. */
@@ -103,6 +130,10 @@ const SELECT = [
   "attendees",
   "createdDateTime",
   "lastModifiedDateTime",
+  "type",
+  "recurrence",
+  "seriesMasterId",
+  "originalStart",
 ].join(",");
 
 export interface MicrosoftCalendarDeps {
@@ -209,7 +240,7 @@ async function changeOf(
   const item = await getEvent(graph, id);
   if (!item) return undefined;
   const ts = item.lastModifiedDateTime ?? now();
-  if (item.isCancelled) return { id, change: "delete", ts };
+  if (item.isCancelled) return { id, change: "delete", ts, data: handle(id, item) };
   const org = item.organizer?.emailAddress;
   const text = item.body?.content?.trim();
   return {
@@ -240,13 +271,15 @@ const RESPONSE: Record<string, NonNullable<CalendarData["invitees"]>[number]["st
  *  column indexes, so everything else — change keys, web links, reminder policy, online
  *  meeting blobs — stops here. */
 function pruned(id: string, item: GraphEvent): CalendarData {
-  const out: CalendarData = { gid: id };
+  const out = handle(id, item);
   if (item.subject) out.title = item.subject;
   const start = instant(item.start, item.isAllDay);
   if (start) out.start = start;
   const end = instant(item.end, item.isAllDay);
   if (end) out.end = end;
   if (item.location?.displayName) out.loc = item.location.displayName;
+  const rule = item.recurrence && rrule(item.recurrence);
+  if (rule) out.rrule = rule;
   const invitees = (item.attendees ?? []).map((a) => {
     const inv: NonNullable<CalendarData["invitees"]>[number] = {};
     if (a.emailAddress?.name) inv.name = a.emailAddress.name;
@@ -257,6 +290,60 @@ function pruned(id: string, item: GraphEvent): CalendarData {
   }).filter((inv) => Object.keys(inv).length > 0);
   if (invitees.length) out.invitees = invitees;
   return out;
+}
+
+/** The event's handle: its id, and on an occurrence the series it belongs to and the start
+ *  the rule gave it — what a tombstone carries, what every fuller shape starts from. */
+function handle(id: string, item: GraphEvent): CalendarData {
+  const out: CalendarData = { gid: id };
+  if (item.seriesMasterId) out.series = item.seriesMasterId;
+  if (item.originalStart) out.was = item.originalStart.replace(/\.\d+Z$/, "Z");
+  return out;
+}
+
+const BYDAY: Record<string, string> = {
+  monday: "MO",
+  tuesday: "TU",
+  wednesday: "WE",
+  thursday: "TH",
+  friday: "FR",
+  saturday: "SA",
+  sunday: "SU",
+};
+const BYSETPOS: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, last: -1 };
+const FREQ: Record<string, string> = {
+  daily: "DAILY",
+  weekly: "WEEKLY",
+  absoluteMonthly: "MONTHLY",
+  relativeMonthly: "MONTHLY",
+  absoluteYearly: "YEARLY",
+  relativeYearly: "YEARLY",
+};
+
+/** Graph's pattern and range as one RFC 5545 RRULE value. A relative pattern ("the second
+ *  Tuesday") is `BYDAY` with `BYSETPOS`; a range that ends is `UNTIL` as the date it ends
+ *  on, or `COUNT`. A pattern of a type the vocabulary lacks renders nothing. */
+function rrule(r: Recurrence): string | undefined {
+  const p = r.pattern ?? {};
+  const freq = FREQ[p.type ?? ""];
+  if (!freq) return undefined;
+  const parts = [`FREQ=${freq}`];
+  if (p.interval && p.interval > 1) parts.push(`INTERVAL=${p.interval}`);
+  const range = r.range ?? {};
+  if (range.type === "numbered" && range.numberOfOccurrences) {
+    parts.push(`COUNT=${range.numberOfOccurrences}`);
+  } else if (range.type === "endDate" && range.endDate) {
+    parts.push(`UNTIL=${range.endDate.replaceAll("-", "")}`);
+  }
+  if (p.type?.endsWith("Yearly") && p.month) parts.push(`BYMONTH=${p.month}`);
+  if (p.type?.startsWith("absolute") && p.dayOfMonth) parts.push(`BYMONTHDAY=${p.dayOfMonth}`);
+  const days = (p.daysOfWeek ?? []).map((d) => BYDAY[d]).filter(Boolean);
+  if (days.length && p.type !== "daily") parts.push(`BYDAY=${days.join(",")}`);
+  const pos = p.type?.startsWith("relative") ? BYSETPOS[p.index ?? ""] : undefined;
+  if (pos) parts.push(`BYSETPOS=${pos}`);
+  const wkst = p.type === "weekly" ? BYDAY[p.firstDayOfWeek ?? ""] : undefined;
+  if (wkst && wkst !== "MO") parts.push(`WKST=${wkst}`);
+  return parts.join(";");
 }
 
 /** Graph's `{dateTime, timeZone}` — a wall clock with seven fractional digits and the zone
