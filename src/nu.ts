@@ -216,6 +216,7 @@ export async function checkpoint(
   const { session, here, turnId, attempt, env } = turnOf(input, transport);
   const summary = await buildSummary({
     system: renderSystem(input.docs, env),
+    tools: input.tools,
     events: input.events,
     session,
     model: config.model,

@@ -40,6 +40,12 @@ Deno.test("toRequest: tools, output cap and effort take the wire's names", () =>
   });
   // no effort ⇒ no level: the model decides, on either wire
   assertEquals("thinking_level" in toRequest(params()).generation_config, false);
+  // tools offered and none called: the checkpoint's choice reaches this wire too
+  assertEquals(
+    toRequest(params({ tool_choice: { type: "none" } })).generation_config.tool_choice,
+    "none",
+  );
+  assertEquals("tool_choice" in toRequest(params()).generation_config, false);
   // the catalog's five depths collapse onto the wire's top from `high` up
   assertEquals(THINKING_LEVEL.xhigh, "high");
   assertEquals(THINKING_LEVEL.max, "high");

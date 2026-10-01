@@ -55,6 +55,9 @@ export interface CompactInput {
   /** The prefix the agent's think reads (its instructions, memories, environment): the
    *  checkpoint is written against it, so what the prefix already says is not carried. */
   system?: Anthropic.TextBlockParam[];
+  /** The think's tools, offered and never called: the cached prefix is tools, then system,
+   *  so only the think's own tools let the checkpoint read the think's cache entry. */
+  tools?: Anthropic.Tool[];
   events: Event[]; // the window, log order
   session: Session; // whose window it is, and where it speaks (§4)
   model: string;
@@ -271,7 +274,8 @@ export async function buildSummary(
     model: input.model,
     effort: input.effort,
     maxTokens: SUMMARY_MAX_TOKENS,
-    tools: [],
+    tools: input.tools ?? [],
+    ...(input.tools?.length ? { toolChoice: "none" as const } : {}),
     turnId: input.turnId,
     signal: input.signal,
   });

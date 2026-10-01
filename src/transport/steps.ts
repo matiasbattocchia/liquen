@@ -79,6 +79,8 @@ export function toRequest(params: Anthropic.MessageCreateParamsNonStreaming): Re
       max_output_tokens: params.max_tokens,
       thinking_summaries: "auto",
       ...(effort ? { thinking_level: THINKING_LEVEL[effort] } : {}),
+      // the one choice the harness makes: the tools offered, none called (mu.ts)
+      ...(params.tool_choice?.type === "none" ? { tool_choice: "none" } : {}),
     },
   };
 }

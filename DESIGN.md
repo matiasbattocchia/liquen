@@ -1656,7 +1656,8 @@ compaction proper is only pi's **checkpoint layer**:
 - **Written under the agent's own prefix.** The checkpoint call carries the system prefix
   the think would read — instructions, memories, environment — so the model can see what
   already stands in the agent's prompt and leave it out of the record. The same prefix also
-  means the same cache entry.
+  means the same cache entry: the cached prefix is the tools, then the system, so the call
+  carries the think's tools too, offered with `tool_choice: none` and never called.
 - **Prompt shape** = open ends, not a record: what is still open (each by the name and
   address the window shows, whose move it is, with the figures that move needs) · what a
   principal said here that the prefix does not already say. Closed threads, standing facts

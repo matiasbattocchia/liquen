@@ -33,6 +33,8 @@ export type Emission =
 export interface StepInput extends RenderedRequest {
   model: string;
   tools?: Anthropic.Tool[]; // omit ⇒ a toolless call (wiring, not a knob — tools are code)
+  /** `none`: the tools ride the request, so its prefix is the think's, and none is called. */
+  toolChoice?: "none";
   maxTokens?: number; // API-required output cap; default: the catalog's (§9)
   effort?: Effort; // adaptive thinking depth; omit ⇒ the model's default
   turnId?: string; // the turn this call IS — rides past the params, to the meter (§2)
@@ -83,6 +85,7 @@ export async function mu(
     max_tokens: input.maxTokens ?? DEFAULT_MAX_TOKENS,
     messages: input.messages,
     tools: input.tools ?? [],
+    ...(input.toolChoice ? { tool_choice: { type: input.toolChoice } } : {}),
     // modern models reason adaptively (§2); the summary is the log's only view of that
     // reasoning, and it bills the same as the empty block the models return by default
     thinking: { type: "adaptive", display: "summarized" },

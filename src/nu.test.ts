@@ -305,6 +305,30 @@ Deno.test("checkpoint: a window under budget is nothing to do — no call, no ev
   assertEquals(out, []);
 });
 
+Deno.test("checkpoint: its request opens on the think's prefix — the same tools, offered and none called", async () => {
+  const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
+  const tools: Anthropic.Tool[] = [{ name: "send", input_schema: { type: "object" } }];
+  const input = {
+    events,
+    docs: [],
+    tools,
+    compactPrompt: PROMPT,
+    config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+  };
+  const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const transport = (p: Anthropic.MessageCreateParamsNonStreaming) => {
+    seen.push(p);
+    return Promise.resolve(canned([{ kind: "assistant", text: "## Open" }]));
+  };
+  await nu(input, transport);
+  await checkpoint(input, transport);
+  const [think, check] = seen;
+  assertEquals(check.tools, think.tools);
+  assertEquals(check.system, think.system);
+  assertEquals(check.tool_choice, { type: "none" });
+  assertEquals(think.tool_choice, undefined);
+});
+
 Deno.test("nu: a checkpoint cut at max_tokens is an error, not a record — and no second call", async () => {
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   let calls = 0;
