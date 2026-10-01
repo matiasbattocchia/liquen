@@ -210,10 +210,11 @@ function pruned(item: CalendarEvent): CalendarData {
   const end = item.end?.dateTime ?? item.end?.date;
   if (end) out.end = end;
   if (item.location) out.loc = item.location;
-  // the rule is the RRULE line's value; a tombstone of an occurrence is its own delete row,
-  // so the import-only exception lines add nothing the log does not already say
-  const rules = (item.recurrence ?? []).filter((l) => l.startsWith("RRULE:"));
+  const lines = item.recurrence ?? [];
+  const rules = lines.filter((l) => l.startsWith("RRULE:"));
   if (rules.length) out.rrule = rules.map((l) => l.slice("RRULE:".length)).join("\n");
+  const exdates = lines.filter((l) => l.startsWith("EXDATE")).flatMap(exdateValues);
+  if (exdates.length) out.exdates = exdates;
   const invitees = (item.attendees ?? []).map((a) => {
     const inv: NonNullable<CalendarData["invitees"]>[number] = {};
     if (a.displayName) inv.name = a.displayName;
@@ -226,6 +227,23 @@ function pruned(item: CalendarEvent): CalendarData {
   }).filter((inv) => Object.keys(inv).length > 0);
   if (invitees.length) out.invitees = invitees;
   return out;
+}
+
+/** An `EXDATE` line's values as ISO stamps: `EXDATE:20260901T060000Z,20260908T060000Z` is
+ *  two instants; `EXDATE;VALUE=DATE:20260901` a date; a `TZID=` parameter stays beside a
+ *  wall clock, the shape a zoned clock has everywhere here. */
+function exdateValues(line: string): string[] {
+  const colon = line.indexOf(":");
+  if (colon < 0) return [];
+  const tzid = line.slice(0, colon).match(/;TZID=([^;]+)/)?.[1];
+  return line.slice(colon + 1).split(",").flatMap((v) => {
+    const m = v.trim().match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z?))?$/);
+    if (!m) return [];
+    const date = `${m[1]}-${m[2]}-${m[3]}`;
+    if (!m[4]) return [date];
+    const clock = `${date}T${m[4]}:${m[5]}:${m[6]}`;
+    return [m[7] ? `${clock}Z` : tzid ? `${clock} ${tzid}` : clock];
+  });
 }
 
 /** The event's handle: its id, and on an occurrence the series it belongs to and the start

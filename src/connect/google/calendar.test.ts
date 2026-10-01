@@ -289,7 +289,8 @@ Deno.test("a series is its master: the first occurrence's times and the RRULE li
       title: "Standup",
       start: "2026-08-25T09:00:00Z",
       end: "2026-08-25T09:15:00Z",
-      rrule: "FREQ=WEEKLY;BYDAY=TU;UNTIL=20261231T235959Z", // the rule's value, nothing else of the lines
+      rrule: "FREQ=WEEKLY;BYDAY=TU;UNTIL=20261231T235959Z", // the rule's value
+      exdates: ["2026-09-01T06:00:00 America/Argentina/Buenos_Aires"], // the EXDATE line's, as stamps
     });
   });
 });

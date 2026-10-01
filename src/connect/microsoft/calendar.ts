@@ -12,9 +12,8 @@
  * one Graph change feed that runs from a point forward, unbounded, and lists series
  * MASTERS and single events (the `calendarView` delta of v1.0 is bound to a fixed window and
  * expands series into instances). It carries only `id`, `type`, `start`, `end` per event, so
- * each change is one more `GET /v1.0/me/events/<id>` for its content; a removal comes as
- * `{id, "@removed"}` and needs none. The `/beta` prefix is the feed's address and nothing
- * else about it is beta: the event resource read back is v1.0's.
+ * each change is one more `GET /beta/me/events/<id>` for its content; a removal comes as
+ * `{id, "@removed"}` and needs none.
  *
  * The cursor is the `@odata.deltaLink` — a complete URL, fetched as it is. A first run asks
  * `?startDateTime=now` and pages to the deltaLink publishing nothing; a `410 Gone` (the
@@ -26,8 +25,13 @@
  *
  * A series is its master (`type: seriesMaster`): the first occurrence's times and a
  * structured `recurrence` (a pattern and a range), rendered here as the RRULE text the
- * canonical shape carries. An event read back as an `occurrence` or `exception` wears its
- * `seriesMasterId` and `originalStart`.
+ * canonical shape carries. A change to one occurrence — cancelled, moved, retitled — lands
+ * on the master: its stamp moves and the delta lists it, so the detail read is `/beta`'s,
+ * where the master carries `cancelledOccurrences` (occurrence ids, `OID.<master>.<date>`,
+ * the date in the series' zone — the master's `exdates`) and, expanded,
+ * `exceptionOccurrences` (the departing occurrences as whole events, each published as its
+ * own change wearing `seriesMasterId` and `originalStart`). An exception's rows are keyed
+ * on its own stamp, so a master listed again re-reads them and the log dedupes.
  *
  * Times are asked in UTC (`Prefer: outlook.timezone`) and published as instants (`…Z`); an
  * all-day event is published as its dates, the shape Google's `date` has. The body is asked
@@ -83,6 +87,8 @@ export interface GraphEvent {
   recurrence?: Recurrence;
   seriesMasterId?: string;
   originalStart?: string;
+  cancelledOccurrences?: string[];
+  exceptionOccurrences?: GraphEvent[];
   [k: string]: unknown;
 }
 
@@ -134,6 +140,8 @@ const SELECT = [
   "recurrence",
   "seriesMasterId",
   "originalStart",
+  "cancelledOccurrences",
+  "exceptionOccurrences",
 ].join(",");
 
 export interface MicrosoftCalendarDeps {
@@ -206,17 +214,19 @@ async function pollCalendar(
   let link: string | undefined;
   try {
     link = await round(graph, cursor, async (item) => {
-      const change = item["@removed"]
-        ? { id: item.id!, change: "delete" as const, ts: now() }
+      const changes = item["@removed"]
+        ? [{ id: item.id!, change: "delete" as const, ts: now() }]
         : await changeOf(graph, item.id!, now);
-      if (!change) return;
+      if (!changes.length) return;
       name ??= getCalendarName(graph, calendarId);
       const base = {
         service: SERVICE,
         connection_address: upn,
         conversation: calendarConversation(address, await name),
       };
-      for (const draft of calendarRows(base, change)) await deps.publish(draft);
+      for (const change of changes) {
+        for (const draft of calendarRows(base, change)) await deps.publish(draft);
+      }
       published++;
     });
   } catch (err) {
@@ -230,15 +240,24 @@ async function pollCalendar(
   return published;
 }
 
-/** One listed id → the change it is, read off the event itself. An id the read cannot find
- *  is an event gone between the list and the read: the feed says so on its next round. */
+/** One listed id → the changes it is: the event itself, then each exception a master
+ *  carries. An id the read cannot find is an event gone between the list and the read: the
+ *  feed says so on its next round. */
 async function changeOf(
   graph: (url: string, headers?: Record<string, string>) => Promise<Response>,
   id: string,
   now: () => string,
-): Promise<CalendarChange | undefined> {
+): Promise<CalendarChange[]> {
   const item = await getEvent(graph, id);
-  if (!item) return undefined;
+  if (!item) return [];
+  const exceptions = (item.exceptionOccurrences ?? []).filter((e) => e.id).map((e) =>
+    change(e.id!, { seriesMasterId: id, ...e }, now)
+  );
+  return [change(id, item, now), ...exceptions];
+}
+
+/** The change one event is, read off the event. */
+function change(id: string, item: GraphEvent, now: () => string): CalendarChange {
   const ts = item.lastModifiedDateTime ?? now();
   if (item.isCancelled) return { id, change: "delete", ts, data: handle(id, item) };
   const org = item.organizer?.emailAddress;
@@ -280,6 +299,11 @@ function pruned(id: string, item: GraphEvent): CalendarData {
   if (item.location?.displayName) out.loc = item.location.displayName;
   const rule = item.recurrence && rrule(item.recurrence);
   if (rule) out.rrule = rule;
+  // an occurrence id ends in the date the rule gave it
+  const exdates = (item.cancelledOccurrences ?? [])
+    .map((oid) => oid.match(/(\d{4}-\d{2}-\d{2})$/)?.[1])
+    .filter((d): d is string => !!d);
+  if (exdates.length) out.exdates = exdates;
   const invitees = (item.attendees ?? []).map((a) => {
     const inv: NonNullable<CalendarData["invitees"]>[number] = {};
     if (a.emailAddress?.name) inv.name = a.emailAddress.name;
@@ -415,14 +439,18 @@ async function getCalendarName(
   return (await res.json() as { name?: string }).name;
 }
 
-/** The event behind a listed id, in UTC with a text body; `undefined` when it is gone. */
+/** The event behind a listed id, in UTC with a text body, a master's exceptions expanded in;
+ *  `undefined` when it is gone. */
 async function getEvent(
   graph: (url: string, headers?: Record<string, string>) => Promise<Response>,
   id: string,
 ): Promise<GraphEvent | undefined> {
-  const res = await graph(`${GRAPH}/v1.0/me/events/${encodeURIComponent(id)}?$select=${SELECT}`, {
-    prefer: 'outlook.timezone="UTC", outlook.body-content-type="text"',
-  });
+  const res = await graph(
+    `${GRAPH}/beta/me/events/${
+      encodeURIComponent(id)
+    }?$select=${SELECT}&$expand=exceptionOccurrences`,
+    { prefer: 'outlook.timezone="UTC", outlook.body-content-type="text"' },
+  );
   if (res.status === 404) {
     await res.body?.cancel();
     return undefined;

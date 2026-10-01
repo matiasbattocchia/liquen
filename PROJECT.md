@@ -5014,6 +5014,20 @@ went. The log holds the series, never its expansion: a day's view is a fetch
 (`calendarView` on Graph, `singleEvents=true` on Google). An occurrence's rows still ref its
 own referent, which has no create — the dangling tolerance the log already has.
 
-Open: whether a change to one occurrence puts its master into Graph's `/beta` events delta
-is unverified on a tenant; an occurrence edited or cancelled on Outlook may not reach the
-log at all.
+Live on the tenant the same night: a "this and following" edit on Outlook splits the series
+the way Google does — the old master edited, a new master created — and an occurrence
+cancelled on Outlook lands as an edit of its master with nothing changed, the stamp moved.
+
+### A master's cancelled dates and exceptions ride its `/beta` read (2026-10-01) — LANDED
+
+Graph's events delta lists masters and singles only, and a change to one occurrence moves
+the master's stamp: the detail read is now `/beta/me/events/<id>` with
+`cancelledOccurrences` selected and `exceptionOccurrences` expanded. The cancelled
+occurrence ids (`OID.<master>.<date>`) are the master's `exdates`, a field of
+`CalendarData` beside `rrule` (Google's `EXDATE` lines ride it too, as stamps); each
+exception is published as its own change, series and original start on it, a cancelled one
+as a delete. So on Outlook a cancelled occurrence reads as the series minus a date, and on
+Google as a delete of the occurrence — each wire's own truth, a date either way. An
+exception's rows key on its own stamp, so a master listed again re-reads them and the log
+dedupes. Verified against the docs; the expanded exceptions' honouring of the UTC/text
+`Prefer` is to be confirmed on a tenant (a zoned clock would stay named, not break).

@@ -63,7 +63,7 @@ function graph(
     if (/^\/v1\.0\/me\/calendars?(\/[^/]+)?$/.test(url.pathname)) {
       return Promise.resolve(Response.json({ name: CALENDAR_NAME }));
     }
-    const m = url.pathname.match(/^\/v1\.0\/me\/events\/(.+)$/);
+    const m = url.pathname.match(/^\/beta\/me\/events\/(.+)$/);
     if (m) {
       const ev = events[decodeURIComponent(m[1])];
       return Promise.resolve(
@@ -188,7 +188,8 @@ Deno.test("a new event is a create: the deltaLink is fetched as it is, the event
     ).tick();
 
     const read = calls[1];
-    assertEquals(read.url.pathname, "/v1.0/me/events/AAMk1");
+    assertEquals(read.url.pathname, "/beta/me/events/AAMk1");
+    assertEquals(read.url.searchParams.get("$expand"), "exceptionOccurrences");
     assertStringIncludes(read.url.searchParams.get("$select")!, "lastModifiedDateTime");
     assertStringIncludes(read.headers.get("prefer")!, 'outlook.timezone="UTC"');
     assertStringIncludes(read.headers.get("prefer")!, 'outlook.body-content-type="text"');
@@ -422,6 +423,70 @@ Deno.test("every pattern type renders: relative ones as BYDAY with BYSETPOS, a n
       });
       assertEquals(data.rrule, want);
     }
+  });
+});
+
+Deno.test("a change to one occurrence lands on the master: its cancelled dates are `exdates`, and each exception it expands is published as its own change", async () => {
+  await withVault(async (creds) => {
+    await seeded(creds);
+    const cap = captor();
+    await poller(
+      creds,
+      graph(() => ({ value: [{ id: "AAMkS" }], "@odata.deltaLink": `${DELTA}?$deltatoken=d2` }), {
+        AAMkS: {
+          ...CREATED,
+          id: "AAMkS",
+          subject: "Standup",
+          type: "seriesMaster",
+          recurrence: { pattern: { type: "daily", interval: 1 }, range: { type: "noEnd" } },
+          lastModifiedDateTime: "2026-09-25T12:00:00Z",
+          cancelledOccurrences: ["OID.AAMkS.2026-10-03", "OID.AAMkS.2026-10-10"],
+          exceptionOccurrences: [
+            {
+              ...CREATED,
+              id: "AAMkX",
+              type: "exception",
+              subject: "Standup (largo)",
+              originalStart: "2026-10-01T18:00:00Z",
+              end: { dateTime: "2026-10-01T19:30:00.0000000", timeZone: "UTC" },
+              lastModifiedDateTime: "2026-09-25T11:00:00Z",
+            },
+            {
+              ...CREATED,
+              id: "AAMkY",
+              type: "exception",
+              isCancelled: true,
+              originalStart: "2026-10-02T18:00:00Z",
+              lastModifiedDateTime: "2026-09-25T11:30:00Z",
+            },
+          ],
+        },
+      }),
+      cap.publish,
+    ).tick();
+
+    assertEquals(cap.rows.length, 4); // the master, the exception, the cancelled one + its stamp
+    const master = (cap.rows[0].parts[0] as CalendarPart).data;
+    assertEquals(master.gid, "AAMkS");
+    assertEquals(master.exdates, ["2026-10-03", "2026-10-10"]); // the occurrence id's date
+    const longer = cap.rows[1];
+    assertEquals(longer.payload?.action, "edit");
+    assertEquals(
+      longer.envelope.external_id,
+      "calendar:ana@contoso.com:AAMkX:2026-09-25T11:00:00Z",
+    );
+    const data = (longer.parts[0] as CalendarPart).data;
+    assertEquals(data.series, "AAMkS"); // the master it was expanded from
+    assertEquals(data.was, "2026-10-01T18:00:00Z");
+    assertEquals(data.title, "Standup (largo)");
+    assertEquals(data.end, "2026-10-01T19:30:00Z");
+    const gone = cap.rows[2];
+    assertEquals(gone.payload?.action, "delete");
+    assertEquals((gone.parts[0] as CalendarPart).data, {
+      gid: "AAMkY",
+      series: "AAMkS",
+      was: "2026-10-02T18:00:00Z",
+    });
   });
 });
 

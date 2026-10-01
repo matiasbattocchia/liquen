@@ -146,9 +146,11 @@ export type LocationPart = DataPart<"location", {
  *  A recurring series is ONE event, its master: `start`/`end` are its first occurrence and
  *  `rrule` is the rule (RFC 5545 RRULE text, `FREQ=WEEKLY;BYDAY=TU;UNTIL=20261231` — a
  *  connector whose wire speaks a structured pattern renders it). The log holds the series,
- *  never its occurrences; a day's expanded view is a fetch. An occurrence that departs from
- *  the rule (moved, retitled, cancelled, answered on its own) is its own event with its own
- *  `gid`, wearing `series` (the master's `gid`) and `was` (the start the rule gave it).
+ *  never its occurrences; a day's expanded view is a fetch. `exdates` are the starts the
+ *  rule gives that the series no longer holds (RFC 5545 EXDATE: a date, or an instant). An
+ *  occurrence that departs from the rule (moved, retitled, cancelled, answered on its own) is
+ *  its own event with its own `gid`, wearing `series` (the master's `gid`) and `was` (the
+ *  start the rule gave it).
  *
  *  The event's DESCRIPTION is not here: prose is the part's `text` (where it renders as the
  *  element's body and reads as words, instead of escaped inside the `data` attribute), and
@@ -160,6 +162,7 @@ export type CalendarData = {
   end?: string;
   loc?: string;
   rrule?: string;
+  exdates?: string[];
   series?: string;
   was?: string;
   invitees?: {
