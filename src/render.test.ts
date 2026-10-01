@@ -213,11 +213,13 @@ Deno.test("programs: the PATH directories under the org's folder, after the docs
     blocks.map((b) => b.text.replace(/^\n\n---\n\n/, "").split("\n")[0]),
     ["# On-demand docs", "# Programs", "# Environment"],
   );
-  // the docs index's shape, each shipped program's usage under its directory
-  assertStringIncludes(
+  // an inlined doc's shape: the directory in brackets, a line per program, its usage where
+  // it ships one, else its name
+  assertEquals(
     blocks[1].text,
-    "- [/o/system/bin] aread, fetch\n  - aread <path>\n  - fetch URL\n" +
-      "- [/o/organization/bin] gws",
+    "\n\n---\n\n# Programs\n\nThese programs are on your PATH.\n\n" +
+      "[/o/system/bin]\n- aread <path>\n- fetch URL\n\n" +
+      "[/o/organization/bin]\n- gws",
   );
 });
 
