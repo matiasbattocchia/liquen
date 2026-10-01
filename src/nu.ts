@@ -36,6 +36,7 @@ import {
   type Env,
   type Member,
   render,
+  type RenderInput,
   renderSystem,
   type Roster,
   SILENCE,
@@ -196,6 +197,23 @@ function turnOf(input: TurnInput, transport: ModelTransport) {
   return { session, here, turnId, attempt, env };
 }
 
+/** What render reads for this invocation — the think's request, and the checkpoint's: the
+ *  checkpoint's window is laid out exactly as the next think's would be (§5). */
+function renderInput(input: TurnInput, session: Session, env: Env, now: string): RenderInput {
+  return {
+    events: input.events,
+    docs: input.docs,
+    session,
+    now,
+    zone: input.config.timezone,
+    env,
+    ambient: input.ambient,
+    media: input.media,
+    roster: input.roster,
+    connections: input.connections,
+  };
+}
+
 /** The maintenance turn (§5): a checkpoint over the window, or nothing. Run by xi in an
  *  idle gap — after a turn ended, never while one runs: a summary lands at the head of the
  *  window, under every thinking block a running turn would replay. Input never waits for
@@ -214,9 +232,11 @@ export async function checkpoint(
 ): Promise<TurnOutput> {
   const { config } = input;
   const { session, here, turnId, attempt, env } = turnOf(input, transport);
+  const now = new Date().toISOString();
   const summary = await buildSummary({
     system: renderSystem(input.docs, env),
     tools: input.tools,
+    window: (tail) => render({ ...renderInput(input, session, env, now), tail }).messages,
     events: input.events,
     session,
     model: config.model,
@@ -253,18 +273,7 @@ export async function nu(
   });
 
   const now = ts();
-  const rendered = render({
-    events: input.events,
-    docs: input.docs,
-    session,
-    now,
-    zone: config.timezone,
-    env,
-    ambient: input.ambient,
-    media: input.media,
-    roster: input.roster,
-    connections: input.connections,
-  });
+  const rendered = render(renderInput(input, session, env, now));
 
   const res = await attempt({
     ...rendered,

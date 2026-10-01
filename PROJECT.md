@@ -5052,3 +5052,18 @@ new master.
   voice as its mail; the grant's own events read as the grant. Which of those an event row
   should carry, and whether creator and organizer should agree across the two wires, is
   undecided.
+
+### The checkpoint request is the think's (2026-10-01) — LANDED
+
+A checkpoint call used to carry a transcript of its own — the covered span flattened to
+`[who @ conv] text` lines, no tools — so nothing past the system prefix ever matched the
+cache the turn had just written, and the whole span was paid for again at full price. The
+call is now the think's request: its tools (offered, `tool_choice: none`), its system
+prefix, and the window as render lays it out for the next think, closing on the instruction
+where the anchor goes. Render also marks the previous closing's block, so the entry the
+closed turn wrote is named outright rather than found by the API's short lookback; the
+checkpoint and the first think over the new boundary both read it back and write only the
+collapsed turn. The instruction names where the archive ends (`<archived-through>` quotes
+the last archived line) and folds the `<checkpoint>` block the window opens on. A window
+the API refused as too long, or a span that draws no block, still goes as the transcript.
+The seeded `compaction.md` changed with it: an org that holds its own copy diffs it.

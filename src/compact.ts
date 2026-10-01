@@ -2,9 +2,13 @@
  * compact.ts — the checkpoint layer (DESIGN §5 "Compaction", from pi).
  *
  * Pruning is already render's closed-region collapse; this is the other layer: when the
- * window outgrows `compactAt`, one mu call (no tools, under the agent's own system prefix)
- * writes a structured checkpoint over the older CLOSED events, published as a `summary`
- * event with `covers: [from, to]`.
+ * window outgrows `compactAt`, one mu call writes a structured checkpoint over the older
+ * CLOSED events, published as a `summary` event with `covers: [from, to]`. The call is the
+ * think's own request — its tools (offered, none called), its system prefix, the window as
+ * render lays it out — closing on the instruction where the anchor goes, so it reads the
+ * cache entry the turn just wrote and the model reads the window in the form it works
+ * from; a window the API refused as too long, or a span that collapses to nothing, goes as
+ * a transcript instead.
  * Iterative: a later compaction folds the previous summary in (pi's update rule), and
  * `covers` chains from the previous summary's start so survivors get re-covered.
  *
@@ -29,6 +33,9 @@ import {
   isCancelled,
   outcomeLine,
   ownVoice,
+  silenced,
+  silent,
+  textOf,
 } from "./render.ts";
 import type { StepCall, StepInput } from "./mu.ts";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -49,6 +56,9 @@ export const SUMMARY_MAX_TOKENS = 16_384;
 /** How much of one tool outcome the checkpoint transcript carries. */
 const RESULT_CHARS = 500;
 
+/** How much of the last archived line the instruction quotes. */
+const QUOTE_CHARS = 80;
+
 export interface CompactInput {
   /** The turn's interrupt (§2) — a cut checkpoint call is the cut turn's. */
   signal?: AbortSignal;
@@ -58,6 +68,10 @@ export interface CompactInput {
   /** The think's tools, offered and never called: the cached prefix is tools, then system,
    *  so only the think's own tools let the checkpoint read the think's cache entry. */
   tools?: Anthropic.Tool[];
+  /** The window as the next think reads it, closing on `tail` where the anchor goes
+   *  (render.ts): byte for byte the think's messages up to the turn that just closed, so
+   *  the request reads the entry that turn wrote and writes only the collapsed delta. */
+  window: (tail: string) => Anthropic.MessageParam[];
   events: Event[]; // the window, log order
   session: Session; // whose window it is, and where it speaks (§4)
   model: string;
@@ -236,6 +250,28 @@ function transcript(covered: Event[], session: Session): { text: string; previou
   return { text: lines.join("\n"), previous };
 }
 
+/** The last archived line as the model finds it in the window: who said it, and how it
+ *  begins. Undefined when nothing in the span draws a block — tool traffic and thinking
+ *  collapse to nothing in the closed region — so a span the model could not see goes as a
+ *  transcript instead. */
+function archivedThrough(covered: Event[], session: Session): string | undefined {
+  for (const e of [...covered].reverse()) {
+    if (silenced(e)) continue;
+    let line: string | undefined;
+    if (e.type === "message" && !silent(e)) {
+      const who = ownVoice(e, session)
+        ? "me"
+        : e.envelope.sender?.name ?? e.envelope.sender?.address ?? "?";
+      line = `${who}: ${textOf(e)}`;
+    } else if (e.type === "error") line = `error: ${errorTextOf(e)}`;
+    else if (isCancelled(e)) line = `cancelled: ${textOf(e)}`;
+    else if (e.type === "alarm") line = `alarm: ${textOf(e)}`;
+    if (line === undefined) continue;
+    const flat = line.replace(/\s+/g, " ").trim();
+    return flat.length > QUOTE_CHARS ? `${flat.slice(0, QUOTE_CHARS - 1)}…` : flat;
+  }
+}
+
 /** Run the checkpoint step and mint the summary event. Null ⇒ under threshold: there was
  *  nothing to write. An error draft ⇒ there was, and it could not be written — the call
  *  never completed, or the model answered without a usable checkpoint (cut at the ceiling,
@@ -248,7 +284,6 @@ export async function buildSummary(
 ): Promise<Draft<SummaryEvent> | Draft<ErrorEvent> | null> {
   const span = compactionSpan(input.events, input.session, input.compactAt, input.keepRecent);
   if (!span) return null;
-  const { text, previous } = transcript(span.covered, input.session);
 
   const failed = (why: string): Draft<ErrorEvent> => ({
     ts: new Date().toISOString(),
@@ -264,13 +299,25 @@ export async function buildSummary(
   // the instruction is read lazily: only a window that actually compacts pays the read
   const instruction = await input.prompt();
   if (instruction === null) return failed("system/instructions/compaction.md is missing");
-  let prompt = `<conversation>\n${text}\n</conversation>\n\n`;
-  if (previous) prompt += `<previous-summary>\n${previous}\n</previous-summary>\n\n`;
-  prompt += instruction;
+  // the window as the think reads it, the instruction naming where the archive ends — or,
+  // for a window the API refused whole or a span that draws no block, the span as a
+  // transcript with the previous checkpoint beside it
+  const through = overflowed(input.events)
+    ? undefined
+    : archivedThrough(span.covered, input.session);
+  let messages: Anthropic.MessageParam[];
+  if (through !== undefined) {
+    messages = input.window(`<archived-through>${through}</archived-through>\n\n${instruction}`);
+  } else {
+    const { text, previous } = transcript(span.covered, input.session);
+    let prompt = `<conversation>\n${text}\n</conversation>\n\n`;
+    if (previous) prompt += `<previous-summary>\n${previous}\n</previous-summary>\n\n`;
+    messages = [{ role: "user", content: [{ type: "text", text: prompt + instruction }] }];
+  }
 
   const res = await call({
     system: input.system ?? [],
-    messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
+    messages,
     model: input.model,
     effort: input.effort,
     maxTokens: SUMMARY_MAX_TOKENS,

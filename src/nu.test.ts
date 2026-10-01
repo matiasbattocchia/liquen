@@ -327,6 +327,12 @@ Deno.test("checkpoint: its request opens on the think's prefix — the same tool
   assertEquals(check.system, think.system);
   assertEquals(check.tool_choice, { type: "none" });
   assertEquals(think.tool_choice, undefined);
+  // and the window: the think's messages to the last block before its anchor, then the
+  // instruction in the anchor's place — the request reads the entry the think wrote
+  assertEquals(check.messages.slice(0, -1), think.messages.slice(0, -1));
+  const tail = (check.messages.at(-1)!.content as { text?: string }[]).at(-1)!.text!;
+  assertEquals(tail.startsWith("<archived-through>me: respuesta 5</archived-through>"), true, tail);
+  assertEquals(tail.endsWith("Write a checkpoint."), true);
 });
 
 Deno.test("nu: a checkpoint cut at max_tokens is an error, not a record — and no second call", async () => {

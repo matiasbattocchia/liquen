@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { buildSummary, compactionSpan, estTokens, overflowed, turnOver } from "./compact.ts";
 import { DEFAULT_COMPACT_AT, DEFAULT_WINDOW_LIMIT } from "./config.ts";
-import { applySummary } from "./render.ts";
+import { applySummary, render } from "./render.ts";
 import type {
   Event,
   MessageEvent,
@@ -20,6 +20,17 @@ const SESSION = { id: "s1", agentId: "a1", conversation: "mind@a1" };
 const PROMPT = () =>
   Deno.readTextFile(new URL("./seed/system/instructions/compaction.md", import.meta.url))
     .then((t) => t as string | null);
+
+/** The window as nu hands it to the checkpoint: the next think's rendering, closing on
+ *  the instruction. */
+const windowOf = (events: Event[]) => (tail: string) =>
+  render({ events, docs: [], session: SESSION, now: "2026-07-20T10:05:00Z", tail }).messages;
+
+/** The text of a request's last block — where the instruction lands. */
+const lastText = (p: Anthropic.MessageCreateParamsNonStreaming): string => {
+  const content = p.messages.at(-1)!.content as { type: string; text?: string }[];
+  return content.at(-1)!.text ?? "";
+};
 
 const msg = (text: string, self: boolean, conv = "mind@a1"): MessageEvent => ({
   id: `e${String(++n).padStart(3, "0")}`,
@@ -75,7 +86,7 @@ Deno.test("span: covers the older closed events, keeps the recent budget", () =>
   assert(!span.covered.includes(events[4]));
 });
 
-Deno.test("buildSummary: mints a summary event; the checkpoint prompt carries the transcript", async () => {
+Deno.test("buildSummary: mints a summary event; the request is the window as the think reads it, closing on the instruction", async () => {
   const events = [
     msg("necesito el informe para el viernes", false),
     msg("dale, lo agendo", true),
@@ -91,6 +102,7 @@ Deno.test("buildSummary: mints a summary event; the checkpoint prompt carries th
   };
   const out = await buildSummary({
     events,
+    window: windowOf(events),
     session: SESSION,
     model: "claude-x",
     compactAt: 1,
@@ -100,12 +112,78 @@ Deno.test("buildSummary: mints a summary event; the checkpoint prompt carries th
   assert(out !== null && out.type === "summary");
   assertEquals(out.payload.covers[0], events[0].id);
   assertStringIncludes(out.parts[0].text, "informe viernes");
-  const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
-  assertStringIncludes(prompt, "[Ana @ mind@a1] necesito el informe");
-  assertStringIncludes(prompt, "[me @ mind@a1] dale, lo agendo");
-  // first checkpoint — no BLOCK (the unified instruction may mention the tag)
-  assert(!prompt.includes("<previous-summary>\n"));
-  assertEquals(seen[0].tools?.length ?? 0, 0); // bare call, no tools
+  // the window, laid out by render: the same blocks the next think would carry
+  const think = render({ events, docs: [], session: SESSION, now: "2026-07-20T10:05:00Z" });
+  assertEquals(seen[0].messages.slice(0, -1), think.messages.slice(0, -1));
+  assertStringIncludes(JSON.stringify(seen[0].messages), "necesito el informe");
+  assertStringIncludes(JSON.stringify(seen[0].messages), "dale, lo agendo");
+  // the instruction closes the request where the anchor goes, naming where the archive ends
+  const tail = lastText(seen[0]);
+  assert(tail.startsWith("<archived-through>me: de nada</archived-through>\n\n"), tail);
+  assertStringIncludes(tail, "The conversation above is being archived");
+  assert(!JSON.stringify(seen[0].messages).includes("now: "));
+  assert(!tail.includes("<conversation>\n"));
+});
+
+Deno.test("buildSummary: the archive ends where the kept tail begins — the quote is the last archived line", async () => {
+  const events = [
+    msg("uno", false),
+    msg("respuesta uno", true),
+    msg("dos", false),
+    msg("respuesta dos", true),
+    msg("tres", false),
+  ];
+  const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const out = await buildSummary(
+    {
+      events,
+      window: windowOf(events),
+      session: SESSION,
+      model: "claude-x",
+      compactAt: 1,
+      keepRecent: 200, // keeps the last exchange and the trailing message
+      prompt: PROMPT,
+    },
+    stepping((p) => {
+      seen.push(p);
+      return Promise.resolve(canned([{ kind: "assistant", text: "## Open" }]));
+    }),
+  );
+  assert(out !== null && out.type === "summary");
+  const cut = events.find((e) => e.id === out.payload.covers[1])!;
+  assert(cut !== events.at(-1)); // something was kept
+  const who = cut.agent ? "me" : "Ana";
+  assertStringIncludes(
+    lastText(seen[0]),
+    `<archived-through>${who}: ${cut.parts[0].text}</archived-through>`,
+  );
+  // and the kept tail is in the request, in view, after the line quoted
+  assertStringIncludes(JSON.stringify(seen[0].messages), "tres");
+});
+
+Deno.test("buildSummary: a span that draws no block goes as a transcript — there is nothing to quote", async () => {
+  const events: Event[] = [...step(1), msg("listo", true)];
+  const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const out = await buildSummary(
+    {
+      events,
+      window: windowOf(events),
+      session: SESSION,
+      model: "claude-x",
+      compactAt: 1,
+      keepRecent: 100, // keeps the closing: the covered span is the tool step alone
+      prompt: PROMPT,
+    },
+    stepping((p) => {
+      seen.push(p);
+      return Promise.resolve(canned([{ kind: "assistant", text: "## Open" }]));
+    }),
+  );
+  assert(out !== null && out.type === "summary", JSON.stringify(out));
+  assert(!events.slice(0, 3).some((e) => e.id > out.payload.covers[1]));
+  const prompt = lastText(seen[0]);
+  assertStringIncludes(prompt, "<conversation>\n[me → bash(step 1)]");
+  assert(!prompt.startsWith("<archived-through>"));
 });
 
 Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", async () => {
@@ -122,6 +200,7 @@ Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", asyn
   };
   const out = await buildSummary({
     events,
+    window: windowOf(events),
     session: SESSION,
     model: "claude-x",
     compactAt: 1,
@@ -129,9 +208,11 @@ Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", asyn
     prompt: PROMPT,
   }, stepping(transport));
   assert(out !== null && out.type === "summary");
-  const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
-  assertStringIncludes(prompt, "<previous-summary>\n## Ongoing threads\n- viejo hilo");
-  assertStringIncludes(prompt, "If a <previous-summary> block is present, rewrite it");
+  // the previous checkpoint opens the window, as the think reads it
+  const first = (seen[0].messages[0].content as { text: string }[])[0].text;
+  assert(first.startsWith("<checkpoint>\n## Ongoing threads\n- viejo hilo\n</checkpoint>"), first);
+  assertStringIncludes(lastText(seen[0]), "If the conversation opens on a <checkpoint> block");
+  assert(!JSON.stringify(seen[0].messages).includes("<previous-summary>\n"));
   assertEquals(out.payload.covers[0], old.payload.covers[0]); // chains from the previous summary's start
 });
 
@@ -139,6 +220,7 @@ Deno.test("buildSummary: a call that never completes is an error, not a silent r
   const events = [msg("hola", false), msg("¡hola!", true)];
   const out = await buildSummary({
     events,
+    window: windowOf(events),
     session: SESSION,
     model: "claude-x",
     compactAt: 1,
@@ -331,7 +413,7 @@ Deno.test("span: the API's ceiling is the one hard one — a refused request com
   assertEquals(span.covered, refused);
 });
 
-Deno.test("buildSummary: a dead loop's checkpoint carries the tool traffic and the error — that IS the content", async () => {
+Deno.test("buildSummary: a window the API refused goes as a transcript — the tool traffic and the error ARE the content", async () => {
   const events: Event[] = [msg("hacé el informe", false)];
   for (let k = 1; k <= 8; k++) events.push(...step(k));
   events.push(errorEv("prompt is too long: 213462 tokens > 200000 maximum"));
@@ -339,6 +421,7 @@ Deno.test("buildSummary: a dead loop's checkpoint carries the tool traffic and t
   const out = await buildSummary(
     {
       events,
+      window: windowOf(events),
       session: SESSION,
       model: "claude-x",
       compactAt: 1,
@@ -353,11 +436,41 @@ Deno.test("buildSummary: a dead loop's checkpoint carries the tool traffic and t
     }),
   );
   assert(out !== null && out.type === "summary");
-  const prompt = (seen[0].messages[0].content as { text: string }[])[0].text;
-  assertStringIncludes(prompt, "[Ana @ mind@a1] hacé el informe"); // what it was asked
+  assertEquals(seen[0].messages.length, 1); // the one block: sending the window again would be refused again
+  const prompt = lastText(seen[0]);
+  assertStringIncludes(prompt, "<conversation>\n[Ana @ mind@a1] hacé el informe"); // what it was asked
   assertStringIncludes(prompt, "bash(step 1)");
   assertStringIncludes(prompt, "out 1");
   assertStringIncludes(prompt, "[error] prompt is too long"); // and how it ended
+  assertStringIncludes(prompt, "When the conversation comes as a <conversation> block");
+});
+
+Deno.test("buildSummary: a dead turn's chain reaches the checkpoint whole — trailing, so render lays it out", async () => {
+  const events: Event[] = [msg("hacé el informe", false)];
+  for (let k = 1; k <= 3; k++) events.push(...step(k));
+  events.push(errorEv("overloaded"));
+  const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const out = await buildSummary(
+    {
+      events,
+      window: windowOf(events),
+      session: SESSION,
+      model: "claude-x",
+      compactAt: 1,
+      keepRecent: 400,
+      prompt: PROMPT,
+    },
+    stepping((p) => {
+      seen.push(p);
+      return Promise.resolve(canned([{ kind: "assistant", text: "## Open\n- informe" }]));
+    }),
+  );
+  assert(out !== null && out.type === "summary");
+  const blocks = seen[0].messages.flatMap((m) => m.content as { type: string }[]);
+  assertEquals(blocks.filter((b) => b.type === "tool_use").length, 3);
+  assertEquals(blocks.filter((b) => b.type === "tool_result").length, 3);
+  assertStringIncludes(JSON.stringify(blocks), "overloaded"); // the row that killed it
+  assertStringIncludes(lastText(seen[0]), "<archived-through>error: overloaded</archived-through>");
 });
 
 Deno.test("buildSummary: a cut checkpoint is an error, not a record", async () => {
@@ -365,6 +478,7 @@ Deno.test("buildSummary: a cut checkpoint is an error, not a record", async () =
   const out = await buildSummary(
     {
       events,
+      window: windowOf(events),
       session: SESSION,
       model: "claude-x",
       compactAt: 1,
@@ -385,6 +499,7 @@ Deno.test("buildSummary: an empty checkpoint is an error — not a silent retry 
   const events = [msg("hola", false), msg("¡hola!", true)];
   const out = await buildSummary({
     events,
+    window: windowOf(events),
     session: SESSION,
     model: "claude-x",
     compactAt: 1,
@@ -401,6 +516,7 @@ Deno.test("buildSummary: a missing instruction doc is an error — the checkpoin
   const out = await buildSummary(
     {
       events,
+      window: windowOf(events),
       session: SESSION,
       model: "claude-x",
       compactAt: 1,

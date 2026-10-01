@@ -1393,7 +1393,12 @@ constraint, and render derives it **from the window's shape**:
   **hour**: the window's floor is anchored (§2), so this prefix outlives the idle gaps
   between an agent's wakes, and it is the expensive block — a 2× write buys 0.1× reads
   across them. The within-turn breakpoint (the growing tool chain) keeps the default five
-  minutes, which already outlives any chain.
+  minutes, which already outlives any chain. The previous closing's block wears its mark
+  too: it is the prefix the turn that just closed wrote its entry under, and the mark names
+  that entry outright however many blocks the turn collapses into, so the first request
+  over the new boundary — and the checkpoint over the same window — reads it back and
+  writes only the collapsed delta. Four marks in all: the system prefix, the previous
+  boundary, the boundary, the chain.
 
 ### Media (the same collapse pattern, applied to bytes)
 
@@ -1598,8 +1603,8 @@ compaction proper is only pi's **checkpoint layer**:
   prompt they render to, since the estimate counts ids, envelopes and the tool traffic the
   closed region drops; our checkpoint is non-destructive, the log keeps everything and
   `search` reads it back). The closing's own insert is that look (the self-poke, §2), so
-  the checkpoint runs the moment the turn ends, in the gap: **one model call (no tools)
-  over the closed region**, keeping the most recent `keepRecent` (~20K) uncovered, its
+  the checkpoint runs the moment the turn ends, in the gap: **one model call over the
+  window, no tool called**, keeping the most recent `keepRecent` (~20K) uncovered, its
   summary committed as the batch (publishAndRelease). Its insert wakes the next look —
   `summary` is the one self-authored non-message that passes `relevant` (§2) — which finds
   the visible window light and idles, or thinks over the record when the input a dead
@@ -1629,9 +1634,9 @@ compaction proper is only pi's **checkpoint layer**:
   structurally: a step (the events sharing a call's `turn_id`) replays as one API turn, and
   stays whole on either side of the cut — and never after unanswered input a closing left
   unconsumed: a world message is INPUT, and a checkpoint is a record, not an answer. The
-  transcript the checkpoint works from carries the tool calls, their outcomes and the
-  error that ended a dead turn for the same reason — inside a loop they ARE the content. A
-  checkpoint that cannot be written is an error event, not a record — the model wrote it
+  window the checkpoint works from carries a dead turn's tool calls, their outcomes and
+  the error that ended it for the same reason — inside a loop they ARE the content, and a
+  dead chain is trailing, so render lays it out whole. A checkpoint that cannot be written is an error event, not a record — the model wrote it
   badly (cut at the output ceiling, or empty), or the call never completed. The turn ends
   on it, unstamped, and the next look retries: the window stays uncovered whichever it
   was, a turn taken over it would cost more and say less, and a checkpoint failing for a
@@ -1652,12 +1657,23 @@ compaction proper is only pi's **checkpoint layer**:
   frontmatter, so it is never indexed: the harness sends it as itself, and reads it by
   name; a doc that is gone is a checkpoint that cannot be written, on the error path a cut
   or empty one already takes. One unified instruction covers first-checkpoint and fold
-  (it branches on `<previous-summary>` itself, so the code doesn't).
-- **Written under the agent's own prefix.** The checkpoint call carries the system prefix
-  the think would read — instructions, memories, environment — so the model can see what
-  already stands in the agent's prompt and leave it out of the record. The same prefix also
-  means the same cache entry: the cached prefix is the tools, then the system, so the call
-  carries the think's tools too, offered with `tool_choice: none` and never called.
+  (it branches on the `<checkpoint>` or `<previous-summary>` block itself, so the code
+  doesn't), and the two forms the window takes (below).
+- **The request is the think's.** The checkpoint call carries the think's tools (offered
+  with `tool_choice: none`, none called), the system prefix the think reads — instructions,
+  memories, environment — and the window as render lays it out for the next think, closing
+  on the instruction where the anchor goes. The model sees what already stands in the
+  agent's prompt and leaves it out of the record, and it reads the conversation in the form
+  it works from. And the request reads the cache the turn just wrote: the cached prefix is
+  the tools, the system, then the closed region through the previous closing's mark, all
+  byte-identical to the think's, so only the just-closed turn, collapsed, is written. The
+  instruction says where the archive ends — `<archived-through>` quotes the last archived
+  line, who said it and how it begins — and what follows stays in view. Two windows go as a
+  **transcript** instead, a `<conversation>` block of the covered span with the previous
+  checkpoint beside it as `<previous-summary>`: one the API refused as too long (sending it
+  again would be refused again; the transcript cuts each tool outcome short and inlines no
+  media), and one whose span draws no block (tool traffic and thinking collapse to nothing
+  in the closed region, so there would be nothing to quote).
 - **Prompt shape** = open ends, not a record: what is still open (each by the name and
   address the window shows, whose move it is, with the figures that move needs) · what a
   principal said here that the prefix does not already say. Closed threads, standing facts
@@ -1665,7 +1681,8 @@ compaction proper is only pi's **checkpoint layer**:
   mentions of anyone stay out — the log keeps all of it and `search` reads it back. A
   heading with nothing under it is left out, and names, addresses, paths and figures are
   kept verbatim. **Iterative merge**: a later
-  compaction folds the previous summary in (`<previous-summary>` + new span → merged);
+  compaction folds the previous summary in (the `<checkpoint>` block the window opens on,
+  or `<previous-summary>` beside a transcript, + new span → merged);
   `covers` chains from the previous summary's start, so survivors get re-covered (pi's
   rule); `covers[1]` is the newest event folded in, so the range is always ordered.
 - **Render**: drop everything with `id ≤ covers[1]` of the latest summary and every earlier

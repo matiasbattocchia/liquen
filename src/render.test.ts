@@ -755,8 +755,47 @@ Deno.test("the cached prefix survives the tool loop, and the boundary only moves
     zone: "UTC",
     now: t(7),
   }).messages;
-  assertEquals(txt(marked(three)[0]), "vale"); // moved forward
+  // the new boundary is marked, and the previous closing keeps its mark: the entry the
+  // last turn wrote is named outright, whatever the collapsed turn spans
+  assertEquals(marked(three).map(txt), ["listo", "vale"]);
   assertEquals(blocksOf(three).map(bare).slice(0, prefixOf(one).length), prefixOf(one));
+  assertEquals(prefixOf(three), prefixOf(one));
+});
+
+Deno.test("the checkpoint's window is the next think's, closing on its instruction — the anchor out, the marks in place", () => {
+  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
+  const base = { docs: [] as DocEntry[], session: SESSION, zone: "UTC" };
+  const events: Event[] = [
+    mindMsg("e01", t(0), "uno", false),
+    mindMsg("e02", t(1), "listo", true, "T1"),
+    mindMsg("e03", t(2), "dos", false),
+    mindMsg("e04", t(3), "vale", true, "T2"), // the turn that just closed
+  ];
+  const think = render({ ...base, events, now: t(4), ambient: ["cwd: /work"] }).messages;
+  const check = render({ ...base, events, now: t(4), tail: "WRITE THE CHECKPOINT" }).messages;
+  // every block but the last is the think's, mark for mark
+  assertEquals(check.slice(0, -1), think.slice(0, -1));
+  assertEquals(marked(check).map(txt), marked(think).map(txt));
+  // the instruction stands where the anchor would, a plain user block, unmarked
+  const last = blocksOf(check).at(-1)!;
+  assertEquals(last, { type: "text", text: "WRITE THE CHECKPOINT" });
+  assertEquals(JSON.stringify(check).includes("now: "), false);
+  assertEquals(JSON.stringify(check).includes("cwd: /work"), false);
+});
+
+Deno.test("a mark for the hour is never shortened — the boundary block keeps it when nothing trails", () => {
+  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
+  const events: Event[] = [
+    mindMsg("e01", t(0), "uno", false),
+    mindMsg("e02", t(1), "listo", true, "T1"),
+  ];
+  const { messages } = render({ docs: [], session: SESSION, zone: "UTC", events, now: t(2) });
+  const [mark] = marked(messages);
+  assertEquals(txt(mark), "listo");
+  assertEquals((mark as { cache_control?: unknown }).cache_control, {
+    type: "ephemeral",
+    ttl: "1h",
+  });
 });
 
 Deno.test("mid-turn the tool chain gets its own breakpoint — the loop stops re-paying it", () => {

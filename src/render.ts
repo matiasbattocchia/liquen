@@ -256,6 +256,10 @@ export interface RenderInput {
    *  plane — joined into the trailing anchor block (§5). Deployment-specific: empty on edge
    *  (no persistent exec env). */
   ambient?: string[];
+  /** Text that closes the request where the anchor goes — the checkpoint's instruction
+   *  (§5): the checkpoint reads the window exactly as the next think would, so its
+   *  request is the think's up to the last block before this one. */
+  tail?: string;
   /** The bytes behind the attachments this render inlines, by uri — the blocks for the
    *  uris `wantedMedia` names, fetched by xi through the media port (§5). Only
    *  TRAILING-region messages inline: the model sees the picture while it's current, the
@@ -709,7 +713,7 @@ export function pinnedMedia(e: Event): Record<string, MediaBlock> {
 }
 
 function renderMessages(
-  { events: window, session, now, zone, ambient, media, roster, connections }: RenderInput,
+  { events: window, session, now, zone, ambient, tail, media, roster, connections }: RenderInput,
 ): MessageParam[] {
   const me = session; // whose voice — the (agent, session) pair
   const who: Roster = roster ?? { names: {}, principals: [session.agentId] };
@@ -816,13 +820,13 @@ function renderMessages(
   /** Set a cache breakpoint on a block. It is metadata, not content: the cached prefix is
    *  the blocks themselves, so moving the mark forward never invalidates what it covered. */
   const mark = (b: ContentBlockParam | undefined, ttl?: "1h") => {
-    if (b && b.type !== "mid_conv_system") {
-      (b as { cache_control?: { type: "ephemeral"; ttl?: "1h" } }).cache_control = {
-        type: "ephemeral",
-        ...(ttl ? { ttl } : {}),
-      };
-    }
+    if (!b || b.type === "mid_conv_system") return;
+    const at = b as { cache_control?: { type: "ephemeral"; ttl?: "1h" } };
+    // a block already marked for the hour keeps it: the shorter mark names the same prefix
+    if (at.cache_control?.ttl === "1h" && !ttl) return;
+    at.cache_control = { type: "ephemeral", ...(ttl ? { ttl } : {}) };
   };
+  const lastBlock = () => (cur as { content: ContentBlockParam[] } | null)?.content.at(-1);
   const world = (e: MessageEvent) => {
     // what the WUM caps left out, said where it was cut — the count is the useful part:
     // it tells the agent whether `search` is worth a call before it answers
@@ -893,26 +897,18 @@ function renderMessages(
   // CLOSED — collapse: messages survive; errors stay visible as system blocks (§2);
   // thinking and ALL tool traffic drop (§5) — pairs, and the deferred outcomes a gate
   // produced: once the turn that cared about them has closed, they are noise like the rest.
-  for (const e of events.slice(0, boundary + 1)) {
-    if (deferred.has(e)) continue; // unconsumed input — renders in the trailing region
-    if (e.type === "summary") {
-      place("user", { type: "text", text: checkpointEl(e) });
-      continue;
-    }
+  const collapse = (e: Event) => {
+    if (deferred.has(e)) return; // unconsumed input — renders in the trailing region
+    if (e.type === "summary") return place("user", { type: "text", text: checkpointEl(e) });
     if (e.type === "error") {
-      place("user", { type: "text", text: systemEl("error", errorTextOf(e)) });
-      continue;
+      return place("user", { type: "text", text: systemEl("error", errorTextOf(e)) });
     }
     if (isCancelled(e)) {
-      place("user", { type: "text", text: systemEl("cancelled", textOf(e)) });
-      continue;
+      return place("user", { type: "text", text: systemEl("cancelled", textOf(e)) });
     }
-    if (e.type === "alarm") {
-      place("user", { type: "text", text: alarmLine(e) });
-      continue;
-    }
-    if (e.type !== "message") continue;
-    if (silent(e)) continue; // said nothing — it closed the turn, it draws no block
+    if (e.type === "alarm") return place("user", { type: "text", text: alarmLine(e) });
+    if (e.type !== "message") return;
+    if (silent(e)) return; // said nothing — it closed the turn, it draws no block
     if (e.envelope.conversation.address === here) {
       if (isSelf(e, me)) {
         placeOwn(bodyOf(e, zone)); // bare: the agent's own voice
@@ -923,20 +919,31 @@ function renderMessages(
     } else {
       world(e);
     }
-  }
-
-  // The cache breakpoint (§5): the closed region is the stable prefix — collapsed once and
+  };
+  // The cache breakpoints (§5): the closed region is the stable prefix — collapsed once and
   // then byte-identical on every later turn, since the boundary only ever moves FORWARD and
   // all volatility (now, cwd, jobs, inlined media) lives after it. Marking it makes the whole
   // history a cache READ (0.1x input) with only the turn's delta written, which is what the
   // tool loop needs: every tool round-trip re-sends this same prefix seconds apart.
-  // The cluster must close here — a `<conv>` element spanning the boundary would absorb
+  // The previous closing's block wears its mark too: it is the prefix the turn that just
+  // closed wrote its entry under, and the mark names that entry outright, however many
+  // blocks the turn collapses into — the first request over the new boundary, and the
+  // checkpoint over the same window, read it back and write only the delta.
+  // The cluster must close at each — a `<conv>` element spanning a boundary would absorb
   // trailing messages and rewrite the prefix's last block on every turn.
   // The hour TTL: this prefix survives as long as the window's anchor does (xi), which is
   // far longer than a five-minute idle gap — and it is the expensive block, so a hit that
   // spans the gaps between an agent's wakes is worth the 2x write.
+  const prior = closingBoundary(events.slice(0, boundary), session);
+  events.slice(0, boundary + 1).forEach((e, i) => {
+    collapse(e);
+    if (i === prior) {
+      closeCluster();
+      mark(lastBlock(), "1h");
+    }
+  });
   closeCluster();
-  mark((cur as { content: ContentBlockParam[] } | null)?.content.at(-1), "1h");
+  mark(lastBlock(), "1h");
 
   // A step's anchor, where its request carried it (nu records it on the step): a thinking
   // block's signature binds everything the request held before it, so while a turn's
@@ -1019,11 +1026,12 @@ function renderMessages(
   // one, and this one keeps the default five minutes, which outlives any tool chain. A miss
   // (a message landing mid-turn reorders the tail) costs only a normal write.
   closeCluster();
-  mark((cur as { content: ContentBlockParam[] } | null)?.content.at(-1));
+  mark(lastBlock());
 
   // the trailing anchor: `now:` + the volatile environment lines (cwd · git · bg jobs),
-  // ONE block after everything the prefix holds (§5)
-  placeAnchor(anchorText(now, zone, ambient));
+  // ONE block after everything the prefix holds (§5) — or the caller's tail in its place
+  if (tail !== undefined) place("user", { type: "text", text: tail });
+  else placeAnchor(anchorText(now, zone, ambient));
   flush();
   return out;
 }
