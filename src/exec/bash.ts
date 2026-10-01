@@ -136,7 +136,10 @@ export function bashSpec(timeoutMsDefault: number): ExecTool["spec"] {
       "locked for the edit and replaced atomically. " +
       "fetch [-X METHOD] [-H 'k: v'] [-d BODY|@-] [-i] [-o PATH] URL [limit] [maxBytes], over " +
       "curl/wget: a status outside 2xx fails the call, where curl -s exits 0 on a 404; JSON " +
-      "prints pretty, the body is head-truncated like aread (-o saves it whole); an API's " +
+      "prints pretty; an HTML page reads as text with absolute links, followed by the JSON " +
+      "data scripts it carries (no script runs, so on a client-rendered page those are " +
+      "often the content); the body is head-truncated like aread (-o saves it whole, as " +
+      "served); an API's " +
       "credential is the $VAR the environment holds, sent as a header " +
       '(-H "Authorization: Bearer $VAR"). ' +
       "rg and fd are available for search when installed.",

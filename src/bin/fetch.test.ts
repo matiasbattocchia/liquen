@@ -96,6 +96,26 @@ Deno.test("render: head truncation carries the footer; -i puts the status and he
   assertEquals(withHead, "HTTP 200\ncontent-type: text/plain\n\nhi");
 });
 
+Deno.test("render: an HTML page reads as text; a cut names the overrides and -o for the HTML", () => {
+  const page = (body: string) => ({
+    status: 200,
+    headers: new Headers({ "content-type": "text/html; charset=utf-8" }),
+    bytes: new TextEncoder().encode(`<title>T</title><body>${body}`),
+  });
+  assertEquals(
+    render(parseArgs(["https://h/dir/x"]), page(`<p><a href="y">next</a>`)),
+    "# T\n\n[next](https://h/dir/y)",
+  );
+  const many = Array.from({ length: 20 }, (_, i) => `<p>p${i}`).join("");
+  const out = render(parseArgs(["https://h/x", "3"]), page(many));
+  assert(out.startsWith("# T\n\np0\n\n[showing lines 1-3 of 41"));
+  assertStringIncludes(
+    out,
+    "more of the text: fetch https://h/x <limit> <maxBytes>; " +
+      "the HTML as served: fetch -o <path> https://h/x]",
+  );
+});
+
 Deno.test("run: 2xx prints the body and exits 0; a JSON body gets a JSON content-type", async () => {
   const { impl, seen } = fake(200, '{"ok":true}', { "content-type": "application/json" });
   const { code, out } = await captured(["-d", '{"a":1}', "https://h/api"], impl);

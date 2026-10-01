@@ -2267,7 +2267,13 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   `aread`'s rule (a response is a read; its beginning is the useful end) with `aread`'s
   two overrides in `aread`'s order, and `-o` saves the whole response for `aread` to
   page; JSON prints pretty; bytes the model cannot read are named, never dumped; `-d`
-  implies POST and a JSON content-type unless a header says otherwise. Transport
+  implies POST and a JSON content-type unless a header says otherwise. An HTML page
+  reads as **text** — its words as light markdown with absolute links, then every JSON
+  data script it carries (`application/json`, `ld+json`), pretty, under its opening tag.
+  No script runs, so the server's bytes are all there is: on a client-rendered page the
+  data scripts are often the only copy of the content, and executable code, styles and
+  hidden elements are what is dropped. `-o` keeps the HTML as served, so a truncated
+  page's footer names the size overrides for reading further as text. Transport
   failures are sentences (`cannot reach <host> — …`). The shim trusts the org's bundle
   (`system/ca-bundle.pem`) and dials through the proxy the environment names, so a
   fronted grant's handle is swapped on the way out like any other client's.

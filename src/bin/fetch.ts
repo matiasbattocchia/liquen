@@ -18,6 +18,10 @@
  *     end; `-o` saves the whole thing for `aread` to page
  *   • JSON is printed pretty; bytes the model cannot read (an image, a PDF) are named,
  *     never dumped
+ *   • an HTML page reads as text (bin/html.ts): its words as light markdown with absolute
+ *     links, then the JSON data scripts it carries — no script runs, so those are often
+ *     the only copy of a client-rendered page's content. `-o` saves the HTML as served,
+ *     so a truncated page names the overrides to read further as text
  *   • `-d` implies POST and a JSON content-type unless a header says otherwise; `@-` is
  *     the body on stdin (heredoc-friendly, like awrite), `@FILE` a file's
  *   • `-i` prints the status line and the headers before the body
@@ -30,6 +34,7 @@ import { report } from "../entry.ts";
 import { said, withTimeout } from "../connect/http.ts";
 import { MAX_BYTES, MAX_LINES, truncateHead } from "../exec/truncate.ts";
 import { isBytes } from "../store/media.ts";
+import { htmlToText } from "./html.ts";
 
 /** One call's bound, headers to body. Under bash's own default cap (120s), so a stalled
  *  origin is named by this binary rather than by the turn's timeout. */
@@ -106,8 +111,12 @@ async function bodyOf(given: string): Promise<string> {
 const textual = (mime: string) =>
   /^text\//.test(mime) || /json|xml|javascript|x-www-form-urlencoded|yaml|csv/.test(mime);
 
-/** The body as the model should read it: JSON pretty when it parses, else verbatim. */
-export function present(text: string, mime: string): string {
+const isHtml = (mime: string) => mime === "text/html" || mime === "application/xhtml+xml";
+
+/** The body as the model should read it: HTML as text with links absolute against `url`,
+ *  JSON pretty when it parses, else verbatim. */
+export function present(text: string, mime: string, url?: string): string {
+  if (isHtml(mime)) return htmlToText(text, url);
   if (!/json/.test(mime)) return text;
   try {
     return JSON.stringify(JSON.parse(text), null, 2);
@@ -133,7 +142,7 @@ export function render(args: FetchArgs, a: Answer): string {
   if (mime && !textual(mime) && (isBytes(mime) || /octet-stream/.test(mime))) {
     return `${head}[${mime} · ${a.bytes.length} bytes — save it: fetch -o <path> ${args.url}]`;
   }
-  const text = present(new TextDecoder().decode(a.bytes), mime);
+  const text = present(new TextDecoder().decode(a.bytes), mime, args.url);
   const t = truncateHead(text, { maxLines: args.limit, maxBytes: args.maxBytes });
   if (t.shownLines === 0) {
     return `${head}[line 1 alone exceeds the byte cap (${
@@ -141,9 +150,12 @@ export function render(args: FetchArgs, a: Answer): string {
     } bytes) — raise maxBytes: fetch ${args.url} ${args.limit ?? MAX_LINES} <bytes>, ` +
       `or save it: fetch -o <path> ${args.url}]`;
   }
+  const rest = isHtml(mime)
+    ? `more of the text: fetch ${args.url} <limit> <maxBytes>; ` +
+      `the HTML as served: fetch -o <path> ${args.url}`
+    : `whole response: fetch -o <path> ${args.url}, then aread <path>`;
   const footer = t.truncated
-    ? `\n\n[showing lines 1-${t.shownLines} of ${t.totalLines} — whole response: ` +
-      `fetch -o <path> ${args.url}, then aread <path>]`
+    ? `\n\n[showing lines 1-${t.shownLines} of ${t.totalLines} — ${rest}]`
     : "";
   return head + t.text + footer;
 }
