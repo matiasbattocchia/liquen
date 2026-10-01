@@ -2200,6 +2200,17 @@ the FULL form (the card: approving is judging exactly what will be said). `send`
 own, and what it adds is the one thing no generic rule can know — a NAME where the wire has
 an address: `send(to: Vivian, text: …)`, the address standing when nothing names it.
 
+**A tool's words are a FILE** — `system/instructions/tools/<name>.md` (seeded, one per
+builtin tool, `src/tooldoc.ts`), editable like any instruction and the words' only source;
+the code holds the schema the handler reads (names, types, enums, `required`) and no
+prose. Like the checkpoint prompt it carries no frontmatter, so it is never indexed: each
+turn reads it by name. The file is the description, then a last block with one item per
+parameter (`- name: what it is`, an object's fields indented under it); `{{name}}` stands
+for a number the code holds — a cap, a default — filled from the tool's `vars`. The file
+and the schema must agree item for item: boot checks every builtin's file and refuses to
+start on the first that disagrees, naming it, and a turn whose read disagrees fails the
+same way.
+
 So the durable substrate is a config switch: **files (`bash` + binaries) ⟺ db (the doc
 calls + functions)**; `bash`-for-scratch rides along regardless. The switch is the docs'
 own, apart from where the store lives: an org whose log is on Postgres may keep its docs

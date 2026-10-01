@@ -24,7 +24,6 @@
  * sees a log; and xi itself never subscribes: the tail belongs to main.
  */
 
-import type Anthropic from "@anthropic-ai/sdk";
 import type {
   About,
   Action,
@@ -73,6 +72,7 @@ import { sameHandle, speaksThrough } from "./store/roster.ts";
 import { foldName, namesMatch, preferProper } from "./store/names.ts";
 import { newId } from "./store/id.ts";
 import { roomPart } from "./room.ts";
+import { type ToolShape, wordedAll } from "./tooldoc.ts";
 import type { ConversationRow } from "./store/connections.ts";
 import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
@@ -885,9 +885,9 @@ export interface RoomsPort {
   rename?: (req: RoomsActor & { conversation: string; name: string }) => Promise<void>;
 }
 
-/** An exec-plane tool: its API spec + its executor. Executors should throw on failure. */
-export interface ExecTool {
-  spec: Anthropic.Tool;
+/** An exec-plane tool: its schema, worded from its doc (tooldoc.ts), + its executor.
+ *  Executors should throw on failure. */
+export interface ExecTool extends ToolShape {
   execute: (input: Json, signal: AbortSignal) => Promise<Json | ExecOutcome>;
   /** How a call READS to a person — the approval card, the anchor's pending list, the
    *  mirror's tool line (§9). Optional: `describeCall`'s default already renders a
@@ -1178,7 +1178,16 @@ async function think(
       docs,
       docsOn: ports.docs.on,
       ...(ports.bins ? { bins: await ports.bins() } : {}),
-      tools: specsOf(ports, config, await accounts({ id: config.agentId }, ports)),
+      // each tool's words are its doc (tooldoc.ts), read fresh like any instruction
+      tools: await wordedAll(
+        specsOf(ports, config, await accounts({ id: config.agentId }, ports)),
+        (name) =>
+          ports.docs.read({ agent: config.agentId, conversation: home }, {
+            scope: "system",
+            kind: "instruction",
+            name,
+          }),
+      ),
       config,
       surfaces: surfaces.map(surfaceOf),
       principals: org.principals,
@@ -3471,275 +3480,126 @@ async function people(log: Pick<Reader, "read">, handle?: string): Promise<strin
   return [...new Set(named.map((e) => e.envelope.sender?.address).filter((a) => !!a))] as string[];
 }
 
-/** The tools this turn offers. `held` is the agent's accounts: a tool that acts through
- *  an account's service is offered only to an agent holding one there. */
-export function specsOf(
-  ports: XiPorts,
-  config: AgentConfig,
-  held: Pick<ConnectionRow, "service">[] = [],
-): Anthropic.Tool[] {
-  const booked = writers(ports).some((s) => held.some((c) => c.service === s));
-  const all: Anthropic.Tool[] = [
-    {
+/** The harness's own tools, as schemas: what the model reads about each is its
+ *  `system/instructions/tools/` doc (tooldoc.ts). */
+export const OWN_TOOLS: ToolShape[] = [
+  {
+    spec: {
       name: "send",
-      description:
-        "Dispatch a message to an external world conversation (<conv>). Note: this tool is " +
-        "not needed for internal user-assistant conversations (<principal>); you must not " +
-        "use send to refer to a principal because they are present in this same conversation.",
       input_schema: {
         type: "object",
         properties: {
-          to: {
-            type: "string",
-            description: "target <conv> `name` or `address` — or recipients separated by `,` " +
-              "(agents by name, or mail addresses) to open a room with them: unnamed, a " +
-              "direct room of up to 8 besides you; with `subject`, a group (`ops`) or a " +
-              "channel (`#ops`). A room's address in any order lands in the same room",
-          },
-          connection: {
-            type: "string",
-            description:
-              "which of your accounts it rides — a <conn> `name` or `address`. Needed only " +
-              "when `to` is an address nobody here has written to yet",
-          },
-          text: {
-            type: "string",
-            description:
-              "the message body or the attachment caption; omit only when reacting or sending " +
-              "files without a caption",
-          },
-          re: {
-            type: "string",
-            description:
-              "target message `id`. REQUIRED with `react`. OPTIONAL with `text` and/or " +
-              "`files` (depends on the `action`)",
-          },
-          subject: {
-            type: "string",
-            description:
-              "the name of the conversation this message opens: a mail's Subject line on a " +
-              "first send to addresses — every mail thread is a conversation of its own, " +
-              "and a send into one needs no subject. On a list of agents, the room's name: " +
-              "`ops` opens a group, `#ops` a channel",
-          },
-          react: { type: "string", description: "an emoji to land on the `re` message" },
-          action: {
-            type: "string",
-            enum: ACTIONS,
-            description:
-              "create (default for text or files) | edit | delete | add (default for react) | " +
-              "remove. Text or files: create without `re` sends a new message, with `re` " +
-              "*replies to* the target message; edit *replaces* content and delete *takes* it " +
-              "back (both require `re`). Reactions: add *reacts to* the target message, remove " +
-              "*takes* back the glyph you put on it",
-          },
-          files: {
-            type: "array",
-            items: { type: "string" },
-            description: "file paths to attach. A relative path resolves from your shell's cwd",
-          },
+          to: { type: "string" },
+          connection: { type: "string" },
+          text: { type: "string" },
+          re: { type: "string" },
+          subject: { type: "string" },
+          react: { type: "string" },
+          action: { type: "string", enum: ACTIONS },
+          files: { type: "array", items: { type: "string" } },
           location: {
             type: "object",
             properties: {
               latitude: { type: "number" },
               longitude: { type: "number" },
-              name: { type: "string", description: "the label the pin shows" },
-              address: { type: "string", description: "the line under the label" },
+              name: { type: "string" },
+              address: { type: "string" },
             },
             required: ["latitude", "longitude"],
-            description: "a map pin, sent as its own message after any text or files. WhatsApp " +
-              "conversations only",
           },
         },
         required: ["to"],
       },
     },
-    {
+  },
+  {
+    spec: {
       name: "search",
-      description:
-        "Search the message log: every conversation your agent can read, whichever session " +
-        "you are, including everything older than your window. Every filter " +
-        "narrows, and none is required: `in` with `after`/`before` and no `text` reads a " +
-        `stretch of a conversation as it happened. The most recent matches come back (${SEARCH_LIMIT} ` +
-        "unless you set `limit`), newest last, in the same form as your window: `<conn>` and " +
-        "`<conv>` around `<msg>` lines with the same ids, author marks, attachment markers " +
-        "(with their `path`) and clock — every stamp with its year. When older matches were " +
-        "cut, a closing line names the moment to pass as `before` for the next page. A " +
-        "`<conv address>` is what `in` and `send(to:)` both take back. `from` also asks " +
-        "your accounts' address books: whoever is saved under that name stands first, as " +
-        "`<contact>` lines under the account's `<conn>`, with the `address` to write to — " +
-        "so someone you have saved and never heard from is findable too; a book that " +
-        "could not be asked is said in a line of its own.",
       input_schema: {
         type: "object",
         properties: {
-          in: {
-            type: "string",
-            description:
-              "one conversation: its address, or a name (a group's, or the person a direct " +
-              "chat is with; any part of it, case doesn't matter)",
-          },
-          from: {
-            type: "string",
-            description: "one sender: their address, or any part of the name they go by",
-          },
-          connection: {
-            type: "string",
-            description: "one of your accounts — a <conn> `name` or `address`: only what " +
-              "rode it",
-          },
-          before: {
-            type: "string",
-            description: "only messages sent before this moment: ISO-8601, e.g. `2026-09-01` or " +
-              "`2026-09-01T17:00` (your org's clock unless it carries an offset)",
-          },
-          after: {
-            type: "string",
-            description: "only messages sent after this moment, same form as `before`",
-          },
-          text: {
-            type: "string",
-            description:
-              "a phrase the message contains (in its words, an attachment's caption or its " +
-              "filename), matched literally as one contiguous string, case-insensitive: no word " +
-              "splitting, no fuzziness, no wildcards. Keep it short and distinctive: one word " +
-              "or a fragment you are sure of beats a whole sentence",
-          },
-          limit: {
-            type: "integer",
-            description:
-              `how many of the most recent matches to return (optional; default ${SEARCH_LIMIT})`,
-          },
-          around: {
-            type: "integer",
-            description:
-              `lines of the conversation to show either side of each match (0–${AROUND_MAX}; ` +
-              "optional, default 0). With it, each match wears `match` after its stamp, and " +
-              "a `…` line stands where lines between two stretches are not shown",
-          },
+          in: { type: "string" },
+          from: { type: "string" },
+          connection: { type: "string" },
+          before: { type: "string" },
+          after: { type: "string" },
+          text: { type: "string" },
+          limit: { type: "integer" },
+          around: { type: "integer" },
         },
       },
     },
-    {
+    vars: { search_limit: SEARCH_LIMIT, around_max: AROUND_MAX },
+  },
+  {
+    spec: {
       name: "schedule",
-      description:
-        "Wake yourself later with a note. At the time you set, the note arrives as an alarm " +
-        "in this conversation and you decide then what to do about it; nothing is executed " +
-        "for you. Write the note to your future self, who will read it cold: say the thing " +
-        "to do, not `as discussed`. Use `cancel` with the id to unset it. The horizon is a " +
-        "year; anything further out belongs in your files, not a timer.",
       input_schema: {
         type: "object",
         properties: {
-          note: {
-            type: "string",
-            description: "what you want to be told when it fires; your own words, self-contained",
-          },
-          at: {
-            type: "string",
-            description:
-              "a moment: ISO-8601, e.g. `2026-09-01T17:00` (your org's clock unless it carries " +
-              "an offset)",
-          },
-          in: {
-            type: "string",
-            description: "a delay from now: `20m`, `3h`, `2d` (also `90s`, `1w`)",
-          },
-          cron: {
-            type: "string",
-            description:
-              "instead, repeat forever: five fields on your org's clock; `0 9 * * *` is every " +
-              "day at 09:00, `*/15 9-18 * * 1-5` every quarter hour through the workweek",
-          },
+          note: { type: "string" },
+          at: { type: "string" },
+          in: { type: "string" },
+          cron: { type: "string" },
         },
         required: ["note"],
       },
     },
-    {
+  },
+  {
+    spec: {
       name: "cancel",
-      description: "Unset something of yours that is still standing: a pending approval (a call " +
-        "awaiting a verdict that stopped being worth asking; your principal is told, the " +
-        "call never runs) or a scheduled wake you no longer want.",
       input_schema: {
         type: "object",
-        properties: {
-          id: {
-            type: "string",
-            description: "the id, exactly as your pending or scheduled list shows it",
-          },
-        },
+        properties: { id: { type: "string" } },
         required: ["id"],
       },
     },
-    {
+  },
+  {
+    spec: {
       name: "conversation",
-      description: "A room's members and name — the rooms `send` opens with a list. Locally, any " +
-        "member may change it; on a wire (Slack, Teams, WhatsApp) the change goes through " +
-        "your account there. Every change, yours or anybody's, reaches the room as a " +
-        "`<room>` line from whoever made it: who joined, who left, the new name. " +
-        "`show` with no `which` lists your local rooms and the public channels; with " +
-        "one, its members. A direct room is its members and takes no change: another " +
-        "list is another room. Mail has no rooms to change.",
       input_schema: {
         type: "object",
         properties: {
-          action: {
-            type: "string",
-            enum: [...ROOM_ACTIONS],
-            description:
-              "show (default) | join — a public channel | leave — the last one out closes " +
-              "the room | add — `who` joins | remove — `who` leaves | rename — to `name`, " +
-              "the kind kept",
-          },
-          which: {
-            type: "string",
-            description: "the room: its name (`ops`, `#ops`) or its `<conv address>`",
-          },
-          who: {
-            type: "string",
-            description: "who to add or remove, separated by `,` — locally agents by id, name or " +
-              "session address; on a wire people by `address` or the name they go by here",
-          },
-          name: { type: "string", description: "the new name (rename)" },
+          action: { type: "string", enum: [...ROOM_ACTIONS] },
+          which: { type: "string" },
+          who: { type: "string" },
+          name: { type: "string" },
         },
       },
     },
-    ...(booked
-      ? [
-        {
-          name: "contact",
-          description:
-            "Save someone in your account's address book — from then on their lines wear " +
-            "`contact` with that name instead of `external`, and the account's other devices " +
-            "see it too. `who` is who: an <conv> `address`, or the name they go by here. " +
-            "`name` is what they are saved as; omit it and they are saved under the name " +
-            "they go by, or under none. `forget` takes the entry out. The call answers once " +
-            "the wire has it, and that answer is the whole of it: nothing of the entry lands " +
-            "in this log, and a call that fails is yours to make again.",
-          input_schema: {
-            type: "object",
-            properties: {
-              who: { type: "string", description: "their `address`, or the name they go by here" },
-              name: { type: "string", description: "what to save them as (save only)" },
-              connection: {
-                type: "string",
-                description:
-                  "which of your accounts saves them — a <conn> `name` or `address`. Needed " +
-                  "only when `who` is new here and you have more than one",
-              },
-              action: {
-                type: "string",
-                enum: ["save", "forget"],
-                description: "save (default) | forget",
-              },
-            },
-            required: ["who"],
-          },
-        } satisfies Anthropic.Tool,
-      ]
-      : []),
-    ...Object.values(ports.exec ?? {}).map((t) => t.spec),
+  },
+  {
+    spec: {
+      name: "contact",
+      input_schema: {
+        type: "object",
+        properties: {
+          who: { type: "string" },
+          name: { type: "string" },
+          connection: { type: "string" },
+          action: { type: "string", enum: ["save", "forget"] },
+        },
+        required: ["who"],
+      },
+    },
+  },
+];
+
+/** The tools this turn offers, before their words. `held` is the agent's accounts: a tool
+ *  that acts through an account's service (`contact`) is offered only to an agent holding
+ *  one there. */
+export function specsOf(
+  ports: XiPorts,
+  config: AgentConfig,
+  held: Pick<ConnectionRow, "service">[] = [],
+): ToolShape[] {
+  const booked = writers(ports).some((s) => held.some((c) => c.service === s));
+  const all: ToolShape[] = [
+    ...OWN_TOOLS.filter((t) => booked || t.spec.name !== "contact"),
+    ...Object.values(ports.exec ?? {}),
   ];
   // the offer is config's to shape (§9): `agent.tools` names what the model sees
-  return config.tools ? all.filter((t) => config.tools!.includes(t.name)) : all;
+  return config.tools ? all.filter((t) => config.tools!.includes(t.spec.name)) : all;
 }

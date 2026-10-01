@@ -21,6 +21,7 @@ import { MEDIA_MARK } from "../store/media.ts";
 import { MAX_BYTES, MAX_LINES, truncateTail } from "./truncate.ts";
 import { DEFAULT_BASH_TIMEOUT_MS } from "../config.ts";
 import { USAGE } from "../bin/usage.ts";
+import type { ToolShape } from "../tooldoc.ts";
 
 /** A background job the agent left running: its process group + a hint of what it is. */
 export interface Job {
@@ -104,64 +105,28 @@ function userSpaceEnv(binPath?: string): Record<string, string> {
   return env;
 }
 
-/** The bash tool as the model reads it — the same contract wherever the shell runs. */
-export function bashSpec(timeoutMsDefault: number): ExecTool["spec"] {
+/** The bash tool's schema and the numbers its doc names — the same contract wherever the
+ *  shell runs; its words are `system/instructions/tools/bash.md` (tooldoc.ts). */
+export function bashShape(timeoutMsDefault: number): ToolShape {
   return {
-    name: "bash",
-    description: "Run a bash command. The working directory PERSISTS between calls like a " +
-      "terminal (cd once, it sticks), but " +
-      "shell/env state (exported vars, activated venvs) does not, so re-export or chain those. " +
-      `stdout+stderr merged; output truncated to the last ${MAX_LINES} lines / ${
-        MAX_BYTES / 1024
-      }KB (override with max_lines/max_bytes when you deliberately need more or less); ` +
-      "when truncated, the full output is saved to a file the footer names (page it with aread). " +
-      `Default timeout ${timeoutMsDefault / 1000}s; run long work in the background ` +
-      "(cmd > out.log 2>&1 &) and poll with tail. Prefer fat commands: chain independent steps " +
-      "with && or ; in ONE call, and emit multiple bash calls in one turn when they don't depend " +
-      "on each other; every separate call is a full round-trip. Calls in one turn run at " +
-      "once, each from the same directory, so give each its own cd; the cwd: line under now: " +
-      "is where your next call starts. " +
-      "Four helpers on PATH, their usage listed under # Programs, do the everyday jobs " +
-      "better than their habitual counterparts; reach for them first. " +
-      "aread, over cat/head/sed -n: it shows a file from " +
-      "its TOP with a footer naming the offset to continue from, where a cat through this " +
-      "tool keeps only the last lines and a long file loses its beginning; on an image or PDF " +
-      "it attaches the file itself, so you see it, and a binary answers with its size, not " +
-      "mojibake. " +
-      "awrite, over cat >/echo >: it creates parent dirs " +
-      "and replaces the file atomically, keeping its mode. " +
-      "aedit, over sed -i/perl -pi: the old text " +
-      "is literal, never a regex, and an edit whose old text is missing or matches twice " +
-      "fails and says which, where sed changes nothing or too much in silence; the file is " +
-      "locked for the edit and replaced atomically. " +
-      "fetch, over " +
-      "curl/wget: a status outside 2xx fails the call, where curl -s exits 0 on a 404; JSON " +
-      "prints pretty; an HTML page reads as text with absolute links, followed by the JSON " +
-      "data scripts it carries (no script runs, so on a client-rendered page those are " +
-      "often the content); the body is head-truncated like aread (-o saves it whole, as " +
-      "served; -o - writes it whole to stdout for a program: fetch -o - URL | jq …); " +
-      "an API's " +
-      "credential is the $VAR the environment holds, sent as a header " +
-      '(-H "Authorization: Bearer $VAR"). ' +
-      "rg and fd are available for search when installed.",
-    input_schema: {
-      type: "object",
-      properties: {
-        command: { type: "string", description: "bash command to execute" },
-        timeout: {
-          type: "number",
-          description: `seconds (optional; default ${timeoutMsDefault / 1000})`,
+    spec: {
+      name: "bash",
+      input_schema: {
+        type: "object",
+        properties: {
+          command: { type: "string" },
+          timeout: { type: "number" },
+          max_lines: { type: "number" },
+          max_bytes: { type: "number" },
         },
-        max_lines: {
-          type: "number",
-          description: `output truncation: keep the last N lines (optional; default ${MAX_LINES})`,
-        },
-        max_bytes: {
-          type: "number",
-          description: `output truncation: byte cap (optional; default ${MAX_BYTES})`,
-        },
+        required: ["command"],
       },
-      required: ["command"],
+    },
+    vars: {
+      timeout: timeoutMsDefault / 1000,
+      max_lines: MAX_LINES,
+      max_kb: MAX_BYTES / 1024,
+      max_bytes: MAX_BYTES,
     },
   };
 }
@@ -252,7 +217,7 @@ export function bashTool(opts: BashOptions): ExecTool {
   const state = opts.state ?? { cwd: opts.workspace };
 
   return {
-    spec: bashSpec(timeoutMsDefault),
+    ...bashShape(timeoutMsDefault),
 
     async execute(input: Json, signal: AbortSignal): Promise<Json | ExecOutcome> {
       const call = input as unknown as BashInput;

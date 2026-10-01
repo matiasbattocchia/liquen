@@ -42,13 +42,24 @@ const ok = (emissions: Emission[], stop: Anthropic.StopReason = "end_turn") =>
 
 /** The exec-plane tool the scenarios use — injected via ports (bash's stand-in). */
 const echoTool = {
-  spec: {
-    name: "echo",
-    description: "echoes its input",
-    input_schema: { type: "object" as const },
-  },
+  spec: { name: "echo", input_schema: { type: "object" as const } },
   execute: (input: unknown) => Promise.resolve({ echoed: input } as never),
 };
+
+/** The words of the fixtures' own exec tools, laid beside the builtins'. */
+const FIXTURE_TOOLS: Record<string, string> = {
+  echo: "echoes its input",
+  attach: "answers with a file",
+};
+
+/** A docs root as every org boots on it, plus the fixtures' tools. */
+async function docsAt(root: string) {
+  await seedOrg(onFiles(root));
+  for (const [name, words] of Object.entries(FIXTURE_TOOLS)) {
+    await Deno.writeTextFile(`${root}/system/instructions/tools/${name}.md`, `${words}\n`);
+  }
+  return openFileDocs(root);
+}
 
 function principalMsg(text: string): Draft<MessageEvent> {
   return {
@@ -131,7 +142,7 @@ async function scenario(
   const { transport, calls } = scripted(script);
   const main = fanOut({ ...CONFIG, ...config }, log, {
     log,
-    docs: openFileDocs(`${dir}/docs`),
+    docs: await docsAt(`${dir}/docs`),
     transport,
     exec: { echo: echoTool },
     ...ports,
@@ -480,7 +491,7 @@ Deno.test("send `connection`: a named account places first contact on its wire",
       return "allow";
     },
   };
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   try {
     await log.publish(principalMsg("escribile a este número"));
     for (let i = 0; i < 12; i++) await xi(config, ports);
@@ -532,7 +543,7 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
     gate: (name) => name === "send" ? "ask" : "allow",
     timezone: "America/Argentina/Mendoza",
   };
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   const patient = (text: string, ts: string, own = false): Draft<MessageEvent> => ({
     ts,
     type: "message",
@@ -595,7 +606,7 @@ Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere 
     }], "tool_use"),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   try {
     await log.publish(principalMsg("mandale la ubicación"));
     for (let i = 0; i < 12; i++) await xi(CONFIG, ports);
@@ -660,7 +671,7 @@ Deno.test("send `subject`: a first send names the thread it opens; a send into a
     }], "tool_use"),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   try {
     await log.publish(principalMsg("mandá los mails"));
     for (let i = 0; i < 12; i++) await xi(CONFIG, ports);
@@ -733,7 +744,7 @@ Deno.test("send: one address on two accounts is two conversations — `connectio
     }], "tool_use"),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   try {
     await log.publish(principalMsg("contestá"));
     for (let i = 0; i < 12; i++) await xi(CONFIG, ports);
@@ -808,7 +819,7 @@ Deno.test("contact: `who` resolves like a send, the write rides the person's own
       return "allow";
     },
   };
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, contact };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, contact };
   try {
     await log.publish({
       ts: new Date().toISOString(),
@@ -876,7 +887,7 @@ Deno.test("search `from` asks the address books too: someone saved and never hea
     ok([{ kind: "tool_use", name: "search", input: { from: "Nadie" } }], "tool_use"),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, contact };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, contact };
   try {
     // Verónica wrote once, back when nobody had named her: the row carries a number and
     // no name, so the LOG cannot find her by name and the book is what reaches the row
@@ -947,7 +958,7 @@ Deno.test("search: a book that cannot be reached is named, never mistaken for an
     ok([{ kind: "tool_use", name: "search", input: { from: "vero 🌻" } }], "tool_use"),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, contact };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, contact };
   try {
     await log.publish({
       ts: new Date(Date.now() - 40 * 3_600_000).toISOString(),
@@ -1009,7 +1020,7 @@ Deno.test("search: a port is per service, a book is per ACCOUNT — every one of
     ok([{ kind: "tool_use", name: "search", input: { from: "Vidal" } }], "tool_use"),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, contact };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, contact };
   try {
     await log.publish(principalMsg("quién es vidal"));
     for (let i = 0; i < 10; i++) await xi(CONFIG, ports);
@@ -1084,7 +1095,7 @@ Deno.test("contact: two accounts and a stranger — the model must say which boo
       return "allow";
     },
   };
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, contact };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, contact };
   try {
     await log.publish(principalMsg("agendá a ana"));
     for (let i = 0; i < 12; i++) await xi(config, ports);
@@ -1148,7 +1159,7 @@ Deno.test("contact: a person is in two places — a name saved on the book is re
     ),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, contact };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, contact };
   try {
     await log.publish({
       ts: new Date().toISOString(),
@@ -1276,7 +1287,7 @@ Deno.test("conversation on a wire: every verb goes through the wire's port as th
       return "allow";
     },
   };
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, rooms };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, rooms };
   try {
     await log.publish(
       wireRow("slack", "T1", { address: "C1", kind: "channel", name: "ops" }, {
@@ -1396,7 +1407,7 @@ Deno.test("send: a list of people on a wire opens a room through the port — un
       return "allow";
     },
   };
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport, rooms };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, rooms };
   try {
     await log.publish(
       wireRow(
@@ -1769,7 +1780,7 @@ Deno.test("a pending ask lives in the ANCHOR — state, not transcript (§5)", a
     return Promise.resolve(script.shift() ?? ok([]));
   };
   const config = { ...CONFIG, gate: (name: string) => name === "send" ? "ask" : "allow" };
-  const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports = { log, docs: await docsAt(`${dir}/docs`), transport };
   await log.upsertConnections([WA]);
   try {
     await log.publish(principalMsg("mandale"));
@@ -1803,7 +1814,7 @@ Deno.test("the anchor states the approval state either way — silence is not a 
     return Promise.resolve(script.shift() ?? ok([]));
   };
   const config = { ...CONFIG, gate: (name: string) => name === "send" ? "ask" : "allow" };
-  const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports = { log, docs: await docsAt(`${dir}/docs`), transport };
   const anchor = () => JSON.stringify(last?.messages.at(-1)?.content);
   await log.upsertConnections([WA]);
   try {
@@ -1875,7 +1886,7 @@ Deno.test("no duplicate turn: the decision is re-derived under the lease, not be
     ok([{ kind: "assistant", text: "ya contesté" }], "end_turn"),
     ok([{ kind: "assistant", text: "DUPLICATE" }], "end_turn"), // must never be consumed
   ]);
-  const ports = { log, docs: openFileDocs(`${dir}/docs`), transport, exec: { echo: echoTool } };
+  const ports = { log, docs: await docsAt(`${dir}/docs`), transport, exec: { echo: echoTool } };
   try {
     await log.publish(principalMsg("hola"));
     // TWO invocations for the same event — both would have decided "think" before the lease
@@ -1896,7 +1907,7 @@ Deno.test("the gate is free: a spectator event takes no lease and reads nothing"
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   const { transport, calls } = scripted([ok([{ kind: "assistant", text: "no" }], "end_turn")]);
-  const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports = { log, docs: await docsAt(`${dir}/docs`), transport };
   try {
     await log.publish(principalMsg("hola")); // real work IS owed…
     const thinking = await log.publish({
@@ -1940,7 +1951,7 @@ Deno.test("recovery: a stale lock (crashed holder) → pending uses swept, then 
   ]);
   const main = fanOut(CONFIG, log, {
     log,
-    docs: openFileDocs(`${dir}/docs`),
+    docs: await docsAt(`${dir}/docs`),
     transport,
     exec: { echo: echoTool },
   });
@@ -2032,7 +2043,7 @@ Deno.test("coalescing race: a message landing between window-read and closing pu
     }
     return ok([{ kind: "assistant", text: "dos listo" }]);
   };
-  const main = fanOut(CONFIG, log, { log, docs: openFileDocs(`${dir}/docs`), transport });
+  const main = fanOut(CONFIG, log, { log, docs: await docsAt(`${dir}/docs`), transport });
   try {
     await log.publish(principalMsg("uno"));
     await waitFor(() => n >= 1); // turn 1 read its window and is mid-flight
@@ -2086,7 +2097,7 @@ Deno.test("send `re`: the window's id resolves to the wire's name — reply, rea
     reply.re = shortId(peer.id);
     react.re = shortId(peer.id);
 
-    const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+    const ports = { log, docs: await docsAt(`${dir}/docs`), transport };
     for (let i = 0; i < 6; i++) await xi(CONFIG, ports); // one turn per call; extras idle
 
     const ours = (await log.read({ types: ["message"] }))
@@ -2166,7 +2177,7 @@ Deno.test("send action: the account may unsay its own words, and lift its own re
     Object.assign(react, { re: shortId(theirs.id) });
     Object.assign(glyphless, { re: shortId(theirs.id) });
 
-    const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+    const ports = { log, docs: await docsAt(`${dir}/docs`), transport };
     for (let i = 0; i < 16; i++) await xi(CONFIG, ports);
 
     const ours = (await log.read({ types: ["message"] }))
@@ -3005,7 +3016,7 @@ Deno.test("cancel: the agent withdraws one of two asks — and a bare /y settles
     agent: { id: "a1", session_id: "mind" },
   });
   const config = { ...CONFIG, gate: (name: string) => name === "send" ? "ask" : "allow" };
-  const ports = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports = { log, docs: await docsAt(`${dir}/docs`), transport };
   await log.upsertConnections([WA]);
   try {
     await log.publish(says("mandale a los dos"));
@@ -3062,7 +3073,7 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
     ok([{ kind: "tool_use", name: "schedule", input: { in: "1s", note: "llamar a la clínica" } }]),
     ok([{ kind: "assistant", text: "listo, te aviso" }]),
   ]).transport;
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   const config = { ...CONFIG, timezone: "UTC" };
   try {
     await log.publish(principalMsg("recordame llamar a la clínica"));
@@ -3141,7 +3152,7 @@ Deno.test("schedule: a bare `at` reads the org's clock — 17:00 Buenos Aires is
   const transport = scripted([
     ok([{ kind: "tool_use", name: "schedule", input: { at: `${day}T17:00`, note: "merienda" } }]),
   ]).transport;
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   try {
     await log.publish(principalMsg("a las cinco"));
     await xi({ ...CONFIG, timezone: "America/Argentina/Buenos_Aires" }, ports);
@@ -3162,7 +3173,7 @@ Deno.test("the roster: the prefix splits it into who steers this agent and every
     last = params;
     return Promise.resolve(ok([{ kind: "assistant", text: "ok" }], "end_turn"));
   };
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   try {
     await log.syncAgents([
       { agentId: "a1", mind: "mind@a1", principals: ["matias"] },
@@ -3189,7 +3200,7 @@ Deno.test("the surfaces: the prefix names them, the anchor lists the ones that a
     last = params;
     return Promise.resolve(ok([{ kind: "assistant", text: "ok" }], "end_turn"));
   };
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   const config = { ...CONFIG, timezone: "UTC" };
   try {
     await log.upsertConnections([
@@ -3245,7 +3256,7 @@ Deno.test("schedule: the horizon — no wake in the past, none beyond a year, no
       { kind: "tool_use", name: "schedule", input: { at: "2030-01-01T09:00 mañana", note: "x" } },
     ]),
   ]).transport;
-  const ports: XiPorts = { log, docs: openFileDocs(`${dir}/docs`), transport };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   try {
     await log.publish(principalMsg("agendá cosas raras"));
     await xi({ ...CONFIG, timezone: "UTC" }, ports); // the turn that calls…
@@ -3275,7 +3286,7 @@ Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the ope
   const config = { ...CONFIG, timezone: "UTC" };
   const ports = {
     log,
-    docs: openFileDocs(`${dir}/docs`),
+    docs: await docsAt(`${dir}/docs`),
     transport,
     ambient: () => Promise.resolve(["cwd: /work"]), // the exec plane's lines (§9)
   };
@@ -3322,7 +3333,7 @@ Deno.test("xi returns what it decided, and discloses it the moment it decides", 
   const seen: [string, string | undefined][] = [];
   const ports: XiPorts = {
     log,
-    docs: openFileDocs(`${dir}/docs`),
+    docs: await docsAt(`${dir}/docs`),
     transport,
     onDecision: (v, cursor) => seen.push([v, cursor]),
   };
@@ -3352,7 +3363,7 @@ Deno.test("a turn that ends in a terminal error discloses the idle it leaves", a
   const seen: [string, string | undefined][] = [];
   const ports: XiPorts = {
     log,
-    docs: openFileDocs(`${dir}/docs`),
+    docs: await docsAt(`${dir}/docs`),
     transport,
     onDecision: (v, cursor) => seen.push([v, cursor]),
   };
@@ -3377,7 +3388,7 @@ Deno.test("a tool's attachment outside the agent's ground is refused, and the re
   await Deno.writeTextFile(`${home}/mine.png`, "\x89PNG");
   await Deno.writeTextFile(`${ground}/log/log.db`, "sqlite");
   const attach = {
-    spec: { name: "attach", description: "", input_schema: { type: "object" as const } },
+    spec: { name: "attach", input_schema: { type: "object" as const } },
     // a bytes read as `aread` reports one: the output plus the paths it read
     execute: () =>
       Promise.resolve({ output: "read two", files: [`${home}/mine.png`, `${ground}/log/log.db`] }),

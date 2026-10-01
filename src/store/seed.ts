@@ -82,6 +82,24 @@ export function onFiles(root: string): Seedbed {
   };
 }
 
+/** One doc to lay: scope, owner, name, template. */
+type Template = [DocScope, string, string, string];
+
+/** The builtin tools whose words are docs (tooldoc.ts), one file each under
+ *  `system/instructions/tools/`. */
+const TOOL_DOCS = [
+  "send",
+  "search",
+  "schedule",
+  "cancel",
+  "conversation",
+  "contact",
+  "bash",
+  "read",
+  "write",
+  "edit",
+];
+
 /** Copy templates into the bed — a template only where its FOLDER does not exist.
  *
  *  The folder, not the file, because an absent doc is an answer: a deployment that deleted
@@ -89,10 +107,7 @@ export function onFiles(root: string): Seedbed {
  *  none, and the next boot must not argue. What that costs is a template added to a folder
  *  an org already has: it reaches new orgs and no existing one. Deleting the folder is how
  *  an org asks for the set again. */
-async function install(
-  bed: Seedbed,
-  docs: [DocScope, string, string, string][], // scope, owner, name, template
-): Promise<void> {
+async function install(bed: Seedbed, docs: Template[]): Promise<void> {
   // asked once per folder, before any of them is written: a folder two templates share is
   // absent for both or for neither, whichever this call found
   const laid = new Map<string, boolean>();
@@ -113,6 +128,12 @@ export async function seedOrg(bed: Seedbed): Promise<void> {
   await install(bed, [
     ["system", "", "instructions/system", "system/instructions/system.md"],
     ["system", "", "instructions/compaction", "system/instructions/compaction.md"],
+    ...TOOL_DOCS.map((tool): Template => [
+      "system",
+      "",
+      `instructions/tools/${tool}`,
+      `system/instructions/tools/${tool}.md`,
+    ]),
     ["system", "", "skills/workflows", "system/skills/workflows.md"],
     ["system", "", "skills/transcribe-audio", "system/skills/transcribe-audio.md"],
     ["organization", "", "instructions/organization", "organization.md"],

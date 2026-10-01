@@ -38,7 +38,7 @@ import { MAX_BYTES, MAX_LINES } from "./truncate.ts";
 import { DEFAULT_BASH_TIMEOUT_MS } from "../config.ts";
 import {
   type BashInput,
-  bashSpec,
+  bashShape,
   type BashState,
   CWD_MARK,
   type ExecPlane,
@@ -301,7 +301,7 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
   const out = `${opts.workspace}/.out`;
 
   const bash: ExecTool = {
-    spec: bashSpec(timeoutMsDefault),
+    ...bashShape(timeoutMsDefault),
     async execute(input: Json, signal: AbortSignal): Promise<Json | ExecOutcome> {
       const call = input as unknown as BashInput;
       const timeoutMs = call.timeout !== undefined ? call.timeout * 1000 : timeoutMsDefault;

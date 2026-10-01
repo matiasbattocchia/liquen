@@ -32,7 +32,7 @@
  * holds a token.
  */
 
-import { type AgentConfig, type Decision, relevant, xi, type XiPorts } from "./xi.ts";
+import { type AgentConfig, type Decision, OWN_TOOLS, relevant, xi, type XiPorts } from "./xi.ts";
 import { ownComplex } from "./render.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
@@ -67,7 +67,11 @@ import { createTranscriber } from "./processors.ts";
 import { type DoorAgent, installDoors, type Status, type Tune } from "./door.ts";
 import { loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import type { About, Delta, Event } from "./types.ts";
+import { checkToolDocs } from "./tooldoc.ts";
+import { bashShape } from "./exec/bash.ts";
+import { DOC_TOOLS } from "./exec/docs.ts";
 import {
+  DEFAULT_BASH_TIMEOUT_MS,
   DEFAULT_DEBOUNCE_MS,
   findRoot,
   type OrgConfig,
@@ -192,6 +196,19 @@ export async function start(
   await seedOrg(docs.bed);
   for (const agent of principals) {
     if (agent.runs !== false) await seedAgent(docs.bed, agent.agentId);
+  }
+  // every builtin tool's words are a doc the org may edit (tooldoc.ts): one that disagrees
+  // with its schema stops the start here, named, before any turn reads it
+  if (principals.length > 0) {
+    const ctx = { agent: principals[0].agentId };
+    await checkToolDocs(
+      [
+        ...OWN_TOOLS,
+        bashShape(catalog?.system.bashTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS),
+        ...Object.values(DOC_TOOLS),
+      ],
+      (name) => docs.read(ctx, { scope: "system", kind: "instruction", name }),
+    );
   }
   // one transport per provider, shared by every agent declared on it; a test's scripted
   // edge stands in for all of them

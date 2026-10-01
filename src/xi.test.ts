@@ -830,7 +830,7 @@ Deno.test("attachmentsOf: the bytes ride on the result — a rewrite of the path
 Deno.test("specsOf: `tools` names what the model sees — unset offers everything", () => {
   const bash = { spec: { name: "bash", description: "", input_schema: { type: "object" } } };
   const ports = { exec: { bash } } as unknown as XiPorts;
-  const names = (tools?: string[]) => specsOf(ports, { ...CONFIG, tools }).map((t) => t.name);
+  const names = (tools?: string[]) => specsOf(ports, { ...CONFIG, tools }).map((t) => t.spec.name);
   assertEquals(names(), ["send", "search", "schedule", "cancel", "conversation", "bash"]);
   // the coding-agent shape: built-ins and exec filter alike, by name
   assertEquals(names(["search", "schedule", "cancel", "bash"]), [
@@ -846,7 +846,7 @@ Deno.test("specsOf: `tools` names what the model sees — unset offers everythin
     contact: { whatsapp: { write: () => Promise.resolve({}) } },
   } as unknown as XiPorts;
   const offered = (held: { service: string }[]) =>
-    specsOf(withBook, { ...CONFIG, tools: undefined }, held).map((t) => t.name);
+    specsOf(withBook, { ...CONFIG, tools: undefined }, held).map((t) => t.spec.name);
   assertEquals(offered([{ service: "slack" }]), names());
   assertEquals(offered([{ service: "slack" }, { service: "whatsapp" }]), [
     "send",
@@ -857,8 +857,9 @@ Deno.test("specsOf: `tools` names what the model sees — unset offers everythin
     "contact",
     "bash",
   ]);
-  const send = specsOf(ports, { ...CONFIG, tools: undefined }).find((t) => t.name === "send")!;
-  assert("connection" in (send.input_schema.properties as Record<string, unknown>));
+  const send = specsOf(ports, { ...CONFIG, tools: undefined })
+    .find((t) => t.spec.name === "send")!;
+  assert("connection" in (send.spec.input_schema.properties as Record<string, unknown>));
 });
 
 Deno.test("anchored: a late-stamped row inside the window is kept — position sets the floor", () => {
