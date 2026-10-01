@@ -5034,3 +5034,21 @@ dedupes. Verified on a tenant: a master with two deleted occurrences lands as an
 `series` and `was`, its clock a `Z` instant, so the expanded exceptions honour the UTC/text
 `Prefer`; a "this and following" split lands beside them as the old master's `UNTIL` and a
 new master.
+
+### Open on calendar rows (2026-10-01)
+
+- **An edit says nothing of what changed.** Every edit row is the whole trimmed event again,
+  so a reader whose window no longer holds the earlier row sees the current state only. A
+  master edit that adds a date to `exdates` does not say which date went. The shared
+  `connect/calendar.ts` could compare a change with the last row it wrote for the event and
+  carry only the fields that moved.
+- **An RSVP reads as the organizer editing.** A reply moves the event's stamp, so it lands as
+  an ordinary edit voiced by the organizer, the full invitee list and description again, one
+  copy per reply. Set aside for now; it would ride the diff above, an invitee-status-only
+  change voiced by whoever replied.
+- **Whose voice an event is.** `sender` is Google's `creator` and Graph's `organizer`, on
+  every row of the event. An invitation from another account lands in the grant's own
+  calendar voiced by that account, so it reads as that account writing to the org, the same
+  voice as its mail; the grant's own events read as the grant. Which of those an event row
+  should carry, and whether creator and organizer should agree across the two wires, is
+  undecided.
