@@ -77,7 +77,7 @@ import type { ConversationRow } from "./store/connections.ts";
 import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./store/media.ts";
-import type { BinDir, FilePart, LocationPart, SendPreview } from "./types.ts";
+import type { BinDir, Carried, FilePart, LocationPart, SendPreview } from "./types.ts";
 import { directAddress, MIND, parseDirect, parseSession, sessionAddress } from "./session.ts";
 import {
   bookEl,
@@ -312,11 +312,14 @@ function sealed(e: Event, events: Event[], wake: Wake, now: number): boolean {
     p.type === "file" && kinds.includes(p.kind) && p.file.uri.startsWith("file://")
   );
   if (!media || now - Date.parse(e.ts) >= PROCESSOR_TIMEOUT_MS) return false;
-  return !events.some((x) => {
-    const w = words(x);
-    return w !== undefined &&
-      (w.ref === e.envelope.external_id || x.payload?.ref_id === e.id);
-  });
+  return !events.some((x) => transcribes(x, e));
+}
+
+/** Is `x` the transcript of `note`? The words name the note by its wire id, or by its row
+ *  when the mirror carried both into a mind (§4). */
+function transcribes(x: Event, note: Event): boolean {
+  const w = words(x);
+  return w !== undefined && (w.ref === note.envelope.external_id || x.payload?.ref_id === note.id);
 }
 
 /** A transcript whose note is already BEHIND the last look — the half of rung-inheritance
@@ -3161,9 +3164,10 @@ const REF_REACH = 500;
 /** What a pending `send` will do, for its card (§9). The conversation is where the call
  *  LANDS (the resolver's address, or the argument as typed when nothing answers to it);
  *  the line it answers is the referent when it replies, else the other side's last word
- *  there — the agent's own rows and the account's own hand are not the other side. Best
- *  effort throughout: a referent that cannot be found leaves the row out, since the send
- *  itself will say so when it runs. */
+ *  there — the agent's own rows and the account's own hand are not the other side, and a
+ *  mark on a line (a reaction, a transcript) is not a line. Best effort throughout: a
+ *  referent that cannot be found leaves the row out, since the send itself will say so
+ *  when it runs. */
 async function sendPreviewOf(
   use: ToolUseEvent,
   resolve: Resolve,
@@ -3178,16 +3182,14 @@ async function sendPreviewOf(
   const to = a.to === undefined ? "" : String(a.to);
   const who = resolve(to);
   const address = who?.address ?? to;
-  let answered: Event | undefined;
-  if (a.re !== undefined) {
-    answered = await referent(ports, address, String(a.re)).catch(() => undefined);
-  } else {
-    const recent = await ports.log.read({ conversation: address, types: ["message"], limit: 50 });
-    answered = recent.findLast((e) =>
-      !ownVoice(e, session) && e.envelope.sender?.address !== e.envelope.connection_address
+  const recent = await ports.log.read({ conversation: address, types: ["message"], limit: 50 });
+  const answered = a.re !== undefined
+    ? await referent(ports, address, String(a.re)).catch(() => undefined)
+    : recent.findLast((e) =>
+      spoken(e as MessageEvent) && !ownVoice(e, session) &&
+      e.envelope.sender?.address !== e.envelope.connection_address
     );
-  }
-  const lastText = answered ? textOf(answered) : "";
+  const heard = answered ? lineOf(answered, recent) : undefined;
   const files = Array.isArray(a.files) ? a.files.length : 0;
   const loc = a.location && typeof a.location === "object" && !Array.isArray(a.location)
     ? a.location as Record<string, unknown>
@@ -3198,7 +3200,7 @@ async function sendPreviewOf(
       address,
       ...(who?.kind ? { kind: who.kind } : {}),
     },
-    ...(answered && lastText ? { last: { text: lastText, at: hhmm(answered.ts, zone) } } : {}),
+    ...(answered && heard ? { last: { ...heard, at: hhmm(answered.ts, zone) } } : {}),
     ...(typeof a.subject === "string" && a.subject ? { subject: a.subject } : {}),
     ...(typeof a.react === "string" && a.react ? { react: a.react } : {}),
     ...(typeof a.text === "string" && a.text ? { text: a.text } : {}),
@@ -3211,6 +3213,29 @@ async function sendPreviewOf(
       }
       : {}),
   };
+}
+
+/** A line as its card row shows it: every word it has — the text and captions, a pin's
+ *  label, the transcript `rows` hold for a voice note — and what it carried beside them.
+ *  A line with neither is nothing to show. */
+function lineOf(e: Event, rows: Event[]): { text: string; carries?: Carried[] } | undefined {
+  const parts = (e as MessageEvent).parts ?? [];
+  const carries: Carried[] = [];
+  const said = [textOf(e)];
+  for (const p of parts) {
+    if (p.type === "file") carries.push(p.kind);
+    if (p.type === "data" && p.kind === "location") {
+      carries.push("location");
+      const pin = (p as LocationPart).data;
+      said.push(pin.name ?? pin.address ?? "");
+    }
+  }
+  const transcript = rows.find((x) => transcribes(x, e))?.parts
+    .find((p) => p.type === "text" && p.kind === "transcript");
+  if (transcript?.type === "text") said.push(transcript.text);
+  const text = said.filter((s) => s !== "").join(" ");
+  if (text === "" && carries.length === 0) return undefined;
+  return { text, ...(carries.length > 0 ? { carries } : {}) };
 }
 
 /** `send(location:)` → the part: degrees within the globe, labels as given. A shape the

@@ -22,7 +22,7 @@
  * the anchor's pending list, the mirror's tool line.
  */
 
-import type { Conversation, Event, Json, SendPreview, ToolCall } from "./types.ts";
+import type { Carried, Conversation, Event, Json, SendPreview, ToolCall } from "./types.ts";
 import type { Reader } from "./store/log.ts";
 import { clipEnd } from "./exec/truncate.ts";
 
@@ -108,7 +108,11 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
   const { name, address, kind } = p.conversation;
   const who = !name ? address : addressReads(kind) ? `${name} <${address}>` : name;
   const rows = [`**${labels.conversation}**: ${who}`];
-  if (p.last) rows.push(`**${labels.last}** (${p.last.at}):\n${p.last.text}`);
+  if (p.last) {
+    const things = (p.last.carries ?? []).map((c) => `[${labels.carried[CARRIED[c]]}]`);
+    const line = [...things, p.last.text].filter((s) => s !== "").join(" ");
+    rows.push(`**${labels.last}** (${p.last.at}):\n${line}`);
+  }
   if (p.subject) rows.push(`**${labels.subject}**: ${p.subject}`);
   if (p.react) rows.push(`**${labels.react}**: ${p.react}`);
   if (p.text) rows.push(`**${labels.reply}**:\n${p.text}`);
@@ -128,7 +132,35 @@ export interface SendCardLabels {
   reply: string;
   files: string;
   location: string;
+  carried: Record<CarriedWord, string>;
 }
+
+type CarriedWord =
+  | "image"
+  | "audio"
+  | "video"
+  | "document"
+  | "sticker"
+  | "story"
+  | "file"
+  | "location";
+
+/** The word a person knows each carried thing by: Instagram's story shapes are all a
+ *  story, and its generic attachments a file. */
+const CARRIED: Record<Carried, CarriedWord> = {
+  image: "image",
+  audio: "audio",
+  video: "video",
+  document: "document",
+  sticker: "sticker",
+  file: "file",
+  media: "file",
+  story: "story",
+  ig_story: "story",
+  story_mention: "story",
+  story_reply: "story",
+  location: "location",
+};
 
 /** `k: v, k: v` over the arguments that carry something — except when there is exactly one
  *  string argument, which prints bare: for a one-argument tool the value IS the call, and

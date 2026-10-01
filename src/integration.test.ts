@@ -22,7 +22,15 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
 import { shortId } from "./render.ts";
-import type { Draft, Event, Json, MessageEvent, ToolResultEvent, ToolUseEvent } from "./types.ts";
+import type {
+  Draft,
+  Event,
+  Json,
+  MessageEvent,
+  Part,
+  ToolResultEvent,
+  ToolUseEvent,
+} from "./types.ts";
 
 const CONFIG: AgentConfig = {
   agentId: "a1",
@@ -575,6 +583,79 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
       files: 2,
       location: "Consultorio",
     });
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a gated send's last word is a line without text: what it carried, and the words it has", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const { transport } = scripted([
+    ok([
+      { kind: "tool_use", name: "send", input: { to: "5492616560401", text: "qué lindo!" } },
+      { kind: "tool_use", name: "send", input: { to: "5492615550000", text: "dale, el lunes" } },
+    ], "tool_use"),
+    ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
+  ]);
+  const config: AgentConfig = {
+    ...CONFIG,
+    gate: (name) => name === "send" ? "ask" : "allow",
+    timezone: "America/Argentina/Mendoza",
+  };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  const from = (address: string, name: string, ts: string, parts: Part[], id: string) =>
+    log.publish({
+      ts,
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "5491100000000",
+        conversation: { address, kind: "direct", name },
+        sender: { address, name },
+        external_id: id,
+      },
+      parts,
+    });
+  try {
+    // a photo with no caption
+    await from("5492616560401", "Carlos", "2026-09-23T19:42:00Z", [{
+      type: "file",
+      kind: "image",
+      file: { mime_type: "image/jpeg", uri: "file:///foto.jpg" },
+    }], "wa:p1");
+    // a voice note, and its words riding on it a minute later — senderless, as the
+    // processor writes them
+    await from("5492615550000", "Ana", "2026-09-23T19:44:00Z", [{
+      type: "file",
+      kind: "audio",
+      file: { mime_type: "audio/ogg", uri: "file:///nota.ogg" },
+    }], "wa:n1");
+    await log.publish({
+      ts: "2026-09-23T19:45:00Z",
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "5491100000000",
+        conversation: { address: "5492615550000", kind: "direct" },
+      },
+      payload: { action: "add", ref_external_id: "wa:n1" },
+      parts: [{ type: "text", kind: "transcript", text: "¿podemos el lunes?" }],
+    });
+    await log.publish(principalMsg("contestales"));
+    for (let i = 0; i < 6; i++) await xi(config, ports);
+    const sends = (await log.read({ types: ["permission_request"] })).map((e) =>
+      e.type === "permission_request" ? e.parts[0].data.send?.last : undefined
+    );
+    assertEquals(sends, [
+      { text: "", carries: ["image"], at: "23 Sep 16:42" },
+      { text: "¿podemos el lunes?", carries: ["audio"], at: "23 Sep 16:44" },
+    ]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

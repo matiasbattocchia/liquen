@@ -1,6 +1,6 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { describeCall, describeSendCard, nameResolver } from "./describe.ts";
-import type { Event } from "./types.ts";
+import type { Event, SendPreview } from "./types.ts";
 
 Deno.test("describeCall: one string argument prints bare — the argument IS the call", () => {
   assertEquals(
@@ -193,6 +193,16 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
     reply: "Respuesta",
     files: "Adjuntos",
     location: "Ubicación",
+    carried: {
+      image: "imagen",
+      audio: "audio",
+      video: "video",
+      document: "documento",
+      sticker: "sticker",
+      story: "historia",
+      file: "archivo",
+      location: "ubicación",
+    },
   };
   assertEquals(
     describeSendCard({
@@ -244,5 +254,24 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
     "**Conversación**: ✨Somos una gran familia✨\n\n" +
       "**Último mensaje** (30 Sep 16:46):\nEeee yo quiero el de los mosquitos 🤪🤭\n\n" +
       "**Reacción**: 🤣",
+  );
+  // a line that is not words says what it carried, ahead of whatever words it has
+  const answering = (last: SendPreview["last"]) =>
+    describeSendCard(
+      { conversation: { address: "5491100000000" }, last, text: "qué lindo!", files: 0 },
+      labels,
+    );
+  assertEquals(
+    answering({ text: "", carries: ["image"], at: "1 Oct 10:02" }),
+    "**Conversación**: 5491100000000\n\n**Último mensaje** (1 Oct 10:02):\n[imagen]\n\n" +
+      "**Respuesta**:\nqué lindo!",
+  );
+  assertStringIncludes(
+    answering({ text: "¿el lunes?", carries: ["audio"], at: "1 Oct 10:02" }),
+    "\n[audio] ¿el lunes?\n",
+  );
+  assertStringIncludes(
+    answering({ text: "", carries: ["story_reply", "location"], at: "1 Oct 10:02" }),
+    "\n[historia] [ubicación]\n",
   );
 });

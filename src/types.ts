@@ -450,11 +450,16 @@ export interface BinDir {
   programs: { name: string; usage?: string }[];
 }
 
+/** What a line can carry that is not words: a file of some kind, or a pin. */
+export type Carried = MediaKind | "location";
+
 export interface SendPreview {
   conversation: { name?: string; address: string; kind?: Conversation["kind"] };
   /** The line the send answers: the referent when it replies, else the other side's
-   *  last word in that conversation. `at` is already on the org's clock. */
-  last?: { text: string; at: string };
+   *  last word in that conversation. `at` is already on the org's clock. `text` is every
+   *  word the line has — caption, pin label, a voice note's transcript — and may be empty;
+   *  `carries` names what came beside the words, so a photo alone still reads as a line. */
+  last?: { text: string; at: string; carries?: Carried[] };
   /** The thread the send opens (`send(subject:)`) — a mail's Subject line. */
   subject?: string;
   /** The glyph a `send(react:)` puts on the line `last` quotes. */
