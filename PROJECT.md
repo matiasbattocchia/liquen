@@ -5035,23 +5035,34 @@ dedupes. Verified on a tenant: a master with two deleted occurrences lands as an
 `Prefer`; a "this and following" split lands beside them as the old master's `UNTIL` and a
 new master.
 
-### Open on calendar rows (2026-10-01)
+### An edit wears its diff; an event wears its organizer (2026-10-01) — DECIDED
 
-- **An edit says nothing of what changed.** Every edit row is the whole trimmed event again,
-  so a reader whose window no longer holds the earlier row sees the current state only. A
-  master edit that adds a date to `exdates` does not say which date went. The shared
-  `connect/calendar.ts` could compare a change with the last row it wrote for the event and
-  carry only the fields that moved.
-- **An RSVP reads as the organizer editing.** A reply moves the event's stamp, so it lands as
-  an ordinary edit voiced by the organizer, the full invitee list and description again, one
-  copy per reply. Set aside for now; it would ride the diff above, an invitee-status-only
-  change voiced by whoever replied.
-- **Whose voice an event is.** `sender` is Google's `creator` and Graph's `organizer`, on
-  every row of the event. An invitation from another account lands in the grant's own
-  calendar voiced by that account, so it reads as that account writing to the org, the same
-  voice as its mail; the grant's own events read as the grant. Which of those an event row
-  should carry, and whether creator and organizer should agree across the two wires, is
-  undecided.
+An edit row is the whole trimmed event again, so a reader whose window no longer holds the
+earlier row sees the current state only, and a master edit that adds a date to `exdates`
+does not say which date went. Decided, both wires, in the shared `connect/calendar.ts`:
+
+- **An edit carries the whole event and a diff of it.** `data` stays whole (the handle with
+  it), whether or not the referent is in the window; the diff rides beside it, rendered
+  first.
+- **The diff wears the data's shape.** A plain field is `{old, new}`; a list entry that
+  changed keeps its identity as plain fields and wears `{old, new}` on what moved (invitees
+  matched by email, by name where there is none); an entry added or removed goes whole under
+  `new` or `old` (`exdates: [{new: '2026-10-09'}]`). The description is the line's text, so
+  its diff carries only `old`.
+- **An edit that changes no mapped field is dropped.** A change to something unmapped
+  (attachments) stays silent.
+- **No earlier row, no diff.** An edit of an event the connector never wrote carries the
+  whole event alone.
+- **One row per change the poller sees.** Two replies, or a reply and a moved start, read in
+  one poll land as one row with every change in its diff.
+- **The voice is the organizer, on every row.** Google's `organizer`, falling back to its
+  `creator` when the organizer is a calendar rather than a person; Graph's `organizer`. An
+  invitation from another account reads as that account, external with its address when
+  unsaved, which is the trust signal for a line a stranger can place. An RSVP stays voiced by
+  the organizer; the diff says who replied.
+
+Open before building: how the connector learns an event's previous state — reading its last
+row back from the log, or a copy of its own.
 
 ### The checkpoint request is the think's (2026-10-01) — LANDED
 
