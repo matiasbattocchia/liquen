@@ -120,7 +120,7 @@ Deno.test("recap: the agent's markdown is shown as styles", () => {
   );
 });
 
-Deno.test("recap: a bodiless row is not a line — a picture with no caption paints none", () => {
+Deno.test("recap: a row with nothing to say is not a line", () => {
   const { p, screen } = surface();
   const media: Event = {
     ...asked("2026-09-11T14:13:00Z", ""),
@@ -182,6 +182,72 @@ Deno.test("live: the principal's line through a wire is dated and marked like a 
     extra: { via: { service: "whatsapp" } },
   });
   assertEquals(plain(screen()), "11 Sep 11:13 ❯ [via whatsapp] buen día\n");
+});
+
+/** A voice note through a wire, and its transcript: the row that carries it, as ingest
+ *  writes it after the file has landed. */
+function voiceNote(): [MessageEvent, MessageEvent] {
+  const via = { via: { service: "whatsapp" } };
+  const audio: MessageEvent = {
+    ...asked("2026-10-02T20:50:31Z", "", "Matías (WhatsApp)"),
+    extra: via,
+    parts: [{
+      type: "file",
+      kind: "audio",
+      file: { mime_type: "audio/ogg", uri: "file:///n.ogg", size: 21840 },
+    }],
+  };
+  const transcript: MessageEvent = {
+    ...asked("2026-10-02T20:50:41Z", "", "Matías (WhatsApp)"),
+    id: "i-transcript",
+    extra: via,
+    payload: { ref_id: audio.id, action: "add" },
+    parts: [{ type: "text", kind: "transcript", text: "mandale a Mecha" }],
+  };
+  return [audio, transcript];
+}
+
+Deno.test("live: a line that is not words says what it carried, and its transcript follows", () => {
+  const { p, screen } = surface();
+  for (const e of voiceNote()) p.event(e);
+  assertEquals(
+    plain(screen()),
+    "2 Oct 17:50 ❯ [via whatsapp] [audio]\n\n2 Oct 17:50 ❯ [via whatsapp] mandale a Mecha\n",
+  );
+});
+
+Deno.test("recap: a line that is not words says what it carried, as the live copy does", () => {
+  const { p, screen } = surface();
+  p.recap(voiceNote());
+  assertEquals(
+    plain(screen()),
+    "2 Oct 17:50 ❯ [via whatsapp] [audio]\n\n2 Oct 17:50 ❯ [via whatsapp] mandale a Mecha\n",
+  );
+});
+
+Deno.test("live: a caption and a pin's label read after what carried them", () => {
+  const { p, screen } = surface();
+  p.event({
+    ...asked("2026-09-11T14:13:00Z", "", "Matías (WhatsApp)"),
+    extra: { via: { service: "whatsapp" } },
+    parts: [
+      {
+        type: "file",
+        kind: "image",
+        file: { mime_type: "image/jpeg", uri: "file:///f.jpg", size: 1 },
+        text: "el flyer",
+      },
+      {
+        type: "data",
+        kind: "location",
+        data: { latitude: -32.9, longitude: -68.8, name: "Hippocampus" },
+      },
+    ],
+  });
+  assertEquals(
+    plain(screen()),
+    "11 Sep 11:13 ❯ [via whatsapp] [image] [location] el flyer Hippocampus\n",
+  );
 });
 
 Deno.test("live: a line typed on this surface is not painted twice", () => {

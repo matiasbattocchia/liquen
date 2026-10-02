@@ -109,7 +109,7 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
   const who = !name ? address : addressReads(kind) ? `${name} <${address}>` : name;
   const rows = [`**${labels.conversation}**: ${who}`];
   if (p.last) {
-    const things = (p.last.carries ?? []).map((c) => `[${labels.carried[CARRIED[c]]}]`);
+    const things = (p.last.carries ?? []).map((c) => `[${labels.carried[carriedWord(c)]}]`);
     const line = [...things, p.last.text].filter((s) => s !== "").join(" ");
     rows.push(`**${labels.last}** (${p.last.at}):\n${line}`);
   }
@@ -135,7 +135,7 @@ export interface SendCardLabels {
   carried: Record<CarriedWord, string>;
 }
 
-type CarriedWord =
+export type CarriedWord =
   | "image"
   | "audio"
   | "video"
@@ -161,6 +161,10 @@ const CARRIED: Record<Carried, CarriedWord> = {
   story_reply: "story",
   location: "location",
 };
+
+/** What a carried thing is called — the key a tongue's `carried` labels are read under,
+ *  and itself the English word. */
+export const carriedWord = (c: Carried): CarriedWord => CARRIED[c];
 
 /** `k: v, k: v` over the arguments that carry something — except when there is exactly one
  *  string argument, which prints bare: for a one-argument tool the value IS the call, and

@@ -4,7 +4,7 @@
  */
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { fireAtOf, nextFire, type When, zonedTime } from "./timers.ts";
+import { fireAtOf, momentOf, nextFire, type When, zonedTime } from "./timers.ts";
 import { timersSuite } from "./suite/timers.ts";
 import { sqlite } from "./suite/mod.ts";
 
@@ -84,4 +84,25 @@ Deno.test("fireAtOf: one way of saying when, inside the horizon", () => {
   bad({ at: "tomorrow" }, "not a moment");
   bad({ at: "2020-01-01T09:00" }, "already passed");
   bad({ in: "99w" }, "more than a year out");
+});
+
+Deno.test("momentOf: a stamp as the lines show it reads back on the org's clock", () => {
+  const tz = "America/Argentina/Buenos_Aires";
+  const now = Date.parse("2026-10-02T20:56:00.000Z"); // 2 Oct 17:56 on that clock
+  assertEquals(momentOf("2 Oct 17:36", tz, now), "2026-10-02T20:36:00.000Z");
+  assertEquals(momentOf("2 Oct 2026 17:36", tz, now), "2026-10-02T20:36:00.000Z");
+  assertEquals(momentOf("2 oct", tz, now), "2026-10-02T03:00:00.000Z");
+  // with no year, the nearest such date: last December from January, next January from
+  // December
+  const january = Date.parse("2027-01-05T12:00:00.000Z");
+  assertEquals(momentOf("28 Dec 9:00", tz, january), "2026-12-28T12:00:00.000Z");
+  const december = Date.parse("2026-12-30T12:00:00.000Z");
+  assertEquals(momentOf("3 Jan 9:00", tz, december), "2027-01-03T12:00:00.000Z");
+  // 29 Feb is a date only in a leap year among the candidates
+  const leapish = Date.parse("2027-11-10T12:00:00.000Z");
+  assertEquals(momentOf("29 Feb", tz, leapish), "2028-02-29T03:00:00.000Z");
+  for (const spec of ["2 Oct 17", "2 Octubre 17:36", "31 Feb 9:00", "2 Oct 25:00", "Oct 2"]) {
+    const err = assertThrows(() => momentOf(spec, tz, now), Error);
+    assert(err.message.includes("not a moment"), err.message);
+  }
 });

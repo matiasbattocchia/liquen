@@ -19,6 +19,7 @@ import { INLINE_CAP, inlineable, isExternal, type MediaBlock, pathOf } from "./s
 import { MIND, routedSession } from "./session.ts";
 import { clipEnd } from "./exec/truncate.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
+import { MONTHS } from "./store/timers.ts";
 import type {
   AlarmEvent,
   BinDir,
@@ -1788,8 +1789,7 @@ export function bodyOf(e: Event, zone?: string): string {
  */
 // English on purpose: these stamps face the MODEL, which reads them fine in any tongue. The
 // org's `locale` translates the harness's human-facing words (the mirror's tags, §4), not
-// what the model is shown.
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// what the model is shown. `MONTHS` is shared with `momentOf`, which reads a stamp back.
 const MONTHS_LONG = [
   "January",
   "February",

@@ -42,13 +42,13 @@ import {
   silent,
   textOf,
 } from "./render.ts";
-import { describeCall } from "./describe.ts";
+import { carriedWord, describeCall } from "./describe.ts";
 import { markdown, renderMarkdown } from "./md.ts";
 import type {
   Delta,
   Event,
   EventId,
-  Part,
+  LocationPart,
   PermissionRequestEvent,
   PermissionResponseEvent,
   RoomPart,
@@ -57,9 +57,23 @@ import type {
 } from "./types.ts";
 import { roomWords } from "./room.ts";
 
-/** A room's change, in the words a painted line reads — none for any other part. */
-const roomLine = (p: Part): string[] =>
-  p.type === "data" && p.kind === "room" ? [roomWords(p as RoomPart)] : [];
+/** A message as one painted line: what it carried that is not words, as the send card
+ *  names it (`[audio]`, `[image]`, `[location]`) ahead of every word it has — text,
+ *  captions, a pin's label — and a room's change in words. A voice note's transcript is a
+ *  row of its own, so it paints as the line that follows. */
+const lineOf = (e: Event): string => {
+  const things: string[] = [];
+  const said = [textOf(e)];
+  for (const p of e.parts) {
+    if (p.type === "file") things.push(`[${carriedWord(p.kind)}]`);
+    else if (p.type === "data" && p.kind === "location") {
+      things.push(`[${carriedWord("location")}]`);
+      const pin = (p as LocationPart).data;
+      said.push(pin.name ?? pin.address ?? "");
+    } else if (p.type === "data" && p.kind === "room") said.push(roomWords(p as RoomPart));
+  }
+  return [...things, ...said].filter((t) => t !== "").join(" ");
+};
 import { tailOf } from "./line.ts";
 
 export const DIM = "\x1b[2m";
@@ -163,13 +177,12 @@ export function painter(s: Surface): Painter {
     switch (e.type) {
       case "message": {
         const via = (e.extra?.via ?? undefined) as { service?: string } | undefined;
-        const text = e.parts.flatMap((p) => p.type === "text" ? [p.text] : roomLine(p))
-          .join(" ");
+        const text = lineOf(e);
         if (!self) {
           // the principal spoke. Through a mind-alias surface (§4) the mirror's copy is the
           // only sighting, so it is painted, tagged; in the home room, a line this surface
           // typed is already on screen, and one another attachment sent is painted here
-          if (e.envelope.conversation.address !== s.home) return;
+          if (e.envelope.conversation.address !== s.home || text === "") return;
           if (!via && (!s.typed || s.typed(text))) return;
           settle();
           s.gap();
@@ -189,7 +202,7 @@ export function painter(s: Surface): Painter {
           const spoke = block !== "none";
           settle();
           if (spoke) s.gap(); // the body itself already streamed; this closes it off
-        } else {
+        } else if (text !== "") {
           settle();
           s.gap();
           s.write(`${stamp(e.ts)}${CYAN}→ ${e.envelope.conversation.address}:${RESET} ${text}`);
@@ -299,7 +312,7 @@ export function painter(s: Surface): Painter {
     for (const e of events) {
       switch (e.type) {
         case "message": {
-          const text = [textOf(e), ...e.parts.flatMap(roomLine)].filter((t) => t).join(" ");
+          const text = lineOf(e);
           if (text === "" || silent(e)) continue;
           gap();
           if (ownVoice(e, s.session)) put(`${stamp(e.ts)}${AGENT} ${renderMarkdown(text)}`);

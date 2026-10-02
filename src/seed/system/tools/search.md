@@ -19,7 +19,8 @@ never heard from is findable too; a book that could not be asked is said in a li
 - from: one sender: their address, or any part of the name they go by
 - connection: one of your accounts — a <conn> `name` or `address`: only what rode it
 - before: only messages sent before this moment: ISO-8601, e.g. `2026-09-01` or
-  `2026-09-01T17:00` (your org's clock unless it carries an offset)
+  `2026-09-01T17:00` (your org's clock unless it carries an offset), or a stamp as your
+  lines show it, `1 Sep 17:00`
 - after: only messages sent after this moment, same form as `before`
 - text: a phrase the message contains (in its words, an attachment's caption or its
   filename), matched literally as one contiguous string, case-insensitive: no word splitting,
