@@ -570,3 +570,33 @@ Deno.test("a verdict reads under the line that gave it, live and reopened alike"
       "11 Sep 11:16 ❯ /y conv u2\n— u2 allowed for this conversation",
   );
 });
+
+// a wake is why the agent acts with nobody having spoken: its note stands ahead of the
+// work it set off, stamped like a line
+Deno.test("a fired wake paints its note, live and reopened alike", () => {
+  const wake = {
+    id: "a1",
+    ts: "2026-10-02T20:56:23Z",
+    type: "alarm",
+    payload: {},
+    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    parts: [{ type: "text", kind: "alarm", text: "recordarle a Mecha el mail" }],
+  } as unknown as Event;
+  const use = {
+    id: "u1",
+    ts: "2026-10-02T20:56:25Z",
+    type: "tool_use",
+    payload: { turn_id: "t1" },
+    agent: { id: AGENT, session_id: "mind" },
+    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    parts: [{ type: "data", kind: "tool_use", data: { name: "search", input: { in: "549" } } }],
+  } as unknown as Event;
+  const live = surface();
+  live.p.event(wake);
+  live.p.event(use);
+  const again = surface();
+  again.p.recap([wake, use]);
+  const seen = plain(live.screen());
+  assertEquals(plain(again.screen()).trimEnd(), seen.trimEnd());
+  assertEquals(seen.trimEnd(), "2 Oct 17:56 ⏰ recordarle a Mecha el mail\n\n⚙ search(549)");
+});

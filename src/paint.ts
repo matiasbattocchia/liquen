@@ -34,6 +34,7 @@
  */
 
 import {
+  failureOf,
   hhmm,
   isCancelled,
   outcomeLine,
@@ -44,15 +45,16 @@ import {
   textOf,
 } from "./render.ts";
 import { describeCall, lineOf } from "./describe.ts";
+import { verdictSaid, words } from "./i18n.ts";
 import { markdown, renderMarkdown } from "./md.ts";
 import type {
+  AlarmEvent,
   Delta,
   Event,
   EventId,
   PermissionRequestEvent,
   PermissionResponseEvent,
   SessionRef,
-  ToolResultEvent,
 } from "./types.ts";
 import { tailOf } from "./line.ts";
 
@@ -210,7 +212,7 @@ export function painter(s: Surface): Painter {
           return;
         }
         if (!e.parts[0].data.is_error) return; // it did what the line above says it did
-        s.write(`${RED}✗ ${failure(e)}${RESET}\n`);
+        s.write(`${RED}✗ ${failureOf(e)}${RESET}\n`);
         return;
       }
       case "permission_request": {
@@ -237,6 +239,15 @@ export function painter(s: Surface): Painter {
         checkpointing = false;
         s.gap();
         s.write(`${DIM}≡ checkpoint written${RESET}\n`);
+        return;
+      }
+      case "alarm": {
+        // a wake the agent scheduled, handing back its own note: what the turn after it
+        // acts on, so it opens a block of its own, stamped like a line
+        settle();
+        s.gap();
+        s.write(alarmRow(e, stamp));
+        s.prompt();
         return;
       }
       case "error": {
@@ -316,7 +327,7 @@ export function painter(s: Surface): Painter {
           }
           if (!e.parts[0].data.is_error) continue;
           row();
-          put(`${RED}✗ ${failure(e)}${RESET}`);
+          put(`${RED}✗ ${failureOf(e)}${RESET}`);
           continue;
         }
         case "permission_request": {
@@ -335,6 +346,11 @@ export function painter(s: Surface): Painter {
         case "summary": {
           gap();
           put(`${DIM}≡ checkpoint written${RESET}`);
+          continue;
+        }
+        case "alarm": {
+          gap();
+          put(alarmRow(e, stamp));
           continue;
         }
         case "control": {
@@ -357,16 +373,6 @@ export function painter(s: Surface): Painter {
   return { delta, event, recap };
 }
 
-/** Why a call failed: the tool's own words, whole and as it wrote them — rows and all. A
- *  failure is the one outcome a principal has to act on, and the reason is already bounded
- *  where output is bounded (`exec/truncate.ts`); a screen that clipped it again would put
- *  the reader back in the terminal, running the call by hand to see what it had said. */
-function failure(e: ToolResultEvent): string {
-  const { output } = e.parts[0].data;
-  const said = (typeof output === "string" ? output : JSON.stringify(output) ?? "").trimEnd();
-  return said === "" ? "failed, saying nothing" : said;
-}
-
 /** The ask, named by the handle the agent's own words and `cancel(id)` use, so `/y cca9a2`
  *  and "cancelo el duplicado cca9a2" point at the same row. A call this surface has already
  *  printed is not printed again: the card adds only where it lands, the address the
@@ -379,14 +385,13 @@ function card(e: PermissionRequestEvent, shown: Set<EventId>): string {
   return lands?.length ? `? approve ${handle} → ${lands.join(", ")}` : `? approve ${handle}`;
 }
 
+/** A fired wake, as a row: when, and the note the agent left itself when it scheduled it. */
+function alarmRow(e: AlarmEvent, stamp: (ts: string) => string): string {
+  return `${stamp(e.ts)}${YELLOW}⏰ ${e.parts[0]?.text ?? ""}${RESET}`;
+}
+
 /** The answer, as a row of its own: what was decided and how far it reaches, in the
  *  principal's vocabulary. The clock's settlement says so. */
 function verdictRow(e: PermissionResponseEvent): string {
-  const { behavior, scope, reason, lapsed } = e.parts[0].data;
-  const handle = shortId(e.payload.ref_id);
-  if (lapsed) return `— ${handle} lapsed, nobody answered${reason ? ` (${reason})` : ""}`;
-  const reach = scope === "once" ? "once" : scope === "always" ? "always" : `for this ${scope}`;
-  return `— ${handle} ${behavior === "allow" ? "allowed" : "refused"} ${reach}${
-    reason ? `: ${reason}` : ""
-  }`;
+  return `— ${shortId(e.payload.ref_id)} ${verdictSaid(e.parts[0].data, words())}`;
 }

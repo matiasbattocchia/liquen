@@ -5173,3 +5173,24 @@ the approval only through the outcome's JSON.
 
 Open: a lapse reaches a surface only as the deferred outcome, worded for the model ("Make
 it again if it is still worth doing"), and an allowed send's outcome is raw JSON there.
+
+### A wake shows; a surface reads what the REPL reads (2026-10-03) — LANDED
+
+The reminder to Mecha fired at 17:56 as an `alarm` in `mind@matias`, and nothing drew it:
+the painter had no case for it, the recall left it out, the mirror skipped it. The
+transcript showed a `⚙ search` nobody asked for. The note said "si ya mandó el correo, no
+mandar nada", which is why the agent searched first.
+
+- **The REPL paints a wake** as a stamped row, `2 Oct 17:56 ⏰ <note>`, live and recalled.
+- **The mirror carries every row the REPL draws** as `[system] …`: a wake, a failed call
+  (`✗` and the tool's words), a verdict in the REPL's words quoting its card (a lapse
+  included), a turn the principal cut, a checkpoint. The verdict words are the i18n row
+  (`verdictSaid`), which the REPL reads in English.
+
+Still not drawn, here or there:
+- An `error` paints live as `! {"error":"…"}`, JSON, and the recall leaves it out.
+- A principal's `/cancel` and Ctrl-C log a `control` row that no recall draws and no
+  surface receives; the REPL echoes a typed `/cancel` but not a Ctrl-C.
+- A delivery that fails after the send went out (`envelope.status` failed) moves the row's
+  lifecycle, which the door's tail does not follow; the REPL never hears of it.
+- Thinking streams in the REPL; a surface gets `[agent thinking...]` alone.

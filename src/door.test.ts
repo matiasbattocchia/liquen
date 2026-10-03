@@ -919,12 +919,25 @@ Deno.test({
       ];
       await copied(thumb, { ref_id: card!.id, action: "add" });
       await copied(thumb, { ref_id: card!.id, action: "remove" }); // an un-react draws nothing
+      // a wake the agent scheduled: harness-written, and a row all the same
+      await log.publish({
+        ts: new Date().toISOString(),
+        type: "alarm",
+        envelope: {
+          service: "local",
+          connection_address: "agent",
+          conversation: { address: "mind@ana" },
+        },
+        parts: [{ type: "text", kind: "alarm", text: "recordarle a Mecha el mail" }],
+      } as Draft<Event>);
       const client = await rawClient(dir);
       const opened = await client.request({ op: "tail", recall: 10 });
+      const recalled = (opened.recalled ?? []) as Event[];
       assertEquals(
-        ((opened.recalled ?? []) as Event[]).filter((e) => e.type === "message").map(lineOf),
+        recalled.filter((e) => e.type === "message").map(lineOf),
         ["[audio]", "👍"],
       );
+      assertEquals(recalled.at(-1)?.type, "alarm");
       client.conn.close();
     } finally {
       await down();

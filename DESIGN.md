@@ -978,7 +978,10 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     crosses as the line that gave it — a `/y` typed at the terminal, a thumb on a card —
     quoting the card's own crossing, which is how a surface points where a terminal names
     the card by its handle. Tool calls cross as redacted one-liners under a tag of their
-    own (`[agent tool] bash(git status)`). The tags, the
+    own (`[agent tool] bash(git status)`). Every row the harness writes in the REPL
+    crosses as `[system] …`: an approved call's outcome, a failure (`✗` and the tool's
+    words), a verdict (quoting its card), a fired wake (`⏰` and the agent's note), a turn
+    the principal cut, a checkpoint. A surface reads what the REPL reads. The tags, the
     reply hint under a card and the presence words are the harness's own, so they speak the
     org's tongue (config `locale`, language subtag: `es_AR.UTF-8` ⇒ `[agente pregunta] …`;
     unknown or unset ⇒ English) — the model's voice needs no translating, the prefix states

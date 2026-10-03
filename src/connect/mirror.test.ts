@@ -621,9 +621,10 @@ Deno.test("mirror fan-out: a harness error crosses — the one voice left when a
   });
 });
 
-Deno.test("mirror fan-out: a withdrawal crosses, a verdict never does — turn_id is the bit", async () => {
-  await withMirror(async ({ publish, inConv, waitFor }) => {
+Deno.test("mirror fan-out: a verdict crosses as the REPL's row, quoting its card; a withdrawal names the call", async () => {
+  await withMirror(async ({ publish, inConv, waitFor, setDelivery }) => {
     const settle = (
+      data: Record<string, unknown>,
       payload: { ref_id: string; turn_id?: string },
       text?: string,
     ): Draft<Event> => ({
@@ -639,20 +640,96 @@ Deno.test("mirror fan-out: a withdrawal crosses, a verdict never does — turn_i
       parts: [{
         type: "data",
         kind: "permission_response",
-        data: { behavior: "deny", scope: "once", reason: "withdrawn by the agent" },
+        data,
         ...(text !== undefined ? { text } : {}),
       }],
-    } as Draft<Event>);
-    // the principal's own verdict: their /y line is already on their surface
-    await publish(settle({ ref_id: "01a0-use" }));
-    // the agent's cancel (turn-marked): the card went out, so the withdrawal follows it
-    await publish(settle({ ref_id: "01a1-use", turn_id: "T1" }, "send(to: Vivian)"));
+    } as unknown as Draft<Event>);
+    const card = await publish(sendCard());
     await waitFor(async () => (await inConv("D1")).length === 1);
-    assertStringIncludes(
-      textOf((await inConv("D1"))[0]),
+    await setDelivery((await inConv("D1"))[0].id, { external_id: "slack:T1:D1:200.1" });
+    // the principal's verdict, or the clock's: the row the REPL draws under the card
+    await publish(
+      settle({ behavior: "allow", scope: "conversation" }, { ref_id: card.payload!.ref_id! }),
+    );
+    await waitFor(async () => (await inConv("D1")).length === 2);
+    const verdict = (await inConv("D1"))[1];
+    assertEquals(textOf(verdict), "`[system]` allowed for this conversation");
+    assertEquals(verdict.payload?.ref_external_id, "slack:T1:D1:200.1");
+    await publish(settle(
+      { behavior: "deny", scope: "once", lapsed: true, reason: "unanswered for 24h" },
+      { ref_id: "01a0-use" },
+    ));
+    await waitFor(async () => (await inConv("D1")).length === 3);
+    assertEquals(
+      textOf((await inConv("D1"))[2]),
+      "`[system]` lapsed, nobody answered (unanswered for 24h)",
+    );
+    // the agent's cancel (turn-marked): the card went out, so the withdrawal follows it
+    await publish(settle(
+      { behavior: "deny", scope: "once", reason: "withdrawn by the agent" },
+      { ref_id: "01a1-use", turn_id: "T1" },
+      "send(to: Vivian)",
+    ));
+    await waitFor(async () => (await inConv("D1")).length === 4);
+    assertEquals(
+      textOf((await inConv("D1"))[3]),
       "`[system]` withdrawn: **send**(to: Vivian)",
     );
   });
+});
+
+Deno.test("mirror fan-out: every row the harness writes in the REPL crosses as `[system]`", async () => {
+  await withMirror(
+    async ({ publish, inConv, waitFor }) => {
+      const harness = (type: string, parts: unknown[], payload: Record<string, unknown> = {}) =>
+        publish({
+          ts: new Date().toISOString(),
+          type,
+          payload,
+          envelope: {
+            service: "local",
+            connection_address: "agent",
+            conversation: { address: "mind@ana" },
+          },
+          parts,
+        } as unknown as Draft<Event>);
+      await harness("alarm", [{ type: "text", kind: "alarm", text: "recordarle a Mecha el mail" }]);
+      await harness("tool_result", [{
+        type: "data",
+        kind: "tool_result",
+        data: { output: "Command exited with code 1", is_error: true },
+      }], { ref_id: "u1", turn_id: "t1" });
+      await harness(
+        "tool_result",
+        [{ type: "data", kind: "tool_result", data: { output: "ok" } }],
+        {
+          ref_id: "u2",
+          turn_id: "t1",
+        },
+      ); // a call that went fine says nothing more, there as here
+      await harness(
+        "control",
+        [{
+          type: "text",
+          kind: "text",
+          text: "cancelled by your principal — the turn stopped here",
+        }],
+        { control: "cancelled" },
+      );
+      await harness("summary", [{ type: "text", kind: "text", text: "…" }], {
+        covers: ["a", "b"],
+      });
+      await waitFor(async () => (await inConv("549")).length === 4);
+      assertEquals((await inConv("549")).map(textOf), [
+        "`[sistema]` ⏰ recordarle a Mecha el mail",
+        "`[sistema]` ✗ Command exited with code 1",
+        "`[sistema]` cancelled by your principal — the turn stopped here",
+        "`[sistema]` ≡ punto de control escrito",
+      ]);
+    },
+    30,
+    "es_AR.UTF-8",
+  );
 });
 
 Deno.test("mirror: a SILENCE note reaches no surface — nothing said is nothing sent", async () => {

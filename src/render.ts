@@ -1624,6 +1624,16 @@ export function outcomeLine(e: ToolResultEvent, max = 0): string {
   return `${e.parts[0].text ?? "the approved call"} ${is_error ? "—" : "→"} ${bounded}`;
 }
 
+/** Why a call failed: the tool's own words, whole and as it wrote them — rows and all. A
+ *  failure is the one outcome a principal has to act on, and the reason is already bounded
+ *  where output is bounded (`exec/truncate.ts`); a screen that clipped it again would put
+ *  the reader back in the terminal, running the call by hand to see what it had said. */
+export function failureOf(e: ToolResultEvent): string {
+  const { output } = e.parts[0].data;
+  const said = (typeof output === "string" ? output : JSON.stringify(output) ?? "").trimEnd();
+  return said === "" ? "failed, saying nothing" : said;
+}
+
 /** An `error` event's message — rendered as a `<system>` text block rather than a real
  *  `mid_conv_system` one: it PRECEDES what it marks, and the API takes `mid_conv_system`
  *  only in trailing position (§5, live-smoke finding). */
