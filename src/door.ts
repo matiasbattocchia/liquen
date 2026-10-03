@@ -30,7 +30,7 @@
  *                         sender?, session?}          answered (quoting the card when it
  *                                                     answers one) and a verdict per use,
  *                                                     together → {ok, id} (the line's)
- *   control              {op, kind, session?}            → the principal's hard stop,
+ *   control              {op, kind, sender?, session?}   → the principal's hard stop,
  *                                                          typed: `cancel`
  *                                                          cuts the session's running turn
  *                                                          (§2) → {ok, id}
@@ -383,23 +383,24 @@ async function handle(
   // harness, signed by whoever the request says. No turn_id, ever: that is the model's
   // mark, and its absence is what keeps this row input — one complex, two halves, told
   // apart by turn_id alone.
-  const line = (text: string, payload?: { ref_id: EventId }): Draft<MessageEvent> => {
+  const signed = () => {
     const sender = (req.sender ?? {}) as { address?: unknown; name?: unknown };
     const address = typeof sender.address === "string" && sender.address
       ? sender.address
       : agent.agentId;
     return {
-      ts: new Date().toISOString(),
-      type: "message",
-      ...(payload ? { payload } : {}),
-      agent: { id: agent.agentId, session_id: session },
-      envelope: {
-        ...envelope,
-        sender: { address, name: typeof sender.name === "string" ? sender.name : address },
-      },
-      parts: [{ type: "text", kind: "text", text }],
+      ...envelope,
+      sender: { address, name: typeof sender.name === "string" ? sender.name : address },
     };
   };
+  const line = (text: string, payload?: { ref_id: EventId }): Draft<MessageEvent> => ({
+    ts: new Date().toISOString(),
+    type: "message",
+    ...(payload ? { payload } : {}),
+    agent: { id: agent.agentId, session_id: session },
+    envelope: signed(),
+    parts: [{ type: "text", kind: "text", text }],
+  });
   if (req.op === "message") {
     const text = req.text;
     if (typeof text !== "string" || text === "") throw new Error("message needs text");
@@ -440,15 +441,16 @@ async function handle(
     if (!CONTROLS.includes(req.kind as ControlKind)) {
       throw new Error(`control kind must be one of ${CONTROLS.join(", ")}`);
     }
-    // the principal's half, like a message (§3): stamped for the mind, no turn_id. The
-    // word rides as text so the row reads on any surface; the classification is payload.
+    // the principal's half, like a message (§3): stamped for the mind, no turn_id, signed.
+    // The word rides as text so the row reads on any surface; the classification is
+    // payload.
     const row = await port.publish(
       {
         ts: new Date().toISOString(),
         type: "control",
         payload: { control: req.kind as ControlKind },
         agent: { id: agent.agentId, session_id: session },
-        envelope,
+        envelope: signed(),
         parts: [{ type: "text", kind: "text", text: `/${req.kind}` }],
       } satisfies Draft<ControlEvent>,
     );

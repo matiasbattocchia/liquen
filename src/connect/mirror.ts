@@ -64,7 +64,7 @@ import {
   silent,
 } from "../render.ts";
 import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
-import { verdictSaid, type Words, words } from "../i18n.ts";
+import { type Words, words } from "../i18n.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type {
   AlarmEvent,
@@ -377,9 +377,11 @@ const same = (parts: Part[]): CC => () => parts;
  *  account: `[agent] …` for the voice, `[agent tool] …` for a redacted tool call,
  *  `[agent asks] …` for a gate waiting on the principal, `[via <surface>] …` for a
  *  principal's own words replayed as output — `[<username> via <surface>]` on a surface
- *  that is another principal's, and `[system] …` for every row the harness itself writes
- *  there — an outcome, a failure, a verdict, a wake, a cut turn, a checkpoint. Null ⇒ the
- *  REPL draws no row for it either (a result that went fine, a principal's control). */
+ *  that is another principal's — a `/y`, a `/n`, a `/cancel` among them — and `[system] …`
+ *  for what the harness says there: an approved call's outcome, a failure, a withdrawal, a
+ *  wake, a cut turn, a checkpoint. Null ⇒ nothing to say there: a result that went fine,
+ *  a call refused (its `/n` said so), a verdict (the line that gave it said so; its row,
+ *  handle and all, is the terminal's). */
 async function ccParts(
   e: Event,
   deps: Pick<MirrorDeps, "read">,
@@ -400,7 +402,9 @@ async function ccParts(
   }
   if (e.type === "tool_result" && e.payload.deferred) {
     // a call the principal approved, now run: they asked for it, so they hear how it went
-    // — the same sentence the model is given (§9)
+    // — the same sentence the model is given (§9). A call refused never ran: the line
+    // that refused it crossed already.
+    if (e.parts[0].data.refused) return null;
     return same([{
       type: "text",
       kind: "text",
@@ -422,9 +426,10 @@ async function ccParts(
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ≡ ${w.checkpoint}` }]);
   }
   if (e.type === "control") {
-    // the harness closing a turn the principal cut
-    if (!isCancelled(e)) return null;
+    // the principal's hard stop is their line (`/cancel`); the harness closing the turn it
+    // cut is the system's
     const said = (e as ControlEvent).parts[0]?.text ?? "";
+    if (!isCancelled(e)) return said ? principalLine(e, said, [], w) : null;
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${said}` }]);
   }
   if (e.type === "error") {
@@ -468,12 +473,6 @@ async function ccParts(
       text: `\`[${w.system}]\` ${w.withdrawn}: ${boldName(call ?? "…")}`,
     }]);
   }
-  if (e.type === "permission_response") {
-    // the answer, under the line that gave it or the clock that lapsed it — quoting the
-    // card (fanOut), so the REPL's handle is said already
-    const v = (e as PermissionResponseEvent).parts[0].data;
-    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${verdictSaid(v, w)}` }]);
-  }
   if (e.type !== "message") return null;
   const m = e as MessageEvent;
   const parts = m.parts ?? [];
@@ -499,9 +498,14 @@ async function ccParts(
   // quotes the card instead (fanOut), so the handle is said already
   const handle = await quotedHandle(read, m);
   const words = handle ? said.replace(new RegExp(`(^|\\s+)${handle}(?=\\s|$)`), "") : said;
-  // the same tag shape as the voice, saying where it was typed — the terminal when the
-  // mind itself is where it landed (the REPL and `liquen cli` both speak through the
-  // door). On a surface that is another principal's (§4), it says who, by username.
+  return principalLine(e, words, files, w);
+}
+
+/** A principal's row on a surface: the same tag shape as the voice, saying where it was
+ *  typed — the terminal when the mind itself is where it landed (the REPL and `liquen cli`
+ *  both speak through the door). On a surface that is another principal's (§4), it says
+ *  who, by username. */
+function principalLine(e: Event, words: string, files: Part[], w: Words): CC {
   const where = viaOf(e)?.service ?? "terminal";
   const by = e.envelope.sender?.address;
   return (a) => [

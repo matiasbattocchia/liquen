@@ -46,7 +46,12 @@ async function steer(
   username: string,
 ): Promise<number> {
   if (line === "/cancel") {
-    const r = await w.request({ op: "control", kind: "cancel", session });
+    const r = await w.request({
+      op: "control",
+      kind: "cancel",
+      sender: { address: username, name: username },
+      session,
+    });
     if (!r.ok) console.error(String(r.error));
     else console.log("cancel sent");
     return r.ok ? 0 : 1;

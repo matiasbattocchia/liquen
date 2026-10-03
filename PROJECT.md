@@ -5194,3 +5194,28 @@ Still not drawn, here or there:
 - A delivery that fails after the send went out (`envelope.status` failed) moves the row's
   lifecycle, which the door's tail does not follow; the REPL never hears of it.
 - Thinking streams in the REPL; a surface gets `[agent thinking...]` alone.
+
+### A refusal is its `/n`; a cut is its `/cancel` (2026-10-03) — LANDED
+
+A refused call reached WhatsApp as the model's sentence, `send(to: Emiliano Serú, …) —
+refused by your principal: en este caso Emi…`, and the REPL drew it twice: the verdict row
+with the reason, then that sentence. The verdict rows that crossed as `[sistema] aprobado
+para esta conversación` repeated the line that gave them.
+
+- **A refused call draws no outcome.** Its deferred result carries `refused: true`
+  (`ToolOutput`), set wherever a deny settles a use: a principal's `/n`, a lapse, the
+  agent's withdrawal. The model still reads why; the REPL and the mirror draw nothing for
+  it. A refusal reads as `❯ /n <reason>` then `— bbc24a refused once` at the terminal and
+  as `[por terminal] /n <reason>` on a surface, as an approval does.
+- **A verdict's row is the terminal's.** It names the card by handle, which a surface has
+  no use for; the line that gave the verdict crossed already. A principal's reason is left
+  off the row, since their line shows it; a lapse and a withdrawal keep theirs. The
+  mirror's `verdictSaid` and its i18n row went with it. A withdrawal still crosses as
+  `[sistema] retirado: send(…)`, now quoting its card.
+- **`/cancel` is a principal line.** The door signs the `control` row (`sender`), the REPL
+  paints it as `❯ /cancel` (a Ctrl-C too, which the screen never echoed) live and
+  recalled, and the mirror crosses it as `[por terminal] /cancel` ahead of `[sistema]
+  cancelled by your principal — the turn stopped here`. The REPL's "cancel sent" is gone.
+
+Open: a lapse now reaches a surface not at all. The card stays on the phone, and a `/y`
+quoting it gets the harness's "that approval was already answered".

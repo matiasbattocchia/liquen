@@ -1512,7 +1512,7 @@ async function act(
   const resultOf = async (
     use: ToolUseEvent,
     outcome: Json | ExecOutcome,
-    flags?: Partial<{ is_error: boolean; cancelled: boolean }>,
+    flags?: Partial<{ is_error: boolean; cancelled: boolean; refused: boolean }>,
     /** The call, rendered — set only on a DEFERRED outcome, which has to name what it is
      *  reporting on: its `tool_use` has already collapsed out of the transcript (§5). */
     call?: string,
@@ -1658,7 +1658,7 @@ async function act(
       continue;
     }
     if (verdict?.behavior === "deny") {
-      out.push(await resultOf(use, refused(verdict), { is_error: true }));
+      out.push(await resultOf(use, refused(verdict), { is_error: true, refused: true }));
       continue;
     }
     if (stolen) {
@@ -1679,7 +1679,7 @@ async function act(
     await standing(use, verdict);
     const call = describe(use);
     if (verdict.behavior === "deny") {
-      out.push(await resultOf(use, refused(verdict), { is_error: true }, call));
+      out.push(await resultOf(use, refused(verdict), { is_error: true, refused: true }, call));
     } else if (stolen) {
       out.push(
         await resultOf(

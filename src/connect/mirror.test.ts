@@ -621,7 +621,7 @@ Deno.test("mirror fan-out: a harness error crosses — the one voice left when a
   });
 });
 
-Deno.test("mirror fan-out: a verdict crosses as the REPL's row, quoting its card; a withdrawal names the call", async () => {
+Deno.test("mirror fan-out: a verdict's row and a refused call's outcome stay at the terminal; a withdrawal crosses", async () => {
   await withMirror(async ({ publish, inConv, waitFor, setDelivery }) => {
     const settle = (
       data: Record<string, unknown>,
@@ -647,34 +647,79 @@ Deno.test("mirror fan-out: a verdict crosses as the REPL's row, quoting its card
     const card = await publish(sendCard());
     await waitFor(async () => (await inConv("D1")).length === 1);
     await setDelivery((await inConv("D1"))[0].id, { external_id: "slack:T1:D1:200.1" });
-    // the principal's verdict, or the clock's: the row the REPL draws under the card
-    await publish(
-      settle({ behavior: "allow", scope: "conversation" }, { ref_id: card.payload!.ref_id! }),
-    );
-    await waitFor(async () => (await inConv("D1")).length === 2);
-    const verdict = (await inConv("D1"))[1];
-    assertEquals(textOf(verdict), "`[system]` allowed for this conversation");
-    assertEquals(verdict.payload?.ref_external_id, "slack:T1:D1:200.1");
+    // the principal's verdict, or the clock's: the line that gave it crossed, the row with
+    // its handle is the terminal's
+    await publish(settle({ behavior: "deny", scope: "once", reason: "más informal" }, {
+      ref_id: card.payload!.ref_id!,
+    }));
     await publish(settle(
       { behavior: "deny", scope: "once", lapsed: true, reason: "unanswered for 24h" },
       { ref_id: "01a0-use" },
     ));
-    await waitFor(async () => (await inConv("D1")).length === 3);
-    assertEquals(
-      textOf((await inConv("D1"))[2]),
-      "`[system]` lapsed, nobody answered (unanswered for 24h)",
-    );
+    // …and the call it refused never ran: no outcome to tell
+    await publish({
+      ts: new Date().toISOString(),
+      type: "tool_result",
+      payload: { ref_id: card.payload!.ref_id!, turn_id: "t1", deferred: true },
+      agent: { id: "ana", session_id: "mind" },
+      envelope: {
+        service: "local",
+        connection_address: "agent",
+        conversation: { address: "mind@ana" },
+      },
+      parts: [{
+        type: "data",
+        kind: "tool_result",
+        text: "send(to: Lucas, text: dale)",
+        data: { output: "refused by your principal: más informal", is_error: true, refused: true },
+      }],
+    } as unknown as Draft<Event>);
     // the agent's cancel (turn-marked): the card went out, so the withdrawal follows it
     await publish(settle(
       { behavior: "deny", scope: "once", reason: "withdrawn by the agent" },
-      { ref_id: "01a1-use", turn_id: "T1" },
+      { ref_id: "01a0fd7f-cde6-7000-8000-412733bbc24a", turn_id: "T1" },
       "send(to: Vivian)",
     ));
-    await waitFor(async () => (await inConv("D1")).length === 4);
-    assertEquals(
-      textOf((await inConv("D1"))[3]),
-      "`[system]` withdrawn: **send**(to: Vivian)",
-    );
+    await waitFor(async () => (await inConv("D1")).length === 2);
+    await new Promise((r) => setTimeout(r, 150));
+    const rows = await inConv("D1");
+    assertEquals(rows.length, 2);
+    assertEquals(textOf(rows[1]), "`[system]` withdrawn: **send**(to: Vivian)");
+    assertEquals(rows[1].payload?.ref_external_id, "slack:T1:D1:200.1"); // under its card
+  });
+});
+
+Deno.test("mirror fan-out: a /cancel crosses as the principal's line, the cut turn as the system's", async () => {
+  await withMirror(async ({ publish, inConv, waitFor }) => {
+    const env = {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "mind@ana" },
+    };
+    await publish({
+      ts: new Date().toISOString(),
+      type: "control",
+      payload: { control: "cancel" },
+      agent: { id: "ana", session_id: "mind" },
+      envelope: { ...env, sender: { address: "ana", name: "ana" } },
+      parts: [{ type: "text", kind: "text", text: "/cancel" }],
+    } as Draft<Event>);
+    await publish({
+      ts: new Date().toISOString(),
+      type: "control",
+      payload: { control: "cancelled" },
+      envelope: env,
+      parts: [{
+        type: "text",
+        kind: "text",
+        text: "cancelled by your principal — the turn stopped here",
+      }],
+    } as Draft<Event>);
+    await waitFor(async () => (await inConv("549")).length === 2);
+    assertEquals((await inConv("549")).map(textOf), [
+      "`[via terminal]` /cancel",
+      "`[system]` cancelled by your principal — the turn stopped here",
+    ]);
   });
 });
 

@@ -45,7 +45,6 @@ import {
   textOf,
 } from "./render.ts";
 import { describeCall, lineOf } from "./describe.ts";
-import { verdictSaid, words } from "./i18n.ts";
 import { markdown, renderMarkdown } from "./md.ts";
 import type {
   AlarmEvent,
@@ -203,8 +202,10 @@ export function painter(s: Surface): Painter {
       case "tool_result": {
         // a deferred outcome is the harness reporting on a call the principal approved —
         // it stands as a block of its own and reads as a sentence, because it lands long
-        // after the row it answers scrolled by
+        // after the row it answers scrolled by. A call refused never ran: the verdict row
+        // already said so
         if (e.payload.deferred) {
+          if (e.parts[0].data.refused) return;
           settle();
           s.gap();
           s.write(`${YELLOW}${outcomeLine(e)}${RESET}`);
@@ -255,8 +256,18 @@ export function painter(s: Surface): Painter {
         return;
       }
       case "control": {
-        // the harness closing the turn the principal cut; their own word is already on screen
-        if (!isCancelled(e)) return;
+        if (!isCancelled(e)) {
+          // the principal's hard stop is a line of theirs: one this surface typed is on
+          // screen already; a Ctrl-C, or another attachment's, is painted here
+          const text = textOf(e);
+          if (e.envelope.conversation.address !== s.home || !s.typed || s.typed(text)) return;
+          settle();
+          s.gap();
+          s.write(`${stamp(e.ts)}${YOU} ${text}`);
+          s.prompt();
+          return;
+        }
+        // the harness closing the turn the principal cut
         held = "";
         settle();
         s.gap();
@@ -321,6 +332,7 @@ export function painter(s: Surface): Painter {
           // a deferred outcome answers a call from another turn: it stands alone, as it
           // does live. An ordinary one belongs to the call right above it.
           if (e.payload.deferred) {
+            if (e.parts[0].data.refused) continue;
             gap();
             put(`${YELLOW}${outcomeLine(e)}${RESET}`);
             continue;
@@ -354,9 +366,9 @@ export function painter(s: Surface): Painter {
           continue;
         }
         case "control": {
-          if (!isCancelled(e)) continue;
           gap();
-          put(`${DIM}${textOf(e)}${RESET}`);
+          if (isCancelled(e)) put(`${DIM}${textOf(e)}${RESET}`);
+          else put(`${stamp(e.ts)}${YOU} ${textOf(e)}`);
           continue;
         }
         default:
@@ -391,7 +403,13 @@ function alarmRow(e: AlarmEvent, stamp: (ts: string) => string): string {
 }
 
 /** The answer, as a row of its own: what was decided and how far it reaches, in the
- *  principal's vocabulary. The clock's settlement says so. */
+ *  principal's vocabulary. The clock's settlement says so, and why; a principal's reason
+ *  is their own line, the row above, and the agent's withdrawal says why it took it back. */
 function verdictRow(e: PermissionResponseEvent): string {
-  return `— ${shortId(e.payload.ref_id)} ${verdictSaid(e.parts[0].data, words())}`;
+  const { behavior, scope, reason, lapsed } = e.parts[0].data;
+  const handle = shortId(e.payload.ref_id);
+  if (lapsed) return `— ${handle} lapsed, nobody answered${reason ? ` (${reason})` : ""}`;
+  const reach = scope === "once" ? "once" : scope === "always" ? "always" : `for this ${scope}`;
+  const why = reason && e.payload.turn_id !== undefined ? `: ${reason}` : "";
+  return `— ${handle} ${behavior === "allow" ? "allowed" : "refused"} ${reach}${why}`;
 }

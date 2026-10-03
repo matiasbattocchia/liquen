@@ -11,7 +11,7 @@
  * The English row is the type: a tongue joins whole or not at all.
  */
 
-import type { DeltaKind, PermissionVerdict } from "./types.ts";
+import type { DeltaKind } from "./types.ts";
 
 export type Words = typeof TONGUES.en;
 
@@ -24,16 +24,6 @@ const TONGUES = {
     approve: "approve",
     hint: "reply /y to approve · /n <reason> to refuse · or react 👍 / 👎",
     withdrawn: "withdrawn",
-    // a card's answer (§9): what was decided and how far it reaches
-    verdict: {
-      allowed: "allowed",
-      refused: "refused",
-      lapsed: "lapsed, nobody answered",
-      once: "once",
-      conversation: "for this conversation",
-      connection: "for this connection",
-      always: "always",
-    },
     checkpoint: "checkpoint written",
     // the send card's rows (§9): the labels a person reads the call under
     card: {
@@ -73,15 +63,6 @@ const TONGUES = {
     approve: "aprobar",
     hint: "responder /y para aprobar · /n <motivo> para rechazar · o reaccionar 👍 / 👎",
     withdrawn: "retirado",
-    verdict: {
-      allowed: "aprobado",
-      refused: "rechazado",
-      lapsed: "venció, nadie respondió",
-      once: "una vez",
-      conversation: "para esta conversación",
-      connection: "para esta conexión",
-      always: "siempre",
-    },
     checkpoint: "punto de control escrito",
     card: {
       conversation: "Conversación",
@@ -108,14 +89,6 @@ const TONGUES = {
 };
 // every tongue says everything English says — a half-written one is a type error
 const _whole: Record<keyof typeof TONGUES, Words> = TONGUES;
-
-/** A card's answer in a tongue's words — the REPL's verdict row after its handle, and the
- *  mirror's `[system]` line quoting the card. */
-export function verdictSaid(v: PermissionVerdict, w: Words): string {
-  if (v.lapsed) return `${w.verdict.lapsed}${v.reason ? ` (${v.reason})` : ""}`;
-  const said = v.behavior === "allow" ? w.verdict.allowed : w.verdict.refused;
-  return `${said} ${w.verdict[v.scope]}${v.reason ? `: ${v.reason}` : ""}`;
-}
 
 /** The tongue a libc locale names — `es_AR.UTF-8` is Spanish; one we don't speak, and no
  *  locale at all, is English. */

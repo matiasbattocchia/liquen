@@ -413,6 +413,9 @@ export interface ToolOutput {
   output: Json;
   is_error?: boolean;
   cancelled?: boolean;
+  /** The call never ran: its gate said no — a principal's `/n`, a lapse, the agent's own
+   *  withdrawal. The model reads why; a principal's surface already shows the verdict. */
+  refused?: boolean;
 }
 
 export type PermissionBehavior = "allow" | "deny";

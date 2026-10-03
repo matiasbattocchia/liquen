@@ -600,3 +600,75 @@ Deno.test("a fired wake paints its note, live and reopened alike", () => {
   assertEquals(plain(again.screen()).trimEnd(), seen.trimEnd());
   assertEquals(seen.trimEnd(), "2 Oct 17:56 ⏰ recordarle a Mecha el mail\n\n⚙ search(549)");
 });
+
+// a refusal reads as the principal's `/n` and the row under it: their reason is their line,
+// and the call it refused never ran, so no outcome follows. A cut turn reads as their
+// `/cancel` — a Ctrl-C, typed nowhere, included — and the harness's word under it.
+Deno.test("a /n and a /cancel read as the principal's lines, live and reopened alike", () => {
+  const TS = "2026-10-02T16:42:59Z";
+  const env = { service: "local", connection_address: "agent", conversation: { address: HOME } };
+  const history = [
+    {
+      ...asked(TS, "/n en este caso Emi es un contacto"),
+      payload: { ref_id: "g1" },
+    },
+    {
+      id: "p1",
+      ts: TS,
+      type: "permission_response",
+      payload: { ref_id: "01a0fd7f-cde6-7000-8000-412733bbc24a" },
+      envelope: env,
+      parts: [{
+        type: "data",
+        kind: "permission_response",
+        data: { behavior: "deny", scope: "once", reason: "en este caso Emi es un contacto" },
+      }],
+    },
+    {
+      id: "r1",
+      ts: TS,
+      type: "tool_result",
+      payload: { ref_id: "u1", turn_id: "t1", deferred: true },
+      agent: { id: AGENT, session_id: "mind" },
+      envelope: env,
+      parts: [{
+        type: "data",
+        kind: "tool_result",
+        text: "send(to: Emiliano Serú, …)",
+        data: { output: "refused by your principal: …", is_error: true, refused: true },
+      }],
+    },
+    {
+      id: "c1",
+      ts: "2026-10-02T16:45:00Z",
+      type: "control",
+      payload: { control: "cancel" },
+      agent: { id: AGENT, session_id: "mind" },
+      envelope: { ...env, sender: { address: "matias", name: "matias" } },
+      parts: [{ type: "text", kind: "text", text: "/cancel" }],
+    },
+    {
+      id: "c2",
+      ts: "2026-10-02T16:45:00Z",
+      type: "control",
+      payload: { control: "cancelled" },
+      envelope: env,
+      parts: [{
+        type: "text",
+        kind: "text",
+        text: "cancelled by your principal — the turn stopped here",
+      }],
+    },
+  ] as unknown as Event[];
+  const live = surface({ typed: () => false }); // another attachment's lines, and a Ctrl-C
+  for (const e of history) live.p.event(e);
+  const again = surface();
+  again.p.recap(history);
+  const seen = plain(live.screen());
+  assertEquals(plain(again.screen()).trimEnd(), seen.trimEnd());
+  assertEquals(
+    seen.trimEnd(),
+    "2 Oct 13:42 ❯ /n en este caso Emi es un contacto\n— bbc24a refused once\n\n" +
+      "2 Oct 13:45 ❯ /cancel\n\ncancelled by your principal — the turn stopped here",
+  );
+});

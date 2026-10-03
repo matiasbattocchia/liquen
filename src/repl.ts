@@ -93,9 +93,19 @@ await entry(async () => {
   const waiting = () => pending.length ? `(waiting ${pending.map(shortId).join(" ")}) ` : "";
   // the session's turn edge, as the door last pushed it
   let busy = false;
-  const cancel = async () => {
-    const r = await w.request({ op: "control", kind: "cancel", session });
-    write(r.ok ? `${DIM}cancel sent${RESET}\n` : `\n${RED}! ${r.error}${RESET}\n`);
+  // the cut is a line of the principal's, logged: typed, the screen already shows it; a
+  // Ctrl-C is painted when its row comes back
+  const cancel = async (typedHere: boolean) => {
+    if (typedHere) typed.push("/cancel");
+    const r = await w.request({
+      op: "control",
+      kind: "cancel",
+      sender: { address: a.username, name: a.username },
+      session,
+    });
+    if (r.ok) return;
+    if (typedHere) typed.splice(typed.lastIndexOf("/cancel"), 1);
+    write(`\n${RED}! ${r.error}${RESET}\n`);
   };
   const screen = createScreen({
     // the line wears the principal's mark, as its recalled lines do
@@ -107,7 +117,7 @@ await entry(async () => {
         .filter((t) => t !== ""),
     interrupt: () => {
       if (!busy) return false;
-      void cancel();
+      void cancel(false);
       return true;
     },
   });
@@ -184,7 +194,7 @@ await entry(async () => {
     if (text === "") continue;
     if (text === "/quit" || text === "/q") break;
     if (text === "/cancel") {
-      await cancel();
+      await cancel(true);
       continue;
     }
     if (steering(text)) {
