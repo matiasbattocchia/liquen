@@ -246,7 +246,7 @@ Deno.test("anthropic, silenced: a stream gone silent mid-call fails as a dropped
   await serving(true, async (client) => {
     const began = Date.now();
     const err = await assertRejects(
-      () => silenced(anthropicTransport(client), 200)(REQUEST),
+      () => silenced(anthropicTransport(client), { silenceMs: 200 })(REQUEST),
       Error,
       "no word from the model in 0.2s",
     );

@@ -87,32 +87,69 @@ export function transports(keys: { anthropic?: string } = {}): (p: Provider) => 
 
 /** How long a call may go without a delta before it counts as a dropped connection. A
  *  working model streams its text, thinking and tool calls throughout, however long it
- *  works, so this much silence is a peer that is gone: a stream ended while the machine
- *  slept, whose end never arrived. Long enough for the one silence a working model keeps —
- *  a tool call's arguments, which a provider may send only once they are whole. Timers stop
- *  while the machine sleeps, so the count runs in time awake. */
-export const SILENCE_MS = 120_000;
+ *  works, so this much silence is a peer that is gone: a stream whose end never arrived.
+ *  Long enough for the one silence a working model keeps — a tool call's arguments, which a
+ *  provider may send only once they are whole. Timers stop while the machine sleeps, so the
+ *  count runs in time awake. */
+export const SILENCE_MS = 300_000;
+
+/** The deadline a call is left with once the machine wakes. A short sleep leaves the
+ *  connection standing and the stream picks up where it was; a long one leaves a peer that
+ *  hung up while its goodbye had nowhere to land, and the reader never learns of it. So the
+ *  wake does not cut the call: it gives the stream this long to say something. */
+export const WAKE_MS = 30_000;
+
+/** How often a call in flight looks at the wall clock, and how far past a tick the clock
+ *  must have run to count as a sleep — a stalled event loop runs late by less. */
+const TICK_MS = 5_000;
+const SLEPT_MS = 10_000;
+
+/** The clocks `silenced` reads, a test's to fake. */
+export interface Silence {
+  silenceMs?: number;
+  wakeMs?: number;
+  tickMs?: number;
+  /** The wall clock: it runs while the machine sleeps, where timers do not. */
+  now?: () => number;
+}
 
 /**
  * Give a transport a silence deadline: every delta it emits re-arms it, and a call that goes
  * `silenceMs` without one is aborted through the signal the transport was handed, beside the
  * turn's interrupt. The call then fails with no status, which nu retries as weather (§2) —
  * the SDKs set no limit of their own that a stream mid-flight would hit.
+ *
+ * A wake shortens the wait: a tick that finds the wall clock far ahead of its interval
+ * means the machine slept, and the deadline drops to `wakeMs` — the next delta restores it.
  */
-export function silenced(transport: ModelTransport, silenceMs = SILENCE_MS): ModelTransport {
+export function silenced(
+  transport: ModelTransport,
+  { silenceMs = SILENCE_MS, wakeMs = WAKE_MS, tickMs = TICK_MS, now = Date.now }: Silence = {},
+): ModelTransport {
   return async (params, emit, meta, signal) => {
     const silence = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const arm = () => {
+    let woke = false; // the deadline running is the wake's
+    const arm = (ms: number) => {
       clearTimeout(timer);
-      timer = setTimeout(() => silence.abort(), silenceMs);
+      timer = setTimeout(() => silence.abort(), ms);
     };
-    arm();
+    arm(silenceMs);
+    let ticked = now();
+    const ticker = setInterval(() => {
+      const t = now();
+      if (t - ticked > tickMs + SLEPT_MS) {
+        woke = true;
+        arm(wakeMs);
+      }
+      ticked = t;
+    }, tickMs);
     try {
       return await transport(
         params,
         (d) => {
-          arm();
+          woke = false;
+          arm(silenceMs);
           emit?.(d);
         },
         meta,
@@ -120,11 +157,17 @@ export function silenced(transport: ModelTransport, silenceMs = SILENCE_MS): Mod
       );
     } catch (err) {
       if (silence.signal.aborted && !signal?.aborted) {
-        throw new Error(`no word from the model in ${silenceMs / 1000}s: the connection is gone`);
+        throw new Error(
+          woke
+            ? `no word from the model in ${wakeMs / 1000}s after the machine woke: ` +
+              `the connection died while it slept`
+            : `no word from the model in ${silenceMs / 1000}s: the connection is gone`,
+        );
       }
       throw err;
     } finally {
       clearTimeout(timer);
+      clearInterval(ticker);
     }
   };
 }

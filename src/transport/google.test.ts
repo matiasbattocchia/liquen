@@ -248,7 +248,7 @@ Deno.test("google, silenced: a stream gone silent fails as a dropped connection,
   await scripted([{ after: 0, event: start }, { after: 0, event: delta("ho") }], async (c) => {
     const began = Date.now();
     const err = await assertRejects(
-      () => silenced(googleTransport(c), 200)(REQUEST),
+      () => silenced(googleTransport(c), { silenceMs: 200 })(REQUEST),
       Error,
       "no word from the model in 0.2s",
     );

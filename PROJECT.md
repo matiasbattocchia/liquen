@@ -5121,3 +5121,27 @@ local server that sends one event and then holds the stream open reproduced it.
   `…SECRET`, `…PASSWORD`) is a boot error, and so are `PATH` and `TERM`. The case: a
   headed browser the principal watches needs `DISPLAY`, `WAYLAND_DISPLAY` and
   `XDG_RUNTIME_DIR`, none of which the allowlist issues.
+
+### A wake gives a dead stream thirty seconds (2026-10-02) — LANDED
+
+The silence deadline counts time awake, so a call the sleep killed still waited the whole
+deadline after the lid opened. Nothing else could tell sooner:
+
+- **Pings.** Anthropic's wire sends one `ping`, 2.6 s in, then nothing through the call's
+  longest quiet (22.9 s on `claude-sonnet-5`, a 250-line `write_file` without eager
+  streaming, read off the raw SSE). Nothing keeps a held stream talking.
+- **TCP keepalive.** It would be the right layer: a probe after the wake meets a peer with no
+  connection and the read fails. But `Deno.createHttpClient` offers no keepalive and no
+  HTTP/2 ping, and `ss -o` shows no keepalive timer on Deno's sockets (2.9.6).
+
+So `silenced` watches the wall clock. A call in flight ticks every 5 s; a tick that finds
+`Date.now()` more than 10 s past its interval means the machine slept, since the wall clock
+runs through a sleep and timers do not. The deadline then drops to `WAKE_MS` (30 s) rather
+than cutting the call: a short sleep leaves the connection standing, and its stream picks
+up where it was. The next delta restores the full deadline; if none comes, the call fails
+as a connection that died while the machine slept, and nu retries it.
+
+`SILENCE_MS` rose from 120 s to 300 s with it. A wake no longer waits on it, so it only has
+to bound the half-open connection the clock cannot see (a network change, a NAT that
+forgot), and it outlasts any one tool call the output cap allows: at Google's 400 tok/s, a
+64k-token call is 160 s of quiet.
