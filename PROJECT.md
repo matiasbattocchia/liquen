@@ -5083,3 +5083,41 @@ collapsed turn. The instruction names where the archive ends (`<archived-through
 the last archived line) and folds the `<checkpoint>` block the window opens on. A window
 the API refused as too long, or a span that draws no block, still goes as the transcript.
 The seeded `compaction.md` changed with it: an org that holds its own copy diffs it.
+
+### A silent stream is a dropped connection; `export` (2026-10-02) — LANDED
+
+A laptop suspended mid-call (chiche's agent on `gemini-3.8-flash`, 12:23:37 to 12:32:34)
+left the turn waiting on its stream for good: 25 minutes after the wake, nothing logged and
+nothing failed, until a restart ran the owed turn again and it finished. Nothing bounded the
+wait. The turn's signal fires only on a cancel or a lost lock, and the SDK's Interactions
+client sets no timeout on a request that carries a signal (`timeout_ms` defaults to -1). A
+local server that sends one event and then holds the stream open reproduced it.
+
+- **The silence deadline.** `silenced` (transport/mod.ts) wraps a transport and aborts a
+  call that goes `SILENCE_MS` (120 s) without a delta. Every delta re-arms it, so a call
+  may run as long as the model works. The call fails with no status, which nu's ladder
+  already retries as a dropped connection. The turn's own interrupt still surfaces as
+  itself. Timers stop while the machine sleeps: the CLI's 1500 s timeout took 2036 s of
+  wall time across that 537 s suspend.
+  Every provider's transport is wrapped. The Anthropic SDK also arms its timeout around
+  `fetch` alone and clears it once headers arrive, and drops `ping` events before a
+  listener sees them, so only the deltas can tell.
+- **`tool` deltas.** A tool call's arguments reach the Stream as `{kind: "tool", name,
+  text}`, so a model writing a file is not silent to the deadline. Measured 2026-10-02 with
+  a 250-line `write_file` call:
+  - Anthropic holds a call's arguments whole by default: 42.7 s with no delta on
+    `claude-opus-5-5`, 24.1 s on `claude-sonnet-5`. The transport sets
+    `eager_input_streaming` on every tool, and the longest gaps fell to 6.5 s and 2.8 s.
+  - Google sent a 3,700-token call as one `arguments_delta` after 9.3 s of nothing on
+    `gemini-3.8-flash`, about 400 tok/s, and the request has no switch for it. The docs'
+    "Stream tool calls" section says arguments *can* arrive as partial deltas, but its
+    Python and JS examples read `type: "arguments"` and `partial_arguments`, which neither
+    the wire nor the SDK (2.22.0, 2.27.0) has: it is `arguments_delta` with `arguments`.
+    At that rate a single call of about 48k tokens, which the 64k output cap allows, would
+    trip the deadline.
+- **`export`.** An agent's shell inherits the harness's environment variables its
+  `organization.agents` / `agents.<name>` `export` knob names, read at each bash call, on
+  this machine's shells only. A name ending as a secret's does (`…KEY`, `…TOKEN`,
+  `…SECRET`, `…PASSWORD`) is a boot error, and so are `PATH` and `TERM`. The case: a
+  headed browser the principal watches needs `DISPLAY`, `WAYLAND_DISPLAY` and
+  `XDG_RUNTIME_DIR`, none of which the allowlist issues.

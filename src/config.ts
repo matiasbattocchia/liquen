@@ -143,6 +143,7 @@ export interface AgentDefaults {
   provider: ProviderName | null; // the transport seam; null ⇒ anthropic
   tools: string[] | null; // the tools offered to the model, by name; null ⇒ all of them
   rules: Rule[]; // permission policy as data (§9)
+  export: string[]; // the harness's environment variables its shell inherits, by name
   gateHours: number | null; // an unanswered ask lapses after this; null ⇒ stands until answered
   engagedMinutes: number; // attention (§2): how long the agent's own last word keeps
   digestAfterMessages: number; //   a conversation hot · the ambient pile that forces a
@@ -358,6 +359,14 @@ const AGENT: Entry[] = [
     doc: "permission policy: first match decides (allow|ask|deny); * matches any tool; " +
       "connection/conversation pin a rule to where a send lands, connection to whose " +
       "address book a contact is written in",
+  },
+  {
+    key: "export",
+    value: [],
+    doc: "names of the harness's environment variables an agent's shell inherits, read at " +
+      "each bash call — what a tool needs from the machine it runs on, like DISPLAY for a " +
+      "browser the principal watches; shells on this machine only. A name a secret goes " +
+      "by (…_KEY, …_TOKEN, …_SECRET, …PASSWORD) is refused",
   },
   {
     key: "gateHours",
@@ -1084,6 +1093,13 @@ export function checkDatabase(v: unknown): string | null {
 
 /** The checks that would otherwise surface as a RangeError inside a turn's render or as an
  *  API rejection mid-conversation — discovered at boot instead. */
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** How a secret's name ends: every one the harness reads does (`ANTHROPIC_API_KEY`,
+ *  `PGPASSWORD`, `WA_BRIDGE_TOKEN`). */
+const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSWORD)$/i;
+/** What every shell is issued already: PATH is built, TERM fixed. */
+const BUILT_ENV = ["PATH", "TERM"];
+
 function validateAgent(a: Partial<AgentDefaults>, path: string): void {
   if (a.model != null && (typeof a.model !== "string" || a.model === "")) {
     throw new Error(`${path}: model must be a model name`);
@@ -1107,6 +1123,25 @@ function validateAgent(a: Partial<AgentDefaults>, path: string): void {
       (a.tools as unknown[]).every((t) => typeof t === "string" && t !== "");
     if (!ok) {
       throw new Error(`${path}: tools must be an array of tool names, or null (⇒ all)`);
+    }
+  }
+  if (a.export != null) {
+    if (!Array.isArray(a.export)) {
+      throw new Error(`${path}: export must be an array of environment variable names`);
+    }
+    for (const name of a.export as unknown[]) {
+      if (typeof name !== "string" || !ENV_NAME.test(name)) {
+        throw new Error(`${path}: export: "${name}" is not an environment variable name`);
+      }
+      if (SECRET_NAME.test(name)) {
+        throw new Error(
+          `${path}: export: "${name}" is a secret's name — a secret reaches a shell as the ` +
+            "egress proxy's handle, never as itself",
+        );
+      }
+      if (BUILT_ENV.includes(name)) {
+        throw new Error(`${path}: export: "${name}" is the harness's to set in every shell`);
+      }
     }
   }
   if (a.rules != null) {

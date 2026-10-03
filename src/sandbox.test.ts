@@ -58,3 +58,30 @@ Deno.test("the shell speaks through the proxy's pocket and the org's locale", as
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("an agent's shell inherits the variables it exports, as the harness holds them at the call", async () => {
+  const dir = await Deno.makeTempDir();
+  const sandbox = await openLocalSandbox(dir, {
+    store: storeAt({ engine: "sqlite", dir }),
+    agents: ["a1", "a2"],
+    exports: { a1: ["LIQUEN_TEST_DISPLAY", "LIQUEN_TEST_UNSET"] },
+  });
+  const say = async (agent: string) => {
+    const out = await sandbox.forAgent(agent).session("mind").exec.bash.execute(
+      { command: 'echo "[$LIQUEN_TEST_DISPLAY] [${LIQUEN_TEST_UNSET-unset}]"' },
+      new AbortController().signal,
+    );
+    return (typeof out === "string" ? out : (out as { output: string }).output).trim();
+  };
+  try {
+    Deno.env.set("LIQUEN_TEST_DISPLAY", ":0");
+    assertEquals(await say("a1"), "[:0] [unset]");
+    assertEquals(await say("a2"), "[] [unset]"); // another agent's export is not its own
+    Deno.env.set("LIQUEN_TEST_DISPLAY", ":1");
+    assertEquals(await say("a1"), "[:1] [unset]");
+  } finally {
+    Deno.env.delete("LIQUEN_TEST_DISPLAY");
+    await sandbox.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

@@ -32,6 +32,8 @@ export interface AgentSettings {
   locale?: string;
   tools?: string[];
   rules?: Rule[];
+  /** The harness's environment variables its local shells inherit, by name. */
+  export?: string[];
   windowLimit?: number;
   /** The backlog floor, an instant (§5): decided once when the org came up. */
   since?: string;

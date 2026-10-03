@@ -48,8 +48,9 @@ export interface BashOptions {
   state?: BashState; // sticky cwd, published for the plane's ambient snapshot
   /** Extra env ISSUED into every spawn (evaluated per call — placeholders can rotate).
    *  This is the ONLY channel besides the allowlist by which user space learns anything:
-   *  the egress proxy's HTTPS_PROXY/SSL_CERT_FILE/placeholder-token land here (§9). Never
-   *  put a real secret in it — the whole point is that user space holds only handles. */
+   *  the egress proxy's HTTPS_PROXY/SSL_CERT_FILE/placeholder-token land here (§9), and so
+   *  do the variables an agent's `export` knob names. Never put a real secret in it — the
+   *  whole point is that user space holds only handles. */
   env?: () => Promise<Record<string, string>>;
   /** The Linux user every spawn RUNS AS (§9, the container story): user space is not just
    *  an empty pocket but a different owner — the kernel enforces the data classification.
@@ -84,8 +85,10 @@ export const CWD_MARK = "__MU_CWD__";
 //   LANG/LC_ALL encoding — without them tools drop to C locale and mangle UTF-8
 //   TMPDIR      honored where set
 //   USER/LOGNAME/SHELL  identity fallbacks (git author guessing, whoami)
-// PATH is built, TERM is fixed to `dumb` (no TTY to paint). Anything else gets added
-// here by name, with a reason — this list is what user space is allowed to know.
+// PATH is built, TERM is fixed to `dumb` (no TTY to paint). Anything every org needs gets
+// added here by name, with a reason; what one org's tools need from its machine (DISPLAY
+// for a browser someone watches) is its agents' `export` knob, issued through `env` below.
+// This list and that knob are what user space is allowed to know.
 const ENV_ALLOWLIST = ["HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "LOGNAME", "SHELL"];
 /** How long the readers are given once bash itself has exited. A backgrounded child holds
  *  the pipe open, so the race has to be cut for the call to return at all. */

@@ -416,6 +416,35 @@ Deno.test("an agent's model, maxTokens and provider are type-checked", async () 
   }
 });
 
+Deno.test("export: environment variable names, never a secret's or one the harness sets", async () => {
+  await withDir(async (root) => {
+    const write = (cfg: unknown) => Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify(cfg));
+    await write({ agents: { ana: {} } });
+    assertEquals((await readConfig(root)).organization.agents.export, []);
+    await write({
+      organization: { agents: { export: ["DISPLAY"] } },
+      agents: { ana: { export: ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] } },
+    });
+    const cfg = await readConfig(root);
+    assertEquals(cfg.organization.agents.export, ["DISPLAY"]);
+    assertEquals(cfg.agents.ana.export, ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"]);
+    for (
+      const [bad, says] of [
+        ["DISPLAY", "must be an array"],
+        [["MY VAR"], "is not an environment variable name"],
+        [[7], "is not an environment variable name"],
+        [["GEMINI_API_KEY"], "is a secret's name"],
+        [["PGPASSWORD"], "is a secret's name"],
+        [["WA_BRIDGE_TOKEN"], "is a secret's name"],
+        [["PATH"], "the harness's to set"],
+      ] as const
+    ) {
+      await write({ agents: { ana: { export: bad } } });
+      await assertRejects(() => readConfig(root), Error, says, JSON.stringify(bad));
+    }
+  });
+});
+
 Deno.test("the roster's principals and mind: names must be in the roster, mind a boolean", async () => {
   await withDir(async (root) => {
     const write = (agents: unknown) =>

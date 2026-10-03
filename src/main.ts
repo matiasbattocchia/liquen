@@ -231,7 +231,11 @@ export async function start(
       sleepMinutes: catalog?.system.sandboxSleepMinutes,
       ...planeOptions,
     })
-    : await openLocalSandbox(dir, { store, ...planeOptions });
+    : await openLocalSandbox(dir, {
+      store,
+      exports: Object.fromEntries(principals.map((p) => [p.agentId, p.settings?.export ?? []])),
+      ...planeOptions,
+    });
   // the ports stand whether or not a service is connected yet: a leg is only ever reached
   // through one of the agent's accounts, and a service connected while main runs has its
   // ports already there
@@ -667,6 +671,7 @@ async function compileRoster(
         // null survives the funnel: it means "every tool", not "unset"
         tools: (cfg.tools !== undefined ? cfg.tools : org.tools) ?? undefined,
         rules: cfg.rules ?? org.rules,
+        export: cfg.export ?? org.export,
         since,
         timezone: catalog.organization.timezone || undefined,
         locale: catalog.organization.locale ?? undefined,

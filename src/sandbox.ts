@@ -59,6 +59,9 @@ export interface LocalSandboxOptions {
   locale?: string | null;
   /** The `system.bashTimeoutMs` knob: a call's default timeout. */
   bashTimeoutMs?: number;
+  /** Each agent's `export` knob: the variables of this process's environment its shells
+   *  inherit, read at each call. One the environment does not hold is not issued. */
+  exports?: Record<string, string[]>;
 }
 
 /** The local provider: subprocesses on this machine, ONE GROUND PER AGENT, ONE SHELL PER
@@ -71,7 +74,7 @@ export interface LocalSandboxOptions {
  *  refused broker-side, before any byte is read. */
 export async function openLocalSandbox(
   dir: string,
-  { store, agents, locale, bashTimeoutMs }: LocalSandboxOptions,
+  { store, agents, locale, bashTimeoutMs, exports = {} }: LocalSandboxOptions,
 ): Promise<Sandbox> {
   // the egress proxy (§9): front every credential row that declares an env var — user
   // space gets the placeholder + proxy env, never a real credential
@@ -79,7 +82,18 @@ export async function openLocalSandbox(
   const localeEnv: Record<string, string> = locale ? { LANG: locale } : {};
   const grounds = new Map<string, ExecGround>();
   for (const agentId of agents) {
-    const userEnv = async () => ({ ...(await proxy.env(agentId)), ...localeEnv });
+    const exported = () =>
+      Object.fromEntries(
+        (exports[agentId] ?? []).flatMap((name) => {
+          const v = Deno.env.get(name);
+          return v === undefined ? [] : [[name, v]];
+        }),
+      );
+    const userEnv = async () => ({
+      ...exported(),
+      ...(await proxy.env(agentId)),
+      ...localeEnv,
+    });
     grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashTimeoutMs));
   }
   const shells = new Map<string, ExecPlane>();
