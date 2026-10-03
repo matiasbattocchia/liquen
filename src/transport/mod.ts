@@ -3,7 +3,7 @@
  *
  * mu stays pure by taking the model call as a parameter (see mu.ts). This is the production
  * wiring of that parameter, one transport per provider: open a streaming request, pump
- * `text`/`thinking` deltas to the Stream via `emit`, and return the final message. Errors
+ * `text`/`thinking`/`tool` deltas to the Stream via `emit`, and return the final message. Errors
  * propagate as a rejected promise — mu's boundary turns that into `{ ok: false, error }`,
  * and nu owns the retry (§2).
  *
@@ -75,11 +75,57 @@ export function transports(keys: { anthropic?: string } = {}): (p: Provider) => 
   return (p) => {
     const had = made.get(p.name);
     if (had) return had;
-    const t: ModelTransport = p.name === "google"
-      ? googleTransport(googleClient())
-      : anthropicTransport(anthropicClient(keys.anthropic));
+    const t: ModelTransport = silenced(
+      p.name === "google"
+        ? googleTransport(googleClient())
+        : anthropicTransport(anthropicClient(keys.anthropic)),
+    );
     made.set(p.name, t);
     return t;
+  };
+}
+
+/** How long a call may go without a delta before it counts as a dropped connection. A
+ *  working model streams its text, thinking and tool calls throughout, however long it
+ *  works, so this much silence is a peer that is gone: a stream ended while the machine
+ *  slept, whose end never arrived. Long enough for the one silence a working model keeps —
+ *  a tool call's arguments, which a provider may send only once they are whole. Timers stop
+ *  while the machine sleeps, so the count runs in time awake. */
+export const SILENCE_MS = 120_000;
+
+/**
+ * Give a transport a silence deadline: every delta it emits re-arms it, and a call that goes
+ * `silenceMs` without one is aborted through the signal the transport was handed, beside the
+ * turn's interrupt. The call then fails with no status, which nu retries as weather (§2) —
+ * the SDKs set no limit of their own that a stream mid-flight would hit.
+ */
+export function silenced(transport: ModelTransport, silenceMs = SILENCE_MS): ModelTransport {
+  return async (params, emit, meta, signal) => {
+    const silence = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => silence.abort(), silenceMs);
+    };
+    arm();
+    try {
+      return await transport(
+        params,
+        (d) => {
+          arm();
+          emit?.(d);
+        },
+        meta,
+        signal ? AbortSignal.any([signal, silence.signal]) : silence.signal,
+      );
+    } catch (err) {
+      if (silence.signal.aborted && !signal?.aborted) {
+        throw new Error(`no word from the model in ${silenceMs / 1000}s: the connection is gone`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   };
 }
 

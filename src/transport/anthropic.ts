@@ -1,6 +1,7 @@
 /**
  * transport/anthropic.ts — the Anthropic edge: a streaming Messages request, deltas pumped
- * to the Stream via `emit`, the final message returned as is. The request vocabulary IS this
+ * to the Stream via `emit` (text, thinking, and a tool call's arguments as they are written),
+ * the final message returned as is. The request vocabulary IS this
  * API's, so nothing is translated on the way in or out (see transport/mod.ts).
  */
 
@@ -26,6 +27,12 @@ export function anthropicTransport(
     // set explicitly: an account's default on a mismatch depends on when it was created
     const bound = {
       ...params,
+      // a tool call's arguments stream as they are written; held whole by default, they are
+      // a silence as long as the call (42.7s on claude-opus-5-5 for a 250-line file; 6.5s at
+      // most between deltas with this, 2026-10-02) — and a silence is a dropped connection
+      ...(params.tools
+        ? { tools: params.tools.map((t) => ({ ...t, eager_input_streaming: true })) }
+        : {}),
       ...(params.thinking
         ? {
           thinking: { ...params.thinking, block_binding: { prefix_mismatch_behavior: mismatch } },
@@ -42,6 +49,12 @@ export function anthropicTransport(
     // `finalMessage()`, which is the path mu catches).
     stream.on("text", (delta) => emit?.({ kind: "text", text: delta }));
     stream.on("thinking", (delta) => emit?.({ kind: "thinking", text: delta }));
+    stream.on("streamEvent", (ev, snapshot) => {
+      if (ev.type !== "content_block_delta" || ev.delta.type !== "input_json_delta") return;
+      const block = snapshot.content[ev.index];
+      const name = block && "name" in block ? block.name : undefined;
+      emit?.({ kind: "tool", name, text: ev.delta.partial_json });
+    });
     stream.on("error", (err) => emit?.({ kind: "error", text: errorText(err) }));
     const message = await stream.finalMessage();
     // a dropped block is reasoning the model answered without: the request that dropped

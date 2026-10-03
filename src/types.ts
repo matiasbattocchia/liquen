@@ -766,8 +766,10 @@ export interface About {
  *  it. Every kind reaches every tailer: what to show and what to fold away is the client's
  *  call, and it can only make it if the words arrive. */
 export interface Delta {
-  kind: "text" | "thinking" | "checkpoint" | "error";
+  kind: "text" | "thinking" | "checkpoint" | "tool" | "error";
   text?: string;
+  /** A `tool` delta's tool: its `text` is a fragment of the call's arguments, JSON. */
+  name?: string;
 }
 export type Emit = (delta: Delta) => void;
 

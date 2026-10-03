@@ -6,7 +6,10 @@
  * status and usage but not the steps.
  *
  * Deltas reach the Stream as they arrive: a `model_output` text fragment as `text`, a
- * `thought` summary as `thinking`. The turn's interrupt aborts the underlying fetch.
+ * `thought` summary as `thinking`, a function call's arguments as `tool` — whole, in one
+ * delta, since the API sends them only once they are complete (measured on
+ * gemini-3.8-flash, 2026-10-02: a 3,700-token call arrived as one fragment after 9s of
+ * nothing). The turn's interrupt aborts the underlying fetch.
  */
 
 import { GoogleGenAI } from "@google/genai";
@@ -33,6 +36,10 @@ export function googleTransport(client: GoogleGenAI): ModelTransport {
         if (d.type === "text") emit?.({ kind: "text", text: d.text });
         else if (d.type === "thought_summary" && d.content?.type === "text") {
           emit?.({ kind: "thinking", text: d.content.text });
+        } else if (d.type === "arguments_delta" && d.arguments) {
+          const step = a.steps[ev.index];
+          const name = step?.type === "function_call" ? step.name : undefined;
+          emit?.({ kind: "tool", name, text: d.arguments });
         }
       } else if (ev.event_type === "error") {
         emit?.({ kind: "error", text: ev.error?.message ?? "interaction error" });

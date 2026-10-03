@@ -1,7 +1,11 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertObjectMatch, assertRejects } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 import { explained, googleClient, googleTransport } from "./google.ts";
+import { silenced } from "./mod.ts";
 import { mu } from "../mu.ts";
+import { retryable } from "../nu.ts";
+import type { Delta } from "../types.ts";
 
 const KEY = Deno.env.get("GEMINI_API_KEY");
 // the model is the operator's choice: the free tier meters each one separately
@@ -155,4 +159,102 @@ Deno.test("google: an error the SDK could read, or with no status, passes throug
   assertEquals(explained(read), read);
   const dropped = new TypeError("fetch failed");
   assertEquals(explained(dropped), dropped);
+});
+
+// Offline: a local server answers as the Interactions API does — an event stream — with the
+// events a test scripts, `null` holding the stream open with nothing more to say.
+const sse = (ev: unknown) => `event: message\ndata: ${JSON.stringify(ev)}\n\n`;
+const start = { event_type: "step.start", index: 0, step: { type: "model_output" } };
+const delta = (text: string) => ({
+  event_type: "step.delta",
+  index: 0,
+  delta: { type: "text", text },
+});
+const completed = {
+  event_type: "interaction.completed",
+  interaction: { status: "completed", usage: { total_input_tokens: 1, total_output_tokens: 1 } },
+};
+const REQUEST = {
+  model: "gemini-3.8-flash",
+  max_tokens: 100,
+  messages: [{ role: "user" as const, content: "hi" }],
+};
+
+async function scripted(
+  script: { after: number; event: unknown | null }[],
+  run: (client: GoogleGenAI) => Promise<void>,
+): Promise<void> {
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  const server = Deno.serve({ port: 0, onListen: () => {} }, () => {
+    const enc = new TextEncoder();
+    const body = new ReadableStream({
+      start(c) {
+        for (const { after, event } of script) {
+          timers.push(setTimeout(() => {
+            if (event === null) return;
+            try {
+              c.enqueue(enc.encode(sse(event)));
+              if (event === completed) c.close();
+            } catch { /* the client hung up first */ }
+          }, after));
+        }
+      },
+    });
+    return new Response(body, { headers: { "content-type": "text/event-stream" } });
+  });
+  try {
+    await run(
+      new GoogleGenAI({
+        apiKey: "test",
+        httpOptions: { baseUrl: `http://127.0.0.1:${server.addr.port}` },
+      }),
+    );
+  } finally {
+    for (const t of timers) clearTimeout(t);
+    await server.shutdown();
+  }
+}
+
+Deno.test("google: a function call's arguments reach the Stream as a tool delta, named", async () => {
+  const call = {
+    event_type: "step.start",
+    index: 1,
+    step: { type: "function_call", id: "c1", name: "bash" },
+  };
+  const args = {
+    event_type: "step.delta",
+    index: 1,
+    delta: { type: "arguments_delta", arguments: '{"command":"ls"}' },
+  };
+  const stop = { event_type: "step.stop", index: 1 };
+  const script = [start, delta("ho"), call, args, stop, completed]
+    .map((event) => ({ after: 0, event }));
+  await scripted(script, async (c) => {
+    const seen: Delta[] = [];
+    const message = await googleTransport(c)(REQUEST, (d) => seen.push(d));
+    assertEquals(seen, [
+      { kind: "text", text: "ho" },
+      { kind: "tool", name: "bash", text: '{"command":"ls"}' },
+    ]);
+    assertObjectMatch(message.content.at(-1)!, {
+      id: "c1",
+      name: "bash",
+      input: { command: "ls" },
+    });
+  });
+});
+
+Deno.test("google, silenced: a stream gone silent fails as a dropped connection, which nu retries", async () => {
+  await scripted([{ after: 0, event: start }, { after: 0, event: delta("ho") }], async (c) => {
+    const began = Date.now();
+    const err = await assertRejects(
+      () => silenced(googleTransport(c), 200)(REQUEST),
+      Error,
+      "no word from the model in 0.2s",
+    );
+    assert(Date.now() - began < 2_000, "the deadline cut the wait: the SDK honors the signal");
+    const status = (err as { status?: number }).status;
+    assertEquals(status, undefined);
+    assert(retryable(status, (err as Error).message));
+  });
 });
