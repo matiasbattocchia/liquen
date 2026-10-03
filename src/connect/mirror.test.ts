@@ -127,7 +127,7 @@ Deno.test("mirror fan-in: an alias inbound copies to the mind and cross-CCs the 
     await waitFor(async () => (await inConv("549")).length === 1);
     const [cc] = await inConv("549");
     assertEquals(cc.agent?.id, "ana");
-    assertEquals(textOf(cc), "`[ana via slack]` pick up milk");
+    assertEquals(textOf(cc), "`[via slack]` pick up milk"); // her own surface: no name
     // …and never back to the origin surface
     await new Promise((r) => setTimeout(r, 150));
     assertEquals((await inConv("D1")).length, 1);
@@ -179,8 +179,73 @@ Deno.test("mirror fan-out: a terminal-typed principal line CCs tagged with where
   await withMirror(async ({ publish, inConv, waitFor }) => {
     await publish(mindMsg("hola"));
     await waitFor(async () => (await inConv("D1")).length === 1);
-    assertEquals(textOf((await inConv("D1"))[0]), "`[ana via terminal]` hola");
-    assertEquals(textOf((await inConv("549"))[0]), "`[ana via terminal]` hola");
+    assertEquals(textOf((await inConv("D1"))[0]), "`[via terminal]` hola");
+    assertEquals(textOf((await inConv("549"))[0]), "`[via terminal]` hola");
+  });
+});
+
+/** A card in ana's mind, for the use whose handle is `bbc24a`. */
+const sendCard = (): Draft<Event> => ({
+  ts: new Date().toISOString(),
+  type: "permission_request",
+  payload: { ref_id: "01a0fd7f-cde6-7000-8000-412733bbc24a" },
+  envelope: {
+    service: "local",
+    connection_address: "agent",
+    conversation: { address: "mind@ana" },
+  },
+  parts: [{
+    type: "data",
+    kind: "permission_request",
+    data: { tool: "send", detail: "send(to: Lucas, text: dale)" },
+  }],
+} as Draft<Event>);
+
+Deno.test("mirror fan-out: a line that answers a card quotes the card's crossing, its handle said by the quote", async () => {
+  await withMirror(async ({ publish, inConv, waitFor, setDelivery }) => {
+    const card = await publish(sendCard());
+    await waitFor(async () =>
+      (await inConv("D1")).length === 1 && (await inConv("549")).length === 1
+    );
+    // the dispatchers stamp what they posted
+    for (const [conv, id] of [["D1", "slack:T1:D1:200.1"], ["549", "whatsapp:wmw.card"]]) {
+      const [cc] = await inConv(conv);
+      await setDelivery(cc.id, { external_id: id });
+    }
+    await publish(mindMsg("/n bbc24a not today", { payload: { ref_id: card.id } }));
+    await waitFor(async () =>
+      (await inConv("D1")).length === 2 && (await inConv("549")).length === 2
+    );
+    const wa = (await inConv("549"))[1];
+    assertEquals(textOf(wa), "`[via terminal]` /n not today");
+    assertEquals(wa.payload?.ref_external_id, "whatsapp:wmw.card");
+    assertEquals((await inConv("D1"))[1].payload?.ref_external_id, "slack:T1:D1:200.1");
+  });
+});
+
+Deno.test("mirror fan-out: a thumb on a card crosses as its glyph, quoting the card", async () => {
+  await withMirror(async ({ publish, inConv, waitFor, setDelivery }) => {
+    const card = await publish(sendCard());
+    await waitFor(async () => (await inConv("549")).length === 1);
+    await setDelivery((await inConv("549"))[0].id, { external_id: "whatsapp:wmw.card" });
+    // the copy of a thumb given on Slack: an `add` naming the card
+    await publish(mindMsg("", {
+      payload: { ref_id: card.id, action: "add" },
+      parts: [{ type: "data", kind: "reaction", data: { unicode: "👍" } }],
+      extra: { via: { event: "x", service: "slack", conversation: "D1" } },
+    }));
+    await waitFor(async () => (await inConv("549")).length === 2);
+    const wa = (await inConv("549"))[1];
+    assertEquals(textOf(wa), "`[via slack]` 👍");
+    assertEquals(wa.payload?.ref_external_id, "whatsapp:wmw.card");
+    // an un-react says nothing
+    await publish(mindMsg("", {
+      payload: { ref_id: card.id, action: "remove" },
+      parts: [{ type: "data", kind: "reaction", data: { unicode: "👍" } }],
+      extra: { via: { event: "y", service: "slack", conversation: "D1" } },
+    }));
+    await new Promise((r) => setTimeout(r, 150));
+    assertEquals((await inConv("549")).length, 2);
   });
 });
 
@@ -658,11 +723,11 @@ Deno.test("mirror fan-in: a principal's DM with the org number copies to the org
     assertEquals(copy.agent, { id: "ventas", session_id: "mind" }); // whose mind
     assertEquals(copy.envelope.sender, { address: "matias", name: "Matías" }); // who spoke
     assertEquals(textOf(copy), "mandá los recordatorios");
-    // and the other principal's DM gets the cross-broadcast, naming who typed it
+    // and the other principal's DM gets the cross-broadcast, naming who typed it by username
     await waitFor(async () => (await inConv("549115550002")).length === 1);
     assertEquals(
       textOf((await inConv("549115550002"))[0]),
-      "`[Matías via whatsapp]` mandá los recordatorios",
+      "`[matias via whatsapp]` mandá los recordatorios",
     );
     assertEquals((await inConv("549115550001")).length, 1); // never back to the origin
     assertEquals((await inConv("549117770000")).length, 0); // the org number has no self-chat surface

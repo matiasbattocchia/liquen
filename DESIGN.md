@@ -971,11 +971,14 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
   - **fan-out**: every mind event the REPL would show CCs to every alias binding except
     the origin surface (read off `extra.via`): the agent's voice as `[agent] …` (a
     self-conversation renders both speakers as the principal — the tag is the surface's
-    only input/output distinction; the log needs none, authorship is the bit), the
-    a principal's own words as `[<name> via <surface>] …` (input replayed as output — fan-out
-    over fan-in's own copy is what cross-syncs surfaces, and the reader on the other
-    surface may be another principal, so the line names who spoke), tool calls as redacted
-    one-liners under a tag of their own (`[agent tool] bash(git status)`). The tags, the
+    only input/output distinction; the log needs none, authorship is the bit), a
+    principal's own words as `[via <surface>] …` (input replayed as output — fan-out over
+    fan-in's own copy is what cross-syncs surfaces; on a surface that is another
+    principal's the tag names who spoke, by username: `[matias via whatsapp] …`). A verdict
+    crosses as the line that gave it — a `/y` typed at the terminal, a thumb on a card —
+    quoting the card's own crossing, which is how a surface points where a terminal names
+    the card by its handle. Tool calls cross as redacted one-liners under a tag of their
+    own (`[agent tool] bash(git status)`). The tags, the
     reply hint under a card and the presence words are the harness's own, so they speak the
     org's tongue (config `locale`, language subtag: `es_AR.UTF-8` ⇒ `[agente pregunta] …`;
     unknown or unset ⇒ English) — the model's voice needs no translating, the prefix states

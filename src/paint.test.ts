@@ -140,13 +140,18 @@ Deno.test("live: the agent's text opens with a blank line, the time and its mark
   assertEquals(plain(screen()), "11 Sep 11:14 • el tuyo y el de la clínica\n\n");
 });
 
-Deno.test("live: the agent's change to a room paints in words, where it went", () => {
+// a send, a room change: the row the agent wrote into another conversation is its call's
+// doing, and the call's own `⚙` row already says it — live, and in a recall of this room
+Deno.test("live: a row the agent wrote into another conversation paints nothing", () => {
   const { p, screen } = surface();
+  const sent = answered("2026-09-11T14:14:00Z", "Mecha, no te olvides de pasarme tu mail");
+  sent.envelope.conversation = { address: "5491161444901", kind: "direct" };
+  p.event(sent);
   const line = answered("2026-09-11T14:14:00Z", "");
   line.envelope.conversation = { address: "grp_ops", kind: "group", name: "ops" };
   line.parts = [roomPart({ joined: [{ address: "mind@cy" }] })];
   p.event(line);
-  assertEquals(plain(screen()), "11 Sep 11:14 → grp_ops: joined mind@cy\n");
+  assertEquals(plain(screen()), "");
 });
 
 Deno.test("live: markdown streams as styles, a span held until it closes", () => {
@@ -510,5 +515,58 @@ Deno.test("a recap prints exactly what the live screen printed", () => {
     ),
     true,
     JSON.stringify(seen),
+  );
+});
+
+// who answered, how and when stands above the answer: a thumb given on a phone, a `/y`
+// typed at another terminal — principal lines like any other, painted live and recalled
+Deno.test("a verdict reads under the line that gave it, live and reopened alike", () => {
+  const TS = "2026-09-11T14:14:00Z";
+  const at = (id: string, type: string, data: Json, payload: Record<string, Json> = {}): Event => ({
+    id,
+    ts: TS,
+    type,
+    payload: { turn_id: "t1", ...payload },
+    agent: { id: AGENT, session_id: "mind" },
+    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    parts: [{ type: "data", kind: type, data }],
+  } as unknown as Event);
+  const card = (id: string, use: string) =>
+    at(id, "permission_request", { tool: "send", call: "send(…)", detail: "send(to: Lucas)" }, {
+      ref_id: use,
+    });
+  const thumb: MessageEvent = {
+    ...asked("2026-09-11T14:15:00Z", ""),
+    payload: { ref_id: "g1", action: "add" },
+    parts: [{ type: "data", kind: "reaction", data: { unicode: "👍" } }],
+    extra: { via: { event: "w1", service: "whatsapp", conversation: "549" } },
+  };
+  const typed: MessageEvent = {
+    ...asked("2026-09-11T14:16:00Z", "/y conv u2"),
+    payload: { ref_id: "g2" },
+  };
+  const history: Event[] = [
+    card("g1", "u1"),
+    thumb,
+    at("p1", "permission_response", { behavior: "allow", scope: "once" }, { ref_id: "u1" }),
+    card("g2", "u2"),
+    typed,
+    at("p2", "permission_response", { behavior: "allow", scope: "conversation" }, {
+      ref_id: "u2",
+    }),
+  ];
+  // another attachment's lines: this screen never echoed them
+  const live = surface({ typed: () => false });
+  for (const e of history) live.p.event(e);
+  const again = surface();
+  again.p.recap(history);
+  const seen = plain(live.screen());
+  assertEquals(plain(again.screen()).trimEnd(), seen.trimEnd());
+  assertEquals(
+    seen.trimEnd(),
+    "? approve u1 send(to: Lucas)\n\n" +
+      "11 Sep 11:15 ❯ [via whatsapp] 👍\n— u1 allowed once\n\n" +
+      "? approve u2 send(to: Lucas)\n\n" +
+      "11 Sep 11:16 ❯ /y conv u2\n— u2 allowed for this conversation",
   );
 });

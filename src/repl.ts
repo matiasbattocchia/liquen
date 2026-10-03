@@ -11,10 +11,12 @@
  *
  *   you type            → {op: "message"} through the door
  *   the agent thinks    → thinking deltas stream dim; assistant text streams live
- *   the agent acts      → tool_use/result lines; peer sends as `→ conv: text`
+ *   the agent acts      → tool_use/result lines; a send is its call's row
  *   a gate fires        → an approval card; answer `/{y,n} [once|conv|conn|always|all]
  *                         [reason]` — a scope word makes the verdict STANDING (remembered
- *                         policy, §9); `all` answers every card waiting at once
+ *                         policy, §9); `all` answers every card waiting at once. The line
+ *                         is logged with its verdicts, so it stands in the room like any
+ *                         other line: in a recall, and on the mirrored surfaces
  *   Ctrl-C (or /cancel) → cut the running turn: a thinking model is hung up on, a running
  *                         tool is killed, and the agent idles until you speak again (§2).
  *                         Ctrl-C cuts only while the door says the session is busy; idle,
@@ -100,7 +102,9 @@ await entry(async () => {
     head: () => `${waiting()}${YOU} `,
     // and once sent it stands as a recalled line would: the time, the mark, the words
     sent: (line) => `${DIM}${hhmm(new Date().toISOString(), a.timezone)}${RESET} ${YOU} ${line}`,
-    recalled: () => recalled.filter((e) => e.type === "message" && !ownVoice(e, me)).map(textOf),
+    recalled: () =>
+      recalled.filter((e) => e.type === "message" && !ownVoice(e, me)).map(textOf)
+        .filter((t) => t !== ""),
     interrupt: () => {
       if (!busy) return false;
       void cancel();
@@ -184,22 +188,25 @@ await entry(async () => {
       continue;
     }
     if (steering(text)) {
-      const a = answering(text, pending);
-      if (typeof a === "string") {
-        write(`${DIM}${a}${RESET}\n`);
+      const ans = answering(text, pending);
+      if (typeof ans === "string") {
+        write(`${DIM}${ans}${RESET}\n`);
         continue;
       }
-      pending.splice(0, pending.length, ...pending.filter((ref) => !a.refs.includes(ref)));
-      for (const ref of a.refs) {
-        const r = await w.request({
-          op: "permission_response",
-          ref_id: ref,
-          verdict: a.verdict,
-          session,
-        });
-        if (!r.ok) write(`\n${RED}! ${r.error}${RESET}\n`);
+      pending.splice(0, pending.length, ...pending.filter((ref) => !ans.refs.includes(ref)));
+      typed.push(text);
+      const r = await w.request({
+        op: "permission_response",
+        refs: ans.refs,
+        verdict: ans.verdict,
+        text,
+        sender: { address: a.username, name: a.username },
+        session,
+      });
+      if (!r.ok) {
+        typed.splice(typed.lastIndexOf(text), 1);
+        write(`\n${RED}! ${r.error}${RESET}\n`);
       }
-      if (a.refs.length > 1) write(`${DIM}${a.refs.length} approvals answered${RESET}\n`);
       continue;
     }
     typed.push(text);

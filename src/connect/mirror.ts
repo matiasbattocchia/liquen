@@ -17,13 +17,14 @@
  *             voice as `[agent] …`, its tool calls as `[agent tool] **bash**(git status)`
  *             (redacted to one line), a gate waiting on the principal as `[agent asks] …`,
  *             the harness's own word as `[system] …`, and the principal's own words as
- *             `[you via <surface>] …` — input replayed as output. Every tag ships wrapped
+ *             `[via <surface>] …` — input replayed as output, a `/y` and a thumb on a
+ *             card among them, quoting the card's own crossing. Every tag ships wrapped
  *             in backticks, so a surface that reads markdown sets it apart from the words
  *             around it (WhatsApp renders it monospace; the bridge passes code spans
  *             through untouched). The log needs no tag: authorship is the bit.
  *
  * Fan-out applied to fan-in's own mind copy is what cross-broadcasts surfaces: a WA line
- * copies to the mind, and that copy CCs — tagged `[you via whatsapp]` — to Slack, origin
+ * copies to the mind, and that copy CCs — tagged `[via whatsapp]` — to Slack, origin
  * skipped. A CC is a
  * plain outbound event on its service: the dispatchers post it and backfill `external_id`,
  * so the platform echo MERGES into it like any other send (§4). The loop is closed by
@@ -53,7 +54,7 @@
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { MIND, parseSession, sessionAddress } from "../session.ts";
-import { outcomeLine, silenced, silent } from "../render.ts";
+import { outcomeLine, reactionOf, shortId, silenced, silent } from "../render.ts";
 import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
 import { type Words, words } from "../i18n.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
@@ -110,8 +111,8 @@ export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): ()
     const mind = mindOf(e);
     if (mind !== null) {
       enqueue(e, async () => {
-        const parts = await ccParts(e, deps, w);
-        if (parts) await fanOut(deps, e, mind, parts, now);
+        const cc = await ccParts(e, deps, w);
+        if (cc) await fanOut(deps, e, mind, cc, now);
       });
       return;
     }
@@ -283,7 +284,7 @@ async function fanOut(
   deps: MirrorDeps,
   e: Event,
   agentId: string,
-  parts: Part[],
+  cc: CC,
   now: () => string,
 ): Promise<void> {
   const via = viaOf(e);
@@ -294,10 +295,19 @@ async function fanOut(
     !(via && via.service === a.service && via.conversation === a.conversation)
   );
   if (targets.length === 0) return;
-  await deps.publish(targets.map((a): Draft<MessageEvent> => ({
+  // a principal's line that points at a mind row — the card a `/y` answers, the card a
+  // thumb sits on — quotes that row's crossing on each surface, the surface's own way of
+  // pointing: a reply there, where a terminal names the card by its handle
+  const pointed = e.type === "message" && e.payload?.turn_id === undefined
+    ? e.payload?.ref_id
+    : undefined;
+  const quotes = await Promise.all(
+    targets.map((a) => pointed ? crossingOf(deps, a.conversation, pointed) : undefined),
+  );
+  await deps.publish(targets.map((a, i): Draft<MessageEvent> => ({
     ts: now(),
     type: "message",
-    payload: { ref_id: e.id },
+    payload: { ref_id: e.id, ...(quotes[i] ? { ref_external_id: quotes[i] } : {}) },
     // the CC is the agent's leg speaking on that surface (dispatch resolves the author's
     // alter-ego token off `agent.id`) — mind content, so the MIND session's row (§4)
     agent: { id: agentId, session_id: MIND },
@@ -306,7 +316,7 @@ async function fanOut(
       connection_address: a.connection,
       conversation: { address: a.conversation },
     },
-    parts,
+    parts: cc(a),
     extra: {
       via: { event: e.id, service: "local", conversation: sessionAddress(agentId, MIND) },
       // presence is only true while the turn runs: the sweeper never re-offers it
@@ -315,18 +325,39 @@ async function fanOut(
   })));
 }
 
+/** The wire id a mind row's crossing landed under on one surface — what a quote of that
+ *  row names there. Undefined until the dispatcher stamps it, or where it never crossed. */
+async function crossingOf(
+  deps: Pick<MirrorDeps, "read">,
+  conversation: string,
+  event: EventId,
+): Promise<string | undefined> {
+  const [cc] = await deps.read({
+    conversation,
+    limit: 1,
+    filter: (x) => viaOf(x)?.event === event,
+  });
+  return cc?.envelope.external_id;
+}
+
+/** A crossing's parts for one surface: most read the same everywhere, but a principal's
+ *  line names its author only where the surface is somebody else's. */
+type CC = (target: AliasRow) => Part[];
+const same = (parts: Part[]): CC => () => parts;
+
 /** What a mind event looks like on a surface — exactly what the REPL shows (§4). Every
  *  line opens with WHO, because a self-conversation renders both speakers as the same
  *  account: `[agent] …` for the voice, `[agent tool] …` for a redacted tool call,
- *  `[agent asks] …` for a gate waiting on the principal, `[<name> via <surface>] …` for a
- *  principal's own words replayed as output. Null ⇒ this event kind never crosses
- *  (thinking, results, the verdict itself — which is the principal's own `/y`; the
+ *  `[agent asks] …` for a gate waiting on the principal, `[via <surface>] …` for a
+ *  principal's own words replayed as output — `[<username> via <surface>]` on a surface
+ *  that is another principal's. Null ⇒ this event kind never crosses (thinking, results,
+ *  the verdict itself — the line that gave it crosses, a `/y` or a thumb on the card; the
  *  agent's own settlement, a `cancel`, crosses as a `[system]` withdrawal). */
 async function ccParts(
   e: Event,
-  deps: Pick<MirrorDeps, "read" | "nameOf">,
+  deps: Pick<MirrorDeps, "read">,
   w: Words,
-): Promise<Part[] | null> {
+): Promise<CC | null> {
   const read = deps.read;
   if (silent(e)) return null; // the model said nothing (§5) — nothing crosses to a surface
   if (e.type === "tool_use") {
@@ -334,29 +365,33 @@ async function ccParts(
     // principal READS the call, so `in: Sprinters Friends` beats `in: 1203…@g.us`
     const call = (e as ToolUseEvent).parts[0].data;
     const resolve = await nameResolver(read, [call]);
-    return [{
+    return same([{
       type: "text",
       kind: "text",
       text: `\`[${w.tool}]\` ${boldName(describeCall(call, { resolve }))}`,
-    }];
+    }]);
   }
   if (e.type === "tool_result" && e.payload.deferred) {
     // a call the principal approved, now run: they asked for it, so they hear how it went
     // — the same sentence the model is given (§9). Ordinary results never cross.
-    return [{ type: "text", kind: "text", text: `\`[${w.system}]\` ${outcomeLine(e, 160)}` }];
+    return same([{
+      type: "text",
+      kind: "text",
+      text: `\`[${w.system}]\` ${outcomeLine(e, 160)}`,
+    }]);
   }
   if (e.type === "error") {
     // the harness's own voice reaching the principal (§2): it speaks when the model can't
     // — a gate is waiting, so no turn will be taken to relay this
     const { error } = (e as ErrorEvent).parts[0].data;
-    return [{ type: "text", kind: "text", text: `\`[${w.system}]\` ${error}` }];
+    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${error}` }]);
   }
   if (e.type === "delta") {
     // presence (§9): what the mind is doing, for the principal on the other side of a
     // chat — the log holds the fact, the words are the surface's. The whole line is the
     // tag, the same shape every crossing line opens with
     const { kind } = (e as DeltaEvent).parts[0].data;
-    return [{ type: "text", kind: "text", text: `\`[${w.presence[kind]}]\`` }];
+    return same([{ type: "text", kind: "text", text: `\`[${w.presence[kind]}]\`` }]);
   }
   if (e.type === "permission_request") {
     // the approval card, wherever the principal is (§9). It carries the ARGUMENTS, not
@@ -369,23 +404,23 @@ async function ccParts(
     const body = ask.send
       ? `**${ask.tool}**\n\n${describeSendCard(ask.send, w.card)}`
       : boldName(ask.detail);
-    return [{
+    return same([{
       type: "text",
       kind: "text",
       // a blank row between them: the legend reads apart from the call it is about
       text: `\`[${w.asks}]\` ${w.approve} ${body}\n\n\`${w.hint}\``,
-    }];
+    }]);
   }
   if (e.type === "permission_response" && e.payload?.turn_id !== undefined) {
     // the agent took an ask back (`cancel`, §9) — turn_id marks the settlement as the
     // model's own doing. The principal saw the card, so they hear the withdrawal; their
-    // own verdicts (no turn_id) never cross — their `/y` line is already on their surface.
+    // own verdicts (no turn_id) never cross — the line that gave one crosses instead.
     const call = (e as PermissionResponseEvent).parts[0].text;
-    return [{
+    return same([{
       type: "text",
       kind: "text",
       text: `\`[${w.system}]\` ${w.withdrawn}: ${boldName(call ?? "…")}`,
-    }];
+    }]);
   }
   if (e.type !== "message") return null;
   const m = e as MessageEvent;
@@ -397,25 +432,53 @@ async function ccParts(
     // are the same account on the surface (everything renders as the principal), so the
     // tag is the only thing that tells output from input there.
     if (!text && parts.length === 0) return null;
-    return [
+    return same([
       ...(text ? [{ type: "text", kind: "text", text: `\`[${w.agent}]\` ${text}` } as const] : []),
       ...parts.filter((p) => p.type === "file"),
-    ];
+    ]);
   }
-  if (!text) return null;
-  // a principal's own line, coming back as output on another surface: same tag shape as
-  // the voice, naming who typed it and where — the reader there may be another principal
-  // (§4), so the line says which; the terminal when the mind itself is where it landed —
-  // the REPL and `liquen cli` both speak through the door, which cannot tell them apart
+  // a principal's own line, coming back as output on another surface: what they said — a
+  // reaction says its glyph — and whatever they sent with it
+  const glyph = reactionOf(m);
+  const said = glyph === undefined ? text : e.payload?.action === "remove" ? "" : glyph;
+  const files = parts.filter((p) => p.type === "file");
+  if (!said && files.length === 0) return null;
+  // a terminal names the card a line answers by its handle; on a surface the crossing
+  // quotes the card instead (fanOut), so the handle is said already
+  const handle = await quotedHandle(read, m);
+  const words = handle ? said.replace(new RegExp(`(^|\\s+)${handle}(?=\\s|$)`), "") : said;
+  // the same tag shape as the voice, saying where it was typed — the terminal when the
+  // mind itself is where it landed (the REPL and `liquen cli` both speak through the
+  // door). On a surface that is another principal's (§4), it says who, by username.
   const where = viaOf(e)?.service ?? "terminal";
-  const sender = e.envelope.sender;
-  const who = sender?.address
-    ? (await deps.nameOf?.(sender.address)) ?? sender.name ?? sender.address
-    : sender?.name ?? "you";
-  return [
-    { type: "text", kind: "text", text: `\`[${w.via(who, where)}]\` ${text}` },
-    ...parts.filter((p) => p.type === "file"),
+  const by = e.envelope.sender?.address;
+  return (a) => [
+    {
+      type: "text",
+      kind: "text",
+      text: `\`[${w.via(where, by && by !== a.principal ? by : undefined)}]\`${
+        words ? ` ${words}` : ""
+      }`,
+    },
+    ...files,
   ];
+}
+
+/** The handle of the card a principal's line quotes, if it quotes one: a mind row `ref_id`
+ *  can name (the door's line, a surface reply joined at fan-in). */
+async function quotedHandle(
+  read: MirrorDeps["read"],
+  m: MessageEvent,
+): Promise<string | undefined> {
+  const ref = m.payload?.ref_id;
+  if (!ref) return undefined;
+  const [card] = await read({
+    conversation: m.envelope.conversation.address,
+    types: ["permission_request"],
+    limit: 1,
+    filter: (x) => x.id === ref,
+  });
+  return card ? shortId(card.payload!.ref_id as EventId) : undefined;
 }
 
 /** `send(to: …)` → `**send**(to: …)` — the tool name in bold. Common markdown, like every

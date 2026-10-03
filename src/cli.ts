@@ -38,7 +38,13 @@ export const USAGE = "usage: liquen cli [--dir <org>] [--agent <name>] [--sessio
 /** `/y` · `/n` · `/cancel`, said through the door as the REPL says them: the cards answered
  *  are the ones still open in the session, and the answer is the exit code — 0 said, 1 the
  *  door refused, 2 nothing to answer or not a verdict. */
-async function steer(w: Wire, line: string, session: string, open: string[]): Promise<number> {
+async function steer(
+  w: Wire,
+  line: string,
+  session: string,
+  open: string[],
+  username: string,
+): Promise<number> {
   if (line === "/cancel") {
     const r = await w.request({ op: "control", kind: "cancel", session });
     if (!r.ok) console.error(String(r.error));
@@ -50,22 +56,21 @@ async function steer(w: Wire, line: string, session: string, open: string[]): Pr
     console.error(a);
     return 2;
   }
-  let code = 0;
-  for (const ref of a.refs) {
-    const r = await w.request({
-      op: "permission_response",
-      ref_id: ref,
-      verdict: a.verdict,
-      session,
-    });
-    if (r.ok) {
-      console.log(`${a.verdict.behavior === "allow" ? "allowed" : "denied"} ${shortId(ref)}`);
-    } else {
-      console.error(`${shortId(ref)}: ${r.error}`);
-      code = 1;
-    }
+  const r = await w.request({
+    op: "permission_response",
+    refs: a.refs,
+    verdict: a.verdict,
+    text: line,
+    sender: { address: username, name: username },
+    session,
+  });
+  if (!r.ok) {
+    console.error(String(r.error));
+    return 1;
   }
-  return code;
+  const said = a.verdict.behavior === "allow" ? "allowed" : "denied";
+  for (const ref of a.refs) console.log(`${said} ${shortId(ref)}`);
+  return 0;
 }
 
 await entry(async () => {
@@ -156,7 +161,7 @@ await entry(async () => {
   }
   if (steers) {
     leaving = true;
-    const code = await steer(w, instruction, session, t.open ?? []);
+    const code = await steer(w, instruction, session, t.open ?? [], a.username);
     conn.close();
     Deno.exit(code);
   }

@@ -45,7 +45,8 @@ const TONGUES = {
         location: "location",
       },
     },
-    via: (who: string, where: string) => `${who} via ${where}`,
+    // where a principal's line was typed, and by whom when the surface is someone else's
+    via: (where: string, who?: string) => who ? `${who} via ${where}` : `via ${where}`,
     // the word a presence line carries for each delta (§9): the surface's, not the log's
     presence: { thinking: "agent thinking...", checkpoint: "agent compacting..." } as Record<
       DeltaKind,
@@ -80,7 +81,7 @@ const TONGUES = {
         location: "ubicación",
       },
     },
-    via: (who: string, where: string) => `${who} por ${where}`,
+    via: (where: string, who?: string) => who ? `${who} por ${where}` : `por ${where}`,
     presence: { thinking: "agente pensando...", checkpoint: "agente compactando..." },
   },
 };

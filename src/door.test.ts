@@ -24,6 +24,7 @@ import { NOTHING, scoped } from "./policy.ts";
 import { type AgentConfig, xi } from "./xi.ts";
 import { scripted } from "./testing.ts";
 import { textOf } from "./render.ts";
+import { lineOf } from "./describe.ts";
 import type {
   ControlEvent,
   Draft,
@@ -37,6 +38,26 @@ import type {
 } from "./types.ts";
 
 const AGENT = { agentId: "ana", sessionId: "mind" };
+
+/** The card the harness raises in ana's mind for one use. */
+function cardFor(use: string): Draft<PermissionRequestEvent> {
+  return {
+    ts: new Date().toISOString(),
+    type: "permission_request",
+    payload: { ref_id: use },
+    agent: { id: "ana", session_id: "mind" },
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "mind@ana" },
+    },
+    parts: [{
+      type: "data",
+      kind: "permission_request",
+      data: { tool: "send", detail: "send(to: Lucas, text: dale)" },
+    }],
+  } as Draft<PermissionRequestEvent>;
+}
 
 async function up(policy?: Parameters<typeof scoped>[1]) {
   const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
@@ -236,18 +257,40 @@ Deno.test({
       await client.settle(() => client.events.length >= 1);
       assertEquals(client.events[0].id, msg.id);
 
-      // permission_response: the verdict lands referencing the gated use
-      const pr = await client.request({
+      // permission_response: the line that answered and the verdict on the gated use land
+      // together, the line first, quoting the card it answers
+      const card = await log.publish(cardFor("01USE"));
+      const verdict = {
         op: "permission_response",
-        ref_id: msg.id, // any referent works for the door's own contract
+        refs: ["01USE"],
         verdict: { behavior: "allow", scope: "once" },
-      });
+        text: "/y",
+        sender: { address: "matias", name: "matias" },
+      };
+      const pr = await client.request(verdict);
       assertEquals(pr.ok, true);
       const [resp] = await log.read({
         types: ["permission_response"],
       }) as PermissionResponseEvent[];
-      assertEquals(resp.payload.ref_id, msg.id);
+      assertEquals(resp.payload.ref_id, "01USE");
       assertEquals(resp.parts[0].data, { behavior: "allow", scope: "once" });
+      const line = (await log.read({ types: ["message"] })).at(-1) as MessageEvent;
+      assertEquals(line.id, pr.id);
+      assert(line.id < resp.id);
+      assertEquals(textOf(line), "/y");
+      assertEquals(line.payload?.ref_id, card!.id);
+      assertEquals(line.payload?.turn_id, undefined);
+      assertEquals(line.envelope.sender, { address: "matias", name: "matias" });
+      // a card no longer waiting is refused, and nothing lands
+      const again = await client.request(verdict);
+      assertEquals(again.ok, false);
+      assertMatch(String(again.error), /is waiting/);
+      assertEquals((await log.read({ types: ["permission_response"] })).length, 1);
+      // and a verdict always comes with the line that gave it
+      for (const bad of [{ text: undefined }, { text: "" }, { refs: [] }, { refs: "01USE" }]) {
+        const r = await client.request({ ...verdict, ...bad });
+        assertEquals(r.ok, false, `refused: ${JSON.stringify(bad)}`);
+      }
 
       client.conn.close();
     } finally {
@@ -264,8 +307,9 @@ Deno.test({
     const { dir, log, down } = await up();
     try {
       const client = await rawClient(dir);
+      await log.publish(cardFor("01USE"));
       const answer = (verdict: unknown) =>
-        client.request({ op: "permission_response", ref_id: "01USE", verdict });
+        client.request({ op: "permission_response", refs: ["01USE"], verdict, text: "/n" });
       for (
         const bad of [
           { behavior: "maybe", scope: "once" },
@@ -833,6 +877,55 @@ Deno.test({
       assertStringIncludes(String(refused.error), "positive integer");
 
       for (const c of [client, next, few, other, bare, bad]) c.conn.close();
+    } finally {
+      await down();
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a recall carries every row the live screen drew — a voice note, a thumb on a card",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { dir, log, down } = await up();
+    try {
+      /** A principal's row as the mirror copies one in from WhatsApp. */
+      const copied = (parts: MessageEvent["parts"], payload?: MessageEvent["payload"]) =>
+        log.publish(
+          {
+            ts: new Date().toISOString(),
+            type: "message",
+            ...(payload ? { payload } : {}),
+            agent: { id: "ana", session_id: "mind" },
+            envelope: {
+              service: "local",
+              connection_address: "agent",
+              conversation: { address: "mind@ana" },
+              sender: { address: "matias", name: "matias" },
+            },
+            parts,
+            extra: { via: { event: "w1", service: "whatsapp", conversation: "549" } },
+          } satisfies Draft<MessageEvent>,
+        );
+      const card = await log.publish(cardFor("01USE"));
+      await copied([{
+        type: "file",
+        kind: "audio",
+        file: { uri: "file:///a.ogg", mime_type: "audio/ogg" },
+      }]);
+      const thumb = [{ type: "data", kind: "reaction", data: { unicode: "👍" } }] as MessageEvent[
+        "parts"
+      ];
+      await copied(thumb, { ref_id: card!.id, action: "add" });
+      await copied(thumb, { ref_id: card!.id, action: "remove" }); // an un-react draws nothing
+      const client = await rawClient(dir);
+      const opened = await client.request({ op: "tail", recall: 10 });
+      assertEquals(
+        ((opened.recalled ?? []) as Event[]).filter((e) => e.type === "message").map(lineOf),
+        ["[audio]", "👍"],
+      );
+      client.conn.close();
     } finally {
       await down();
     }

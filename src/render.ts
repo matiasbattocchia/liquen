@@ -640,7 +640,7 @@ export function cardsIn(events: Event[]): (ref: EventId | undefined) => boolean 
 }
 
 /** The glyph a reaction carries, on either wire shape (data: open-bsp · text: legacy). */
-function reactionOf(e: MessageEvent): string | undefined {
+export function reactionOf(e: MessageEvent): string | undefined {
   const p = e.parts.find((p) => p.kind === "reaction");
   if (!p) return undefined;
   if (p.type === "data") {

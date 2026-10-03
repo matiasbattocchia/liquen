@@ -26,7 +26,10 @@
  *                                                          → {ok, id, status: "queued"}
  *   message              {op, text, sender?, session?}   → the principal's half of the
  *                                                          complex (no turn_id, §3) → {ok, id}
- *   permission_response  {op, ref_id, verdict, session?} → answers a gate → {ok, id}
+ *   permission_response  {op, refs, verdict, text,  → answers open gates: the line that
+ *                         sender?, session?}          answered (quoting the card when it
+ *                                                     answers one) and a verdict per use,
+ *                                                     together → {ok, id} (the line's)
  *   control              {op, kind, session?}            → the principal's hard stop,
  *                                                          typed: `cancel`
  *                                                          cuts the session's running turn
@@ -67,6 +70,7 @@ import type {
   Draft,
   Effort,
   Event,
+  EventId,
   Json,
   MessageEvent,
   PermissionBehavior,
@@ -78,7 +82,8 @@ import type {
 import type { Log } from "./store/log.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
-import { silent, textOf } from "./render.ts";
+import { shortId, silent } from "./render.ts";
+import { lineOf } from "./describe.ts";
 
 export interface DoorAgent {
   agentId: string;
@@ -374,44 +379,62 @@ async function handle(
     );
     return { ok: true, id: use!.id, status: "queued" };
   }
-  if (req.op === "message") {
-    const text = req.text;
-    if (typeof text !== "string" || text === "") throw new Error("message needs text");
+  // the principal's line (§3): agent.id = whose mind, session_id = entered through the
+  // harness, signed by whoever the request says. No turn_id, ever: that is the model's
+  // mark, and its absence is what keeps this row input — one complex, two halves, told
+  // apart by turn_id alone.
+  const line = (text: string, payload?: { ref_id: EventId }): Draft<MessageEvent> => {
     const sender = (req.sender ?? {}) as { address?: unknown; name?: unknown };
     const address = typeof sender.address === "string" && sender.address
       ? sender.address
       : agent.agentId;
-    const msg = await port.publish(
-      {
-        ts: new Date().toISOString(),
-        type: "message",
-        // the principal's stamp (§3): agent.id = whose mind, session_id = entered through
-        // the harness. No turn_id, ever: that is the model's mark, and its absence is what
-        // keeps this row input — one complex, two halves, told apart by turn_id alone.
-        agent: { id: agent.agentId, session_id: session },
-        envelope: {
-          ...envelope,
-          sender: { address, name: typeof sender.name === "string" ? sender.name : address },
-        },
-        parts: [{ type: "text", kind: "text", text }],
-      } satisfies Draft<MessageEvent>,
-    );
+    return {
+      ts: new Date().toISOString(),
+      type: "message",
+      ...(payload ? { payload } : {}),
+      agent: { id: agent.agentId, session_id: session },
+      envelope: {
+        ...envelope,
+        sender: { address, name: typeof sender.name === "string" ? sender.name : address },
+      },
+      parts: [{ type: "text", kind: "text", text }],
+    };
+  };
+  if (req.op === "message") {
+    const text = req.text;
+    if (typeof text !== "string" || text === "") throw new Error("message needs text");
+    const msg = await port.publish(line(text));
     return { ok: true, id: msg!.id };
   }
   if (req.op === "permission_response") {
-    const ref = req.ref_id;
-    if (typeof ref !== "string" || ref === "") throw new Error("permission_response needs ref_id");
+    const refs = req.refs;
+    if (!Array.isArray(refs) || refs.length === 0 || refs.some((r) => typeof r !== "string")) {
+      throw new Error("permission_response needs refs, the uses it answers");
+    }
+    const text = req.text;
+    if (typeof text !== "string" || text === "") {
+      throw new Error("permission_response needs text, the line that answered");
+    }
     const verdict = verdictOf(req.verdict);
-    const res = await port.publish(
-      {
+    const open = await port.gates({ agentId: agent.agentId, sessionId: session });
+    const cards = refs.map((ref) => open.find((c) => c.payload.ref_id === ref));
+    const stale = refs.find((_, i) => cards[i] === undefined);
+    if (stale !== undefined) throw new Error(`no card ${shortId(stale)} is waiting`);
+    // the line and its verdicts land together, the line first: it is how the room — a
+    // recall, a mirrored surface — reads who answered, when, and with what. A line that
+    // answers one card quotes it, as a surface's reply would; the gate reads a quoted
+    // card already settled as spent, so the line is never answered twice.
+    const [said] = await port.publish([
+      line(text, cards.length === 1 ? { ref_id: cards[0]!.id } : undefined),
+      ...refs.map((ref): Draft<PermissionResponseEvent> => ({
         ts: new Date().toISOString(),
         type: "permission_response",
-        payload: { ref_id: ref },
+        payload: { ref_id: ref as EventId },
         envelope,
         parts: [{ type: "data", kind: "permission_response", data: verdict }],
-      } satisfies Draft<PermissionResponseEvent>,
-    );
-    return { ok: true, id: res!.id };
+      })),
+    ]);
+    return { ok: true, id: said.id };
   }
   if (req.op === "control") {
     if (!CONTROLS.includes(req.kind as ControlKind)) {
@@ -506,8 +529,9 @@ async function recap(
     types: [...RECALLED],
     silenced: false,
     limit: Math.min(limit, MAX_RECALL),
-    // the emptiness test is a MESSAGE's: a data row carries no text and is not blank for it
-    filter: (e) => e.type !== "message" || (!silent(e) && textOf(e) !== ""),
+    // the emptiness test is a MESSAGE's, and it is the surface's own: a row recalled is a
+    // row the live screen drew — an audio, a pin, a thumb on a card all draw one
+    filter: (e) => e.type !== "message" || (!silent(e) && lineOf(e) !== ""),
   });
 }
 

@@ -605,7 +605,8 @@ export { parseVerdict, reactionVerdict } from "./render.ts"; // the steering voc
  * To answer one of several they QUOTE it, which is what a chat app is for. The mirror
  * translates the quote at fan-in — the alias conversation is invisible to this port
  * (policy §6), so the join happens where visibility lives: the copy's `ref_id` names the
- * card event itself, and `ref_external_id` survives as the mark that they quoted at all.
+ * card event itself. A line the door logged beside its own verdicts quotes its card the
+ * same way, and finds it settled — said already, so it says nothing.
  *
  * No verdict ever falls silently: a bare word against several cards, or a quote pointing at a
  * card already answered, comes back as a harness `error` the mirror carries. Said ONCE — the
@@ -661,9 +662,7 @@ function gateVerdict(
     if (said.every) return spoken ? [] : live.map(response);
     // a quote that hits no card at all (they replied to something else) is no quote: fall
     // back to the bare rule rather than dropping their word on the floor
-    const quoted = (e.payload?.ref_external_id
-      ? cards.find((c) => c.id === e.payload?.ref_id)
-      : undefined) ??
+    const quoted = cards.find((c) => c.id === e.payload?.ref_id) ??
       (live.length === 1 ? last : AMBIGUOUS);
     if (quoted === AMBIGUOUS) return spoken ? [] : [ambiguity(live.length, hereEnv)];
     if (!quoted || quoted.id > e.id) break; // answered before it was ever asked (ids are append order, §3)

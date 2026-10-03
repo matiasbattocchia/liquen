@@ -5145,3 +5145,31 @@ as a connection that died while the machine slept, and nu retries it.
 to bound the half-open connection the clock cannot see (a network change, a NAT that
 forgot), and it outlasts any one tool call the output cap allows: at Google's 400 tok/s, a
 64k-token call is 160 s of quiet.
+
+### A verdict stands under the line that gave it (2026-10-03) — LANDED
+
+In `../new`, a card answered from WhatsApp read `2 Oct 17:36 ❯ [via whatsapp] /y conv`
+then `— 2c1f1a allowed for this conversation`; one answered at the REPL read only
+`— bbc24a allowed once`, with no time and no hand. The door's verdict op logged the
+verdict alone, so the REPL's typed `/y` lived only on that screen, and WhatsApp heard of
+the approval only through the outcome's JSON.
+
+- **The door logs the line with its verdicts.** `permission_response` takes `{refs,
+  verdict, text, sender}` and appends the principal's line and one verdict per use in one
+  publish, the line first. A line answering one card quotes it (`ref_id` = the card); a
+  ref with no open card is refused. The gate reads a quote off `ref_id` alone now, so it
+  finds that card settled and says nothing. The REPL and `liquen cli` speak it.
+- **The REPL reopens as it was.** The recall keeps every row the live screen drew
+  (`lineOf`, describe.ts, shared by both): a voice note, an uncaptioned image, a pin, a
+  thumb on a card, which `70965ce`'s `[audio]` line lost on reopen. A reaction paints as
+  its glyph: `❯ [via whatsapp] 👍`, then the verdict row.
+- **The mirror carries verdict lines.** A `/y` typed at the terminal crosses as
+  `[por terminal] /y`, a thumb as `[por whatsapp] 👍`, each quoting the card's crossing
+  on that surface; the handle a terminal line names the card by is dropped, since the
+  quote says it. The tag names the sender by username only on a surface that is another
+  principal's. A principal's file without words crosses too.
+- **The `→ <address>: text` row is gone.** A send's row in another conversation repeated
+  its `⚙` row, by raw address, and no recall reached it.
+
+Open: a lapse reaches a surface only as the deferred outcome, worded for the model ("Make
+it again if it is still worth doing"), and an allowed send's outcome is raw JSON there.

@@ -22,9 +22,20 @@
  * the anchor's pending list, the mirror's tool line.
  */
 
-import type { Carried, Conversation, Event, Json, SendPreview, ToolCall } from "./types.ts";
+import type {
+  Carried,
+  Conversation,
+  Event,
+  Json,
+  LocationPart,
+  RoomPart,
+  SendPreview,
+  ToolCall,
+} from "./types.ts";
 import type { Reader } from "./store/log.ts";
 import { clipEnd } from "./exec/truncate.ts";
+import { textOf } from "./render.ts";
+import { roomWords } from "./room.ts";
 
 /** An addressed argument → who it reaches: the name a human knows them by, the address
  *  the call will actually land on, and the conversation's kind. Resolution needs a
@@ -165,6 +176,29 @@ const CARRIED: Record<Carried, CarriedWord> = {
 /** What a carried thing is called — the key a tongue's `carried` labels are read under,
  *  and itself the English word. */
 export const carriedWord = (c: Carried): CarriedWord => CARRIED[c];
+
+/** A message as one line, the way a principal's surface shows it: what it carried that is
+ *  not words (`[audio]`, `[image]`, `[location]`) ahead of every word it has — text,
+ *  captions, a pin's label — a room's change in words, and a reaction as its glyph. A
+ *  voice note's transcript is a row of its own, so it reads as the line that follows; an
+ *  un-react says nothing. Empty ⇒ the row draws no line, here or in a recall. */
+export function lineOf(e: Event): string {
+  const things: string[] = [];
+  const said = [textOf(e)];
+  for (const p of e.parts ?? []) {
+    if (p.type === "file") things.push(`[${carriedWord(p.kind)}]`);
+    else if (p.type === "data" && p.kind === "location") {
+      things.push(`[${carriedWord("location")}]`);
+      const pin = (p as LocationPart).data;
+      said.push(pin.name ?? pin.address ?? "");
+    } else if (p.type === "data" && p.kind === "room") said.push(roomWords(p as RoomPart));
+    else if (p.type === "data" && p.kind === "reaction" && e.payload?.action !== "remove") {
+      const d = p.data as { unicode?: string; name?: string } | null;
+      said.push(d?.unicode ?? d?.name ?? "");
+    }
+  }
+  return [...things, ...said].filter((t) => t !== "").join(" ");
+}
 
 /** `k: v, k: v` over the arguments that carry something — except when there is exactly one
  *  string argument, which prints bare: for a one-argument tool the value IS the call, and

@@ -22,7 +22,8 @@
  * The transcript is append-only: a row, once written, is a fact about what happened, and
  * only the row being written may still change. So an approval is two rows, each written
  * when its event arrives — the ask (`?`, named by the handle the agent and `cancel(id)`
- * use) and, later, the answer (`—`) — and a recap of a window prints exactly the rows the
+ * use) and, later, the answer (`—`), under the principal's line that gave it (`❯ /y`,
+ * `❯ [via whatsapp] 👍`) when a principal gave it — and a recap of a window prints exactly the rows the
  * live screen printed for it. Whatever is true only for now — which cards are open, what
  * can be typed to answer them — is the surface's to show on its own line, never a row.
  *
@@ -42,38 +43,17 @@ import {
   silent,
   textOf,
 } from "./render.ts";
-import { carriedWord, describeCall } from "./describe.ts";
+import { describeCall, lineOf } from "./describe.ts";
 import { markdown, renderMarkdown } from "./md.ts";
 import type {
   Delta,
   Event,
   EventId,
-  LocationPart,
   PermissionRequestEvent,
   PermissionResponseEvent,
-  RoomPart,
   SessionRef,
   ToolResultEvent,
 } from "./types.ts";
-import { roomWords } from "./room.ts";
-
-/** A message as one painted line: what it carried that is not words, as the send card
- *  names it (`[audio]`, `[image]`, `[location]`) ahead of every word it has — text,
- *  captions, a pin's label — and a room's change in words. A voice note's transcript is a
- *  row of its own, so it paints as the line that follows. */
-const lineOf = (e: Event): string => {
-  const things: string[] = [];
-  const said = [textOf(e)];
-  for (const p of e.parts) {
-    if (p.type === "file") things.push(`[${carriedWord(p.kind)}]`);
-    else if (p.type === "data" && p.kind === "location") {
-      things.push(`[${carriedWord("location")}]`);
-      const pin = (p as LocationPart).data;
-      said.push(pin.name ?? pin.address ?? "");
-    } else if (p.type === "data" && p.kind === "room") said.push(roomWords(p as RoomPart));
-  }
-  return [...things, ...said].filter((t) => t !== "").join(" ");
-};
 import { tailOf } from "./line.ts";
 
 export const DIM = "\x1b[2m";
@@ -192,22 +172,19 @@ export function painter(s: Surface): Painter {
           return;
         }
         if (via) return; // an alias CC is plumbing — its mind original already painted
-        if (e.envelope.conversation.address === s.home) {
-          // the message is published: whatever `say` is still holding is the sentinel —
-          // which is never a word, even after words — or the tail of a reply that ended
-          // mid-word. Either way this turn is over; one that said nothing leaves the
-          // screen as it found it, or an idle hour would be a column of blank lines.
-          if (!silent(e) && held !== "" && held.trim() !== SILENCE) show(held);
-          held = "";
-          const spoke = block !== "none";
-          settle();
-          if (spoke) s.gap(); // the body itself already streamed; this closes it off
-        } else if (text !== "") {
-          settle();
-          s.gap();
-          s.write(`${stamp(e.ts)}${CYAN}→ ${e.envelope.conversation.address}:${RESET} ${text}`);
-          s.prompt();
-        }
+        // a row the agent wrote into another conversation is a send's own: the call that
+        // made it already stands on screen as its `⚙` row, and a recall of this room
+        // never reaches it
+        if (e.envelope.conversation.address !== s.home) return;
+        // the message is published: whatever `say` is still holding is the sentinel —
+        // which is never a word, even after words — or the tail of a reply that ended
+        // mid-word. Either way this turn is over; one that said nothing leaves the
+        // screen as it found it, or an idle hour would be a column of blank lines.
+        if (!silent(e) && held !== "" && held.trim() !== SILENCE) show(held);
+        held = "";
+        const spoke = block !== "none";
+        settle();
+        if (spoke) s.gap(); // the body itself already streamed; this closes it off
         return;
       }
       case "tool_use": {

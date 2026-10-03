@@ -135,6 +135,7 @@ async function scenario(
     calls: () => number;
     read: (type?: Event["type"]) => Promise<Event[]>;
     publish: (e: Draft<Event>) => Promise<Event>;
+    publishAll: (es: Draft<Event>[]) => Promise<Event[]>; // one append, as the door makes it
     preloaded: Event[]; // as STORED — the store minted their ids (§3)
   }) => Promise<void>,
   config: Partial<AgentConfig> = {},
@@ -163,6 +164,7 @@ async function scenario(
       calls,
       read: (type?: Event["type"]) => log.read(type ? { types: [type] } : undefined),
       publish: (e) => log.publish(e) as Promise<Event>, // scenario drafts always store
+      publishAll: (es) => log.publish(es),
       preloaded,
     });
   } finally {
@@ -2746,10 +2748,76 @@ Deno.test("the gate answers from a surface: the principal's own /y and /n settle
   );
 });
 
+Deno.test("two cards open: a terminal's /y lands with its verdict, and the other card stays open", async () => {
+  // the door's shape: the line the principal typed, quoting the card it answers, and the
+  // verdict on that card's use — one append. The gate reads the line as the latest word
+  // and finds its card settled: said already. The other card is the only one open, and a
+  // bare word would answer it — this one never does.
+  await scenario(
+    [
+      ok([
+        { kind: "tool_use", name: "send", input: { to: "wa:a", text: "uno", connection: "wa" } },
+        { kind: "tool_use", name: "send", input: { to: "wa:b", text: "dos", connection: "wa" } },
+      ], "tool_use"),
+      ok([], "end_turn"),
+      ok([], "end_turn"),
+    ],
+    async ({ publish, publishAll, read }) => {
+      const env = {
+        service: "local",
+        connection_address: "agent",
+        conversation: { address: "mind@a1" },
+      } as const;
+      await publish({
+        ts: new Date().toISOString(),
+        type: "message",
+        agent: { id: "a1", session_id: "mind" },
+        envelope: { ...env, sender: { address: "matias", name: "matias" } },
+        parts: [{ type: "text", kind: "text", text: "mandá los dos" }],
+      } as Draft<Event>);
+      await waitFor(async () => (await read("permission_request")).length === 2);
+      const cards = await read("permission_request");
+      const use = cards[1].payload!.ref_id as string;
+      await publishAll([
+        {
+          ts: new Date().toISOString(),
+          type: "message",
+          payload: { ref_id: cards[1].id },
+          agent: { id: "a1", session_id: "mind" },
+          envelope: { ...env, sender: { address: "matias", name: "matias" } },
+          parts: [{ type: "text", kind: "text", text: `/y ${shortId(use)}` }],
+        },
+        {
+          ts: new Date().toISOString(),
+          type: "permission_response",
+          payload: { ref_id: use },
+          envelope: env,
+          parts: [{
+            type: "data",
+            kind: "permission_response",
+            data: { behavior: "allow", scope: "once" },
+          }],
+        },
+      ] as Draft<Event>[]);
+      await waitFor(async () =>
+        (await read("message")).some((e) => e.envelope.conversation.address === "wa:b")
+      );
+      await new Promise((r) => setTimeout(r, 250)); // quiescence
+      assertEquals((await read("permission_response")).length, 1);
+      assertEquals((await read("error")).length, 0);
+      assertEquals(
+        (await read("message")).filter((e) => e.envelope.conversation.address === "wa:a").length,
+        0,
+      );
+    },
+    { gate: (name) => name === "send" ? "ask" : "allow" },
+  );
+});
+
 Deno.test("two cards open: a bare /y settles nothing, the quoted one settles its own", async () => {
   // a quoted /y arrives as the mirror writes it: `ref_id` already TRANSLATED to the card
   // event (the join happens at fan-in, where visibility lives — the alias conversation is
-  // hidden from xi's port), `ref_external_id` surviving as the they-quoted mark
+  // hidden from xi's port)
   const says = (text: string, quote?: string): Draft<MessageEvent> => ({
     ts: new Date().toISOString(),
     type: "message",
