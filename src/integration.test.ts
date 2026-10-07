@@ -2070,7 +2070,8 @@ Deno.test("recovery: a stale lock (crashed holder) → pending uses swept, then 
     const [swept] = await log.read({ types: ["tool_result"] });
     assert(swept.type === "tool_result");
     assertEquals(swept.payload.ref_id, use.id);
-    assertEquals(swept.parts[0].data.cancelled, true); // swept, NOT re-run — state unknown
+    // swept, NOT re-run — state unknown
+    assertEquals(swept.parts[0].data, { output: "orphaned by a crashed turn", is_error: true });
     await waitFor(() => calls() >= 1); // the completed barrier then owes the closing think
   } finally {
     await main.stop();

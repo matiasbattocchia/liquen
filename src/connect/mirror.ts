@@ -447,7 +447,7 @@ const same = (parts: Part[]): CC => () => parts;
  *  for what the harness says there: a failure, a wake, a cut turn. Null ⇒ nothing to say
  *  there: a checkpoint (the presence line said the mind was compacting), a result that
  *  went fine, an approved call's included (the card asked for it, the `/y` gave it), a
- *  call refused (its `/n` said so), a settlement (the line that gave it said so; its row
+ *  call refused (its `/n` said so) or cut (its `/cancel` said so), a settlement (the line that gave it said so; its row
  *  — handle, lapse and withdrawal all — is the terminal's). */
 async function ccParts(
   e: Event,
@@ -470,9 +470,10 @@ async function ccParts(
   if (e.type === "tool_result") {
     // a call says itself as it is made, so only a failure speaks again — the REPL's `✗`,
     // in the tool's own words; an approved call's names the call, its row long gone. A
-    // call refused never ran: the line that refused it crossed already.
-    const { is_error, refused } = e.parts[0].data;
-    if (!is_error || refused) return null;
+    // call refused never ran: the line that refused it crossed already, as did the
+    // `/cancel` that cut one.
+    const { is_error, refused, cancelled } = e.parts[0].data;
+    if (!is_error || refused || cancelled) return null;
     const said = e.payload.deferred ? failedCallOf(e) : failureOf(e);
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${said}` }]);
   }

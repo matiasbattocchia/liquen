@@ -622,7 +622,8 @@ Deno.test("a fired wake paints its note, live and reopened alike", () => {
 
 // a refusal reads as the principal's `/n` and the row under it: their reason is their line,
 // and the call it refused never ran, so no outcome follows. A cut turn reads as their
-// `/cancel` — a Ctrl-C, typed nowhere, included — and nothing under it: the row is the cut.
+// `/cancel` — a Ctrl-C, typed nowhere, included — and nothing under it: the row is the cut,
+// and the call it stopped mid-run draws no failure.
 Deno.test("a /n and a /cancel read as the principal's lines, live and reopened alike", () => {
   const TS = "2026-10-02T16:42:59Z";
   const env = { service: "local", connection_address: "agent", conversation: { address: HOME } };
@@ -656,6 +657,32 @@ Deno.test("a /n and a /cancel read as the principal's lines, live and reopened a
       }],
     },
     {
+      id: "u2",
+      ts: "2026-10-02T16:44:00Z",
+      type: "tool_use",
+      payload: { turn_id: "t2" },
+      agent: { id: AGENT, session_id: "mind" },
+      envelope: env,
+      parts: [{
+        type: "data",
+        kind: "tool_use",
+        data: { name: "bash", input: { command: "sleep 60" } },
+      }],
+    },
+    {
+      id: "r2",
+      ts: "2026-10-02T16:45:00Z",
+      type: "tool_result",
+      payload: { ref_id: "u2", turn_id: "t2" },
+      agent: { id: AGENT, session_id: "mind" },
+      envelope: env,
+      parts: [{
+        type: "data",
+        kind: "tool_result",
+        data: { output: "killed", is_error: true, cancelled: true },
+      }],
+    },
+    {
       id: "c1",
       ts: "2026-10-02T16:45:00Z",
       type: "control",
@@ -674,7 +701,7 @@ Deno.test("a /n and a /cancel read as the principal's lines, live and reopened a
   assertEquals(
     seen.trimEnd(),
     "2 Oct 13:42 ❯ /n en este caso Emi es un contacto\n— bbc24a refused once\n\n" +
-      "2 Oct 13:45 ❯ /cancel",
+      "⚙ bash(sleep 60)\n\n2 Oct 13:45 ❯ /cancel",
   );
 });
 

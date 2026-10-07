@@ -405,9 +405,9 @@ before acquiring would run a duplicate turn.
   A returning zombie can neither release the lease its successor works under nor land its
   turn's events (`LeaseLost` — dropped loudly), because that successor is already redoing the
   same window and two turns publishing one window is what the lock exists to prevent. Act
-  then **sweeps** pending uses (cancelled results) instead
+  then **sweeps** pending uses (error results: "orphaned by a crashed turn") instead
   of blindly re-running tools whose side-effects may already have happened — the model
-  sees the cancellations and re-decides. A cleanly released lock over pending uses means
+  sees them and re-decides. A cleanly released lock over pending uses means
   nothing crashed: just run them. At boot, main simply invokes every agent once — whatever
   the log owes, unprompted. (A failed think leaves a trailing `error`, and `decide` reads that
   as nothing owed; the next message or alarm retries — idle-after-error is intended.)
@@ -490,7 +490,9 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     door's `control` verb (the REPL's Ctrl-C while the session is busy, or `/cancel`) —
     fires the running turn's interrupt, which the turn lease carries. What it cuts depends on where the turn is: a **think** has its model request aborted and
     answers nothing; an **act** has its running tools killed (bash: the whole process
-    group) and writes **cancelled tool_results** (count toward barriers, `cancelled: true`).
+    group) and writes **cancelled tool_results** (count toward barriers, `cancelled: true`):
+    the model reads what each said, and a principal's surface draws none of them — the
+    `/cancel` above them says why they stopped.
     The principal's row is the whole of the cut — the one row that says what they wanted,
     and the harness adds no word of its own. Landing, it fires the interrupt; standing, it
     closes the turn: while nothing but the cut turn's own rows (its tools' results, a
@@ -1549,7 +1551,8 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   order (not a timeline after the per-conversation partition) and they broke `<conv>`
   clustering. One fact per line. **`<system kind="…">` elements** are plain text likewise:
   they precede what they mark, so they can't be (trailing-only) system blocks. The kind is
-  which word the harness is saying — `error`, `cancelled`, `wake`, `outcome`. Every voice
+  the type of the event the harness is saying it for — `error`, `control`, `alarm`,
+  `tool_result`. Every voice
   in the user role wears a tag render writes and escapes — `<conv>`, `<principal>`,
   `<system>`, `<checkpoint>` — so a peer who types one into a message gets it back as
   text, and the harness's word cannot be forged from the world.

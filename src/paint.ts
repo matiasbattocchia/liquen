@@ -208,9 +208,10 @@ export function painter(s: Surface): Painter {
       }
       case "tool_result": {
         // only a failure speaks: a call that went fine did what its row says, an approved
-        // one what its card asked, and a refused one never ran — its verdict said so
-        const { is_error, refused } = e.parts[0].data;
-        if (!is_error || refused) return;
+        // one what its card asked, a refused one never ran — its verdict said so — and a
+        // cut one stopped because the principal's `/cancel` said so
+        const { is_error, refused, cancelled } = e.parts[0].data;
+        if (!is_error || refused || cancelled) return;
         if (e.payload.deferred) {
           // an approved call's failure lands long after its row scrolled by: a block of its
           // own, naming the call
@@ -338,8 +339,8 @@ export function painter(s: Surface): Painter {
         case "tool_result": {
           // a failure, as live: a deferred one answers a call from another turn and stands
           // alone; an ordinary one belongs to the call right above it
-          const { is_error, refused } = e.parts[0].data;
-          if (!is_error || refused) continue;
+          const { is_error, refused, cancelled } = e.parts[0].data;
+          if (!is_error || refused || cancelled) continue;
           if (e.payload.deferred) {
             gap();
             put(`${RED}${deferredFailure(e)}${RESET}`);

@@ -8,7 +8,7 @@
  *   • release when the work's events are published (write before release)
  *   • a crashed holder releases by TTL — the next acquire STEALS the stale lock, and
  *     reports it: a steal means the previous work's state is unknown, so the stealer
- *     sweeps pending tool uses (cancelled results) instead of blindly re-running them
+ *     sweeps pending tool uses (error results) instead of blindly re-running them
  *
  * TWO STAMPS, because the row answers two questions. `born` is WHO holds it: minted once
  * per acquisition, at random — two acquisitions in one millisecond are still two holders,

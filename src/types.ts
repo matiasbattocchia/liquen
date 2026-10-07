@@ -411,6 +411,8 @@ export interface ToolCall {
 export interface ToolOutput {
   output: Json;
   is_error?: boolean;
+  /** The call was cut mid-run by the principal's `/cancel`. The model reads what it said;
+   *  a principal's surface already shows the `/cancel`. */
   cancelled?: boolean;
   /** The call never ran: its gate said no — a principal's `/n`, a lapse, the agent's own
    *  withdrawal. The model reads why; a principal's surface already shows the verdict. */

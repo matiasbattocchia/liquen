@@ -16,7 +16,7 @@
  * coalescing (N invocations during one turn all bounce off the lock and the last window read
  * sees everything). WHAT is owed — pending tools, an unclosed chain, unanswered messages — is
  * derived from the log, so every invocation does the right work. A stolen lock (TTL expired — the previous holder crashed) turns act's execute into a
- * sweep: pending uses get cancelled results instead of a blind re-run of tools whose
+ * sweep: pending uses get error results instead of a blind re-run of tools whose
  * side-effects may already have happened; the model sees the cancellations and re-decides.
  *
  * xi is the harness's sole contact with the log — the only reader (the window, `search`,
@@ -1516,9 +1516,7 @@ async function act(
     if (stolen) {
       // the previous holder crashed mid-act: execution state unknown — cancel, don't
       // re-run (a send may already have reached the peer); the model re-decides
-      out.push(
-        await resultOf(use, "orphaned by a crashed turn", { is_error: true, cancelled: true }),
-      );
+      out.push(await resultOf(use, "orphaned by a crashed turn", { is_error: true }));
       continue;
     }
     runnable.push({ use });
@@ -1533,14 +1531,7 @@ async function act(
     if (verdict.behavior === "deny") {
       out.push(await resultOf(use, refused(verdict), { is_error: true, refused: true }, call));
     } else if (stolen) {
-      out.push(
-        await resultOf(
-          use,
-          "orphaned by a crashed turn",
-          { is_error: true, cancelled: true },
-          call,
-        ),
-      );
+      out.push(await resultOf(use, "orphaned by a crashed turn", { is_error: true }, call));
     } else {
       runnable.push({ use, call });
     }
@@ -1548,8 +1539,8 @@ async function act(
 
   // the batch runs in parallel — the lock serializes the mind, not the tools (§2). The
   // turn's interrupt is the principal's cancel (§2): a tool it cuts reports `cancelled`,
-  // the same flag the steal-sweep sets, and their row standing behind these results is
-  // what keeps the agent idle instead of narrating what it was told to drop.
+  // and their row standing behind these results is what keeps the agent idle instead of
+  // narrating what it was told to drop.
   out.push(
     ...await Promise.all(runnable.map(async ({ use, call }) => {
       try {

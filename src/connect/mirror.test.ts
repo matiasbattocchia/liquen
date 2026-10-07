@@ -795,6 +795,19 @@ Deno.test("mirror fan-out: a /cancel crosses as the principal's line, and that i
       connection_address: "agent",
       conversation: { address: "mind@ana" },
     };
+    // the call it stopped mid-run: the `/cancel` says why, so its result does not
+    await publish({
+      ts: new Date().toISOString(),
+      type: "tool_result",
+      payload: { ref_id: "u1", turn_id: "t1" },
+      agent: { id: "ana", session_id: "mind" },
+      envelope: env,
+      parts: [{
+        type: "data",
+        kind: "tool_result",
+        data: { output: "killed", is_error: true, cancelled: true },
+      }],
+    } as unknown as Draft<Event>);
     await publish({
       ts: new Date().toISOString(),
       type: "control",
