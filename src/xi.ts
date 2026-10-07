@@ -942,10 +942,12 @@ export async function xi(
   //    after is the stalled-cycle bug: that wake bounces, and nothing wakes again (§2).
   let last: Draft<Event>[];
   try {
-    last = signal.aborted
-      ? [] // cut before it began: the principal's row closes it
-      : v === "act"
+    // a think cut before it began has nothing to answer: the principal's row closes it. An
+    // act still answers its calls, each `cancelled` unrun, so none is left for a later turn
+    last = v === "act"
       ? await act(events, got === "stolen", session, config, gate, ports, signal)
+      : signal.aborted
+      ? []
       : await think(events, config, ports, signal, v);
   } catch (err) {
     await lock.release(); // nothing to pair the release with
@@ -1454,6 +1456,11 @@ async function act(
   //     one, whose answer is `pending_approval`. Asking is part of executing, so the chain
   //     closes and the mind stays free while the principal decides (§9).
   for (const use of pending) {
+    if (signal.aborted) {
+      // cut before it was asked or run: nothing goes to the principal, nothing runs
+      out.push(await resultOf(use, NOT_RUN, { is_error: true, cancelled: true }));
+      continue;
+    }
     const { name, input } = use.parts[0].data;
     // a send AT THE PRINCIPAL is refused before it is gated: the assistant channel already
     // reaches them, so this call has no destination to approve — asking would put a card
@@ -1539,10 +1546,13 @@ async function act(
 
   // the batch runs in parallel — the lock serializes the mind, not the tools (§2). The
   // turn's interrupt is the principal's cancel (§2): a tool it cuts reports `cancelled`,
-  // and their row standing behind these results is what keeps the agent idle instead of
-  // narrating what it was told to drop.
+  // one it reaches first never starts, and their row standing behind these results is what
+  // keeps the agent idle instead of narrating what it was told to drop.
   out.push(
     ...await Promise.all(runnable.map(async ({ use, call }) => {
+      if (signal.aborted) {
+        return await resultOf(use, NOT_RUN, { is_error: true, cancelled: true }, call);
+      }
       try {
         return await resultOf(
           use,
@@ -1573,6 +1583,9 @@ const PENDING_APPROVAL = {
     "Do NOT issue it again; you will be told the outcome when they decide. If it stops " +
     "being worth asking, withdraw it with cancel(id) — your pending list names the id.",
 };
+
+/** What a call the principal's cut reached before it started returns: it never ran. */
+const NOT_RUN = "cancelled by your principal before it ran — the call did NOT run";
 
 type Party = { agentId: string; sessionId: string };
 

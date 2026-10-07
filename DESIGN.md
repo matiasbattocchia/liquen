@@ -490,7 +490,9 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     door's `control` verb (the REPL's Ctrl-C while the session is busy, or `/cancel`) —
     fires the running turn's interrupt, which the turn lease carries. What it cuts depends on where the turn is: a **think** has its model request aborted and
     answers nothing; an **act** has its running tools killed (bash: the whole process
-    group) and writes **cancelled tool_results** (count toward barriers, `cancelled: true`):
+    group), never starts the ones it reaches first — no card asked, nothing run — and
+    writes **cancelled tool_results** for all of them (count toward barriers, `cancelled: true`),
+    so no later turn runs a call the principal stopped:
     the model reads what each said, and a principal's surface draws none of them — the
     `/cancel` above them says why they stopped.
     The principal's row is the whole of the cut — the one row that says what they wanted,

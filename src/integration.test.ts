@@ -2098,6 +2098,46 @@ Deno.test("recovery: a pending use with a cleanly released lock is simply run at
   );
 });
 
+Deno.test("a cut that reaches an act before its calls start answers them unrun, and no later turn runs them", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  let ran = 0;
+  const echo = { ...echoTool, execute: (input: unknown) => (ran++, echoTool.execute(input)) };
+  const { transport } = scripted([
+    ok([{ kind: "tool_use", name: "echo", input: { v: 1 } }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, exec: { echo } };
+  // the principal's interrupt, fired between the lease and the act
+  const cut: XiPorts = {
+    ...ports,
+    log: Object.create(log, {
+      lock: {
+        value: (name: string) =>
+          Object.create(log.lock(name), { signal: { value: () => AbortSignal.abort() } }),
+      },
+    }),
+  };
+  try {
+    await log.publish(principalMsg("hacé algo"));
+    await xi(CONFIG, ports); // the think: the call is made
+    assertEquals((await log.read({ types: ["tool_use"] })).length, 1);
+    await xi(CONFIG, cut); // the act, cut before it began
+    const [result] = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
+    assertEquals(result.parts[0].data.cancelled, true);
+    assertStringIncludes(String(result.parts[0].data.output), "did NOT run");
+    // news wakes the agent: it reads the call answered, and nothing runs it
+    await log.publish(principalMsg("seguís?"));
+    for (let i = 0; i < 4; i++) await xi(CONFIG, ports);
+    assertEquals(ran, 0);
+    assertEquals((await log.read({ types: ["tool_result"] })).length, 1);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("compaction: an over-budget window is checkpointed in the gap after the turn — never before a think (§5)", async () => {
   await scenario(
     [
