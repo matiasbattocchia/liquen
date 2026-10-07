@@ -411,10 +411,3 @@ export const MAIL_GROUPS: string[] = [
 /** The statement that takes `conversation_thread` off the log: a thread is a reply chain
  *  inside its conversation, carried by each message's `ref_external_id` (§3). */
 export const DROP_THREAD = `ALTER TABLE events DROP COLUMN conversation_thread`;
-
-/** The statement that takes the harness's word on a cut off the log: a cut is the
- *  principal's `control` row alone (§2), and a `control` row the harness wrote beside it
- *  would read to the model, and on a reopened screen, as a second one. `control` is the
- *  engine's expression for the payload's `control`. */
-export const DROP_CANCELLED = (control: string): string =>
-  `DELETE FROM events WHERE type = 'control' AND ${control} = 'cancelled'`;

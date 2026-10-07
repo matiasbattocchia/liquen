@@ -76,7 +76,6 @@ import {
   build,
   cutOf,
   type Dialect,
-  DROP_CANCELLED,
   DROP_THREAD,
   eventOf,
   externalOf,
@@ -856,7 +855,6 @@ function migrate(db: DatabaseSync) {
   if (v < 14) migrateV14(db);
   if (v < 15) migrateV15(db);
   if (v < 16) migrateV16(db);
-  if (v < 17) migrateV17(db);
 }
 
 /** Whether the `events` table has a column: a store the current DDL created lacks the ones
@@ -864,14 +862,6 @@ function migrate(db: DatabaseSync) {
 function hasColumn(db: DatabaseSync, name: string): boolean {
   return db.prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = ?").get(name) !==
     undefined;
-}
-
-/** v17 — a cut is the principal's `control` row alone (§2): the harness's `cancelled` goes. */
-function migrateV17(db: DatabaseSync) {
-  writing(db, () => {
-    db.exec(DROP_CANCELLED("json_extract(payload, '$.control')"));
-    db.exec("PRAGMA user_version = 17");
-  });
 }
 
 /** v16 — a thread is a reply chain inside its conversation (§3): `conversation_thread` goes. */

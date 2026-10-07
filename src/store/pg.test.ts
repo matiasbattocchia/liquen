@@ -14,7 +14,6 @@ import { DatabaseSync } from "node:sqlite";
 import { foldName } from "./names.ts";
 import { digits, sameHandle } from "./roster.ts";
 import { routedSession } from "../session.ts";
-import type { Draft, Event } from "../types.ts";
 import { connect } from "./pg/sql.ts";
 import { VERSION } from "./pg/schema.ts";
 import { openPgDocs, type PgDocs } from "./pg/docs.ts";
@@ -243,29 +242,6 @@ if (url === undefined) {
       ]);
       assertEquals(rows[1].payload?.ref_external_id, "mail:me@org.com:m0@org.com");
       await raised.close();
-      // the raise to v8 takes the harness's `cancelled` off: a cut is the principal's row
-      const cut = (control: string, text: string) =>
-        ({
-          ts: "2026-10-02T16:45:00Z",
-          type: "control",
-          payload: { control },
-          envelope: {
-            service: "local",
-            connection_address: "agent",
-            conversation: { address: "mind@a1" },
-          },
-          parts: [{ type: "text", kind: "text", text }],
-        }) as unknown as Draft<Event>;
-      const before = await store.open();
-      await before.publish([cut("cancel", "/cancel"), cut("cancelled", "cancelled")]);
-      await before.close();
-      await sql.unsafe("UPDATE schema_version SET version = 7");
-      const after = await store.open();
-      assertEquals(
-        (await after.read({ types: ["control"] })).map((e) => e.payload?.control),
-        ["cancel"],
-      );
-      await after.close();
       await sql.unsafe("UPDATE schema_version SET version = $1::integer", [VERSION + 1]);
       await assertRejects(() => store.open(), Error, `schema version ${VERSION + 1}`);
     } finally {

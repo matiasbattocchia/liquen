@@ -7,7 +7,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { type Log, openLog } from "./log.ts";
-import type { Draft, Event, MessageEvent } from "../types.ts";
+import type { Draft, MessageEvent } from "../types.ts";
 import { logSuite } from "./suite/log.ts";
 import { sqlite } from "./suite/mod.ts";
 
@@ -286,46 +286,6 @@ Deno.test("migrate v15: every mail thread is a group, a send not yet confirmed i
       teams: "direct",
       whatsapp: "direct",
     });
-  } finally {
-    await log.close();
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-Deno.test("migrate v17: a cut is the principal's control row alone — the harness's `cancelled` beside it goes", async () => {
-  const dir = await Deno.makeTempDir();
-  const first = await openLog(dir);
-  const envelope = {
-    service: "local",
-    connection_address: "agent",
-    conversation: { address: "mind@a1" },
-  };
-  await first.publish([
-    {
-      ts: "2026-10-02T16:45:00.000Z",
-      type: "control",
-      payload: { control: "cancel" },
-      agent: { id: "a1", session_id: "mind" },
-      envelope,
-      parts: [{ type: "text", kind: "text", text: "/cancel" }],
-    },
-    {
-      ts: "2026-10-02T16:45:01.000Z",
-      type: "control",
-      payload: { control: "cancelled" },
-      envelope,
-      parts: [{ type: "text", kind: "text", text: "cancelled by your principal" }],
-    },
-  ] as unknown as Draft<Event>[]);
-  await first.close();
-  const db = new DatabaseSync(`${dir}/log.db`);
-  db.exec("PRAGMA user_version = 16");
-  db.close();
-
-  const log = await openLog(dir); // reopening IS the migration
-  try {
-    const rows = await log.read({ types: ["control"] });
-    assertEquals(rows.map((e) => e.payload?.control), ["cancel"]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
