@@ -547,6 +547,7 @@ const RECALLED = [
   "summary",
   "control",
   "alarm",
+  "error",
 ] as const;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>

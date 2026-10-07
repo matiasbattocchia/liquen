@@ -34,6 +34,7 @@
  */
 
 import {
+  errorTextOf,
   failedCallOf,
   failureOf,
   hhmm,
@@ -49,6 +50,7 @@ import { markdown, renderMarkdown } from "./md.ts";
 import type {
   AlarmEvent,
   Delta,
+  ErrorEvent as HarnessErrorEvent,
   Event,
   EventId,
   PermissionRequestEvent,
@@ -253,7 +255,9 @@ export function painter(s: Surface): Painter {
         return;
       }
       case "error": {
-        s.error(JSON.stringify(e.parts[0]?.data ?? {}));
+        // the harness's own word, its sentence alone — where the surface puts failures
+        settle();
+        s.error(errorTextOf(e));
         return;
       }
       case "control": {
@@ -372,8 +376,13 @@ export function painter(s: Surface): Painter {
           else put(`${stamp(e.ts)}${YOU} ${textOf(e)}`);
           continue;
         }
+        case "error": {
+          gap();
+          put(errorRow(e));
+          continue;
+        }
         default:
-          continue; // thinking · deltas · errors · the substrate: none of them are lines
+          continue; // thinking · deltas · the substrate: none of them are lines
       }
     }
     // one write: the past arrives as a page, not as a line the surface redraws around
@@ -403,6 +412,11 @@ function deferredFailure(e: ToolResultEvent): string {
   return `✗ ${failedCallOf(e)}`;
 }
 
+/** A harness error, recalled: the row the REPL's `error` sink drew for it live. */
+function errorRow(e: HarnessErrorEvent): string {
+  return `${RED}! ${errorTextOf(e)}${RESET}`;
+}
+
 /** A fired wake, as a row: when, and the note the agent left itself when it scheduled it. */
 function alarmRow(e: AlarmEvent, stamp: (ts: string) => string): string {
   return `${stamp(e.ts)}${YELLOW}⏰ ${e.parts[0]?.text ?? ""}${RESET}`;
@@ -410,12 +424,13 @@ function alarmRow(e: AlarmEvent, stamp: (ts: string) => string): string {
 
 /** The answer, as a row of its own: what was decided and how far it reaches, in the
  *  principal's vocabulary. The clock's settlement says so, and why; a principal's reason
- *  is their own line, the row above, and the agent's withdrawal says why it took it back. */
+ *  is their own line, the row above; the agent's withdrawal (`turn_id`: a turn settled it)
+ *  is no verdict at all. */
 function verdictRow(e: PermissionResponseEvent): string {
   const { behavior, scope, reason, lapsed } = e.parts[0].data;
   const handle = shortId(e.payload.ref_id);
   if (lapsed) return `— ${handle} lapsed${reason ? `: ${reason}` : ""}`;
+  if (e.payload.turn_id !== undefined) return `— ${handle} withdrawn by the agent`;
   const reach = scope === "once" ? "once" : scope === "always" ? "always" : `for this ${scope}`;
-  const why = reason && e.payload.turn_id !== undefined ? `: ${reason}` : "";
-  return `— ${handle} ${behavior === "allow" ? "allowed" : "refused"} ${reach}${why}`;
+  return `— ${handle} ${behavior === "allow" ? "allowed" : "refused"} ${reach}`;
 }

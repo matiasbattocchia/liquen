@@ -30,7 +30,12 @@ function surface(over: Partial<Surface> = {}) {
     home: HOME,
     zone: ZONE,
     write: put,
-    error: (t) => screen += `!${t}`,
+    // the REPL's: a block of its own, marked
+    error: (t) => {
+      put(tail.owed(2));
+      put(`! ${t}`);
+      put(tail.owed(1));
+    },
     prompt: () => put(tail.owed(1)),
     gap: () => put(tail.owed(2)),
     thinking: true,
@@ -409,7 +414,8 @@ Deno.test("recap: the work shows, not just the words — and an open card is sti
     id,
     ts: "2026-09-11T14:14:00Z",
     type,
-    payload: { turn_id: "t1", ...payload },
+    // a turn stamps what it writes; a principal's verdict is no turn's
+    payload: type === "permission_response" ? payload : { turn_id: "t1", ...payload },
     agent: { id: AGENT, session_id: "mind" },
     envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
     parts: [{ type: "data", kind: type, data }],
@@ -455,7 +461,8 @@ Deno.test("a recap prints exactly what the live screen printed", () => {
     id,
     ts: TS,
     type,
-    payload: { turn_id: "t1", ...payload },
+    // a turn stamps what it writes; a principal's verdict is no turn's
+    payload: type === "permission_response" ? payload : { turn_id: "t1", ...payload },
     agent: { id: AGENT, session_id: "mind" },
     envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
     parts: [{ type: "data", kind: type, data }],
@@ -525,7 +532,8 @@ Deno.test("a verdict reads under the line that gave it, live and reopened alike"
     id,
     ts: TS,
     type,
-    payload: { turn_id: "t1", ...payload },
+    // a turn stamps what it writes; a principal's verdict is no turn's
+    payload: type === "permission_response" ? payload : { turn_id: "t1", ...payload },
     agent: { id: AGENT, session_id: "mind" },
     envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
     parts: [{ type: "data", kind: type, data }],
@@ -714,5 +722,49 @@ Deno.test("a lapse reads its reason; an approved call speaks only when it failed
   assertEquals(
     seen.trim(),
     "— bbc24a lapsed: unanswered for 24h\n\n✗ send(to: Vivian) — the bridge is down",
+  );
+});
+
+// the harness's own word reads as its sentence, never its wire shape, and a reopened
+// screen draws it where the live one did; the agent taking its ask back is no verdict
+Deno.test("an error reads as its sentence and a withdrawal as itself, live and reopened alike", () => {
+  const TS = "2026-10-02T16:42:59Z";
+  const env = { service: "local", connection_address: "agent", conversation: { address: HOME } };
+  const history = [
+    {
+      id: "e1",
+      ts: TS,
+      type: "error",
+      envelope: env,
+      parts: [{
+        type: "data",
+        kind: "error",
+        data: { error: "that approval was already answered — 1 still waiting" },
+      }],
+    },
+    {
+      id: "p1",
+      ts: TS,
+      type: "permission_response",
+      payload: { ref_id: "01a0fd7f-cde6-7000-8000-412733bbc24a", turn_id: "t1" },
+      agent: { id: AGENT, session_id: "mind" },
+      envelope: env,
+      parts: [{
+        type: "data",
+        kind: "permission_response",
+        text: "send(to: Vivian)",
+        data: { behavior: "deny", scope: "once", reason: "withdrawn by the agent" },
+      }],
+    },
+  ] as unknown as Event[];
+  const live = surface();
+  for (const e of history) live.p.event(e);
+  const again = surface();
+  again.p.recap(history);
+  const seen = plain(live.screen());
+  assertEquals(plain(again.screen()).trimEnd(), seen.trimEnd());
+  assertEquals(
+    seen.trim(),
+    "! that approval was already answered — 1 still waiting\n— bbc24a withdrawn by the agent",
   );
 });

@@ -930,6 +930,17 @@ Deno.test({
         },
         parts: [{ type: "text", kind: "alarm", text: "recordarle a Mecha el mail" }],
       } as Draft<Event>);
+      // …and the harness's own word: the live screen drew it, so the reopened one does
+      await log.publish({
+        ts: new Date().toISOString(),
+        type: "error",
+        envelope: {
+          service: "local",
+          connection_address: "agent",
+          conversation: { address: "mind@ana" },
+        },
+        parts: [{ type: "data", kind: "error", data: { error: "model stopped: refusal" } }],
+      } as Draft<Event>);
       const client = await rawClient(dir);
       const opened = await client.request({ op: "tail", recall: 10 });
       const recalled = (opened.recalled ?? []) as Event[];
@@ -937,7 +948,7 @@ Deno.test({
         recalled.filter((e) => e.type === "message").map(lineOf),
         ["[audio]", "👍"],
       );
-      assertEquals(recalled.at(-1)?.type, "alarm");
+      assertEquals(recalled.slice(-2).map((e) => e.type), ["alarm", "error"]);
       client.conn.close();
     } finally {
       await down();

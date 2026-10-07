@@ -5239,7 +5239,15 @@ text. The plan: the mirror's fan-in turns a surface line or reaction that answer
 into response rows carrying the line, sender and `via` (the original stays in the alias
 conversation, which xi never sees); the door writes the same rows for the terminal; both
 through one function (`src/verdict.ts`: the line, the card pointed at, the open cards →
-rows or error text) that also holds the bare-`/y` rule (`answering` takes the newest
-card, the gate calls it ambiguous — pick one) and refuses a second settlement of a card.
-`/y all` carries the line on its first row. xi's gate stops reading messages, and every
-message in the mind is one the model reads.
+rows or error text) that also holds the bare-`/y` rule and refuses a second settlement of
+a card. A bare `/y` with several cards open answers the newest, at the terminal and on a
+surface alike. `/y all` carries the line on its first row. xi's gate stops reading
+messages, and every message in the mind is one the model reads.
+
+### An error reads as its sentence, and a reopened REPL draws it (2026-10-07) — LANDED
+
+- A harness `error` paints as `! <its sentence>` — no `{"error":…}` wrapper — and the
+  door's recall carries `error` rows, so a reopened REPL draws them where the live one did.
+  `liquen cli` still writes them to stderr. A stream's error delta has no row and stays
+  live-only.
+- The agent's withdrawal reads `— bbc24a withdrawn by the agent`, not as a refusal.
