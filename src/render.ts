@@ -823,7 +823,7 @@ function renderMessages(
       return place("user", { type: "text", text: systemEl("error", errorTextOf(e)) });
     }
     if (e.type === "control") {
-      return place("user", { type: "text", text: systemEl("cancelled", CANCELLED) });
+      return place("user", { type: "text", text: systemEl("control", CANCELLED) });
     }
     if (e.type === "alarm") return place("user", { type: "text", text: alarmLine(e) });
     if (e.type !== "message") return;
@@ -900,7 +900,7 @@ function renderMessages(
       place("user", { type: "text", text: systemEl("error", errorTextOf(e)) });
     } else if (e.type === "control") {
       // nothing failed: it was stopped. A tool it cut welds above it, its result included
-      place("user", { type: "text", text: systemEl("cancelled", CANCELLED) });
+      place("user", { type: "text", text: systemEl("control", CANCELLED) });
     } else if (e.type === "alarm") {
       place("user", { type: "text", text: alarmLine(e) });
     } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
@@ -910,7 +910,7 @@ function renderMessages(
       // the second half of a non-blocking gate (§9): the principal ruled, the harness ran
       // the call for us, and this is it reporting back — in its own voice, because the
       // tool_use it answers is spent. Narration, so it can stand alone in any position.
-      place("user", { type: "text", text: systemEl("outcome", outcomeLine(e)) });
+      place("user", { type: "text", text: systemEl("tool_result", outcomeLine(e)) });
     } else if (e.type === "tool_result" && welded.has(e.payload.ref_id)) {
       place("user", toolResultBlock(e, useById.get(e.payload.ref_id)!, mediaBlocks(e)));
     } else if (e.type === "message") {
@@ -1491,9 +1491,9 @@ function checkpointEl(e: SummaryEvent): string {
 
 /** The harness's own word to the model — an element, and its body escaped, so the tag is
  *  render's to write and nobody else's: a peer who types one into a message renders it as
- *  text, since every world body is escaped on the way in. `kind` says which word it is,
- *  so the four read apart without the sentence having to announce itself. */
-function systemEl(kind: "error" | "cancelled" | "wake" | "outcome", text: string): string {
+ *  text, since every world body is escaped on the way in. `kind` is the type of the event
+ *  it renders, so the four read apart without the sentence having to announce itself. */
+function systemEl(kind: "error" | "control" | "alarm" | "tool_result", text: string): string {
   return `<system kind="${kind}">${escText(text)}</system>`;
 }
 
@@ -1567,7 +1567,7 @@ export function errorTextOf(e: HarnessErrorEvent): string {
  *  ventriloquized as the principal. No room to name: an alarm fires in the session that
  *  armed it, which is the session reading it. */
 function alarmLine(e: AlarmEvent): string {
-  return systemEl("wake", e.parts[0]?.text ?? "");
+  return systemEl("alarm", e.parts[0]?.text ?? "");
 }
 
 /** OUR SIDE produced this row (§3 authorship — presence, not equality): the model's turn

@@ -498,7 +498,7 @@ export interface MessageEvent extends EventBase {
 /** The hard stop (§2): the principal's word, the door's verb, stamped like a message and
  *  signed. Landing, it fires the running turn's interrupt; standing, it closes that turn —
  *  the mind idles on it until something new arrives (`cutStands`), and the model reads it
- *  as the harness's `<system kind="cancelled">` line. Its text is the word as typed. */
+ *  as the harness's `<system kind="control">` line. Its text is the word as typed. */
 export interface ControlEvent extends EventBase {
   type: "control";
   parts: Part[];

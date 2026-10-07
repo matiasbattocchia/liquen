@@ -498,7 +498,7 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     narrate what it was told to drop until news arrives — a line from anyone but itself, a
     fired wake, a principal's ruling. Nothing failed, so it is not an `error`: a surface
     draws the principal's line and nothing under it, and the model reads the row, where it
-    stands, as the harness's `<system kind="cancelled">` line — never the word as typed.
+    stands, as the harness's `<system kind="control">` line — never the word as typed.
     **Undirected — affects all the session's in-flight work.**
 - **`control` is typed at its source** — the door emits it (Ctrl-C, a slash word, a
   button); a word typed on a chat surface is a `message`, a soft stop — and xi routes the
@@ -729,14 +729,14 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | type | producer *(model→role)* | consumer *(→ LLM role)* | xi | type-specific fields |
 |---|---|---|---|---|
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
-| `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`), signed | `<system kind="cancelled">`, where it stands — never the word as typed | **interrupts** the running turn (§2), never a wake; standing, it closes the turn — `decide` idles until news (`cutStands`) | parts(text: the word) · payload{control: stop · cancel} |
+| `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`), signed | `<system kind="control">`, where it stands — never the word as typed | **interrupts** the running turn (§2), never a wake; standing, it closes the turn — `decide` idles until news (`cutStands`) | parts(text: the word) · payload{control: stop · cancel} |
 | `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
-| `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `<system kind="outcome">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
+| `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `<system kind="tool_result">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
 | `summary` | nu, in the idle gap after a turn (§5) | leading text block (§5) | look again (idle, or the think a dead turn left owed) | parts(text) · payload{covers} |
-| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `<system kind="wake">` carrying the note | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
+| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `<system kind="alarm">` carrying the note | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
 | `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
 | `delta` | main (presence, §9): the mind is at work and somebody is waiting | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
 
@@ -789,7 +789,7 @@ and a principal's `/y` to a card is read where it enters the mind, below.
   - **The verdict is a second, later call.** When it lands, xi runs the tool on the model's
     behalf. That outcome cannot be a `tool_result` block — its pair is spent — so it is a
     `tool_result` EVENT marked `payload.deferred`, which render narrates in the harness's
-    voice (`<system kind="outcome">send(to: Vivian) → sent</system>`). The principal's
+    voice (`<system kind="tool_result">send(to: Vivian) → sent</system>`). The principal's
     surfaces draw it only when the call failed (`✗ send(to: Vivian) — <the tool's words>`):
     the card asked for the call and their `/y` gave it. It collapses with the rest of the
     tool traffic at the boundary (§5).

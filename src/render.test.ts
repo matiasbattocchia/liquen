@@ -582,7 +582,7 @@ Deno.test("a deferred outcome is narrated, never welded — its tool_use is spen
   // the harness's own sentence, in the harness's own voice
   assertEquals(
     dump.includes(
-      '<system kind=\\"outcome\\">send(to: Mariana, text: hola) → {\\"sent\\":true}</system>',
+      '<system kind=\\"tool_result\\">send(to: Mariana, text: hola) → {\\"sent\\":true}</system>',
     ),
     true,
   );
@@ -2016,7 +2016,7 @@ Deno.test("a fired wake renders as the harness handing back the agent's own note
   const texts = blocksOf(messages).map(txt);
   const line = texts.find((s) => s.includes("llamar a la clínica"));
   assert(line, "the note reaches the prompt — it is the whole point of the wake");
-  assertStringIncludes(line!, '<system kind="wake">');
+  assertStringIncludes(line!, '<system kind="alarm">');
   // it is not the principal talking: the harness says it, in the user turn like every
   // other system line (§5 — the API takes mid-conversation system only trailing)
   assert(
@@ -2307,7 +2307,7 @@ Deno.test("the principal's cancel reads as the harness's <system> line under the
   ];
   const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t2 });
   const text = JSON.stringify(messages);
-  const line = `<system kind=\\"cancelled\\">${CANCELLED}</system>`;
+  const line = `<system kind=\\"control\\">${CANCELLED}</system>`;
   assertStringIncludes(text, line);
   assert(text.indexOf("tool_result") < text.indexOf(line));
   assert(!text.includes("/cancel")); // the word is the principal's; the model reads its meaning
