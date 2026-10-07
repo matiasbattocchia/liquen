@@ -486,7 +486,7 @@ export interface PermissionVerdict {
 }
 
 /** The principal's hard stop, as the door's `control` verb names it (§2). */
-export type ControlKind = "stop" | "cancel";
+export type ControlKind = "cancel";
 
 /** World text, or the agent's own monologue/send. (`visibility` parked — returns with
  *  the subagent tree, §10; until then every message is simply a message.) */

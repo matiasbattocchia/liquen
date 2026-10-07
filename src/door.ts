@@ -476,7 +476,7 @@ async function handle(
   );
 }
 
-const CONTROLS: readonly ControlKind[] = ["stop", "cancel"];
+const CONTROLS: readonly ControlKind[] = ["cancel"];
 
 /** The tail's model settings, each a string when given; `undefined` when it names none. */
 function tuneOf(req: Record<string, unknown>): Tune | undefined {

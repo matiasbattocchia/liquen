@@ -610,7 +610,7 @@ one peripheral for both.
     stop_reason?      // on a turn's LAST event: the stop, in the harness's vocabulary (decide reads it)
     covers?           // on a summary: [from,to] — the id range the checkpoint stands for
     mentions?         // wire mentions, canonical addresses
-    control?          // the principal's hard stop, typed at the door (stop | cancel)
+    control?          // the principal's hard stop, typed at the door (cancel)
   }
   extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, <service> provenance, raw
   status?: {        // delivery lifecycle — ONE mutable json_patch-merged column, never events
@@ -729,7 +729,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | type | producer *(model→role)* | consumer *(→ LLM role)* | xi | type-specific fields |
 |---|---|---|---|---|
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
-| `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`), signed | `<system kind="control">`, where it stands — never the word as typed | **interrupts** the running turn (§2), never a wake; standing, it closes the turn — `decide` idles until news (`cutStands`) | parts(text: the word) · payload{control: stop · cancel} |
+| `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`), signed | `<system kind="control">`, where it stands — never the word as typed | **interrupts** the running turn (§2), never a wake; standing, it closes the turn — `decide` idles until news (`cutStands`) | parts(text: the word) · payload{control: cancel} |
 | `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
 | `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `<system kind="tool_result">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |

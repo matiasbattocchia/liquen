@@ -681,7 +681,7 @@ Deno.test({
       // the vocabulary is closed: a word the classifier does not know is refused
       const bad = await client.request({ op: "control", kind: "faster" });
       assertEquals(bad.ok, false);
-      assertMatch(String(bad.error), /stop, cancel/);
+      assertMatch(String(bad.error), /one of cancel/);
       // …and a named session's room is where its own cancel lands
       const named = await client.request({ op: "control", kind: "cancel", session: "build" });
       assertEquals(named.ok, true);
