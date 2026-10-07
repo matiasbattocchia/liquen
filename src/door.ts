@@ -78,7 +78,7 @@ import type { Log } from "./store/log.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
 import { silent } from "./render.ts";
-import { answer, answerRows } from "./verdict.ts";
+import { answer, settle } from "./verdict.ts";
 import { lineOf } from "./describe.ts";
 
 export interface DoorAgent {
@@ -412,13 +412,17 @@ async function handle(
     const open = await port.gates({ agentId: agent.agentId, sessionId: session });
     const a = answer({ line: text }, open);
     if (typeof a === "string") throw new Error(a);
-    const [said] = await port.publish(
-      answerRows(a, text, {
-        agent: { id: agent.agentId, session_id: session },
-        envelope: signed(),
-      }),
-    );
-    return { ok: true, id: said.id, refs: a.refs, verdict: a.verdict };
+    const said = await settle((rows) => port.publish(rows), a, text, {
+      agent: { id: agent.agentId, session_id: session },
+      envelope: signed(),
+    });
+    if (typeof said === "string") throw new Error(said);
+    return {
+      ok: true,
+      id: said[0].id,
+      refs: said.map((e) => e.payload.ref_id),
+      verdict: a.verdict,
+    };
   }
   if (req.op === "control") {
     if (!CONTROLS.includes(req.kind as ControlKind)) {

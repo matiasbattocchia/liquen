@@ -32,7 +32,6 @@ import { sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
 import {
   anchorText,
-  cancelled,
   type Env,
   type Member,
   render,
@@ -130,7 +129,8 @@ export interface TurnInput {
    *  read off the connection rows by xi; `<conn name>` (§5). */
   connections?: Record<string, string>;
   /** The turn's interrupt (§2): fired by the principal's cancel while the call is in
-   *  flight — the request is cut, and the turn closes on the `cancelled` row, unretried. */
+   *  flight — the request is cut, unretried, and the turn writes nothing: the principal's
+   *  `control` row is what closes it. */
   signal?: AbortSignal;
 }
 
@@ -231,7 +231,7 @@ export async function checkpoint(
   emit?: Emit,
 ): Promise<TurnOutput> {
   const { config } = input;
-  const { session, here, turnId, attempt, env } = turnOf(input, transport);
+  const { session, turnId, attempt, env } = turnOf(input, transport);
   const now = new Date().toISOString();
   const summary = await buildSummary({
     system: renderSystem(input.docs, env),
@@ -251,7 +251,7 @@ export async function checkpoint(
       { ...step, kind: "checkpoint" },
       emit && ((d) => emit(d.kind === "text" ? { ...d, kind: "checkpoint" } : d)),
     ));
-  if (input.signal?.aborted) return [cancelled(here)]; // the cancel cut the checkpoint
+  if (input.signal?.aborted) return []; // the cancel cut the checkpoint: it stands for itself
   return summary ? [summary] : [];
 }
 
@@ -285,7 +285,7 @@ export async function nu(
     kind: "think",
     signal: input.signal,
   }, emit);
-  if (input.signal?.aborted) return [cancelled(here)]; // the principal spoke, not the weather
+  if (input.signal?.aborted) return []; // the principal spoke, not the weather: their row closes it
   if (!res.ok) return [errorEvent(res.error)]; // unstamped ⇒ terminal (decide idles)
 
   // The model's words in the session's own room. consumed: the coalescing horizon — what

@@ -387,8 +387,10 @@ before acquiring would run a duplicate turn.
   add still closes with the `SILENCE` sentinel (§5) — so every release re-fires whatever
   bounced off its lease; the millisecond-wide `ignore` path publishes nothing, and a poke
   lost there waits for the periodic poke, the liveness floor (§10).
-- **The lease carries two stamps.** `born` is WHO holds it — minted once per acquisition
-  and quoted by every write the holder makes. `seen` is WHETHER ANYONE IS THERE — re-stamped
+- **The lease carries two stamps.** `born` is WHO holds it — minted once per acquisition,
+  at random, and quoted by every write the holder makes; two acquisitions in one
+  millisecond are still two holders, so a turn's late release can never free the lease its
+  successor took right behind it. `seen` is WHETHER ANYONE IS THERE — re-stamped
   by a heartbeat (`LOCK_TTL_MS / 3`) for as long as the holder lives, and the only thing the
   TTL measures. Splitting them is what lets the TTL be small: a turn's length is not knowable
   from here — `think` spans a model call and its retry sleeps, `act` spans the slowest tool
@@ -488,14 +490,16 @@ one must) + cross-agent parallelism** (a global provider-rate cap is deferred, �
     door's `control` verb (the REPL's Ctrl-C while the session is busy, or `/cancel`) —
     fires the running turn's interrupt, which the turn lease carries. What it cuts depends on where the turn is: a **think** has its model request aborted and
     answers nothing; an **act** has its running tools killed (bash: the whole process
-    group) and writes **cancelled tool_results** (count toward barriers, `cancelled: true`). Either way the turn closes on
-    the harness's own `control` row — unstamped, `payload.control: "cancelled"`, the text
-    "cancelled by your principal — the turn stopped here" — so the agent idles instead of
-    narrating what it was told to drop, until something new arrives. Nothing failed, so
-    it is not an `error`: the surfaces show it dim, the CLI does not count it, and the
-    model reads it as a `<system>` line. **Undirected — affects all the session's
-    in-flight work.** The principal's row itself is transparent (§5): their word draws
-    nothing; its consequence is what the model reads.
+    group) and writes **cancelled tool_results** (count toward barriers, `cancelled: true`).
+    The principal's row is the whole of the cut — the one row that says what they wanted,
+    and the harness adds no word of its own. Landing, it fires the interrupt; standing, it
+    closes the turn: while nothing but the cut turn's own rows (its tools' results, a
+    failure, a checkpoint) follows it, `decide` idles (`cutStands`), so the agent does not
+    narrate what it was told to drop until news arrives — a line from anyone but itself, a
+    fired wake, a principal's ruling. Nothing failed, so it is not an `error`: a surface
+    draws the principal's line and nothing under it, and the model reads the row, where it
+    stands, as the harness's `<system kind="cancelled">` line — never the word as typed.
+    **Undirected — affects all the session's in-flight work.**
 - **`control` is typed at its source** — the door emits it (Ctrl-C, a slash word, a
   button); a word typed on a chat surface is a `message`, a soft stop — and xi routes the
   type: it starts nothing (the wake table); the store fires the interrupt of the lease held
@@ -693,7 +697,7 @@ Decisions:
   a table owns stays in the table (the map is the truth, extra is provenance), secrets go
   to the vault only. With refs, action and mentions typed, WhatsApp's sidecar is empty.
 - **Store-wide column conventions**: `created_at` on every table (a datetime; integer
-  clocks keep their own names — `locks.born`, `oauth_states.born`); `updated_at` only
+  clocks keep their own names — `locks.seen`, `oauth_states.born`); `updated_at` only
   where update operations exist; `agent_id` nullable with null meaning the org's;
   `extra` as the one JSON catch-all, always shallow-merged on update.
 - **`visibility` is `message`-only — and PARKED (not in the v0 types).** The rationale
@@ -725,7 +729,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | type | producer *(model→role)* | consumer *(→ LLM role)* | xi | type-specific fields |
 |---|---|---|---|---|
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
-| `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`) · xi/nu (the `cancelled` closing) | the principal's: transparent — its consequence renders; the harness's: `<system kind="cancelled">` | the principal's **interrupts** the running turn (§2), never a wake; the harness's closes it — `decide` idles on a trailing one | parts(text: the word) · payload{control: stop · cancel · cancelled} |
+| `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`), signed | `<system kind="cancelled">`, where it stands — never the word as typed | **interrupts** the running turn (§2), never a wake; standing, it closes the turn — `decide` idles until news (`cutStands`) | parts(text: the word) · payload{control: stop · cancel} |
 | `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
 | `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `<system kind="outcome">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
@@ -801,6 +805,15 @@ and a principal's `/y` to a card is read where it enters the mind, below.
     asked before the window's floor is as open as one asked a minute ago, and the REPL's
     pile opens on it past any recall. `openCards`/`owedOf` in xi are the derivations the
     store's SQL implements; the store test holds the two to one answer.
+  - **A card is settled once, by the store.** A terminal `/y` and a phone's 👍 in the same
+    instant, a lapse a second behind a `/n`, the agent's withdrawal racing its principal's
+    answer: each read the card open, and only one may close it. The publish that writes a
+    `permission_response` stores it only when no ruling on that use exists yet, and writers
+    take turns (SQLite's write lock, Postgres's `serial`), so the look and the insert never
+    interleave. The loser is not stored — omitted from its batch, as an unstored merge-only
+    draft is — and its writer says so: the door and the mirror refuse the answer as
+    already given, the `cancel` tool reports the card answered, the lapse sweep counts it
+    as not lapsed.
   - **An ask nobody answers lapses** (`gateHours`, per agent; null ⇒ it stands). Past it,
     main's tick settles the card with the harness's own deny, marked `lapsed` and carrying
     the hours — a row like any verdict, so the anchor drops the line, a late `/y` is told
@@ -2556,7 +2569,7 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
 | the dispatch sweeper (§5) | one UPDATE on the tick (`store/sweep.ts`): transiently `failed` → `queued`, the backoff ladder in the WHERE, an expression index on `state` | the same statement under pg_cron |
 | privacy (`scoped(log, policy)`, §6) | the policy bakes into the port: reads filter BEFORE the window limit, writes are checked before landing (`WITH CHECK`), each agent's subscription delivers only its view | RLS (`USING`/`WITH CHECK`) + the agent's own credential — the wrapper vanishes |
 | Stream | in-process EventEmitter → SSE | Supabase Realtime |
-| the turn lease (§2) | a `locks` row **in the same DB** — `INSERT … ON CONFLICT DO NOTHING` to take, one atomic `UPDATE … WHERE born <= cutoff` to steal a dead holder's, `DELETE` to release | the same row; a turn's last publish reads it `FOR UPDATE`, so a steal waits for the release |
+| the turn lease (§2) | a `locks` row **in the same DB** — `INSERT … ON CONFLICT DO NOTHING` to take, one atomic `UPDATE … WHERE seen <= cutoff` to steal a dead holder's, `DELETE` to release | the same row; a turn's last publish reads it `FOR UPDATE`, so a steal waits for the release |
 | timers / clock | `timers` table + in-mem wheel | pg_cron / pgmq |
 | locks / atomicity | transactions (WAL + `busy_timeout`) | transactions · an advisory lock per writer section |
 | agents (`store/agents.ts`) | `agents` table in `log.db`, MIRRORED from the `agents/` folders at start (§9 framework way) | `agents` table (openbsp lineage) |

@@ -283,13 +283,23 @@ export function offerOf(
 
 /** The lease a `control` row cuts (§2): the turn RUNNING in its room. The publish that
  *  lands the row marks that lease in the same transaction — the heartbeat reads the mark —
- *  and cuts a holder in its own process once the row is committed. The turn's own closing
- *  row (`cancelled`) orders nothing. */
-export function cutOf(r: Columns, event: Draft): string | undefined {
-  return r.type === "control" && r.conversation_address !== null &&
-      (event.payload as { control?: string } | undefined)?.control !== "cancelled"
+ *  and cuts a holder in its own process once the row is committed. */
+export function cutOf(r: Columns): string | undefined {
+  return r.type === "control" && r.conversation_address !== null
     ? turnLockOf(r.conversation_address)
     : undefined;
+}
+
+/** The use a `permission_response` settles (§9). A card is settled ONCE: the first ruling
+ *  on a use is the one stored, and a later one — a terminal `/y` and a phone's 👍 in the
+ *  same instant, a lapse a second behind a `/n` — is not stored at all, omitted from the
+ *  batch the way an unstored merge-only draft is. Writers take turns (SQLite's write lock,
+ *  Postgres's `serial`), so the look and the insert never interleave with another
+ *  settlement's. */
+export function settles(event: Draft): string | undefined {
+  if (event.type !== "permission_response") return undefined;
+  const ref = (event.payload as { ref_id?: unknown } | undefined)?.ref_id;
+  return typeof ref === "string" ? ref : undefined;
 }
 
 /** The external id a row is stored under: the wire's, else — on a LOCAL event — its own
@@ -401,3 +411,10 @@ export const MAIL_GROUPS: string[] = [
 /** The statement that takes `conversation_thread` off the log: a thread is a reply chain
  *  inside its conversation, carried by each message's `ref_external_id` (§3). */
 export const DROP_THREAD = `ALTER TABLE events DROP COLUMN conversation_thread`;
+
+/** The statement that takes the harness's word on a cut off the log: a cut is the
+ *  principal's `control` row alone (§2), and a `control` row the harness wrote beside it
+ *  would read to the model, and on a reopened screen, as a second one. `control` is the
+ *  engine's expression for the payload's `control`. */
+export const DROP_CANCELLED = (control: string): string =>
+  `DELETE FROM events WHERE type = 'control' AND ${control} = 'cancelled'`;

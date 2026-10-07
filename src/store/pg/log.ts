@@ -38,6 +38,7 @@ import {
   offerOf,
   type Row,
   rowOf,
+  settles,
   storedAs,
   utcOf,
 } from "../events.ts";
@@ -101,6 +102,10 @@ ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET
   session_id = coalesce(events.session_id, excluded.session_id),
   updated_at = excluded.updated_at
 RETURNING id`;
+
+/** A ruling on the use already stands (`settles`): the settlement in hand is not stored. */
+const RULED = `SELECT 1 FROM events
+  WHERE type = 'permission_response' AND payload ->> 'ref_id' = $1::text`;
 
 /** The merge-only path (§3): a partless draft patches the row its external id names, and
  *  stores nothing when there is none. */
@@ -213,7 +218,9 @@ export async function openPgLog(
       ]);
       return hit ? { ...event, id: hit.id } as Event : null;
     }
-    const cut = cutOf(r, event);
+    const use = settles(event);
+    if (use !== undefined && (await rows(tx, RULED, [use])).length > 0) return null;
+    const cut = cutOf(r);
     if (cut !== undefined) {
       await count(tx, "UPDATE locks SET cancel = 1 WHERE name = $1::text", [cut]);
       cuts.push(cut);

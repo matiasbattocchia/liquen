@@ -23,11 +23,8 @@ import { MONTHS } from "./store/timers.ts";
 import type {
   AlarmEvent,
   BinDir,
-  ControlEvent,
   Conversation,
   DataPart,
-  Draft,
-  Envelope,
   ErrorEvent as HarnessErrorEvent, // aliased: `ErrorEvent` is a DOM global in Deno's lib
   Event,
   EventId,
@@ -369,8 +366,7 @@ function byEventTime(
   const elisions: Elisions = { earlier: new Map(), rest: new Map() };
   const member = (e: Event) => e.type === "message" && !ownVoice(e, session);
   const transparent = (e: Event) =>
-    e.type === "permission_request" || e.type === "permission_response" ||
-    (e.type === "control" && !isCancelled(e));
+    e.type === "permission_request" || e.type === "permission_response";
   for (let i = 0; i < out.length; i++) {
     if (!member(out[i])) continue;
     let j = i;
@@ -826,8 +822,8 @@ function renderMessages(
     if (e.type === "error") {
       return place("user", { type: "text", text: systemEl("error", errorTextOf(e)) });
     }
-    if (isCancelled(e)) {
-      return place("user", { type: "text", text: systemEl("cancelled", textOf(e)) });
+    if (e.type === "control") {
+      return place("user", { type: "text", text: systemEl("cancelled", CANCELLED) });
     }
     if (e.type === "alarm") return place("user", { type: "text", text: alarmLine(e) });
     if (e.type !== "message") return;
@@ -902,8 +898,9 @@ function renderMessages(
       place("user", { type: "text", text: checkpointEl(e) });
     } else if (e.type === "error") {
       place("user", { type: "text", text: systemEl("error", errorTextOf(e)) });
-    } else if (isCancelled(e)) {
-      place("user", { type: "text", text: systemEl("cancelled", textOf(e)) }); // nothing failed: it was stopped
+    } else if (e.type === "control") {
+      // nothing failed: it was stopped. A tool it cut welds above it, its result included
+      place("user", { type: "text", text: systemEl("cancelled", CANCELLED) });
     } else if (e.type === "alarm") {
       place("user", { type: "text", text: alarmLine(e) });
     } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
@@ -1613,23 +1610,22 @@ export function textOf(e: Event): string {
     .join(" ");
 }
 
-/** The harness's word for a turn the principal cut short (§2). The row is unstamped and
- *  closes the turn: `decide` idles on it until something new arrives, and the model reads
- *  it as a `<system>` line — not an error, nothing failed. */
+/** What the model reads where the principal's hard stop stands (§2): the harness's
+ *  `<system>` line — not an error, nothing failed. */
 export const CANCELLED = "cancelled by your principal — the turn stopped here";
 
-export function cancelled(envelope: Envelope): Draft<ControlEvent> {
-  return {
-    ts: new Date().toISOString(),
-    type: "control",
-    envelope,
-    payload: { control: "cancelled" },
-    parts: [{ type: "text", kind: "text", text: CANCELLED }],
-  };
-}
-
-export function isCancelled(e: Event): boolean {
-  return e.type === "control" && e.payload.control === "cancelled";
+/** The principal's hard stop STANDS (§2): their last `control` row, and nothing since it
+ *  that is news — only what the turn it cut still wrote (its tools' cancelled results, a
+ *  failure, a checkpoint). The work it cut is still unanswered, and answering it would be
+ *  narrating what they said to drop, so the mind idles on it. News is what would wake a
+ *  turn of its own: a line from anyone but us, a fired wake, a principal's ruling. */
+export function cutStands(events: Event[], session: SessionRef): boolean {
+  const at = findLastIndex(events, (e) => e.type === "control");
+  return at !== -1 && !events.slice(at + 1).some((e) =>
+    e.type === "alarm" ||
+    (e.type === "permission_response" && e.payload.turn_id === undefined) ||
+    (e.type === "message" && !ownVoice(e, session) && !silenced(e))
+  );
 }
 
 function filesOf(e: Event): FilePart[] {

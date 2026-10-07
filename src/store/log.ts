@@ -76,6 +76,7 @@ import {
   build,
   cutOf,
   type Dialect,
+  DROP_CANCELLED,
   DROP_THREAD,
   eventOf,
   externalOf,
@@ -85,6 +86,7 @@ import {
   offerOf,
   type Row,
   rowOf,
+  settles,
   storedAs,
   utcOf,
 } from "./events.ts";
@@ -209,7 +211,8 @@ export interface Appender {
   /** PUBLISH. Durably append; the write itself is the trigger. Upsert on `external_id`:
    *  known id ⇒ merge (no wake) · new/absent ⇒ insert (wakes). A PARTLESS draft is
    *  merge-ONLY (§3): it patches the row its external_id names, and when that row doesn't
-   *  exist NOTHING is stored — null (single) or omitted (batch). Takes `Draft`s — the
+   *  exist NOTHING is stored — null (single) or omitted (batch); so it goes for a
+   *  `permission_response` on a use some ruling already settled (§9). Takes `Draft`s — the
    *  store mints event ids — and returns the STORED events, so callers read `.id` off the
    *  result. A batch is ONE transaction: all of it lands, or none. */
   publish(event: Draft, opts?: PublishOptions): Promise<Event | null>;
@@ -562,6 +565,10 @@ export async function openLog(
   const unlock = db.prepare(RELEASE_SQL);
   const owns = db.prepare(OWNS_SQL);
   const cancel = db.prepare(CANCEL_SQL);
+  const ruled = db.prepare(
+    `SELECT 1 AS x FROM events
+      WHERE type = 'permission_response' AND json_extract(payload, '$.ref_id') = ?`,
+  );
   // this log's live subscriptions: an insert made here wakes them at once, and one made by
   // another process reaches them at their next poll
   const tails = new Set<() => void>();
@@ -577,7 +584,8 @@ export async function openLog(
   /** One upsert — or, for a PARTLESS draft, one patch (merge-only: nothing stored when the
    *  referenced row doesn't exist ⇒ null). Returns the STORED id (minted here, or the
    *  surviving row's on a merge). The id is minted in JS, not by the column default: on
-   *  LOCAL events it doubles as the external_id (`externalOf`). */
+   *  LOCAL events it doubles as the external_id (`externalOf`). A settlement of a card
+   *  already settled is not stored either (`settles`) ⇒ null. */
   const write = (event: Draft, now: string, cuts: string[]): Event | null => {
     const r = rowOf(event);
     const offer = offerOf(r, now);
@@ -588,7 +596,9 @@ export async function openLog(
         | undefined;
       return hit ? { ...event, id: hit.id } as Event : null;
     }
-    const cut = cutOf(r, event);
+    const use = settles(event);
+    if (use !== undefined && ruled.get(use) !== undefined) return null;
+    const cut = cutOf(r);
     if (cut !== undefined) {
       cancel.run(cut);
       cuts.push(cut);
@@ -846,6 +856,7 @@ function migrate(db: DatabaseSync) {
   if (v < 14) migrateV14(db);
   if (v < 15) migrateV15(db);
   if (v < 16) migrateV16(db);
+  if (v < 17) migrateV17(db);
 }
 
 /** Whether the `events` table has a column: a store the current DDL created lacks the ones
@@ -853,6 +864,14 @@ function migrate(db: DatabaseSync) {
 function hasColumn(db: DatabaseSync, name: string): boolean {
   return db.prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = ?").get(name) !==
     undefined;
+}
+
+/** v17 — a cut is the principal's `control` row alone (§2): the harness's `cancelled` goes. */
+function migrateV17(db: DatabaseSync) {
+  writing(db, () => {
+    db.exec(DROP_CANCELLED("json_extract(payload, '$.control')"));
+    db.exec("PRAGMA user_version = 17");
+  });
 }
 
 /** v16 — a thread is a reply chain inside its conversation (§3): `conversation_thread` goes. */

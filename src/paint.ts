@@ -38,7 +38,6 @@ import {
   failedCallOf,
   failureOf,
   hhmm,
-  isCancelled,
   ownVoice,
   shortId,
   SILENCE,
@@ -274,22 +273,16 @@ export function painter(s: Surface): Painter {
         return;
       }
       case "control": {
-        if (!isCancelled(e)) {
-          // the principal's hard stop is a line of theirs: one this surface typed is on
-          // screen already; a Ctrl-C, or another attachment's, is painted here
-          const text = textOf(e);
-          if (e.envelope.conversation.address !== s.home || !s.typed || s.typed(text)) return;
-          settle();
-          s.gap();
-          s.write(`${stamp(e.ts)}${YOU} ${text}`);
-          s.prompt();
-          return;
-        }
-        // the harness closing the turn the principal cut
+        // the principal's hard stop, a line of theirs, and the end of the turn it cuts:
+        // whatever that turn was still holding goes with it. One this surface typed is on
+        // screen already; a Ctrl-C, or another attachment's, is painted here
+        if (e.envelope.conversation.address !== s.home) return;
         held = "";
         settle();
+        const text = textOf(e);
+        if (!s.typed || s.typed(text)) return;
         s.gap();
-        s.write(`${DIM}${textOf(e)}${RESET}`);
+        s.write(`${stamp(e.ts)}${YOU} ${text}`);
         s.prompt();
         return;
       }
@@ -386,8 +379,7 @@ export function painter(s: Surface): Painter {
         }
         case "control": {
           gap();
-          if (isCancelled(e)) put(`${DIM}${textOf(e)}${RESET}`);
-          else put(`${stamp(e.ts)}${YOU} ${textOf(e)}`);
+          put(`${stamp(e.ts)}${YOU} ${textOf(e)}`);
           continue;
         }
         case "error": {

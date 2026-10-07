@@ -348,9 +348,8 @@ export interface Payload {
    *  wears: `@` a person (the default when absent), `#` a conversation. Unordered —
    *  pair by name, not position. */
   mentions?: { address: string; name?: string; type?: "@" | "#" }[];
-  /** A `control` row's kind: the principal's hard stop, typed at the door (§2), or the
-   *  harness's `cancelled` acknowledging that it carried one out (§2). */
-  control?: ControlKind | "cancelled";
+  /** A `control` row's kind: the principal's hard stop, typed at the door (§2). */
+  control?: ControlKind;
 }
 
 /** The event's SIDECAR (§3): auditable, droppable, `json_patch`-merged on echo-merge —
@@ -496,14 +495,14 @@ export interface MessageEvent extends EventBase {
   parts: Part[];
 }
 
-/** The hard stop (§2), both halves. The principal's word — the door's verb — is stamped
- *  like a message and fires the running turn's
- *  interrupt. The harness's `cancelled` is unstamped and closes the turn it cut: its text
- *  is what the model reads, and it is the last row until the principal speaks again. */
+/** The hard stop (§2): the principal's word, the door's verb, stamped like a message and
+ *  signed. Landing, it fires the running turn's interrupt; standing, it closes that turn —
+ *  the mind idles on it until something new arrives (`cutStands`), and the model reads it
+ *  as the harness's `<system kind="cancelled">` line. Its text is the word as typed. */
 export interface ControlEvent extends EventBase {
   type: "control";
   parts: Part[];
-  payload: Payload & { control: ControlKind | "cancelled" };
+  payload: Payload & { control: ControlKind };
 }
 
 /** mu's tool request. `turn_id` groups a parallel batch for the barrier (§2). */

@@ -11,7 +11,9 @@
  *     sweeps pending tool uses (cancelled results) instead of blindly re-running them
  *
  * TWO STAMPS, because the row answers two questions. `born` is WHO holds it: minted once
- * per acquisition, quoted by every write the holder makes, never moved. `seen` is WHETHER
+ * per acquisition, at random — two acquisitions in one millisecond are still two holders,
+ * and a holder's late release never names its successor — quoted by every write the holder
+ * makes, never moved. `seen` is WHETHER
  * ANYONE IS THERE: re-stamped by a heartbeat while the holder lives, and the only thing the
  * TTL is measured against. Splitting them is what lets the TTL shrink. A single stamp has
  * to cover the longest turn imaginable — and a turn's length is not knowable here: `think`
@@ -121,10 +123,10 @@ export const OWNS_SQL = "SELECT 1 AS x FROM locks WHERE name = ?1 AND born = ?2"
  *  and any process's locker reads the same lease. */
 export interface LeaseRows {
   /** Insert the row when there is none: whether this call inserted it. */
-  take(name: string, t: number): Promise<boolean>;
+  take(name: string, born: number, t: number): Promise<boolean>;
   /** Re-stamp, unmarked, a row nobody has beaten since `cutoff`: whether this call did. One
    *  statement, so two stealers cannot both win. */
-  steal(name: string, t: number, cutoff: number): Promise<boolean>;
+  steal(name: string, born: number, t: number, cutoff: number): Promise<boolean>;
   /** The heartbeat under the token: the row's mark, or `undefined` when the row is no longer
    *  this token's. */
   beat(name: string, born: number, t: number): Promise<{ cancel: boolean } | undefined>;
@@ -134,6 +136,13 @@ export interface LeaseRows {
   live(name: string, cutoff: number): Promise<boolean>;
   /** The row under this token carries the mark. */
   marked(name: string, born: number): Promise<boolean>;
+}
+
+/** A holder's `born`: 53 random bits, a safe integer in JS and a `bigint` on Postgres, and
+ *  never 0 — the stamp of a lock not yet acquired. */
+function mint(): number {
+  const [hi, lo] = crypto.getRandomValues(new Uint32Array(2));
+  return (hi & 0x1fffff) * 2 ** 32 + lo || 1;
 }
 
 /** A synchronous statement's answer as a promise — a throw becomes a rejection. */
@@ -149,12 +158,12 @@ function settled<T>(f: () => T): Promise<T> {
  *  invocation, and a fan-out that invokes every agent per event adds that up. */
 export function sqliteLeases(db: DatabaseSync): LeaseRows {
   const take = db.prepare(
-    "INSERT INTO locks (name, born, seen) VALUES (?1, ?2, ?2) ON CONFLICT(name) DO NOTHING",
+    "INSERT INTO locks (name, born, seen) VALUES (?1, ?2, ?3) ON CONFLICT(name) DO NOTHING",
   );
   // only the row whose heartbeat is still older than the cutoff is updated, and `changes`
   // says whether it was us. A stolen lease starts unmarked: the cancel was the dead holder's.
   const steal = db.prepare(
-    "UPDATE locks SET born = ?2, seen = ?2, cancel = 0 WHERE name = ?1 AND seen <= ?3",
+    "UPDATE locks SET born = ?2, seen = ?3, cancel = 0 WHERE name = ?1 AND seen <= ?4",
   );
   // the heartbeat, quoting the token: a holder that was stolen from re-stamps nothing —
   // and reads the mark a control row left, which is how a cancel from another process
@@ -166,8 +175,9 @@ export function sqliteLeases(db: DatabaseSync): LeaseRows {
   const live = db.prepare("SELECT 1 AS x FROM locks WHERE name = ? AND seen > ?");
   const marked = db.prepare("SELECT cancel FROM locks WHERE name = ?1 AND born = ?2");
   return {
-    take: (name, t) => settled(() => Number(take.run(name, t).changes) > 0),
-    steal: (name, t, cutoff) => settled(() => Number(steal.run(name, t, cutoff).changes) > 0),
+    take: (name, born, t) => settled(() => Number(take.run(name, born, t).changes) > 0),
+    steal: (name, born, t, cutoff) =>
+      settled(() => Number(steal.run(name, born, t, cutoff).changes) > 0),
     beat: (name, born, t) =>
       settled(() => {
         const row = beat.get(name, born, t) as { cancel: number } | undefined;
@@ -274,14 +284,15 @@ export function createLocker(
       return {
         async acquire(): Promise<Acquired> {
           const t = now();
-          if (await rows.take(name, t)) {
-            born = t;
+          const token = mint();
+          if (await rows.take(name, token, t)) {
+            born = token;
             start();
             return "acquired";
           }
           // held — steal only if the heartbeat stopped (the holder died without releasing)
-          if (await rows.steal(name, t, t - ttlMs)) {
-            born = t;
+          if (await rows.steal(name, token, t, t - ttlMs)) {
+            born = token;
             start();
             return "stolen";
           }

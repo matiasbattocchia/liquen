@@ -10,8 +10,7 @@ import { openLog } from "./store/log.ts";
 import type { AgentConfig } from "./xi.ts";
 import type { AgentRow } from "./store/agents.ts";
 import type { Policy } from "./policy.ts";
-import type { ControlEvent, Draft, Event, MessageEvent, ToolResultEvent } from "./types.ts";
-import { isCancelled } from "./render.ts";
+import type { Draft, Event, MessageEvent, ToolResultEvent } from "./types.ts";
 import type { ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
 import { type OrgConfig, readConfig } from "./config.ts";
@@ -798,15 +797,13 @@ Deno.test("a cancel mid-act kills the running tool: its result says so and the t
     await waitFor(async () => (await main.log.read({ types: ["tool_use"] })).length === 1);
     await new Promise((r) => setTimeout(r, 200)); // the shell is in its sleep
     await main.log.publish(cancel("mind@a1"));
-    const closing = async () => (await main.log.read({ types: ["control"] })).filter(isCancelled);
-    await waitFor(async () => (await closing()).length === 1);
+    await waitFor(async () => (await main.log.read({ types: ["tool_result"] })).length === 1);
     const [result] = await main.log.read({ types: ["tool_result"] }) as ToolResultEvent[];
     assertEquals(result.parts[0].data.cancelled, true);
     assertEquals(result.parts[0].data.is_error, true);
     assert(String(result.parts[0].data.output).includes("started")); // what ran, kept
-    const [stop] = await closing() as ControlEvent[];
-    assertEquals(stop.agent, undefined); // the harness's word, not the principal's
-    assertEquals(stop.payload.turn_id, undefined); // unstamped: the turn ends here
+    // the principal's row is the whole of the cut: the harness adds no word of its own
+    assertEquals((await main.log.read({ types: ["control"] })).length, 1);
     assertEquals(await main.log.read({ types: ["error"] }), []); // nothing failed
     await new Promise((r) => setTimeout(r, 300)); // the agent idles on it: no further step
     assertEquals(calls(), 1);
@@ -816,7 +813,7 @@ Deno.test("a cancel mid-act kills the running tool: its result says so and the t
   }
 });
 
-Deno.test("a cancel mid-think aborts the model call: no reply, the turn closes on the cancel", async () => {
+Deno.test("a cancel mid-think aborts the model call: no reply, the turn ends on the cancel", async () => {
   const dir = await Deno.makeTempDir();
   let entered!: () => void;
   const calling = new Promise<void>((r) => (entered = r));
@@ -834,8 +831,8 @@ Deno.test("a cancel mid-think aborts the model call: no reply, the turn closes o
     await main.log.publish(principalMsg("mind@a1", "pensá mucho"));
     await calling;
     await main.log.publish(cancel("mind@a1"));
-    const closing = async () => (await main.log.read({ types: ["control"] })).filter(isCancelled);
-    await waitFor(async () => (await closing()).length === 1);
+    await waitFor(async () => !(await main.log.lock("turn-mind@a1").held())); // the turn ended
+    assertEquals((await main.log.read({ types: ["control"] })).length, 1); // the cancel alone
     assertEquals(await main.log.read({ types: ["error"] }), []); // nothing failed
     assertEquals((await main.log.read({ types: ["message"] })).filter((e) => e.agent).length, 0);
     await new Promise((r) => setTimeout(r, 300));

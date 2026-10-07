@@ -21,7 +21,13 @@
 
 import { MIND } from "../../session.ts";
 import { UNPREFIX } from "../connections.ts";
-import { DROP_THREAD, MAIL_GROUPS, MAIL_MAILBOXES, MAIL_THREADS } from "../events.ts";
+import {
+  DROP_CANCELLED,
+  DROP_THREAD,
+  MAIL_GROUPS,
+  MAIL_MAILBOXES,
+  MAIL_THREADS,
+} from "../events.ts";
 import type { Db, Sql } from "./sql.ts";
 
 /** A text column: byte-ordered. */
@@ -604,7 +610,7 @@ $f$;
 
 /** The version the DDL creates. A store found below it is raised in place, once, by the
  *  steps between; a store above it was made by a newer liquen, and this one refuses it. */
-export const VERSION = 7;
+export const VERSION = 8;
 
 /** `RAISE[v]` takes a store from version `v` to `v + 1`: the ALTERs the DDL's `IF NOT
  *  EXISTS` cannot express, run before the DDL so the views it replaces find their columns.
@@ -636,6 +642,10 @@ const RAISE: Record<number, (tx: Db) => Promise<void>> = {
   // v7 — a thread is a reply chain inside its conversation (§3): `conversation_thread` goes
   6: async (tx) => {
     await tx.unsafe(DROP_THREAD);
+  },
+  // v8 — a cut is the principal's `control` row alone (§2): the harness's `cancelled` goes
+  7: async (tx) => {
+    await tx.unsafe(DROP_CANCELLED("payload ->> 'control'"));
   },
 };
 

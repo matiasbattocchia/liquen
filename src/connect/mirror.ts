@@ -56,24 +56,16 @@
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { MIND, parseSession, sessionAddress } from "../session.ts";
-import {
-  failedCallOf,
-  failureOf,
-  isCancelled,
-  reactionOf,
-  shortId,
-  silenced,
-  silent,
-} from "../render.ts";
+import { failedCallOf, failureOf, reactionOf, shortId, silenced, silent } from "../render.ts";
 import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
 import { type Words, words } from "../i18n.ts";
 import {
   answer,
   answerLine,
-  answerRows,
   parseVerdict,
   reactionVerdict,
   type Said,
+  settle,
 } from "../verdict.ts";
 import type { Gates } from "../store/gates.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
@@ -246,7 +238,13 @@ async function fanIn(
   const said = verdictSaid(e, card);
   if (said) {
     const a = answer(said, await deps.gates({ agentId: binding.agentId, sessionId: MIND }), card);
-    if (typeof a === "string") {
+    const settled = typeof a === "string" ? a : await settle(
+      (rows) => deps.publish(rows),
+      a,
+      "line" in said ? said.line : said.glyph,
+      from,
+    );
+    if (typeof settled === "string") {
       await deps.publish({
         ts: now(),
         type: "error",
@@ -255,11 +253,9 @@ async function fanIn(
           connection_address: "agent",
           conversation: { address: mind },
         },
-        parts: [{ type: "data", kind: "error", data: { error: a } }],
+        parts: [{ type: "data", kind: "error", data: { error: settled } }],
       } as Draft<ErrorEvent>);
-      return;
     }
-    await deps.publish(answerRows(a, "line" in said ? said.line : said.glyph, from));
     return;
   }
 
@@ -486,11 +482,9 @@ async function ccParts(
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ⏰ ${note}` }]);
   }
   if (e.type === "control") {
-    // the principal's hard stop is their line (`/cancel`); the harness closing the turn it
-    // cut is the system's
+    // the principal's hard stop is their line (`/cancel`), and the whole of the cut
     const said = (e as ControlEvent).parts[0]?.text ?? "";
-    if (!isCancelled(e)) return said ? principalLine(e, said, [], w) : null;
-    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${said}` }]);
+    return said ? principalLine(e, said, [], w) : null;
   }
   if (e.type === "error") {
     // the harness's own voice reaching the principal (§2): it speaks when the model can't

@@ -152,16 +152,22 @@ Deno.test("decide: an answered ask whose call has not run yet → act (the harne
   assertEquals(decide([peerMsg(), u, req, pending, resp, done], SESSION, WAKE), "think");
 });
 
-Deno.test("decide: a trailing cancelled row idles the turn it closed, and the next word wakes", () => {
-  const closed = ev("control", {
-    payload: { control: "cancelled" },
-    parts: [{ type: "text", kind: "text", text: "cancelled by your principal" }],
-  } as Partial<Event>);
-  // the cut act: uses answered, but no closing think is owed — the principal said drop it
-  assertEquals(decide([peerMsg(), use("u1"), result("u1"), closed], SESSION, WAKE), "ignore");
+Deno.test("decide: the principal's cancel idles the turn it cut until news, its tools' results behind it", () => {
+  const cut = () =>
+    ev("control", {
+      payload: { control: "cancel" },
+      parts: [{ type: "text", kind: "text", text: "/cancel" }],
+    } as Partial<Event>);
+  // the cut act: its tools report after the cancel landed, and no closing think is owed —
+  // the principal said drop it
+  const c = cut();
+  assertEquals(decide([peerMsg(), use("u1"), c, result("u1")], SESSION, WAKE), "ignore");
   // the cut think: the message it was answering stays unanswered, and stays idle
-  assertEquals(decide([peerMsg(), closed], SESSION, WAKE), "ignore");
-  assertEquals(decide([peerMsg(), closed, peerMsg()], SESSION, WAKE), "think");
+  const d = cut();
+  assertEquals(decide([peerMsg(), d], SESSION, WAKE), "ignore");
+  // news wakes: a line, or a fired wake
+  assertEquals(decide([peerMsg(), d, peerMsg()], SESSION, WAKE), "think");
+  assertEquals(decide([peerMsg(), d, ev("alarm")], SESSION, WAKE), "think");
 });
 
 Deno.test("decide: the agent's own settlement (a cancel — turn_id) is never the errand", () => {

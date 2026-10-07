@@ -43,19 +43,19 @@ import { count, type Db, rows } from "./sql.ts";
 
 export function pgLeases(db: Db): LeaseRows {
   return {
-    take: async (name, t) =>
+    take: async (name, born, t) =>
       await count(
         db,
-        `INSERT INTO locks (name, born, seen) VALUES ($1::text, $2::bigint, $2::bigint)
+        `INSERT INTO locks (name, born, seen) VALUES ($1::text, $2::bigint, $3::bigint)
          ON CONFLICT (name) DO NOTHING`,
-        [name, t],
+        [name, born, t],
       ) > 0,
-    steal: async (name, t, cutoff) =>
+    steal: async (name, born, t, cutoff) =>
       await count(
         db,
-        `UPDATE locks SET born = $2::bigint, seen = $2::bigint, cancel = 0
-         WHERE name = $1::text AND seen <= $3::bigint`,
-        [name, t, cutoff],
+        `UPDATE locks SET born = $2::bigint, seen = $3::bigint, cancel = 0
+         WHERE name = $1::text AND seen <= $4::bigint`,
+        [name, born, t, cutoff],
       ) > 0,
     beat: async (name, born, t) => {
       const [row] = await rows<{ cancel: number }>(

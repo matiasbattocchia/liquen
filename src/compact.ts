@@ -27,10 +27,11 @@
 import type { Draft, ErrorEvent, Event, Session, SummaryEvent } from "./types.ts";
 import {
   applySummary,
+  CANCELLED,
   closingBoundary,
+  cutStands,
   deferredInput,
   errorTextOf,
-  isCancelled,
   outcomeLine,
   ownVoice,
   silenced,
@@ -104,17 +105,21 @@ export function overflowed(events: Event[]): boolean {
 /** Is the turn over? The trailing chain — everything after the last closing — replays its
  *  thinking on the next request, and a summary inserted under it changes the prefix every
  *  signature was bound to. So a checkpoint waits for the turn to end: a closing (nothing
- *  trails), or the harness's word that the turn is dead — a terminal error or a cancel as
- *  the last event. A dead turn's chain replays too, but nothing continues it: the
- *  checkpoint covers it whole, and the record says what its tools found. */
+ *  trails), or the turn is dead — a terminal error as the last event, or the principal's
+ *  cancel standing (`cutStands`). A dead turn's chain replays too, but nothing continues
+ *  it: the checkpoint covers it whole, and the record says what its tools found. */
 export function turnOver(events: Event[], session: Session): boolean {
-  const last = events.at(-1);
-  if (last !== undefined && (last.type === "error" || isCancelled(last))) return true;
+  if (dead(events, session)) return true;
   const boundary = closingBoundary(events, session);
   return !events.slice(boundary + 1).some((e) =>
     (e.type === "thinking" || e.type === "tool_use" || e.type === "tool_result") &&
     ownVoice(e, session)
   );
+}
+
+/** Nothing continues the turn the window ends on: a terminal error, or a cut standing. */
+function dead(events: Event[], session: Session): boolean {
+  return events.at(-1)?.type === "error" || cutStands(events, session);
 }
 
 /** Where a cut may fall: after index `i` when no STEP straddles it. A step — the events
@@ -188,20 +193,19 @@ export function compactionSpan(
   // the same: `covers` is an id range, so the cut stays below the first such message, or
   // the range would hide it.
   // A DEAD turn — an error or a cancel ended it — is covered WHOLE, its chain and the
-  // input it was answering, down to the row that killed it: its thinking replays on the
+  // input it was answering, down to the last row it wrote: its thinking replays on the
   // next request, and a summary under part of it is the prefix edit this layer exists to
   // avoid; nothing continues the turn, so its results are not being worked from; and the
   // record carries what it was asked and what its tools found, which is what the next
   // think answers from. `keepRecent` is a live conversation's tail, and does not apply.
-  const last = events.at(-1);
-  const dead = last !== undefined && (last.type === "error" || isCancelled(last));
+  const ended = dead(events, session);
   const safe = cutPoints(events);
   const firstDeferred = events.findIndex((e) => deferred.has(e));
-  const reach = dead ? events.length : kept;
+  const reach = ended ? events.length : kept;
   const ceiling = firstDeferred === -1 ? reach : Math.min(reach, firstDeferred);
   let cut = -1;
   for (let c = ceiling - 1; c >= 0; c--) {
-    if (safe.has(c) && (c <= boundary || dead)) {
+    if (safe.has(c) && (c <= boundary || ended)) {
       cut = c;
       break;
     }
@@ -242,7 +246,7 @@ function transcript(covered: Event[], session: Session): { text: string; previou
     } else if (e.type === "error") {
       // a dead turn's last word: the record says the work stopped, and why
       lines.push(`[error] ${errorTextOf(e)}`);
-    } else if (isCancelled(e)) {
+    } else if (e.type === "control") {
       lines.push(`[cancelled] the turn was stopped`);
     }
     // thinking: private — never part of the record
@@ -264,7 +268,7 @@ function archivedThrough(covered: Event[], session: Session): string | undefined
         : e.envelope.sender?.name ?? e.envelope.sender?.address ?? "?";
       line = `${who}: ${textOf(e)}`;
     } else if (e.type === "error") line = `error: ${errorTextOf(e)}`;
-    else if (isCancelled(e)) line = `cancelled: ${textOf(e)}`;
+    else if (e.type === "control") line = `cancelled: ${CANCELLED}`;
     else if (e.type === "alarm") line = `alarm: ${textOf(e)}`;
     if (line === undefined) continue;
     const flat = line.replace(/\s+/g, " ").trim();

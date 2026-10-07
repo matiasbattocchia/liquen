@@ -4,7 +4,6 @@ import type Anthropic from "@anthropic-ai/sdk";
 import {
   anchorText,
   CANCELLED,
-  cancelled,
   capRun,
   GAP,
   render,
@@ -2281,31 +2280,12 @@ Deno.test("horizon split: a lagged message with an OLDER ts is still unconsumed 
   assertEquals(JSON.stringify(messages.slice(0, -1)).includes("cero"), false);
 });
 
-Deno.test("the harness's cancelled row reads as a <system> element, and not as an error", () => {
-  const t1 = "2026-07-16T14:01:00Z";
-  const t2 = "2026-07-16T14:02:00Z";
-  const closing = {
-    id: "c02",
-    ...cancelled({
-      service: "local",
-      connection_address: "agent",
-      conversation: { address: "mind@a1" },
-    }),
-    ts: t2,
-  } as Event;
-  const events: Event[] = [mindMsg("e01", t1, "pensá mucho", false), closing];
-  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t2 });
-  const text = JSON.stringify(messages);
-  assertStringIncludes(text, `<system kind=\\"cancelled\\">${CANCELLED}</system>`);
-  assert(!text.includes("error"));
-});
-
-Deno.test("a control row is transparent: the principal's cancel draws nothing, and a run flows across it", () => {
+Deno.test("the principal's cancel reads as the harness's <system> line under the work it cut, not as an error", () => {
   const t1 = "2026-07-16T14:01:00Z";
   const t2 = "2026-07-16T14:02:00Z";
   const cancel: Event = {
-    id: "c01",
-    ts: t1,
+    id: "c03",
+    ts: t2,
     type: "control",
     payload: { control: "cancel" },
     agent: SELF,
@@ -2316,15 +2296,22 @@ Deno.test("a control row is transparent: the principal's cancel draws nothing, a
     },
     parts: [{ type: "text", kind: "text", text: "/cancel" }],
   } as Event;
+  // the cut tool's result lands after the cancel: it welds to its use, and the line follows
+  const cut = toolResultE("r04", t2, "t1", "killed", "u02");
+  cut.parts[0].data = { output: "killed", is_error: true, cancelled: true };
   const events: Event[] = [
-    mindMsg("e01", t1, "pará", false),
+    mindMsg("e01", t1, "pensá mucho", false),
+    toolUseE("u02", t1, "t1", "bash", { command: "sleep 10" }),
     cancel,
-    waMsg("e02", t2, "¿sigue en pie lo de mañana?", false),
+    cut,
   ];
   const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t2 });
   const text = JSON.stringify(messages);
-  assert(!text.includes("/cancel")); // the word is the principal's, never the model's input
-  assertEquals(messages.length, 1); // one world-user-message: the run was not cut in two
+  const line = `<system kind=\\"cancelled\\">${CANCELLED}</system>`;
+  assertStringIncludes(text, line);
+  assert(text.indexOf("tool_result") < text.indexOf(line));
+  assert(!text.includes("/cancel")); // the word is the principal's; the model reads its meaning
+  assert(!text.includes('<system kind=\\"error'));
 });
 
 Deno.test("the roster names the marks (§4, §5): <principal name>, principal=, agent= carry its word; external= the wire's", () => {

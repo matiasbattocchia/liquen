@@ -622,7 +622,7 @@ Deno.test("a fired wake paints its note, live and reopened alike", () => {
 
 // a refusal reads as the principal's `/n` and the row under it: their reason is their line,
 // and the call it refused never ran, so no outcome follows. A cut turn reads as their
-// `/cancel` — a Ctrl-C, typed nowhere, included — and the harness's word under it.
+// `/cancel` — a Ctrl-C, typed nowhere, included — and nothing under it: the row is the cut.
 Deno.test("a /n and a /cancel read as the principal's lines, live and reopened alike", () => {
   const TS = "2026-10-02T16:42:59Z";
   const env = { service: "local", connection_address: "agent", conversation: { address: HOME } };
@@ -664,18 +664,6 @@ Deno.test("a /n and a /cancel read as the principal's lines, live and reopened a
       envelope: { ...env, sender: { address: "matias", name: "matias" } },
       parts: [{ type: "text", kind: "text", text: "/cancel" }],
     },
-    {
-      id: "c2",
-      ts: "2026-10-02T16:45:00Z",
-      type: "control",
-      payload: { control: "cancelled" },
-      envelope: env,
-      parts: [{
-        type: "text",
-        kind: "text",
-        text: "cancelled by your principal — the turn stopped here",
-      }],
-    },
   ] as unknown as Event[];
   const live = surface({ typed: () => false }); // another attachment's lines, and a Ctrl-C
   for (const e of history) live.p.event(e);
@@ -686,7 +674,7 @@ Deno.test("a /n and a /cancel read as the principal's lines, live and reopened a
   assertEquals(
     seen.trimEnd(),
     "2 Oct 13:42 ❯ /n en este caso Emi es un contacto\n— bbc24a refused once\n\n" +
-      "2 Oct 13:45 ❯ /cancel\n\ncancelled by your principal — the turn stopped here",
+      "2 Oct 13:45 ❯ /cancel",
   );
 });
 

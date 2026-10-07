@@ -18,6 +18,7 @@
 import { shortId } from "./render.ts";
 import type {
   Draft,
+  Event,
   EventId,
   PermissionRequestEvent,
   PermissionResponseEvent,
@@ -98,6 +99,8 @@ export interface Answered {
 /** A card's handle as a line names it: `shortId`'s six hex digits. */
 const HANDLE = /^[0-9a-f]{6}$/;
 
+const ANSWERED = "that approval was already answered";
+
 /** What `said` answers among the `open` cards (oldest first), or the sentence it is refused
  *  with. `quoted` is the card a surface's reply or reaction points at, open or not. A
  *  handle in the line is lifted out before the verdict is read, so it is not taken for a
@@ -118,8 +121,8 @@ export function answer(
   const live = (c: PermissionRequestEvent) => open.some((o) => o.id === c.id);
   if (!named && quoted && !live(quoted)) {
     return open.length === 0
-      ? "that approval was already answered"
-      : `that approval was already answered — ${open.length} still waiting, /y answers the newest`;
+      ? ANSWERED
+      : `${ANSWERED} — ${open.length} still waiting, /y answers the newest`;
   }
   if (open.length === 0) return "no approval is waiting";
   if (verdict.every) return { refs: open.map((c) => c.payload.ref_id), verdict };
@@ -148,6 +151,20 @@ export function answerRows(
       ...(i === 0 ? [{ type: "text" as const, kind: "text" as const, text: line }] : []),
     ],
   }));
+}
+
+/** The answer logged, as the store kept it: the settlements of the cards no other ruling
+ *  reached first — a card is settled once (§9), and a race between two surfaces, or with
+ *  the lapse, is the store's to break — or, when every card went to someone else, the
+ *  sentence the answer is refused with. */
+export async function settle(
+  publish: (rows: Draft<PermissionResponseEvent>[]) => Promise<Event[]>,
+  a: Answered,
+  line: string,
+  from: Pick<Draft<PermissionResponseEvent>, "agent" | "envelope" | "extra">,
+): Promise<PermissionResponseEvent[] | string> {
+  const stored = await publish(answerRows(a, line, from)) as PermissionResponseEvent[];
+  return stored.length > 0 ? stored : ANSWERED;
 }
 
 /** The line a settlement carries — the principal's `/y`, `/n <reason>`, `👍` — when it is

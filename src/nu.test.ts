@@ -474,7 +474,7 @@ Deno.test("nu: an empty checkpoint is an error too — not a full re-run on ever
   assert(out[0].type === "error");
 });
 
-Deno.test("an aborted step is the principal's cancel: one closing row, no retry", async () => {
+Deno.test("an aborted step is the principal's cancel: nothing written, no retry", async () => {
   let calls = 0;
   const ctl = new AbortController();
   const out = await nu(
@@ -486,11 +486,7 @@ Deno.test("an aborted step is the principal's cancel: one closing row, no retry"
     },
   );
   assertEquals(calls, 1);
-  assertEquals(out.length, 1);
-  assertEquals(out[0].type, "control");
-  assertEquals(out[0].payload?.control, "cancelled");
-  assertEquals(out[0].agent, undefined); // the harness's word — nothing failed, it was stopped
-  assertEquals(out[0].payload?.turn_id, undefined); // unstamped: the turn ends here
+  assertEquals(out, []); // nothing failed, it was stopped: the principal's row closes it
 });
 
 Deno.test("nu: a step that calls a tool records the anchor its request carried", async () => {

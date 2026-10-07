@@ -81,11 +81,10 @@ import type { BinDir, Carried, FilePart, LocationPart, SendPreview } from "./typ
 import { directAddress, MIND, parseDirect, parseSession, sessionAddress } from "./session.ts";
 import {
   bookEl,
-  cancelled,
   closingBoundary,
+  cutStands,
   hhmm,
   type HitsOpts,
-  isCancelled,
   type Member,
   namedRoom,
   ownComplex,
@@ -200,7 +199,7 @@ export function decide(
   // window that has to shrink before the next think can run.
   const idle = (): Decision => (needsCheckpoint(events, session, wake) ? "compact" : "ignore");
   if (justFailed(events)) return idle(); // idle-after-error
-  if (justCancelled(events)) return idle(); // the principal cut it: idle until they speak
+  if (cutStands(events, session)) return idle(); // the principal cut it: idle until news
   if (unclosedChain(events, session)) return "think";
   const v = attention(events, session, wake, now);
   return v === "ignore" ? idle() : v;
@@ -460,14 +459,6 @@ function justFailed(events: Event[]): boolean {
   return events.at(-1)?.type === "error" && !cutOff(events);
 }
 
-/** The harness's `cancelled` is the LAST thing in the window ⇒ nothing owed (§2). The
- *  work it cut is still unanswered, and answering it now would be narrating what the
- *  principal just told us to drop — the next thing they say is what wakes us. */
-function justCancelled(events: Event[]): boolean {
-  const last = events.at(-1);
-  return last !== undefined && isCancelled(last);
-}
-
 /**
  * The cheap gate, over the ONE event that triggered this invocation: could it change what the
  * log owes *this* agent? Pure — no log, no lease — so a spectator costs nothing at all. Same
@@ -502,8 +493,9 @@ export function relevant(config: AgentConfig, event: Event): boolean {
     // already happened inside nu, so a logged error means we stopped. `decide` says the same
     // from the window side (a trailing error ⇒ ignore, or compact when the window is over
     // budget: the tick brings that look); waking here would hot-loop.
-    // `control` acts on a RUNNING turn — the store fires its lease's interrupt (§2) — never starts one;
-    // the harness's `cancelled` closes one, and `decide` idles on it from the window side.
+    // `control` acts on a RUNNING turn — the store fires its lease's interrupt (§2) — never
+    // starts one; standing, it closes the turn it cut, and `decide` idles on it from the
+    // window side (`cutStands`).
     default:
       return false; // thinking · error · permission_request · control · delta · unknown
   }
@@ -930,11 +922,6 @@ export async function xi(
     limit,
   ); // the
   //    ONE read: the work's input as well as the decision's (§2)
-  const hereEnv: Envelope = {
-    service: "local",
-    connection_address: "agent",
-    conversation: { address: session.conversation },
-  };
   // the rulings still owed are STANDING state, read off the store (§9): a card asked before
   // the window's floor is as open as one asked a minute ago
   const v = decide(
@@ -956,7 +943,7 @@ export async function xi(
   let last: Draft<Event>[];
   try {
     last = signal.aborted
-      ? [cancelled(hereEnv)] // cut before it began: the cancel still closes it
+      ? [] // cut before it began: the principal's row closes it
       : v === "act"
       ? await act(events, got === "stolen", session, config, gate, ports, signal)
       : await think(events, config, ports, signal, v);
@@ -1561,8 +1548,8 @@ async function act(
 
   // the batch runs in parallel — the lock serializes the mind, not the tools (§2). The
   // turn's interrupt is the principal's cancel (§2): a tool it cuts reports `cancelled`,
-  // the same flag the steal-sweep sets, and the turn closes on the harness's word so the
-  // agent idles instead of narrating what it was told to drop.
+  // the same flag the steal-sweep sets, and their row standing behind these results is
+  // what keeps the agent idle instead of narrating what it was told to drop.
   out.push(
     ...await Promise.all(runnable.map(async ({ use, call }) => {
       try {
@@ -1580,7 +1567,6 @@ async function act(
       }
     })),
   );
-  if (signal.aborted) out.push(cancelled(here));
   return out;
 }
 
@@ -2493,8 +2479,8 @@ async function execute(
     // withdraw an open ask (§9): the one settlement invariant does all the work — a
     // permission_response ref'ing the use closes the card, so the anchor line drops and a
     // late verdict from the principal is told it was already answered (`verdict.ts`). The
-    // open asks are the store's (§9), read under the lock: it serializes the mind, so
-    // nothing settles between this read and the publish.
+    // open asks are the store's (§9); a principal's answer can still land between this read
+    // and the publish, and the store keeps whichever settlement came first.
     const id = String(args.id ?? "");
     const byId = (ref: EventId) => ref === id || shortId(ref) === id;
     const card = (await ports.log.gates({ agentId: self.id, sessionId: self.session_id }))
@@ -2513,7 +2499,7 @@ async function execute(
       );
     }
     const call = card.parts[0].data.call;
-    await ports.log.publish(
+    const withdrawn = await ports.log.publish(
       {
         ts: new Date().toISOString(),
         type: "permission_response",
@@ -2536,6 +2522,11 @@ async function execute(
         }],
       } satisfies Draft<PermissionResponseEvent>,
     );
+    if (withdrawn === null) {
+      throw new Error(
+        `"${id}" was answered by your principal just now — it is not yours to withdraw`,
+      );
+    }
     return { withdrawn: true, call };
   }
   if (name === "send") {

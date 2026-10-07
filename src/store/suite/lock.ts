@@ -56,6 +56,25 @@ export function lockSuite(s: Substrate): void {
     });
   });
 
+  Deno.test("a holder's late release never frees a successor that took the lease in the same millisecond", async () => {
+    const store = await s.fresh();
+    const at = Date.now();
+    const log = await store.open({ now: () => at }); // every stamp reads one instant
+    try {
+      const first = log.lock("turn-a1");
+      assertEquals(await first.acquire(), "acquired");
+      await first.release(); // the turn's end drops the row
+      const next = log.lock("turn-a1");
+      assertEquals(await next.acquire(), "acquired");
+      await first.release(); // the ended turn's off-switch, run again after its successor took over
+      assertEquals(await log.lock("turn-a1").acquire(), "held");
+      await next.release();
+    } finally {
+      await log.close();
+      await store.drop();
+    }
+  });
+
   Deno.test("a LIVE holder is never stolen from, however long its turn runs", async () => {
     // the one test that must wait real time: what it proves is that the heartbeat FIRES,
     // and a timer firing is the one thing a moved clock cannot stand in for
@@ -158,7 +177,7 @@ export function lockSuite(s: Substrate): void {
   });
 
   /** A `control` row in the session's room — the order a running turn is cut by (§2). */
-  const control = (conversation: string, kind = "cancel"): Draft => ({
+  const control = (conversation: string): Draft => ({
     ts: new Date().toISOString(),
     type: "control",
     envelope: {
@@ -166,8 +185,8 @@ export function lockSuite(s: Substrate): void {
       connection_address: "agent",
       conversation: { address: conversation },
     },
-    payload: { control: kind },
-    parts: [{ type: "text", kind: "control", text: kind }],
+    payload: { control: "cancel" },
+    parts: [{ type: "text", kind: "control", text: "/cancel" }],
   } as unknown as Draft);
 
   Deno.test("the lease carries the interrupt: a control row this process lands fires it at once", async () => {
@@ -199,16 +218,6 @@ export function lockSuite(s: Substrate): void {
       const t0 = Date.now();
       while (!signal.aborted && Date.now() - t0 < 2000) await new Promise((r) => setTimeout(r, 5));
       assertEquals(signal.aborted, true);
-      await lock.release();
-    });
-  });
-
-  Deno.test("the turn's own closing row (`cancelled`) orders nothing", async () => {
-    await withLogs(async (a) => {
-      const lock = a.lock("turn-mind@ana");
-      assertEquals(await lock.acquire(), "acquired");
-      await a.publish(control("mind@ana", "cancelled"));
-      assertEquals(lock.signal().aborted, false);
       await lock.release();
     });
   });

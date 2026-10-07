@@ -5265,3 +5265,30 @@ bare `/y` against several cards as the newest; the gate called it ambiguous.
 
 Open: two answers racing for one card — a terminal and a phone in the same instant — can
 both land; `owed` takes the earliest, but the room draws both.
+
+### A card is settled once; a cut is one row; a lease token is not a clock (2026-10-07) — LANDED
+
+- **Settled once.** The store's write stores a `permission_response` only when no ruling on
+  its use exists (`settles`, both adapters, inside the serialized write), and omits the
+  loser from its batch. `settle` in `verdict.ts` publishes an answer and refuses it as
+  already given when nothing was stored; the door and the mirror's fan-in both run it.
+  The `cancel` tool throws when the principal's answer got there first; the lapse sweep
+  counts only what it stored. Closes the race the entry above left open.
+- **The principal's `control` row is the whole of a cut.** The harness's `cancelled` row
+  (`payload.control: "cancelled"`, unstamped, `CANCELLED` as its text) is gone: nu and xi
+  write nothing for a cut turn, the act's killed tools still report `cancelled: true`.
+  `decide` idles while the cut stands — the last `control` row, followed by nothing but
+  the turn's own rows (`cutStands`, render.ts) — and compaction treats a standing cut as a
+  dead turn the same way. Render draws the row, where it stands, as the `<system
+  kind="cancelled">` line (no longer transparent to a run; the weld floats it under a
+  tool it cut). The REPL draws `❯ /cancel` and nothing under it, and a surface gets
+  `[por terminal] /cancel` alone. `cutOf` takes every `control` row. Old logs keep their
+  `cancelled` rows; they now render as the same `<system>` line, a second time.
+- **The flaky `search \`connection\`` test was a lock bug.** `born`, the lease's holder
+  token, was the acquire's millisecond, so a turn ending and the next taking the lease in
+  the same millisecond shared a token, and xi's `finally` release of the first deleted
+  the second's row: its `publishAndRelease` threw `LeaseLost` and its events were dropped
+  (`lease … was stolen`). Fast scripted turns hit it about one run in three under the
+  `search` filter, and in production a fast pair of turns could too. `born` is now 53
+  random bits (`mint`); `take`/`steal` carry it beside `seen`. The lock suite pins it with
+  a frozen clock.

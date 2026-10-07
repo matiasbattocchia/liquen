@@ -114,7 +114,9 @@ export async function lapseGates(
   for (const card of await log.gates()) {
     const hours = card.agent ? hoursOf(card.agent.id) : undefined;
     if (hours == null || Date.parse(card.ts) > now - hours * 3_600_000) continue;
-    await log.publish(
+    // a card answered since the scan read it keeps its answer: the store stores no second
+    // ruling (§9)
+    const lapsed = await log.publish(
       {
         ts: new Date(now).toISOString(),
         type: "permission_response", // harness-authored: no `agent`, no turn_id (§3)
@@ -139,7 +141,7 @@ export async function lapseGates(
         }],
       } satisfies Draft<PermissionResponseEvent>,
     );
-    settled++;
+    if (lapsed !== null) settled++;
   }
   return settled;
 }

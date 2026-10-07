@@ -788,7 +788,7 @@ Deno.test("mirror fan-out: a settlement's row — a verdict, a lapse, a withdraw
   });
 });
 
-Deno.test("mirror fan-out: a /cancel crosses as the principal's line, the cut turn as the system's", async () => {
+Deno.test("mirror fan-out: a /cancel crosses as the principal's line, and that is the whole of the cut", async () => {
   await withMirror(async ({ publish, inConv, waitFor }) => {
     const env = {
       service: "local",
@@ -803,26 +803,12 @@ Deno.test("mirror fan-out: a /cancel crosses as the principal's line, the cut tu
       envelope: { ...env, sender: { address: "ana", name: "ana" } },
       parts: [{ type: "text", kind: "text", text: "/cancel" }],
     } as Draft<Event>);
-    await publish({
-      ts: new Date().toISOString(),
-      type: "control",
-      payload: { control: "cancelled" },
-      envelope: env,
-      parts: [{
-        type: "text",
-        kind: "text",
-        text: "cancelled by your principal — the turn stopped here",
-      }],
-    } as Draft<Event>);
-    await waitFor(async () => (await inConv("549")).length === 2);
-    assertEquals((await inConv("549")).map(textOf), [
-      "`[via terminal]` /cancel",
-      "`[system]` cancelled by your principal — the turn stopped here",
-    ]);
+    await waitFor(async () => (await inConv("549")).length === 1);
+    assertEquals((await inConv("549")).map(textOf), ["`[via terminal]` /cancel"]);
   });
 });
 
-Deno.test("mirror fan-out: a wake, a failure and a cut turn cross as `[system]`; a checkpoint does not", async () => {
+Deno.test("mirror fan-out: a wake and a failure cross as `[system]`; a checkpoint does not", async () => {
   await withMirror(
     async ({ publish, inConv, waitFor }) => {
       const harness = (type: string, parts: unknown[], payload: Record<string, unknown> = {}) =>
@@ -866,21 +852,11 @@ Deno.test("mirror fan-out: a wake, a failure and a cut turn cross as `[system]`;
         text: "send(to: Vivian)",
         data: { output: "the bridge is down", is_error: true },
       }], { ref_id: "u4", turn_id: "t2", deferred: true });
-      await harness(
-        "control",
-        [{
-          type: "text",
-          kind: "text",
-          text: "cancelled by your principal — the turn stopped here",
-        }],
-        { control: "cancelled" },
-      );
-      await waitFor(async () => (await inConv("549")).length === 4);
+      await waitFor(async () => (await inConv("549")).length === 3);
       assertEquals((await inConv("549")).map(textOf), [
         "`[sistema]` ⏰ recordarle a Mecha el mail",
         "`[sistema]` ✗ Command exited with code 1",
         "`[sistema]` ✗ send(to: Vivian) — the bridge is down",
-        "`[sistema]` cancelled by your principal — the turn stopped here",
       ]);
     },
     30,

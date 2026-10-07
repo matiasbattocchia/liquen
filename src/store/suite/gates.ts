@@ -141,8 +141,8 @@ export function gatesSuite(s: Substrate): void {
       assertEquals((await owed())[0].verdict, { behavior: "allow", scope: "once" });
       // the derivation over the whole log says the same
       assertEquals(owedOf(await log.read(), SESSION).map((o) => o.use.id), [u1!.id]);
-      // a second ruling on the same use changes nothing: one errand per use, the first word
-      await log.publish(rule(u1!.id));
+      // a second ruling on the same use is not stored: one errand per use, the first word
+      assertEquals(await log.publish(rule(u1!.id)), null);
       assertEquals((await owed()).length, 1);
       // the deferred report closes it
       await log.publish(result(u1!.id, true));
@@ -154,6 +154,28 @@ export function gatesSuite(s: Substrate): void {
       assertEquals(await log.gates({ agentId: "ana", sessionId: "mind" }), []); // and it closed the card
     } finally {
       await log.close();
+      await store.drop();
+    }
+  });
+
+  Deno.test("a card is settled once: the first ruling stands, a racing one is not stored", async () => {
+    const store = await s.fresh();
+    const one = await store.open();
+    const two = await store.open(); // another process's view: the phone's answer, the lapse
+    try {
+      const u = await one.publish(use());
+      const v = await one.publish(use());
+      await one.publish([ask(u!.id), ask(v!.id)]);
+      // the two answers race; whichever the store takes first is the only one kept
+      const [a, b] = await Promise.all([one.publish(rule(u!.id)), two.publish(rule(u!.id))]);
+      assertEquals([a, b].filter((r) => r !== null).length, 1);
+      // a batch keeps the cards still open and omits the settled one
+      const both = await two.publish([rule(u!.id), rule(v!.id)]);
+      assertEquals(both.map((r) => r.payload?.ref_id), [v!.id]);
+      assertEquals((await one.read({ types: ["permission_response"] })).length, 2);
+    } finally {
+      await one.close();
+      await two.close();
       await store.drop();
     }
   });
