@@ -621,7 +621,7 @@ Deno.test("mirror fan-out: a harness error crosses — the one voice left when a
   });
 });
 
-Deno.test("mirror fan-out: a verdict's row and a refused call's outcome stay at the terminal; a withdrawal crosses", async () => {
+Deno.test("mirror fan-out: a settlement's row — a verdict, a lapse, a withdrawal — and a refused call's outcome stay at the terminal", async () => {
   await withMirror(async ({ publish, inConv, waitFor, setDelivery }) => {
     const settle = (
       data: Record<string, unknown>,
@@ -674,18 +674,22 @@ Deno.test("mirror fan-out: a verdict's row and a refused call's outcome stay at 
         data: { output: "refused by your principal: más informal", is_error: true, refused: true },
       }],
     } as unknown as Draft<Event>);
-    // the agent's cancel (turn-marked): the card went out, so the withdrawal follows it
+    // …and the agent's cancel (turn-marked) is a settlement like any other
     await publish(settle(
       { behavior: "deny", scope: "once", reason: "withdrawn by the agent" },
       { ref_id: "01a0fd7f-cde6-7000-8000-412733bbc24a", turn_id: "T1" },
       "send(to: Vivian)",
     ));
+    // the agent's next word crosses, and nothing stands between it and the card
+    await publish(mindMsg("listo", {
+      agent: { id: "ana", session_id: "mind" },
+      payload: { turn_id: "t9" },
+    }));
     await waitFor(async () => (await inConv("D1")).length === 2);
     await new Promise((r) => setTimeout(r, 150));
     const rows = await inConv("D1");
     assertEquals(rows.length, 2);
-    assertEquals(textOf(rows[1]), "`[system]` withdrawn: **send**(to: Vivian)");
-    assertEquals(rows[1].payload?.ref_external_id, "slack:T1:D1:200.1"); // under its card
+    assertEquals(textOf(rows[1]), "`[agent]` listo");
   });
 });
 
@@ -723,7 +727,7 @@ Deno.test("mirror fan-out: a /cancel crosses as the principal's line, the cut tu
   });
 });
 
-Deno.test("mirror fan-out: every row the harness writes in the REPL crosses as `[system]`", async () => {
+Deno.test("mirror fan-out: a wake, a failure and a cut turn cross as `[system]`; a checkpoint does not", async () => {
   await withMirror(
     async ({ publish, inConv, waitFor }) => {
       const harness = (type: string, parts: unknown[], payload: Record<string, unknown> = {}) =>
@@ -738,6 +742,10 @@ Deno.test("mirror fan-out: every row the harness writes in the REPL crosses as `
           },
           parts,
         } as unknown as Draft<Event>);
+      // a checkpoint is the terminal's: a surface heard the mind compacting as it happened
+      await harness("summary", [{ type: "text", kind: "text", text: "…" }], {
+        covers: ["a", "b"],
+      });
       await harness("alarm", [{ type: "text", kind: "alarm", text: "recordarle a Mecha el mail" }]);
       await harness("tool_result", [{
         type: "data",
@@ -753,6 +761,17 @@ Deno.test("mirror fan-out: every row the harness writes in the REPL crosses as `
         },
       ); // a call that went fine says nothing more, there as here
       await harness(
+        "tool_result",
+        [{ type: "data", kind: "tool_result", text: "send(to: Roxi)", data: { output: "sent" } }],
+        { ref_id: "u3", turn_id: "t2", deferred: true },
+      ); // …an approved one included: the card asked for it, the `/y` gave it
+      await harness("tool_result", [{
+        type: "data",
+        kind: "tool_result",
+        text: "send(to: Vivian)",
+        data: { output: "the bridge is down", is_error: true },
+      }], { ref_id: "u4", turn_id: "t2", deferred: true });
+      await harness(
         "control",
         [{
           type: "text",
@@ -761,15 +780,12 @@ Deno.test("mirror fan-out: every row the harness writes in the REPL crosses as `
         }],
         { control: "cancelled" },
       );
-      await harness("summary", [{ type: "text", kind: "text", text: "…" }], {
-        covers: ["a", "b"],
-      });
       await waitFor(async () => (await inConv("549")).length === 4);
       assertEquals((await inConv("549")).map(textOf), [
         "`[sistema]` ⏰ recordarle a Mecha el mail",
         "`[sistema]` ✗ Command exited with code 1",
+        "`[sistema]` ✗ send(to: Vivian) — the bridge is down",
         "`[sistema]` cancelled by your principal — the turn stopped here",
-        "`[sistema]` ≡ punto de control escrito",
       ]);
     },
     30,

@@ -5219,3 +5219,27 @@ para esta conversación` repeated the line that gave them.
 
 Open: a lapse now reaches a surface not at all. The card stays on the phone, and a `/y`
 quoting it gets the harness's "that approval was already answered".
+
+### An approved call speaks only when it fails; a settlement's row stays home (2026-10-07) — LANDED
+
+- **An approved call that went fine draws nothing**, at the terminal or on a surface: the
+  card asked for it and the `/y` gave it, and the outcome was raw JSON on both. One that
+  failed draws `✗ send(to: Vivian) — <the tool's words>` (`failedCallOf`), naming the call
+  because its own row scrolled by long before. The model still reads every outcome.
+- **A lapse reads `— bbc24a lapsed: unanswered for 24h`.**
+- **A withdrawal no longer crosses.** Every settlement row — a verdict, a lapse, the
+  agent's withdrawal — is the terminal's; `[sistema] retirado: …` and its i18n row are gone.
+- **A checkpoint written no longer crosses.** A surface hears `[agente compactando...]`
+  while it is written; `[sistema] ≡ punto de control escrito` and its i18n row are gone.
+
+Planned: a principal's answer is a `permission_response`, not a message. Today a `/y` is
+logged in the mind twice — a `message` the model never reads (`saidVerdict` drops it) and
+the response — and a surface's `/y` is turned into a response by xi's gate reading chat
+text. The plan: the mirror's fan-in turns a surface line or reaction that answers a card
+into response rows carrying the line, sender and `via` (the original stays in the alias
+conversation, which xi never sees); the door writes the same rows for the terminal; both
+through one function (`src/verdict.ts`: the line, the card pointed at, the open cards →
+rows or error text) that also holds the bare-`/y` rule (`answering` takes the newest
+card, the gate calls it ambiguous — pick one) and refuses a second settlement of a card.
+`/y all` carries the line on its first row. xi's gate stops reading messages, and every
+message in the mind is one the model reads.

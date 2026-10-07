@@ -1634,6 +1634,11 @@ export function failureOf(e: ToolResultEvent): string {
   return said === "" ? "failed, saying nothing" : said;
 }
 
+/** An approved call's failure, the call named: it lands long after the call's own row. */
+export function failedCallOf(e: ToolResultEvent): string {
+  return `${e.parts[0].text ?? "the approved call"} — ${failureOf(e)}`;
+}
+
 /** An `error` event's message — rendered as a `<system>` text block rather than a real
  *  `mid_conv_system` one: it PRECEDES what it marks, and the API takes `mid_conv_system`
  *  only in trailing position (§5, live-smoke finding). */

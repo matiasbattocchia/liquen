@@ -34,10 +34,10 @@
  */
 
 import {
+  failedCallOf,
   failureOf,
   hhmm,
   isCancelled,
-  outcomeLine,
   ownVoice,
   shortId,
   SILENCE,
@@ -54,6 +54,7 @@ import type {
   PermissionRequestEvent,
   PermissionResponseEvent,
   SessionRef,
+  ToolResultEvent,
 } from "./types.ts";
 import { tailOf } from "./line.ts";
 
@@ -200,19 +201,19 @@ export function painter(s: Surface): Painter {
         return;
       }
       case "tool_result": {
-        // a deferred outcome is the harness reporting on a call the principal approved —
-        // it stands as a block of its own and reads as a sentence, because it lands long
-        // after the row it answers scrolled by. A call refused never ran: the verdict row
-        // already said so
+        // only a failure speaks: a call that went fine did what its row says, an approved
+        // one what its card asked, and a refused one never ran — its verdict said so
+        const { is_error, refused } = e.parts[0].data;
+        if (!is_error || refused) return;
         if (e.payload.deferred) {
-          if (e.parts[0].data.refused) return;
+          // an approved call's failure lands long after its row scrolled by: a block of its
+          // own, naming the call
           settle();
           s.gap();
-          s.write(`${YELLOW}${outcomeLine(e)}${RESET}`);
+          s.write(`${RED}${deferredFailure(e)}${RESET}`);
           s.prompt();
           return;
         }
-        if (!e.parts[0].data.is_error) return; // it did what the line above says it did
         s.write(`${RED}✗ ${failureOf(e)}${RESET}\n`);
         return;
       }
@@ -329,15 +330,15 @@ export function painter(s: Surface): Painter {
           continue;
         }
         case "tool_result": {
-          // a deferred outcome answers a call from another turn: it stands alone, as it
-          // does live. An ordinary one belongs to the call right above it.
+          // a failure, as live: a deferred one answers a call from another turn and stands
+          // alone; an ordinary one belongs to the call right above it
+          const { is_error, refused } = e.parts[0].data;
+          if (!is_error || refused) continue;
           if (e.payload.deferred) {
-            if (e.parts[0].data.refused) continue;
             gap();
-            put(`${YELLOW}${outcomeLine(e)}${RESET}`);
+            put(`${RED}${deferredFailure(e)}${RESET}`);
             continue;
           }
-          if (!e.parts[0].data.is_error) continue;
           row();
           put(`${RED}✗ ${failureOf(e)}${RESET}`);
           continue;
@@ -397,6 +398,11 @@ function card(e: PermissionRequestEvent, shown: Set<EventId>): string {
   return lands?.length ? `? approve ${handle} → ${lands.join(", ")}` : `? approve ${handle}`;
 }
 
+/** An approved call's failure, as a row: the call named, since its own row is long gone. */
+function deferredFailure(e: ToolResultEvent): string {
+  return `✗ ${failedCallOf(e)}`;
+}
+
 /** A fired wake, as a row: when, and the note the agent left itself when it scheduled it. */
 function alarmRow(e: AlarmEvent, stamp: (ts: string) => string): string {
   return `${stamp(e.ts)}${YELLOW}⏰ ${e.parts[0]?.text ?? ""}${RESET}`;
@@ -408,7 +414,7 @@ function alarmRow(e: AlarmEvent, stamp: (ts: string) => string): string {
 function verdictRow(e: PermissionResponseEvent): string {
   const { behavior, scope, reason, lapsed } = e.parts[0].data;
   const handle = shortId(e.payload.ref_id);
-  if (lapsed) return `— ${handle} lapsed, nobody answered${reason ? ` (${reason})` : ""}`;
+  if (lapsed) return `— ${handle} lapsed${reason ? `: ${reason}` : ""}`;
   const reach = scope === "once" ? "once" : scope === "always" ? "always" : `for this ${scope}`;
   const why = reason && e.payload.turn_id !== undefined ? `: ${reason}` : "";
   return `— ${handle} ${behavior === "allow" ? "allowed" : "refused"} ${reach}${why}`;

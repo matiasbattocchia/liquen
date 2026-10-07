@@ -55,9 +55,9 @@
 import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { MIND, parseSession, sessionAddress } from "../session.ts";
 import {
+  failedCallOf,
   failureOf,
   isCancelled,
-  outcomeLine,
   reactionOf,
   shortId,
   silenced,
@@ -77,7 +77,6 @@ import type {
   MessageEvent,
   Part,
   PermissionRequestEvent,
-  PermissionResponseEvent,
   Service,
   ToolUseEvent,
 } from "../types.ts";
@@ -305,13 +304,11 @@ async function fanOut(
     !(via && via.service === a.service && via.conversation === a.conversation)
   );
   if (targets.length === 0) return;
-  // a row that points at a mind row — the card a `/y` answers, the card a thumb sits on,
-  // the card a verdict settles — quotes that row's crossing on each surface, the surface's
-  // own way of pointing: a reply there, where a terminal names the card by its handle
+  // a principal's line that points at a mind row — the card a `/y` answers, the card a
+  // thumb sits on — quotes that row's crossing on each surface, the surface's own way of
+  // pointing: a reply there, where a terminal names the card by its handle
   const pointed = e.type === "message" && e.payload?.turn_id === undefined
     ? e.payload?.ref_id
-    : e.type === "permission_response"
-    ? (await cardOf(deps, e.envelope.conversation.address, e.payload.ref_id))?.id
     : undefined;
   const quotes = await Promise.all(
     targets.map((a) => pointed ? crossingOf(deps, a.conversation, pointed) : undefined),
@@ -335,21 +332,6 @@ async function fanOut(
       ...(e.type === "delta" ? { delta: true } : {}),
     },
   })));
-}
-
-/** The card raised for a use, in the room it was raised in. */
-async function cardOf(
-  deps: Pick<MirrorDeps, "read">,
-  conversation: string,
-  use: EventId,
-): Promise<Event | undefined> {
-  const [card] = await deps.read({
-    conversation,
-    types: ["permission_request"],
-    limit: 1,
-    filter: (x) => x.payload?.ref_id === use,
-  });
-  return card;
 }
 
 /** The wire id a mind row's crossing landed under on one surface — what a quote of that
@@ -378,10 +360,11 @@ const same = (parts: Part[]): CC => () => parts;
  *  `[agent asks] …` for a gate waiting on the principal, `[via <surface>] …` for a
  *  principal's own words replayed as output — `[<username> via <surface>]` on a surface
  *  that is another principal's — a `/y`, a `/n`, a `/cancel` among them — and `[system] …`
- *  for what the harness says there: an approved call's outcome, a failure, a withdrawal, a
- *  wake, a cut turn, a checkpoint. Null ⇒ nothing to say there: a result that went fine,
- *  a call refused (its `/n` said so), a verdict (the line that gave it said so; its row,
- *  handle and all, is the terminal's). */
+ *  for what the harness says there: a failure, a wake, a cut turn. Null ⇒ nothing to say
+ *  there: a checkpoint (the presence line said the mind was compacting), a result that
+ *  went fine, an approved call's included (the card asked for it, the `/y` gave it), a
+ *  call refused (its `/n` said so), a settlement (the line that gave it said so; its row
+ *  — handle, lapse and withdrawal all — is the terminal's). */
 async function ccParts(
   e: Event,
   deps: Pick<MirrorDeps, "read">,
@@ -400,30 +383,19 @@ async function ccParts(
       text: `\`[${w.tool}]\` ${boldName(describeCall(call, { resolve }))}`,
     }]);
   }
-  if (e.type === "tool_result" && e.payload.deferred) {
-    // a call the principal approved, now run: they asked for it, so they hear how it went
-    // — the same sentence the model is given (§9). A call refused never ran: the line
-    // that refused it crossed already.
-    if (e.parts[0].data.refused) return null;
-    return same([{
-      type: "text",
-      kind: "text",
-      text: `\`[${w.system}]\` ${outcomeLine(e, 160)}`,
-    }]);
-  }
   if (e.type === "tool_result") {
     // a call says itself as it is made, so only a failure speaks again — the REPL's `✗`,
-    // in the tool's own words
-    if (!e.parts[0].data.is_error) return null;
-    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${failureOf(e)}` }]);
+    // in the tool's own words; an approved call's names the call, its row long gone. A
+    // call refused never ran: the line that refused it crossed already.
+    const { is_error, refused } = e.parts[0].data;
+    if (!is_error || refused) return null;
+    const said = e.payload.deferred ? failedCallOf(e) : failureOf(e);
+    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${said}` }]);
   }
   if (e.type === "alarm") {
     // a wake the agent scheduled, its own note handed back: what the turn after it acts on
     const note = (e as AlarmEvent).parts[0]?.text ?? "";
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ⏰ ${note}` }]);
-  }
-  if (e.type === "summary") {
-    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ≡ ${w.checkpoint}` }]);
   }
   if (e.type === "control") {
     // the principal's hard stop is their line (`/cancel`); the harness closing the turn it
@@ -461,16 +433,6 @@ async function ccParts(
       kind: "text",
       // a blank row between them: the legend reads apart from the call it is about
       text: `\`[${w.asks}]\` ${w.approve} ${body}\n\n\`${w.hint}\``,
-    }]);
-  }
-  if (e.type === "permission_response" && e.payload?.turn_id !== undefined) {
-    // the agent took an ask back (`cancel`, §9) — turn_id marks the settlement as the
-    // model's own doing. The principal saw the card, so they hear the withdrawal.
-    const call = (e as PermissionResponseEvent).parts[0].text;
-    return same([{
-      type: "text",
-      kind: "text",
-      text: `\`[${w.system}]\` ${w.withdrawn}: ${boldName(call ?? "…")}`,
     }]);
   }
   if (e.type !== "message") return null;

@@ -23,8 +23,6 @@ const TONGUES = {
     system: "system",
     approve: "approve",
     hint: "reply /y to approve · /n <reason> to refuse · or react 👍 / 👎",
-    withdrawn: "withdrawn",
-    checkpoint: "checkpoint written",
     // the send card's rows (§9): the labels a person reads the call under
     card: {
       conversation: "Conversation",
@@ -62,8 +60,6 @@ const TONGUES = {
     system: "sistema",
     approve: "aprobar",
     hint: "responder /y para aprobar · /n <motivo> para rechazar · o reaccionar 👍 / 👎",
-    withdrawn: "retirado",
-    checkpoint: "punto de control escrito",
     card: {
       conversation: "Conversación",
       last: "Último mensaje",

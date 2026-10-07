@@ -786,8 +786,9 @@ and a `/y` is read in xi, below.
   - **The verdict is a second, later call.** When it lands, xi runs the tool on the model's
     behalf. That outcome cannot be a `tool_result` block — its pair is spent — so it is a
     `tool_result` EVENT marked `payload.deferred`, which render narrates in the harness's
-    voice (`<system kind="outcome">send(to: Vivian) → sent</system>`) and the mirror carries
-    to the principal who approved it. It collapses with the rest of the tool traffic at the
+    voice (`<system kind="outcome">send(to: Vivian) → sent</system>`). The principal's
+    surfaces draw it only when the call failed (`✗ send(to: Vivian) — <the tool's words>`):
+    the card asked for the call and their `/y` gave it. It collapses with the rest of the tool traffic at the
     boundary (§5).
   - **What is still waiting lives in the ANCHOR, not the transcript** (§5): a pending gate
     is state, not history — the transcript already closed those calls. The anchor is
@@ -979,11 +980,13 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     quoting the card's own crossing, which is how a surface points where a terminal names
     the card by its handle. Tool calls cross as redacted one-liners under a tag of their
     own (`[agent tool] bash(git status)`). What the harness says in the REPL crosses as
-    `[system] …`: an approved call's outcome, a failure (`✗` and the tool's words), a
-    withdrawal, a fired wake (`⏰` and the agent's note), a turn the principal cut (under
-    their `/cancel`, which crosses as their line), a checkpoint. A verdict's own row
-    (`— bbc24a refused once`) is the terminal's: on a surface the line that gave it says
-    it, and a call refused draws no outcome anywhere. The tags, the
+    `[system] …`: a failure (`✗` and the tool's words; an approved call's names the call), a
+    fired wake (`⏰` and the agent's note), a turn the principal cut (under their
+    `/cancel`, which crosses as their line). A checkpoint written is the terminal's: a
+    surface heard `[agent compacting...]` while it was written. A settlement's own row is
+    the terminal's too — a verdict (`— bbc24a refused once`), a lapse (`— bbc24a lapsed: unanswered
+    for 24h`), the agent's withdrawal: on a surface the line that gave a verdict says it,
+    and a call refused draws no outcome anywhere. The tags, the
     reply hint under a card and the presence words are the harness's own, so they speak the
     org's tongue (config `locale`, language subtag: `es_AR.UTF-8` ⇒ `[agente pregunta] …`;
     unknown or unset ⇒ English) — the model's voice needs no translating, the prefix states

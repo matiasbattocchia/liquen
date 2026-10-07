@@ -510,7 +510,6 @@ Deno.test("a recap prints exactly what the live screen printed", () => {
       "⚙ send(to: Roxi, text: Terrada 1439)\n" +
         "? approve u1 → Roxana Casol (5492616510433)\n" +
         "— u1 allowed for this conversation\n\n" +
-        "send(to: Roxi) → sent\n\n" +
         "⚙ bash(date)\n✗ Command exited with code 1\n",
     ),
     true,
@@ -670,5 +669,50 @@ Deno.test("a /n and a /cancel read as the principal's lines, live and reopened a
     seen.trimEnd(),
     "2 Oct 13:42 ❯ /n en este caso Emi es un contacto\n— bbc24a refused once\n\n" +
       "2 Oct 13:45 ❯ /cancel\n\ncancelled by your principal — the turn stopped here",
+  );
+});
+
+// a lapse says why the card closed; an approved call that went fine says nothing more —
+// the card asked for it and the `/y` gave it — and one that failed names the call, its own
+// row long scrolled by
+Deno.test("a lapse reads its reason; an approved call speaks only when it failed", () => {
+  const TS = "2026-10-02T16:42:59Z";
+  const env = { service: "local", connection_address: "agent", conversation: { address: HOME } };
+  const settled = (id: string, ref: string, data: Json) => ({
+    id,
+    ts: TS,
+    type: "permission_response",
+    payload: { ref_id: ref },
+    envelope: env,
+    parts: [{ type: "data", kind: "permission_response", data }],
+  });
+  const ran = (id: string, ref: string, call: string, data: Json) => ({
+    id,
+    ts: TS,
+    type: "tool_result",
+    payload: { ref_id: ref, turn_id: "t1", deferred: true },
+    agent: { id: AGENT, session_id: "mind" },
+    envelope: env,
+    parts: [{ type: "data", kind: "tool_result", text: call, data }],
+  });
+  const history = [
+    settled("p1", "01a0fd7f-cde6-7000-8000-412733bbc24a", {
+      behavior: "deny",
+      scope: "once",
+      lapsed: true,
+      reason: "unanswered for 24h",
+    }),
+    ran("r1", "u2", "send(to: Roxi)", { is_error: false, output: { ok: true } }),
+    ran("r2", "u3", "send(to: Vivian)", { is_error: true, output: "the bridge is down" }),
+  ] as unknown as Event[];
+  const live = surface();
+  for (const e of history) live.p.event(e);
+  const again = surface();
+  again.p.recap(history);
+  const seen = plain(live.screen());
+  assertEquals(plain(again.screen()).trimEnd(), seen.trimEnd());
+  assertEquals(
+    seen.trim(),
+    "— bbc24a lapsed: unanswered for 24h\n\n✗ send(to: Vivian) — the bridge is down",
   );
 });
