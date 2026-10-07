@@ -1,6 +1,14 @@
 import { assertEquals } from "@std/assert";
-import { answer, answerLine, answerRows, parseVerdict, reactionVerdict } from "./verdict.ts";
-import type { Event, PermissionRequestEvent, PermissionResponseEvent } from "./types.ts";
+import {
+  answer,
+  type Answered,
+  answerLine,
+  answerRows,
+  parseVerdict,
+  reactionVerdict,
+  settle,
+} from "./verdict.ts";
+import type { Draft, Event, PermissionRequestEvent, PermissionResponseEvent } from "./types.ts";
 
 Deno.test("reactionVerdict: a thumb or a heart is /y, a thumb down or a gasp is /n — always once (§9)", () => {
   assertEquals(reactionVerdict("👍"), { behavior: "allow", scope: "once" });
@@ -155,4 +163,33 @@ Deno.test("answerRows: one settlement per card, the line on the first and nowher
     }],
   } as unknown as Event as PermissionResponseEvent;
   assertEquals(answerLine(lapse), undefined);
+});
+
+Deno.test("settle: the line rides the first card the store keeps — one lost to a race does not take it", async () => {
+  const from = {
+    agent: { id: "a", session_id: "mind" },
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "mind@a" },
+    },
+  } as const;
+  const all: Answered = {
+    refs: ["u1", "u2", "u3"],
+    verdict: { behavior: "allow", scope: "once", every: true },
+  };
+  // a store where u1 was ruled on first: its settlement is not kept
+  const store = (ruled: string[]) => async (rows: Draft<PermissionResponseEvent>[]) =>
+    await Promise.resolve(
+      rows.filter((r) => !ruled.includes(r.payload.ref_id))
+        .map((r, i) => ({ ...r, id: `${r.payload.ref_id}-${i}` }) as unknown as Event),
+    );
+  const kept = await settle(store(["u1"]), all, "/y all", from) as PermissionResponseEvent[];
+  assertEquals(kept.map((e) => e.payload.ref_id), ["u2", "u3"]);
+  assertEquals(kept.map(answerLine), ["/y all", undefined]);
+  // every card lost: the answer is refused, with the sentence
+  assertEquals(
+    await settle(store(["u1", "u2", "u3"]), all, "/y all", from),
+    "that approval was already answered",
+  );
 });

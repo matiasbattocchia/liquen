@@ -131,10 +131,10 @@ export function answer(
 
 /* ── the rows ─────────────────────────────────────────────────────────── */
 
-/** An answer as the log holds it: one settlement per card, in the order they were asked,
- *  written together; the first carries the line that gave them — what the room draws as
- *  the principal's, a `/y all` included, once. `from` is who and where: their signature,
- *  the session's stamp, a surface's provenance. */
+/** An answer as the log holds it: one settlement per card, in the order they were asked;
+ *  the first carries the line that gave them — what the room draws as the principal's, a
+ *  `/y all` included, once. `from` is who and where: their signature, the session's stamp,
+ *  a surface's provenance. */
 export function answerRows(
   a: Answered,
   line: string,
@@ -156,14 +156,23 @@ export function answerRows(
 /** The answer logged, as the store kept it: the settlements of the cards no other ruling
  *  reached first — a card is settled once (§9), and a race between two surfaces, or with
  *  the lapse, is the store's to break — or, when every card went to someone else, the
- *  sentence the answer is refused with. */
+ *  sentence the answer is refused with. The cards go one at a time, so the line rides the
+ *  first one the store keeps: a card lost to a race does not take the line with it. */
 export async function settle(
   publish: (rows: Draft<PermissionResponseEvent>[]) => Promise<Event[]>,
   a: Answered,
   line: string,
   from: Pick<Draft<PermissionResponseEvent>, "agent" | "envelope" | "extra">,
 ): Promise<PermissionResponseEvent[] | string> {
-  const stored = await publish(answerRows(a, line, from)) as PermissionResponseEvent[];
+  const stored: PermissionResponseEvent[] = [];
+  for (const row of answerRows(a, line, from)) {
+    const [data] = row.parts;
+    const carrying: Draft<PermissionResponseEvent> = {
+      ...row,
+      parts: stored.length === 0 ? [data, { type: "text", kind: "text", text: line }] : [data],
+    };
+    stored.push(...await publish([carrying]) as PermissionResponseEvent[]);
+  }
   return stored.length > 0 ? stored : ANSWERED;
 }
 
