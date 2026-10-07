@@ -5232,18 +5232,6 @@ quoting it gets the harness's "that approval was already answered".
 - **A checkpoint written no longer crosses.** A surface hears `[agente compactando...]`
   while it is written; `[sistema] ≡ punto de control escrito` and its i18n row are gone.
 
-Planned: a principal's answer is a `permission_response`, not a message. Today a `/y` is
-logged in the mind twice — a `message` the model never reads (`saidVerdict` drops it) and
-the response — and a surface's `/y` is turned into a response by xi's gate reading chat
-text. The plan: the mirror's fan-in turns a surface line or reaction that answers a card
-into response rows carrying the line, sender and `via` (the original stays in the alias
-conversation, which xi never sees); the door writes the same rows for the terminal; both
-through one function (`src/verdict.ts`: the line, the card pointed at, the open cards →
-rows or error text) that also holds the bare-`/y` rule and refuses a second settlement of
-a card. A bare `/y` with several cards open answers the newest, at the terminal and on a
-surface alike. `/y all` carries the line on its first row. xi's gate stops reading
-messages, and every message in the mind is one the model reads.
-
 ### An error reads as its sentence, and a reopened REPL draws it (2026-10-07) — LANDED
 
 - A harness `error` paints as `! <its sentence>` — no `{"error":…}` wrapper — and the
@@ -5251,3 +5239,29 @@ messages, and every message in the mind is one the model reads.
   `liquen cli` still writes them to stderr. A stream's error delta has no row and stays
   live-only.
 - The agent's withdrawal reads `— bbc24a withdrawn by the agent`, not as a refusal.
+
+### A principal's answer is its settlement, not a message (2026-10-07) — LANDED
+
+A `/y` was logged in the mind twice — a `message` the model never read (`saidVerdict`
+dropped it from the transcript) beside the `permission_response` — and a surface's `/y`
+became a settlement only when xi's gate read chat text on its next wake. The REPL read a
+bare `/y` against several cards as the newest; the gate called it ambiguous.
+
+- **One rule, two doors** (`src/verdict.ts`). `answer` reads a line or a reaction against
+  the open cards: a handle or a quoted card picks its own, a bare word the newest, `all`
+  every card open now; what settles nothing comes back as the sentence that says why.
+  `answerRows` writes a `permission_response` per card, signed, the first carrying the
+  line. The door's `permission_response` op takes `{text, sender?, session?}` and runs it
+  (the REPL and `liquen cli` send the line as typed); the mirror's fan-in runs it for a
+  surface's `/y` line or a verdict reaction on a card, and logs a harness `error` for what
+  settles nothing. The original stays in the alias conversation, which xi never sees.
+- **xi reads settlements only.** `gateVerdict`, its ambiguity and spent-line rules, and
+  `saidVerdict`'s transcript filter are gone: every message in the mind is one the model
+  reads. A mind that still holds `/y` messages from before shows them to the model as the
+  principal's lines.
+- **The room draws the answer off the settlement**: the REPL paints its line (`❯ /y`,
+  `❯ [via whatsapp] 👍`) then the verdict row, live and recalled; the mirror crosses the
+  line quoting the card, its handle dropped, and a `/y all` once.
+
+Open: two answers racing for one card — a terminal and a phone in the same instant — can
+both land; `owed` takes the earliest, but the room draws both.

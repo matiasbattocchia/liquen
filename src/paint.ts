@@ -46,6 +46,7 @@ import {
   textOf,
 } from "./render.ts";
 import { describeCall, lineOf } from "./describe.ts";
+import { answerLine } from "./verdict.ts";
 import { markdown, renderMarkdown } from "./md.ts";
 import type {
   AlarmEvent,
@@ -112,6 +113,11 @@ export function painter(s: Surface): Painter {
   let block: "none" | "text" | "thinking" = "none"; // what the transcript last streamed
   const clock = s.clock ?? (() => new Date());
   const stamp = (ts: string) => `${DIM}${hhmm(ts, s.zone)}${RESET} `;
+  // a principal's line: when, their mark, and the wire it came in through, if one
+  const yours = (e: Event, text: string) => {
+    const via = viaOf(e)?.service;
+    return `${stamp(e.ts)}${YOU} ${via ? `${CYAN}[via ${via}]${RESET} ` : ""}${text}`;
+  };
   // the agent's text, released: the first of a block opens it — a blank line, the time
   // and the mark — and the rest flows through the markdown stream
   const show = (raw: string) => {
@@ -160,7 +166,7 @@ export function painter(s: Surface): Painter {
     // stamped lines stay non-self: locally they're already on screen
     switch (e.type) {
       case "message": {
-        const via = (e.extra?.via ?? undefined) as { service?: string } | undefined;
+        const via = viaOf(e);
         const text = lineOf(e);
         if (!self) {
           // the principal spoke. Through a mind-alias surface (§4) the mirror's copy is the
@@ -170,8 +176,7 @@ export function painter(s: Surface): Painter {
           if (!via && (!s.typed || s.typed(text))) return;
           settle();
           s.gap();
-          const wire = via ? `${CYAN}[via ${via.service}]${RESET} ` : "";
-          s.write(`${stamp(e.ts)}${YOU} ${wire}${text}`);
+          s.write(yours(e, text));
           s.prompt();
           return;
         }
@@ -231,8 +236,16 @@ export function painter(s: Surface): Painter {
       }
       case "permission_response": {
         // the card is answered — by this surface, another, the agent withdrawing it, or
-        // the clock — and the answer is a row of its own, under whatever stands
+        // the clock — and the answer is a row of its own, under whatever stands. A
+        // principal's answer is their line first: one this surface typed is on screen
+        // already, one from elsewhere is painted here
         s.onGateSettled?.(e.payload.ref_id);
+        const said = answerLine(e);
+        if (said !== undefined && (viaOf(e) || (s.typed && !s.typed(said)))) {
+          settle();
+          s.gap();
+          s.write(yours(e, said));
+        }
         settle();
         s.prompt();
         s.write(`${DIM}${verdictRow(e)}${RESET}\n`);
@@ -320,11 +333,7 @@ export function painter(s: Surface): Painter {
           if (text === "" || silent(e)) continue;
           gap();
           if (ownVoice(e, s.session)) put(`${stamp(e.ts)}${AGENT} ${renderMarkdown(text)}`);
-          else {
-            const via = (e.extra?.via ?? undefined) as { service?: string } | undefined;
-            const wire = via?.service ? `${CYAN}[via ${via.service}]${RESET} ` : "";
-            put(`${stamp(e.ts)}${YOU} ${wire}${text}`);
-          }
+          else put(yours(e, text));
           continue;
         }
         case "tool_use": {
@@ -356,6 +365,11 @@ export function painter(s: Surface): Painter {
           continue;
         }
         case "permission_response": {
+          const said = answerLine(e);
+          if (said !== undefined) {
+            gap();
+            put(yours(e, said));
+          }
           row();
           put(`${DIM}${verdictRow(e)}${RESET}`);
           continue;
@@ -415,6 +429,11 @@ function deferredFailure(e: ToolResultEvent): string {
 /** A harness error, recalled: the row the REPL's `error` sink drew for it live. */
 function errorRow(e: HarnessErrorEvent): string {
   return `${RED}! ${errorTextOf(e)}${RESET}`;
+}
+
+/** The surface a principal's row came in through (`extra.via`, the mirror's copy), if any. */
+function viaOf(e: Event): { service?: string } | undefined {
+  return (e.extra?.via ?? undefined) as { service?: string } | undefined;
 }
 
 /** A fired wake, as a row: when, and the note the agent left itself when it scheduled it. */

@@ -15,8 +15,8 @@
  *   a gate fires        → an approval card; answer `/{y,n} [once|conv|conn|always|all]
  *                         [reason]` — a scope word makes the verdict STANDING (remembered
  *                         policy, §9); `all` answers every card waiting at once. The line
- *                         is logged with its verdicts, so it stands in the room like any
- *                         other line: in a recall, and on the mirrored surfaces
+ *                         is logged on its settlements, so it stands in the room as the
+ *                         principal's: in a recall, and on the mirrored surfaces
  *   Ctrl-C (or /cancel) → cut the running turn: a thinking model is hung up on, a running
  *                         tool is killed, and the agent idles until you speak again (§2).
  *                         Ctrl-C cuts only while the door says the session is busy; idle,
@@ -34,7 +34,7 @@
  */
 
 import meta from "../deno.json" with { type: "json" };
-import { answering, attach, resolveAgent, steering, tuneFlags, wire } from "./attach.ts";
+import { attach, resolveAgent, steering, tuneFlags, wire } from "./attach.ts";
 import { createScreen } from "./line.ts";
 import { orgFlag } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
@@ -198,17 +198,11 @@ await entry(async () => {
       continue;
     }
     if (steering(text)) {
-      const ans = answering(text, pending);
-      if (typeof ans === "string") {
-        write(`${DIM}${ans}${RESET}\n`);
-        continue;
-      }
-      pending.splice(0, pending.length, ...pending.filter((ref) => !ans.refs.includes(ref)));
+      // the door reads the line against the open cards, as the mirror reads a phone's; the
+      // pile empties as the settlements come back
       typed.push(text);
       const r = await w.request({
         op: "permission_response",
-        refs: ans.refs,
-        verdict: ans.verdict,
         text,
         sender: { address: a.username, name: a.username },
         session,

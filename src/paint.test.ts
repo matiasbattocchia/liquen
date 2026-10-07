@@ -542,25 +542,37 @@ Deno.test("a verdict reads under the line that gave it, live and reopened alike"
     at(id, "permission_request", { tool: "send", call: "send(…)", detail: "send(to: Lucas)" }, {
       ref_id: use,
     });
-  const thumb: MessageEvent = {
-    ...asked("2026-09-11T14:15:00Z", ""),
-    payload: { ref_id: "g1", action: "add" },
-    parts: [{ type: "data", kind: "reaction", data: { unicode: "👍" } }],
-    extra: { via: { event: "w1", service: "whatsapp", conversation: "549" } },
-  };
-  const typed: MessageEvent = {
-    ...asked("2026-09-11T14:16:00Z", "/y conv u2"),
-    payload: { ref_id: "g2" },
-  };
+  // a principal's answer: the settlement, signed, carrying the line that gave it
+  const answered = (
+    id: string,
+    ts: string,
+    use: string,
+    data: Json,
+    line: string,
+    via?: Record<string, Json>,
+  ): Event => ({
+    ...asked(ts, ""),
+    id,
+    type: "permission_response",
+    payload: { ref_id: use },
+    parts: [
+      { type: "data", kind: "permission_response", data },
+      { type: "text", kind: "text", text: line },
+    ],
+    ...(via ? { extra: { via } } : {}),
+  } as unknown as Event);
   const history: Event[] = [
     card("g1", "u1"),
-    thumb,
-    at("p1", "permission_response", { behavior: "allow", scope: "once" }, { ref_id: "u1" }),
-    card("g2", "u2"),
-    typed,
-    at("p2", "permission_response", { behavior: "allow", scope: "conversation" }, {
-      ref_id: "u2",
+    answered("p1", "2026-09-11T14:15:00Z", "u1", { behavior: "allow", scope: "once" }, "👍", {
+      event: "w1",
+      service: "whatsapp",
+      conversation: "549",
     }),
+    card("g2", "u2"),
+    answered("p2", "2026-09-11T14:16:00Z", "u2", {
+      behavior: "allow",
+      scope: "conversation",
+    }, "/y conv u2"),
   ];
   // another attachment's lines: this screen never echoed them
   const live = surface({ typed: () => false });
@@ -616,20 +628,18 @@ Deno.test("a /n and a /cancel read as the principal's lines, live and reopened a
   const env = { service: "local", connection_address: "agent", conversation: { address: HOME } };
   const history = [
     {
-      ...asked(TS, "/n en este caso Emi es un contacto"),
-      payload: { ref_id: "g1" },
-    },
-    {
+      ...asked(TS, ""),
       id: "p1",
-      ts: TS,
       type: "permission_response",
       payload: { ref_id: "01a0fd7f-cde6-7000-8000-412733bbc24a" },
-      envelope: env,
-      parts: [{
-        type: "data",
-        kind: "permission_response",
-        data: { behavior: "deny", scope: "once", reason: "en este caso Emi es un contacto" },
-      }],
+      parts: [
+        {
+          type: "data",
+          kind: "permission_response",
+          data: { behavior: "deny", scope: "once", reason: "en este caso Emi es un contacto" },
+        },
+        { type: "text", kind: "text", text: "/n en este caso Emi es un contacto" },
+      ],
     },
     {
       id: "r1",
@@ -767,4 +777,20 @@ Deno.test("an error reads as its sentence and a withdrawal as itself, live and r
     seen.trim(),
     "! that approval was already answered — 1 still waiting\n— bbc24a withdrawn by the agent",
   );
+});
+
+// a `/y` typed on this screen is on it already: only the settlement's row is painted under it
+Deno.test("live: a verdict typed here paints its row, not its line again", () => {
+  const live = surface({ typed: (t) => t === "/y" });
+  live.p.event({
+    ...asked("2026-10-07T12:00:00Z", ""),
+    id: "p1",
+    type: "permission_response",
+    payload: { ref_id: "01a0fd7f-cde6-7000-8000-412733bbc24a" },
+    parts: [
+      { type: "data", kind: "permission_response", data: { behavior: "allow", scope: "once" } },
+      { type: "text", kind: "text", text: "/y" },
+    ],
+  } as unknown as Event);
+  assertEquals(plain(live.screen()).trim(), "— bbc24a allowed once");
 });

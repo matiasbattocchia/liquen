@@ -512,6 +512,7 @@ export async function start(
     subscribe: (l, o) => log.subscribe(l, o),
     publish: log.publish,
     read: (q) => log.read(q),
+    gates: (scope) => log.gates(scope),
     aliases: () => log.aliases(),
     nameOf: async (id) => (await log.agents()).find((a) => a.agentId === id)?.name ?? id,
     locale: catalog?.organization.locale,

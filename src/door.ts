@@ -26,10 +26,10 @@
  *                                                          → {ok, id, status: "queued"}
  *   message              {op, text, sender?, session?}   → the principal's half of the
  *                                                          complex (no turn_id, §3) → {ok, id}
- *   permission_response  {op, refs, verdict, text,  → answers open gates: the line that
- *                         sender?, session?}          answered (quoting the card when it
- *                                                     answers one) and a verdict per use,
- *                                                     together → {ok, id} (the line's)
+ *   permission_response  {op, text, sender?,  → the principal's `/y` · `/n` line, read
+ *                         session?}             against the open cards (`verdict.ts`): a
+ *                                               settlement per card it answers, the first
+ *                                               carrying the line → {ok, id, refs, verdict}
  *   control              {op, kind, sender?, session?}   → the principal's hard stop,
  *                                                          typed: `cancel`
  *                                                          cuts the session's running turn
@@ -70,19 +70,15 @@ import type {
   Draft,
   Effort,
   Event,
-  EventId,
   Json,
   MessageEvent,
-  PermissionBehavior,
-  PermissionResponseEvent,
-  PermissionScope,
-  PermissionVerdict,
   ToolUseEvent,
 } from "./types.ts";
 import type { Log } from "./store/log.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
-import { shortId, silent } from "./render.ts";
+import { silent } from "./render.ts";
+import { answer, answerRows } from "./verdict.ts";
 import { lineOf } from "./describe.ts";
 
 export interface DoorAgent {
@@ -393,10 +389,9 @@ async function handle(
       sender: { address, name: typeof sender.name === "string" ? sender.name : address },
     };
   };
-  const line = (text: string, payload?: { ref_id: EventId }): Draft<MessageEvent> => ({
+  const line = (text: string): Draft<MessageEvent> => ({
     ts: new Date().toISOString(),
     type: "message",
-    ...(payload ? { payload } : {}),
     agent: { id: agent.agentId, session_id: session },
     envelope: signed(),
     parts: [{ type: "text", kind: "text", text }],
@@ -408,34 +403,22 @@ async function handle(
     return { ok: true, id: msg!.id };
   }
   if (req.op === "permission_response") {
-    const refs = req.refs;
-    if (!Array.isArray(refs) || refs.length === 0 || refs.some((r) => typeof r !== "string")) {
-      throw new Error("permission_response needs refs, the uses it answers");
-    }
     const text = req.text;
-    if (typeof text !== "string" || text === "") {
-      throw new Error("permission_response needs text, the line that answered");
+    if (typeof text !== "string" || text.trim() === "") {
+      throw new Error("permission_response needs text, the line that answers");
     }
-    const verdict = verdictOf(req.verdict);
+    // the terminal's way of pointing is a handle in the line; `answer` reads it the way the
+    // mirror reads a surface's reply, and refuses what settles nothing
     const open = await port.gates({ agentId: agent.agentId, sessionId: session });
-    const cards = refs.map((ref) => open.find((c) => c.payload.ref_id === ref));
-    const stale = refs.find((_, i) => cards[i] === undefined);
-    if (stale !== undefined) throw new Error(`no card ${shortId(stale)} is waiting`);
-    // the line and its verdicts land together, the line first: it is how the room — a
-    // recall, a mirrored surface — reads who answered, when, and with what. A line that
-    // answers one card quotes it, as a surface's reply would; the gate reads a quoted
-    // card already settled as spent, so the line is never answered twice.
-    const [said] = await port.publish([
-      line(text, cards.length === 1 ? { ref_id: cards[0]!.id } : undefined),
-      ...refs.map((ref): Draft<PermissionResponseEvent> => ({
-        ts: new Date().toISOString(),
-        type: "permission_response",
-        payload: { ref_id: ref as EventId },
-        envelope,
-        parts: [{ type: "data", kind: "permission_response", data: verdict }],
-      })),
-    ]);
-    return { ok: true, id: said.id };
+    const a = answer({ line: text }, open);
+    if (typeof a === "string") throw new Error(a);
+    const [said] = await port.publish(
+      answerRows(a, text, {
+        agent: { id: agent.agentId, session_id: session },
+        envelope: signed(),
+      }),
+    );
+    return { ok: true, id: said.id, refs: a.refs, verdict: a.verdict };
   }
   if (req.op === "control") {
     if (!CONTROLS.includes(req.kind as ControlKind)) {
@@ -552,32 +535,3 @@ const RECALLED = [
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
-
-const BEHAVIORS: readonly PermissionBehavior[] = ["allow", "deny"];
-const SCOPES: readonly PermissionScope[] = ["once", "conversation", "connection", "always"];
-
-/** The verdict as the log stores it — its four fields, each in the vocabulary `parseVerdict`
- *  speaks (§9), nothing else carried along. The scope is never defaulted: a verdict that
- *  names none is refused, because a standing verdict writes a rule wherever its scope says. */
-function verdictOf(v: unknown): PermissionVerdict {
-  if (!isObject(v)) throw new Error("permission_response needs a verdict object");
-  const { behavior, scope, reason, every } = v;
-  if (!BEHAVIORS.includes(behavior as PermissionBehavior)) {
-    throw new Error(`verdict behavior must be one of ${BEHAVIORS.join(", ")}`);
-  }
-  if (!SCOPES.includes(scope as PermissionScope)) {
-    throw new Error(`verdict scope must be one of ${SCOPES.join(", ")}`);
-  }
-  if (reason !== undefined && typeof reason !== "string") {
-    throw new Error("verdict reason must be a string");
-  }
-  if (every !== undefined && typeof every !== "boolean") {
-    throw new Error("verdict every must be a boolean");
-  }
-  return {
-    behavior: behavior as PermissionBehavior,
-    scope: scope as PermissionScope,
-    ...(reason !== undefined ? { reason } : {}),
-    ...(every !== undefined ? { every } : {}),
-  };
-}

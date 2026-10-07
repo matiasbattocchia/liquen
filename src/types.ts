@@ -552,13 +552,15 @@ export interface PermissionRequestEvent extends EventBase {
   parts: [DataPart<"permission_request", PermissionAsk>];
 }
 
-/** The approver's structured verdict — auto (nu) or human (ingest id-match) (§3).
- *  `ref_id` = the tool_use it settles (the star's center, not a chain: request and
- *  response both point at the use, one hop for the barrier query). */
+/** A card settled: the principal's answer, the clock's lapse, or the agent's withdrawal
+ *  (§9). `ref_id` = the tool_use it settles (the star's center, not a chain: request and
+ *  response both point at the use, one hop for the barrier query). A principal's answer
+ *  is their line too — the text part, on the first row of what one line settled, signed by
+ *  them and carrying a surface's `extra.via` (`verdict.ts`). */
 export interface PermissionResponseEvent extends EventBase {
   type: "permission_response";
   payload: Payload & { ref_id: EventId };
-  parts: [DataPart<"permission_response", PermissionVerdict>];
+  parts: [DataPart<"permission_response", PermissionVerdict>, ...TextPart[]];
 }
 
 /** Ages out old messages; note-as-compaction already handles tool noise continuously (§5). */

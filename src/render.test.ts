@@ -2027,17 +2027,36 @@ Deno.test("a fired wake renders as the harness handing back the agent's own note
 
 /* ── the principal's channel: wrapped, steering hidden, never capped ───── */
 
-Deno.test("a verdict line draws no block, and the run flows across it — one room, one element", () => {
+Deno.test("a principal's answer draws no block, and the run flows across it — one room, one element", () => {
   const t = (m: string) => `2026-08-20T10:0${m}:00Z`;
   const dm = { address: "wa:ana", kind: "direct" as const };
+  // the settlement, carrying the line that gave it: the model reads the verdict in the
+  // outcome it owes, never as a line of the principal's
+  const answered = {
+    id: "v1",
+    ts: t("1"),
+    type: "permission_response",
+    payload: { ref_id: "u1" },
+    agent: { id: SESSION.agentId, session_id: "mind" },
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: SESSION.conversation },
+      sender: { address: "matias", name: "matias" },
+    },
+    parts: [
+      { type: "data", kind: "permission_response", data: { behavior: "allow", scope: "once" } },
+      { type: "text", kind: "text", text: "/y" },
+    ],
+  } as unknown as Event;
   const events: Event[] = [
     worldMsg("e1", t("0"), dm, { address: "549:ana", name: "Ana" }, "te paso el total"),
-    mindMsg("v1", t("1"), "/y", false), // the gate answer — consumed by xi, not conversation
+    answered,
     worldMsg("e2", t("2"), dm, { address: "549:ana", name: "Ana" }, "son 120"),
   ];
   const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t("3") });
   const texts = blocksOf(messages).map(txt);
-  assert(!texts.some((s) => s.includes("/y")), "the verdict is steering — it never renders");
+  assert(!texts.some((s) => s.includes("/y")), "the answer is steering — it never renders");
   const conv = texts.find((s) => s.startsWith("<conn"));
   assert(conv, "the room renders");
   assertStringIncludes(conv!, "te paso el total");

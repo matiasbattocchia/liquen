@@ -649,7 +649,8 @@ thinking: + parts(data: {thinking, signature}) + payload{turn_id}  // replayed i
 tool_result: + parts(data: {output, is_error?, cancelled?}) + payload{turn_id, ref_id, deferred?}
           // deferred = a gated call approved LATER: narration, never a block (§9)
 permission_request:  + parts(data: {tool, call, detail}) + payload{ref_id→tool_use}
-permission_response: + parts(data: {behavior, scope, reason?}) + payload{ref_id→tool_use}
+permission_response: + parts(data: {behavior, scope, reason?}, text?) + payload{ref_id→tool_use}
+          // text = the principal's line that gave it, on the first row of what it settled
           // request and response BOTH point at the use — a star, not a chain
 summary:  + parts(text) + payload{covers:[from,to]}
 alarm/error: + parts(data)  // harness signals; no `agent` (harness-authored)
@@ -729,7 +730,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `<system kind="outcome">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
-| `permission_response` | nu (auto) · xi (the principal's `/y`·`/n`, any surface) · the REPL · main (a lapsed ask) | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?,lapsed?}) · payload{ref_id→tool_use} |
+| `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
 | `summary` | nu, in the idle gap after a turn (§5) | leading text block (§5) | look again (idle, or the think a dead turn left owed) | parts(text) · payload{covers} |
 | `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `<system kind="wake">` carrying the note | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
 | `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
@@ -743,40 +744,38 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 Every inbound passes through ingest, which classifies its AUTHOR — principal, member,
 stranger — and never its words: an inbound is a `message` whatever it says. A "stop" typed on a chat surface is the soft
 stop (§2), a customer's "stop" or "yes" is their own words (an unsubscribe, an answer),
-and a `/y` is read in xi, below.
+and a principal's `/y` to a card is read where it enters the mind, below.
 
-- **The verdict is not ingest's** (landed 2026-08-18): a gate is answered in **xi**, which
-  already derives what the log owes and therefore already knows which cards are open. The
-  principal's line passes through as an ordinary `message`, and xi reads
-  `/{y,n} [once|conv|conn|always|all] [reason]` off it (`parseVerdict` — one syntax, every
-  door) and publishes the structured `{behavior, scope, reason?, every?}` + ref before it
-  reads the verdict — so ONE invocation settles the gate and acts on it. Two independent
-  axes, one word each: HOW LONG (`once`, the bare form — or `conv` · `conn` · `always`,
-  which make it STANDING (§9): an allow/deny row remembered for that conversation, that
-  connection, or the tool everywhere) and HOW MANY (`all` — every open card settled at
-  once, which is how a pile a phone cannot comfortably quote through gets cleared). The
-  widest scope is `always` rather than `all` so that the two axes keep one word each: a
-  bare `/y` reads as `/y once`, `/y always` is its natural opposite, and `all` is then free
-  to mean what it plainly says. That
-  keeps every surface equal (the REPL's key handling is a shortcut, not the mechanism) and
-  keeps the decision out of free text (Claude-Code discipline; its channels-relay does the
-  same id-match). WHICH card an answer settles is the whole problem, and the rule is that
-  they say so: a bare `/y` settles the ONE open card, and with several waiting they QUOTE
-  the card they mean — a chat app's own reply mechanism, arriving as `ref_external_id`,
-  resolved through the card's copy on that surface (`extra.via.event`). Guessing is not on
-  the table: the wrong guess sends the wrong message under their name. A `/y` typed BEFORE
-  a card settles nothing. A verdict that settles nothing is never silent — silence reads as
-  a broken gate — but the one who says so is the HARNESS, on an `error` the mirror carries:
-  it names the ambiguity ("N waiting, quote the one you mean") or the mistake ("that one was
-  already answered") itself, rather than spending a model turn on plumbing. Once per line:
-  the same latest line is re-read on every wake, and a line is spent once a verdict or a
-  harness word followed it. **A reaction on the card is a verdict too** (landed
-  2026-09-23): 👍 or ❤️ reads as `/y`, 👎 or 😮 as `/n` — the bar a phone offers on a long
-  press, and Slack's names for the same glyphs (`reactionVerdict`, spelling normalised:
-  no skin tone, no variation selector). Always `once`: a reaction has no words for a
-  scope or a reason. It counts ONLY on a card — the mirror's copy carries the reaction's
-  `add` and its ref translated to the card event, and `saidVerdict` reads a glyph off any
-  other row (a thumb on the agent's line) as conversation, an un-react as nothing.
+- **A principal's answer is a settlement, not a message.** Outside the mind everything is
+  a message — a card crosses to a phone as one, and a `/y` comes back as one — so the
+  translation happens at the two places a principal's words enter the mind: the door, for
+  a terminal's line, and the mirror's fan-in, for a surface's line or reaction. Both read
+  it by one rule (`verdict.ts`) against the open cards and write what comes back: a
+  `permission_response` per card it settles, signed by the principal, the first carrying
+  the line that gave it (and a surface's `extra.via`). The mind holds no message the
+  model does not read, and xi reads settlements, never chat text. The line is
+  `/{y,n} [once|conv|conn|always|all] [reason]` (`parseVerdict` — one syntax, every door),
+  the settlement `{behavior, scope, reason?, every?}` + the use it settles. Two
+  independent axes, one word each: HOW LONG (`once`, the bare form — or `conv` · `conn` ·
+  `always`, which make it STANDING (§9): an allow/deny row remembered for that
+  conversation, that connection, or the tool everywhere) and HOW MANY (`all` — every open
+  card settled at once). The widest scope is `always` rather than `all` so that the two
+  axes keep one word each: a bare `/y` reads as `/y once`, `/y always` is its natural
+  opposite, and `all` is then free to mean what it plainly says. That keeps every surface
+  equal and keeps the decision out of free text (Claude-Code discipline; its
+  channels-relay does the same id-match). WHICH card an answer settles: the one it points
+  at — a handle in the line (the terminal's way), or the card a surface reply quotes or a
+  reaction sits on (a chat app's own pointing, arriving as `ref_external_id` and resolved
+  through the card's copy on that surface, `extra.via.event`). A word that points at
+  nothing settles the newest card. An answer that settles nothing — nothing waiting, a
+  card already answered, a handle no card wears — is never silent: a terminal is refused
+  on the wire, and a surface hears it from the HARNESS, on an `error` the mirror carries.
+  **A reaction on the card is a verdict too**: 👍 or ❤️ reads as `/y`, 👎 or 😮 as `/n` —
+  the bar a phone offers on a long press, and Slack's names for the same glyphs
+  (`reactionVerdict`, spelling normalised: no skin tone, no variation selector). Always
+  `once`: a reaction has no words for a scope or a reason. It counts ONLY on a card: a
+  thumb on any other row, a glyph off the table, an un-react cross into the mind as the
+  lines they are.
 - **A gate never blocks the mind** (landed 2026-08-18). The ask happens *inside* the call:
   `act` publishes the `permission_request` AND answers the `tool_use` in the same batch,
   with `{status: pending_approval}`. So the chain closes, the model keeps its voice while
@@ -788,8 +787,8 @@ and a `/y` is read in xi, below.
     `tool_result` EVENT marked `payload.deferred`, which render narrates in the harness's
     voice (`<system kind="outcome">send(to: Vivian) → sent</system>`). The principal's
     surfaces draw it only when the call failed (`✗ send(to: Vivian) — <the tool's words>`):
-    the card asked for the call and their `/y` gave it. It collapses with the rest of the tool traffic at the
-    boundary (§5).
+    the card asked for the call and their `/y` gave it. It collapses with the rest of the
+    tool traffic at the boundary (§5).
   - **What is still waiting lives in the ANCHOR, not the transcript** (§5): a pending gate
     is state, not history — the transcript already closed those calls. The anchor is
     rewritten every turn, so an ask that gets answered simply stops being listed, and the
@@ -975,10 +974,10 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     only input/output distinction; the log needs none, authorship is the bit), a
     principal's own words as `[via <surface>] …` (input replayed as output — fan-out over
     fan-in's own copy is what cross-syncs surfaces; on a surface that is another
-    principal's the tag names who spoke, by username: `[matias via whatsapp] …`). A verdict
-    crosses as the line that gave it — a `/y` typed at the terminal, a thumb on a card —
-    quoting the card's own crossing, which is how a surface points where a terminal names
-    the card by its handle. Tool calls cross as redacted one-liners under a tag of their
+    principal's the tag names who spoke, by username: `[matias via whatsapp] …`). A
+    principal's answer crosses as the line its settlement carries — a `/y` typed at the
+    terminal, a thumb on a card — quoting the card's own crossing, which is how a surface
+    points where a terminal names the card by its handle. Tool calls cross as redacted one-liners under a tag of their
     own (`[agent tool] bash(git status)`). What the harness says in the REPL crosses as
     `[system] …`: a failure (`✗` and the tool's words; an approved call's names the call), a
     fired wake (`⏰` and the agent's note), a turn the principal cut (under their
@@ -1256,8 +1255,9 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   identity, same element either way); the agent's replies are bare `assistant` text. The element is the mark of
   the one voice that outranks everything else — the model reads "answer in your own text"
   off its shape, and world text that types the tag arrives escaped, so an unescaped
-  `<principal>` can only be render's own. A `/y` · `/n` verdict line draws no block at all
-  (it is steering — the gate consumes it), and the principal's room is exempt from the WUM
+  `<principal>` can only be render's own. A `/y` · `/n` is no line here: it is a
+  settlement (§9), which draws no block — the model reads the verdict in the outcome it
+  is owed — and the principal's room is exempt from the WUM
   caps: their line is never redacted, whatever the world was doing around it. The agent's
   console; `send` never appears
   here. Every principal-identified conversation reaches here (§4): the mirror
@@ -2392,7 +2392,8 @@ Under Postgres the door gives way to RLS — the script client is unchanged.
 else — never holds a log handle: it speaks to its agent through the same socket, which
 serves five ops: `call` (above), `message` (the principal's half of the complex, no
 `turn_id`), `control` (the principal's hard stop, typed — `cancel` cuts the session's
-running turn, §2), `permission_response` (a gate answered), and `tail` (the agent's scoped
+running turn, §2), `permission_response` (a gate answered: the principal's line, read
+against the open cards by the same rule the mirror reads a surface's by), and `tail` (the agent's scoped
 view pushed from a cursor, model deltas riding the same wire — `onDelta` is a fan-out over
 the tailers; its `cwd` is where the client stands, and the session's shell starts there for
 as long as the connection lives — tried as the agent's uid before the tail opens, so a place

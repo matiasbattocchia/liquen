@@ -95,7 +95,6 @@ import {
   renderHits,
   roomNames,
   type Roster,
-  saidVerdict,
   shortId,
   silenced,
   type Surface,
@@ -575,131 +574,6 @@ export function owedOf(events: Event[], session: Session): Owed[] {
   return out;
 }
 
-/** The verdict, as the principal types it on any surface (§9):
- *  `/{y,n} [once|conv|conn|always|all] [reason]`. Two independent axes, one word each:
- *
- *    HOW LONG   `once` (the bare form) settles this call. `conv` · `conn` · `always` make
- *               it STANDING — remembered for the conversation, the connection, or the tool
- *               everywhere.
- *    HOW MANY   `all` answers every open card at once, each settled `once` — the pile a
- *               phone cannot comfortably quote through, cleared in one line.
- *
- *  `always` is the widest SCOPE precisely so `all` can mean all of them: a bare `/y` reads
- *  as `/y once`, which makes `/y always` the natural opposite and leaves `all` free for
- *  what it plainly says. One syntax, every door: gateVerdict here, the REPL's own line. */
-export { parseVerdict, reactionVerdict } from "./render.ts"; // the steering vocabulary
-// lives with the predicate that hides it from the window — one parser, both doors
-
-/**
- * A gate answered from wherever the principal is (§9). The approval card crosses to their
- * surfaces (mirror), and this is the way back: their own line, in their own DM, IS the
- * verdict — so a principal steering from a phone can approve without a terminal. Only their
- * words count (`ownComplex` and not `ownVoice`: our complex authored it, the model didn't),
- * and only after the ask — a `/y` typed before the card answers nothing.
- *
- * WHICH card it answers is the whole problem, and the answer is: whichever one they pointed
- * at. A bare `/y` settles the single open card and nothing else — with two waiting, a bare
- * word is genuinely ambiguous, and guessing would send the wrong message under their name.
- * `/y all` is that ambiguity answered rather than dodged: they mean all of them, every open
- * card settles at once, and the pile a phone is bad at quoting through clears in one line.
- * To answer one of several they QUOTE it, which is what a chat app is for. The mirror
- * translates the quote at fan-in — the alias conversation is invisible to this port
- * (policy §6), so the join happens where visibility lives: the copy's `ref_id` names the
- * card event itself. A line the door logged beside its own verdicts quotes its card the
- * same way, and finds it settled — said already, so it says nothing.
- *
- * No verdict ever falls silently: a bare word against several cards, or a quote pointing at a
- * card already answered, comes back as a harness `error` the mirror carries. Said ONCE — the
- * same latest line is re-read on every wake while the gate waits.
- */
-function gateVerdict(
-  events: Event[],
-  session: Session,
-  hereEnv: Envelope,
-  live: PermissionRequestEvent[] = openCards(events),
-): (Draft<PermissionResponseEvent> | Draft<ErrorEvent>)[] {
-  if (live.length === 0) return [];
-  const open = live.map((c) => c.payload.ref_id);
-  // resolution reads EVERY card in the window, not just the open ones: a quote that lands on
-  // a card already settled is a mistake worth naming (their phone shows the whole history,
-  // and after a re-issue two identical-looking cards sit there, only one of them live).
-  // The open ones may stand deeper than the window reaches — they are cards all the same.
-  const inWindow = new Set(events.map((e) => e.id));
-  const cards = [
-    ...events.filter((e) => e.type === "permission_request"),
-    ...live.filter((c) => !inWindow.has(c.id)),
-  ];
-  const last = live.at(-1);
-  if (!last) return [];
-  const isCard = (ref: EventId | undefined) => cards.some((c) => c.id === ref);
-  /** One card settled, exactly as they typed it. */
-  const response = (card: Event): Draft<PermissionResponseEvent> => ({
-    ts: new Date().toISOString(),
-    type: "permission_response",
-    payload: { ref_id: card.payload!.ref_id as EventId },
-    envelope: hereEnv,
-    parts: [{
-      type: "data",
-      kind: "permission_response",
-      data: said!, // behavior + scope + reason, exactly as they typed it
-    }],
-  });
-  let said: PermissionVerdict | undefined;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e.type !== "message" || !ownComplex(e, session) || ownVoice(e, session)) continue;
-    // their line, or their reaction ON a card: a thumb on some other row is not a verdict
-    said = saidVerdict(e, isCard);
-    if (!said) break; // their latest word is not a verdict — they said something else
-    // Answered already? While a gate waits, EVERY event re-reads this same latest line —
-    // and a line stays latest long after it did its work. Two ways it is spent: a verdict
-    // came of it, or the harness already said why none could. Either way, say nothing twice.
-    const spoken = events.slice(i + 1).some((x) =>
-      x.type === "error" || x.type === "permission_response"
-    );
-    // `all` points at no single card BECAUSE it points at all of them: no quote to resolve,
-    // no ambiguity to report, one response per open card in the order they were asked
-    if (said.every) return spoken ? [] : live.map(response);
-    // a quote that hits no card at all (they replied to something else) is no quote: fall
-    // back to the bare rule rather than dropping their word on the floor
-    const quoted = cards.find((c) => c.id === e.payload?.ref_id) ??
-      (live.length === 1 ? last : AMBIGUOUS);
-    if (quoted === AMBIGUOUS) return spoken ? [] : [ambiguity(live.length, hereEnv)];
-    if (!quoted || quoted.id > e.id) break; // answered before it was ever asked (ids are append order, §3)
-    // the card they pointed at has already been answered — say so, with what is still open
-    if (!open.includes(quoted.payload?.ref_id as EventId)) {
-      return spoken ? [] : [settled(live.length, hereEnv)];
-    }
-    return [response(quoted)];
-  }
-  return [];
-}
-
-/** Several cards up and a bare word: the HARNESS says so, rather than guessing or going
- *  quiet. It rides an `error` (the harness's own voice, §2) — which the mirror carries to
- *  the principal's surfaces and which, being the window's last event, keeps the agent from
- *  taking a turn it would only spend re-issuing the tools it is already waiting on. */
-const AMBIGUOUS = Symbol("ambiguous");
-
-function ambiguity(open: number, hereEnv: Envelope): Draft<ErrorEvent> {
-  return harness(
-    `${open} approvals are waiting — reply TO the one you mean (quote it), ` +
-      `or \`/y all\` · \`/n all\` to answer all ${open} at once`,
-    hereEnv,
-  );
-}
-
-/** They answered a card that is no longer open — the usual cause is two copies of the same
- *  ask on the surface (a re-issue), where the newest is the DEAD one. Silence here reads as
- *  a broken gate, so the harness names it and points at what is actually waiting. */
-function settled(open: number, hereEnv: Envelope): Draft<ErrorEvent> {
-  return harness(
-    `that approval was already answered — ${open} still waiting, quote one of those ` +
-      `(they are the OLDER cards: the newer copies are the ones already settled)`,
-    hereEnv,
-  );
-}
-
 /** The harness's own voice (§2): an `error` the mirror carries to the principal's surfaces. */
 function harness(error: string, hereEnv: Envelope): Draft<ErrorEvent> {
   return {
@@ -1056,22 +930,13 @@ export async function xi(
     limit,
   ); // the
   //    ONE read: the work's input as well as the decision's (§2)
-  // 3a. a gate the principal answered on a SURFACE (§9): their `/y` · `/n [reason]` becomes
-  //     the verdict before the verdict is read, so one invocation settles it AND acts on it
   const hereEnv: Envelope = {
     service: "local",
     connection_address: "agent",
     conversation: { address: session.conversation },
   };
-  // a `/y all` answers several cards at once, so this is a list — published together, in the
-  // order they were asked, before the verdict is read
-  // the open asks and the rulings still owed are STANDING state, read off the store (§9):
-  // a card asked before the window's floor is as open as one asked a minute ago
-  const gates = () => ports.log.gates({ agentId: session.agentId, sessionId: session.id });
-  for (const answer of gateVerdict(events, session, hereEnv, await gates())) {
-    const settled = await ports.log.publish(answer);
-    if (settled) events.push(settled);
-  }
+  // the rulings still owed are STANDING state, read off the store (§9): a card asked before
+  // the window's floor is as open as one asked a minute ago
   const v = decide(
     events,
     session,
@@ -2627,7 +2492,7 @@ async function execute(
   if (name === "cancel") {
     // withdraw an open ask (§9): the one settlement invariant does all the work — a
     // permission_response ref'ing the use closes the card, so the anchor line drops and a
-    // late verdict from the principal gets gateVerdict's already-answered reply. The
+    // late verdict from the principal is told it was already answered (`verdict.ts`). The
     // open asks are the store's (§9), read under the lock: it serializes the mind, so
     // nothing settles between this read and the publish.
     const id = String(args.id ?? "");

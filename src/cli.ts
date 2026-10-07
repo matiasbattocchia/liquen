@@ -23,7 +23,7 @@
  * `/cancel` to cut a running turn. Steering is said and the CLI exits on the door's reply.
  */
 
-import { answering, attach, resolveAgent, steering, tuneFlags, type Wire, wire } from "./attach.ts";
+import { attach, resolveAgent, steering, tuneFlags, type Wire, wire } from "./attach.ts";
 import { shortId } from "./render.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { painter } from "./paint.ts";
@@ -35,14 +35,13 @@ import { helpFlag } from "./connect/help.ts";
 export const USAGE = "usage: liquen cli [--dir <org>] [--agent <name>] [--session <name>] " +
   "[--model <name>] [--effort <level>] [--provider <name>] [--timeout <seconds>] <instruction…>";
 
-/** `/y` · `/n` · `/cancel`, said through the door as the REPL says them: the cards answered
- *  are the ones still open in the session, and the answer is the exit code — 0 said, 1 the
- *  door refused, 2 nothing to answer or not a verdict. */
+/** `/y` · `/n` · `/cancel`, said through the door as the REPL says them: the door reads a
+ *  verdict against the cards still open in the session, and the answer is the exit code —
+ *  0 said, 1 the door refused it (nothing to answer, not a verdict, a stale handle). */
 async function steer(
   w: Wire,
   line: string,
   session: string,
-  open: string[],
   username: string,
 ): Promise<number> {
   if (line === "/cancel") {
@@ -56,15 +55,8 @@ async function steer(
     else console.log("cancel sent");
     return r.ok ? 0 : 1;
   }
-  const a = answering(line, open);
-  if (typeof a === "string") {
-    console.error(a);
-    return 2;
-  }
   const r = await w.request({
     op: "permission_response",
-    refs: a.refs,
-    verdict: a.verdict,
     text: line,
     sender: { address: username, name: username },
     session,
@@ -73,8 +65,8 @@ async function steer(
     console.error(String(r.error));
     return 1;
   }
-  const said = a.verdict.behavior === "allow" ? "allowed" : "denied";
-  for (const ref of a.refs) console.log(`${said} ${shortId(ref)}`);
+  const said = r.verdict?.behavior === "allow" ? "allowed" : "denied";
+  for (const ref of r.refs ?? []) console.log(`${said} ${shortId(ref)}`);
   return 0;
 }
 
@@ -166,7 +158,7 @@ await entry(async () => {
   }
   if (steers) {
     leaving = true;
-    const code = await steer(w, instruction, session, t.open ?? [], a.username);
+    const code = await steer(w, instruction, session, a.username);
     conn.close();
     Deno.exit(code);
   }

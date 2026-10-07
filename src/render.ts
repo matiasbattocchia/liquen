@@ -34,7 +34,6 @@ import type {
   FilePart,
   Json,
   MessageEvent,
-  PermissionVerdict,
   ReactionPart,
   Session,
   SessionRef,
@@ -355,8 +354,8 @@ export function applySummary(events: Event[]): Event[] {
  *  noise, not meaning; within a conversation, `ts` order stands. A run is WORLD CONTENT:
  *  every voice but the model's own, in every conversation but the session's — the
  *  principal's phone-sent lines are lines of their rooms, part of the run like any peer's.
- *  Rows that render nowhere no matter the region (gate cards, their verdicts, the `/y`
- *  line itself, a `/cancel`) are TRANSPARENT: the run flows across them. What ends a run is a rendered
+ *  Rows that render nowhere no matter the region (gate cards, their settlements, a
+ *  `/cancel`) are TRANSPARENT: the run flows across them. What ends a run is a rendered
  *  block of the machine's own chain — the agent's voice, a tool cycle, a turn boundary —
  *  so the order the API constrains and the weld depends on is never touched. Nor is
  *  history rewritten: a straggler that arrives after the agent already answered stays
@@ -368,13 +367,10 @@ function byEventTime(
 ): { events: Event[]; elisions: Elisions } {
   const out = [...events];
   const elisions: Elisions = { earlier: new Map(), rest: new Map() };
-  const isCard = cardsIn(events);
   const member = (e: Event) => e.type === "message" && !ownVoice(e, session);
   const transparent = (e: Event) =>
     e.type === "permission_request" || e.type === "permission_response" ||
-    (e.type === "control" && !isCancelled(e)) ||
-    (e.type === "message" && !ownVoice(e, session) &&
-      e.envelope.conversation.address === here && saidVerdict(e, isCard) !== undefined);
+    (e.type === "control" && !isCancelled(e));
   for (let i = 0; i < out.length; i++) {
     if (!member(out[i])) continue;
     let j = i;
@@ -566,79 +562,6 @@ function byConversation(run: Event[]): Event[] {
   return [...groups.values()].sort((a, b) => byTs(a.at(-1)!, b.at(-1)!)).flat();
 }
 
-/* ── the principal's steering vocabulary (§9) ─────────────────────────── */
-
-const VERDICT = /^\/(y|n)\b(?:\s+(all|once|conv|conn|always)(?=\s|$))?\s*(.*)$/s;
-
-const SCOPES = {
-  once: "once",
-  conv: "conversation",
-  conn: "connection",
-  always: "always",
-} as const;
-
-/** Parse a principal's line into a verdict, or nothing if it isn't one. Lives here because
- *  the two consumers are render (a verdict line is steering, never conversation — it draws
- *  no block) and xi (the gate it answers), and xi already imports render's predicates. */
-export function parseVerdict(text: string): PermissionVerdict | undefined {
-  const said = VERDICT.exec(text.trim());
-  if (!said) return undefined;
-  const reason = said[3].trim();
-  const every = said[2] === "all";
-  return {
-    behavior: said[1] === "y" ? "allow" : "deny",
-    scope: every || !said[2] ? "once" : SCOPES[said[2] as keyof typeof SCOPES],
-    ...(reason ? { reason } : {}),
-    ...(every ? { every: true } : {}),
-  };
-}
-
-/** The verdict a REACTION spells (§9): a thumb or a heart on the card is `/y`, a thumb
- *  down or a gasp is `/n` — WhatsApp's quick-reaction bar, plus Slack's names for the same
- *  glyphs. Always `once`: a reaction has no words for a scope or a reason. */
-const REACTIONS: Record<string, PermissionVerdict["behavior"]> = {
-  "👍": "allow",
-  "❤": "allow",
-  "+1": "allow",
-  "thumbsup": "allow",
-  "heart": "allow",
-  "👎": "deny",
-  "😮": "deny",
-  "-1": "deny",
-  "thumbsdown": "deny",
-  "open_mouth": "deny",
-};
-
-/** A glyph as the table keys it: no variation selector (`❤️` is `❤` + VS16), no skin tone
- *  (`👍🏻` is `👍` + a modifier) — the phone's spelling of the same reaction. */
-export function reactionVerdict(glyph: string): PermissionVerdict | undefined {
-  const bare = glyph.replace(/[\u{FE0F}\u{1F3FB}-\u{1F3FF}]/gu, "").trim();
-  const behavior = REACTIONS[bare];
-  return behavior ? { behavior, scope: "once" } : undefined;
-}
-
-/** What a principal's row says as a verdict, if anything: a `/y` line, or a reaction ON A
- *  CARD from the table above. A reaction elsewhere (a thumb on the agent's own line) is
- *  conversation, not steering — `isCard` says what the row points at; an un-react says
- *  nothing. One predicate for the gate (xi) and for the window (a verdict draws no block). */
-export function saidVerdict(
-  e: Event,
-  isCard: (ref: EventId | undefined) => boolean,
-): PermissionVerdict | undefined {
-  if (e.type !== "message") return undefined;
-  const glyph = reactionOf(e);
-  if (glyph === undefined) return parseVerdict(textOf(e));
-  if (e.payload?.action === "remove" || !isCard(e.payload?.ref_id)) return undefined;
-  return reactionVerdict(glyph);
-}
-
-/** The cards in a window, as the predicate `saidVerdict` asks for: is this ref one of them? */
-export function cardsIn(events: Event[]): (ref: EventId | undefined) => boolean {
-  const cards = new Set<EventId>();
-  for (const e of events) if (e.type === "permission_request") cards.add(e.id);
-  return (ref) => ref !== undefined && cards.has(ref);
-}
-
 /** The glyph a reaction carries, on either wire shape (data: open-bsp · text: legacy). */
 export function reactionOf(e: MessageEvent): string | undefined {
   const p = e.parts.find((p) => p.kind === "reaction");
@@ -720,7 +643,6 @@ function renderMessages(
   const who: Roster = roster ?? { names: {}, principals: [session.agentId] };
   const accounts = connections ?? {};
   const here = session.conversation; // the session's own room — everything else is world
-  const isCard = cardsIn(window);
   const { deferred, events, elisions, boundary, trailing } = regions(window, session);
   // room names from the WHOLE window, silenced rows included — a name is a fact about the
   // room, and the row that carried it need not be one the model reads
@@ -913,9 +835,8 @@ function renderMessages(
     if (e.envelope.conversation.address === here) {
       if (isSelf(e, me)) {
         placeOwn(bodyOf(e, zone)); // bare: the agent's own voice
-      } else if (saidVerdict(e, isCard) === undefined) {
-        place("user", { type: "text", text: principalLine(e) }); // a verdict line is
-        // steering, not conversation — the gate consumed it, so it draws no block
+      } else {
+        place("user", { type: "text", text: principalLine(e) });
       }
     } else {
       world(e);
@@ -1002,9 +923,7 @@ function renderMessages(
       if (isSelf(e, me) && e.envelope.conversation.address === here) {
         placeOwn(bodyOf(e, zone)); // mid-chain assistant text
       } else if (e.envelope.conversation.address === here) {
-        if (saidVerdict(e, isCard) === undefined) {
-          place("user", { type: "text", text: principalLine(e) });
-        }
+        place("user", { type: "text", text: principalLine(e) });
       } else {
         world(e);
       }

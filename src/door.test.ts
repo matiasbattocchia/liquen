@@ -25,6 +25,7 @@ import { type AgentConfig, xi } from "./xi.ts";
 import { scripted } from "./testing.ts";
 import { textOf } from "./render.ts";
 import { lineOf } from "./describe.ts";
+import { answerLine } from "./verdict.ts";
 import type {
   ControlEvent,
   Draft,
@@ -257,37 +258,35 @@ Deno.test({
       await client.settle(() => client.events.length >= 1);
       assertEquals(client.events[0].id, msg.id);
 
-      // permission_response: the line that answered and the verdict on the gated use land
-      // together, the line first, quoting the card it answers
-      const card = await log.publish(cardFor("01USE"));
+      // permission_response: the line, read against the open cards — the settlement lands
+      // signed and carrying it, and no message does
+      await log.publish(cardFor("01USE"));
+      const messages = (await log.read({ types: ["message"] })).length;
       const verdict = {
         op: "permission_response",
-        refs: ["01USE"],
-        verdict: { behavior: "allow", scope: "once" },
         text: "/y",
         sender: { address: "matias", name: "matias" },
       };
       const pr = await client.request(verdict);
       assertEquals(pr.ok, true);
+      assertEquals([pr.refs, pr.verdict], [["01USE"], { behavior: "allow", scope: "once" }]);
       const [resp] = await log.read({
         types: ["permission_response"],
       }) as PermissionResponseEvent[];
+      assertEquals(resp.id, pr.id);
       assertEquals(resp.payload.ref_id, "01USE");
+      assertEquals(resp.payload.turn_id, undefined);
       assertEquals(resp.parts[0].data, { behavior: "allow", scope: "once" });
-      const line = (await log.read({ types: ["message"] })).at(-1) as MessageEvent;
-      assertEquals(line.id, pr.id);
-      assert(line.id < resp.id);
-      assertEquals(textOf(line), "/y");
-      assertEquals(line.payload?.ref_id, card!.id);
-      assertEquals(line.payload?.turn_id, undefined);
-      assertEquals(line.envelope.sender, { address: "matias", name: "matias" });
-      // a card no longer waiting is refused, and nothing lands
+      assertEquals(answerLine(resp), "/y");
+      assertEquals(resp.envelope.sender, { address: "matias", name: "matias" });
+      assertEquals((await log.read({ types: ["message"] })).length, messages);
+      // nothing left to answer: refused, and nothing lands
       const again = await client.request(verdict);
       assertEquals(again.ok, false);
-      assertMatch(String(again.error), /is waiting/);
+      assertMatch(String(again.error), /no approval is waiting/);
       assertEquals((await log.read({ types: ["permission_response"] })).length, 1);
-      // and a verdict always comes with the line that gave it
-      for (const bad of [{ text: undefined }, { text: "" }, { refs: [] }, { refs: "01USE" }]) {
+      // and an answer is always a line
+      for (const bad of [{ text: undefined }, { text: "" }, { text: 7 }]) {
         const r = await client.request({ ...verdict, ...bad });
         assertEquals(r.ok, false, `refused: ${JSON.stringify(bad)}`);
       }
@@ -300,50 +299,38 @@ Deno.test({
 });
 
 Deno.test({
-  name: "door: a verdict is checked on the wire — the vocabulary, and a scope every time",
+  name: "door: a verdict is read off the line — its handle, its scope, its reason, its reach",
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
     const { dir, log, down } = await up();
     try {
       const client = await rawClient(dir);
-      await log.publish(cardFor("01USE"));
-      const answer = (verdict: unknown) =>
-        client.request({ op: "permission_response", refs: ["01USE"], verdict, text: "/n" });
-      for (
-        const bad of [
-          { behavior: "maybe", scope: "once" },
-          { behavior: "allow" }, // no scope: an unscoped verdict would write a standing rule
-          { behavior: "allow", scope: "all" }, // `all` is the other axis (`every`), not a scope
-          { behavior: "deny", scope: "once", reason: 7 },
-          { behavior: "allow", scope: "once", every: "yes" },
-          "allow",
-          ["allow", "once"],
-        ]
-      ) {
-        const r = await answer(bad);
-        assertEquals(r.ok, false, `refused: ${JSON.stringify(bad)}`);
-        assertMatch(String(r.error), /verdict/);
+      await log.publish(cardFor("01a0fd7f-cde6-7000-8000-412733aaa111"));
+      await log.publish(cardFor("01a0fd7f-cde6-7000-8000-412733bbb222"));
+      const say = (text: string) => client.request({ op: "permission_response", text });
+      // what settles nothing is refused, and nothing lands
+      for (const [bad, why] of [["hola", /not a verdict/], ["/y 99ffee", /no card 99ffee/]]) {
+        const r = await say(bad as string);
+        assertEquals(r.ok, false, `refused: ${bad}`);
+        assertMatch(String(r.error), why as RegExp);
       }
-      assertEquals(await log.read({ types: ["permission_response"] }), []); // nothing landed
-      // the full shape lands as the verdict it is — and only the verdict's own fields
-      const ok = await answer({
-        behavior: "deny",
-        scope: "connection",
-        reason: "not from here",
-        every: true,
-        stray: "dropped",
-      });
-      assertEquals(ok.ok, true);
+      assertEquals(await log.read({ types: ["permission_response"] }), []);
+      // a handle picks its card, wherever it stands; its word is never the reason
+      const named = await say("/n conn aaa111 not from here");
+      assertEquals(named.ok, true);
       const [resp] = await log.read({
         types: ["permission_response"],
       }) as PermissionResponseEvent[];
+      assertEquals(resp.payload.ref_id, "01a0fd7f-cde6-7000-8000-412733aaa111");
       assertEquals(resp.parts[0].data, {
         behavior: "deny",
         scope: "connection",
         reason: "not from here",
-        every: true,
       });
+      // a bare word answers the newest card still open
+      const bare = await say("/y");
+      assertEquals(bare.refs, ["01a0fd7f-cde6-7000-8000-412733bbb222"]);
       client.conn.close();
     } finally {
       await down();

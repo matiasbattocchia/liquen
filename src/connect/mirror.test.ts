@@ -2,9 +2,15 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { createMirror } from "./mirror.ts";
 import { words } from "../i18n.ts";
 import { SILENCE } from "../render.ts";
-import { parseVerdict } from "../xi.ts";
+import { answerLine, parseVerdict } from "../verdict.ts";
 import { openLog } from "../store/log.ts";
-import type { Draft, Event, MessageEvent, ToolUseEvent } from "../types.ts";
+import type {
+  Draft,
+  Event,
+  MessageEvent,
+  PermissionResponseEvent,
+  ToolUseEvent,
+} from "../types.ts";
 import type { Connections } from "../store/connections.ts";
 
 /** A live org with two alias surfaces bound to `ana`: the Slack self-DM `D1` (grant
@@ -14,6 +20,8 @@ async function withMirror(
   fn: (t: {
     publish: (e: Draft<Event>) => Promise<Event>;
     inConv: (conversation: string) => Promise<MessageEvent[]>;
+    /** ana's mind, rows of one type — what a settlement or a harness word lands as. */
+    inMind: (type: string) => Promise<Event[]>;
     setDelivery: (id: string, patch: { external_id: string }) => Promise<void>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
     log: Pick<Connections, "deleteConnections">;
@@ -32,6 +40,7 @@ async function withMirror(
     subscribe: (l, o) => log.subscribe(l, o),
     publish: log.publish,
     read: (q) => log.read(q),
+    gates: (scope) => log.gates(scope),
     aliases: () => log.aliases(),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     locale,
@@ -50,6 +59,7 @@ async function withMirror(
       publish: (e) => log.publish(e) as Promise<Event>, // mirror drafts always store
       inConv: async (conversation) =>
         (await log.read({ conversation, types: ["message"] })) as MessageEvent[],
+      inMind: (type) => log.read({ conversation: "mind@ana", types: [type as Event["type"]] }),
       setDelivery: (id, patch) => log.setDelivery(id, patch),
       waitFor,
       log,
@@ -201,9 +211,33 @@ const sendCard = (): Draft<Event> => ({
   }],
 } as Draft<Event>);
 
+/** A principal's answer to `sendCard`, as the door or fan-in writes it: the settlement,
+ *  signed, carrying the line that gave it. */
+const answered = (
+  line: string,
+  data: Record<string, unknown>,
+  extra?: Record<string, unknown>,
+): Draft<Event> => ({
+  ts: new Date().toISOString(),
+  type: "permission_response",
+  payload: { ref_id: "01a0fd7f-cde6-7000-8000-412733bbc24a" },
+  agent: { id: "ana", session_id: "mind" },
+  envelope: {
+    service: "local",
+    connection_address: "agent",
+    conversation: { address: "mind@ana" },
+    sender: { address: "ana", name: "ana" },
+  },
+  parts: [
+    { type: "data", kind: "permission_response", data },
+    { type: "text", kind: "text", text: line },
+  ],
+  ...(extra ? { extra } : {}),
+} as unknown as Draft<Event>);
+
 Deno.test("mirror fan-out: a line that answers a card quotes the card's crossing, its handle said by the quote", async () => {
   await withMirror(async ({ publish, inConv, waitFor, setDelivery }) => {
-    const card = await publish(sendCard());
+    await publish(sendCard());
     await waitFor(async () =>
       (await inConv("D1")).length === 1 && (await inConv("549")).length === 1
     );
@@ -212,7 +246,9 @@ Deno.test("mirror fan-out: a line that answers a card quotes the card's crossing
       const [cc] = await inConv(conv);
       await setDelivery(cc.id, { external_id: id });
     }
-    await publish(mindMsg("/n bbc24a not today", { payload: { ref_id: card.id } }));
+    await publish(
+      answered("/n bbc24a not today", { behavior: "deny", scope: "once", reason: "not today" }),
+    );
     await waitFor(async () =>
       (await inConv("D1")).length === 2 && (await inConv("549")).length === 2
     );
@@ -228,11 +264,9 @@ Deno.test("mirror fan-out: a thumb on a card crosses as its glyph, quoting the c
     const card = await publish(sendCard());
     await waitFor(async () => (await inConv("549")).length === 1);
     await setDelivery((await inConv("549"))[0].id, { external_id: "whatsapp:wmw.card" });
-    // the copy of a thumb given on Slack: an `add` naming the card
-    await publish(mindMsg("", {
-      payload: { ref_id: card.id, action: "add" },
-      parts: [{ type: "data", kind: "reaction", data: { unicode: "👍" } }],
-      extra: { via: { event: "x", service: "slack", conversation: "D1" } },
+    // a thumb given on Slack, settled at fan-in: the settlement carries the glyph
+    await publish(answered("👍", { behavior: "allow", scope: "once" }, {
+      via: { event: "x", service: "slack", conversation: "D1" },
     }));
     await waitFor(async () => (await inConv("549")).length === 2);
     const wa = (await inConv("549"))[1];
@@ -447,60 +481,121 @@ Deno.test("words: the tongue is the locale's language subtag; one we don't speak
   assertEquals(words(undefined).agent, "agent");
 });
 
-Deno.test("mirror fan-in: a quoted CC is TRANSLATED — the copy's ref_id names the mind event (§9)", async () => {
-  await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
-    // a card crosses to the self-DM and its CC gets claimed by the dispatcher
+/** A card in ana's mind asking about `use` — gated, so the store counts it open. */
+const cardOn = (use: string, to: string): Draft<Event> => ({
+  ts: new Date().toISOString(),
+  type: "permission_request",
+  payload: { ref_id: use },
+  agent: { id: "ana", session_id: "mind" },
+  envelope: {
+    service: "local",
+    connection_address: "agent",
+    conversation: { address: "mind@ana" },
+  },
+  parts: [{
+    type: "data",
+    kind: "permission_request",
+    data: { tool: "send", call: `send(to: ${to})`, detail: `send(to: ${to}, text: hola)` },
+  }],
+} as Draft<Event>);
+
+Deno.test("mirror fan-in: a line that answers a card is its settlement — no message, the quote translated (§9)", async () => {
+  await withMirror(async ({ publish, inConv, inMind, setDelivery, waitFor }) => {
+    // two cards cross to the self-DM, and the dispatcher claims each CC
+    await publish(cardOn("01a0-use-a", "Vivian"));
+    await publish(cardOn("01a0-use-b", "Lucas"));
+    await waitFor(async () => (await inConv("D1")).length === 2);
+    const [ccA, ccB] = await inConv("D1");
+    await setDelivery(ccA.id, { external_id: "slack:T1:D1:666.6" });
+    await setDelivery(ccB.id, { external_id: "slack:T1:D1:666.7" });
+    const settled = async () => (await inMind("permission_response")) as PermissionResponseEvent[];
+
+    // the principal replies to the OLDER card: the quote names a surface row, the mirror
+    // joins it to the card, and the mind gets the settlement — signed, carrying the line
+    // and where it came from — and no message the model would not read
     await publish({
-      ts: new Date().toISOString(),
-      type: "permission_request",
-      payload: { ref_id: "01a0-use" },
-      agent: { id: "ana", session_id: "mind" },
-      envelope: {
-        service: "local",
-        connection_address: "agent",
-        conversation: { address: "mind@ana" },
-      },
-      parts: [{
-        type: "data",
-        kind: "permission_request",
-        data: { tool: "send", call: "send(to: V)", detail: "send(to: V, text: hola)" },
-      }],
+      ...aliasInbound("/n muy formal", { external_id: "slack:T1:D1:777.7" }),
+      payload: { ref_external_id: "slack:T1:D1:666.6" },
     } as Draft<Event>);
+    await waitFor(async () => (await settled()).length === 1);
+    const [first] = await settled();
+    assertEquals(first.payload.ref_id, "01a0-use-a");
+    assertEquals(first.parts[0].data, { behavior: "deny", scope: "once", reason: "muy formal" });
+    assertEquals(answerLine(first), "/n muy formal");
+    assertEquals(first.envelope.sender?.address, "ana"); // the binding's principal, by username
+    assertEquals((first.extra?.via as { service: string }).service, "slack");
+    assertEquals(await inConv("mind@ana"), []);
+
+    // a bare word answers the newest card still open
+    await publish(aliasInbound("/y", { external_id: "slack:T1:D1:888.8" }));
+    await waitFor(async () => (await settled()).length === 2);
+    assertEquals((await settled())[1].payload.ref_id, "01a0-use-b");
+
+    // a reply to a card already answered settles nothing, and the harness says so
+    await publish({
+      ...aliasInbound("/y", { external_id: "slack:T1:D1:888.9" }),
+      payload: { ref_external_id: "slack:T1:D1:666.6" },
+    } as Draft<Event>);
+    await waitFor(async () => (await inMind("error")).length === 1);
+    assertStringIncludes(JSON.stringify((await inMind("error"))[0].parts), "already answered");
+    assertEquals((await settled()).length, 2);
+
+    // a reply to a card that is NOT a verdict is a line like any other: copied, its quote
+    // joined to the card
+    await publish({
+      ...aliasInbound("esperá un toque", { external_id: "slack:T1:D1:889.0" }),
+      payload: { ref_external_id: "slack:T1:D1:666.6" },
+    } as Draft<Event>);
+    await waitFor(async () => (await inConv("mind@ana")).length === 1);
+    const [copy] = await inConv("mind@ana");
+    assertEquals(copy.payload?.ref_id, (ccA.extra?.via as { event: string }).event);
+    assertEquals(copy.payload?.ref_external_id, "slack:T1:D1:666.6");
+  });
+});
+
+Deno.test("mirror fan-in: a thumb ON a card settles it; a thumb elsewhere, or taken back, is a line (§9)", async () => {
+  await withMirror(async ({ publish, inConv, inMind, setDelivery, waitFor }) => {
+    await publish(cardOn("01a0-use-c", "Vivian"));
     await waitFor(async () => (await inConv("D1")).length === 1);
     const [cc] = await inConv("D1");
     await setDelivery(cc.id, { external_id: "slack:T1:D1:666.6" });
+    const react = (name: string, on: string, action: "add" | "remove", id: string) =>
+      publish({
+        ...aliasInbound("", { external_id: id }),
+        payload: { ref_external_id: on, action },
+        parts: [{ type: "data", kind: "reaction", data: { name } }],
+      } as Draft<Event>);
 
-    // the principal quotes the card and answers — the surface reply names the CC's id
-    await publish(aliasInbound("/y", { external_id: "slack:T1:D1:777.7" }));
-    const reply = (await inConv("D1")).find((e) => textOf(e) === "/y")!;
-    await publish({
-      ...aliasInbound("/y", { external_id: "slack:T1:D1:888.8" }),
-      payload: { ref_external_id: "slack:T1:D1:666.6" },
-    } as Draft<Event>);
-
-    // the mind copy of the QUOTED /y joins the card itself: xi's port never sees the alias
-    // conversation (policy §6), so the mirror is where the quote becomes a liquen-side ref
-    await waitFor(async () =>
-      (await inConv("mind@ana")).some((e) => e.payload?.ref_external_id !== undefined)
+    // a glyph off the table on the card, and an un-react: lines, copied with their action
+    await react("joy", "slack:T1:D1:666.6", "add", "slack:T1:D1:700.1");
+    await react("+1", "slack:T1:D1:666.6", "remove", "slack:T1:D1:700.2");
+    await waitFor(async () => (await inConv("mind@ana")).length === 2);
+    assertEquals(
+      (await inConv("mind@ana")).map((e) => e.payload?.action),
+      ["add", "remove"],
     );
-    const copy = (await inConv("mind@ana")).find((e) => e.payload?.ref_external_id)!;
-    assertEquals(copy.payload?.ref_id, (cc.extra?.via as { event: string }).event);
-    assertEquals(copy.payload?.ref_external_id, "slack:T1:D1:666.6");
-    // …while the unquoted /y keeps plain provenance
-    const bare = (await inConv("mind@ana")).find((e) => !e.payload?.ref_external_id)!;
-    assertEquals(bare.payload?.ref_id, reply.id);
+    assertEquals(await inMind("permission_response"), []);
 
-    // a reaction on the card is the same join with its action kept: an `add` naming the
-    // card is what the gate reads as a thumb ON the card (§9), an un-react is a `remove`
-    await publish({
-      ...aliasInbound("", { external_id: "slack:T1:D1:999.9" }),
-      payload: { ref_external_id: "slack:T1:D1:666.6", action: "add" },
-      parts: [{ type: "data", kind: "reaction", data: { name: "+1" } }],
-    } as Draft<Event>);
-    await waitFor(async () => (await inConv("mind@ana")).some((e) => e.payload?.action === "add"));
-    const thumb = (await inConv("mind@ana")).find((e) => e.payload?.action === "add")!;
-    assertEquals(thumb.payload?.ref_id, (cc.extra?.via as { event: string }).event);
-    assertEquals(thumb.parts, [{ type: "data", kind: "reaction", data: { name: "+1" } }]);
+    // Slack's `+1` on the card: the settlement, carrying the glyph as its line
+    await react("+1", "slack:T1:D1:666.6", "add", "slack:T1:D1:700.3");
+    await waitFor(async () => (await inMind("permission_response")).length === 1);
+    const [thumb] = (await inMind("permission_response")) as PermissionResponseEvent[];
+    assertEquals(thumb.payload.ref_id, "01a0-use-c");
+    assertEquals(thumb.parts[0].data, { behavior: "allow", scope: "once" });
+    assertEquals(answerLine(thumb), "+1");
+    assertEquals((await inConv("mind@ana")).length, 2);
+  });
+});
+
+Deno.test("mirror fan-in: a /y with nothing waiting is answered by the harness", async () => {
+  await withMirror(async ({ publish, inConv, inMind, waitFor }) => {
+    await publish(aliasInbound("/y", { external_id: "slack:T1:D1:500.1" }));
+    await waitFor(async () => (await inMind("error")).length === 1);
+    assertStringIncludes(
+      JSON.stringify((await inMind("error"))[0].parts),
+      "no approval is waiting",
+    );
+    assertEquals(await inConv("mind@ana"), []);
   });
 });
 
@@ -613,11 +708,11 @@ Deno.test("mirror fan-out: a harness error crosses — the one voice left when a
       parts: [{
         type: "data",
         kind: "error",
-        data: { error: "2 approvals are waiting — reply TO the one you mean" },
+        data: { error: "that approval was already answered" },
       }],
     } as Draft<Event>);
     await waitFor(async () => (await inConv("D1")).length === 1);
-    assertStringIncludes(textOf((await inConv("D1"))[0]), "`[system]` 2 approvals are waiting");
+    assertStringIncludes(textOf((await inConv("D1"))[0]), "`[system]` that approval was already");
   });
 });
 
@@ -827,6 +922,7 @@ Deno.test("mirror fan-in: a principal's DM with the org number copies to the org
     subscribe: (l, o) => log.subscribe(l, o),
     publish: log.publish,
     read: (q) => log.read(q),
+    gates: (scope) => log.gates(scope),
     aliases: () => log.aliases(),
     nameOf: async (id) => (await log.agents()).find((a) => a.agentId === id)?.name ?? id,
   }, 10);

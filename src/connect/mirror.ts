@@ -9,7 +9,9 @@
  *
  *   fan-in    an inbound on an alias conversation → a COPY into `mind@<agent>` — the agent
  *             wakes on it exactly as on a REPL line. `extra.via` holds the provenance
- *             (origin event id + wire coordinates); `cause` points home.
+ *             (origin event id + wire coordinates); `cause` points home. A line or a
+ *             reaction that answers a card enters as its settlement instead, carrying the
+ *             line (`verdict.ts`): the mind holds no message the model does not read.
  *   fan-out   every mind event the REPL would show → a CC to every alias binding EXCEPT
  *             the origin surface (read off `extra.via`). Every crossing line opens with
  *             WHO, because a self-conversation renders both speakers as the same account
@@ -65,6 +67,15 @@ import {
 } from "../render.ts";
 import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
 import { type Words, words } from "../i18n.ts";
+import {
+  answer,
+  answerLine,
+  answerRows,
+  parseVerdict,
+  reactionVerdict,
+  type Said,
+} from "../verdict.ts";
+import type { Gates } from "../store/gates.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type {
   AlarmEvent,
@@ -77,6 +88,7 @@ import type {
   MessageEvent,
   Part,
   PermissionRequestEvent,
+  PermissionResponseEvent,
   Service,
   ToolUseEvent,
 } from "../types.ts";
@@ -87,6 +99,8 @@ export interface MirrorDeps {
   publish: Appender["publish"];
   /** The settle re-read (小-window): is the origin row still there, or absorbed? */
   read: Reader["read"];
+  /** The open cards, off the store (§9): what a surface's `/y` is read against. */
+  gates: Gates["gates"];
   /** The live bindings (§4): connect flows write them, the mirror reads through. */
   aliases: () => Promise<AliasRow[]>;
   /** The roster's word for a member (§4) — what a principal's copy is signed with, and
@@ -193,28 +207,19 @@ async function fanIn(
   // only the mirror, reading unscoped, can make the join. A quoted CC resolves to the mind
   // event it was made from (`extra.via.event`); that id rides the copy as `ref_id`, which
   // is how a `/y` quoting one of several cards names the card itself.
-  const origin = await quotedOrigin(deps, e, sessionAddress(binding.agentId, MIND));
-  await deps.publish({
-    ts: now(),
-    type: "message",
-    // `ref_external_id` still rides along as the mark that they quoted AT ALL — a quote
-    // that resolves to nothing falls back to provenance, not to silence
-    // …and the action rides too: a reaction on the card is an `add` naming it, which is
-    // how a thumb on the card reads as a verdict in the mind (§9) and an un-react does not
-    payload: {
-      ref_id: origin ?? e.id,
-      ...(e.payload?.ref_external_id ? { ref_external_id: e.payload.ref_external_id } : {}),
-      ...(e.payload?.action ? { action: e.payload.action } : {}),
-    },
+  const mind = sessionAddress(binding.agentId, MIND);
+  const origin = await quotedOrigin(deps, e, mind);
+  // whose, and where from, whatever the row becomes in the mind
+  const from = {
     // the principal's stamp (§3): whose mind + entered through the harness — a surface is
-    // the mind's face, so the copy is the MIND session's row. No turn_id: input, not
-    // voice — exactly a REPL line in wire clothing.
+    // the mind's face, so the row is the MIND session's. No turn_id: input, not voice —
+    // exactly a REPL line in wire clothing.
     agent: { id: binding.agentId, session_id: MIND },
     envelope: {
-      service: "local",
+      service: "local" as const,
       connection_address: "agent",
-      conversation: { address: sessionAddress(binding.agentId, MIND) },
-      // the binding says who is on the other side (§4): the copy is signed with their
+      conversation: { address: mind },
+      // the binding says who is on the other side (§4): the row is signed with their
       // username and the roster's word for them, never the wire's display name — a
       // self-chat carries no sender at all (the account spoke), a principal's DM carries
       // the phone's
@@ -223,7 +228,6 @@ async function fanIn(
         name: (await deps.nameOf?.(binding.principal)) ?? binding.principal,
       },
     },
-    parts: e.parts ?? [],
     extra: {
       via: {
         event: e.id,
@@ -233,7 +237,74 @@ async function fanIn(
         ...(e.envelope.external_id ? { external_id: e.envelope.external_id } : {}),
       },
     },
+  };
+
+  // a line or a reaction that answers a card is the principal settling it (§9): the mind
+  // gets the settlement, carrying the line, and no message — read by the same rule the door
+  // reads a terminal's `/y` by (`verdict.ts`). What settles nothing is the harness's to say.
+  const card = origin ? await cardAt(deps, mind, origin) : undefined;
+  const said = verdictSaid(e, card);
+  if (said) {
+    const a = answer(said, await deps.gates({ agentId: binding.agentId, sessionId: MIND }), card);
+    if (typeof a === "string") {
+      await deps.publish({
+        ts: now(),
+        type: "error",
+        envelope: {
+          service: "local",
+          connection_address: "agent",
+          conversation: { address: mind },
+        },
+        parts: [{ type: "data", kind: "error", data: { error: a } }],
+      } as Draft<ErrorEvent>);
+      return;
+    }
+    await deps.publish(answerRows(a, "line" in said ? said.line : said.glyph, from));
+    return;
+  }
+
+  await deps.publish({
+    ts: now(),
+    type: "message",
+    // `ref_external_id` still rides along as the mark that they quoted AT ALL — a quote
+    // that resolves to nothing falls back to provenance, not to silence. The action rides
+    // too: a reaction is an `add` or a `remove` naming what it sits on.
+    payload: {
+      ref_id: origin ?? e.id,
+      ...(e.payload?.ref_external_id ? { ref_external_id: e.payload.ref_external_id } : {}),
+      ...(e.payload?.action ? { action: e.payload.action } : {}),
+    },
+    ...from,
+    parts: e.parts ?? [],
   } as Draft<MessageEvent>);
+}
+
+/** A surface row as a verdict, if it is one: a `/y` · `/n` line, wherever it points, or a
+ *  reaction from the verdict table ON a card. A thumb on any other row, a glyph off the
+ *  table, an un-react — conversation, copied like any line. */
+function verdictSaid(e: MessageEvent, card: PermissionRequestEvent | undefined): Said | undefined {
+  const glyph = reactionOf(e);
+  if (glyph === undefined) {
+    const line = textOf(e);
+    return parseVerdict(line) ? { line } : undefined;
+  }
+  if (!card || e.payload?.action === "remove" || !reactionVerdict(glyph)) return undefined;
+  return { glyph };
+}
+
+/** The card a mind row id names, if it names one. */
+async function cardAt(
+  deps: Pick<MirrorDeps, "read">,
+  mind: string,
+  id: EventId,
+): Promise<PermissionRequestEvent | undefined> {
+  const [card] = await deps.read({
+    conversation: mind,
+    types: ["permission_request"],
+    limit: 1,
+    filter: (x) => x.id === id,
+  });
+  return card as PermissionRequestEvent | undefined;
 }
 
 /** The mind event a quoted surface row was made from, if the quote can be joined. Both
@@ -309,6 +380,8 @@ async function fanOut(
   // pointing: a reply there, where a terminal names the card by its handle
   const pointed = e.type === "message" && e.payload?.turn_id === undefined
     ? e.payload?.ref_id
+    : e.type === "permission_response" && !e.parts[0].data.every
+    ? (await cardOf(deps, e.envelope.conversation.address, e.payload.ref_id))?.id
     : undefined;
   const quotes = await Promise.all(
     targets.map((a) => pointed ? crossingOf(deps, a.conversation, pointed) : undefined),
@@ -332,6 +405,21 @@ async function fanOut(
       ...(e.type === "delta" ? { delta: true } : {}),
     },
   })));
+}
+
+/** The card raised for a use, in the room it was raised in. */
+async function cardOf(
+  deps: Pick<MirrorDeps, "read">,
+  conversation: string,
+  use: EventId,
+): Promise<Event | undefined> {
+  const [card] = await deps.read({
+    conversation,
+    types: ["permission_request"],
+    limit: 1,
+    filter: (x) => x.payload?.ref_id === use,
+  });
+  return card;
 }
 
 /** The wire id a mind row's crossing landed under on one surface — what a quote of that
@@ -435,6 +523,16 @@ async function ccParts(
       text: `\`[${w.asks}]\` ${w.approve} ${body}\n\n\`${w.hint}\``,
     }]);
   }
+  if (e.type === "permission_response") {
+    // a principal's answer crosses as the line that gave it. A terminal names the card by
+    // its handle; on a surface the crossing quotes the card instead (fanOut), so the handle
+    // is said already. A settlement with no line — a lapse, a withdrawal, the rest of a
+    // `/y all` — is the terminal's row.
+    const said = answerLine(e as PermissionResponseEvent);
+    if (said === undefined) return null;
+    const handle = shortId(e.payload.ref_id);
+    return principalLine(e, said.replace(new RegExp(`(^|\\s+)${handle}(?=\\s|$)`), ""), [], w);
+  }
   if (e.type !== "message") return null;
   const m = e as MessageEvent;
   const parts = m.parts ?? [];
@@ -456,11 +554,7 @@ async function ccParts(
   const said = glyph === undefined ? text : e.payload?.action === "remove" ? "" : glyph;
   const files = parts.filter((p) => p.type === "file");
   if (!said && files.length === 0) return null;
-  // a terminal names the card a line answers by its handle; on a surface the crossing
-  // quotes the card instead (fanOut), so the handle is said already
-  const handle = await quotedHandle(read, m);
-  const words = handle ? said.replace(new RegExp(`(^|\\s+)${handle}(?=\\s|$)`), "") : said;
-  return principalLine(e, words, files, w);
+  return principalLine(e, said, files, w);
 }
 
 /** A principal's row on a surface: the same tag shape as the voice, saying where it was
@@ -480,23 +574,6 @@ function principalLine(e: Event, words: string, files: Part[], w: Words): CC {
     },
     ...files,
   ];
-}
-
-/** The handle of the card a principal's line quotes, if it quotes one: a mind row `ref_id`
- *  can name (the door's line, a surface reply joined at fan-in). */
-async function quotedHandle(
-  read: MirrorDeps["read"],
-  m: MessageEvent,
-): Promise<string | undefined> {
-  const ref = m.payload?.ref_id;
-  if (!ref) return undefined;
-  const [card] = await read({
-    conversation: m.envelope.conversation.address,
-    types: ["permission_request"],
-    limit: 1,
-    filter: (x) => x.id === ref,
-  });
-  return card ? shortId(card.payload!.ref_id as EventId) : undefined;
 }
 
 /** `send(to: …)` → `**send**(to: …)` — the tool name in bold. Common markdown, like every
