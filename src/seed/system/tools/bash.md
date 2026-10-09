@@ -12,7 +12,10 @@ the full output is saved to a file the footer names (page it with aread). Defaul
 Prefer fat commands: chain independent steps with && or ; in ONE call, and emit multiple bash
 calls in one turn when they don't depend on each other; every separate call is a full
 round-trip. Calls in one turn run at once, each from the same directory, so give each its own
-cd; the cwd: line under now: is where your next call starts.
+cd; the cwd: line under now: is where your next call starts. A non-zero exit fails the call,
+but only the last command's status reaches it: a step that fails in the middle of a ; chain (a
+cd to a folder you are already in, and the write after it that never ran) shows only in the
+output, so read its head, and join with && the steps that must not go on after a failure.
 
 Four helpers on PATH, their usage listed under # Programs, do the everyday jobs better than
 their habitual counterparts; reach for them first.
