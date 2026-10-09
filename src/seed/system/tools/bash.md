@@ -2,20 +2,23 @@
 kind: tool
 ---
 
-Run a bash command. The working directory PERSISTS between calls like a terminal (cd once, it
-sticks), but shell/env state (exported vars, activated venvs) does not, so re-export or chain
+Run a bash command. Each call is a fresh shell in the folder the cwd: line under now: names:
+a cd lasts its call, and so does shell/env state (exported vars, activated venvs), so chain
 those. stdout+stderr merged; output truncated to the last {{max_lines}} lines / {{max_kb}}KB
 (override with max_lines/max_bytes when you deliberately need more or less); when truncated,
 the full output is saved to a file the footer names (page it with aread). Default timeout
-{{timeout}}s; run long work in the background (cmd > out.log 2>&1 &) and poll with tail.
+{{timeout}}s; run long work in the background (cmd > out.log 2>&1 &) and poll with tail. What
+you left running is listed under now: by its live process: kill <pid> stops it, kill -- -<group>
+all of its group. The call runs as bash -c with your text, so a pkill -f on words from your
+own command kills the shell running it.
 
 Prefer fat commands: chain independent steps with && or ; in ONE call, and emit multiple bash
 calls in one turn when they don't depend on each other; every separate call is a full
 round-trip. Calls in one turn run at once, each from the same directory, so give each its own
-cd; the cwd: line under now: is where your next call starts. A non-zero exit fails the call,
-but only the last command's status reaches it: a step that fails in the middle of a ; chain (a
-cd to a folder you are already in, and the write after it that never ran) shows only in the
-output, so read its head, and join with && the steps that must not go on after a failure.
+cd. A non-zero exit fails the call, but only the last command's status reaches it: a step
+that fails in the middle of a ; chain (a cd to a folder that isn't there, and the write after
+it that never ran) shows only in the output, so read its head, and join with && the steps
+that must not go on after a failure.
 
 Four helpers on PATH, their usage listed under # Programs, do the everyday jobs better than
 their habitual counterparts; reach for them first.

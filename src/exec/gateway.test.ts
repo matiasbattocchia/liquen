@@ -122,15 +122,20 @@ cases("the output, both streams in order; a non-zero exit is the error result", 
   await assertRejects(() => run(shell, { command: "false" }), Error, "code 1");
 });
 
-cases("the cwd sticks across calls, and a lost one is said once", async (shell, place) => {
-  const { workspace, gateway } = place;
-  await run(shell, { command: "mkdir -p sub/deeper && cd sub/deeper" });
-  assertEquals(await run(shell, { command: "pwd" }), `${workspace}/sub/deeper`);
-  assertEquals((await shell.ambient())[0], `cwd: ${workspace}/sub/deeper`);
-  await gateway.exec(`rm -rf ${quote(`${workspace}/sub`)}`);
-  await assertRejects(() => run(shell, { command: "pwd" }), Error, "cannot stand there");
-  assertEquals(await run(shell, { command: "pwd" }), workspace);
-});
+cases(
+  "a cd lasts its call, the shell is stood, and a lost place is said once",
+  async (shell, place) => {
+    const { workspace, gateway } = place;
+    await run(shell, { command: "mkdir -p sub/deeper && cd sub/deeper" });
+    assertEquals(await run(shell, { command: "pwd" }), workspace); // the cd was the call's
+    await shell.stand(`${workspace}/sub/deeper`);
+    assertEquals(await run(shell, { command: "pwd" }), `${workspace}/sub/deeper`);
+    assertEquals((await shell.ambient())[0], `cwd: ${workspace}/sub/deeper`);
+    await gateway.exec(`rm -rf ${quote(`${workspace}/sub`)}`);
+    await assertRejects(() => run(shell, { command: "pwd" }), Error, "cannot stand there");
+    assertEquals(await run(shell, { command: "pwd" }), workspace);
+  },
+);
 
 cases("the environment is the issued one alone", async (shell) => {
   const env = String(await run(shell, { command: "env | sort" }));
@@ -164,7 +169,7 @@ cases(
     assert(Date.now() - t0 < 10_000, "the call did not wait for the job");
     const lines = (await shell.ambient()).join("\n");
     assertStringIncludes(lines, "background — 1 job:");
-    assertStringIncludes(lines, "sleep 30 & echo started");
+    assert(/^· sleep 30 — running \d+s · pid \d+$/m.test(lines), lines); // by its live process
     await shell.reap();
     await new Promise((r) => setTimeout(r, 300));
     assertEquals((await shell.ambient()).some((l) => l.startsWith("background")), false);
@@ -212,7 +217,8 @@ cases("a file the agent attaches lands on the conversation's shelf", async (shel
     await assertRejects(() => files.resolve("gone.png"), Error, "no such file");
     await assertRejects(() => files.resolve("/etc/passwd"), Error, "outside your files");
     // with the shell's cwd, a relative reference is from where the shell stands
-    await run(shell, { command: "mkdir -p shots && cp pic.png shots/b.png && cd shots" });
+    await run(shell, { command: "mkdir -p shots && cp pic.png shots/b.png" });
+    await shell.stand(`${place.workspace}/shots`);
     const standing = gatewayFiles(place.gateway, {
       home: place.workspace,
       cwd: shell.cwd,

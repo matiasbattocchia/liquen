@@ -44,6 +44,7 @@ import {
   type ExecPlane,
   type Job,
   jobLines,
+  parseMembers,
   settle,
 } from "./bash.ts";
 
@@ -393,6 +394,14 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
         `b=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) && ` +
         `echo "git: $b · $(git status --porcelain | grep -c .)"`,
         ...pgids.map((p) => `${alive(String(p))} && echo "live ${p}"`),
+        // the members of each live group, for the job lines (none when ps is missing)
+        ...(pgids.length
+          ? [
+            `ps -e -o pgid=,pid=,args= 2>/dev/null | awk '${
+              pgids.map((p) => `$1 == ${p}`).join(" || ")
+            } { print "member", $0 }'`,
+          ]
+          : []),
         "true",
       ].join("\n");
       let said = "";
@@ -414,7 +423,8 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
       }
       const live = new Set([...said.matchAll(/^live (\d+)$/gm)].map((m) => Number(m[1])));
       for (const j of jobs) if (!live.has(j.pgid)) jobs.delete(j);
-      return [...lines, ...jobLines(jobs)];
+      const members = [...said.matchAll(/^member (.*)$/gm)].map((m) => m[1]).join("\n");
+      return [...lines, ...jobLines(jobs, parseMembers(members, live))];
     },
     async stand(path?: string) {
       if (path === undefined) {

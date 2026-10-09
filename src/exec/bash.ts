@@ -25,7 +25,9 @@ import type { ToolShape } from "../tooldoc.ts";
 
 /** A background job the agent left running: its process group + a hint of what it is. */
 export interface Job {
-  pgid: number; // == the setsid child's pid: `kill <pgid>` the leader, `kill -<pgid>` the tree
+  pgid: number; // == the setsid child's pid. The leader is often gone by the time the job
+  //                is seen (a `cmd &` from a subshell outlives its bash): `kill -- -<pgid>`
+  //                stops the tree, `kill <pid>` a member the ambient line names.
   command: string; // the FULL launch command — the ambient line truncates; a UI/control
   //                  client shows it whole (§9). Kept verbatim, never parsed.
   since: number; // Date.now() at launch — age + the future TTL reaper (§9)
@@ -73,10 +75,18 @@ function hasSetsid(): boolean {
   return _hasSetsid;
 }
 
-// Sticky cwd: fresh subprocess per call, but the working directory persists between calls
-// like a real terminal — a tail sentinel reports the shell's final pwd + exit code, so the
-// model never re-`cd`s and its true exit status survives the appended print (§9 audit find).
+// Fresh subprocess per call; a tail sentinel reports the shell's final pwd + exit code, so
+// the true exit status survives the appended print (§9 audit find), and the pwd can be kept
+// as the next call's start — the sticky cwd, off below.
 export const CWD_MARK = "__MU_CWD__";
+
+/** Whether a `cd` in a call moves where the next one starts. Off: every call starts where
+ *  the shell stands (the workspace, or the place `stand` was given), and a `cd` lasts its
+ *  call. The model writes `cd dir && …` at the head of a call by habit; with the cwd kept,
+ *  that `cd` fails on the next call from inside dir, silently in a `;` chain (a vibes
+ *  session, 2026-10-09: four times, one false result). The sticky code stays for a second
+ *  look. */
+export const STICKY_CWD = false;
 
 // User space starts with an EMPTY pocket (clearEnv): the harness process's environment —
 // API keys, bridge tokens, whatever it was launched with — never leaks into the agent's
@@ -144,8 +154,7 @@ export interface BashInput {
 
 /** The command as the shell runs it: followed by a sentinel line that prints the shell's
  *  final pwd and the command's REAL exit code (the appended print would otherwise mask a
- *  non-zero exit). A `cd` in the command is honored, and the cwd it leaves is the next
- *  call's — the sticky cwd. */
+ *  non-zero exit). The pwd it reports is the next call's start only with STICKY_CWD on. */
 export function wrapCommand(command: string): string {
   return `${command}\n__mu_rc=$?; printf '\\n${CWD_MARK}%s:%s\\n' "$(pwd)" "$__mu_rc"`;
 }
@@ -158,7 +167,8 @@ export interface BashEnd {
   timeoutMs: number;
 }
 
-/** A call's raw output → its result: the sentinel peeled off the tail (moving `state.cwd`,
+/** A call's raw output → its result: the sentinel peeled off the tail (moving `state.cwd`
+ *  with STICKY_CWD on,
  *  recovering the exit code), the text tail-truncated — the whole of it handed to `spill`,
  *  which answers where it now lies — and a non-zero exit, a timeout or an abort thrown as
  *  the error result carrying the output. Media marks (`aread` on a bytes file, §5) come
@@ -180,7 +190,7 @@ export async function settle(
     if (sep !== -1) {
       const dir = line.slice(0, sep);
       const rc = Number(line.slice(sep + 1));
-      if (dir) state.cwd = dir;
+      if (dir && STICKY_CWD) state.cwd = dir;
       if (Number.isFinite(rc)) exitCode = rc;
     }
     output = raw.slice(0, mark);
@@ -215,7 +225,7 @@ export async function settle(
 
 export function bashTool(opts: BashOptions): ExecTool {
   const timeoutMsDefault = opts.defaultTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
-  // sticky cwd lives in the shared state when the plane provides one (so it can report it),
+  // the cwd lives in the shared state when the plane provides one (so it can report it),
   // else in a local closure var
   const state = opts.state ?? { cwd: opts.workspace };
 
@@ -345,7 +355,7 @@ export function bashTool(opts: BashOptions): ExecTool {
   };
 }
 
-/** One SESSION's shell on its agent's ground (§9): its own sticky cwd and its own job set.
+/** One SESSION's shell on its agent's ground (§9): its own cwd and its own job set.
  *  Two sessions of one agent stand in one folder but never in one place — a client placing
  *  one session's shell, or a `cd` in it, moves nothing for its siblings. */
 export interface ExecPlane {
@@ -363,7 +373,7 @@ export interface ExecPlane {
    *  from one is connected (the door passes it along), the workspace when none is given.
    *  The place is tried first, by the same spawn a call makes and as the same uid, so a
    *  directory the agent cannot stand in is refused here — at the attach — and the shell
-   *  never moves. The shell's own `cd`s stick from there as ever. */
+   *  never moves. A `cd` in a call lasts the call (STICKY_CWD). */
   stand(path?: string): Promise<void>;
   /** The programs the org's folder puts on PATH, by directory in PATH order — the prefix
    *  lists them after the docs (§5). */
@@ -421,23 +431,74 @@ export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<str
   const git = await gitLine(state.cwd);
   if (git) lines.push(git);
   for (const j of jobs) if (!groupAlive(j.pgid)) jobs.delete(j);
-  return [...lines, ...jobLines(jobs)];
+  return [...lines, ...jobLines(jobs, await groupMembers(jobs))];
+}
+
+/** A process alive in a job's group: its pid, the kill handle, and its command line. */
+export interface Member {
+  pid: number;
+  args: string;
+}
+
+/** `ps -e -o pgid=,pid=,args=` lines (Linux and macOS print the same three columns) → the
+ *  members of each group asked for, by pid. A group with no line has no entry. */
+export function parseMembers(ps: string, pgids: Iterable<number>): Map<number, Member[]> {
+  const want = new Set(pgids);
+  const members = new Map<number, Member[]>();
+  for (const line of ps.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    if (!m || !want.has(Number(m[1]))) continue;
+    const pgid = Number(m[1]);
+    const list = members.get(pgid) ?? [];
+    list.push({ pid: Number(m[2]), args: m[3].trim() });
+    members.set(pgid, list.sort((a, b) => a.pid - b.pid));
+  }
+  return members;
+}
+
+/** The live members of the jobs' groups, from one `ps`. Empty when there are no jobs, or
+ *  when ps is missing: the job lines then fall back to the launch command. */
+async function groupMembers(jobs: Set<Job>): Promise<Map<number, Member[]>> {
+  if (jobs.size === 0) return new Map();
+  try {
+    const out = await new Deno.Command("ps", {
+      args: ["-e", "-o", "pgid=,pid=,args="],
+      stdin: "null",
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    return parseMembers(new TextDecoder().decode(out.stdout), [...jobs].map((j) => j.pgid));
+  } catch {
+    return new Map();
+  }
+}
+
+/** A command line for the ambient line: the program by its basename, one line, and when
+ *  long, its head and its tail (the tail is where a script's name is). */
+function brief(args: string): string {
+  const one = args.replace(/\s+/g, " ").trim().replace(/^\S*\//, "");
+  return one.length > 72 ? `${one.slice(0, 44)}…${one.slice(-27)}` : one;
 }
 
 /** The background section of the ambient block, one section in the anchor's grammar (xi's
- *  standing lists): `· what — when · handle`. pid is the kill handle: `kill <pid>` stops the
- *  leader, `kill -<pid>` the whole tree. The command is collapsed to one line and clipped —
- *  the full text lives on the Job. None when nothing runs. */
-export function jobLines(jobs: Set<Job>): string[] {
+ *  standing lists): `· what — when · handle`. What runs is the group's live members, not
+ *  the call that launched them (a write that ended with `vite &` would otherwise be listed
+ *  as the write, running on, and get killed for it): the first member's command line, and
+ *  how many more; `pid` is the first member, `kill <pid>` stops it, and with more than one
+ *  the group is named too, `kill -- -<group>` stops them all. Without members (no ps), the
+ *  launch command clipped, and the group as the handle. The full launch text lives on the
+ *  Job. None when nothing runs. */
+export function jobLines(jobs: Set<Job>, members = new Map<number, Member[]>()): string[] {
   if (jobs.size === 0) return [];
-  const brief = (c: string) => {
-    const one = c.replace(/\s+/g, " ").trim();
-    return one.length > 60 ? `${one.slice(0, 59)}…` : one;
+  const line = (j: Job) => {
+    const live = members.get(j.pgid) ?? [];
+    const when = `running ${ageOf(j.since)}`;
+    if (live.length === 0) return `· ${brief(j.command)} — ${when} · group ${j.pgid}`;
+    const more = live.length > 1 ? `, and ${live.length - 1} more` : "";
+    const group = live.length > 1 ? ` · group ${j.pgid}` : "";
+    return `· ${brief(live[0].args)}${more} — ${when} · pid ${live[0].pid}${group}`;
   };
-  return [
-    `background — ${jobs.size} job${jobs.size === 1 ? "" : "s"}:`,
-    ...[...jobs].map((j) => `· ${brief(j.command)} — running ${ageOf(j.since)} · pid ${j.pgid}`),
-  ];
+  return [`background — ${jobs.size} job${jobs.size === 1 ? "" : "s"}:`, ...[...jobs].map(line)];
 }
 
 /** This process's module cache — the one the shims read. Asked of the deno that runs the
@@ -551,7 +612,7 @@ export function shippedAt(dir: string): BinDir {
  *                             binary it fetched is as private as its notes.
  *    the process's own PATH   inherited verbatim: the system underneath.
  *  `env` (optional) is issued into every spawn — the egress proxy's handoff vars (§9).
- *  What is per SESSION — the sticky cwd, the job set — is the shell's, opened per session
+ *  What is per SESSION — the cwd, the job set — is the shell's, opened per session
  *  on this ground. */
 export async function installExecGround(
   dir: string,

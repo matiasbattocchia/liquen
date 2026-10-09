@@ -178,8 +178,7 @@ Deno.test("bash: tail-truncation persists the full output and points at it", asy
 Deno.test("bash: the spill lands under the workspace wherever the shell stands", async () => {
   await withPlane(async ({ run, dir }) => {
     await Deno.mkdir(`${dir}/elsewhere`);
-    await run(`cd ${dir}/elsewhere`);
-    const out = await run("seq 1 3000");
+    const out = await run(`cd ${dir}/elsewhere && seq 1 3000`);
     const m = out.match(/full output: (\S+)]/);
     assert(m, "footer names the persisted file");
     assert(m![1].startsWith(`${wsOf(dir)}/.out/`), m![1]);
@@ -218,8 +217,8 @@ Deno.test("exec plane: stand() moves where the next call starts; bare, it is the
     await Deno.mkdir(`${dir}/proj`);
     await plane.stand(`${dir}/proj`);
     assertEquals(await run("pwd"), await Deno.realPath(`${dir}/proj`));
-    await run("cd .."); // the shell's own moves still stick
-    assertEquals(await run("pwd"), await Deno.realPath(dir));
+    await run("cd .."); // a cd lasts its call (STICKY_CWD off)
+    assertEquals(await run("pwd"), await Deno.realPath(`${dir}/proj`));
     await plane.stand();
     assertEquals(await run("pwd"), await Deno.realPath(wsOf(dir)));
   } finally {
@@ -237,7 +236,7 @@ Deno.test("exec ground: two sessions' shells share the folder, never the place o
     const run = (shell: typeof mind) => async (command: string) =>
       String(await shell.exec.bash.execute({ command }, live()));
     await Deno.mkdir(`${dir}/proj`);
-    await run(build)(`cd ${dir}/proj`);
+    await build.stand(`${dir}/proj`);
     assertEquals(await run(build)("pwd"), await Deno.realPath(`${dir}/proj`));
     assertEquals(await run(mind)("pwd"), await Deno.realPath(wsOf(dir))); // unmoved
     await run(build)("sleep 30 &");
@@ -373,15 +372,15 @@ Deno.test("binaries: aedit failure surfaces as a bash error the agent can read",
   });
 });
 
-Deno.test("bash: cwd persists between calls (sticky), env does not", async () => {
+Deno.test("bash: a cd lasts its call (STICKY_CWD off), and so does env", async () => {
   const dir = await Deno.makeTempDir();
   try {
     await Deno.mkdir(`${dir}/workspace/sub`, { recursive: true });
     const bash = bashTool({ workspace: `${dir}/workspace` });
     const home = await Deno.realPath(`${dir}/workspace`);
     assertEquals(String(await bash.execute({ command: "pwd" }, live())), home);
-    await bash.execute({ command: "cd sub" }, live()); // cd sticks
-    assertEquals(String(await bash.execute({ command: "pwd" }, live())), `${home}/sub`);
+    assertEquals(String(await bash.execute({ command: "cd sub && pwd" }, live())), `${home}/sub`);
+    assertEquals(String(await bash.execute({ command: "pwd" }, live())), home); // not kept
     // env does NOT persist (fresh subprocess each call)
     await bash.execute({ command: "export FOO=bar" }, live());
     assertEquals(String(await bash.execute({ command: "echo ${FOO:-unset}" }, live())), "unset");
@@ -465,7 +464,7 @@ Deno.test("exec plane: ambient() reports cwd, git, and live background jobs", as
     assert(lines.every((l) => !l.startsWith("git:")), "no git line outside a repo");
     assert(lines.every((l) => !l.startsWith("background")), "no jobs yet");
 
-    // make it a git repo → git line appears; cd sticks so ambient reflects it
+    // make it a git repo → git line appears
     await exec.bash.execute({
       command: "git init -q && git config user.email a@b.c && git config user.name a",
     }, live());
@@ -481,10 +480,39 @@ Deno.test("exec plane: ambient() reports cwd, git, and live background jobs", as
     const jobLine = lines.find((l) => l.startsWith("· "));
     assert(jobLine, lines.join(" | "));
     assert(/ · pid \d+$/.test(jobLine!), `job line must carry a kill handle: ${jobLine}`);
+    assert(jobLine!.startsWith(`· ${marker} `), `the job is named by its live process: ${jobLine}`);
+    assert(!jobLine!.includes("exec -a"), `not by the call that launched it: ${jobLine}`);
     await reap();
     lines = await ambient();
     assert(lines.every((l) => !l.startsWith("background")), "reaped job gone from ambient");
   } finally {
+    new Deno.Command("pkill", { args: ["-f", marker] }).outputSync();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("exec plane: a job whose leader is gone is named by the member alive, with its pid", async () => {
+  // the session's case: a write that ended with `(vite &)` was listed as the write, running on
+  const dir = await Deno.makeTempDir();
+  const { exec, ambient, reap } = (await installExecGround(dir, "a1")).shell();
+  const marker = `mu_sub_${crypto.randomUUID().slice(0, 8)}`;
+  try {
+    await exec.bash.execute(
+      { command: `echo hi > f.txt; (exec -a ${marker} sleep 300 &)` },
+      live(),
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    const jobLine = (await ambient()).find((l) => l.startsWith("· "));
+    assert(jobLine, "the job shows");
+    const m = /^· (\S+) 300 — running \d+s · pid (\d+)$/.exec(jobLine!);
+    assert(m, `named by its live process, with its pid: ${jobLine}`);
+    assertEquals(m![1], marker);
+    const ps = new TextDecoder().decode(
+      new Deno.Command("ps", { args: ["-o", "args=", "-p", m![2]] }).outputSync().stdout,
+    );
+    assertStringIncludes(ps, marker); // the pid is the member's, a kill handle that works
+  } finally {
+    await reap();
     new Deno.Command("pkill", { args: ["-f", marker] }).outputSync();
     await Deno.remove(dir, { recursive: true });
   }

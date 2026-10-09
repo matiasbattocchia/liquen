@@ -2275,8 +2275,13 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   the uid — and one SHELL per session on it, so where a session stands and what it left
   running is never another's, while the docs a shell writes land where the doc
   cascade already reads (`awrite memories/x.md` from where it stands). Binaries stay
-  org-wide. **cwd persists between calls like a terminal** (a pwd sentinel appended to each
-  command reports the shell's final dir + real exit code; env/venv state does NOT persist).
+  org-wide. **A `cd` lasts its call**: every call starts where the shell stands (a pwd
+  sentinel appended to each command reports the shell's final dir + real exit code; keeping
+  that dir as the next call's start — the sticky cwd, `STICKY_CWD` — is off, since the model
+  writes `cd dir && …` at the head of a call by habit and a kept cwd made that `cd` fail,
+  silently in a `;` chain; env/venv state does NOT persist either). The background jobs in
+  the ambient block are listed by their live processes (first member's command line, its pid,
+  the group when there are more), never by the call that launched them.
   An interface's `message` carries the directory it was typed from, and the session's
   shell starts THERE while that connection lives — the principal's shell and the agent's
   stand in the same place — returning to the workspace when it hangs up. A place the
