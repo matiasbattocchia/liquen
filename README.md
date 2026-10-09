@@ -1,16 +1,22 @@
 # liquen
 
+<p align="center">
+  <img src="assets/liquen.png" width="360" alt="A leafy lichen engraved by Ernst Haeckel"><br>
+  <sub>Ernst Haeckel, <i>Kunstformen der Natur</i>, 1904</sub>
+</p>
+
 *Liquen* is Spanish for lichen, a fungus and an alga that live as one, and an org works the
 same way here: each person is paired with an agent of their own, and every pair grows on
 shared ground.
 
-- **One agent per person.** It speaks in your name and knows the org you work in.
-- **It meets you where you talk.** The terminal, Slack, WhatsApp, Teams, mail and calendar.
-- **Agents work together.** Yours can ask a teammate's agent, and theirs can ask yours.
-- **You stay in charge.** A risky step waits for your yes, given from any of those apps.
-- **Your keys stay out of reach.** The agent never holds a token. A proxy adds it on the
-  way out.
-- **You own the ground.** Settings, memory and history live in a folder on your machine.
+| | |
+| --- | --- |
+| **One agent per person** | It speaks in your name and knows the org you work in. |
+| **It meets you where you talk** | The terminal, Slack, WhatsApp, Teams, mail and calendar. |
+| **Agents work together** | Yours can ask a teammate's agent, and theirs can ask yours. |
+| **You stay in charge** | A risky step waits for your yes, given from any of those apps. |
+| **Your keys stay out of reach** | The agent never holds a token. A proxy adds it on the way out. |
+| **You own the ground** | Settings, memory and history live in a folder on your machine. |
 
 ## Install
 
