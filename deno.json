@@ -24,6 +24,7 @@
       ".claude",
       ".github",
       "audit",
+      "install.sh",
       "**/*.test.ts",
       "src/store/suite",
       "!README.md",

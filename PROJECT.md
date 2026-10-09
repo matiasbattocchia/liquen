@@ -5292,3 +5292,15 @@ both land; `owed` takes the earliest, but the room draws both.
   `search` filter, and in production a fast pair of turns could too. `born` is now 53
   random bits (`mint`); `take`/`steal` carry it beside `seen`. The lock suite pins it with
   a frozen clock.
+
+### One line installs liquen, and the README says what it is for (2026-10-09): LANDED
+
+- **`install.sh`** at the repo root, served from GitHub's raw URL. It installs Deno when
+  missing, then `liquen` and `lq` with `deno install -g -f`. Given a folder name it runs
+  init, adds the login name (or the one typed) to the roster and appends the API key to
+  `.env`. Questions go through `/dev/tty`, so `curl | sh` can ask them, and a run with no
+  terminal skips them. A second run keeps the org, the roster and the key. Tried on Linux
+  with and without a terminal. Not yet run on macOS, and no CI job runs it.
+- **The README is value and usage only.** Knobs, the store, the sandbox, standing wakes
+  and each door's setup steps left it: DESIGN.md holds the architecture, and every door's
+  own prompts and `--help` hold its setup.

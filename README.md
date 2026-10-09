@@ -1,220 +1,59 @@
-# liquen — an org-level agent harness
+# liquen
 
-Each org member (a **principal**) gets an AI **agent** that acts for them over a shared
-event log — CLI today; Slack/WhatsApp next. Design: [DESIGN.md](./DESIGN.md) · roadmap:
-[PROJECT.md](./PROJECT.md) · agent-driven install: [SKILL.md](./SKILL.md).
+*Liquen* is Spanish for lichen, a fungus and an alga that live as one, and an org works the
+same way here: each person is paired with an agent of their own, and every pair grows on
+shared ground.
 
-## Run an org
+- **One agent per person.** It speaks in your name and knows the org you work in.
+- **It meets you where you talk.** The terminal, Slack, WhatsApp, Teams, mail and calendar.
+- **Agents work together.** Yours can ask a teammate's agent, and theirs can ask yours.
+- **You stay in charge.** A risky step waits for your yes, given from any of those apps.
+- **Your keys stay out of reach.** The agent never holds a token. A proxy adds it on the
+  way out.
+- **You own the ground.** Settings, memory and history live in a folder on your machine.
 
-Requires [Deno](https://deno.com) ≥ 2. An org is a folder: `config.jsonc` declares it,
-`data/` is its living state, `.env` its secrets, and `deno.jsonc` names the package
-(`@liquen/liquen`) every task runs.
+## Install
 
-```sh
-# 1. the org, and your agent on its roster
-deno run -A jsr:@liquen/liquen/init myorg && cd myorg
-deno task agent <you>
-
-# 2. credentials — one of:
-echo 'ANTHROPIC_API_KEY=sk-ant-…' > .env   # a Console API key
-ant auth login                             # or platform OAuth (then NO key line in .env, not even empty)
-# an agent declared `provider: "google"` reads GEMINI_API_KEY from .env instead
-
-# 3. talk to your agent
-deno task repl
-```
-
-In the REPL: type to your agent · `/y [note]` / `/n [reason]` answer approval cards ·
-`/quit` exits.
-
-`liquen <task>` is `deno task <task>` said from anywhere inside the org — `liquen start`,
-`liquen agent ana`, `liquen --dir ~/myorg status` from outside it. The command holds no
-code of its own, so the package that runs is always the one the org's `deno.jsonc` pins:
+On Linux or macOS:
 
 ```sh
-deno install -g -A -n liquen jsr:@liquen/liquen/liquen
-deno install -g -A -n lq jsr:@liquen/liquen/liquen   # the same command, short: `lq start`
+curl -fsSL https://raw.githubusercontent.com/matiasbattocchia/liquen/main/install.sh | sh -s -- myorg
+cd myorg && liquen repl
 ```
 
-`liquen start -D` runs the org in the background, its lines appended to
-`data/run/liquen.log`; `liquen stop` ends it either way. `liquen connect --remove
-<service>:<address>` takes a grant back — the target as `liquen status` prints it.
-`liquen reload` has the running org take up an edit to `config.jsonc`: what the edit
-touched restarts, a connection declared since starts, one removed stops, and it prints what
-moved. `liquen reload slack` restarts a process by name besides. The commands that write
-the file — `liquen connect`, `liquen agent` — reload the org themselves.
+The script installs Deno when it is missing, makes the org, adds you to its roster and asks
+for your Anthropic API key. Leave the name off and it installs only the `liquen` command.
+An agent on Gemini reads `GEMINI_API_KEY` from `.env` instead.
 
-A role is a lock: every process in a run holds `data/run/<role>.pid` while it lives —
-`liquen` the supervisor, `main` the mind. So there is one of each, whoever started it: a
-REPL that finds no daemon raises a mind of its own, and `liquen start` over it refuses
-rather than tail, fan out and mirror the same log twice. `liquen stop` ends the run, not a
-process — the supervisor first, then anything still standing, an interface-raised mind
-included — and waits for each lock to come free, so `liquen stop && liquen start` is safe to
-say in one breath. `liquen update` puts the org on the newest release of the package: the
-lock names the version every task runs, so the new code comes up at the next `liquen start`.
-
-`./data/` is seeded from the package's `src/seed/` templates by the command that declares:
-`liquen init` writes `data/system/` and `data/organization/` — what every agent reads — and `liquen
-agent <name>` writes that agent's workspace, `data/agents/<name>/`, with the instruction
-file that says who they are and a memory to write the next by. So the words are on disk to
-edit before anything runs. A first run adds what only a run can make (the log, the CA and
-its bundle, the file shims) and seeds whatever is missing — a roster entry typed into
-`config.jsonc` by hand gets its home then. Nothing seeded is ever overwritten, and nothing
-is seeded into a folder that already exists — delete a doc you do not want and it stays
-deleted; delete the folder to ask for the set again. Docs are read fresh every turn, so an
-edit lands on the agent's next turn without a restart.
-`data/` is living state and stays out of git; `src/seed/` is the org definition at birth.
-
-## Knobs
-
-Every knob lives in `config.jsonc` at the project root (the catalog — init
-materializes it, the system never writes it; comments document each key). Env is for
-secrets only. The org is where you run liquen; `--dir <path>` names it from anywhere else.
-
-The org binds one port, `edge.port` (8787): every service is reached through it by path,
-`/<service>/ingest` and `/<service>/oauth/callback`, and the connectors behind it listen
-on sockets under `data/run/`, so nothing else is configured. The org is reached at
-`http://localhost:8787` until `edge.publicUrl` names its public https address — whatever
-a tunnel or a host publishes `edge.port` at; the doors print the address to register
-either way, and `edge.tunnel` holds the tunnel's argv when `liquen start` should run it.
-Without a public address, what needs the internet to dial in (Teams, a member's Slack
-sign-in, a GitHub webhook short of `gh webhook forward`) waits for it.
-
-The store is SQLite under `data/log` until `system.database` names a Postgres database
-(`postgres://user@host:5432/db`, `?schema=` for one schema of it); the password goes in
-`.env` as `PGPASSWORD`. Every process of the org opens whichever the catalog says. The
-docs stay files under `data/` either way until `system.docs` says `table`: they are then
-rows of that database's `docs` table, seeded there at boot, and an agent reaches them
-through its `read`, `write` and `edit` tools instead of its shell — each a function of
-the store, run under one agent role whose row-level policy bounds it to the org's two
-scopes, its own and its conversation's.
-
-Agents' shells run on this machine until `system.sandbox` names a sandbox gateway: the
-Worker in `sandbox/cloudflare/`, deployed to your Cloudflare account with `npm run
-deploy` there and its token set with `wrangler secret put SANDBOX_API_KEY`. Each agent
-then gets a Cloudflare sandbox of its own; the same token goes in `.env` as
-`SANDBOX_API_KEY`. An agent's first bash call starts its sandbox, and it stops
-`system.sandboxSleepMinutes` (10) after the last one; its background jobs and workspace
-files go with it. The agent sees the countdown at every step, so it keeps a long job alive
-by checking on it, and a longer window does the same at the price of idle container time.
-If this machine goes quiet, the gateway stops the sandbox on its own after the same window.
-A remote sandbox cannot reach files here, so it needs `system.docs: "table"`.
-
-## Standing wakes
-
-An agent wakes itself with its own `schedule` tool. The work a *deployment* owns is armed
-from outside — a poll the org exists to run, standing before anybody has said a word to
-the agent:
+## Use
 
 ```sh
-deno task schedule --agent ana --name sonar-digest --cron '*/15 8-21 * * 1-5' \
-  "pull the sonar digest since your last cursor and file what it shows"
+liquen repl              # talk to your agent
+liquen agent ana         # add a teammate
+liquen start -D          # keep the org running in the background
+liquen connect           # list the services you can bring in
+liquen status            # see who and what the org holds
+liquen schedule --help   # wake an agent on a clock
+liquen update            # move to the newest release
+liquen stop              # end the run
 ```
 
-At each fire the note arrives as an alarm in that agent's session and the agent decides
-then what to do about it — nothing is executed for it, so the note is written as
-instructions to be read cold. `--name` is the handle: arming it again replaces the row, so
-an entrypoint that runs at every boot keeps one wake instead of stacking one per restart,
-and `--cancel <handle>` unsets it. Cron is five fields on the org's clock; `--at` and
-`--in` arm a single wake instead. Nothing restarts — the clock's next sweep reads the
-table, and `deno task status` lists what is armed.
+In the REPL you type to your agent. `/y` and `/n` answer its approval cards, `/cancel`
+stops a turn and `/quit` leaves.
 
-## Connections
+Each service guides its own setup, and `--help` on any of them explains the rest. Slack,
+WhatsApp, Teams, Google and Microsoft mail and calendar, GitHub, and any HTTP API by token
+come in the box.
 
-The org runs first — `deno task start` — and the doors run against it. The first door of a
-service declares its connection in `config.jsonc` and reloads the running org, which
-starts the connection's process. A door whose grant makes the service deliver at once —
-a WhatsApp pairing, a GitHub grant — waits for that process to be up before it asks,
-since a delivery that finds no door is dropped by everyone.
+Your org is a folder. `config.jsonc` holds every setting, `.env` the secrets, `data/` the
+living state. Tell your agent who it is in `data/agents/<you>/instructions/agent.md`. It
+reads the file fresh on every turn.
 
-### GitHub (dev-tier: `gh webhook forward`)
+## More
 
-Two identities, either alone enough to start: the org's, which every agent falls back to,
-and an agent's own, which posts under that person's name. The smallest setup is one paste
-and no GitHub App at all:
+- [DESIGN.md](./DESIGN.md) explains how liquen works and why.
+- [PROJECT.md](./PROJECT.md) records what landed and what is still open.
+- [SKILL.md](./SKILL.md) lets a coding agent do the install for you.
 
-```sh
-deno task start                               # webhook receiver → the log, replies → gh api
-deno task connect github user --org --token   # a machine user's token → the org
-gh webhook forward --repo=you/repo \
-  --events=issue_comment,pull_request,pull_request_review_comment \
-  --url=http://localhost:8787/github/ingest
-```
-
-An App buys three things a paste cannot: an org token minted hourly with nothing static
-stored, deliveries the ingest can verify, and a device flow that signs a person in without
-a secret crossing the terminal.
-
-```sh
-deno task connect github app     # App ID + .pem + (optional) webhook secret, client id/secret
-deno task connect github bot     # its installation → the org
-deno task connect github user    # the device flow → your own leg
-```
-
-Every door closes by naming what the org still owes, and `--help` explains each option.
-
-### Slack (bring-your-own app, per org)
-
-1. **One sitting at the console.** The door prints the prefill link and opens it (Slack
-   builds the app from [`src/seed/slack-manifest.json`](./src/seed/slack-manifest.json),
-   consent lists filled from `connections.slack`), then takes what the console shows,
-   each paste empty to skip: the OAuth client, its signing secret (HTTP ingest only), and
-   the app-level token (xapp, the Socket Mode carrier). *Install to Workspace* while you
-   are there, and the flags take the tokens it issued:
-
-   ```sh
-   deno task connect slack app --bot --user   # xoxb → the org's shared identity, xoxp → your own leg
-   ```
-
-   Which carrier ingest opens is read off the vault: an app-level token is the socket, a
-   signing secret is HTTP.
-
-2. **Connect a member who is not at this terminal**: Slack redirects to https only, so this
-   needs the org's public door (`edge.publicUrl`, which the manifest of step 1 registers as
-   `<publicUrl>/slack/oauth/callback`). The door prints a link that binds the grant to
-   `[agent]` and is good for one sign-in; send it to them and the door waits until they
-   finish:
-
-   ```sh
-   deno task connect slack user [agent]
-   ```
-
-3. **The connection runs under `deno task start`** — both halves in one process: Socket
-   Mode (or HTTP) in, chat.postMessage out, tokens read from the vault at each use. The
-   app door declares the connection and reloads the org, which starts it. The carrier is
-   chosen when the process starts, so the door has the org restart a running connection
-   when it stores one, and says so when the vault holds neither.
-
-   The ingest is one webhook function either way — Socket Mode is just the local carrier;
-   an edge deploy serves the same function at the app's Events API request URL.
-
-### Any HTTP API
-
-An agent reaches an API with the `fetch` binary on its PATH — curl's flags, `aread`'s
-truncation, a status outside 2xx as a failure — and the credential never enters user
-space: a vault row declaring `extra.env` and `extra.hosts` is fronted as a `mu-grant-…`
-handle under that name in the agent's environment, and the egress proxy swaps it for the
-live token on the way out, toward those hosts only. `fetch -H "Authorization: Bearer
-$GH_TOKEN" https://api.github.com/user` is the whole of it. The GitHub doors above write
-that row for GitHub; for any other API the `token` door writes one from a paste:
-
-```sh
-deno task connect token crm --env CRM_TOKEN --hosts api.crm.io,*.crm.io   # the org's
-deno task connect token crm --env CRM_TOKEN --hosts api.crm.io --agent ana # one agent's own
-```
-
-`--probe <url>` spends the token once before writing, so a bad paste is refused rather
-than stored; the grant is picked up at the next `deno task start`. A connector of the org's
-own writes the same row for its service from its own door.
-
-## Development
-
-This repo is the package. An org runs a checkout instead of the registry by naming it in
-its `deno.jsonc` — `"links": ["../liquen"]` — and every task follows.
-
-```sh
-deno task check   # fmt + lint + typecheck
-deno task test    # all tests
-deno task fix     # format + lint
-deno task smoke   # live transport round-trip (credentials in .env)
-```
+This repo is the package. An org runs a checkout of it once its `deno.jsonc` says
+`"links": ["../liquen"]`, and `deno task check` and `deno task test` gate every change.
