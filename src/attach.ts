@@ -12,6 +12,7 @@ import { userInfo } from "node:os";
 import { EFFORTS, findRoot, PROVIDERS, readConfig } from "./config.ts";
 import type { Status, Tune } from "./door.ts";
 import type { Delta, Effort, Event, PermissionVerdict } from "./types.ts";
+import type { UsageRow } from "./store/log.ts";
 
 // A raised daemon owes the client a bound socket within this window — seeding, the exec
 // planes and the proxy all sit between spawn and bind.
@@ -93,12 +94,24 @@ export async function resolveAgent(
 
 /** Attach to the agent's door. A refusal means no daemon — raise an ephemeral one and
  *  keep connecting until it binds; the daemon takes itself down (the linger) when the
- *  last attachment is gone. */
-export async function attach(a: Attached): Promise<Deno.UnixConn> {
+ *  last attachment is gone. An observer (`raise: false`) raises nothing: a daemon's boot
+ *  answers whatever the log owes, and watching must never be what made the agent work —
+ *  so the refusal is its answer. */
+export async function attach(
+  a: Attached,
+  opts: { raise?: boolean } = {},
+): Promise<Deno.UnixConn> {
   const path = `${a.dir}/agents/${a.target}/door.sock`;
   try {
     return await Deno.connect({ transport: "unix", path });
-  } catch { /* nothing listening — raise a daemon */ }
+  } catch (err) {
+    if (opts.raise === false) {
+      throw new Error(
+        `nothing is running for ${a.target} — no daemon on ${path} ` +
+          `(${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+  }
   const daemon = new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", new URL("./main.ts", import.meta.url).href, "--ephemeral"],
     cwd: a.root,
@@ -129,6 +142,8 @@ export interface Reply {
   recalled?: Event[];
   /** `tail`: the asks still open in the session, by the id a verdict names (§9). */
   open?: string[];
+  /** An observing `tail`: the spend of the steps its recall holds. */
+  spend?: UsageRow[];
   /** `permission_response`: the uses the line settled, oldest first, and its verdict. */
   refs?: string[];
   verdict?: PermissionVerdict;
@@ -147,13 +162,14 @@ export interface Wire {
 }
 
 /** Speak the wire: newline-JSON requests answered in order; after a `tail` the same
- *  connection pushes {event}, {delta} and {status} lines — demuxed by shape (a reply
+ *  connection pushes {event}, {delta}, {status} and — to an observer — {usage} lines — demuxed by shape (a reply
  *  always carries `ok`; a push never does). Writes ride one chain so requests never
  *  interleave. */
 export function wire(conn: Deno.UnixConn, on: {
   event(e: Event): void;
   delta(d: Delta): void;
   status?(s: Status): void;
+  usage?(row: UsageRow): void;
 }): Wire {
   const encoder = new TextEncoder();
   let wchain: Promise<void> = Promise.resolve();
@@ -172,9 +188,10 @@ export function wire(conn: Deno.UnixConn, on: {
       .pipeThrough(new TextLineStream());
     for await (const line of lines) {
       if (!line.trim()) continue;
-      const msg = JSON.parse(line) as { event?: Event; delta?: Delta } & Reply;
+      const msg = JSON.parse(line) as { event?: Event; delta?: Delta; usage?: UsageRow } & Reply;
       if (msg.event) on.event(msg.event);
       else if (msg.delta) on.delta(msg.delta);
+      else if (msg.usage) on.usage?.(msg.usage);
       else if (msg.ok !== undefined) awaiting.shift()?.(msg);
       else if (msg.status !== undefined) on.status?.(msg as Status);
     }

@@ -37,7 +37,7 @@ import { ownComplex } from "./render.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
 import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runner.ts";
-import type { Log } from "./store/log.ts";
+import type { Log, UsageRow } from "./store/log.ts";
 import { databaseOf, storeAt } from "./store/mod.ts";
 import { type ClockSettings, tick } from "./tick.ts";
 import { enroll, route } from "./route.ts";
@@ -316,10 +316,15 @@ export async function start(
   // attributed to it (§2 telemetry) — also the seam where per-agent providers plug in.
   // The roster's transport is the STOCK one: what every session of the agent thinks
   // through unless an attachment asks for another (`tune`, below)
+  // …and each row crosses the agent's observing tails (§9), under the step it paid for
+  let castUsage: (agentId: string, row: UsageRow) => void = () => {};
   const meter = (agentId: string, t: ModelTransport) =>
     metered(
       t,
-      (row) => void log.meter(row).catch((err) => console.error("metering failed:", err)),
+      (row) => {
+        void log.meter(row).catch((err) => console.error("metering failed:", err));
+        castUsage(agentId, row);
+      },
       agentId,
     );
   const stock = new Map(principals.map((p) => [p.agentId, meter(p.agentId, transportFor(p))]));
@@ -487,6 +492,7 @@ export async function start(
           // where the principal stands is where the session's shell starts (§9)
           stand: (session, path) => sandbox.forAgent(a.config.agentId).session(session).stand(path),
           tune: (session, settings) => tune(a.config.agentId, session, settings),
+          spend: (turns) => log.spend({ agentId: a.config.agentId, turns }),
         };
       }
       // a PAUSED agent (`mind: false`, §4): the door still opens on its rooms — a tail reads
@@ -496,6 +502,7 @@ export async function start(
         sessionId: MIND,
         paused: true,
         port: (sessionId: string) => Promise.resolve(scoped(log, policyOf(p.agentId, sessionId))),
+        spend: (turns) => log.spend({ agentId: p.agentId, turns }),
       };
     }),
   );
@@ -511,6 +518,7 @@ export async function start(
     doors.emit(agentId, sessionId, delta);
     presence.delta(agentId, sessionId, delta);
   };
+  castUsage = (agentId, row) => doors.usage(agentId, row);
   castStatus = (agentId, sessionId, line, about) => {
     doors.status(agentId, sessionId, line);
     presence.status(agentId, sessionId, line.status, about);

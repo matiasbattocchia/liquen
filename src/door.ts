@@ -35,7 +35,8 @@
  *                                                          cuts the session's running turn
  *                                                          (§2) → {ok, id}
  *   tail          {op, from?, session?, cwd?, recall?,
- *                  model?, effort?, provider?}   → {ok, recalled?} — then the
+ *                  model?, effort?, provider?,
+ *                  observe?}                     → {ok, recalled?, spend?} — then the
  *                                                  connection also PUSHES: {event} per row
  *                                                  of that session's scoped view (from the
  *                                                  cursor), {delta} per model delta,
@@ -51,6 +52,11 @@
  *                                                  session's for as long as the connection
  *                                                  lives — checked before the tail opens,
  *                                                  and the hang-up puts the roster's back.
+ *                                                  `observe` is a watcher's tail: the recall
+ *                                                  carries the thinking too, the reply the
+ *                                                  recalled steps' spend (`spend`), and
+ *                                                  each model call's spend is pushed as
+ *                                                  {usage} right after the step it paid for.
  *
  * One synthetic turn key per connection (`job:<id>`): a `call` run is a turn no session
  * ever held, so its uses read as fresh work to act, its results weld to their uses in the
@@ -74,7 +80,7 @@ import type {
   MessageEvent,
   ToolUseEvent,
 } from "./types.ts";
-import type { Log } from "./store/log.ts";
+import type { Log, UsageRow } from "./store/log.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
 import { silent } from "./render.ts";
@@ -100,6 +106,9 @@ export interface DoorAgent {
    *  connection lives, the roster's (`undefined`) once it hangs up. Rejects a provider
    *  that cannot run the model at that effort, and the tail is refused with it. */
   tune?(sessionId: string, settings: Tune | undefined): void | Promise<void>;
+  /** The agent's spend on these steps (`turn_id`s) — what an observing tail's recall is
+   *  paid with. Absent: an observer's recall carries none. */
+  spend?(turns: string[]): Promise<UsageRow[]>;
 }
 
 /** A session's model settings as an attachment names them — each one optional, the
@@ -125,6 +134,10 @@ export interface Doors {
   emit(agentId: string, sessionId: string, delta: Delta): void;
   /** Fan a turn edge out the same way — the daemon discloses, the interface decides. */
   status(agentId: string, sessionId: string, line: Status): void;
+  /** Fan one model call's spend to the agent's observing tails: each pushes it once the
+   *  step it paid for has crossed that tail, so a tail never hears of another session's
+   *  steps and the row lands under its step. */
+  usage(agentId: string, row: UsageRow): void;
   /** Live connections across every door — what an attachment-derived lifetime reads. */
   attachments(): number;
   close(): Promise<void>;
@@ -143,7 +156,49 @@ type Push = (line: Record<string, unknown>) => void;
  *  is decided, and a client that exits on `idle` must have painted the row the idle covers.
  *  `seen` starts at an id minted when the tail opens — an event the tail will never deliver
  *  cannot hold a status back — and a busy edge drops a held idle: the state moved on. */
-type Tailer = { push: Push; session: string; seen: string; held?: Status };
+type Tailer = {
+  push: Push;
+  session: string;
+  seen: string;
+  held?: Status;
+  /** An observing tail: spend rides it, keyed by the step it paid for — held until the
+   *  step's first row has been pushed (`stepped`), then pushed behind that row's batch. */
+  observe?: { owed: Map<string, UsageRow[]>; stepped: Set<string> };
+};
+
+/** How many steps an observing tail remembers, either side: spend waiting for a step that
+ *  is another session's never arrives, and the oldest is dropped past this. */
+const OBSERVED_STEPS = 64;
+
+function bounded<K>(set: { keys(): IterableIterator<K>; delete(k: K): boolean; size: number }) {
+  while (set.size > OBSERVED_STEPS) set.delete(set.keys().next().value as K);
+}
+
+function pushUsage(t: Tailer, row: UsageRow): void {
+  const o = t.observe;
+  if (!o || row.turn_id === undefined) return;
+  if (o.stepped.has(row.turn_id)) {
+    t.push({ usage: row });
+    return;
+  }
+  o.owed.set(row.turn_id, [...o.owed.get(row.turn_id) ?? [], row]);
+  bounded(o.owed);
+}
+
+/** A step's row has been pushed: what it cost follows it, once the batch it came in has. */
+function stepped(t: Tailer, e: Event): void {
+  const o = t.observe;
+  const turn = e.payload?.turn_id;
+  if (!o || typeof turn !== "string" || o.stepped.has(turn)) return;
+  o.stepped.add(turn);
+  bounded(o.stepped);
+  const rows = o.owed.get(turn);
+  if (!rows) return;
+  o.owed.delete(turn);
+  queueMicrotask(() => {
+    for (const row of rows) t.push({ usage: row });
+  });
+}
 
 function pushStatus(t: Tailer, line: Status): void {
   if (line.status === "busy") {
@@ -211,6 +266,9 @@ export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Do
         if (t.session === sessionId) pushStatus(t, line);
       }
     },
+    usage(agentId: string, row: UsageRow) {
+      for (const t of casts.get(agentId) ?? []) pushUsage(t, row);
+    },
     attachments: () => conns.size,
     async close() {
       for (const { listener } of listeners) listener.close();
@@ -272,12 +330,18 @@ async function serve(
     await agent.tune?.(session, settings);
     tuned.add(session);
   };
-  const tail = async (session: string, from?: string) => {
+  const tail = async (session: string, from?: string, observe = false) => {
     if (untail) throw new Error("already tailing");
-    const t: Tailer = { push, session, seen: newId() };
+    const t: Tailer = {
+      push,
+      session,
+      seen: newId(),
+      ...(observe ? { observe: { owed: new Map(), stepped: new Set<string>() } } : {}),
+    };
     untail = (await agent.port(session)).subscribe(
       (e: Event) => {
         push({ event: e });
+        stepped(t, e);
         if (e.id > t.seen) t.seen = e.id;
         if (t.held && t.held.after! <= t.seen) {
           const line = t.held;
@@ -331,7 +395,7 @@ async function handle(
   req: Record<string, unknown>,
   agent: DoorAgent,
   turnId: string,
-  tail: (session: string, from?: string) => Promise<void>,
+  tail: (session: string, from?: string, observe?: boolean) => Promise<void>,
   stand: (session: string, path: string) => Promise<void>,
   tune: (session: string, settings: Tune) => Promise<void>,
 ): Promise<Record<string, unknown>> {
@@ -457,17 +521,26 @@ async function handle(
     const settings = tuneOf(req);
     if (settings) await tune(session, settings);
     // read the past before opening on the present, so the two never name the same row
-    const recalled = req.recall === undefined ? undefined : await recap(port, address, req.recall);
+    const observe = req.observe === true;
+    const recalled = req.recall === undefined
+      ? undefined
+      : await recap(port, address, req.recall, observe ? WATCHED : RECALLED);
+    // an observer's recall is paid with the spend of the steps it holds
+    const steps = [
+      ...new Set((recalled ?? []).map((e) => e.payload?.turn_id).filter(isStep)),
+    ];
+    const spend = observe && steps.length && agent.spend ? await agent.spend(steps) : undefined;
     // the asks still open, by id (§9): standing state off the store, so a surface answers
     // a card asked before anything its recall reaches
     const open = (await port.gates({ agentId: agent.agentId, sessionId: session }))
       .map((c) => c.payload.ref_id);
-    await tail(session, typeof req.from === "string" ? req.from : undefined);
+    await tail(session, typeof req.from === "string" ? req.from : undefined, observe);
     return {
       ok: true,
       status: "tailing",
       ...(open.length ? { open } : {}),
       ...(recalled ? { recalled } : {}),
+      ...(spend ? { spend } : {}),
     };
   }
   throw new Error(
@@ -509,13 +582,14 @@ async function recap(
   port: Pick<Log, "read">,
   conversation: string,
   limit: unknown,
+  types: readonly Event["type"][],
 ): Promise<Event[]> {
   if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1) {
     throw new Error("tail recall must be a positive integer");
   }
   return await port.read({
     conversation,
-    types: [...RECALLED],
+    types: [...types],
     silenced: false,
     limit: Math.min(limit, MAX_RECALL),
     // the emptiness test is a MESSAGE's, and it is the surface's own: a row recalled is a
@@ -536,6 +610,13 @@ const RECALLED = [
   "alarm",
   "error",
 ] as const;
+
+/** What an observer's recall carries: the surface's classes, and the thinking the live
+ *  screen streams as it happens. */
+const WATCHED = [...RECALLED, "thinking"] as const;
+
+/** A model step's key — never a door call's synthetic one (`job:`). */
+const isStep = (t: unknown): t is string => typeof t === "string" && !t.startsWith("job:");
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);

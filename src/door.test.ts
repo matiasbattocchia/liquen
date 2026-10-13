@@ -17,6 +17,7 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { installDoors, MAX_PENDING_LINES, type Status, type Tune } from "./door.ts";
+import { wire } from "./attach.ts";
 import { bind, type Mu } from "./script.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { openFileDocs } from "./store/docs.ts";
@@ -939,6 +940,94 @@ Deno.test({
       client.conn.close();
     } finally {
       await down();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "door: an observer's tail — the recall carries the thinking and its spend, and each call's spend follows its step",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
+    const log = await openLog(`${dir}/log`);
+    const doors = await installDoors(dir, [{
+      ...AGENT,
+      port: () => Promise.resolve(log),
+      spend: (turns) => log.spend({ agentId: "ana", turns }),
+    }]);
+    const room = {
+      service: "local" as const,
+      connection_address: "agent",
+      conversation: { address: "mind@ana" },
+    };
+    const self = { id: "ana", session_id: "mind" };
+    const thought = (turn: string): Draft =>
+      ({
+        ts: new Date().toISOString(),
+        type: "thinking",
+        agent: self,
+        envelope: room,
+        payload: { turn_id: turn },
+        parts: [{
+          type: "data",
+          kind: "thinking",
+          data: { thinking: `on ${turn}`, signature: "s" },
+        }],
+      }) as Draft;
+    const spent = (turn: string) => ({
+      created_at: new Date().toISOString(),
+      agent_id: "ana",
+      turn_id: turn,
+      kind: "think" as const,
+      model: "m",
+      input_tokens: 10,
+      output_tokens: 1,
+    });
+    const watch = async (observe: boolean) => {
+      const conn = await Deno.connect({ transport: "unix", path: `${dir}/agents/ana/door.sock` });
+      const seen: string[] = [];
+      const w = wire(conn, {
+        event: (e) => seen.push(`event ${e.payload?.turn_id ?? e.type}`),
+        delta: () => {},
+        usage: (r) => seen.push(`usage ${r.turn_id}`),
+      });
+      const reply = await w.request({ op: "tail", recall: 10, ...(observe ? { observe } : {}) });
+      return { conn, seen, reply };
+    };
+    try {
+      await log.publish(thought("s1"));
+      await log.meter(spent("s1"));
+      const watcher = await watch(true);
+      const principal = await watch(false);
+      // the observer's recall is the thinking too, paid for; the principal's is neither
+      assertEquals(watcher.reply.recalled?.map((e) => e.type), ["thinking"]);
+      assertEquals(watcher.reply.spend?.map((r) => r.turn_id), ["s1"]);
+      assertEquals(principal.reply.recalled, []);
+      assertEquals(principal.reply.spend, undefined);
+      // a call's spend is metered before its step lands: it waits for the step, then follows
+      doors.usage("ana", spent("s2"));
+      doors.usage("ana", spent("elsewhere")); // another session's step: never crosses
+      await new Promise((r) => setTimeout(r, 50));
+      assertEquals(watcher.seen, []);
+      await log.publish(thought("s2"));
+      const t0 = Date.now();
+      while (watcher.seen.length < 2 && Date.now() - t0 < 3000) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      assertEquals(watcher.seen, ["event s2", "usage s2"]);
+      // and once the step has crossed, a later row of its spend goes straight through
+      doors.usage("ana", { ...spent("s2"), kind: "checkpoint" });
+      await new Promise((r) => setTimeout(r, 50));
+      assertEquals(watcher.seen, ["event s2", "usage s2", "usage s2"]);
+      assertEquals(principal.seen, ["event s2"]); // spend rides an observer's tail alone
+      watcher.conn.close();
+      principal.conn.close();
+    } finally {
+      await doors.close();
+      await log.close();
+      await Deno.remove(dir, { recursive: true });
     }
   },
 });
