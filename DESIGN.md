@@ -2477,6 +2477,26 @@ from the same connections:
 reaps itself after a linger with zero attachments — and "is one running?" is a
 `connect()`, never a `stat()`.
 
+**Watching is a tail that says nothing.** `liquen tail` is the door's plainest client: it
+opens the session's tail with `observe` and sends no other verb — no line, no verdict, no
+cut, no `cwd`, no model — so it is no principal and nothing it does reaches the agent. An
+observer's tail carries what a watcher needs and a principal's surface folds away: the
+recall holds the thinking too, the reply the spend of the steps it recalled, and each
+model call's spend crosses as `{usage}` the moment the step it paid for has crossed that
+tail — metered before its step lands, held until then, so it stands under its step and
+never reaches a tail that does not hold the step. The painter draws it watching (every
+outcome a row, with the run's facts); `--json` is the same rows, one object a line, for
+a program. A watcher never raises a daemon: a boot answers whatever the log owes, and
+watching must never be what set the agent working.
+
+**A turn is read back, never tracked.** "Turn" has no row (§5): `turns.ts` derives one
+from a session's room the way render derives the boundary — the steps (`turn_id`) from the
+look that opened it to the closing, terminal error or cut that ended it, its opener the
+news its first step read last (`extra.consumed`), its cost the spend its steps metered.
+That one reading is main's line in the run log when a session falls from busy to idle,
+`liquen turns` over history, the turns `liquen status` reports beside the lease, and the
+document `liquen log export` writes of one.
+
 **Presence is a typed fact in the mind, and a message on the wire — the gate's own
 shape.** While a turn runs and the PRINCIPAL is waiting, main writes a `delta` event into
 the mind's room (`connect/presence.ts`): one data part naming the kind, `thinking` or
@@ -2597,7 +2617,8 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   a small jump to Postgres. The lost "just `cat` it" was never real: the agent can't read the
   raw log anyway (it holds other principals' private events — `log.read` is the privacy
   chokepoint), and a multi-producer log is human-unreadable regardless of format. Readability is
-  served by an **`export` tool** (pi-style, RLS-scoped), not by the on-disk format.
+  served by an **export** (`liquen log export`, one turn as a document), not by the
+  on-disk format.
 - **SQLite hardens "the sandbox never writes the durable store."** With JSONL the agent's `bash`
   could in principle `echo >> log.jsonl`; a binary SQLite db it has no tool for and no business
   touching — it reaches the log only through `send`/`search`. The exec plane's *workspace* stays

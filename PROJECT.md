@@ -5304,3 +5304,43 @@ both land; `owed` takes the earliest, but the room draws both.
 - **The README is value and usage only.** Knobs, the store, the sandbox, standing wakes
   and each door's setup steps left it: DESIGN.md holds the architecture, and every door's
   own prompts and `--help` hold its setup.
+
+### An operator can watch an agent work, and read a turn back (2026-10-13): LANDED
+
+Watching one real wake took opening `data/log/log.db` with sqlite and hand-decoding
+`parts`; the run log carried boot lines only, and both door clients joined as a principal.
+
+- **`liquen tail [--agent] [--session] [--recall n] [--follow] [--json]`** (`src/tail.ts`):
+  the door's tail with `observe: true` and no other verb. The recall carries thinking and
+  the recalled steps' spend; each model call's spend is pushed as `{usage}` after the step
+  it paid for (main's meter fans it to the doors, `Doors.usage`). The painter's `watch`
+  mode draws every outcome with its facts. Never raises a daemon (`attach(a, {raise:
+  false})`). `--json`: one object a line, `id`/`turn_id`/`type`/`ts` always present.
+- **Turns** (`src/turns.ts`): derived from a session's room — the steps from the look to
+  the closing (`end_turn` or another terminal stop), a trailing harness error, or the
+  principal's cut; a first think that failed is a turn of its own, handled by the error's
+  id. The opener is the news at or before the first step's `extra.consumed`, looked up by
+  id when it was said in another room. main writes `turn <session> <handle> · opened by …
+  · N steps · N calls · N tool errors · tokens in / out / cache-read · <end> · <duration>
+  · checkpoint <id>|no checkpoint` on each busy → idle edge; `liquen turns [--agent]
+  [--session] [--limit] [--json]` prints the same per turn from history.
+- **`liquen log export --turn <id|last> [--md]`** (`src/export.ts`, task `log`): one turn
+  as markdown — opener, each step's thinking, words and calls with full output and facts,
+  per-step spend, totals, and the first checkpoint whose `covers` reaches into it.
+- **`extra.exec`** on an exec tool's result: `{exit_code?, duration_ms, bytes}`. Bash
+  (both planes) reports the exit status and the size of everything it printed through
+  `ExecTool.execute`'s `report`; act times the call. It is `extra` by the admission rule
+  (dropping it costs only auditability); the parts the model reads are unchanged.
+- **`liquen status --json`**, and status's text now ends with each agent's mind: the turn
+  holding its lease, the last turn's end, the next wake, the last error.
+- **`liquen cli --fail-on-tool-error`**: exit 3 when a call of the session's that ran after
+  the CLI's message failed (refusals and cancels excluded).
+- **`log.spend(query)`** reads the usage table back on both adapters (suite-tested).
+
+Verified against a real org's log (one 25-step wake, read-only): `liquen turns` and `log
+export --turn last` read it; the per-step tokens sum to the usage table's.
+
+Open: `turns`, `log export` and `status` read the store directly, as `status` always has —
+they must answer for an org that is not running, which the door cannot. The run log's
+turn line is written by main, so a turn of an ephemeral daemon (raised by the REPL) lands
+nowhere. Turn segmentation pages back at most 20,000 rows of a session's room.
