@@ -859,4 +859,37 @@ export function logSuite(s: Substrate): void {
       assertEquals(old.extra, { backfill: true });
     });
   });
+
+  /* ── spend ──────────────────────────────────────────────────────────── */
+
+  Deno.test("spend reads back what meter wrote: by agent, by the turns named, the most recent N", async () => {
+    await withLog(async (log) => {
+      const row = (n: number, agent: string, turn: string) => ({
+        created_at: `2026-07-16T00:00:0${n}Z`,
+        agent_id: agent,
+        turn_id: turn,
+        kind: "think" as const,
+        model: "m",
+        input_tokens: 100 * n,
+        output_tokens: n,
+        ...(n % 2 ? { cache_read_tokens: 10 * n } : {}),
+      });
+      await log.meter(row(1, "ana", "t1"));
+      await log.meter(row(2, "bo", "t2"));
+      await log.meter(row(3, "ana", "t3"));
+      await log.meter({ ...row(4, "ana", "t4"), kind: "checkpoint" });
+      assertEquals((await log.spend()).length, 4);
+      assertEquals((await log.spend({ agentId: "ana" })).map((r) => r.turn_id), ["t1", "t3", "t4"]);
+      // a turn's cost is the rows its steps name
+      const named = await log.spend({ agentId: "ana", turns: ["t1", "t4", "t2"] });
+      assertEquals(named.map((r) => r.turn_id), ["t1", "t4"]);
+      assertEquals(named[0], row(1, "ana", "t1")); // an absent field reads back absent
+      assertEquals(named[1].kind, "checkpoint");
+      assertEquals((await log.spend({ agentId: "ana", limit: 2 })).map((r) => r.turn_id), [
+        "t3",
+        "t4",
+      ]);
+      assertEquals(await log.spend({ turns: [] }), []);
+    });
+  });
 }
