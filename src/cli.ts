@@ -10,12 +10,14 @@
  * seen through". Whether the work SUCCEEDED is stdout's reader's call — an error row is
  * a failed command, and the fix is running it again.
  *
- *   usage: liquen cli [--dir <org>] [--agent <name>] [--timeout <seconds>] <instruction…>
+ *   usage: liquen cli [--dir <org>] [--agent <name>] [--timeout <seconds>]
+ *                     [--fail-on-tool-error] <instruction…>
  *
  * stdout is the transcript, as the REPL shows it (text streams live; tool calls as
  * described lines; thinking stays silent). stderr is failure: the log's error rows and
  * the CLI's own. Exit 0 = idle arrived over our message; 1 = no daemon, a hang-up, or
- * the timeout; 2 = usage.
+ * the timeout; 2 = usage; 3 = `--fail-on-tool-error` and a call of the session's that ran
+ * after our message failed — a scripted wake's way to tell "it ran" from "it worked".
  *
  * A card the agent raises waits in the session on its own — the turn closes around it — so
  * the transcript ends on `? approve <handle>`, and the answer is another instruction in
@@ -31,9 +33,17 @@ import { tailOf } from "./line.ts";
 import { orgFlag } from "./config.ts";
 import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
+import type { Event } from "./types.ts";
 
-export const USAGE = "usage: liquen cli [--dir <org>] [--agent <name>] [--session <name>] " +
-  "[--model <name>] [--effort <level>] [--provider <name>] [--timeout <seconds>] <instruction…>";
+export const USAGE =
+  `usage: liquen cli [--dir <org>] [--agent <name>] [--session <name>] [--model <name>]
+                  [--effort <level>] [--provider <name>] [--timeout <seconds>]
+                  [--fail-on-tool-error] <instruction…>
+
+  One instruction to an agent; its work streams to stdout until the agent is idle over it.
+  Exit 0 once it is; 1 with no daemon, a hang-up or the timeout; 2 on a usage error; 3
+  with --fail-on-tool-error, when a call the session made after the instruction failed
+  (a refusal or a cancel is not a failure).`;
 
 /** `/y` · `/n` · `/cancel`, said through the door as the REPL says them: the door reads a
  *  verdict against the cards still open in the session, and the answer is the exit code —
@@ -76,13 +86,15 @@ await entry(async () => {
   // what the session thinks with, for this one instruction (§9): the flags hold while the
   // CLI is attached, and the roster's values come back when it exits
   const tune = tuneFlags(org.args);
-  const flags: { agent?: string; session?: string; timeout?: number } = {};
+  const flags: { agent?: string; session?: string; timeout?: number; failOnToolError?: boolean } =
+    {};
   const words: string[] = [];
   for (let i = 0; i < org.args.length; i++) {
     const arg = org.args[i];
     if (arg === "--agent") flags.agent = org.args[++i];
     else if (arg === "--session") flags.session = org.args[++i];
     else if (arg === "--timeout") flags.timeout = Number(org.args[++i]);
+    else if (arg === "--fail-on-tool-error") flags.failOnToolError = true;
     else words.push(arg);
   }
   const instruction = words.join(" ").trim();
@@ -130,8 +142,22 @@ await entry(async () => {
   // a verdict or a cancel is steering, not a turn: it is said, the CLI says what the door
   // answered, and it is done — there is no transcript to paint
   const steers = instruction === "/cancel" || steering(instruction);
+  // the session's failed calls, by id: those after our message are the turn it started
+  const failed: string[] = [];
+  const failure = (e: Event) => {
+    if (e.type !== "tool_result" || e.agent?.id !== a.target || e.agent.session_id !== session) {
+      return;
+    }
+    const { is_error, refused, cancelled } = e.parts[0].data;
+    if (is_error && !refused && !cancelled && !e.payload.turn_id.startsWith("job:")) {
+      failed.push(e.id);
+    }
+  };
   const w = wire(conn, {
-    event: steers ? () => {} : p.event,
+    event: steers ? () => {} : (e) => {
+      failure(e);
+      p.event(e);
+    },
     delta: p.delta,
     status: (s) => {
       if (s.status === "idle" && s.after !== undefined) {
@@ -184,7 +210,11 @@ await entry(async () => {
     }, flags.timeout * 1000);
   }
 
-  const code = await finished;
+  let code = await finished;
+  if (code === 0 && flags.failOnToolError && failed.some((id) => id > myId)) {
+    console.error(`${failed.filter((id) => id > myId).length} call(s) failed in the turn`);
+    code = 3;
+  }
   leaving = true;
   try {
     conn.close();
