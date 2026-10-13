@@ -22,7 +22,8 @@ Use these headings; omit a heading with nothing under it.
   say]
 
 Leave out:
-- whatever is closed: confirmed, answered, delivered or declined
+- whatever is closed: confirmed, answered, delivered or declined, in the archive or in what
+  stays in view after it
 - whatever your system prompt already says: addresses, prices, payment details, phone
   numbers, policies, procedures
 - a thread that only waits on the other side and did not move in this span

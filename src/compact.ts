@@ -3,12 +3,12 @@
  *
  * Pruning is already render's closed-region collapse; this is the other layer: when the
  * window outgrows `compactAt`, one mu call writes a structured checkpoint over the older
- * CLOSED events, published as a `summary` event with `covers: [from, to]`. The call is the
- * think's own request — its tools (offered, none called), its system prefix, the window as
- * render lays it out — closing on the instruction where the anchor goes, so it reads the
- * cache entry the turn just wrote and the model reads the window in the form it works
- * from; a window the API refused as too long, or a span that collapses to nothing, goes as
- * a transcript instead.
+ * CLOSED turns — whole ones: a span ends where a turn ends, never inside one — published as
+ * a `summary` event with `covers: [from, to]`. The call is the think's own request — its
+ * tools (offered, none called), its system prefix, the window as render lays it out —
+ * closing on the instruction where the anchor goes, so it reads the cache entry the turn
+ * just wrote and the model reads the window in the form it works from; a window the API
+ * refused as too long, or a span that collapses to nothing, goes as a transcript instead.
  * Iterative: a later compaction folds the previous summary in (pi's update rule), and
  * `covers` chains from the previous summary's start so survivors get re-covered.
  *
@@ -156,7 +156,29 @@ function cutPoints(events: Event[]): Set<number> {
   return out;
 }
 
-/** Decide the covered span: everything up to the last safe cut before the keep-recent
+/** Where a turn ends: after index `i` when its row is the turn's last — a closing's last
+ *  row (a closing step may say more than one message), the error that killed a turn, a
+ *  cancel, or a row the cut turn still wrote — and the agent is idle there (`turnOver` on
+ *  the window through `i`). World rows and the previous checkpoint end nothing. A span that
+ *  ends here holds every turn it touches whole, so the summarizer never reads a closed turn
+ *  as one in flight: whatever the turn settled, it settled inside the span. */
+function turnEnds(events: Event[], session: Session): (i: number) => boolean {
+  const lastOfStep = new Map<string, number>();
+  events.forEach((e, i) => {
+    const turn = e.payload?.turn_id;
+    if (typeof turn === "string") lastOfStep.set(turn, i);
+  });
+  return (i) => {
+    const e = events[i];
+    if (e.type === "summary") return false;
+    if (e.type !== "error" && e.type !== "control" && !ownVoice(e, session)) return false;
+    const turn = e.payload?.turn_id;
+    if (typeof turn === "string" && lastOfStep.get(turn)! > i) return false;
+    return turnOver(events.slice(0, i + 1), session);
+  };
+}
+
+/** Decide the covered span: everything up to the last turn end before the keep-recent
  *  tail. Null ⇒ nothing to do: under the threshold, a turn still running, or nothing
  *  coverable yet. */
 export function compactionSpan(
@@ -187,30 +209,36 @@ export function compactionSpan(
     if (keep > keepRecent) break;
     kept = i;
   }
-  // where the cut may fall: in the closed region, after any event no step straddles. Never
-  // after unanswered input: a world message is INPUT, and a checkpoint is a record, not
-  // an answer. Input the closing never consumed sits BEFORE the boundary and is input all
-  // the same: `covers` is an id range, so the cut stays below the first such message, or
-  // the range would hide it.
+  // where the cut may fall: in the closed region, at a turn's end (`turnEnds`), after any
+  // event no step straddles. Never after unanswered input: a world message is INPUT, and a
+  // checkpoint is a record, not an answer. Input the closing never consumed sits BEFORE the
+  // boundary and is input all the same: `covers` is an id range, so the cut stays below the
+  // first such message, or the range would hide it.
   // A DEAD turn — an error or a cancel ended it — is covered WHOLE, its chain and the
   // input it was answering, down to the last row it wrote: its thinking replays on the
   // next request, and a summary under part of it is the prefix edit this layer exists to
   // avoid; nothing continues the turn, so its results are not being worked from; and the
   // record carries what it was asked and what its tools found, which is what the next
   // think answers from. `keepRecent` is a live conversation's tail, and does not apply.
+  // A live conversation's tail is whole turns: when the budget falls inside a turn, the
+  // span stops at the end of the turn before it; when no turn ends before it, the turn it
+  // falls in is closed (the span only runs between turns) and goes whole.
   const ended = dead(events, session);
   const safe = cutPoints(events);
+  const ends = turnEnds(events, session);
+  const cuttable = (c: number) => safe.has(c) && (c <= boundary || ended) && ends(c);
   const firstDeferred = events.findIndex((e) => deferred.has(e));
+  const limit = firstDeferred === -1 ? events.length : firstDeferred;
   const reach = ended ? events.length : kept;
-  const ceiling = firstDeferred === -1 ? reach : Math.min(reach, firstDeferred);
+  const ceiling = Math.min(reach, limit);
   let cut = -1;
-  for (let c = ceiling - 1; c >= 0; c--) {
-    if (safe.has(c) && (c <= boundary || ended)) {
-      cut = c;
-      break;
-    }
+  for (let c = ceiling - 1; c >= 0 && cut < 0; c--) if (cuttable(c)) cut = c;
+  // the fallback needs content past the budget: a tail that holds every turn stays whole
+  const over = events.slice(0, kept).some((e) => e.type !== "summary");
+  if (cut < 0 && over) {
+    for (let c = ceiling; c < limit && cut < 0; c++) if (cuttable(c)) cut = c;
   }
-  if (cut < 0) return null; // everything is recent, or one step — nothing coverable yet
+  if (cut < 0) return null; // everything is recent, or nothing has ended — nothing coverable yet
   const covered = events.slice(0, cut + 1);
   const chain = covered.find((e): e is SummaryEvent => e.type === "summary");
   const content = covered.filter((e) => e.type !== "summary");

@@ -1659,10 +1659,17 @@ compaction proper is only pi's **checkpoint layer**:
   continues it, so its results are not being worked from, a summary under part of its
   chain is the prefix edit this layer exists to avoid, and the record carries what it was
   asked, what its tools found and how it ended, which is what the next think answers from.
-  The cut falls where no tool step straddles it — pi's never-cut-a-tool-result rule,
-  structurally: a step (the events sharing a call's `turn_id`) replays as one API turn, and
-  stays whole on either side of the cut — and never after unanswered input a closing left
-  unconsumed: a world message is INPUT, and a checkpoint is a record, not an answer. The
+  The cut falls at the end of a turn — after its closing's last row, the error that killed
+  it, or the cancel and what the cut turn still wrote — so every turn a span touches is in
+  it whole: a summarizer reading half a turn reads it as in flight, and records as open
+  what the kept half settled. `keepRecent` is therefore a tail of whole turns: when the
+  budget falls inside a turn the span ends at the turn before it, and when no turn ends
+  before it the turn it falls in (closed, since the span runs only between turns) goes
+  whole. Within that, the cut falls where no tool step straddles it — pi's
+  never-cut-a-tool-result rule, structurally: a step (the events sharing a call's
+  `turn_id`) replays as one API turn, and stays whole on either side of the cut — and never
+  after unanswered input a closing left unconsumed: a world message is INPUT, and a
+  checkpoint is a record, not an answer. The
   window the checkpoint works from carries a dead turn's tool calls, their outcomes and
   the error that ended it for the same reason — inside a loop they ARE the content, and a
   dead chain is trailing, so render lays it out whole. A checkpoint that cannot be written is an error event, not a record — the model wrote it

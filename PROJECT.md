@@ -5304,3 +5304,18 @@ both land; `owed` takes the earliest, but the room draws both.
 - **The README is value and usage only.** Knobs, the store, the sandbox, standing wakes
   and each door's setup steps left it: DESIGN.md holds the architecture, and every door's
   own prompts and `--help` hold its setup.
+
+### A checkpoint covers whole turns (2026-10-13) — LANDED
+
+A live org ran one turn of 24 tool steps, and the checkpoint written after it covered the
+turn's opening message through step 20: `keepRecent` (20K) fell inside the turn, and the
+cut only had to avoid splitting a tool step. The steps left in view included the decisive
+one (`sonar ack 93516ebf`), so the record said the batch was unworked and unacked under
+`## Open` while the visible tail showed it acked; the next turn opened on a checkpoint that
+contradicted its own window. A cut now falls only where a turn ends (`turnEnds`,
+`compact.ts`): after a closing step's last row, the error that killed a turn, or a standing
+cancel and what the cut turn still wrote. When the budget falls inside a turn the span ends
+at the turn before it; when no turn ends before it, the turn it falls in is covered whole
+(it is closed: the span only runs between turns). The seeded `compaction.md` also leaves
+out what the in-view tail settles, for the same contradiction across turns; an org that
+holds its own copy diffs it.
