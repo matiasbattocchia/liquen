@@ -209,7 +209,7 @@ Deno.test("every model call is metered: spend lands in the usage table, per agen
   } finally {
     await main.stop();
   }
-  // telemetry is a TABLE, not events: read it as one (the log API never serves it)
+  // telemetry is a TABLE, not events: `spend` reads it, `read` never serves it
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(`${dir}/log/log.db`);
   const rows = db.prepare("SELECT agent_id, turn_id, kind, model, output_tokens FROM usage").all();
@@ -221,6 +221,41 @@ Deno.test("every model call is metered: spend lands in the usage table, per agen
   assertEquals(rows[0].kind, "think"); // what it paid for — maintenance is a WHERE away
   // and the spend JOINS the log: the row names the turn whose events it paid for
   assertEquals(rows[0].turn_id, turn);
+});
+
+Deno.test("a turn's end is one line in the process's log: what opened it, its steps, its spend, its end", async () => {
+  const dir = await Deno.makeTempDir();
+  const { transport } = scripted([
+    canned([{ kind: "tool_use", name: "nope", input: {} }], "tool_use"),
+    reply("listo"),
+  ]);
+  const said: string[] = [];
+  const error = console.error;
+  console.error = (...args: unknown[]) => said.push(args.map(String).join(" "));
+  const main = await start({ dir, debounceMs: 0, principals: [agent("1")] }, { transport });
+  try {
+    await main.log.publish(principalMsg("mind@a1", "hacé algo"));
+    await waitFor(() => said.some((l) => l.startsWith("turn ")));
+    // and only once: the idles after it say nothing more
+    await new Promise((r) => setTimeout(r, 300));
+  } finally {
+    await main.stop();
+    console.error = error;
+    await Deno.remove(dir, { recursive: true });
+  }
+  const lines = said.filter((l) => l.startsWith("turn "));
+  assertEquals(lines.length, 1);
+  const [line] = lines;
+  assert(line.startsWith("turn mind@a1 "), line);
+  for (
+    const part of [
+      'opened by message from Ana "hacé algo"',
+      "2 steps · 1 call · 1 tool error",
+      "tokens ",
+      " · end_turn · ",
+      "no checkpoint",
+    ]
+  ) assert(line.includes(part), `${part} — in: ${line}`);
 });
 
 Deno.test("the framework way: the catalog's roster declares the org; the table mirrors it", async () => {

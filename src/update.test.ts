@@ -36,6 +36,15 @@ Deno.test("syncTasks: what the org lacks is added in its own lines; what it has 
   }
 });
 
+Deno.test("every task the scaffold ships runs a module the package exports", async () => {
+  const exports = (await import("../deno.json", { with: { type: "json" } })).default.exports;
+  for (const [name, task] of Object.entries(await scaffoldTasks())) {
+    const command = typeof task === "string" ? task : task.command;
+    const [, entry] = /@liquen\/liquen\/(\S+)/.exec(command) ?? [];
+    assert(entry !== undefined && `./${entry}` in exports, `${name}: ${command}`);
+  }
+});
+
 Deno.test("pinned: the exact version the org's lock resolved the harness to", () => {
   const tmp = Deno.makeTempDirSync();
   try {
