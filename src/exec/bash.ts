@@ -13,7 +13,7 @@
  *     self-correction path)
  */
 
-import type { ExecOutcome, ExecTool } from "../xi.ts";
+import type { ExecFacts, ExecOutcome, ExecTool } from "../xi.ts";
 import { type AgentUser, agentUser, own, ownTree } from "./user.ts";
 import type { BinDir, Json } from "../types.ts";
 import { newId } from "../store/id.ts";
@@ -179,6 +179,7 @@ export async function settle(
   input: BashInput,
   state: BashState,
   spill: (output: string) => Promise<string>,
+  report?: (facts: ExecFacts) => void,
 ): Promise<Json | ExecOutcome> {
   // If the sentinel is missing (the command called `exit`), the process status stands.
   let output = raw;
@@ -195,6 +196,8 @@ export async function settle(
     }
     output = raw.slice(0, mark);
   }
+  // the run's facts, said before any window narrows the output or a failure throws it
+  report?.({ exit_code: exitCode, bytes: new TextEncoder().encode(output).length });
 
   // the raw output is what gets persisted; the model may widen/narrow the window
   const t = truncateTail(output.trimEnd(), {
@@ -232,7 +235,11 @@ export function bashTool(opts: BashOptions): ExecTool {
   return {
     ...bashShape(timeoutMsDefault),
 
-    async execute(input: Json, signal: AbortSignal): Promise<Json | ExecOutcome> {
+    async execute(
+      input: Json,
+      signal: AbortSignal,
+      report?: (facts: ExecFacts) => void,
+    ): Promise<Json | ExecOutcome> {
       const call = input as unknown as BashInput;
       const { command, timeout } = call;
       const timeoutMs = timeout !== undefined ? timeout * 1000 : timeoutMsDefault;
@@ -337,7 +344,7 @@ export function bashTool(opts: BashOptions): ExecTool {
           await own(`${opts.workspace}/.out`, opts.user);
           await own(path, opts.user);
           return path;
-        });
+        }, report);
       } finally {
         clearTimeout(timer);
         signal.removeEventListener("abort", onAbort);

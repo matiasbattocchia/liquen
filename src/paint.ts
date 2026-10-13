@@ -59,6 +59,7 @@ import type {
   ToolResultEvent,
 } from "./types.ts";
 import { tailOf } from "./line.ts";
+import type { UsageRow } from "./store/log.ts";
 
 export const DIM = "\x1b[2m";
 export const RED = "\x1b[31m";
@@ -95,14 +96,24 @@ export interface Surface {
    *  principal (a voice front, a second REPL) sends lines the screen has never shown, and
    *  those are painted. Absent: every principal line is the surface's own. */
   typed?(text: string): boolean;
+  /** A surface that WATCHES rather than speaks (`liquen tail`): every call's outcome is a
+   *  row of its own — the output's head and the run's facts, not only a failure — the
+   *  recap carries the thinking the live screen streams, and spend is painted. */
+  watch?: boolean;
 }
 
 export interface Painter {
   delta(d: Delta): void;
   event(e: Event): void;
-  /** What the room already holds, oldest first — the door's `recall` (§9). */
-  recap(events: Event[]): void;
+  /** What the room already holds, oldest first — the door's `recall` (§9). `spend` is the
+   *  recalled steps' usage, each row painted under the step it paid for. */
+  recap(events: Event[], spend?: UsageRow[]): void;
+  /** One model call's spend, under the step it paid for. */
+  usage(row: UsageRow): void;
 }
+
+/** How many lines of a call's output a watching surface shows; the export has the rest. */
+export const OUTCOME_LINES = 12;
 
 export function painter(s: Surface): Painter {
   let held = "";
@@ -209,8 +220,13 @@ export function painter(s: Surface): Painter {
       case "tool_result": {
         // only a failure speaks: a call that went fine did what its row says, an approved
         // one what its card asked, a refused one never ran — its verdict said so — and a
-        // cut one stopped because the principal's `/cancel` said so
+        // cut one stopped because the principal's `/cancel` said so. A watcher reads every
+        // outcome: what the call printed is the work it is watching
         const { is_error, refused, cancelled } = e.parts[0].data;
+        if (s.watch && !e.payload.deferred) {
+          s.write(`${outcomeRow(e)}\n`);
+          return;
+        }
         if (!is_error || refused || cancelled) return;
         if (e.payload.deferred) {
           // an approved call's failure lands long after its row scrolled by: a block of its
@@ -306,7 +322,7 @@ export function painter(s: Surface): Painter {
    * after a restart answers what was asked before it. It is not painted differently for
    * it — its answer, when one comes, is the next row.
    */
-  const recap = (events: Event[]): void => {
+  const recap = (events: Event[], spend: UsageRow[] = []): void => {
     // the page keeps its own tail: one blank row between blocks, as the live screen has
     const tail = tailOf();
     let page = "";
@@ -320,35 +336,62 @@ export function painter(s: Surface): Painter {
       events.filter((e) => e.type === "permission_response")
         .map((e) => String(e.payload?.ref_id ?? "")),
     );
+    const paid = spendAfter(events, spend);
     for (const e of events) {
+      recapOne(e);
+      for (const r of paid.get(e.id) ?? []) {
+        row();
+        put(usageRow(r));
+      }
+    }
+    // one write: the past arrives as a page, not as a line the surface redraws around
+    if (page !== "") {
+      put("\n");
+      s.write(page);
+    }
+
+    function recapOne(e: Event): void {
       switch (e.type) {
+        case "thinking": {
+          // the live screen streamed it; a watcher's recap reads it back
+          const said = thinkingOf(e);
+          if (!s.watch || said === "") return;
+          gap();
+          put(`${DIM}${said}${RESET}`);
+          return;
+        }
         case "message": {
           const text = lineOf(e);
-          if (text === "" || silent(e)) continue;
+          if (text === "" || silent(e)) return;
           gap();
           if (ownVoice(e, s.session)) put(`${stamp(e.ts)}${AGENT} ${renderMarkdown(text)}`);
           else put(yours(e, text));
-          continue;
+          return;
         }
         case "tool_use": {
           gap();
           put(`${DIM}⚙ ${describeCall(e.parts[0].data, { full: true })}${RESET}`);
           shown.add(e.id);
-          continue;
+          return;
         }
         case "tool_result": {
           // a failure, as live: a deferred one answers a call from another turn and stands
           // alone; an ordinary one belongs to the call right above it
           const { is_error, refused, cancelled } = e.parts[0].data;
-          if (!is_error || refused || cancelled) continue;
+          if (s.watch && !e.payload.deferred) {
+            row();
+            put(outcomeRow(e));
+            return;
+          }
+          if (!is_error || refused || cancelled) return;
           if (e.payload.deferred) {
             gap();
             put(`${RED}${deferredFailure(e)}${RESET}`);
-            continue;
+            return;
           }
           row();
           put(`${RED}✗ ${failureOf(e)}${RESET}`);
-          continue;
+          return;
         }
         case "permission_request": {
           const ref = e.payload.ref_id;
@@ -356,7 +399,7 @@ export function painter(s: Surface): Painter {
           if (shown.has(ref)) row();
           else gap();
           put(`${YELLOW}${card(e, shown)}${RESET}`);
-          continue;
+          return;
         }
         case "permission_response": {
           const said = answerLine(e);
@@ -366,40 +409,42 @@ export function painter(s: Surface): Painter {
           }
           row();
           put(`${DIM}${verdictRow(e)}${RESET}`);
-          continue;
+          return;
         }
         case "summary": {
           gap();
           put(`${DIM}≡ checkpoint written${RESET}`);
-          continue;
+          return;
         }
         case "alarm": {
           gap();
           put(alarmRow(e, stamp));
-          continue;
+          return;
         }
         case "control": {
           gap();
           put(`${stamp(e.ts)}${YOU} ${textOf(e)}`);
-          continue;
+          return;
         }
         case "error": {
           gap();
           put(errorRow(e));
-          continue;
+          return;
         }
         default:
-          continue; // thinking · deltas · the substrate: none of them are lines
+          return; // deltas · the substrate: none of them are lines
       }
-    }
-    // one write: the past arrives as a page, not as a line the surface redraws around
-    if (page !== "") {
-      put("\n");
-      s.write(page);
     }
   };
 
-  return { delta, event, recap };
+  /** Spend, as a row of its own under the step it paid for. */
+  const usage = (r: UsageRow): void => {
+    settle();
+    s.prompt();
+    s.write(`${usageRow(r)}\n`);
+  };
+
+  return { delta, event, recap, usage };
 }
 
 /** The ask, named by the handle the agent's own words and `cancel(id)` use, so `/y cca9a2`
@@ -415,6 +460,60 @@ function card(e: PermissionRequestEvent, shown: Set<EventId>): string {
 }
 
 /** An approved call's failure, as a row: the call named, since its own row is long gone. */
+/** A call's outcome as a watcher reads it: a failure red and whole, as every surface shows
+ *  one; anything else dim, its first lines — the export holds the rest — and then the
+ *  run's facts where the result carries them (`extra.exec`). */
+export function outcomeRow(e: ToolResultEvent): string {
+  const { output, is_error, cancelled, refused } = e.parts[0].data;
+  const run = e.extra?.exec as
+    | { exit_code?: number; duration_ms?: number; bytes?: number }
+    | undefined;
+  const facts = [
+    ...(run?.exit_code !== undefined ? [`exit ${run.exit_code}`] : []),
+    ...(run?.duration_ms !== undefined ? [`${run.duration_ms} ms`] : []),
+    ...(run?.bytes !== undefined ? [`${run.bytes} B`] : []),
+  ];
+  const tag = facts.length ? ` ${DIM}(${facts.join(" · ")})${RESET}` : "";
+  if (is_error && !cancelled && !refused) return `${RED}✗ ${failureOf(e)}${RESET}${tag}`;
+  const text = (typeof output === "string" ? output : JSON.stringify(output) ?? "").trimEnd();
+  const lines = text === "" ? ["(no output)"] : text.split("\n");
+  const head = lines.slice(0, OUTCOME_LINES).map((l) => `  ${l}`).join("\n");
+  const more = lines.length > OUTCOME_LINES
+    ? `\n  … ${lines.length - OUTCOME_LINES} more lines`
+    : "";
+  return `${DIM}↳${head.slice(1)}${more}${RESET}${tag}`;
+}
+
+/** Where recalled spend stands: under the last row its step wrote (its results come later,
+ *  from the act), keyed by that row's id — the place it lands live. */
+export function spendAfter(events: Event[], spend: UsageRow[]): Map<EventId, UsageRow[]> {
+  const last = new Map<string, EventId>();
+  for (const e of events) {
+    const turn = e.payload?.turn_id;
+    if (typeof turn === "string" && e.type !== "tool_result") last.set(turn, e.id);
+  }
+  const out = new Map<EventId, UsageRow[]>();
+  for (const r of spend) {
+    const at = r.turn_id !== undefined ? last.get(r.turn_id) : undefined;
+    if (at !== undefined) out.set(at, [...out.get(at) ?? [], r]);
+  }
+  return out;
+}
+
+/** One model call's spend, as a row. */
+export function usageRow(r: UsageRow): string {
+  const cached = r.cache_read_tokens ? ` / ${r.cache_read_tokens} cache-read` : "";
+  return `${DIM}Σ ${
+    r.kind ?? "think"
+  } ${r.input_tokens} in / ${r.output_tokens} out${cached}${RESET}`;
+}
+
+/** What a thinking row says — empty for a block the provider kept to itself. */
+function thinkingOf(e: Event): string {
+  const data = (e.parts?.[0] as { data?: { thinking?: unknown } } | undefined)?.data;
+  return typeof data?.thinking === "string" ? data.thinking.trim() : "";
+}
+
 function deferredFailure(e: ToolResultEvent): string {
   return `✗ ${failedCallOf(e)}`;
 }

@@ -616,7 +616,7 @@ one peripheral for both.
     mentions?         // wire mentions, canonical addresses
     control?          // the principal's hard stop, typed at the door (cancel)
   }
-  extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, <service> provenance, raw
+  extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, exec, <service> provenance, raw
   status?: {        // delivery lifecycle — ONE mutable json_patch-merged column, never events
     state?          // the stage whose stamp landed last (envelope.status is its shorthand view):
                     // queued · dispatched · failed · delivered · read · deleted
@@ -655,6 +655,9 @@ message:  + parts: Part[]      // text | data | file, each with kind (open-bsp /
 tool_use: + parts(data: {name, input}) + payload{turn_id}   // implicitly internal
 thinking: + parts(data: {thinking, signature}) + payload{turn_id}  // replayed in-cycle, dropped after
 tool_result: + parts(data: {output, is_error?, cancelled?}) + payload{turn_id, ref_id, deferred?}
+          // + extra.exec on an exec tool's run: {exit_code?, duration_ms, bytes} — the
+          // shell's status, the wall time, the size of all it printed; the operator's, never
+          // rendered
           // deferred = a gated call approved LATER: narration, never a block (§9)
 permission_request:  + parts(data: {tool, call, detail}) + payload{ref_id→tool_use}
 permission_response: + parts(data: {behavior, scope, reason?}, text?) + payload{ref_id→tool_use}
@@ -694,7 +697,7 @@ Decisions:
   action, the reference, the turn keys — typed, and the machine branches on it. `extra` is
   the sidecar — how the wire said it plus harness bookkeeping (`backfill` · `muted` ·
   `archived` — the silencing marks, §2 — `consumed`, `silence`,
-  `via`, `raw`, per-service provenance like `slack: {subtype, authorizations}`) —
+  `via`, `exec` — a run's facts — `raw`, per-service provenance like `slack: {subtype, authorizations}`) —
   mergeable JSON the machine never branches on service keys of. Admission test: dropping
   an `extra` key must cost only auditability, never correctness — what queries or policy
   enforce on is a COLUMN (envelope coordinates, kind, external_id, status, payload), what
@@ -2481,6 +2484,26 @@ from the same connections:
 reaps itself after a linger with zero attachments — and "is one running?" is a
 `connect()`, never a `stat()`.
 
+**Watching is a tail that says nothing.** `liquen tail` is the door's plainest client: it
+opens the session's tail with `observe` and sends no other verb — no line, no verdict, no
+cut, no `cwd`, no model — so it is no principal and nothing it does reaches the agent. An
+observer's tail carries what a watcher needs and a principal's surface folds away: the
+recall holds the thinking too, the reply the spend of the steps it recalled, and each
+model call's spend crosses as `{usage}` the moment the step it paid for has crossed that
+tail — metered before its step lands, held until then, so it stands under its step and
+never reaches a tail that does not hold the step. The painter draws it watching (every
+outcome a row, with the run's facts); `--json` is the same rows, one object a line, for
+a program. A watcher never raises a daemon: a boot answers whatever the log owes, and
+watching must never be what set the agent working.
+
+**A turn is read back, never tracked.** "Turn" has no row (§5): `turns.ts` derives one
+from a session's room the way render derives the boundary — the steps (`turn_id`) from the
+look that opened it to the closing, terminal error or cut that ended it, its opener the
+news its first step read last (`extra.consumed`), its cost the spend its steps metered.
+That one reading is main's line in the run log when a session falls from busy to idle,
+`liquen turns` over history, the turns `liquen status` reports beside the lease, and the
+document `liquen log export` writes of one.
+
 **Presence is a typed fact in the mind, and a message on the wire — the gate's own
 shape.** While a turn runs and the PRINCIPAL is waiting, main writes a `delta` event into
 the mind's room (`connect/presence.ts`): one data part naming the kind, `thinking` or
@@ -2601,7 +2624,8 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   a small jump to Postgres. The lost "just `cat` it" was never real: the agent can't read the
   raw log anyway (it holds other principals' private events — `log.read` is the privacy
   chokepoint), and a multi-producer log is human-unreadable regardless of format. Readability is
-  served by an **`export` tool** (pi-style, RLS-scoped), not by the on-disk format.
+  served by an **export** (`liquen log export`, one turn as a document), not by the
+  on-disk format.
 - **SQLite hardens "the sandbox never writes the durable store."** With JSONL the agent's `bash`
   could in principle `echo >> log.jsonl`; a binary SQLite db it has no tool for and no business
   touching — it reaches the log only through `send`/`search`. The exec plane's *workspace* stays

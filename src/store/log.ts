@@ -262,6 +262,42 @@ export interface UsageRow {
   cache_write_tokens?: number;
 }
 
+/** A read of spend: one agent's rows, those its steps metered (`turns`, by `turn_id`), the
+ *  most recent `limit` — in the order they were metered either way. */
+export interface SpendQuery {
+  agentId?: string;
+  turns?: string[];
+  limit?: number;
+}
+
+/** The usage table's columns as a row hands them, a null standing for an absent field. */
+export interface SpendRow {
+  created_at: string;
+  agent_id: string | null;
+  turn_id: string | null;
+  kind: string | null;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+}
+
+/** A usage row as `meter` took it. */
+export function usageOf(r: SpendRow): UsageRow {
+  return {
+    created_at: r.created_at,
+    ...(r.agent_id !== null ? { agent_id: r.agent_id } : {}),
+    ...(r.turn_id !== null ? { turn_id: r.turn_id } : {}),
+    ...(r.kind !== null ? { kind: r.kind as CallKind } : {}),
+    model: r.model,
+    input_tokens: Number(r.input_tokens),
+    output_tokens: Number(r.output_tokens),
+    ...(r.cache_read_tokens !== null ? { cache_read_tokens: Number(r.cache_read_tokens) } : {}),
+    ...(r.cache_write_tokens !== null ? { cache_write_tokens: Number(r.cache_write_tokens) } : {}),
+  };
+}
+
 export type Log =
   & Appender
   & Reader
@@ -276,6 +312,9 @@ export type Log =
   & {
     /** Record one model call's spend. Fire-and-forget telemetry — never read on the hot path. */
     meter(row: UsageRow): Promise<void>;
+    /** Read spend back: what the metered calls cost, joined to the log by `turn_id` — an
+     *  operator's read, never the hot path's. */
+    spend(query?: SpendQuery): Promise<UsageRow[]>;
     /** Delivery bookkeeping on an already-published event: backfill `external_id`, merge
      *  `status` stages. An UPDATE — no new row: the append stream never sees it, only a
      *  subscriber that asked for `updates` does (§3, §4). */
@@ -712,6 +751,30 @@ export async function openLog(
         row.cache_write_tokens ?? null,
       );
       return Promise.resolve();
+    },
+
+    spend(q: SpendQuery = {}): Promise<UsageRow[]> {
+      const where: string[] = [];
+      const params: (string | number)[] = [];
+      if (q.agentId !== undefined) {
+        where.push("agent_id = ?");
+        params.push(q.agentId);
+      }
+      if (q.turns !== undefined) {
+        where.push("turn_id IN (SELECT value FROM json_each(?))");
+        params.push(JSON.stringify(q.turns));
+      }
+      const filtered = `SELECT rowid AS n, * FROM usage${
+        where.length ? ` WHERE ${where.join(" AND ")}` : ""
+      }`;
+      const text = q.limit !== undefined
+        ? `SELECT * FROM (${filtered} ORDER BY created_at DESC, n DESC LIMIT ?)
+           ORDER BY created_at, n`
+        : `${filtered} ORDER BY created_at, n`;
+      if (q.limit !== undefined) params.push(q.limit);
+      return Promise.resolve(
+        (db.prepare(text).all(...params) as unknown as SpendRow[]).map(usageOf),
+      );
     },
 
     lock: locker.lock, // the turn lease lives HERE — same DB, so one transaction holds both

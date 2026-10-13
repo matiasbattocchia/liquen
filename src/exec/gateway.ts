@@ -31,7 +31,7 @@ import {
   saveMedia,
   sniffMime,
 } from "../store/media.ts";
-import type { ExecOutcome, ExecTool } from "../xi.ts";
+import type { ExecFacts, ExecOutcome, ExecTool } from "../xi.ts";
 import type { Json } from "../types.ts";
 import { newId } from "../store/id.ts";
 import { MAX_BYTES, MAX_LINES } from "./truncate.ts";
@@ -303,7 +303,11 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
 
   const bash: ExecTool = {
     ...bashShape(timeoutMsDefault),
-    async execute(input: Json, signal: AbortSignal): Promise<Json | ExecOutcome> {
+    async execute(
+      input: Json,
+      signal: AbortSignal,
+      report?: (facts: ExecFacts) => void,
+    ): Promise<Json | ExecOutcome> {
       const call = input as unknown as BashInput;
       const timeoutMs = call.timeout !== undefined ? call.timeout * 1000 : timeoutMsDefault;
       const log = `${out}/bash-${newId()}.log`;
@@ -372,6 +376,7 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
         call,
         state,
         () => Promise.resolve(log),
+        report,
       );
     },
   };

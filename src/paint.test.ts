@@ -809,3 +809,92 @@ Deno.test("live: a verdict typed here paints its row, not its line again", () =>
   } as unknown as Event);
   assertEquals(plain(live.screen()).trim(), "— bbc24a allowed once");
 });
+
+/* ── a watching surface (`liquen tail`) ───────────────────────────────── */
+
+const watched = (): Event[] => {
+  const room = {
+    service: "local" as const,
+    connection_address: "agent",
+    conversation: { address: HOME },
+  };
+  const self = { id: AGENT, session_id: "mind" };
+  return [
+    asked("2026-09-11T14:10:00Z", "revisá"),
+    {
+      id: "w1",
+      ts: "2026-09-11T14:10:05Z",
+      type: "thinking",
+      agent: self,
+      envelope: room,
+      payload: { turn_id: "s1" },
+      parts: [{
+        type: "data",
+        kind: "thinking",
+        data: { thinking: "**Mirando**", signature: "x" },
+      }],
+    },
+    {
+      id: "w2",
+      ts: "2026-09-11T14:10:05Z",
+      type: "tool_use",
+      agent: self,
+      envelope: room,
+      payload: { turn_id: "s1", stop_reason: "tool_use" },
+      parts: [{ type: "data", kind: "tool_use", data: { name: "bash", input: { command: "ls" } } }],
+    },
+    {
+      id: "w3",
+      ts: "2026-09-11T14:10:06Z",
+      type: "tool_result",
+      agent: self,
+      envelope: room,
+      payload: { turn_id: "s1", ref_id: "w2" },
+      extra: { exec: { exit_code: 0, duration_ms: 7, bytes: 12 } },
+      parts: [{ type: "data", kind: "tool_result", data: { output: "a.txt\nb.txt" } }],
+    },
+  ] as Event[];
+};
+
+Deno.test("watch: the recap reads the thinking, every outcome with its facts, and the spend under its step", () => {
+  const { p, screen } = surface({ watch: true, typed: () => false });
+  p.recap(watched(), [{
+    created_at: "",
+    turn_id: "s1",
+    kind: "think",
+    model: "m",
+    input_tokens: 900,
+    output_tokens: 12,
+    cache_read_tokens: 300,
+  }]);
+  assertEquals(
+    plain(screen()),
+    [
+      "11 Sep 11:10 ❯ revisá",
+      "",
+      "**Mirando**",
+      "",
+      "⚙ bash(ls)",
+      "Σ think 900 in / 12 out / 300 cache-read",
+      "↳ a.txt",
+      "  b.txt (exit 0 · 7 ms · 12 B)",
+      "",
+    ].join("\n"),
+  );
+  // a principal's surface paints neither the thinking nor a call that went fine
+  const repl = surface();
+  repl.p.recap(watched());
+  assertEquals(plain(repl.screen()), "11 Sep 11:10 ❯ revisá\n\n⚙ bash(ls)\n");
+});
+
+Deno.test("watch: live, each outcome is a row under its call, and spend a row of its own", () => {
+  const { p, screen } = surface({ watch: true, typed: () => false });
+  const [, , use, result] = watched();
+  p.event(use);
+  p.usage({ created_at: "", turn_id: "s1", model: "m", input_tokens: 5, output_tokens: 1 });
+  p.event(result);
+  assertEquals(
+    plain(screen()),
+    "\n⚙ bash(ls)\nΣ think 5 in / 1 out\n↳ a.txt\n  b.txt (exit 0 · 7 ms · 12 B)\n".slice(1),
+  );
+});

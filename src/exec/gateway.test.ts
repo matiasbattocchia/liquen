@@ -17,7 +17,7 @@ import {
 } from "./gateway.ts";
 import { newId } from "../store/id.ts";
 import { pathOf } from "../store/media.ts";
-import type { ExecOutcome } from "../xi.ts";
+import type { ExecFacts, ExecOutcome } from "../xi.ts";
 
 /** A gateway whose sandbox is this machine: each script runs under the local bash, as the
  *  bridge would run it in the container. */
@@ -120,6 +120,16 @@ cases("the output, both streams in order; a non-zero exit is the error result", 
     "Command exited with code 3",
   );
   await assertRejects(() => run(shell, { command: "false" }), Error, "code 1");
+});
+
+cases("a run reports its exit code and the bytes it printed", async (shell) => {
+  const facts: ExecFacts[] = [];
+  const report = (f: ExecFacts) => facts.push(f);
+  await shell.exec.bash.execute({ command: "echo hi" }, new AbortController().signal, report);
+  await assertRejects(() =>
+    shell.exec.bash.execute({ command: "exit 4" }, new AbortController().signal, report)
+  );
+  assertEquals(facts, [{ exit_code: 0, bytes: 3 }, { exit_code: 4, bytes: 0 }]);
 });
 
 cases(

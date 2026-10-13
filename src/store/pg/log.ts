@@ -25,9 +25,12 @@ import type {
   Listener,
   Log,
   PublishOptions,
+  SpendQuery,
+  SpendRow,
   SubscribeOptions,
   UsageRow,
 } from "../log.ts";
+import { usageOf } from "../log.ts";
 import { createLocker, type Lease, LeaseLost } from "../lock.ts";
 import {
   build,
@@ -332,6 +335,28 @@ export async function openPgLog(
           row.cache_write_tokens ?? null,
         ],
       );
+    },
+
+    async spend(q: SpendQuery = {}): Promise<UsageRow[]> {
+      const where: string[] = [];
+      const params: unknown[] = [];
+      if (q.agentId !== undefined) {
+        params.push(q.agentId);
+        where.push(`agent_id = $${params.length}::text`);
+      }
+      if (q.turns !== undefined) {
+        params.push(JSON.stringify(q.turns));
+        where.push(`turn_id IN (SELECT jsonb_array_elements_text($${params.length}::jsonb))`);
+      }
+      const filtered = `SELECT * FROM usage${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
+      let text = `${filtered} ORDER BY created_at`;
+      if (q.limit !== undefined) {
+        params.push(q.limit);
+        text =
+          `SELECT * FROM (${filtered} ORDER BY created_at DESC LIMIT $${params.length}::integer)
+          recent ORDER BY created_at`;
+      }
+      return (await rows<SpendRow>(sql, text, params)).map(usageOf);
     },
 
     lock: locker.lock,

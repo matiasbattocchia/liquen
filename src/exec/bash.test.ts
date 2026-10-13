@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { bashTool, installExecGround, type Job, shippedAt } from "./bash.ts";
+import type { ExecFacts } from "../xi.ts";
 
 const live = () => new AbortController().signal;
 
@@ -404,6 +405,27 @@ Deno.test("bash: the sentinel never leaks into output, and real exit codes survi
     assertStringIncludes(err.message, "exited with code 5");
     assertStringIncludes(err.message, "oops");
     assert(!err.message.includes("__MU_CWD__"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("bash: a run reports its exit code and the bytes it printed — the whole of them, past any window", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${dir}/workspace`, { recursive: true });
+    const bash = bashTool({ workspace: `${dir}/workspace` });
+    const facts: ExecFacts[] = [];
+    const report = (f: ExecFacts) => facts.push(f);
+    await bash.execute({ command: "printf 'héllo'" }, live(), report);
+    // a narrowed window shows 5 lines; the run printed every one of them
+    await bash.execute({ command: "seq 1 1000", max_lines: 5 }, live(), report);
+    await assertRejects(() => bash.execute({ command: "echo oops; exit 5" }, live(), report));
+    assertEquals(facts, [
+      { exit_code: 0, bytes: 6 },
+      { exit_code: 0, bytes: 3893 },
+      { exit_code: 5, bytes: 5 },
+    ]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

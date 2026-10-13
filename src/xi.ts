@@ -680,6 +680,22 @@ export interface ExecOutcome {
   files: string[];
 }
 
+/** What a run was, beside what it said: the facts a tool reports of its own execution —
+ *  the shell's exit status, and the size of everything it printed before any window cut
+ *  it. They ride the result's `extra.exec` with the run's wall time, for the operator; the
+ *  model reads the output alone. */
+export interface ExecFacts {
+  exit_code?: number;
+  bytes?: number;
+}
+
+/** A result's `extra.exec`: the reported facts, the wall time act measured around the
+ *  call, and `bytes` defaulting to the size of the output as it landed. */
+export interface ExecRecord extends ExecFacts {
+  duration_ms: number;
+  bytes: number;
+}
+
 /**
  * A service's address book, both legs (§9). The book itself stays the service's: these
  * ask it, and hold nothing. Each leg answers within its call and keeps no queue, so a
@@ -756,11 +772,23 @@ export interface RoomsPort {
 /** An exec-plane tool: its schema, worded from its doc (tooldoc.ts), + its executor.
  *  Executors should throw on failure. */
 export interface ExecTool extends ToolShape {
-  execute: (input: Json, signal: AbortSignal) => Promise<Json | ExecOutcome>;
+  /** `report` takes the run's facts (`ExecFacts`), said before the outcome returns or
+   *  throws — a failure has an exit status too. */
+  execute: (
+    input: Json,
+    signal: AbortSignal,
+    report?: (facts: ExecFacts) => void,
+  ) => Promise<Json | ExecOutcome>;
   /** How a call READS to a person — the approval card, the anchor's pending list, the
    *  mirror's tool line (§9). Optional: `describeCall`'s default already renders a
    *  one-argument tool as `bash(git status)`, which is what most tools want. */
   describe?: Describe;
+}
+
+/** An output's size in UTF-8 bytes: a string's own, anything else as its JSON. */
+function sizeOf(output: Json): number {
+  const text = typeof output === "string" ? output : JSON.stringify(output) ?? "";
+  return new TextEncoder().encode(text).length;
 }
 
 function isOutcome(x: Json | ExecOutcome): x is ExecOutcome {
@@ -1370,12 +1398,23 @@ async function act(
     /** The call, rendered — set only on a DEFERRED outcome, which has to name what it is
      *  reporting on: its `tool_use` has already collapsed out of the transcript (§5). */
     call?: string,
+    /** An exec tool's run (§9): its facts and its wall time, for `extra.exec`. */
+    run?: { facts: ExecFacts; ms: number },
   ): Promise<Draft<ToolResultEvent>> => {
     const { output: raw, files } = isOutcome(outcome) ? outcome : { output: outcome, files: [] };
     const { parts, pinned, refused } = await attachmentsOf(files, ports.files ?? localFiles());
     const output = refused.length && typeof raw === "string"
       ? `${raw}${raw ? "\n" : ""}${refused.map((r) => `[attachment refused: ${r}]`).join("\n")}`
       : raw;
+    const exec: ExecRecord | undefined = run && {
+      ...run.facts,
+      duration_ms: Math.round(run.ms),
+      bytes: run.facts.bytes ?? sizeOf(output),
+    };
+    const extra = {
+      ...(Object.keys(pinned).length ? { media: pinned } : {}),
+      ...(exec ? { exec } : {}),
+    };
     return {
       ts: ts(),
       type: "tool_result",
@@ -1395,7 +1434,7 @@ async function act(
         },
         ...parts,
       ],
-      ...(Object.keys(pinned).length ? { extra: { media: pinned } } : {}),
+      ...(Object.keys(extra).length ? { extra } : {}),
     };
   };
 
@@ -1553,18 +1592,27 @@ async function act(
       if (signal.aborted) {
         return await resultOf(use, NOT_RUN, { is_error: true, cancelled: true }, call);
       }
+      // an exec tool's run is measured (§9): its wall time here, the rest as it reports
+      const ran = ports.exec?.[use.parts[0].data.name] !== undefined;
+      const facts: ExecFacts = {};
+      const report = (f: ExecFacts) => Object.assign(facts, f);
+      const began = performance.now();
+      const run = () => (ran ? { facts, ms: performance.now() - began } : undefined);
       try {
+        const outcome = await execute(use, signal, self, config, ports, report);
+        return await resultOf(use, outcome, undefined, call, run());
+      } catch (err) {
+        const measured = run();
         return await resultOf(
           use,
-          await execute(use, signal, self, config, ports),
-          undefined,
+          err instanceof Error ? err.message : String(err),
+          {
+            is_error: true,
+            ...(signal.aborted ? { cancelled: true } : {}),
+          },
           call,
+          measured,
         );
-      } catch (err) {
-        return await resultOf(use, err instanceof Error ? err.message : String(err), {
-          is_error: true,
-          ...(signal.aborted ? { cancelled: true } : {}),
-        }, call);
       }
     })),
   );
@@ -2448,6 +2496,7 @@ async function execute(
   self: { id: string; session_id: string },
   config: AgentConfig,
   ports: XiPorts,
+  report?: (facts: ExecFacts) => void,
 ): Promise<Json | ExecOutcome> {
   const { name, input } = use.parts[0].data;
   const args = input as Record<string, Json>;
@@ -2999,7 +3048,7 @@ async function execute(
   }
   const tool = ports.exec?.[name];
   if (!tool) throw new Error(`unknown tool: ${name}`);
-  return await tool.execute(input, signal);
+  return await tool.execute(input, signal, report);
 }
 
 /** The actions a send may name (§3 `Action`, §5 the rendered vocabulary). `create` and
