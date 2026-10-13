@@ -11,7 +11,7 @@ import {
   assertNotEquals,
   assertStringIncludes,
 } from "@std/assert";
-import { type AgentConfig, xi, type XiPorts } from "./xi.ts";
+import { type AgentConfig, type ExecFacts, type ExecRecord, xi, type XiPorts } from "./xi.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { LOCK_TTL_MS } from "./store/lock.ts";
 import type { AgentRow } from "./store/agents.ts";
@@ -60,6 +60,7 @@ const echoTool = {
 const FIXTURE_TOOLS: Record<string, string> = {
   echo: "echoes its input",
   attach: "answers with a file",
+  sh: "exits with the code it is given",
 };
 
 /** A docs root as every org boots on it, plus the fixtures' tools. */
@@ -2132,6 +2133,50 @@ Deno.test("a cut that reaches an act before its calls start answers them unrun, 
     for (let i = 0; i < 4; i++) await xi(CONFIG, ports);
     assertEquals(ran, 0);
     assertEquals((await log.read({ types: ["tool_result"] })).length, 1);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("an exec tool's result carries its run's facts in extra.exec — the model's output untouched", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  // a shell-shaped tool: it reports its exit status and the bytes it printed, and fails
+  const sh = {
+    spec: { name: "sh", input_schema: { type: "object" as const } },
+    execute: (input: unknown, _signal: AbortSignal, report?: (f: ExecFacts) => void) => {
+      const { code } = input as { code: number };
+      report?.({ exit_code: code, bytes: 4096 });
+      if (code !== 0) return Promise.reject(new Error(`boom\n\nCommand exited with code ${code}`));
+      return Promise.resolve("fine");
+    },
+  };
+  const { transport } = scripted([
+    ok([
+      { kind: "tool_use", name: "sh", input: { code: 0 } },
+      { kind: "tool_use", name: "sh", input: { code: 3 } },
+      { kind: "tool_use", name: "search", input: { query: "x" } },
+    ], "tool_use"),
+  ]);
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, exec: { sh } };
+  try {
+    await log.publish(principalMsg("corré"));
+    await xi(CONFIG, ports); // the think: three calls
+    await xi(CONFIG, ports); // the act
+    const results = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
+    const uses = await log.read({ types: ["tool_use"] });
+    const of = (i: number) => results.find((r) => r.payload.ref_id === uses[i].id)!;
+    const ok0 = of(0).extra?.exec as ExecRecord;
+    assertEquals([ok0.exit_code, ok0.bytes], [0, 4096]);
+    assert(ok0.duration_ms >= 0);
+    assertEquals(of(0).parts[0].data, { output: "fine" }); // what the model reads, as before
+    const failed = of(1);
+    assertEquals(failed.parts[0].data.is_error, true);
+    assertEquals((failed.extra?.exec as ExecRecord).exit_code, 3);
+    // a built-in is not an exec run: nothing measured
+    assertEquals(of(2).extra?.exec, undefined);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

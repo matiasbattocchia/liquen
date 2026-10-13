@@ -616,7 +616,7 @@ one peripheral for both.
     mentions?         // wire mentions, canonical addresses
     control?          // the principal's hard stop, typed at the door (cancel)
   }
-  extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, <service> provenance, raw
+  extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, exec, <service> provenance, raw
   status?: {        // delivery lifecycle — ONE mutable json_patch-merged column, never events
     state?          // the stage whose stamp landed last (envelope.status is its shorthand view):
                     // queued · dispatched · failed · delivered · read · deleted
@@ -655,6 +655,9 @@ message:  + parts: Part[]      // text | data | file, each with kind (open-bsp /
 tool_use: + parts(data: {name, input}) + payload{turn_id}   // implicitly internal
 thinking: + parts(data: {thinking, signature}) + payload{turn_id}  // replayed in-cycle, dropped after
 tool_result: + parts(data: {output, is_error?, cancelled?}) + payload{turn_id, ref_id, deferred?}
+          // + extra.exec on an exec tool's run: {exit_code?, duration_ms, bytes} — the
+          // shell's status, the wall time, the size of all it printed; the operator's, never
+          // rendered
           // deferred = a gated call approved LATER: narration, never a block (§9)
 permission_request:  + parts(data: {tool, call, detail}) + payload{ref_id→tool_use}
 permission_response: + parts(data: {behavior, scope, reason?}, text?) + payload{ref_id→tool_use}
@@ -694,7 +697,7 @@ Decisions:
   action, the reference, the turn keys — typed, and the machine branches on it. `extra` is
   the sidecar — how the wire said it plus harness bookkeeping (`backfill` · `muted` ·
   `archived` — the silencing marks, §2 — `consumed`, `silence`,
-  `via`, `raw`, per-service provenance like `slack: {subtype, authorizations}`) —
+  `via`, `exec` — a run's facts — `raw`, per-service provenance like `slack: {subtype, authorizations}`) —
   mergeable JSON the machine never branches on service keys of. Admission test: dropping
   an `extra` key must cost only auditability, never correctness — what queries or policy
   enforce on is a COLUMN (envelope coordinates, kind, external_id, status, payload), what

@@ -12,7 +12,9 @@ export { decide, gateOf, xi } from "./xi.ts";
 export type {
   AgentConfig,
   Decision,
+  ExecFacts,
   ExecOutcome,
+  ExecRecord,
   ExecTool,
   Gate,
   Target,
