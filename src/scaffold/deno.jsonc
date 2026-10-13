@@ -51,6 +51,10 @@
     "turns": {
       "command": "deno run -A --env-file=.env @liquen/liquen/turns",
       "description": "each agent's last turns, a line each — opener, steps, errors, tokens, end"
+    },
+    "log": {
+      "command": "deno run -A --env-file=.env @liquen/liquen/log",
+      "description": "log export --turn <id|last>: one turn as a transcript, every call's output"
     }
   }
 }

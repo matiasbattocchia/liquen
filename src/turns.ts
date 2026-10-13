@@ -22,6 +22,7 @@ import { openStore } from "./store/mod.ts";
 import { findRoot, orgFlag, readConfig } from "./config.ts";
 import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
+import { userInfo } from "node:os";
 
 /** Token counts, summed over usage rows. */
 export interface Tokens {
@@ -346,6 +347,17 @@ export async function rowById(
 ): Promise<Event | undefined> {
   const [row] = await log.read({ beforeId: `${id}0`, limit: 1 });
   return row?.id === id ? row : undefined;
+}
+
+/** The agent a command means when none is named: the roster's only one, else the one
+ *  sharing the OS username — the attach clients' rule. */
+export function defaultAgent(roster: string[]): string {
+  if (roster.length === 1) return roster[0];
+  try {
+    return userInfo().username;
+  } catch {
+    return roster[0] ?? "";
+  }
 }
 
 /** A count as people read one: 9306 → 9.3k. */

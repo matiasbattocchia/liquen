@@ -18,7 +18,8 @@
     "./schedule": "./src/schedule.ts",
     "./connect": "./src/connect/connect.ts",
     "./status": "./src/connect/status.ts",
-    "./turns": "./src/turns.ts"
+    "./turns": "./src/turns.ts",
+    "./log": "./src/export.ts"
   },
   "publish": {
     "exclude": [
@@ -57,6 +58,7 @@
     "connect": "deno run -A --env-file=.env src/connect/connect.ts",
     "status": "deno run -A --env-file=.env src/connect/status.ts",
     "turns": "deno run -A --env-file=.env src/turns.ts",
+    "log": "deno run -A --env-file=.env src/export.ts",
     "proxy": "deno run -A --env-file=.env src/proxy/proxy.ts",
     "run:slack": "deno run -A --env-file=.env src/connect/slack/run.ts",
     "connect:slack": "deno run -A --env-file=.env src/connect/slack/connect.ts",
