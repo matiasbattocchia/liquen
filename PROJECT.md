@@ -5304,3 +5304,30 @@ both land; `owed` takes the earliest, but the room draws both.
 - **The README is value and usage only.** Knobs, the store, the sandbox, standing wakes
   and each door's setup steps left it: DESIGN.md holds the architecture, and every door's
   own prompts and `--help` hold its setup.
+
+### Gemini's thinking and its prompt cache, read off a live run (2026-10-13) — MEASURED
+
+A sonar run on `gemini-3.8-flash` (25 steps, effort null) looked as if it logged no reasoning
+and paid full price for its first five steps. Both came down to the API, not the transport.
+
+- **Thinking is recorded where the API gives it.** 13 of the 25 `thinking` rows hold a
+  summary (300–6,700 chars, one `**heading**` per `thought_summary` delta); the 12 empty ones
+  are the steps whose whole output was 28–182 tokens. Under `thinking_summaries: "auto"`
+  the API omits the summary of a slight thought: a one-line tool call measured 67 thought
+  tokens, a signature and no summary. `auto` and `none` are the only values the wire takes
+  (`detailed` is refused by name). Every step of 250+ output tokens, the 1.5–4.7K ones
+  included, carries its summary. The `text` column is null on every `thinking` row, as on
+  `tool_use`/`tool_result`: the summary lives in `parts[0].data.thinking`. A slight thought's
+  token count is not on its own row anywhere: the step's `usage` row folds
+  `total_thought_tokens` into `output_tokens`. A `thought_tokens` column would carry it.
+- **The prompt cache is the API's to give, and below ~13K tokens it gives none at first.**
+  The Interactions API has implicit caching only (no `cachedContents`; explicit caching is
+  `generateContent`'s). The request is byte-stable step to step (render keeps a turn's
+  chain append-only, and from step 6 every hit reaches past the 9.3K system-plus-tools
+  head), yet steps 1–5 (9.3–12.2K input) read 0 cached and step 6 read 10.7K. Probes with a
+  fresh stable prefix reproduce it: 10K and 13K prefixes hit nothing over five calls and 75
+  s, streamed or not, stateless or `store: true` with `previous_interaction_id`; a 28K
+  prefix hit 26.8K on the second call, 3 s later. Open: explicit caching would need the
+  Google edge on `generateContent` — a second wire, a cache resource per system-plus-tools
+  prefix with its TTL and hourly storage fee, created by an extra call and recreated when a
+  doc edit changes the prefix — for at most ~45K cached-rate tokens a turn at today's size.

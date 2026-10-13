@@ -77,6 +77,7 @@ export function toRequest(params: Anthropic.MessageCreateParamsNonStreaming): Re
     ...(tools.length ? { tools } : {}),
     generation_config: {
       max_output_tokens: params.max_tokens,
+      // the wire takes `auto` or `none`; `auto` is the one that returns summaries
       thinking_summaries: "auto",
       ...(effort ? { thinking_level: THINKING_LEVEL[effort] } : {}),
       // the one choice the harness makes: the tools offered, none called (mu.ts)
@@ -300,8 +301,10 @@ export function toMessage(model: string, a: Assembly): Anthropic.Message {
 }
 
 /** A model step → its content block. Server-tool steps and non-text output are skipped,
- *  as mu skips the blocks it has no emission for. A `thought` step with no summary is the
- *  common case: the signature alone is the block, and it is what the cycle replays. One
+ *  as mu skips the blocks it has no emission for. A `thought` step's summary streams as
+ *  `thought_summary` deltas, one per heading, ahead of the signature; the API leaves a
+ *  slight thought unsummarized under `auto` (on gemini-3.8-flash, one of a few hundred
+ *  tokens or fewer), and then the signature alone is the block — what the cycle replays. One
  *  `model_output` is one utterance however many text items it streamed as — one block, so
  *  nu logs one message. */
 function blockOf(s: Step): Anthropic.ContentBlock[] {

@@ -223,6 +223,58 @@ Deno.test("assemble → toMessage: text and summaries accumulate; statuses map t
   assertEquals(ended("budget_exceeded"), "max_tokens");
 });
 
+Deno.test("assemble → toMessage: a summarized thought, as the wire streams it, is its block's text", () => {
+  // the order gemini-3.8-flash sends: one summary delta per heading, the signature last, and
+  // the call's step.start carrying a signature of its own that the block does not keep
+  const turn: Event[] = [
+    { event_type: "step.start", index: 0, step: { type: "thought" } },
+    {
+      event_type: "step.delta",
+      index: 0,
+      delta: {
+        type: "thought_summary",
+        content: { type: "text", text: "**Reading**\n\nA.\n\n\n" },
+      },
+    },
+    {
+      event_type: "step.delta",
+      index: 0,
+      delta: { type: "thought_summary", content: { type: "text", text: "**Deciding**\n\nB." } },
+    },
+    { event_type: "step.delta", index: 0, delta: { type: "thought_signature", signature: "EuUf" } },
+    { event_type: "step.stop", index: 0 },
+    {
+      event_type: "step.start",
+      index: 1,
+      step: { type: "function_call", id: "c1", name: "report", arguments: {}, signature: "AWk" },
+    },
+    {
+      event_type: "step.delta",
+      index: 1,
+      delta: { type: "arguments_delta", arguments: '{"n":1}' },
+    },
+    { event_type: "step.stop", index: 1 },
+    { event_type: "interaction.completed", interaction: { id: "", status: "requires_action" } },
+  ] as Event[];
+  const m = toMessage("gemini-3.8-flash", fold(turn));
+  assertEquals(m.content as unknown, [
+    { type: "thinking", thinking: "**Reading**\n\nA.\n\n\n**Deciding**\n\nB.", signature: "EuUf" },
+    { type: "tool_use", id: "c1", name: "report", input: { n: 1 } },
+  ]);
+  // and it replays as a thought step holding both, the summary as one text item
+  const replay = toRequest(params({
+    messages: [{ role: "user", content: "go" }, {
+      role: "assistant",
+      content: m.content as Anthropic.ContentBlockParam[],
+    }],
+  }));
+  assertEquals(replay.input[1], {
+    type: "thought",
+    signature: "EuUf",
+    summary: [{ type: "text", text: "**Reading**\n\nA.\n\n\n**Deciding**\n\nB." }],
+  });
+});
+
 Deno.test("toMessage: what did not finish throws with the status nu classifies on", () => {
   const status = (fn: () => unknown): number | undefined => {
     try {
