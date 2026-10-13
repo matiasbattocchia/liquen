@@ -137,7 +137,7 @@ export function jsonOfUsage(r: UsageRow): Record<string, Json> {
 }
 
 /** A turn edge as one JSON object: the time is the moment it crossed. */
-export function jsonOfStatus(s: Status, now = new Date()): Record<string, Json> {
+export function jsonOfStatus(s: Status, now: Date = new Date()): Record<string, Json> {
   return {
     id: null,
     turn_id: null,
