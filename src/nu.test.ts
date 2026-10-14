@@ -392,11 +392,11 @@ Deno.test("nu: a checkpoint is written under the agent's own prefix — what it 
       events,
       docs: [{
         header: {
-          scope: "organization",
+          scope: "shared",
           kind: "instruction",
           name: "organization",
           load: "always",
-          handle: "/org/data/organization/instructions/organization.md",
+          handle: "/org/data/shared/instructions/organization.md",
         },
         body: "La consulta cuesta $40.000.",
       }],

@@ -311,9 +311,9 @@ if (url === undefined) {
     await withDocs([
       ["agent", "a1", "instructions/persona", doc("instruction", "be helpful")],
       ["agent", "a2", "instructions/persona", doc("instruction", "someone else's")],
-      ["organization", "", "skills/refunds", doc("skill", "how to refund")],
+      ["shared", "", "skills/refunds", doc("skill", "how to refund")],
       [
-        "organization",
+        "shared",
         "",
         "instructions/policy",
         doc("instruction", "org policy", "load: always\n"),
@@ -324,14 +324,14 @@ if (url === undefined) {
       const listed = await docs.list({ agent: "a1" });
       assertEquals(refs(listed), [
         "system/instruction/instructions/base",
-        "organization/instruction/instructions/policy",
-        "organization/skill/skills/refunds",
+        "shared/instruction/instructions/policy",
+        "shared/skill/skills/refunds",
         "agent/instruction/instructions/persona",
       ]);
       assertEquals(listed.map((d) => d.header.handle), [
         "system/instructions/base",
-        "organization/instructions/policy",
-        "organization/skills/refunds",
+        "shared/instructions/policy",
+        "shared/skills/refunds",
         "agent/instructions/persona",
       ]);
       // load: always ⇒ the body rides along, stripped; otherwise a pointer
@@ -345,7 +345,7 @@ if (url === undefined) {
       // read pulls a pointer's body, stripped; a missing doc is null
       assertEquals(
         await docs.read({ agent: "a1" }, {
-          scope: "organization",
+          scope: "shared",
           kind: "skill",
           name: "skills/refunds",
         }),
@@ -383,7 +383,7 @@ if (url === undefined) {
   Deno.test("docs: the policy — an agent reads the scopes above it and its own, writes its own and its conversation's, and nothing else", async () => {
     await withDocs([
       ["system", "", "instructions/base", doc("instruction", "world model")],
-      ["organization", "", "skills/refunds", doc("skill", "how to refund")],
+      ["shared", "", "skills/refunds", doc("skill", "how to refund")],
       ["agent", "a1", "instructions/persona", doc("instruction", "mine")],
       ["agent", "a2", "instructions/persona", doc("instruction", "theirs")],
       ["conversation", "c9", "state", doc("memory", "ours")],
@@ -392,7 +392,7 @@ if (url === undefined) {
       const me = docs.as({ agent: "a1", conversation: "c9" });
       // reads: the cascade, as the read port lists it
       assertEquals(await me.read("system/instructions/base"), doc("instruction", "world model"));
-      assertEquals(await me.read("organization/skills/refunds"), doc("skill", "how to refund"));
+      assertEquals(await me.read("shared/skills/refunds"), doc("skill", "how to refund"));
       assertEquals(await me.read("agent/instructions/persona"), doc("instruction", "mine"));
       assertEquals(await me.read("conversation/state"), doc("memory", "ours"));
       // another agent's row is not a doc I can name: the handle resolves to MINE
@@ -418,7 +418,7 @@ if (url === undefined) {
         "row-level security",
       );
       await assertRejects(
-        () => me.write("organization/skills/new", "x"),
+        () => me.write("shared/skills/new", "x"),
         Error,
         "row-level security",
       );
@@ -437,7 +437,7 @@ if (url === undefined) {
         "agent/a2/instructions/persona",
         "conversation/c8/state",
         "conversation/c9/state",
-        "organization//skills/refunds",
+        "shared//skills/refunds",
         "system//instructions/base",
       ]);
       assertEquals(all.find((r) => r.owner === "a2")!.text, doc("instruction", "theirs"));
@@ -463,7 +463,7 @@ if (url === undefined) {
       const listed = await docs.list({ agent: "alter" });
       assertEquals(refs(listed).sort(), [
         "agent/instruction/instructions/agent",
-        "organization/instruction/instructions/organization",
+        "shared/instruction/instructions/organization",
         "system/instruction/instructions/system",
         "system/skill/skills/transcribe-audio",
         "system/skill/skills/workflows",

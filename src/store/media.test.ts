@@ -269,18 +269,18 @@ Deno.test("localFiles: a scoped reference resolves from the agent's home and sta
   const tmp = await Deno.realPath(await Deno.makeTempDir());
   try {
     const home = `${tmp}/agents/ana`;
-    const files = localFiles({ home, roots: [home, `${tmp}/organization`] });
+    const files = localFiles({ home, roots: [home, `${tmp}/shared`] });
     await Deno.mkdir(`${home}/notes`, { recursive: true });
-    await Deno.mkdir(`${tmp}/organization`, { recursive: true });
+    await Deno.mkdir(`${tmp}/shared`, { recursive: true });
     await Deno.mkdir(`${tmp}/log`, { recursive: true });
     await Deno.mkdir(`${tmp}/agents/bo`, { recursive: true });
     await Deno.writeTextFile(`${home}/notes/plan.md`, "# plan");
-    await Deno.writeTextFile(`${tmp}/organization/shared.csv`, "a,b");
+    await Deno.writeTextFile(`${tmp}/shared/shared.csv`, "a,b");
     await Deno.writeTextFile(`${tmp}/log/log.db`, "sqlite");
     await Deno.writeTextFile(`${tmp}/agents/bo/secret.md`, "bo's");
     // relative = from the agent's home, not the harness's cwd
     assertEquals((await files.resolve("notes/plan.md")).file.uri, `file://${home}/notes/plan.md`);
-    assertEquals((await files.resolve(`${tmp}/organization/shared.csv`)).file.name, "shared.csv");
+    assertEquals((await files.resolve(`${tmp}/shared/shared.csv`)).file.name, "shared.csv");
     // the substrate and a peer's folder are outside — the tool_result carries the refusal
     await assertRejects(() => files.resolve(`${tmp}/log/log.db`), Error, "outside");
     await assertRejects(() => files.resolve(`${tmp}/agents/bo/secret.md`), Error, "outside");
@@ -295,9 +295,9 @@ Deno.test("localFiles: a scoped reference resolves from the agent's home and sta
     );
     // with a shell, relative is from where it stands, and the roots judge it all the same
     let cwd = `${home}/notes`;
-    const shelled = localFiles({ home, cwd: () => cwd, roots: [home, `${tmp}/organization`] });
+    const shelled = localFiles({ home, cwd: () => cwd, roots: [home, `${tmp}/shared`] });
     assertEquals((await shelled.resolve("plan.md")).file.uri, `file://${home}/notes/plan.md`);
-    cwd = `${tmp}/organization`;
+    cwd = `${tmp}/shared`;
     assertEquals((await shelled.resolve("shared.csv")).file.name, "shared.csv");
     await assertRejects(() => shelled.resolve("../log/log.db"), Error, "outside");
   } finally {

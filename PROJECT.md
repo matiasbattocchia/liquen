@@ -5386,3 +5386,20 @@ Open: `turns`, `log export` and `status` read the store directly, as `status` al
 they must answer for an org that is not running, which the door cannot. The run log's
 turn line is written by main, so a turn of an ephemeral daemon (raised by the REPL) lands
 nowhere. Turn segmentation pages back at most 20,000 rows of a session's room.
+
+### The scope everyone writes is `shared` (2026-10-14) — LANDED
+
+"Organization" meant four things: the deployment itself, the config section that holds its
+clock, locale and agent defaults, the tenant id a bridge files its sessions under, and the
+docs scope every agent reads and writes. The scope is the odd one out — the seed already
+explained it by its access rule, not by its owner — so it is `shared` now: the folder
+`data/shared/`, the `DocScope` value, the handle prefix (`shared/memories/contacts`), the
+table's scope value and its RLS, the PATH layer `data/shared/bin`, and the scaffold's
+`entrypoint.sh`. The cascade reads as a narrowing: system · shared · agent · conversation.
+The org's own instruction keeps its name, `shared/instructions/organization.md`, since it is
+still about the org. `organization` in `config.jsonc` and `connections.whatsapp.organizationId`
+are untouched: they name the deployment and the tenant, which is all the word means now.
+
+A live org renames its folder (`mv data/organization data/shared`) before the boot that
+brings the package in; the docs inside need no change, since the index reprints handles
+every turn. `~/new`, `~/vibes` and `~/turtle/sonar-agents/turtle` were moved with it.

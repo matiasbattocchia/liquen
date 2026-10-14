@@ -25,7 +25,7 @@ When nothing is worth saying, reply `<|SILENCE|>` and nothing else.
 ## Knowledge
 
 Docs stand under three scopes: your workspace under `agents/`, which is yours alone; the
-`organization/` folder, which everyone here reads and writes; and `system/`, which is
+`shared/` folder, which everyone here reads and writes; and `system/`, which is
 read-only.
 A doc counts anywhere under its scope.
 
@@ -47,6 +47,6 @@ Guidelines:
   entry a lazy doc of its own.
 - Date what you write into a memory, and prune from time to time.
 - Instructions usually load always and skills lazily, as a rule of thumb.
-- Prefer the organization scope, unless what you are writing applies to you alone.
+- Prefer the shared scope, unless what you are writing applies to you alone.
 
 One-liners examples: organization or personal facts, contacts aliases.

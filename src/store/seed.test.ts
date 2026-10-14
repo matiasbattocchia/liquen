@@ -11,7 +11,7 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
     const refs = docs.map((d) => `${d.header.scope}/${d.header.kind}/${d.header.name}`).sort();
     assertEquals(refs, [
       "agent/instruction/instructions/agent",
-      "organization/instruction/instructions/organization",
+      "shared/instruction/instructions/organization",
       "system/instruction/instructions/system",
       "system/skill/skills/transcribe-audio",
       "system/skill/skills/workflows",
@@ -50,8 +50,8 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
     // the kind folders that carry no template stand empty, where a skill or a memory goes
     for (
       const dir of [
-        "organization/skills",
-        "organization/memories",
+        "shared/skills",
+        "shared/memories",
         "agents/alter/skills",
         "agents/alter/memories",
       ]
@@ -68,7 +68,7 @@ Deno.test("seeding never overwrites an edited doc", async () => {
   const root = await Deno.makeTempDir();
   try {
     await seedOrg(onFiles(root));
-    const path = `${root}/organization/instructions/organization.md`;
+    const path = `${root}/shared/instructions/organization.md`;
     await Deno.writeTextFile(path, "---\nkind: instruction\nload: always\n---\nEDITED");
     await seedOrg(onFiles(root)); // idempotent boot
     assertStringIncludes(await Deno.readTextFile(path), "EDITED");
@@ -83,13 +83,13 @@ Deno.test("a deleted doc stays deleted — the folder is what says the org has t
     await seedOrg(onFiles(root));
     await seedAgent(onFiles(root), "alter");
     // an org that wants no org-wide instruction
-    await Deno.remove(`${root}/organization/instructions/organization.md`);
+    await Deno.remove(`${root}/shared/instructions/organization.md`);
     // and one that wants the scope gone altogether
     await Deno.remove(`${root}/system/skills`, { recursive: true });
     await seedOrg(onFiles(root)); // every later boot
     await seedAgent(onFiles(root), "alter");
     assertEquals(
-      await Deno.stat(`${root}/organization/instructions/organization.md`).catch(() => null),
+      await Deno.stat(`${root}/shared/instructions/organization.md`).catch(() => null),
       null,
     );
     // the emptied folder is the org's too — but removing it asks for the set again

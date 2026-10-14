@@ -3,7 +3,7 @@
  *
  * The templates are REAL files in `src/seed/` — readable and editable by the developer
  * before any deployment, shadcn-style; this module only copies them into the org's docs,
- * wherever those live (§9 layout: `system/` · `organization/` · `agents/<name>/` on files,
+ * wherever those live (§9 layout: `system/` · `shared/` · `agents/<name>/` on files,
  * the same scopes as rows of the docs table). Placeholders are meant to be EDITED per
  * deployment — seeding never overwrites, and never returns to a folder that exists.
  * Memory hygiene lives in the template text, not in code.
@@ -103,7 +103,7 @@ const TOOL_DOCS = [
 /** Copy templates into the bed — a template only where its FOLDER does not exist.
  *
  *  The folder, not the file, because an absent doc is an answer: a deployment that deleted
- *  `organization/instructions/organization.md`, or emptied `system/skills/`, said it wants
+ *  `shared/instructions/organization.md`, or emptied `system/skills/`, said it wants
  *  none, and the next boot must not argue. What that costs is a template added to a folder
  *  an org already has: it reaches new orgs and no existing one. Deleting the folder is how
  *  an org asks for the set again. */
@@ -136,9 +136,9 @@ export async function seedOrg(bed: Seedbed): Promise<void> {
     ]),
     ["system", "", "skills/workflows", "system/skills/workflows.md"],
     ["system", "", "skills/transcribe-audio", "system/skills/transcribe-audio.md"],
-    ["organization", "", "instructions/organization", "organization.md"],
+    ["shared", "", "instructions/organization", "organization.md"],
   ]);
-  await bed.folders?.("organization", "");
+  await bed.folders?.("shared", "");
 }
 
 /** A connector's skill, laid by the connector's own door (`liquen connect <service>`), so

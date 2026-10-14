@@ -37,11 +37,11 @@ Deno.test("bash: runs in the workspace, merges stdout+stderr", async () => {
 Deno.test("bash: PATH widens by scope — the agent's own bin cannot shadow the shipped one", async () => {
   await withPlane(async ({ run, dir }) => {
     // same name in every writable layer: whoever answers is the one PATH reaches first
-    for (const at of [`${dir}/organization/bin`, `${wsOf(dir)}/bin`]) {
+    for (const at of [`${dir}/shared/bin`, `${wsOf(dir)}/bin`]) {
       await Deno.writeTextFile(`${at}/whose`, `#!/bin/sh\necho ${at}\n`);
       await Deno.chmod(`${at}/whose`, 0o755);
     }
-    assertEquals(await run("whose"), `${dir}/organization/bin`);
+    assertEquals(await run("whose"), `${dir}/shared/bin`);
     assertEquals(
       await run("command -v aread"),
       `${dir}/system/bin/aread`,
@@ -56,7 +56,7 @@ Deno.test("bash: PATH widens by scope — the agent's own bin cannot shadow the 
     assertStringIncludes(http, "--cached-only --allow-net");
     const path = (await run("echo $PATH")).split(":");
     assert(
-      path.indexOf(`${dir}/organization/bin`) < path.indexOf(`${wsOf(dir)}/bin`),
+      path.indexOf(`${dir}/shared/bin`) < path.indexOf(`${wsOf(dir)}/bin`),
       "the org's bin must precede the agent's",
     );
   });
@@ -66,14 +66,14 @@ Deno.test("bash: bins lists each PATH directory's executables in PATH order", as
   const dir = await Deno.makeTempDir();
   const plane = (await installExecGround(dir, "a1")).shell();
   try {
-    await Deno.writeTextFile(`${dir}/organization/bin/gws`, "#!/bin/sh\n");
-    await Deno.chmod(`${dir}/organization/bin/gws`, 0o755);
+    await Deno.writeTextFile(`${dir}/shared/bin/gws`, "#!/bin/sh\n");
+    await Deno.chmod(`${dir}/shared/bin/gws`, 0o755);
     // a plain file is not a program, and the agent's empty bin is left out
     await Deno.writeTextFile(`${dir}/system/bin/log.db`, "");
     assertEquals(await plane.bins!(), [
       // the harness's own carry their usage from the source; nothing is run to learn it
       shippedAt(`${dir}/system/bin`),
-      { dir: `${dir}/organization/bin`, programs: [{ name: "gws" }] },
+      { dir: `${dir}/shared/bin`, programs: [{ name: "gws" }] },
     ]);
     assertEquals(shippedAt("/b").programs.map((p) => p.name), [
       "aedit",

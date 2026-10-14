@@ -27,7 +27,7 @@ import type {
 /** A header as the file adapter lists it: the handle is the file's absolute path. */
 const HANDLE_PREFIX: Record<DocScope, string> = {
   system: "/org/data/system/",
-  organization: "/org/data/organization/",
+  shared: "/org/data/shared/",
   agent: "/org/data/agents/a1/",
   conversation: "/org/data/conversations/c1/",
 };
@@ -56,14 +56,14 @@ function doc(
 /** The clinic scenario's docs, deliberately out of order. */
 function clinicDocs(): DocEntry[] {
   return [
-    doc("organization", "skill", "reschedule", {
+    doc("shared", "skill", "reschedule", {
       description: "reprogramar un turno",
       load: "lazy",
     }),
     doc("agent", "instruction", "persona", { load: "always" }, "Hablás como Ana: cálida, breve."),
     doc("system", "instruction", "base", { load: "always" }, "Sos el alter-ego de Ana."),
-    doc("organization", "memory", "patients", { description: "notas de pacientes", load: "lazy" }),
-    doc("organization", "instruction", "clinic", { load: "always" }, "Clínica Sur · 9–18h L–V."),
+    doc("shared", "memory", "patients", { description: "notas de pacientes", load: "lazy" }),
+    doc("shared", "instruction", "clinic", { load: "always" }, "Clínica Sur · 9–18h L–V."),
   ];
 }
 
@@ -75,7 +75,7 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
   assertEquals(
     prefix.text,
     "[/org/data/system/base.md]\nSos el alter-ego de Ana.\n\n" +
-      "[/org/data/organization/clinic.md]\nClínica Sur · 9–18h L–V.\n\n" +
+      "[/org/data/shared/clinic.md]\nClínica Sur · 9–18h L–V.\n\n" +
       "[/org/data/agents/a1/persona.md]\nHablás como Ana: cálida, breve.",
   );
   // the rule opens the section, and a pointer wears the handle an inlined doc wears
@@ -83,8 +83,8 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
     index.text,
     "\n\n---\n\n# On-demand docs\n\n" +
       "The path is the doc's own; `aread` one to read it:\n\n" +
-      "- [/org/data/organization/reschedule.md] reprogramar un turno\n" +
-      "- [/org/data/organization/patients.md] notas de pacientes",
+      "- [/org/data/shared/reschedule.md] reprogramar un turno\n" +
+      "- [/org/data/shared/patients.md] notas de pacientes",
   );
 });
 
@@ -95,8 +95,8 @@ Deno.test("on the table, the index says what opens a handle: `read`, not the she
     index.text,
     "\n\n---\n\n# On-demand docs\n\n" +
       "The handle is the doc's own; `read` one to read it:\n\n" +
-      "- [/org/data/organization/reschedule.md] reprogramar un turno\n" +
-      "- [/org/data/organization/patients.md] notas de pacientes",
+      "- [/org/data/shared/reschedule.md] reprogramar un turno\n" +
+      "- [/org/data/shared/patients.md] notas de pacientes",
   );
 });
 
@@ -119,7 +119,7 @@ Deno.test("a tool doc is neither inlined nor indexed: its words ride the request
 Deno.test("kind is the major sort key, then cascade scope, then name", () => {
   // an agent-scope instruction must precede an org-scope skill (instruction < skill)
   const docs = [
-    doc("organization", "skill", "a", {}, "skill-body"),
+    doc("shared", "skill", "a", {}, "skill-body"),
     doc("agent", "instruction", "z", {}, "instr-body"),
   ];
   const text = renderSystem(docs)[0].text;
@@ -127,19 +127,19 @@ Deno.test("kind is the major sort key, then cascade scope, then name", () => {
 });
 
 Deno.test("only-bodies ⇒ single block (cached); only-pointers ⇒ single index block (cached)", () => {
-  const bodiesOnly = renderSystem([doc("organization", "instruction", "x", {}, "body")]);
+  const bodiesOnly = renderSystem([doc("shared", "instruction", "x", {}, "body")]);
   assertEquals(bodiesOnly.length, 1);
   assertEquals(bodiesOnly[0].cache_control, { type: "ephemeral", ttl: "1h" });
 
-  const pointersOnly = renderSystem([doc("organization", "skill", "x", { description: "d" })]);
+  const pointersOnly = renderSystem([doc("shared", "skill", "x", { description: "d" })]);
   assertEquals(pointersOnly.length, 1);
   assert(pointersOnly[0].text.startsWith("# On-demand docs"), "the first section opens bare");
   assertEquals(pointersOnly[0].cache_control, { type: "ephemeral", ttl: "1h" });
 });
 
 Deno.test("a pointer with no description is its handle alone", () => {
-  const [index] = renderSystem([doc("organization", "skill", "bare", {})]);
-  assertEquals(index.text.endsWith("- [/org/data/organization/bare.md]"), true);
+  const [index] = renderSystem([doc("shared", "skill", "bare", {})]);
+  assertEquals(index.text.endsWith("- [/org/data/shared/bare.md]"), true);
 });
 
 Deno.test("empty docs ⇒ empty system", () => {
@@ -147,7 +147,7 @@ Deno.test("empty docs ⇒ empty system", () => {
 });
 
 Deno.test("the env section: who the agent is on one line, where it stands on the next", () => {
-  const blocks = renderSystem([doc("organization", "instruction", "x", {}, "body")], {
+  const blocks = renderSystem([doc("shared", "instruction", "x", {}, "body")], {
     self: "a1",
     name: "Ana",
     email: "ana@x.io",
@@ -214,7 +214,7 @@ Deno.test("programs: the PATH directories under the org's folder, after the docs
             usage: "fetch URL",
           }],
         },
-        { dir: "/o/organization/bin", programs: [{ name: "gws" }] },
+        { dir: "/o/shared/bin", programs: [{ name: "gws" }] },
       ],
     },
   );
@@ -228,7 +228,7 @@ Deno.test("programs: the PATH directories under the org's folder, after the docs
     blocks[1].text,
     "\n\n---\n\n# Programs\n\nThese programs are on your PATH.\n\n" +
       "[/o/system/bin]\n- aread <path>\n- fetch URL\n\n" +
-      "[/o/organization/bin]\n- gws",
+      "[/o/shared/bin]\n- gws",
   );
 });
 

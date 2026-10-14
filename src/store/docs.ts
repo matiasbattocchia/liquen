@@ -4,7 +4,7 @@
  * The durable, human/agent-authored side of the substrate (DESIGN §8): instructions, skills,
  * memory, and tools (a builtin's words, an MCP registration), across four scopes:
  *
- *   system → org → agent → conversation
+ *   system → shared → agent → conversation
  *
  * **One discovery rule, every scope**: walk the scope directory recursively; a file is a doc
  * iff it is `.md` AND opens with YAML frontmatter — *a doc declares itself*. `kind` comes
@@ -28,7 +28,7 @@
  * A header is a row of the `docs` table (§8): the identity columns, `description`, `load`,
  * and the `handle` — the adapter's word for the doc, printed as-is by render and taken
  * as-is by the read the agent makes. Files adapter, rooted at the DATA ROOT (the §9 layout):
- *   <root>/system/**  ·  <root>/organization/**  ·  <root>/agents/<agentId>/**
+ *   <root>/system/**  ·  <root>/shared/**  ·  <root>/agents/<agentId>/**
  *   <root>/conversations/<convId>/**
  * A doc's `name` is its path relative to the scope dir, minus `.md` (so the conventional
  * `instructions/compaction`); its handle is the file's absolute path, the argument `aread`
@@ -44,7 +44,7 @@ import { resolve } from "node:path";
 import { parse as parseYaml } from "@std/yaml";
 import type { AgentId } from "../types.ts";
 
-export type DocScope = "system" | "organization" | "agent" | "conversation";
+export type DocScope = "system" | "shared" | "agent" | "conversation";
 export type DocKind = "instruction" | "skill" | "memory" | "tool";
 export type DocLoad = "always" | "lazy";
 
@@ -153,7 +153,7 @@ export function frontmatterOf(text: string): Record<string, unknown> | null {
 /** The scope directories to walk, in cascade order — skipping any that don't apply. */
 function scopeDirs(root: string, ctx: DocContext): [DocScope, string][] {
   const out: [DocScope, string][] = [];
-  for (const scope of ["system", "organization", "agent", "conversation"] as DocScope[]) {
+  for (const scope of ["system", "shared", "agent", "conversation"] as DocScope[]) {
     const dir = scopeDir(root, scope, ctx);
     if (dir !== null) out.push([scope, dir]);
   }
@@ -164,8 +164,8 @@ function scopeDir(root: string, scope: DocScope, ctx: DocContext): string | null
   switch (scope) {
     case "system":
       return `${root}/system`;
-    case "organization":
-      return `${root}/organization`;
+    case "shared":
+      return `${root}/shared`;
     case "agent":
       return `${root}/agents/${ctx.agent}`;
     case "conversation":

@@ -44,7 +44,7 @@ export interface PgDocs extends Docs {
   close(): Promise<void>;
 }
 
-const SCOPE_ORDER: DocScope[] = ["system", "organization", "agent", "conversation"];
+const SCOPE_ORDER: DocScope[] = ["system", "shared", "agent", "conversation"];
 
 /** Open the docs table in `schema` of the database at `url`. */
 export async function openPgDocs(url: string, opts: { schema?: string } = {}): Promise<PgDocs> {
@@ -58,7 +58,7 @@ export async function openPgDocs(url: string, opts: { schema?: string } = {}): P
   }
 
   /** The rows a context may see. */
-  const VISIBLE = `(scope, owner) IN (('system', ''), ('organization', ''),
+  const VISIBLE = `(scope, owner) IN (('system', ''), ('shared', ''),
     ('agent', $1::text), ('conversation', $2::text))`;
   const ownerOf = (scope: DocScope, ctx: DocContext): string | null => {
     switch (scope) {

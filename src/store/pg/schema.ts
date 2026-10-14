@@ -367,7 +367,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON docs TO ${AGENT_ROLE};
 -- transaction; unset, no row is anyone's
 CREATE OR REPLACE FUNCTION docs_owner(scope text) RETURNS text LANGUAGE sql STABLE AS $f$
   SELECT CASE scope
-    WHEN 'system' THEN '' WHEN 'organization' THEN ''
+    WHEN 'system' THEN '' WHEN 'shared' THEN ''
     WHEN 'agent' THEN nullif(current_setting('liquen.agent', true), '')
     WHEN 'conversation' THEN nullif(current_setting('liquen.conversation', true), '')
   END
@@ -388,8 +388,8 @@ LANGUAGE plpgsql STABLE AS $f$
 BEGIN
   scope := split_part(handle, '/', 1);
   name := substr(handle, length(scope) + 2);
-  IF scope NOT IN ('system', 'organization', 'agent', 'conversation') OR name = '' THEN
-    RAISE EXCEPTION '%: a handle is scope/name — system, organization, agent or conversation, then the doc''s name', handle;
+  IF scope NOT IN ('system', 'shared', 'agent', 'conversation') OR name = '' THEN
+    RAISE EXCEPTION '%: a handle is scope/name — system, shared, agent or conversation, then the doc''s name', handle;
   END IF;
   owner := docs_owner(scope);
 END

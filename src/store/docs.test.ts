@@ -26,15 +26,15 @@ const ref = (docs: DocEntry[]) =>
 Deno.test("list returns every doc's header across the cascade (§8 layout)", async () => {
   await withRoot(async (root) => {
     await put(root, "agents/a1/instructions/persona", doc("instruction", "be helpful"));
-    await put(root, "organization/instructions/policy", doc("instruction", "org policy"));
+    await put(root, "shared/instructions/policy", doc("instruction", "org policy"));
     await put(root, "system/instructions/base", doc("instruction", "world model"));
-    await put(root, "organization/skills/refunds", doc("skill", "how to refund"));
+    await put(root, "shared/skills/refunds", doc("skill", "how to refund"));
 
     const docs = await openFileDocs(root).list({ agent: "a1" });
     assertEquals(ref(docs).sort(), [
       "agent/instruction/instructions/persona",
-      "organization/instruction/instructions/policy",
-      "organization/skill/skills/refunds",
+      "shared/instruction/instructions/policy",
+      "shared/skill/skills/refunds",
       "system/instruction/instructions/base",
     ]);
   });
@@ -82,10 +82,10 @@ Deno.test("load: always ⇒ body is inlined; otherwise header-only pointer", asy
   await withRoot(async (root) => {
     await put(
       root,
-      "organization/instructions/policy",
+      "shared/instructions/policy",
       doc("instruction", "follow the rules", "load: always\n"),
     );
-    await put(root, "organization/skills/refunds", doc("skill", "Step 1. ...", "load: lazy\n"));
+    await put(root, "shared/skills/refunds", doc("skill", "Step 1. ...", "load: lazy\n"));
 
     const byName = new Map(
       (await openFileDocs(root).list({ agent: "a1" })).map((d) => [d.header.name, d]),
@@ -99,7 +99,7 @@ Deno.test("the description is the frontmatter's, parsed as YAML (quotes and colo
   await withRoot(async (root) => {
     await put(
       root,
-      "organization/skills/x",
+      "shared/skills/x",
       '---\nkind: skill\ndescription: "ratio a:b, quoted"\n---\nbody',
     );
     const [d] = await openFileDocs(root).list({ agent: "a1" });
@@ -110,9 +110,9 @@ Deno.test("the description is the frontmatter's, parsed as YAML (quotes and colo
 
 Deno.test("read pulls a pointer's body on demand and strips frontmatter", async () => {
   await withRoot(async (root) => {
-    await put(root, "organization/skills/refunds", doc("skill", "Step 1. ...", "load: lazy\n"));
+    await put(root, "shared/skills/refunds", doc("skill", "Step 1. ...", "load: lazy\n"));
     const body = await openFileDocs(root).read({ agent: "a1" }, {
-      scope: "organization",
+      scope: "shared",
       kind: "skill",
       name: "skills/refunds", // name IS the scope-relative path — kind is metadata (§8)
     });
@@ -136,28 +136,28 @@ Deno.test("conversation scope is listed only when requested", async () => {
 
 Deno.test("non-.md files are ignored; a missing scope lists empty; missing read ⇒ null", async () => {
   await withRoot(async (root) => {
-    await put(root, "organization/instructions/x", doc("instruction", "body"));
+    await put(root, "shared/instructions/x", doc("instruction", "body"));
     await Deno.writeTextFile(
-      `${root}/organization/instructions/notes.txt`,
+      `${root}/shared/instructions/notes.txt`,
       "---\nkind: skill\n---\nignore",
     );
 
     const docs = openFileDocs(root);
     assertEquals(ref(await docs.list({ agent: "a1" })), [
-      "organization/instruction/instructions/x",
+      "shared/instruction/instructions/x",
     ]);
     // an agent with no folder still sees the cascade above it — just nothing of its own
     assertEquals(ref(await docs.list({ agent: "nobody" })), [
-      "organization/instruction/instructions/x",
+      "shared/instruction/instructions/x",
     ]);
     assertEquals(
-      await docs.read({ agent: "a1" }, { scope: "organization", kind: "skill", name: "ghost" }),
+      await docs.read({ agent: "a1" }, { scope: "shared", kind: "skill", name: "ghost" }),
       null,
     );
     // the handle is the file's absolute path: the read takes it as printed, from anywhere
     assertEquals(
       (await docs.list({ agent: "a1" }))[0].header.handle,
-      `${root}/organization/instructions/x.md`,
+      `${root}/shared/instructions/x.md`,
     );
   });
 });
@@ -171,14 +171,14 @@ Deno.test("a linked doc is a doc, a linked folder is a folder, a dangling link i
       await put(outside, "system", doc("instruction", "the legend", "load: always\n"));
       await put(outside, "shared/playbook", doc("skill", "how we work"));
       await Deno.mkdir(`${root}/system/instructions`, { recursive: true });
-      await Deno.mkdir(`${root}/organization`, { recursive: true });
+      await Deno.mkdir(`${root}/shared`, { recursive: true });
       await Deno.symlink(`${outside}/system.md`, `${root}/system/instructions/system.md`);
-      await Deno.symlink(`${outside}/shared`, `${root}/organization/skills`);
+      await Deno.symlink(`${outside}/shared`, `${root}/shared/skills`);
       await Deno.symlink(`${outside}/gone.md`, `${root}/system/instructions/gone.md`);
 
       const docs = await openFileDocs(root).list({ agent: "a1" });
       assertEquals(ref(docs).sort(), [
-        "organization/skill/skills/playbook",
+        "shared/skill/skills/playbook",
         "system/instruction/instructions/system",
       ]);
       // and it is read through the link, body and all

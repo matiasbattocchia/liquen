@@ -614,7 +614,7 @@ export function shippedAt(dir: string): BinDir {
  *                             registry's URL) out of the harness's own module cache, so the
  *                             tool answers for the version that booted and never fetches
  *                             its own code from an agent's uid.
- *    `<dir>/organization/bin`          what the org installs for all its agents (`gws`).
+ *    `<dir>/shared/bin`          what the org installs for all its agents (`gws`).
  *    `<dir>/agents/<id>/bin`  what THIS agent installed for itself — its own folder, so a
  *                             binary it fetched is as private as its notes.
  *    the process's own PATH   inherited verbatim: the system underneath.
@@ -629,10 +629,10 @@ export async function installExecGround(
 ): Promise<ExecGround> {
   const workspace = `${dir}/agents/${agentId}`;
   const shipped = await layShims(dir);
-  const binDirs = [shipped, `${dir}/organization/bin`, `${workspace}/bin`];
+  const binDirs = [shipped, `${dir}/shared/bin`, `${workspace}/bin`];
   const binPath = binDirs.join(":");
   await Deno.mkdir(workspace, { recursive: true });
-  await Deno.mkdir(`${dir}/organization/bin`, { recursive: true });
+  await Deno.mkdir(`${dir}/shared/bin`, { recursive: true });
   await Deno.mkdir(`${workspace}/bin`, { recursive: true });
   const user = agentUser(agentId);
   // the folder is the agent's: the seeded docs and `bin/` were laid by the harness, and
