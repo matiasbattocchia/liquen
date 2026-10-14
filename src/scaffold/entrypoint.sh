@@ -32,7 +32,7 @@ done
 
 # the data classification:
 #   log/    root only — the substrate is the system's, no agent reads it directly
-#   org/    the shared floor — group-writable, setgid + default ACL keep it shared
+#   shared/ the shared floor — group-writable, setgid + default ACL keep it shared
 #   system/ the harness's docs — readable by all, writable by none
 mkdir -p /data/log /data/shared /data/system
 chown -R root:root /data/log
