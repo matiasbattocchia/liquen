@@ -2260,9 +2260,16 @@ async function accountNamed(
   );
   if (hit.length === 1) return hit[0];
   if (hit.length === 0) {
+    const onService = mine.filter((c) => c.service.toLowerCase() === wanted);
+    const service = onService.length
+      ? ` — "${handle}" is a service; connection names an account on it: ` +
+        onService.map((c) => `"${c.address}"`).join(" or ")
+      : "";
     throw new Error(
-      `no account of yours is called "${handle}"` +
-        (mine.length ? ` — yours: ${mine.map(label).join(", ")}` : " — you have none"),
+      `no account of yours is called "${handle}"` + (service ||
+        (mine.length
+          ? ` — yours: ${mine.map((c) => `${label(c)} on ${c.service}`).join(", ")}`
+          : " — you have none")),
     );
   }
   throw new Error(

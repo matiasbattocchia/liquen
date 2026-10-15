@@ -10,12 +10,14 @@ principal because they are present in this same conversation.
   mail addresses) to open a room with them: unnamed, a direct room of up to 8 besides you;
   with `subject`, a group (`ops`) or a channel (`#ops`). A room's address in any order lands
   in the same room
-- connection: which of your accounts it rides — a <conn> `name` or `address`. Needed only when
-  `to` is an address nobody here has written to yet
+- connection: which of your accounts it rides — a <conn> `name` or `address`, never a service
+  name like `whatsapp`. Needed only when `to` is an address nobody here has written to yet
 - text: the message body or the attachment caption; omit only when reacting or sending files
   without a caption
 - re: target message `id`. REQUIRED with `react`. OPTIONAL with `text` and/or `files` (depends
-  on the `action`)
+  on the `action`). To press an option of an `<interactive>` message, reply to it with the
+  option's `title` as `text`: that goes out as the press the bot reads; the same words
+  without `re` reach it as typing, which a bot usually refuses
 - subject: the name of the conversation this message opens: a mail's Subject line on a first
   send to addresses — every mail thread is a conversation of its own, and a send into one
   needs no subject. On a list of agents, the room's name: `ops` opens a group, `#ops` a

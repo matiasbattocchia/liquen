@@ -351,7 +351,12 @@ function partOf(c: WAContent): Part | null {
       };
     }
     case "data":
-      return { type: "data", kind: c.kind, data: (c.data ?? null) as DataPart["data"] };
+      return {
+        type: "data",
+        kind: c.kind,
+        data: (c.data ?? null) as DataPart["data"],
+        ...(c.text ? { text: c.text } : {}), // a caption, a bot's words over its buttons
+      };
     default:
       return null;
   }

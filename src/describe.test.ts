@@ -39,6 +39,13 @@ Deno.test("describeCall: a pin reads by its label, or by its degrees when it has
   );
 });
 
+Deno.test("describeCall: send names the account it rides when the call does", () => {
+  assertEquals(
+    describeCall({ name: "send", input: { to: "wa:x", connection: "whatsapp", text: "hola" } }),
+    "send(to: wa:x, connection: whatsapp, text: hola)",
+  );
+});
+
 Deno.test("describeCall: send says WHO — the name, with the address as the fallback", () => {
   const call = { name: "send", input: { to: "5492604586396", text: "ya salgo" } };
   const vivian = (a: string) => a === "5492604586396" ? { name: "Vivian", address: a } : undefined;

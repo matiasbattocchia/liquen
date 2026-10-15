@@ -419,11 +419,28 @@ Deno.test("file content maps to a FilePart with caption; data to a DataPart", as
               data: { latitude: -34.6, longitude: -58.4 },
             },
           }),
+          textMessage({
+            external_id: "wmw.i.1",
+            content: {
+              version: "1",
+              type: "data",
+              kind: "interactive",
+              text: "¿Seguimos chateando?",
+              data: { form: "buttons", options: [{ id: "si", title: "Sí" }] },
+            },
+          }),
         ],
       }),
     ),
   );
-  const [f, d] = published as MessageEvent[];
+  const [f, d, i] = published as MessageEvent[];
+  // a bot's words over its buttons ride the part as its text
+  assertEquals(i.parts[0], {
+    type: "data",
+    kind: "interactive",
+    data: { form: "buttons", options: [{ id: "si", title: "Sí" }] },
+    text: "¿Seguimos chateando?",
+  });
   assertEquals(f.parts[0], {
     type: "file",
     kind: "image",

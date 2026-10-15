@@ -1040,6 +1040,22 @@ Deno.test("envelope.status failed renders on the line — the agent sees the del
   assertStringIncludes(dump, '<conv kind=\\"direct\\" name=\\"Ana\\" address=\\"wa:ana\\">');
 });
 
+Deno.test("a failed delivery says why, in the dispatcher's words", () => {
+  const t = "2026-08-07T11:00:00Z";
+  const press = worldMsg("e2", t, { address: "wa:bot", kind: "direct" }, null, "Acepto", "failed");
+  press.status = {
+    state: "failed",
+    error:
+      'DispatchError: "Acepto" is none of that message\'s options — answer with one of "Sí", "No"',
+    error_code: 422,
+  };
+  const { messages } = render({ events: [press], docs: [], session: SESSION, zone: "UTC", now: t });
+  assertStringIncludes(
+    JSON.stringify(messages),
+    'status=\\"failed\\" error=\\"&quot;Acepto&quot; is none of that message',
+  );
+});
+
 Deno.test("ambient env lines join the trailing anchor block after now:", () => {
   const t = "2026-07-21T10:00:00Z";
   const events: Event[] = [mindMsg("e1", t, "hola", false)];

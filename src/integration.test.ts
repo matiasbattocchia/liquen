@@ -1625,7 +1625,8 @@ Deno.test("send on an account the agent does not hold is refused before it is ev
       assertEquals(answer.parts[0].data.is_error, true);
       assertStringIncludes(
         JSON.stringify(answer.parts[0].data.output),
-        'no account of yours is called \\"microsoft\\" — yours: matias@acme.onmicrosoft.com',
+        'no account of yours is called \\"microsoft\\" — \\"microsoft\\" is a service; ' +
+          'connection names an account on it: \\"matias@acme.onmicrosoft.com\\"',
       );
       assertEquals((await read("permission_request")).length, 0);
     },
@@ -1774,8 +1775,8 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
       assert(req.type === "permission_request");
       assertEquals(req.envelope.conversation.address, "mind@a1");
       // the card names the call the way a person reads it — not a slice of its JSON
-      assertEquals(req.parts[0].data.call, "send(to: wa:x, text: hi)");
-      assertEquals(req.parts[0].data.detail, "send(to: wa:x, text: hi)");
+      assertEquals(req.parts[0].data.call, "send(to: wa:x, connection: wa, text: hi)");
+      assertEquals(req.parts[0].data.detail, "send(to: wa:x, connection: wa, text: hi)");
       assertEquals(
         (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
         0,
@@ -1797,7 +1798,7 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
       const outcome = (await read("tool_result")).find((e) => e.payload?.deferred);
       assert(outcome?.type === "tool_result");
       assertEquals(outcome.payload.ref_id, req.payload.ref_id);
-      assertEquals(outcome.parts[0].text, "send(to: wa:x, text: hi)");
+      assertEquals(outcome.parts[0].text, "send(to: wa:x, connection: wa, text: hi)");
       assertStringIncludes(JSON.stringify(outcome.parts[0].data.output), "sent");
     },
     { gate: (name) => name === "send" ? "ask" : "allow" },
@@ -1900,7 +1901,7 @@ Deno.test("a pending ask lives in the ANCHOR — state, not transcript (§5)", a
     await xi(config, ports); // the think that follows — this is the prompt we read
     const anchor = JSON.stringify(last?.messages.at(-1)?.content);
     assertStringIncludes(anchor, "waiting — 1 approval");
-    assertStringIncludes(anchor, "send(to: wa:x, text: hola)");
+    assertStringIncludes(anchor, "send(to: wa:x, connection: wa, text: hola)");
     // and NOT in the transcript: what the model sees there is a closed call
     assertStringIncludes(JSON.stringify(last?.messages), "pending_approval");
   } finally {
@@ -2529,7 +2530,8 @@ Deno.test("search `connection`: one of the agent's accounts, named as send names
       // an account nobody wears is the call's error, the agent's accounts named
       assertStringIncludes(
         unknown.parts[0].data.output as string,
-        'no account of yours is called "gmail" — yours: T1:U9, Sole (5491100000000)',
+        'no account of yours is called "gmail" — yours: T1:U9 on slack, ' +
+          "Sole (5491100000000) on whatsapp",
       );
     },
     {},
@@ -3046,7 +3048,7 @@ Deno.test("a standing verdict is PINNED: the ruled conversation runs, its neighb
       await waitFor(async () => (await read("permission_request")).length === 2);
       const [, second] = await read("permission_request");
       assert(second.type === "permission_request");
-      assertEquals(second.parts[0].data.call, "send(to: wa:y, text: dos)");
+      assertEquals(second.parts[0].data.call, "send(to: wa:y, connection: wa, text: dos)");
       assertEquals(
         (await read("message")).filter((e) => e.envelope.conversation.address === "wa:y").length,
         0,
@@ -3098,7 +3100,7 @@ Deno.test("cancel: the agent withdraws one of two asks — and a bare /y settles
     assertEquals(resp.payload.ref_id, a.payload!.ref_id);
     assert(resp.payload.turn_id !== undefined);
     assertStringIncludes(String(resp.parts[0].data.reason), "withdrawn");
-    assertEquals(resp.parts[0].text, "send(to: wa:x, text: uno)");
+    assertEquals(resp.parts[0].text, "send(to: wa:x, connection: wa, text: uno)");
     await xi(config, ports); // the closing turn — the cancel's own result is the record…
     // …so no errand ever follows it, and the withdrawn call never runs
     assertEquals(

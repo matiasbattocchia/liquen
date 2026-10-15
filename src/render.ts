@@ -1338,7 +1338,11 @@ function msgLine(
     return `<reaction ${react}${re}${removed}>${escText(glyph)}</reaction>`;
   }
 
-  const failed = e.envelope.status === "failed" ? ' status="failed"' : "";
+  // a failure says why, in the dispatcher's words: what the service refused is what to fix
+  const why = e.status?.error?.replace(/^\w*Error: /, "");
+  const failed = e.envelope.status !== "failed"
+    ? ""
+    : ` status="failed"${why ? ` error="${escAttr(why)}"` : ""}`;
   // the hoisting rule again, for attachments: a message that IS one file part — a bare
   // voice note, a lone photo — wears the envelope on the marker itself and spends no
   // `<msg>` wrapper. A caption keeps the wrapper: the words are the message's body.

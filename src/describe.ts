@@ -92,6 +92,10 @@ const BUILTIN: Record<string, Describe> = {
     const a = argsOf(input);
     const to = a.to === undefined ? "" : String(a.to);
     const bits = [`to: ${named("to", to, opts)}`];
+    // whose name it goes out in, when the call says
+    if (typeof a.connection === "string" && a.connection !== "") {
+      bits.push(`connection: ${a.connection}`);
+    }
     // what the send DOES, when it is not a plain create (§3) — the part a human weighs
     if (a.action !== undefined) bits.push(`action: ${a.action}`);
     if (a.react !== undefined) bits.push(`react: ${a.react}`);
