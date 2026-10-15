@@ -154,4 +154,26 @@ export function sweepSuite(s: Substrate): void {
       assertEquals((await row(log, e.id)).status?.state, "failed");
     });
   });
+
+  Deno.test("a send that failed for good is claimed once to be reported; one the ladder still offers is not", async () => {
+    await withLog(async (log) => {
+      // the model's own sends: the claim reads authorship off the turn key
+      const mine = async (text: string, status: Record<string, string | number>) => {
+        const e = (await log.publish({ ...outbound(text), payload: { turn_id: text } }))!;
+        await log.setDelivery(e.id, { status: { state: "failed", ...status } });
+        return e.id;
+      };
+      const permanent = await mine("p", { failed_at: iso(T0 - MIN), error_code: 422 });
+      await mine("t", { failed_at: iso(T0 - MIN), error_code: 503 }); // offered again
+      const spent = await mine("s", {
+        failed_at: iso(T0 - MIN),
+        error_code: 503,
+        attempts: RETRY_BACKOFF_MS.length,
+      });
+      await failed(log, 422, MIN); // no turn: nobody's to tell
+      assertEquals(await log.undelivered(iso(T0)), [permanent, spent].sort());
+      assertEquals((await row(log, permanent)).status?.reported_at, iso(T0));
+      assertEquals(await log.undelivered(iso(T0 + MIN)), []); // told once
+    });
+  });
 }

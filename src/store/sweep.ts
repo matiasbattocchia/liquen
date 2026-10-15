@@ -25,6 +25,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import type { EventId } from "../types.ts";
 
 /** The wait before re-offer number N+1, by N re-offers so far. Length = the ceiling. */
 export const RETRY_BACKOFF_MS = [
@@ -39,6 +40,13 @@ export const RETRY_BACKOFF_MS = [
 export interface Sweeper {
   /** One pass at `now` (UTC ISO): re-offer what has waited its rung out. Returns how many. */
   sweep(now: string): Promise<number>;
+  /** Claim the agent's own sends that failed for good and nobody has told it of: stamp
+   *  `reported_at` = `now` on each and answer their ids, oldest first. For good is a
+   *  failure the ladder will not offer again: a permanent class, a transient one past the
+   *  ceiling, or one the wire reported after naming the artifact. A send is the model's
+   *  (`payload.turn_id`): a mirror's copy or a presence line fails without a turn to tell.
+   *  A claim is one conditional UPDATE, so two clocks never claim one row. */
+  undelivered(now: string): Promise<EventId[]>;
 }
 
 /** The dispatcher's own rows (`isOutbound`, minus the state it reads off the lifecycle).
@@ -47,6 +55,13 @@ export interface Sweeper {
  *  be a lie the ladder told. Ephemera fails once, quietly — that is its correct ending. */
 const OURS =
   "type = 'message' AND agent_id IS NOT NULL AND external_id IS NULL AND json_extract(extra, '$.delta') IS NOT 1";
+
+/** The class the ladder offers again: no class (the request never reached the service),
+ *  429, or 5xx. */
+const TRANSIENT = `(json_extract(status, '$.error_code') IS NULL
+  OR (json_type(status, '$.error_code') IN ('integer', 'real')
+      AND (json_extract(status, '$.error_code') = 429
+           OR json_extract(status, '$.error_code') >= 500)))`;
 
 export function createSweeper(db: DatabaseSync): Sweeper {
   const rung = RETRY_BACKOFF_MS
@@ -61,18 +76,31 @@ export function createSweeper(db: DatabaseSync): Sweeper {
        updated_at = ?1
      WHERE ${OURS}
        AND json_extract(status, '$.state') = 'failed'
-       AND (json_extract(status, '$.error_code') IS NULL
-            OR (json_type(status, '$.error_code') IN ('integer', 'real')
-                AND (json_extract(status, '$.error_code') = 429
-                     OR json_extract(status, '$.error_code') >= 500)))
+       AND ${TRANSIENT}
        AND json_extract(status, '$.failed_at') <=
            CASE coalesce(json_extract(status, '$.attempts'), 0) ${rung} END`,
+  );
+  // no `updated_at`: the claim is the harness's bookkeeping, not a lifecycle move to offer
+  const claim = db.prepare(
+    `UPDATE events SET status = json_patch(status, json_object('reported_at', ?1))
+     WHERE type = 'message' AND agent_id IS NOT NULL
+       AND json_extract(payload, '$.turn_id') IS NOT NULL
+       AND json_extract(extra, '$.delta') IS NOT 1
+       AND json_extract(status, '$.state') = 'failed'
+       AND json_extract(status, '$.reported_at') IS NULL
+       AND (external_id IS NOT NULL OR NOT ${TRANSIENT}
+            OR coalesce(json_extract(status, '$.attempts'), 0) >= ${RETRY_BACKOFF_MS.length})
+     RETURNING id`,
   );
   return {
     sweep(now) {
       const at = new Date(now).getTime();
       const cutoffs = RETRY_BACKOFF_MS.map((ms) => new Date(at - ms).toISOString());
       return Promise.resolve(Number(requeue.run(now, ...cutoffs).changes));
+    },
+    undelivered(now) {
+      const ids = (claim.all(now) as { id: string }[]).map((r) => r.id).sort();
+      return Promise.resolve(ids);
     },
   };
 }

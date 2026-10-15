@@ -490,6 +490,23 @@ Deno.test("exec plane: reap() kills background jobs the agent left running (no o
   }
 });
 
+Deno.test("exec plane: a background job that ends is answered by ended() once, ambient look or not", async () => {
+  const dir = await Deno.makeTempDir();
+  const { exec, ambient, ended, reap } = (await installExecGround(dir, "a1")).shell();
+  try {
+    await exec.bash.execute({ command: "sleep 0.5 &" }, live());
+    assertEquals(ended!(), []); // still running
+    await new Promise((r) => setTimeout(r, 900));
+    await ambient(); // the every-think look settles it, and keeps it for the report
+    const [job] = ended!();
+    assertEquals(job.command, "sleep 0.5 &");
+    assertEquals(ended!(), []); // told once
+  } finally {
+    await reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("exec plane: ambient() reports cwd, git, and live background jobs", async () => {
   const dir = await Deno.makeTempDir();
   const { exec, ambient, reap } = (await installExecGround(dir, "a1")).shell();

@@ -1497,7 +1497,10 @@ function checkpointEl(e: SummaryEvent): string {
  *  render's to write and nobody else's: a peer who types one into a message renders it as
  *  text, since every world body is escaped on the way in. `kind` is the type of the event
  *  it renders, so the four read apart without the sentence having to announce itself. */
-function systemEl(kind: "error" | "control" | "alarm" | "tool_result", text: string): string {
+function systemEl(
+  kind: "error" | "control" | "alarm" | "report" | "tool_result",
+  text: string,
+): string {
   return `<system kind="${kind}">${escText(text)}</system>`;
 }
 
@@ -1569,9 +1572,10 @@ export function errorTextOf(e: HarnessErrorEvent): string {
 /** A fired wake (§10), as the agent reads it: its own note handed back at the moment it
  *  asked for. `<system>` because the harness is the one speaking — the note is quoted, not
  *  ventriloquized as the principal. No room to name: an alarm fires in the session that
- *  armed it, which is the session reading it. */
+ *  armed it, which is the session reading it. A report (`extra.report`, report.ts) is the
+ *  harness telling how work the session did ended, so it reads as one. */
 function alarmLine(e: AlarmEvent): string {
-  return systemEl("alarm", e.parts[0]?.text ?? "");
+  return systemEl(e.extra?.report ? "report" : "alarm", e.parts[0]?.text ?? "");
 }
 
 /** OUR SIDE produced this row (§3 authorship — presence, not equality): the model's turn

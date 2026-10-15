@@ -40,6 +40,7 @@ import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runne
 import type { Log, UsageRow } from "./store/log.ts";
 import { databaseOf, storeAt } from "./store/mod.ts";
 import { type ClockSettings, tick } from "./tick.ts";
+import { JOB_PROBE_MS, jobReport, reportDraft, reportUndelivered } from "./report.ts";
 import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import type { AgentRow } from "./store/agents.ts";
@@ -537,6 +538,33 @@ export async function start(
       }
     }).catch((err) => console.error("[main] route:", err));
   }));
+  // a send that fails for good is told to its session at once (report.ts): the update
+  // stream says a row of the model's own went `failed`, and the clock's report pass runs
+  // now instead of at the next beat, which stays the guarantee for a failure stamped while
+  // nobody listened. A failure landing mid-pass runs the pass once more after it.
+  let telling: Promise<void> | undefined;
+  let again = false;
+  const tell = () => {
+    if (telling) {
+      again = true;
+      return;
+    }
+    telling = reportUndelivered(log)
+      .then(() => undefined, (err) => console.error("[main] report:", err))
+      .finally(() => {
+        telling = undefined;
+        if (again) {
+          again = false;
+          tell();
+        }
+      });
+  };
+  unsubs.push(log.subscribe(tell, {
+    updates: true,
+    filter: (e) =>
+      e.type === "message" && e.agent !== undefined && e.payload?.turn_id !== undefined &&
+      e.status?.state === "failed" && e.status.reported_at === undefined,
+  }));
   // the mirror rides the RAW log (§4): it copies between a mind and its alias surfaces, and
   // an agent's own alias conversation is invisible to that agent's scoped port (§6) — the
   // join has to happen where visibility isn't filtered. Inert until a surface is bound, so
@@ -597,6 +625,15 @@ export async function start(
       .finally(() => beating = undefined);
     agents.forEach((a) => invoke(a)());
   }, TICK_MS);
+  // a background job that ended is told to the session whose shell started it (report.ts):
+  // the ambient block lists what still runs, and this says what stopped, unasked
+  const jobWatch = setInterval(() => {
+    const now = Date.now();
+    for (const ended of sandbox.ended()) {
+      log.publish(reportDraft(jobReport(ended, now), new Date(now).toISOString()))
+        .catch((err) => console.error("[main] job report:", err));
+    }
+  }, JOB_PROBE_MS);
 
   return {
     log,
@@ -604,6 +641,7 @@ export async function start(
     async stop() {
       stopped = true;
       clearInterval(ticker);
+      clearInterval(jobWatch);
       for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
       settling.clear();
       for (const unsub of unsubs) unsub();

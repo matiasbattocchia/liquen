@@ -382,6 +382,9 @@ export interface ExecPlane {
   /** Kill every background job this shell left running (§9): called on harness shutdown so
    *  nothing outlives the process that spawned it. */
   reap(): Promise<void>;
+  /** The background jobs that ended since the last ask, each answered once (report.ts).
+   *  A shell that cannot watch its jobs end has none. */
+  ended?(): Job[];
   /** Where the next call starts: the principal's own directory while an interface attached
    *  from one is connected (the door passes it along), the workspace when none is given.
    *  The place is tried first, by the same spawn a call makes and as the same uid, so a
@@ -437,13 +440,28 @@ const ageOf = (since: number): string => {
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
 };
 
-/** A shell's ambient lines (§5): cwd · git (if a repo) · background jobs. Prunes dead
- *  groups from `jobs` here — the reliable, every-think place. Shared by the shell and task mode. */
-export async function bashAmbient(state: BashState, jobs: Set<Job>): Promise<string[]> {
+/** Move the jobs whose group has no member left out of `jobs`, into `ended` when the
+ *  shell keeps one (its ends are reported, report.ts), else nowhere. */
+export function settleJobs(jobs: Set<Job>, ended?: Job[]): void {
+  for (const j of jobs) {
+    if (groupAlive(j.pgid)) continue;
+    jobs.delete(j);
+    ended?.push(j);
+  }
+}
+
+/** A shell's ambient lines (§5): cwd · git (if a repo) · background jobs. Settles dead
+ *  groups out of `jobs` here — the reliable, every-think place — into `ended` when given.
+ *  Shared by the shell and task mode. */
+export async function bashAmbient(
+  state: BashState,
+  jobs: Set<Job>,
+  ended?: Job[],
+): Promise<string[]> {
   const lines = [`cwd: ${state.cwd}`];
   const git = await gitLine(state.cwd);
   if (git) lines.push(git);
-  for (const j of jobs) if (!groupAlive(j.pgid)) jobs.delete(j);
+  settleJobs(jobs, ended);
   return [...lines, ...jobLines(jobs, await groupMembers(jobs))];
 }
 
@@ -648,6 +666,7 @@ export async function installExecGround(
   return {
     shell(): ExecPlane {
       const jobs = new Set<Job>();
+      const exited: Job[] = [];
       const state: BashState = { cwd: workspace };
       return {
         exec: {
@@ -662,7 +681,11 @@ export async function installExecGround(
           }),
         },
         cwd: () => state.cwd,
-        ambient: () => bashAmbient(state, jobs),
+        ambient: () => bashAmbient(state, jobs, exited),
+        ended() {
+          settleJobs(jobs, exited);
+          return exited.splice(0);
+        },
         bins: () => binsIn(binDirs, shipped),
         async stand(path?: string) {
           if (path === undefined) {
@@ -695,6 +718,7 @@ export async function installExecGround(
             } catch { /* already gone */ }
           }
           jobs.clear();
+          exited.length = 0; // the harness ending them is no news to the agent
           return Promise.resolve();
         },
       };

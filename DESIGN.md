@@ -573,6 +573,30 @@ nothing is promised that the clock cannot keep. Finding the next fire is a SEARC
 cron expression is a predicate: candidate days, integer comparisons, and a zone conversion
 only on the days that match.
 
+**A report is how work that ended after its turn reaches the agent** (`report.ts`). A tool
+can finish later than the call: a send is accepted ("sent") and then refused or delivered
+by its dispatcher; a background job outlives the bash call that started it. What the turn
+was told is then the beginning, and an agent that learns the end only if something else
+wakes it goes on believing the beginning — it says "done" over a refused send. A report is
+an `alarm` the harness writes into **the session that did the work**: its text the outcome
+in words, `extra.report.kind` what kind of end it is, `payload.ref_id` the row it is about
+when there is one; render shows it as `<system kind="report">`. It wakes like any alarm,
+so the agent takes a turn to recover: try again, try another way, or tell its principal.
+Two kinds land today:
+
+- **`undelivered`** — one of the model's own sends (a row with `payload.turn_id`: a
+  mirror's copy and a presence line have no turn to tell) failed **for good**: a permanent
+  class (4xx, or a code that is not a number), a transient one the retry ladder (§5) has
+  offered for the last time, or one the wire reported failed after naming the message.
+  A transient failure the ladder will offer again is not news yet. The clock's fourth pass
+  claims such rows (`undelivered`, one conditional UPDATE stamping `status.reported_at`, so
+  two clocks tell a row once) and publishes their reports; main also runs that pass the
+  moment the update stream shows a row of the model's own go `failed`, so a refused send
+  is told in seconds and the beat is the guarantee for one stamped while nobody listened.
+- **`job_ended`** — a background job the session's shell started has no process left
+  (§9, the exit watcher). Its exit status is unknowable; the report says where the outcome
+  is: what the job wrote.
+
 Survey: **Pi** ships no scheduler; **Claude Code** makes the clock a harness peripheral
 (Cron*, ScheduleWakeup, /loop, remote /schedule); **Agent SDK** embedders host their own
 (nanoclaw `schedule_task`). Nobody puts the clock inside the machine.
@@ -723,11 +747,9 @@ Decisions:
   (dropped the umbrella per "each type = a distinct handling contract").
 - **`status` is a mutable field**, not events; delivery bookkeeping; render marks only
   `failed` — a pending mark buys nothing. Transient failures are retried by the sweeper
-  (§5) without a word to the agent; a **final failure surfaces via the `failed` mark** on
-  the message. A distinct **`escalation`** event (agent- or operator-actionable → think) is
-  **deferred** (§10) — `local` never fails to deliver, so it only earns its keep on the
-  wires (WhatsApp windows, blocked numbers, expired creds), likely folded into a general
-  **background-completion** signal.
+  (§5) without a word to the agent; a **final failure surfaces twice**: the `failed` mark
+  on the message, with the dispatcher's reason beside it, and an `undelivered` **report**
+  (§2, the clock) that wakes the session that sent it.
 
 ### Event-type table
 
@@ -1607,11 +1629,10 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   agent otherwise lacks, since every command runs in a fresh shell so bash job control
   (`jobs`/`fg`/`%1`) can't reach a job from a prior call. The `Job` keeps the *full* command
   (a UI/control-client shows it whole); the line clips it. This is the passive-visibility
-  half; the active half — a job-exit **event** published into the log to *wake* the agent
-  on completion (Claude Code's completion callback, done the liquen way: the log is the
-  continuation engine, so an exit event just pokes) — rides the §10 clock (pairs with the
-  reaping registry, §9). **Deployment-specific** (the env note): composed by the
-  exec plane, so on **Docker** it's the one persistent container env; on **Postgres+edge**
+  half; the active half is the job's **report** when it ends (§9, §10): an event published
+  into the log that *wakes* the agent (Claude Code's completion callback, done the liquen
+  way: the log is the continuation engine, so a report just pokes).
+  **Deployment-specific** (the env note): composed by the exec plane, so on **Docker** it's the one persistent container env; on **Postgres+edge**
   there is no persistent bash env (functions are remote and ephemeral, possibly several),
   so the ambient lines are absent — `ports.ambient` is simply unset there.
 - **Future (with compaction/memories):** split the docs cascade by volatility — stable
@@ -2147,25 +2168,24 @@ names the text it replaces, and text that is no longer there matches nothing.
     spawned it — the container-teardown guarantee, extended to the long-running org.
     Managed *visibility* has two halves. **Passive (shipped):** the ambient block lists each
     live job with a **pid kill-handle** + full command on the `Job` (§5) — enough to see and
-    kill what's running. **Active (an idea, designed with clock/background, §10): a push
-    notification on job death.** The exec plane can run a light **exit watcher** (~2s probe
-    over the registry — push from the agent's perspective; a poll underneath, since a
-    `cmd &` grandchild is not our child to await), complementary to the clock (which keeps
-    TTL reaping / boot recovery). Timing would sort the agent-kill noise: a mid-turn death
-    coalesces into that turn's closing think (reads as the obvious consequence of the kill);
-    only a **lone** death spawns a fresh turn. What carries the wake is settled (§10): an
-    `alarm`, whose text part names the job that ended — alarms inform, so the exit arrives
-    as information the owed-derivation counts, and nothing new has to be invented for it.
-    Exit *codes* are unknowable either way — the signal says
-    "gone"; the agent `tail`s the job's log for the outcome.
+    kill what's running. **Active: a report on job death** (`report.ts`, §10). main
+    probes every shell's registry every `JOB_PROBE_MS` (2s — push from the agent's
+    perspective; a poll underneath, since a `cmd &` grandchild is not our child to await):
+    a group with no member left moves out of the registry into the shell's `ended` list
+    (the ambient look settles the same way, so a death it sees first is still told), and
+    each one becomes a `job_ended` report in the session whose shell started it. A mid-turn
+    death (the agent's own `kill`) lands while the turn runs and is consumed by its next
+    step; a **lone** death wakes a fresh turn. Exit *codes* are unknowable — the signal
+    says "gone"; the agent `tail`s what the job wrote for the outcome. Shutdown's reap is
+    no news: what it kills is not told. A remote sandbox's shell reports nothing: its jobs
+    are seen only by a look that keeps the container awake.
     **The exit event generalizes to arbitrary conditions**: a watcher is just a background
     job whose death IS the signal — `(tail -f train.log | grep -qm1 DONE) &` or
     `(inotifywait -e close_write out/) &` exits when the condition fires → lone-death →
-    exit event → poke, and the registry's command string tells the agent *which* watch
-    fired. Condition-watching (Claude Code's Monitor tool) thus costs zero harness code —
-    a **skill** teaches the incantations; latency is tick-bounded, which is the accepted
-    v0.1 trade. (Claude Code's own model, for reference: completion pushes an injected
-    notification; progress is never pushed — the model pulls the output file; mid-run
+    report → wake, and the command the report quotes tells the agent *which* watch fired.
+    Condition-watching (Claude Code's Monitor tool) thus costs zero harness code — a
+    **skill** teaches the incantations; latency is the probe's. (Claude Code's own model,
+    for reference: completion pushes an injected notification; progress is never pushed — the model pulls the output file; mid-run
     conditions exist only via an explicitly armed, filtered watcher.)
     Kill-across-invocations / per-job output tools
     are a further v0.2 item only if long background work becomes common; the unix-native path
@@ -3247,22 +3267,6 @@ very busy channels — v0 wakes on everything) · departments (sub-orgs) · sand
 formalization (currently: silence = no send emitted) · timezones in digest · atomic RPC
 functions (flock gives cross-process append atomicity on files; formalize transactional RPCs
 on Postgres).
-
-**Non-blocking permission requests.** A pending gate currently freezes the agent on ALL
-fronts: while any use waits on the principal, `owed` yields nothing — so a gated
-peer-related send stalls unrelated conversations too. The fix belongs with background
-completion (below): let the gated use return *early* ("awaiting approval") so the chain
-closes and the agent keeps working; the `permission_response` later arrives as the same
-delayed, harness-delivered wake. Decide when background completion lands.
-
-**Background completion & `escalation`.** A long-running tool (or a send that can't deliver
-yet) returns *early* so the agent continues; the harness later writes a **system-authored
-event** that wakes it with the outcome — the **same shape as `alarm`**: a delayed,
-harness-delivered effect (scheduled by a `tool_use`, fired by the harness, so `system`-
-authored → wakes under the relational rule). v0.2 reintroduces **`escalation`** (final,
-actionable delivery failure) as one instance of this. v0 needs neither: `bash` backgrounding
-covers long tools (detach + `tail`, §9), and `local` always delivers. Likely one event type
-(`background`/`report`) with a kind, not a family — decide when the second instance lands.
 
 ## 11. Reference landscape (what we took from each)
 

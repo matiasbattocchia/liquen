@@ -1,17 +1,19 @@
 /**
  * tick.ts — the clock's statement (§2, §10): what one beat of the metronome owes the store.
  *
- * Three passes, each a read off the store and a write back into it, none of them needing
+ * Four passes, each a read off the store and a write back into it, none of them needing
  * anything a process remembers: due timers become `alarm` events, unanswered asks lapse,
- * transiently failed sends are re-offered. main runs them on its ticker; a host whose
- * clock is the database's (pg_cron) runs the same function. Every pass is safe to run
- * from more than one clock at once — a timer is won by `claim`, a card lapses once
- * because the settling verdict closes it, the sweep is one conditional UPDATE — so two
- * ticks overlapping cost a second scan, never a second alarm.
+ * transiently failed sends are re-offered, and sends that failed for good are reported to
+ * the session that sent them. main runs them on its ticker; a host whose clock is the
+ * database's (pg_cron) runs the same function. Every pass is safe to run from more than
+ * one clock at once — a timer is won by `claim`, a card lapses once because the settling
+ * verdict closes it, the sweep and the report's claim are each one conditional UPDATE — so
+ * two ticks overlapping cost a second scan, never a second alarm.
  */
 
 import type { Log } from "./store/log.ts";
 import type { AlarmEvent, Draft, PermissionResponseEvent } from "./types.ts";
+import { reportUndelivered } from "./report.ts";
 
 /** The two per-agent settings the clock reads: the zone a cron advances in, and how long
  *  its asks stand. `undefined` for an agent the clock does not know (a paused one, a row
@@ -26,18 +28,22 @@ export interface Beat {
   fired: number;
   lapsed: number;
   swept: number;
-  failed: { pass: "fire" | "lapse" | "sweep"; error: unknown }[];
+  reported: number;
+  failed: { pass: "fire" | "lapse" | "sweep" | "report"; error: unknown }[];
 }
 
-/** One beat: due wakes → alarms, unanswered asks → lapsed, failed sends → queued. The
- *  passes are independent — each is its own scan and its own writes — so one that fails
- *  is reported in the beat and the next still runs. */
+/** One beat: due wakes → alarms, unanswered asks → lapsed, failed sends → queued, sends
+ *  that failed for good → reports. The passes are independent — each is its own scan and
+ *  its own writes — so one that fails is reported in the beat and the next still runs. */
 export async function tick(
-  log: Pick<Log, "due" | "claim" | "settle" | "gates" | "publish" | "sweep">,
+  log: Pick<
+    Log,
+    "due" | "claim" | "settle" | "gates" | "publish" | "sweep" | "undelivered" | "read"
+  >,
   settings: ClockSettings,
   now: number = Date.now(),
 ): Promise<Beat> {
-  const beat: Beat = { fired: 0, lapsed: 0, swept: 0, failed: [] };
+  const beat: Beat = { fired: 0, lapsed: 0, swept: 0, reported: 0, failed: [] };
   const pass = async (name: Beat["failed"][number]["pass"], run: () => Promise<number>) => {
     try {
       return await run();
@@ -49,6 +55,8 @@ export async function tick(
   beat.fired = await pass("fire", () => fireDue(log, (id) => settings(id)?.timezone, now));
   beat.lapsed = await pass("lapse", () => lapseGates(log, (id) => settings(id)?.gateHours, now));
   beat.swept = await pass("sweep", () => log.sweep(new Date(now).toISOString()));
+  // after the sweep: a row it just re-offered is not failed, and one past the ceiling is
+  beat.reported = await pass("report", () => reportUndelivered(log, now));
   return beat;
 }
 

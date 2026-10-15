@@ -524,5 +524,27 @@ export function pgSweeper(
         )
       );
     },
+    undelivered(now) {
+      // no `updated_at`: the claim is the harness's bookkeeping, not a lifecycle move
+      return serial(async (tx) =>
+        (await rows<{ id: string }>(
+          tx,
+          `UPDATE events SET status = json_patch(status, jsonb_build_object('reported_at', $1::text))
+           WHERE type = 'message' AND agent_id IS NOT NULL
+             AND payload ->> 'turn_id' IS NOT NULL
+             AND NOT flag(extra, 'delta')
+             AND status ->> 'state' = 'failed'
+             AND status ->> 'reported_at' IS NULL
+             AND (external_id IS NOT NULL
+                  OR NOT CASE jsonb_typeof(status -> 'error_code')
+                           WHEN 'number' THEN (status ->> 'error_code')::numeric = 429
+                                           OR (status ->> 'error_code')::numeric >= 500
+                           ELSE coalesce(jsonb_typeof(status -> 'error_code'), 'null') = 'null' END
+                  OR coalesce((status ->> 'attempts')::integer, 0) >= ${RETRY_BACKOFF_MS.length})
+           RETURNING id`,
+          [now],
+        )).map((r) => r.id).sort()
+      );
+    },
   };
 }

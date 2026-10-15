@@ -5403,3 +5403,29 @@ are untouched: they name the deployment and the tenant, which is all the word me
 A live org renames its folder (`mv data/organization data/shared`) before the boot that
 brings the package in; the docs inside need no change, since the index reprints handles
 every turn. `~/new`, `~/vibes` and `~/turtle/sonar-agents/turtle` were moved with it.
+
+### Work that ends after its turn is reported to the session (2026-10-15) — LANDED
+
+Seen on `~/new`: the agent pressed a bank bot's button, the send tool answered `sent`, the
+agent told its principal "Apreté ¡Sigamos!" and ended its turn; a second later the bridge
+refused the press (422, WhatsApp's 479). The row went `failed`, which wakes nobody, so the
+agent's last word stood until the principal asked what happened. The same shape holds for a
+background job: the ambient block dropped a dead job without a word.
+
+A **report** (`src/report.ts`) is how such an end arrives: an `alarm` the harness writes into
+the session that did the work, `extra.report.kind` naming the end, `payload.ref_id` the row
+it is about; render shows `<system kind="report">` and the system instruction tells the agent
+to recover. Two kinds:
+
+- `undelivered` — the model's own send (`payload.turn_id`) failed for good: a permanent
+  class, a transient one past the ladder's last rung, or a failure the wire reported after
+  naming the message. `log.undelivered(now)` claims such rows once (`status.reported_at`, one
+  conditional UPDATE on SQLite and Postgres, suite-tested on both) and the clock's fourth
+  pass publishes their reports; main runs the same pass the moment the update stream shows
+  a row of the model's own go `failed`.
+- `job_ended` — main probes the local shells every 2s (`sandbox.ended()`); the ambient look
+  settles dead jobs into the same list, so either look tells a death once.
+
+Open: a transient failure is not told until the ladder ends (a day out), though the agent
+already said it was sent. The Cloudflare sandbox reports no job ends: its jobs are probed
+only by a look that keeps the container awake.

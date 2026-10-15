@@ -2040,6 +2040,32 @@ Deno.test("a fired wake renders as the harness handing back the agent's own note
   );
 });
 
+Deno.test("a report reads as the harness telling how the agent's own work ended", () => {
+  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
+  const report: Event = {
+    id: "e02",
+    ts: t(1),
+    type: "alarm",
+    payload: { ref_id: "e00" },
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: "mind@a1" },
+    },
+    extra: { report: { kind: "undelivered" } },
+    parts: [{ type: "text", kind: "alarm", text: "your message e00 was not delivered: 422" }],
+  } as Event;
+  const { messages } = render({
+    events: [mindMsg("e01", t(0), "hola", false), report],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t(2),
+  });
+  const line = blocksOf(messages).map(txt).find((s) => s.includes("was not delivered"));
+  assertStringIncludes(line!, '<system kind="report">your message e00 was not delivered');
+});
+
 /* ── the principal's channel: wrapped, steering hidden, never capped ───── */
 
 Deno.test("a principal's answer draws no block, and the run flows across it — one room, one element", () => {

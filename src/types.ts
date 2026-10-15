@@ -253,6 +253,8 @@ export interface Lifecycle {
   attempts?: number;
   error?: string;
   error_code?: number;
+  /** When the session that sent it was told it failed for good (report.ts). */
+  reported_at?: string;
 }
 
 // Naming rule (§3): `address` = a WIRE address (what the platform calls the thing);

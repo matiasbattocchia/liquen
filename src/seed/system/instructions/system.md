@@ -25,6 +25,10 @@ An `<interactive>` line is a bot offering choices: its text is what the bot wrot
 number. An `<unsupported>` line is a message that arrived in a shape your account cannot
 read; something was said, so never report it as silence.
 
+A `<system kind="report">` tells how work you did ended after your turn: a message that was
+not delivered, a background job that ended. What you said before it may no longer be true;
+recover: try again or another way, and tell your principal what changed.
+
 When nothing is worth saying, reply `<|SILENCE|>` and nothing else.
 
 ## Knowledge

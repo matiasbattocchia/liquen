@@ -11,7 +11,13 @@
  * with no exec plane has no proxy either, and a remote sandbox brings its own.
  */
 
-import { type ExecGround, type ExecPlane, installExecGround, shippedAt } from "./exec/bash.ts";
+import {
+  type ExecGround,
+  type ExecPlane,
+  installExecGround,
+  type Job,
+  shippedAt,
+} from "./exec/bash.ts";
 import { type Files, localFiles } from "./store/media.ts";
 import type { Store } from "./store/mod.ts";
 import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
@@ -46,6 +52,16 @@ export interface Sandbox {
   forAgent(agentId: string): SandboxAgent;
   /** Reap every shell's jobs and stop the proxy: nothing outlives the process. */
   close(): Promise<void>;
+  /** The background jobs that ended since the last ask, across every session's shell, each
+   *  answered once with whose it was (report.ts). */
+  ended(): EndedJob[];
+}
+
+/** A background job that ended, and the session whose shell started it. */
+export interface EndedJob {
+  agentId: string;
+  sessionId: string;
+  job: Job;
 }
 
 export interface LocalSandboxOptions {
@@ -96,7 +112,7 @@ export async function openLocalSandbox(
     });
     grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashTimeoutMs));
   }
-  const shells = new Map<string, ExecPlane>();
+  const shells = new Map<string, ExecPlane & { agentId: string; sessionId: string }>();
   const homeOf = (agentId: string) => `${dir}/agents/${agentId}`;
   const filesOf = (agentId: string, shell: ExecPlane): Files => {
     const home = homeOf(agentId);
@@ -115,7 +131,7 @@ export async function openLocalSandbox(
           const key = sessionAddress(agentId, sessionId);
           let shell = shells.get(key);
           if (!shell) {
-            shell = ground.shell();
+            shell = { ...ground.shell(), agentId, sessionId };
             shells.set(key, shell);
           }
           return { ...shell, home: homeOf(agentId), files: filesOf(agentId, shell) };
@@ -126,6 +142,11 @@ export async function openLocalSandbox(
       // each session's own jobs, reaped with its own shell (§9)
       for (const shell of shells.values()) await shell.reap();
       await proxy.close(); // stop the egress proxy and close its vault handle
+    },
+    ended() {
+      return [...shells.values()].flatMap((s) =>
+        (s.ended?.() ?? []).map((job) => ({ agentId: s.agentId, sessionId: s.sessionId, job }))
+      );
     },
   };
 }
@@ -223,6 +244,9 @@ export function openCloudflareSandbox(
     async close() {
       for (const shell of shells.values()) await shell.reap();
     },
+    // a remote job's end is seen only when the shell is asked for its ambient lines, a
+    // look that keeps the sandbox awake, so a watch here would hold it up forever
+    ended: () => [],
   };
 }
 
