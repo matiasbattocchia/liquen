@@ -11,6 +11,12 @@
  * pretty when it parses, wherever it stood in the page (hidden or not). Executable scripts,
  * styles, svg, form controls and anything the page hides from view are dropped.
  *
+ * The text reads content first, since `fetch` keeps a page's head and a reader stops early:
+ * a page's `<main>` before the rest of it, and its navigation (`<nav>`, a navigation role),
+ * which on a site can run to hundreds of lines of menus and filters, after everything else.
+ * Hidden means hidden by the markup or by the page's own `<style>`: a class every rule naming
+ * it hides, the way a listing site salts its text with decoys only a copier would see.
+ *
  * The parser is a forgiving tokenizer and a tree with HTML's common implied closes (a
  * `<li>`, `<td>` or `<p>` ended by what follows it), not a spec parser: it needs only the
  * reading order and the block boundaries right.
@@ -347,6 +353,16 @@ interface Page {
   data: string[];
   /** Preformatted blocks, set aside while the text around them is reflowed. */
   pre: string[];
+  /** The page's `<style>` text, read for the classes it hides. */
+  css: string[];
+  /** Classes the page's own CSS hides (`hiddenClasses`). */
+  hide: Set<string>;
+  /** Navigation, set aside to read after the content, in document order (`navsOf`). */
+  nav: Map<El, string>;
+  /** Read already, out of document order: the `<main>` read first. */
+  skip?: El;
+  /** Inside a navigation being set aside: one nested in it reads in place. */
+  inNav?: boolean;
 }
 
 /** Marks the text keeps out of the reflow: an indent, and a preformatted block's slot.
@@ -366,9 +382,90 @@ function resolve(href: string, base?: string): string {
   }
 }
 
-function hidden(attrs: Record<string, string>): boolean {
+function hidden(attrs: Record<string, string>, page: Page): boolean {
   return ("hidden" in attrs && attrs.hidden !== "until-found") ||
-    /display\s*:\s*none/i.test(attrs.style ?? "");
+    /display\s*:\s*none/i.test(attrs.style ?? "") ||
+    (page.hide.size > 0 && (attrs.class ?? "").split(/\s+/).some((c) => page.hide.has(c)));
+}
+
+interface Rule {
+  selector: string;
+  body: string;
+  /** Outside any at-rule: a rule under `@media` holds only for some readers. */
+  top: boolean;
+}
+
+/** The rules of a stylesheet, at-rule blocks opened and their rules marked as nested. */
+function cssRules(css: string, top = true): Rule[] {
+  const out: Rule[] = [];
+  let i = 0;
+  while (i < css.length) {
+    const open = css.indexOf("{", i);
+    const semi = css.indexOf(";", i);
+    if (open < 0) break;
+    if (semi >= 0 && semi < open && css.slice(i, semi).trim().startsWith("@")) {
+      i = semi + 1; // a statement at-rule: `@import …;`
+      continue;
+    }
+    let depth = 1;
+    let j = open + 1;
+    for (; j < css.length && depth > 0; j++) {
+      if (css[j] === "{") depth++;
+      else if (css[j] === "}") depth--;
+    }
+    const selector = css.slice(i, open).trim();
+    const body = css.slice(open + 1, j - 1);
+    if (selector.startsWith("@")) out.push(...cssRules(body, false));
+    else out.push({ selector, body, top });
+    i = j;
+  }
+  return out;
+}
+
+const BARE_CLASS = /^\.(-?[_a-zA-Z][\w-]*)$/;
+const CLASS = /\.(-?[_a-zA-Z][\w-]*)/g;
+const DISPLAY_NONE = /(?:^|[;{\s])display\s*:\s*none\s*(?:!important\s*)?(?:;|$)/i;
+
+/** The classes a page's CSS hides outright: named by a top-level rule of bare class
+ *  selectors that sets `display: none`, and by no other rule, so a class a tab or a media
+ *  query shows again (`.pane.active`, `@media … .pane`) still reads. */
+export function hiddenClasses(css: string): Set<string> {
+  const hide = new Set<string>();
+  const shown = new Set<string>();
+  for (const r of cssRules(css.replace(/\/\*[\s\S]*?\*\//g, ""))) {
+    const names = r.selector.split(",").map((s) => BARE_CLASS.exec(s.trim())?.[1]);
+    if (r.top && !r.body.includes("{") && DISPLAY_NONE.test(r.body) && names.every(Boolean)) {
+      for (const n of names) hide.add(n!);
+    } else {
+      for (const m of r.selector.matchAll(CLASS)) shown.add(m[1]);
+    }
+  }
+  for (const n of shown) hide.delete(n);
+  return hide;
+}
+
+const isNav = (n: El) => n.tag === "nav" || n.attrs.role === "navigation";
+const isMain = (n: El) => n.tag === "main" || n.attrs.role === "main";
+
+/** The outermost navigation elements, in document order. */
+function navsOf(nodes: Node[], out: El[] = []): El[] {
+  for (const n of nodes) {
+    if (!isEl(n)) continue;
+    if (isNav(n)) out.push(n);
+    else navsOf(n.kids, out);
+  }
+  return out;
+}
+
+/** The page's first visible `<main>`, outside any navigation. */
+function mainOf(nodes: Node[], page: Page): El | undefined {
+  for (const n of nodes) {
+    if (!isEl(n) || DROP.has(n.tag) || hidden(n.attrs, page) || isNav(n)) continue;
+    if (isMain(n)) return n;
+    const inner = mainOf(n.kids, page);
+    if (inner) return inner;
+  }
+  return undefined;
 }
 
 /** The text under a node as written: whitespace kept, `<br>` a newline. */
@@ -400,6 +497,10 @@ function survey(nodes: Node[], page: Page, inSvg = false): void {
       if (data) page.data.push(data);
       continue;
     }
+    if (tag === "style") {
+      if (typeof n.kids[0] === "string") page.css.push(n.kids[0]);
+      continue;
+    }
     if (tag === "title" && !inSvg) page.title ||= flat(textOf(n));
     if (tag === "meta" && /^(og:)?description$/i.test(attrs.name ?? attrs.property ?? "")) {
       page.description ||= attrs.content?.trim();
@@ -416,7 +517,14 @@ function walk(nodes: Node[], page: Page): string {
 function one(n: Node, page: Page): string {
   if (!isEl(n)) return n.replaceAll(INDENT, "").replaceAll(SLOT, "").replace(/\s+/g, " ");
   const { tag, attrs, kids } = n;
-  if (DROP.has(tag) || hidden(attrs)) return "";
+  if (DROP.has(tag) || n === page.skip || hidden(attrs, page)) return "";
+  if (isNav(n)) {
+    if (page.inNav) return block(walk(kids, page));
+    page.inNav = true;
+    page.nav.set(n, walk(kids, page));
+    page.inNav = false;
+    return "";
+  }
   switch (tag) {
     case "br":
       return "\n";
@@ -538,11 +646,19 @@ function tidy(s: string, page: Page): string {
 }
 
 /** The page as text: `# title` and its description, the body as light markdown with links
- *  absolute against `base`, then each data script. */
+ *  absolute against `base` (its `<main>` first), its navigation, then each data script. */
 export function htmlToText(html: string, base?: string): string {
   const root = parse(html);
-  const page: Page = { base, data: [], pre: [] };
+  const page: Page = { base, data: [], pre: [], css: [], hide: new Set(), nav: new Map() };
   survey(root.kids, page);
+  if (page.css.length) page.hide = hiddenClasses(page.css.join("\n"));
   const head = [page.title && `# ${page.title}`, page.description].filter(Boolean).join("\n\n");
-  return [head, tidy(walk(root.kids, page), page), ...page.data].filter(Boolean).join("\n\n");
+  const main = mainOf(root.kids, page);
+  const first = main ? walk([main], page) : "";
+  page.skip = main;
+  const body = tidy(first + walk(root.kids, page), page);
+  const navs = navsOf(root.kids).map((n) => page.nav.get(n) ?? "");
+  const nav = tidy(navs.map(block).join(""), page);
+  return [head, body, nav && `[the page's navigation]\n\n${nav}`, ...page.data]
+    .filter(Boolean).join("\n\n");
 }

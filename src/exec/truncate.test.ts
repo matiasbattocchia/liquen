@@ -38,6 +38,14 @@ Deno.test("tail: a single oversized line yields its tail, char-safe", () => {
   assert(t.truncated);
   assert(t.text.length <= 50);
   assert(t.text.length > 0);
+  assertEquals(t.clippedLineBytes, 200);
+});
+
+Deno.test("tail: an oversized last line says it was clipped; whole lines say nothing", () => {
+  const t = truncateTail(`first\n${"y".repeat(300)}`, { maxLines: 10, maxBytes: 100 });
+  assertEquals([t.startLine, t.totalLines, t.clippedLineBytes], [2, 2, 300]);
+  const whole = truncateTail(numbered(10), { maxLines: 3, maxBytes: 1000 });
+  assertEquals(whole.clippedLineBytes, undefined);
 });
 
 Deno.test("trailing newline does not count as an extra line", () => {

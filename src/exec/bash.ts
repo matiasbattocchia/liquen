@@ -23,6 +23,8 @@ import { DEFAULT_BASH_TIMEOUT_MS } from "../config.ts";
 import { USAGE } from "../bin/usage.ts";
 import type { ToolShape } from "../tooldoc.ts";
 
+const kb = (n: number) => n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} kB`;
+
 /** A background job the agent left running: its process group + a hint of what it is. */
 export interface Job {
   pgid: number; // == the setsid child's pid. The leader is often gone by the time the job
@@ -207,8 +209,12 @@ export async function settle(
   let text = t.text || "(no output)";
   if (t.truncated) {
     const path = await spill(output);
-    text +=
-      `\n\n[showing lines ${t.startLine}-${t.totalLines} of ${t.totalLines} — full output: ${path}]`;
+    const shown = t.clippedLineBytes === undefined
+      ? `showing lines ${t.startLine}-${t.totalLines} of ${t.totalLines}`
+      : `showing only the end of line ${t.startLine} of ${t.totalLines}: its last ${
+        kb(new TextEncoder().encode(t.text).length)
+      } of ${kb(t.clippedLineBytes)}`;
+    text += `\n\n[${shown} — full output: ${path}]`;
   }
 
   if (end.aborted) throw new Error(`${text}\n\nCommand aborted`);

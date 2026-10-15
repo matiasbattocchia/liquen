@@ -175,6 +175,15 @@ Deno.test("turnsOf: a wake opens by its handle; a cut ends the turn; a failed fi
   assertEquals(turns[1].steps, []);
 });
 
+Deno.test("turnsOf: a principal's line the mirror copied in from a surface opens a turn, named by it", () => {
+  const copy: Event = {
+    ...said("abrí la ficha", "Matías"),
+    extra: { via: { event: "wa-1", service: "whatsapp", conversation: "5491100000000" } },
+  } as Event;
+  const turns = turnsOf([copy, ...step("m1", copy.id, { text: "listo" })], REF);
+  assertEquals(openedBy(turns[0].opener), 'message from Matías via whatsapp "abrí la ficha"');
+});
+
 Deno.test("turnsOf: an error mid-act is not the end when a step follows; a trailing one is", () => {
   const hi = said("hacé");
   const s1 = step("e1", hi.id, { calls: ["x"], stop: "tool_use" });

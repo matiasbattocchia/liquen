@@ -16,6 +16,8 @@ export interface Truncation {
   shownLines: number;
   /** 1-indexed line number of the first shown line (tail truncation moves it up). */
   startLine: number;
+  /** Set when the one shown line is only its own tail: that line's whole size, in bytes. */
+  clippedLineBytes?: number;
 }
 
 export interface Limits {
@@ -94,6 +96,7 @@ export function truncateTail(content: string, limits: Limits = {}): Truncation {
   }
   const out: string[] = [];
   let size = 0;
+  let clippedLineBytes: number | undefined;
   for (let i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
     const cost = bytes(lines[i]) + (out.length > 0 ? 1 : 0);
     if (size + cost > maxBytes) {
@@ -102,6 +105,7 @@ export function truncateTail(content: string, limits: Limits = {}): Truncation {
         let tail = lines[i];
         while (bytes(tail) > maxBytes) tail = clipStart(tail, Math.ceil(tail.length / 8));
         out.unshift(tail);
+        clippedLineBytes = cost;
       }
       break;
     }
@@ -114,5 +118,6 @@ export function truncateTail(content: string, limits: Limits = {}): Truncation {
     totalLines: lines.length,
     shownLines: out.length,
     startLine: lines.length - out.length + 1,
+    ...(clippedLineBytes !== undefined ? { clippedLineBytes } : {}),
   };
 }

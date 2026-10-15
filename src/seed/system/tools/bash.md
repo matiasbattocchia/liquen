@@ -32,13 +32,19 @@ their habitual counterparts; reach for them first.
   text is missing or matches twice fails and says which, where sed changes nothing or too much
   in silence; the file is locked for the edit and replaced atomically.
 - fetch, over curl/wget: a status outside 2xx fails the call, where curl -s exits 0 on a 404;
-  JSON prints pretty; an HTML page reads as text with absolute links, followed by the JSON
-  data scripts it carries (no script runs, so on a client-rendered page those are often the
-  content); the body is head-truncated like aread (-o saves it whole, as served; -o - writes
-  it whole to stdout for a program: fetch -o - URL | jq …); an API's credential is the $VAR
-  the environment holds, sent as a header (-H "Authorization: Bearer $VAR").
+  JSON prints pretty; an HTML page reads as text with absolute links, its main content first
+  and its navigation after, followed by the JSON data scripts it carries (no script runs, so
+  on a client-rendered page those are often the content); the body is head-truncated like
+  aread (-o saves it whole, as served; -o - writes it whole to stdout for a program: fetch -o
+  - URL | jq …); an API's credential is the $VAR the environment holds, sent as a header
+  (-H "Authorization: Bearer $VAR"). To grep a page, grep its text (fetch URL 5000 500000 |
+  grep -n -C3 …): served HTML often packs the page onto a few huge lines, so a grep of
+  fetch -o - prints whole minified blobs, and a match without its neighbor line (a label
+  without its value) misleads.
 
-rg and fd are available for search when installed.
+rg and fd may be missing from this machine's PATH: a missing program is a "command not found"
+on stderr, so a search that hides stderr (2>/dev/null) and finds nothing proves nothing. Check
+with command -v rg first, or search with grep -rn and find, which are always there.
 
 - command: bash command to execute
 - timeout: seconds (optional; default {{timeout}})

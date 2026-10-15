@@ -82,6 +82,39 @@ Deno.test("htmlToText: code, styles, svg and hidden elements are dropped; noscri
   assertEquals(out, "Shown on.\n\nfindable\n\nYou need to enable JavaScript to run this app.");
 });
 
+Deno.test("htmlToText: the main content reads first, navigation after everything else", () => {
+  const out = htmlToText(
+    `<body><header><nav><a href="/a">Menu A</a></nav>Site</header>
+    <aside>Related</aside>
+    <main><nav aria-label="breadcrumb">Home › Here</nav><h1>Story</h1><p>Body.</p></main>
+    <footer>Footer</footer></body>`,
+    BASE,
+  );
+  assertEquals(
+    out,
+    "# Story\n\nBody.\n\nSite\n\nRelated\n\nFooter\n\n[the page's navigation]\n\n" +
+      "[Menu A](https://example.com/a)\n\nHome › Here",
+  );
+  // without a main, the page reads in order with its navigation set after it
+  assertEquals(
+    htmlToText(`<nav><ul><li>One<li>Two</ul><nav>Inner</nav></nav><p>Listing: US$ 65.000</p>`),
+    "Listing: US$ 65.000\n\n[the page's navigation]\n\n- One\n- Two\n\nInner",
+  );
+});
+
+Deno.test("htmlToText: a class the page's own CSS hides outright is hidden", () => {
+  const out = htmlToText(
+    `<head><style>
+      .Xq1 { display: none; } .Zz9, .Yy8 { display:none !important }
+      .pane { display: none } .pane.active { display: block }
+      @media (max-width: 600px) { .wide { display: none } }
+    </style></head>
+    <body><p>Pro<span class="Xq1">COPIADO DE SITE</span>pie<span class="Yy8">x</span>dad</p>
+    <div class="pane active">Tab one</div><div class="wide">Wide</div></body>`,
+  );
+  assertEquals(out, "Propiedad\n\nTab one\n\nWide");
+});
+
 Deno.test("htmlToText: data scripts follow the text, pretty, under their opening tag", () => {
   const out = htmlToText(
     `<head><title>App</title>

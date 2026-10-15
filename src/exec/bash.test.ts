@@ -1,4 +1,10 @@
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { bashTool, installExecGround, type Job, shippedAt } from "./bash.ts";
 import type { ExecFacts } from "../xi.ts";
 
@@ -294,6 +300,15 @@ Deno.test("bash: the model can override the truncation limits", async () => {
     assertStringIncludes(narrow, "100");
     assert(!narrow.includes("\n90\n"));
     assertStringIncludes(narrow, "showing lines 96-100 of 100");
+    // one line past the byte cap: the footer says only its end is shown
+    const long = String(
+      await bash.execute(
+        { command: "echo head; printf 'x%.0s' $(seq 1 3000)", max_bytes: 1000 },
+        live(),
+      ),
+    );
+    assertMatch(long, /\[showing only the end of line 2 of 2: its last \d+ B of 2\.9 kB — full/);
+    assert(!long.includes("head"));
     // wider than the default: 3000 lines fit when asked for
     const wide = String(
       await bash.execute({ command: "seq 1 3000", max_lines: 5000, max_bytes: 500_000 }, live()),

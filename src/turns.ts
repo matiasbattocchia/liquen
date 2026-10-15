@@ -39,6 +39,8 @@ export interface Opener {
   ts?: string;
   /** Who said it: a message's or a verdict's sender. */
   who?: string;
+  /** The surface a principal's line came in through, for a mirror's copy of it. */
+  via?: string;
   /** A wake's handle (`liquen schedule --name`). */
   name?: string;
   /** What it said: a message's words, an alarm's note, a call's tool. */
@@ -89,9 +91,17 @@ export function openerOf(e: Event, ref: SessionRef): Opener | undefined {
   }
   switch (e.type) {
     case "message": {
-      if (ownVoice(e, ref) || e.extra?.via !== undefined) return undefined;
+      // a mirror's copy of a principal's line (`extra.via`) is input, like a REPL line
+      if (ownVoice(e, ref)) return undefined;
       const who = e.envelope.sender?.name ?? e.envelope.sender?.address;
-      return { kind: "message", ...at, ...(who ? { who } : {}), text: textOf(e) };
+      const via = (e.extra?.via as { service?: string } | undefined)?.service;
+      return {
+        kind: "message",
+        ...at,
+        ...(who ? { who } : {}),
+        ...(via ? { via } : {}),
+        text: textOf(e),
+      };
     }
     case "alarm": {
       const timer = (e.extra?.timer ?? {}) as { name?: string };
@@ -384,7 +394,9 @@ export function openedBy(o: Opener): string {
   };
   switch (o.kind) {
     case "message":
-      return `message${o.who ? ` from ${o.who}` : ""}${quote(o.text)}`;
+      return `message${o.who ? ` from ${o.who}` : ""}${o.via ? ` via ${o.via}` : ""}${
+        quote(o.text)
+      }`;
     case "wake":
       return `wake ${o.name}`;
     case "alarm":
