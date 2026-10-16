@@ -7,9 +7,11 @@ a cd lasts its call, and so does shell/env state (exported vars, activated venvs
 those. stdout+stderr merged; output truncated to the last {{max_lines}} lines / {{max_kb}}KB
 (override with max_lines/max_bytes when you deliberately need more or less); when truncated,
 the full output is saved to a file the footer names (page it with aread). Default timeout
-{{timeout}}s; run long work in the background (cmd > out.log 2>&1 &) and poll with tail. What
-you left running is listed under now: by its live process: kill <pid> stops it, kill -- -<group>
-all of its group. The call runs as bash -c with your text, so a pkill -f on words from your
+{{timeout}}s; run long work in the background, with its exit status as its last line:
+{ cmd; echo "exit $?"; } > out.log 2>&1 &. You are told when it ends, but not how: the
+harness cannot see a background job's status, so without that line a crash and a success
+look alike; tail out.log then. What you left running is listed under now: by its live
+process: kill <pid> stops it, kill -- -<group> all of its group. The call runs as bash -c with your text, so a pkill -f on words from your
 own command kills the shell running it.
 
 Prefer fat commands: chain independent steps with && or ; in ONE call, and emit multiple bash
