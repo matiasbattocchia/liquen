@@ -10,6 +10,7 @@ import {
   specsOf,
   UNANSWERED_ROOMS,
   unansweredOn,
+  unknownTool,
   type Wake,
   type XiPorts,
 } from "./xi.ts";
@@ -798,6 +799,31 @@ Deno.test("specsOf: `tools` names what the model sees — unset offers everythin
   const send = specsOf(ports, { ...CONFIG, tools: undefined })
     .find((t) => t.spec.name === "send")!;
   assert("connection" in (send.spec.input_schema.properties as Record<string, unknown>));
+});
+
+Deno.test("unknownTool: a program on PATH called as a tool is pointed through bash, with its usage", async () => {
+  const bash = { spec: { name: "bash", description: "", input_schema: { type: "object" } } };
+  const bins = () =>
+    Promise.resolve([
+      { dir: "/o/system/bin", programs: [{ name: "aread", usage: "aread <path>" }] },
+      { dir: "/o/shared/bin", programs: [{ name: "gws" }] },
+    ]);
+  const ports = { exec: { bash }, bins } as unknown as XiPorts;
+  assertEquals(
+    await unknownTool("aread", CONFIG, ports),
+    "unknown tool: aread is a program on your PATH, not a tool; run it through bash: aread <path>",
+  );
+  assertEquals(
+    await unknownTool("gws", CONFIG, ports),
+    "unknown tool: gws is a program on your PATH, not a tool; run it through bash: gws",
+  );
+  assertEquals(await unknownTool("grep", CONFIG, ports), "unknown tool: grep");
+  // where bash is not offered, there is no door to name
+  assertEquals(await unknownTool("aread", { tools: ["search"] }, ports), "unknown tool: aread");
+  assertEquals(
+    await unknownTool("aread", CONFIG, { bins } as unknown as XiPorts),
+    "unknown tool: aread",
+  );
 });
 
 Deno.test("anchored: a late-stamped row inside the window is kept — position sets the floor", () => {

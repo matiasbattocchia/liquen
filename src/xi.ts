@@ -3054,8 +3054,27 @@ async function execute(
     );
   }
   const tool = ports.exec?.[name];
-  if (!tool) throw new Error(`unknown tool: ${name}`);
+  if (!tool) throw new Error(await unknownTool(name, config, ports));
   return await tool.execute(input, signal, report);
+}
+
+/** What a call to a name no tool answers says. The prefix lists the PATH's programs beside
+ *  the tools, and a model reaches for one as a tool of its own: where bash is offered, the
+ *  error names the door the program is behind, with its usage. */
+export async function unknownTool(
+  name: string,
+  config: Pick<AgentConfig, "tools">,
+  ports: Pick<XiPorts, "exec" | "bins">,
+): Promise<string> {
+  const bashOffered = ports.exec?.bash && (!config.tools || config.tools.includes("bash"));
+  const program = bashOffered
+    ? (await ports.bins?.() ?? []).flatMap((b) => b.programs).find((p) => p.name === name)
+    : undefined;
+  return program
+    ? `unknown tool: ${name} is a program on your PATH, not a tool; run it through bash: ${
+      program.usage ?? name
+    }`
+    : `unknown tool: ${name}`;
 }
 
 /** The actions a send may name (§3 `Action`, §5 the rendered vocabulary). `create` and
