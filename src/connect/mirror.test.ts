@@ -755,7 +755,7 @@ Deno.test("mirror fan-out: a settlement's row — a verdict, a lapse, a withdraw
     await publish({
       ts: new Date().toISOString(),
       type: "tool_result",
-      payload: { ref_id: card.payload!.ref_id!, turn_id: "t1", deferred: true },
+      payload: { ref_id: card.payload!.ref_id!, turn_id: "t1", gated: true },
       agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
@@ -857,14 +857,14 @@ Deno.test("mirror fan-out: a wake and a failure cross as `[system]`; a checkpoin
       await harness(
         "tool_result",
         [{ type: "data", kind: "tool_result", text: "send(to: Roxi)", data: { output: "sent" } }],
-        { ref_id: "u3", turn_id: "t2", deferred: true },
+        { ref_id: "u3", turn_id: "t2", gated: true },
       ); // …an approved one included: the card asked for it, the `/y` gave it
       await harness("tool_result", [{
         type: "data",
         kind: "tool_result",
         text: "send(to: Vivian)",
         data: { output: "the bridge is down", is_error: true },
-      }], { ref_id: "u4", turn_id: "t2", deferred: true });
+      }], { ref_id: "u4", turn_id: "t2", gated: true });
       await waitFor(async () => (await inConv("549")).length === 3);
       assertEquals((await inConv("549")).map(textOf), [
         "`[sistema]` ⏰ recordarle a Mecha el mail",

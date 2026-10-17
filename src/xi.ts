@@ -543,7 +543,7 @@ export function owedOf(events: Event[], session: Session): Owed[] {
   const answered = new Set<EventId | undefined>();
   for (const e of events) {
     if (e.type !== "tool_result") continue;
-    (e.payload.deferred ? reported : answered).add(e.payload.ref_id);
+    (e.payload.gated ? reported : answered).add(e.payload.ref_id);
   }
   const out: Owed[] = [];
   const seen = new Set<EventId>();
@@ -1421,7 +1421,7 @@ async function act(
       payload: {
         turn_id: use.payload.turn_id,
         ref_id: use.id,
-        ...(call !== undefined ? { deferred: true as const } : {}),
+        ...(call !== undefined ? { gated: true as const } : {}),
       },
       agent: self,
       envelope: here,

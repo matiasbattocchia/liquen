@@ -479,10 +479,10 @@ export function pgGates(db: Db, eventOf: (row: unknown) => Event): Gates {
              AND u.type = 'tool_use' AND u.agent_id = $1::text AND u.session_id = $2::text
              AND EXISTS (
                SELECT 1 FROM events t WHERE t.type = 'tool_result'
-                 AND t.payload ->> 'ref_id' = u.id AND NOT flag(t.payload, 'deferred'))
+                 AND t.payload ->> 'ref_id' = u.id AND NOT flag(t.payload, 'gated'))
              AND NOT EXISTS (
                SELECT 1 FROM events t WHERE t.type = 'tool_result'
-                 AND t.payload ->> 'ref_id' = u.id AND flag(t.payload, 'deferred'))
+                 AND t.payload ->> 'ref_id' = u.id AND flag(t.payload, 'gated'))
            ORDER BY a.id`,
           [agentId, sessionId],
         ),

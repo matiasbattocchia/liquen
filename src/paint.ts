@@ -223,12 +223,12 @@ export function painter(s: Surface): Painter {
         // cut one stopped because the principal's `/cancel` said so. A watcher reads every
         // outcome: what the call printed is the work it is watching
         const { is_error, refused, cancelled } = e.parts[0].data;
-        if (s.watch && !e.payload.deferred) {
+        if (s.watch && !e.payload.gated) {
           s.write(`${outcomeRow(e)}\n`);
           return;
         }
         if (!is_error || refused || cancelled) return;
-        if (e.payload.deferred) {
+        if (e.payload.gated) {
           // an approved call's failure lands long after its row scrolled by: a block of its
           // own, naming the call
           settle();
@@ -378,13 +378,13 @@ export function painter(s: Surface): Painter {
           // a failure, as live: a deferred one answers a call from another turn and stands
           // alone; an ordinary one belongs to the call right above it
           const { is_error, refused, cancelled } = e.parts[0].data;
-          if (s.watch && !e.payload.deferred) {
+          if (s.watch && !e.payload.gated) {
             row();
             put(outcomeRow(e));
             return;
           }
           if (!is_error || refused || cancelled) return;
-          if (e.payload.deferred) {
+          if (e.payload.gated) {
             gap();
             put(`${RED}${deferredFailure(e)}${RESET}`);
             return;

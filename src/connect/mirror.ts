@@ -474,7 +474,7 @@ async function ccParts(
     // `/cancel` that cut one.
     const { is_error, refused, cancelled } = e.parts[0].data;
     if (!is_error || refused || cancelled) return null;
-    const said = e.payload.deferred ? failedCallOf(e) : failureOf(e);
+    const said = e.payload.gated ? failedCallOf(e) : failureOf(e);
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${said}` }]);
   }
   if (e.type === "alarm") {

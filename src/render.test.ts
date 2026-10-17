@@ -563,7 +563,7 @@ Deno.test("a deferred outcome is narrated, never welded — its tool_use is spen
   const asked = toolResultE("r1", t, "T1", { status: "pending_approval" }, "u1");
   const outcome: ToolResultEvent = {
     ...toolResultE("r2", t, "T1", { sent: true }, "u1"),
-    payload: { turn_id: "T1", ref_id: "u1", deferred: true },
+    payload: { turn_id: "T1", ref_id: "u1", gated: true },
     parts: [{
       type: "data",
       kind: "tool_result",

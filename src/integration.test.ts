@@ -1795,7 +1795,7 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
       );
       // the outcome comes back as a DEFERRED result — the record of what ran, narrated by
       // the harness because the tool_use it answers is long spent (§5)
-      const outcome = (await read("tool_result")).find((e) => e.payload?.deferred);
+      const outcome = (await read("tool_result")).find((e) => e.payload?.gated);
       assert(outcome?.type === "tool_result");
       assertEquals(outcome.payload.ref_id, req.payload.ref_id);
       assertEquals(outcome.parts[0].text, "send(to: wa:x, connection: wa, text: hi)");
@@ -1820,8 +1820,8 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
       assert(req.type === "permission_request");
 
       await publish(respond(req.payload.ref_id, "deny"));
-      await waitFor(async () => (await read("tool_result")).some((e) => e.payload?.deferred));
-      const res = (await read("tool_result")).find((e) => e.payload?.deferred);
+      await waitFor(async () => (await read("tool_result")).some((e) => e.payload?.gated));
+      const res = (await read("tool_result")).find((e) => e.payload?.gated);
       assert(res?.type === "tool_result");
       assertEquals(res.parts[0].data.is_error, true);
       assertEquals(String(res.parts[0].data.output).includes("not now"), true);
@@ -2822,8 +2822,8 @@ Deno.test("a principal's answer settles the gate: /y runs the call, /n refuses i
       await publish(says("mandale"));
       await waitFor(async () => (await read("permission_request")).length === 1);
       await answering({ read, publishAll }, { line: "/n muy formal, reescribilo" });
-      await waitFor(async () => (await read("tool_result")).some((e) => e.payload?.deferred));
-      const res = (await read("tool_result")).find((e) => e.payload?.deferred);
+      await waitFor(async () => (await read("tool_result")).some((e) => e.payload?.gated));
+      const res = (await read("tool_result")).find((e) => e.payload?.gated);
       assert(res?.type === "tool_result");
       assertEquals(res.parts[0].data.is_error, true);
       assertStringIncludes(String(res.parts[0].data.output), "muy formal, reescribilo");
@@ -3104,7 +3104,7 @@ Deno.test("cancel: the agent withdraws one of two asks — and a bare /y settles
     await xi(config, ports); // the closing turn — the cancel's own result is the record…
     // …so no errand ever follows it, and the withdrawn call never runs
     assertEquals(
-      (await log.read({ types: ["tool_result"] })).filter((e) => e.payload?.deferred),
+      (await log.read({ types: ["tool_result"] })).filter((e) => e.payload?.gated),
       [],
     );
     const to = async (addr: string) =>
@@ -3119,7 +3119,7 @@ Deno.test("cancel: the agent withdraws one of two asks — and a bare /y settles
     }, { line: "/y" });
     await xi(config, ports); // verdict lands and the errand runs, one invocation
     assertEquals((await to("wa:y")).length, 1);
-    const outcome = (await log.read({ types: ["tool_result"] })).find((e) => e.payload?.deferred);
+    const outcome = (await log.read({ types: ["tool_result"] })).find((e) => e.payload?.gated);
     assert(outcome?.type === "tool_result");
     assertEquals(outcome.payload.ref_id, b.payload!.ref_id);
   } finally {

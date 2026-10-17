@@ -800,7 +800,7 @@ function renderMessages(
   // `pending_approval`, so the pair is spent — a second `tool_result` block against the same
   // id is not a thing the API has. It renders as harness narration instead.
   const resultRefs = new Set(
-    trailing.filter((e): e is ToolResultEvent => e.type === "tool_result" && !e.payload.deferred)
+    trailing.filter((e): e is ToolResultEvent => e.type === "tool_result" && !e.payload.gated)
       .map((r) => r.payload.ref_id),
   );
   const welded = new Set([...usePresent].filter((id) => resultRefs.has(id)));
@@ -906,7 +906,7 @@ function renderMessages(
     } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
       place("assistant", thinkingBlock(e));
     } else if (e.type === "tool_use" && welded.has(e.id)) place("assistant", toolUseBlock(e));
-    else if (e.type === "tool_result" && e.payload.deferred) {
+    else if (e.type === "tool_result" && e.payload.gated) {
       // the second half of a non-blocking gate (§9): the principal ruled, the harness ran
       // the call for us, and this is it reporting back — in its own voice, because the
       // tool_use it answers is spent. Narration, so it can stand alone in any position.

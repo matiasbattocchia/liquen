@@ -52,10 +52,10 @@ export function gatesSuite(s: Substrate): void {
       data: { tool: "send", call: "send(to: x)", detail: "send(to: x, text: hi)" },
     }],
   });
-  const result = (ref: string, deferred = false): Draft<ToolResultEvent> => ({
+  const result = (ref: string, gated = false): Draft<ToolResultEvent> => ({
     ts: ts(),
     type: "tool_result",
-    payload: { turn_id: "t1", ref_id: ref as Event["id"], ...(deferred ? { deferred: true } : {}) },
+    payload: { turn_id: "t1", ref_id: ref as Event["id"], ...(gated ? { gated: true } : {}) },
     agent: ana,
     envelope: here,
     parts: [{ type: "data", kind: "tool_result", data: { output: "pending" } }],
@@ -144,7 +144,7 @@ export function gatesSuite(s: Substrate): void {
       // a second ruling on the same use is not stored: one errand per use, the first word
       assertEquals(await log.publish(rule(u1!.id)), null);
       assertEquals((await owed()).length, 1);
-      // the deferred report closes it
+      // the gated outcome closes it
       await log.publish(result(u1!.id, true));
       assertEquals(await owed(), []);
       // the model's own withdrawal (turn-marked) is never the errand

@@ -678,11 +678,11 @@ absence IS the "never confirmed" signal echo-dedup and the mirror's absorb guard
 message:  + parts: Part[]      // text | data | file, each with kind (open-bsp / A2A / MCP)
 tool_use: + parts(data: {name, input}) + payload{turn_id}   // implicitly internal
 thinking: + parts(data: {thinking, signature}) + payload{turn_id}  // replayed in-cycle, dropped after
-tool_result: + parts(data: {output, is_error?, cancelled?}) + payload{turn_id, ref_id, deferred?}
+tool_result: + parts(data: {output, is_error?, cancelled?}) + payload{turn_id, ref_id, gated?}
           // + extra.exec on an exec tool's run: {exit_code?, duration_ms, bytes} — the
           // shell's status, the wall time, the size of all it printed; the operator's, never
           // rendered
-          // deferred = a gated call approved LATER: narration, never a block (§9)
+          // gated = the outcome of a call the principal approved LATER: narration, never a block (§9)
 permission_request:  + parts(data: {tool, call, detail}) + payload{ref_id→tool_use}
 permission_response: + parts(data: {behavior, scope, reason?}, text?) + payload{ref_id→tool_use}
           // text = the principal's line that gave it, on the first row of what it settled
@@ -760,7 +760,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
 | `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`), signed | `<system kind="control">`, where it stands — never the word as typed | **interrupts** the running turn (§2), never a wake; standing, it closes the turn — `decide` idles until news (`cutStands`) | parts(text: the word) · payload{control: cancel} |
 | `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
-| `tool_result` | nu · xi (a deferred outcome) | **user** *(live only)*; `deferred` ⇒ `<system kind="tool_result">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, deferred?} |
+| `tool_result` | nu · xi (a gated outcome) | **user** *(live only)*; `gated` ⇒ `<system kind="tool_result">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, gated?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
@@ -817,7 +817,7 @@ and a principal's `/y` to a card is read where it enters the mind, below.
   produced two more cards), which is why the gate used to have to mute everything.
   - **The verdict is a second, later call.** When it lands, xi runs the tool on the model's
     behalf. That outcome cannot be a `tool_result` block — its pair is spent — so it is a
-    `tool_result` EVENT marked `payload.deferred`, which render narrates in the harness's
+    `tool_result` EVENT marked `payload.gated`, which render narrates in the harness's
     voice (`<system kind="tool_result">send(to: Vivian) → sent</system>`). The principal's
     surfaces draw it only when the call failed (`✗ send(to: Vivian) — <the tool's words>`):
     the card asked for the call and their `/y` gave it. It collapses with the rest of the

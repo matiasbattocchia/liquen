@@ -484,7 +484,7 @@ Deno.test("a recap prints exactly what the live screen printed", () => {
     {
       ...at("r2", "tool_result", { is_error: false, output: "sent" }, {
         ref_id: "u1",
-        deferred: true,
+        gated: true,
       }),
       parts: [{
         type: "data",
@@ -646,7 +646,7 @@ Deno.test("a /n and a /cancel read as the principal's lines, live and reopened a
       id: "r1",
       ts: TS,
       type: "tool_result",
-      payload: { ref_id: "u1", turn_id: "t1", deferred: true },
+      payload: { ref_id: "u1", turn_id: "t1", gated: true },
       agent: { id: AGENT, session_id: "mind" },
       envelope: env,
       parts: [{
@@ -723,7 +723,7 @@ Deno.test("a lapse reads its reason; an approved call speaks only when it failed
     id,
     ts: TS,
     type: "tool_result",
-    payload: { ref_id: ref, turn_id: "t1", deferred: true },
+    payload: { ref_id: ref, turn_id: "t1", gated: true },
     agent: { id: AGENT, session_id: "mind" },
     envelope: env,
     parts: [{ type: "data", kind: "tool_result", text: call, data }],

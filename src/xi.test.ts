@@ -148,7 +148,7 @@ Deno.test("decide: an answered ask whose call has not run yet → act (the harne
   // …and once it has reported, that ask is done
   const done = ev("tool_result", {
     ...SELF,
-    payload: { turn_id: "T1", ref_id: "u1", deferred: true },
+    payload: { turn_id: "T1", ref_id: "u1", gated: true },
   } as Partial<Event>);
   assertEquals(decide([peerMsg(), u, req, pending, resp, done], SESSION, WAKE), "think");
 });

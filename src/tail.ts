@@ -94,7 +94,7 @@ export function jsonOf(e: Event): Record<string, Json> {
         ref_id: e.payload.ref_id,
         ...data,
         ...(e.extra?.exec !== undefined ? { exec: e.extra.exec as Json } : {}),
-        ...(e.payload.deferred ? { deferred: true } : {}),
+        ...(e.payload.gated ? { gated: true } : {}),
       };
     case "permission_request":
       return {

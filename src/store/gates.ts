@@ -11,7 +11,7 @@
  *
  * Two anti-joins, one index. `gates` is the request rows with no response for the same use;
  * `owed` is the responses given by someone other than the model (no `turn_id`) whose use
- * holds its immediate `pending_approval` result and no deferred report yet. Both are the
+ * holds its immediate `pending_approval` result and no gated outcome yet. Both are the
  * SQL of the derivations `xi` states over an event list, and the store test holds the two
  * to the same answer.
  */
@@ -89,12 +89,12 @@ export function createGates(db: DatabaseSync, eventOf: (row: unknown) => Event):
          SELECT 1 FROM events t WHERE t.type = 'tool_result' AND ${
       REF.replace("payload", "t.payload")
     } = u.id
-           AND json_extract(t.payload, '$.deferred') IS NOT 1)
+           AND json_extract(t.payload, '$.gated') IS NOT 1)
        AND NOT EXISTS (
          SELECT 1 FROM events t WHERE t.type = 'tool_result' AND ${
       REF.replace("payload", "t.payload")
     } = u.id
-           AND json_extract(t.payload, '$.deferred') = 1)
+           AND json_extract(t.payload, '$.gated') = 1)
      ORDER BY a.id`,
   );
   return {

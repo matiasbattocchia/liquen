@@ -344,7 +344,7 @@ export interface Payload {
    *  gated call the principal approved later (§9). It is the record of what the tool did,
    *  but it can never be a `tool_result` block: its pair is spent. Render narrates it in
    *  the harness's voice instead, and the weld skips it (§5). */
-  deferred?: true;
+  gated?: true;
   /** Wire mentions: canonical address + the display name the stored text uses for it
    *  (absent when the text fell back to the bare address). `type` is the sigil the text
    *  wears: `@` a person (the default when absent), `#` a conversation. Unordered —
