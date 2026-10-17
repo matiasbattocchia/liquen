@@ -253,7 +253,7 @@ export interface Lifecycle {
   attempts?: number;
   error?: string;
   error_code?: number;
-  /** When the session that sent it was told it failed for good (report.ts). */
+  /** When the session that sent it was told it failed for good (late.ts). */
   reported_at?: string;
 }
 
@@ -340,11 +340,27 @@ export interface Payload {
   stop_reason?: string;
   /** On a summary: the id range the checkpoint stands for (§5 compaction). */
   covers?: [EventId, EventId];
-  /** On a tool_result: this outcome arrived AFTER its `tool_use` was already answered — a
-   *  gated call the principal approved later (§9). It is the record of what the tool did,
-   *  but it can never be a `tool_result` block: its pair is spent. Render narrates it in
-   *  the harness's voice instead, and the weld skips it (§5). */
+  /** On a tool_result, the flags that place it in its call's life (§9). A call is answered
+   *  once, by the result its turn welds; anything said of it after that is LATE, and can
+   *  never be a `tool_result` block, since its pair is spent: render narrates it in the
+   *  harness's voice, `<system kind="tool_result">` wearing the flags (§5), and it drops
+   *  with the rest of the tool traffic when its turn closes.
+   *
+   *  GATED: the outcome of a call that was answered `pending_approval` and ran once the
+   *  principal ruled. */
   gated?: true;
+  /** ASYNC: the call answered before its work was done (a send handed to a wire's
+   *  dispatcher, a command still running when its wait ran out), so the answer is a
+   *  beginning and updates follow. A sync call answers with the end, and may still have
+   *  updates: a job its command left running. */
+  async?: true;
+  /** UPDATE: a later word on a call already answered, written by the harness against the
+   *  call (`ref_id` its `tool_use`, `turn_id` its step): a send that will not be delivered,
+   *  lines a running command printed that the call asked to be woken for, the command's
+   *  end. News, so it wakes its session (§2). */
+  update?: true;
+  /** FINAL: the last update a call will have; nothing it set in motion is still running. */
+  final?: true;
   /** Wire mentions: canonical address + the display name the stored text uses for it
    *  (absent when the text fell back to the bare address). `type` is the sigil the text
    *  wears: `@` a person (the default when absent), `#` a conversation. Unordered —

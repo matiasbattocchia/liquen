@@ -95,6 +95,9 @@ export function jsonOf(e: Event): Record<string, Json> {
         ...data,
         ...(e.extra?.exec !== undefined ? { exec: e.extra.exec as Json } : {}),
         ...(e.payload.gated ? { gated: true } : {}),
+        ...(e.payload.async ? { async: true } : {}),
+        ...(e.payload.update ? { update: true } : {}),
+        ...(e.payload.final ? { final: true } : {}),
       };
     case "permission_request":
       return {

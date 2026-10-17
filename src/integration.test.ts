@@ -1793,11 +1793,13 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
       await waitFor(async () =>
         (await read("message")).some((e) => e.envelope.conversation.address === "wa:x")
       );
-      // the outcome comes back as a DEFERRED result — the record of what ran, narrated by
-      // the harness because the tool_use it answers is long spent (§5)
+      // the outcome comes back as a GATED result — the record of what ran, narrated by
+      // the harness because the tool_use it answers is long spent (§5) — and an ASYNC one:
+      // a wire send is handed to its dispatcher, so "sent" is its beginning
       const outcome = (await read("tool_result")).find((e) => e.payload?.gated);
       assert(outcome?.type === "tool_result");
       assertEquals(outcome.payload.ref_id, req.payload.ref_id);
+      assertEquals(outcome.payload.async, true);
       assertEquals(outcome.parts[0].text, "send(to: wa:x, connection: wa, text: hi)");
       assertStringIncludes(JSON.stringify(outcome.parts[0].data.output), "sent");
     },

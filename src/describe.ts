@@ -2,7 +2,7 @@
  * describe.ts — one tool call, one line, for humans (DESIGN §9).
  *
  * A tool call is shown in four places — the approval card, the anchor's pending list, the
- * harness's report of a deferred outcome, and the mirror's `[agent tool]` line — and until
+ * harness's narration of a late result, and the mirror's `[agent tool]` line — and until
  * now each of them wrote its own version (a JSON slice here, a hand-rolled `→ to` there).
  * So the rendering belongs to the TOOL, not to the consumer: `describeCall` is the one
  * function, and a tool that wants better than the default supplies its own `describe`

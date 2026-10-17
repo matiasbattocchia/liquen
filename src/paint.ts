@@ -38,6 +38,8 @@ import {
   failedCallOf,
   failureOf,
   hhmm,
+  isLate,
+  outcomeLine,
   ownVoice,
   shortId,
   SILENCE,
@@ -223,20 +225,21 @@ export function painter(s: Surface): Painter {
         // cut one stopped because the principal's `/cancel` said so. A watcher reads every
         // outcome: what the call printed is the work it is watching
         const { is_error, refused, cancelled } = e.parts[0].data;
-        if (s.watch && !e.payload.gated) {
+        if (s.watch && !isLate(e)) {
           s.write(`${outcomeRow(e)}\n`);
           return;
         }
-        if (!is_error || refused || cancelled) return;
-        if (e.payload.gated) {
-          // an approved call's failure lands long after its row scrolled by: a block of its
+        const failed = is_error && !refused && !cancelled;
+        if (isLate(e) && (failed || s.watch)) {
+          // a late outcome lands long after its call's row scrolled by: a block of its
           // own, naming the call
           settle();
           s.gap();
-          s.write(`${RED}${deferredFailure(e)}${RESET}`);
+          s.write(lateRow(e));
           s.prompt();
           return;
         }
+        if (!failed) return;
         s.write(`${RED}✗ ${failureOf(e)}${RESET}\n`);
         return;
       }
@@ -375,20 +378,21 @@ export function painter(s: Surface): Painter {
           return;
         }
         case "tool_result": {
-          // a failure, as live: a deferred one answers a call from another turn and stands
+          // a failure, as live: a late one answers a call from another turn and stands
           // alone; an ordinary one belongs to the call right above it
           const { is_error, refused, cancelled } = e.parts[0].data;
-          if (s.watch && !e.payload.gated) {
+          if (s.watch && !isLate(e)) {
             row();
             put(outcomeRow(e));
             return;
           }
-          if (!is_error || refused || cancelled) return;
-          if (e.payload.gated) {
+          const failed = is_error && !refused && !cancelled;
+          if (isLate(e) && (failed || s.watch)) {
             gap();
-            put(`${RED}${deferredFailure(e)}${RESET}`);
+            put(lateRow(e));
             return;
           }
+          if (!failed) return;
           row();
           put(`${RED}✗ ${failureOf(e)}${RESET}`);
           return;
@@ -514,8 +518,12 @@ function thinkingOf(e: Event): string {
   return typeof data?.thinking === "string" ? data.thinking.trim() : "";
 }
 
-function deferredFailure(e: ToolResultEvent): string {
-  return `✗ ${failedCallOf(e)}`;
+/** A late outcome's block: its failure in red, the call named, or — for a watcher — what
+ *  it said. */
+function lateRow(e: ToolResultEvent): string {
+  const { is_error, refused, cancelled } = e.parts[0].data;
+  if (is_error && !refused && !cancelled) return `${RED}✗ ${failedCallOf(e)}${RESET}`;
+  return `${DIM}${outcomeLine(e)}${RESET}`;
 }
 
 /** A harness error, recalled: the row the REPL's `error` sink drew for it live. */

@@ -85,6 +85,7 @@ import {
   cutStands,
   hhmm,
   type HitsOpts,
+  isUpdate,
   type Member,
   namedRoom,
   ownComplex,
@@ -259,6 +260,9 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // deferring it to the digest (or sleeping through it) would answer a question nobody
   // asked — "was 07:00 really what you meant?". The one wake class the agent set itself.
   if (news.some((e) => e.type === "alarm")) return "think";
+  // …and so does an update: work the agent started, telling how it went on — a send that
+  // will not arrive, a command it ran ending — which the next turn may have to act on
+  if (news.some((e) => e.type === "tool_result")) return "think";
   // holding the floor is the one question that is per-conversation — so the news is grouped
   // for it, and for nothing else: the two rules below weigh the world as one thing
   for (const conv of new Set(news.map((e) => e.envelope.conversation.address))) {
@@ -582,14 +586,18 @@ function harness(error: string, hereEnv: Envelope): Draft<ErrorEvent> {
  *  sits BEFORE the closing in the log yet was never seen (the live-bench coalescing race).
  *  Position is the fallback for messages without a horizon (pre-horizon logs). Returns the
  *  news itself: attention classes it (§2) rather than waking on its mere existence. */
-function newsOf(events: Event[], session: Session): (MessageEvent | AlarmEvent)[] {
+type News = MessageEvent | AlarmEvent | ToolResultEvent;
+function newsOf(events: Event[], session: Session): News[] {
   // news = a message our side didn't produce (§3 ownVoice) — which now includes the
   // principal's rows: they carry agent.id (and, typed into the session, session_id),
   // but input never carries a turn_id, so it stays answerable — OR an alarm, which is
   // the agent's own past self arriving with something to say (§10): harness-authored, so
-  // never our voice, and unanswered until a turn reads past it like any other news
-  const news = (e: Event): e is MessageEvent | AlarmEvent =>
-    e.type === "alarm" || (e.type === "message" && !ownVoice(e, session) && !silenced(e));
+  // never our voice, and unanswered until a turn reads past it like any other news — OR
+  // an update on one of our calls (§9): the harness telling what the call set in motion
+  // did after its answer
+  const news = (e: Event): e is News =>
+    e.type === "alarm" || isUpdate(e, session) ||
+    (e.type === "message" && !ownVoice(e, session) && !silenced(e));
   const last = lastClosing(events, session);
   if (last === -1) return events.filter(news);
   // resolve the horizon to a POSITION — the window may be re-sorted for display (§5)
@@ -678,6 +686,15 @@ export interface AgentConfig extends TurnConfig, Wake {
 export interface ExecOutcome {
   output: Json;
   files: string[];
+  /** The work goes on after this answer (`Payload.async`), and updates follow. */
+  async?: true;
+}
+
+/** The call an executor runs: its `tool_use` and the step that made it, which is what an
+ *  update about it is written against (`Payload.update`). */
+export interface CallRef {
+  id: EventId;
+  turn_id: string;
 }
 
 /** What a run was, beside what it said: the facts a tool reports of its own execution —
@@ -778,6 +795,7 @@ export interface ExecTool extends ToolShape {
     input: Json,
     signal: AbortSignal,
     report?: (facts: ExecFacts) => void,
+    call?: CallRef,
   ) => Promise<Json | ExecOutcome>;
   /** How a call READS to a person — the approval card, the anchor's pending list, the
    *  mirror's tool line (§9). Optional: `describeCall`'s default already renders a
@@ -1401,7 +1419,9 @@ async function act(
     /** An exec tool's run (§9): its facts and its wall time, for `extra.exec`. */
     run?: { facts: ExecFacts; ms: number },
   ): Promise<Draft<ToolResultEvent>> => {
-    const { output: raw, files } = isOutcome(outcome) ? outcome : { output: outcome, files: [] };
+    const { output: raw, files, async } = isOutcome(outcome)
+      ? outcome
+      : { output: outcome, files: [], async: undefined };
     const { parts, pinned, refused } = await attachmentsOf(files, ports.files ?? localFiles());
     const output = refused.length && typeof raw === "string"
       ? `${raw}${raw ? "\n" : ""}${refused.map((r) => `[attachment refused: ${r}]`).join("\n")}`
@@ -1422,6 +1442,7 @@ async function act(
         turn_id: use.payload.turn_id,
         ref_id: use.id,
         ...(call !== undefined ? { gated: true as const } : {}),
+        ...(async ? { async: true as const } : {}),
       },
       agent: self,
       envelope: here,
@@ -2829,7 +2850,10 @@ async function execute(
         ],
     };
     const sent = await ports.log.publish(msg);
-    return { sent: true, event_id: sent!.id }; // a full draft (parts present) always stores
+    const output = { sent: true, event_id: sent!.id }; // a full draft (parts present) always stores
+    // a wire row is born an offer (store/events.ts `offerOf`): its dispatcher delivers it
+    // after this answer, and an update says so when it never will (update.ts)
+    return envelope.service === "local" ? output : { output, files: [], async: true };
   }
   if (name === "contact") {
     // the address book (§9): `who` points at a person the way `send(to:)` points at a
@@ -3055,7 +3079,7 @@ async function execute(
   }
   const tool = ports.exec?.[name];
   if (!tool) throw new Error(await unknownTool(name, config, ports));
-  return await tool.execute(input, signal, report);
+  return await tool.execute(input, signal, report, { id: use.id, turn_id: use.payload.turn_id });
 }
 
 /** What a call to a name no tool answers says. The prefix lists the PATH's programs beside

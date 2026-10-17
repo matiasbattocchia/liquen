@@ -573,29 +573,31 @@ nothing is promised that the clock cannot keep. Finding the next fire is a SEARC
 cron expression is a predicate: candidate days, integer comparisons, and a zone conversion
 only on the days that match.
 
-**A report is how work that ended after its turn reaches the agent** (`report.ts`). A tool
-can finish later than the call: a send is accepted ("sent") and then refused or delivered
-by its dispatcher; a background job outlives the bash call that started it. What the turn
-was told is then the beginning, and an agent that learns the end only if something else
-wakes it goes on believing the beginning — it says "done" over a refused send. A report is
-an `alarm` the harness writes into **the session that did the work**: its text the outcome
-in words, `extra.report.kind` what kind of end it is, `payload.ref_id` the row it is about
-when there is one; render shows it as `<system kind="report">`. It wakes like any alarm,
-so the agent takes a turn to recover: try again, try another way, or tell its principal.
-Two kinds land today:
+**An update is how work that goes on after its call reaches the agent** (`late.ts`). A
+call can do more than its answer says: a send is accepted ("sent") and then refused or
+delivered by its dispatcher; a command outlives its wait, or leaves a job running. What the
+turn was told is then the beginning, and an agent that learns the end only if something
+else wakes it goes on believing the beginning — it says "done" over a refused send. An
+update is a `tool_result` the harness writes **against the call** (§3: `payload.update`,
+`ref_id` its `tool_use`, `turn_id` its step, `final` once nothing it set in motion still
+runs), so it lands in the session that made the call; render narrates it as
+`<system kind="tool_result" update final>bash(npm test) → exit 0 after 4m …</system>`,
+and it is news that wakes now, as an alarm does (§2), so the agent takes a turn to act on
+it: try again, try another way, or tell its principal. The clock tells one kind:
 
-- **`undelivered`** — one of the model's own sends (a row with `payload.turn_id`: a
+- **undelivered** — one of the model's own sends (a row with `payload.turn_id`: a
   mirror's copy and a presence line have no turn to tell) failed **for good**: a permanent
   class (4xx, or a code that is not a number), a transient one the retry ladder (§5) has
   offered for the last time, or one the wire reported failed after naming the message.
   A transient failure the ladder will offer again is not news yet. The clock's fourth pass
   claims such rows (`undelivered`, one conditional UPDATE stamping `status.reported_at`, so
-  two clocks tell a row once) and publishes their reports; main also runs that pass the
-  moment the update stream shows a row of the model's own go `failed`, so a refused send
-  is told in seconds and the beat is the guarantee for one stamped while nobody listened.
-- **`job_ended`** — a background job the session's shell started has no process left
-  (§9, the exit watcher). Its exit status is unknowable; the report says where the outcome
-  is: what the job wrote.
+  two clocks tell a row once) and writes the final update on the send call, the reason as
+  its output; main also runs that pass the moment the update stream shows a row of the
+  model's own go `failed`, so a refused send is told in seconds and the beat is the
+  guarantee for one stamped while nobody listened.
+
+The shell tells the rest: a command's lines, its end, and what it left running (§9, the
+exec plane).
 
 Survey: **Pi** ships no scheduler; **Claude Code** makes the clock a harness peripheral
 (Cron*, ScheduleWakeup, /loop, remote /schedule); **Agent SDK** embedders host their own
@@ -678,11 +680,19 @@ absence IS the "never confirmed" signal echo-dedup and the mirror's absorb guard
 message:  + parts: Part[]      // text | data | file, each with kind (open-bsp / A2A / MCP)
 tool_use: + parts(data: {name, input}) + payload{turn_id}   // implicitly internal
 thinking: + parts(data: {thinking, signature}) + payload{turn_id}  // replayed in-cycle, dropped after
-tool_result: + parts(data: {output, is_error?, cancelled?}) + payload{turn_id, ref_id, gated?}
+tool_result: + parts(data: {output, is_error?, cancelled?}, text?)
+             + payload{turn_id, ref_id, gated?, async?, update?, final?}
           // + extra.exec on an exec tool's run: {exit_code?, duration_ms, bytes} — the
           // shell's status, the wall time, the size of all it printed; the operator's, never
           // rendered
-          // gated = the outcome of a call the principal approved LATER: narration, never a block (§9)
+          // the flags place it in its call's life (§9). A call is answered ONCE, by the
+          // result its turn welds; what is said of it after that is LATE — narration,
+          // never a block, its `text` the call as a person reads it:
+          //   gated  = the outcome of a call the principal approved later
+          //   async  = the call answered before its work was done; updates follow
+          //   update = a later word on a call already answered (late.ts) — news
+          //   final  = the last update: nothing the call set in motion still runs
+          // a gated call is sync or async like any other, and both kinds can have updates
 permission_request:  + parts(data: {tool, call, detail}) + payload{ref_id→tool_use}
 permission_response: + parts(data: {behavior, scope, reason?}, text?) + payload{ref_id→tool_use}
           // text = the principal's line that gave it, on the first row of what it settled
@@ -748,8 +758,8 @@ Decisions:
 - **`status` is a mutable field**, not events; delivery bookkeeping; render marks only
   `failed` — a pending mark buys nothing. Transient failures are retried by the sweeper
   (§5) without a word to the agent; a **final failure surfaces twice**: the `failed` mark
-  on the message, with the dispatcher's reason beside it, and an `undelivered` **report**
-  (§2, the clock) that wakes the session that sent it.
+  on the message, with the dispatcher's reason beside it, and a final **update** on the
+  send call (§2, the clock) that wakes the session that made it.
 
 ### Event-type table
 
@@ -760,7 +770,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `message` | mu→**assistant** (say) · nu send-exec (directed) · ingest (incoming) | **user** (world) or **assistant** (this session's own) — by authorship | think (not-self) / ignore (self) | parts · payload{action?, ref_*?, mentions?} |
 | `control` | the door (the REPL's Ctrl-C mid-turn, or `/cancel`), signed | `<system kind="control">`, where it stands — never the word as typed | **interrupts** the running turn (§2), never a wake; standing, it closes the turn — `decide` idles until news (`cutStands`) | parts(text: the word) · payload{control: cancel} |
 | `tool_use` | **model → assistant** | **assistant** *(live only)* | **act** — always: a gated call is answered too (§9) | parts(data:{name,input}) · payload{turn_id} |
-| `tool_result` | nu · xi (a gated outcome) | **user** *(live only)*; `gated` ⇒ `<system kind="tool_result">` | think (barrier done) / await (open) | parts(data:{output,is_error?,cancelled?}) · payload{turn_id, ref_id→tool_use, gated?} |
+| `tool_result` | nu · xi (a gated outcome) · the harness (an update: the clock, the shell) | **user** *(live only)*; late (`gated`/`update`) ⇒ `<system kind="tool_result" …flags>` | think (barrier done; an update is news) / await (open) | parts(data:{output,is_error?,cancelled?}, text?) · payload{turn_id, ref_id→tool_use, gated?, async?, update?, final?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
@@ -818,10 +828,11 @@ and a principal's `/y` to a card is read where it enters the mind, below.
   - **The verdict is a second, later call.** When it lands, xi runs the tool on the model's
     behalf. That outcome cannot be a `tool_result` block — its pair is spent — so it is a
     `tool_result` EVENT marked `payload.gated`, which render narrates in the harness's
-    voice (`<system kind="tool_result">send(to: Vivian) → sent</system>`). The principal's
-    surfaces draw it only when the call failed (`✗ send(to: Vivian) — <the tool's words>`):
-    the card asked for the call and their `/y` gave it. It collapses with the rest of the
-    tool traffic at the boundary (§5).
+    voice (`<system kind="tool_result" gated async>send(to: Vivian) → sent</system>`) —
+    a late result, as an update is (§3). The principal's surfaces draw a late result only
+    when it failed (`✗ send(to: Vivian) — <the tool's words>`): the card asked for the
+    call and their `/y` gave it. It collapses with the rest of the tool traffic at the
+    boundary (§5).
   - **What is still waiting lives in the ANCHOR, not the transcript** (§5): a pending gate
     is state, not history — the transcript already closed those calls. The anchor is
     rewritten every turn, so an ask that gets answered simply stops being listed, and the
@@ -1628,10 +1639,12 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   carries its **pid** (`kill <pid>` the leader, `kill -<pid>` the tree) — a kill handle the
   agent otherwise lacks, since every command runs in a fresh shell so bash job control
   (`jobs`/`fg`/`%1`) can't reach a job from a prior call. The `Job` keeps the *full* command
-  (a UI/control-client shows it whole); the line clips it. This is the passive-visibility
-  half; the active half is the job's **report** when it ends (§9, §10): an event published
-  into the log that *wakes* the agent (Claude Code's completion callback, done the liquen
-  way: the log is the continuation engine, so a report just pokes).
+  (a UI/control-client shows it whole); the line clips it, and under it stands the last
+  line the job printed into the pipe the harness reads (its **glance**). This is the
+  passive-visibility half; the active half is the **updates** on the call that started
+  it (§9, §10): the lines it was asked to wake on, and its end — events published into
+  the log that *wake* the agent (Claude Code's completion callback and Monitor, done the
+  liquen way: the log is the continuation engine, so an update just pokes).
   **Deployment-specific** (the env note): composed by the exec plane, so on **Docker** it's the one persistent container env; on **Postgres+edge**
   there is no persistent bash env (functions are remote and ephemeral, possibly several),
   so the ambient lines are absent — `ports.ambient` is simply unset there.
@@ -2168,21 +2181,21 @@ names the text it replaces, and text that is no longer there matches nothing.
     spawned it — the container-teardown guarantee, extended to the long-running org.
     Managed *visibility* has two halves. **Passive (shipped):** the ambient block lists each
     live job with a **pid kill-handle** + full command on the `Job` (§5) — enough to see and
-    kill what's running. **Active: a report on job death** (`report.ts`, §10). main
+    kill what's running. **Active: an update on job death** (`late.ts`, §10). main
     probes every shell's registry every `JOB_PROBE_MS` (2s — push from the agent's
     perspective; a poll underneath, since a `cmd &` grandchild is not our child to await):
     a group with no member left moves out of the registry into the shell's `ended` list
     (the ambient look settles the same way, so a death it sees first is still told), and
-    each one becomes a `job_ended` report in the session whose shell started it. A mid-turn
+    each one becomes the final update on the call that left it. A mid-turn
     death (the agent's own `kill`) lands while the turn runs and is consumed by its next
     step; a **lone** death wakes a fresh turn. Exit *codes* are unknowable — the signal
     says "gone"; the agent `tail`s what the job wrote for the outcome. Shutdown's reap is
-    no news: what it kills is not told. A remote sandbox's shell reports nothing: its jobs
+    no news: what it kills is not told. A remote sandbox's shell tells nothing: its jobs
     are seen only by a look that keeps the container awake.
     **The exit event generalizes to arbitrary conditions**: a watcher is just a background
     job whose death IS the signal — `(tail -f train.log | grep -qm1 DONE) &` or
     `(inotifywait -e close_write out/) &` exits when the condition fires → lone-death →
-    report → wake, and the command the report quotes tells the agent *which* watch fired.
+    update → wake, and the call the update names tells the agent *which* watch fired.
     Condition-watching (Claude Code's Monitor tool) thus costs zero harness code — a
     **skill** teaches the incantations; latency is the probe's. (Claude Code's own model,
     for reference: completion pushes an injected notification; progress is never pushed — the model pulls the output file; mid-run
@@ -2265,11 +2278,11 @@ its SQL side (5 tools: `executeSql`/`getDbSchema`/`sampleTableRows`/`selectAsCsv
 | `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `{sent, event_id}`. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — text beside it replies on the wire; `react` lands a glyph on it; `action` names the verb (`create` · `edit` · `delete` · `add` · `remove` — `create` and `add` are what a body and a glyph already mean, and the two mutating ones reach only the account's own messages). **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
 | `search` | control (dedicated) | `search({in?, from?, connection?, before?, after?, text?, limit?, around?})` → the page as a string in the window's grammar (`<conn>`/`<conv>`/`<msg>`, dated), RLS-scoped, closed by the next page's `before` when cut. Clean sugar over the control-plane log read (SELECT / ripgrep). |
 | `conversation` | control (dedicated) | `conversation(action?, which?, who?, name?)` → the room (`name`, `kind`, `address`, `members`), or `{rooms}` for a bare `show`. A room's members and name (§6): `join` · `leave` · `add` · `remove` · `rename` · `show`. Locally the tool says each change in the room; on a wire each verb goes through the service's rooms port (`XiPorts.rooms`, one per service whose API has it), as the agent on the account, and the wire says the change. Either way the room holds one `room` data part from whoever made it — `joined`, `left` or the new `name` — rendered `<room>`; a local room `send` makes opens with one, its founding members joined. |
-| `bash` | exec + durable-on-files | `bash(cmd)` → `{stdout, stderr, exit}`. The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
+| `bash` | exec + durable-on-files | `bash(command, wait?, wake?)` → the output, or — still running when its wait ran out — the output so far, with updates to follow (the exec plane, below). The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
 | `read` · `write` · `edit` | durable-on-db | The **database** substrate's primitive, by handle: `read(handle, offset?, limit?)` → the text head-truncated with `aread`'s footer · `write(handle, content)` · `edit(handle, spec)` with `aedit`'s conflict-marker spec. Present only where the docs live in the table (the sandbox can't touch the DB, §9 invariant). The model writes no SQL: each call is a function of the store (`docs_read · docs_write · docs_edit`, the binaries' contracts in PL/pgSQL) that the harness calls with bound parameters under the agent role, so one `NOLOGIN` role serves every agent and the row-level policy is the whole rule. |
 
 **A tool owns how it READS.** The same call is shown in four places — the approval card, the
-anchor's pending list, the harness's report of a deferred outcome, the mirror's `[agent
+anchor's pending list, the harness's narration of a late result, the mirror's `[agent
 tool]` line — so the rendering belongs to the tool, not to each consumer (`describeCall`,
 optional `ExecTool.describe`). The default needs almost no overriding: a call with a single
 string argument prints it bare (`bash(git status)`), everything else is `name(k: v, …)`. Two

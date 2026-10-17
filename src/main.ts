@@ -40,7 +40,7 @@ import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runne
 import type { Log, UsageRow } from "./store/log.ts";
 import { databaseOf, storeAt } from "./store/mod.ts";
 import { type ClockSettings, tick } from "./tick.ts";
-import { JOB_PROBE_MS, jobReport, reportDraft, reportUndelivered } from "./report.ts";
+import { JOB_PROBE_MS, jobUpdate, reportUndelivered, updateDraft } from "./late.ts";
 import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import type { AgentRow } from "./store/agents.ts";
@@ -538,7 +538,7 @@ export async function start(
       }
     }).catch((err) => console.error("[main] route:", err));
   }));
-  // a send that fails for good is told to its session at once (report.ts): the update
+  // a send that fails for good is told to its call at once (late.ts): the update
   // stream says a row of the model's own went `failed`, and the clock's report pass runs
   // now instead of at the next beat, which stays the guarantee for a failure stamped while
   // nobody listened. A failure landing mid-pass runs the pass once more after it.
@@ -625,13 +625,15 @@ export async function start(
       .finally(() => beating = undefined);
     agents.forEach((a) => invoke(a)());
   }, TICK_MS);
-  // a background job that ended is told to the session whose shell started it (report.ts):
-  // the ambient block lists what still runs, and this says what stopped, unasked
+  // a background job that ended is told against the call that left it (late.ts): the
+  // ambient block lists what still runs, and this says what stopped, unasked
   const jobWatch = setInterval(() => {
     const now = Date.now();
     for (const ended of sandbox.ended()) {
-      log.publish(reportDraft(jobReport(ended, now), new Date(now).toISOString()))
-        .catch((err) => console.error("[main] job report:", err));
+      const update = jobUpdate(ended, now);
+      if (!update) continue;
+      log.publish(updateDraft(update, new Date(now).toISOString()))
+        .catch((err) => console.error("[main] job update:", err));
     }
   }, JOB_PROBE_MS);
 

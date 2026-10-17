@@ -13,7 +13,7 @@
 
 import type { Log } from "./store/log.ts";
 import type { AlarmEvent, Draft, PermissionResponseEvent } from "./types.ts";
-import { reportUndelivered } from "./report.ts";
+import { reportUndelivered } from "./late.ts";
 
 /** The two per-agent settings the clock reads: the zone a cron advances in, and how long
  *  its asks stand. `undefined` for an agent the clock does not know (a paused one, a row

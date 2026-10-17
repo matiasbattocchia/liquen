@@ -796,11 +796,11 @@ function renderMessages(
     trailing.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => [u.id, u]),
   );
   const usePresent = new Set(useById.keys());
-  // a DEFERRED outcome never welds (§9): its `tool_use` was answered long ago, with
-  // `pending_approval`, so the pair is spent — a second `tool_result` block against the same
-  // id is not a thing the API has. It renders as harness narration instead.
+  // a LATE result never welds (§9): its `tool_use` was answered already, so the pair is
+  // spent — a second `tool_result` block against the same id is not a thing the API has.
+  // It renders as harness narration instead.
   const resultRefs = new Set(
-    trailing.filter((e): e is ToolResultEvent => e.type === "tool_result" && !e.payload.gated)
+    trailing.filter((e): e is ToolResultEvent => e.type === "tool_result" && !isLate(e))
       .map((r) => r.payload.ref_id),
   );
   const welded = new Set([...usePresent].filter((id) => resultRefs.has(id)));
@@ -814,8 +814,8 @@ function renderMessages(
   const inlineBudget = new Set(wantedMedia(window, session));
 
   // CLOSED — collapse: messages survive; errors stay visible as system blocks (§2);
-  // thinking and ALL tool traffic drop (§5) — pairs, and the deferred outcomes a gate
-  // produced: once the turn that cared about them has closed, they are noise like the rest.
+  // thinking and ALL tool traffic drop (§5) — pairs, and the late results told after them:
+  // once the turn that read them has closed, they are noise like the rest.
   const collapse = (e: Event) => {
     if (deferred.has(e)) return; // unconsumed input — renders in the trailing region
     if (e.type === "summary") return place("user", { type: "text", text: checkpointEl(e) });
@@ -906,11 +906,11 @@ function renderMessages(
     } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
       place("assistant", thinkingBlock(e));
     } else if (e.type === "tool_use" && welded.has(e.id)) place("assistant", toolUseBlock(e));
-    else if (e.type === "tool_result" && e.payload.gated) {
-      // the second half of a non-blocking gate (§9): the principal ruled, the harness ran
-      // the call for us, and this is it reporting back — in its own voice, because the
-      // tool_use it answers is spent. Narration, so it can stand alone in any position.
-      place("user", { type: "text", text: systemEl("tool_result", outcomeLine(e)) });
+    else if (e.type === "tool_result" && isLate(e)) {
+      // a call's outcome after its answer (§9): the principal ruled and the harness ran
+      // it, or what it set in motion went on — told in the harness's own voice, because
+      // the tool_use it answers is spent. Narration, so it can stand alone in any position.
+      place("user", { type: "text", text: lateLine(e) });
     } else if (e.type === "tool_result" && welded.has(e.payload.ref_id)) {
       place("user", toolResultBlock(e, useById.get(e.payload.ref_id)!, mediaBlocks(e)));
     } else if (e.type === "message") {
@@ -1022,8 +1022,12 @@ function weldOrder(trailing: Event[], weldedTurns: Set<string>): Event[] {
 }
 
 /** The step a trailing event belongs to: `payload.turn_id`, on every emission that carries
- *  one. Directed sends (ref_id→tool_use) stay outside — they're skipped anyway. */
+ *  one. Directed sends (ref_id→tool_use) stay outside — they're skipped anyway — and so
+ *  does a late result: it names the step of the call it tells about, but it was written
+ *  after that step's request, which its thinking is signed over, so it stands where it
+ *  landed. */
 function turnOf(e: Event): string | undefined {
+  if (e.type === "tool_result" && isLate(e)) return undefined;
   if (e.type === "thinking" || e.type === "tool_use" || e.type === "tool_result") {
     return e.payload.turn_id;
   }
@@ -1498,10 +1502,28 @@ function checkpointEl(e: SummaryEvent): string {
  *  text, since every world body is escaped on the way in. `kind` is the type of the event
  *  it renders, so the four read apart without the sentence having to announce itself. */
 function systemEl(
-  kind: "error" | "control" | "alarm" | "report" | "tool_result",
+  kind: "error" | "control" | "alarm" | "tool_result",
   text: string,
+  flags: string[] = [],
 ): string {
-  return `<system kind="${kind}">${escText(text)}</system>`;
+  return `<system kind="${kind}"${flags.map((f) => ` ${f}`).join("")}>${escText(text)}</system>`;
+}
+
+/** Said of a call after its answer (§9): a gated outcome, or an update. */
+export function isLate(e: ToolResultEvent): boolean {
+  return e.payload.gated === true || e.payload.update === true;
+}
+
+/** An update on one of this session's calls (`Payload.update`): news (§2). */
+export function isUpdate(e: Event, session: SessionRef): e is ToolResultEvent {
+  return e.type === "tool_result" && e.payload.update === true && ownComplex(e, session);
+}
+
+/** A late result as the model reads it: the outcome line, wearing the flags that place it
+ *  in its call's life (`Payload`) — `gated`, `async`, `update`, `final`, the ones it has. */
+function lateLine(e: ToolResultEvent): string {
+  const flags = (["gated", "async", "update", "final"] as const).filter((f) => e.payload[f]);
+  return systemEl("tool_result", outcomeLine(e), flags);
 }
 
 /** The call's wire id is the provider's when the row kept one (`call_id`, §5): a tool cycle
@@ -1535,9 +1557,9 @@ function toolResultBlock(
   };
 }
 
-/** A DEFERRED tool outcome as one sentence (§9): `send(to: Vivian) → sent`. The call was
- *  rendered when the outcome was written — xi is where the tool registry and the address
- *  book are — so this reads it off the event rather than re-deriving it from a `tool_use`
+/** A LATE tool outcome as one sentence (§9): `send(to: Vivian) → sent`. The call was
+ *  rendered when the outcome was written — where the tool registry and the address book
+ *  are — so this reads it off the event rather than re-deriving it from a `tool_use`
  *  that may already have collapsed. `→` carries what happened, `—` what didn't. Shared with
  *  the mirror, so the model and the principal are told the same thing. */
 export function outcomeLine(e: ToolResultEvent, max = 0): string {
@@ -1557,7 +1579,7 @@ export function failureOf(e: ToolResultEvent): string {
   return said === "" ? "failed, saying nothing" : said;
 }
 
-/** An approved call's failure, the call named: it lands long after the call's own row. */
+/** A late failure, the call named: it lands long after the call's own row. */
 export function failedCallOf(e: ToolResultEvent): string {
   return `${e.parts[0].text ?? "the approved call"} — ${failureOf(e)}`;
 }
@@ -1572,10 +1594,9 @@ export function errorTextOf(e: HarnessErrorEvent): string {
 /** A fired wake (§10), as the agent reads it: its own note handed back at the moment it
  *  asked for. `<system>` because the harness is the one speaking — the note is quoted, not
  *  ventriloquized as the principal. No room to name: an alarm fires in the session that
- *  armed it, which is the session reading it. A report (`extra.report`, report.ts) is the
- *  harness telling how work the session did ended, so it reads as one. */
+ *  armed it, which is the session reading it. */
 function alarmLine(e: AlarmEvent): string {
-  return systemEl(e.extra?.report ? "report" : "alarm", e.parts[0]?.text ?? "");
+  return systemEl("alarm", e.parts[0]?.text ?? "");
 }
 
 /** OUR SIDE produced this row (§3 authorship — presence, not equality): the model's turn
@@ -1626,14 +1647,16 @@ export const CANCELLED = "cancelled by your principal — the turn stopped here"
  *  that is news — only what the turn it cut still wrote (its tools' cancelled results, a
  *  failure, a checkpoint). The work it cut is still unanswered, and answering it would be
  *  narrating what they said to drop, so the mind idles on it. News is what would wake a
- *  turn of its own: a line from anyone but us, a fired wake, a principal's ruling. */
+ *  turn of its own: a line from anyone but us, a fired wake, an update on a call, a
+ *  principal's ruling. */
 export function cutStands(events: Event[], session: SessionRef): boolean {
   const at = findLastIndex(events, (e) => e.type === "control");
-  return at !== -1 && !events.slice(at + 1).some((e) =>
-    e.type === "alarm" ||
-    (e.type === "permission_response" && e.payload.turn_id === undefined) ||
-    (e.type === "message" && !ownVoice(e, session) && !silenced(e))
-  );
+  return at !== -1 &&
+    !events.slice(at + 1).some((e) =>
+      e.type === "alarm" || isUpdate(e, session) ||
+      (e.type === "permission_response" && e.payload.turn_id === undefined) ||
+      (e.type === "message" && !ownVoice(e, session) && !silenced(e))
+    );
 }
 
 function filesOf(e: Event): FilePart[] {

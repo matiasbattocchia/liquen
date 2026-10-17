@@ -56,7 +56,15 @@
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { MIND, parseSession, sessionAddress } from "../session.ts";
-import { failedCallOf, failureOf, reactionOf, shortId, silenced, silent } from "../render.ts";
+import {
+  failedCallOf,
+  failureOf,
+  isLate,
+  reactionOf,
+  shortId,
+  silenced,
+  silent,
+} from "../render.ts";
 import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
 import { type Words, words } from "../i18n.ts";
 import {
@@ -469,12 +477,12 @@ async function ccParts(
   }
   if (e.type === "tool_result") {
     // a call says itself as it is made, so only a failure speaks again — the REPL's `✗`,
-    // in the tool's own words; an approved call's names the call, its row long gone. A
-    // call refused never ran: the line that refused it crossed already, as did the
-    // `/cancel` that cut one.
+    // in the tool's own words; a late one (an approved call's, an update's) names the
+    // call, its row long gone. A call refused never ran: the line that refused it crossed
+    // already, as did the `/cancel` that cut one.
     const { is_error, refused, cancelled } = e.parts[0].data;
     if (!is_error || refused || cancelled) return null;
-    const said = e.payload.gated ? failedCallOf(e) : failureOf(e);
+    const said = isLate(e) ? failedCallOf(e) : failureOf(e);
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${said}` }]);
   }
   if (e.type === "alarm") {

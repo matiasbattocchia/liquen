@@ -688,6 +688,43 @@ Deno.test("alarm: a fired wake is answered NOW — no digest to wait for, no nig
   assertEquals(decide([looked(night), alarm(3, night)], SESSION, WAKE, night), "think");
 });
 
+Deno.test("update: a call's later word is answered NOW, until a turn reads past it", () => {
+  const call = ev("tool_use", { ...SELF, ts: at(9), payload: { turn_id: "T1" } } as Partial<Event>);
+  const answered = ev("tool_result", {
+    ...SELF,
+    ts: at(9),
+    payload: { turn_id: "T1", ref_id: call.id, async: true },
+  } as Partial<Event>);
+  const looked = ev("message", {
+    ...SELF,
+    ts: at(8),
+    payload: { turn_id: "T2" },
+    extra: { consumed: answered.id },
+  } as Partial<Event>);
+  const update = (base = NOON) =>
+    ev("tool_result", {
+      ...SELF,
+      ts: at(3, base),
+      payload: { turn_id: "T1", ref_id: call.id, update: true, final: true },
+    } as Partial<Event>);
+  assertEquals(decide([call, answered, looked], SESSION, WAKE, NOON), "ignore");
+  // the work the agent started, telling how it went on: no digest to wait for, no night
+  const u = update();
+  assertEquals(decide([call, answered, looked, u], SESSION, WAKE, NOON), "think");
+  // …its call long out of the window: the update is news on its own
+  assertEquals(decide([looked, u], SESSION, WAKE, NOON), "think");
+  const night = Date.parse("2026-08-19T03:00:00Z");
+  assertEquals(decide([call, answered, looked, update(night)], SESSION, WAKE, night), "think");
+  // a turn that read it closed past it
+  const read = ev("message", {
+    ...SELF,
+    ts: at(1),
+    payload: { turn_id: "T3" },
+    extra: { consumed: u.id },
+  } as Partial<Event>);
+  assertEquals(decide([call, answered, looked, u, read], SESSION, WAKE, NOON), "ignore");
+});
+
 Deno.test("alarm: once a turn has read past it, it stops asking — the horizon rules", () => {
   const a = alarm(5);
   // the closing message carries the horizon it consumed (§2): the alarm is behind it

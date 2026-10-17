@@ -13,7 +13,7 @@
  *     self-correction path)
  */
 
-import type { ExecFacts, ExecOutcome, ExecTool } from "../xi.ts";
+import type { CallRef, ExecFacts, ExecOutcome, ExecTool } from "../xi.ts";
 import { type AgentUser, agentUser, own, ownTree } from "./user.ts";
 import type { BinDir, Json } from "../types.ts";
 import { newId } from "../store/id.ts";
@@ -33,6 +33,7 @@ export interface Job {
   command: string; // the FULL launch command — the ambient line truncates; a UI/control
   //                  client shows it whole (§9). Kept verbatim, never parsed.
   since: number; // Date.now() at launch — age + the future TTL reaper (§9)
+  use?: CallRef; // the call that left it, which its end is told against (late.ts)
 }
 
 /** Sticky cwd shared with the plane so it can report the current directory. */
@@ -245,6 +246,7 @@ export function bashTool(opts: BashOptions): ExecTool {
       input: Json,
       signal: AbortSignal,
       report?: (facts: ExecFacts) => void,
+      use?: CallRef,
     ): Promise<Json | ExecOutcome> {
       const call = input as unknown as BashInput;
       const { command, timeout } = call;
@@ -360,7 +362,12 @@ export function bashTool(opts: BashOptions): ExecTool {
         if (pgid !== undefined && opts.jobs && !timedOut && !signal.aborted) {
           try {
             Deno.kill(-pgid, "SIGWINCH"); // harmless probe: succeeds ⇒ live members
-            opts.jobs.add({ pgid, command: command.trim(), since: Date.now() });
+            opts.jobs.add({
+              pgid,
+              command: command.trim(),
+              since: Date.now(),
+              ...(use ? { use } : {}),
+            });
           } catch { /* group empty — nothing left running */ }
         }
       }
@@ -382,7 +389,7 @@ export interface ExecPlane {
   /** Kill every background job this shell left running (§9): called on harness shutdown so
    *  nothing outlives the process that spawned it. */
   reap(): Promise<void>;
-  /** The background jobs that ended since the last ask, each answered once (report.ts).
+  /** The background jobs that ended since the last ask, each answered once (late.ts).
    *  A shell that cannot watch its jobs end has none. */
   ended?(): Job[];
   /** Where the next call starts: the principal's own directory while an interface attached
@@ -441,7 +448,7 @@ const ageOf = (since: number): string => {
 };
 
 /** Move the jobs whose group has no member left out of `jobs`, into `ended` when the
- *  shell keeps one (its ends are reported, report.ts), else nowhere. */
+ *  shell keeps one (its ends are told, late.ts), else nowhere. */
 export function settleJobs(jobs: Set<Job>, ended?: Job[]): void {
   for (const j of jobs) {
     if (groupAlive(j.pgid)) continue;

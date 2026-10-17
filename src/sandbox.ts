@@ -53,7 +53,7 @@ export interface Sandbox {
   /** Reap every shell's jobs and stop the proxy: nothing outlives the process. */
   close(): Promise<void>;
   /** The background jobs that ended since the last ask, across every session's shell, each
-   *  answered once with whose it was (report.ts). */
+   *  answered once with whose it was (late.ts). */
   ended(): EndedJob[];
 }
 

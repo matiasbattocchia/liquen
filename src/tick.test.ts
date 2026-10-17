@@ -7,7 +7,15 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { lapseGates, tick } from "./tick.ts";
 import { openLog } from "./store/log.ts";
 import { RETRY_BACKOFF_MS } from "./store/sweep.ts";
-import type { Draft, Event, MessageEvent, PermissionRequestEvent } from "./types.ts";
+import type {
+  Draft,
+  Event,
+  MessageEvent,
+  PermissionRequestEvent,
+  ToolResultEvent,
+  ToolUseEvent,
+} from "./types.ts";
+import { outcomeLine } from "./render.ts";
 
 const at = (hoursAgo: number, now = Date.now()) =>
   new Date(now - hoursAgo * 3_600_000).toISOString();
@@ -80,12 +88,27 @@ Deno.test("a beat: the due wake is an alarm in the arming session's room, the ol
   }
 });
 
-/** A message the model sent (a turn's), or a mirror's copy (no turn), to a bot. */
-const sent = (text: string, turn?: string): Draft<MessageEvent> => ({
+/** The send call a turn made. */
+const call = (text: string, turn: string): Draft<ToolUseEvent> => ({
+  ts: new Date().toISOString(),
+  type: "tool_use",
+  agent: { id: "a1", session_id: "mind" },
+  payload: { turn_id: turn },
+  envelope: { service: "local", connection_address: "agent", conversation: { address: "mind@a1" } },
+  parts: [{
+    type: "data",
+    kind: "tool_use",
+    data: { name: "send", input: { to: "5491144117777", text } },
+  }],
+});
+
+/** A message the model sent (a turn's, by its send call), or a mirror's copy (no turn), to
+ *  a bot. */
+const sent = (text: string, turn?: string, use?: Event["id"]): Draft<MessageEvent> => ({
   ts: new Date().toISOString(),
   type: "message",
   agent: { id: "a1", session_id: "mind" },
-  ...(turn ? { payload: { turn_id: turn } } : {}),
+  ...(turn ? { payload: { turn_id: turn, ...(use ? { ref_id: use } : {}) } } : {}),
   envelope: {
     service: "whatsapp",
     connection_address: "5491100000000",
@@ -94,16 +117,21 @@ const sent = (text: string, turn?: string): Draft<MessageEvent> => ({
   parts: [{ type: "text", kind: "text", text }],
 });
 
-Deno.test("a send that failed for good is reported to the session that sent it, once", async () => {
+Deno.test("a send that failed for good is told against the call that sent it, once", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
   try {
     const now = Date.now();
     await log.upsertConnections([{ service: "whatsapp", address: "5491100000000", agentId: "a1" }]);
+    const uses = await log.publish([
+      call("¡Sigamos!", "t1"),
+      call("hola", "t2"),
+      call("¿seguís ahí?", "t3"),
+    ]);
     const [refused, retrying, exhausted, copy] = await log.publish([
-      sent("¡Sigamos!", "t1"),
-      sent("hola", "t2"),
-      sent("¿seguís ahí?", "t3"),
+      sent("¡Sigamos!", "t1", uses[0].id),
+      sent("hola", "t2", uses[1].id),
+      sent("¿seguís ahí?", "t3", uses[2].id),
       sent("[agent] listo"),
     ]);
     const failed = (code: number | null, attempts = 0) => ({
@@ -121,18 +149,22 @@ Deno.test("a send that failed for good is reported to the session that sent it, 
     await log.setDelivery(copy.id, failed(422)); // nobody's turn to tell
     const beat = await tick(log, () => undefined, now);
     assertEquals(beat.reported, 2);
-    const reports = await log.read({ types: ["alarm"] });
-    assertEquals(reports.map((r) => r.payload?.ref_id), [refused.id, exhausted.id]);
-    assertEquals(reports[0].envelope.conversation.address, "mind@a1");
-    assertEquals(reports[0].agent, undefined); // harness-authored: it wakes the session
-    assertEquals((reports[0].extra?.report as { kind: string }).kind, "undelivered");
-    assertStringIncludes(
-      reports[0].parts?.[0].type === "text" ? reports[0].parts[0].text : "",
-      '"¡Sigamos!" to Banco Hipotecario SA (5491144117777) was not delivered: ' +
+    const updates = (await log.read({ types: ["tool_result"] })) as ToolResultEvent[];
+    assertEquals(updates.map((r) => r.payload.ref_id), [uses[0].id, uses[2].id]);
+    assertEquals(updates.map((r) => r.payload.turn_id), ["t1", "t3"]);
+    assertEquals(updates[0].payload.update, true);
+    assertEquals(updates[0].payload.final, true); // nothing more will happen to it
+    assertEquals(updates[0].envelope.conversation.address, "mind@a1");
+    assertEquals(updates[0].agent, { id: "a1", session_id: "mind" });
+    // the call as the card shows it, the address named, and why it did not land
+    assertEquals(
+      outcomeLine(updates[0]),
+      "send(to: Banco Hipotecario SA, text: ¡Sigamos!) — not delivered: " +
         "bridge /dispatch HTTP 422: server returned error 479",
     );
+    assertEquals(updates[0].parts[0].data.is_error, true);
     assertStringIncludes(
-      reports[1].parts?.[0].type === "text" ? reports[1].parts[0].text : "",
+      outcomeLine(updates[1]),
       `still failing after ${RETRY_BACKOFF_MS.length} retries`,
     );
     assertEquals((await tick(log, () => undefined, now)).reported, 0); // told once

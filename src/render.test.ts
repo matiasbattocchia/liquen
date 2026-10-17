@@ -557,7 +557,7 @@ Deno.test("error events render as a <system> element — the model stays aware (
   );
 });
 
-Deno.test("a deferred outcome is narrated, never welded — its tool_use is spent (§9)", () => {
+Deno.test("a gated outcome is narrated, never welded — its tool_use is spent (§9)", () => {
   const t = "2026-07-19T12:00:00Z";
   const use = toolUseE("u1", t, "T1", "send", { to: "wa", text: "hola" });
   const asked = toolResultE("r1", t, "T1", { status: "pending_approval" }, "u1");
@@ -582,7 +582,7 @@ Deno.test("a deferred outcome is narrated, never welded — its tool_use is spen
   // the harness's own sentence, in the harness's own voice
   assertEquals(
     dump.includes(
-      '<system kind=\\"tool_result\\">send(to: Mariana, text: hola) → {\\"sent\\":true}</system>',
+      '<system kind=\\"tool_result\\" gated>send(to: Mariana, text: hola) → {\\"sent\\":true}</system>',
     ),
     true,
   );
@@ -2040,30 +2040,42 @@ Deno.test("a fired wake renders as the harness handing back the agent's own note
   );
 });
 
-Deno.test("a report reads as the harness telling how the agent's own work ended", () => {
+Deno.test("an update narrates the call it tells about, flags and all, and drops once read", () => {
   const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
-  const report: Event = {
-    id: "e02",
-    ts: t(1),
-    type: "alarm",
-    payload: { ref_id: "e00" },
-    envelope: {
-      service: "local",
-      connection_address: "agent",
-      conversation: { address: "mind@a1" },
-    },
-    extra: { report: { kind: "undelivered" } },
-    parts: [{ type: "text", kind: "alarm", text: "your message e00 was not delivered: 422" }],
-  } as Event;
-  const { messages } = render({
-    events: [mindMsg("e01", t(0), "hola", false), report],
-    docs: [],
-    session: SESSION,
-    zone: "UTC",
-    now: t(2),
-  });
-  const line = blocksOf(messages).map(txt).find((s) => s.includes("was not delivered"));
-  assertStringIncludes(line!, '<system kind="report">your message e00 was not delivered');
+  const use = toolUseE("e01", t(0), "T1", "bash", { command: "deno test" });
+  const answer: ToolResultEvent = {
+    ...toolResultE("e02", t(0), "T1", "still running", "e01"),
+    payload: { turn_id: "T1", ref_id: "e01", async: true },
+  };
+  const update: ToolResultEvent = {
+    ...toolResultE("e04", t(2), "T1", "exit 0 after 2m\nok | 12 passed", "e01"),
+    payload: { turn_id: "T1", ref_id: "e01", update: true, final: true },
+    parts: [{
+      type: "data",
+      kind: "tool_result",
+      data: { output: "exit 0 after 2m\nok | 12 passed" },
+      text: "bash(deno test)",
+    }],
+  };
+  const told = [
+    mindMsg("e00", t(0), "corré los tests", false),
+    use,
+    answer,
+    mindMsg("e03", t(1), "corriendo", true, "T1b"),
+    update,
+  ];
+  const view = (events: Event[]) =>
+    render({ events, docs: [], session: SESSION, zone: "UTC", now: t(5) }).messages;
+  const blocks = blocksOf(view(told));
+  assertEquals(
+    blocks.map(txt).find((s) => s.includes("deno test")),
+    '<system kind="tool_result" update final>bash(deno test) → exit 0 after 2m\nok | 12 passed</system>',
+  );
+  // its call collapsed with the turn that made it: the update is narration, never a block
+  assertEquals(blocks.filter((b) => b.type === "tool_result").length, 0);
+  // and once a turn has read it, it collapses like the rest of the tool traffic
+  const read = blocksOf(view([...told, mindMsg("e05", t(3), "pasaron todos", true, "T2")]));
+  assertEquals(read.map(txt).some((s) => s.includes("12 passed")), false);
 });
 
 /* ── the principal's channel: wrapped, steering hidden, never capped ───── */
