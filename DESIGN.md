@@ -2232,7 +2232,14 @@ names the text it replaces, and text that is no longer there matches nothing.
     the agent learns at its next turn what died with the process. No orphan survives the
     process that spawned it — the container-teardown guarantee, extended to the
     long-running org. Nothing caps a job's age: it is visible in the ambient block, with
-    its kill handle, for as long as it runs.
+    its kill handle, for as long as it runs. A harness that goes down without its
+    shutdown (a SIGKILL, the OOM killer, the machine) tells nothing, and a job is held
+    only in its memory — so the log is what remembers: every call that left work running
+    answers `async`, and at boot, before any shell runs, main reads the bash calls
+    answered `async` with no `final` update (`unended`, the store's anti-join beside the
+    open asks) and tells each final, **lost**: it may have ended or may still run, and
+    nothing more is told. The next run cannot adopt the group — a pgid outlives no reboot,
+    and after one the number may name a stranger.
   - Every update lands against the call (§3, `late.ts`): a mid-turn one is consumed by the
     turn's next step; a **lone** one wakes a fresh turn. A remote sandbox's shell has none
     of this: its output is a file in the container, a call is killed at its wait, and a

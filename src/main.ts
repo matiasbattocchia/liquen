@@ -40,7 +40,7 @@ import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runne
 import type { Log, UsageRow } from "./store/log.ts";
 import { databaseOf, storeAt } from "./store/mod.ts";
 import { type ClockSettings, tick } from "./tick.ts";
-import { reportUndelivered, shellUpdate, updateDraft } from "./late.ts";
+import { reportLost, reportUndelivered, shellUpdate, updateDraft } from "./late.ts";
 import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import type { AgentRow } from "./store/agents.ts";
@@ -231,6 +231,12 @@ export async function start(
     locale: catalog?.organization.locale,
     bashWaitMs: catalog?.system.bashWaitMs,
   };
+  // a command the last run answered async and never told the end of went down with it
+  // (late.ts): told lost before this run's shells owe anything of their own
+  const lost = await reportLost(log);
+  if (lost) {
+    console.log(`[main] ${lost} command${lost === 1 ? "" : "s"} lost with the last run, told`);
+  }
   const sandbox = remote
     ? openCloudflareSandbox(dir, {
       url: remote,

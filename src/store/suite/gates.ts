@@ -179,4 +179,45 @@ export function gatesSuite(s: Substrate): void {
       await store.drop();
     }
   });
+
+  Deno.test("unended: a call answered async is owed until a final update, and only its tool's", async () => {
+    const store = await s.fresh();
+    const log = await store.open();
+    try {
+      const late = (ref: string, flags: Record<string, true>): Draft<ToolResultEvent> => {
+        const r = result(ref);
+        return { ...r, payload: { ...r.payload, ...flags } };
+      };
+      const bash = (): Draft<ToolUseEvent> => {
+        const u = use();
+        return {
+          ...u,
+          parts: [{
+            type: "data",
+            kind: "tool_use",
+            data: { name: "bash", input: { command: "make" } },
+          }],
+        };
+      };
+      const ended = await log.publish(bash());
+      const running = await log.publish(bash());
+      const told = await log.publish(bash());
+      const sync = await log.publish(bash());
+      const sent = await log.publish(use());
+      await log.publish([
+        late(ended!.id, { async: true }),
+        late(running!.id, { async: true }),
+        late(told!.id, { async: true }),
+        result(sync!.id),
+        late(sent!.id, { async: true }),
+        late(ended!.id, { update: true, final: true }),
+        late(told!.id, { update: true }), // a word, not the last one
+      ]);
+      assertEquals((await log.unended("bash")).map((u) => u.id), [running!.id, told!.id]);
+      assertEquals((await log.unended("send")).map((u) => u.id), [sent!.id]);
+    } finally {
+      await log.close();
+      await store.drop();
+    }
+  });
 }

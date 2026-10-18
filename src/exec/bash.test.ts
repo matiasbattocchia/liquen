@@ -529,10 +529,13 @@ Deno.test("bash: a backgrounded job returns immediately (pipe not held open)", a
     const bash = bashTool({ workspace: `${dir}/workspace`, defaultWaitMs: 30_000, jobs });
     const t0 = Date.now();
     // a long sleeper (uniquely named via exec -a) that holds the pipe
-    const out = String(
-      await bash.execute({ command: `echo launched; exec -a ${marker} sleep 30 &` }, live()),
-    );
+    const answer = await bash.execute(
+      { command: `echo launched; exec -a ${marker} sleep 30 &` },
+      live(),
+    ) as { output: string; async?: true };
     const ms = Date.now() - t0;
+    const out = answer.output;
+    assertEquals(answer.async, true); // its end is owed, as one past its wait
     assertStringIncludes(out, "launched");
     assertMatch(out, /\[left running as group \d+: what it prints goes on in \S+; you are told/);
     assert(ms < 5000, `backgrounded call took ${ms}ms — pipe held open`);
@@ -549,8 +552,8 @@ Deno.test("bash: a job that prints into the call's pipe lives past the call, its
     const bash = bashTool({ workspace: dir, jobs });
     // no redirect: the job writes where the call's output went, after the call answered
     const command = "(for i in 1 2 3; do echo tick $i; sleep 0.3; done; touch finished) &";
-    const out = String(await bash.execute({ command }, live(), undefined, USE));
-    assertStringIncludes(out, "left running as group");
+    const answer = await bash.execute({ command }, live(), undefined, USE) as { output: string };
+    assertStringIncludes(answer.output, "left running as group");
     const end = await told(1);
     assertEquals(end.final, true);
     assertMatch(end.output, /^what it left running ended after \d+s \(group \d+\); its exit/);

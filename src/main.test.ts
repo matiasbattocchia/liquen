@@ -7,6 +7,7 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { TextLineStream } from "@std/streams";
 import { start } from "./main.ts";
 import { openLog } from "./store/log.ts";
+import { newId } from "./store/id.ts";
 import type { AgentConfig } from "./xi.ts";
 import type { AgentRow } from "./store/agents.ts";
 import type { Policy } from "./policy.ts";
@@ -912,6 +913,73 @@ Deno.test("a command that outlives its wait wakes the agent with its end, told a
       requests[2],
     );
     assert(requests[2].includes("built"));
+  } finally {
+    await main.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a command the last run answered async and never ended is told lost at boot", async () => {
+  const dir = await Deno.makeTempDir();
+  const pre = await openLog(`${dir}/log`);
+  const here = {
+    service: "local" as const,
+    connection_address: "agent",
+    conversation: { address: "mind@a1" },
+  };
+  const self = { id: "a1", session_id: "mind" };
+  const T0 = newId(); // the last run's turn: ids order turns, so a real one
+  await pre.publish(principalMsg("mind@a1", "levantá el server"));
+  const use = await pre.publish({
+    ts: new Date().toISOString(),
+    type: "tool_use",
+    payload: { turn_id: T0 },
+    agent: self,
+    envelope: here,
+    parts: [{
+      type: "data",
+      kind: "tool_use",
+      data: { name: "bash", input: { command: "make serve", wait: 0 } },
+    }],
+  });
+  await pre.publish({
+    ts: new Date().toISOString(),
+    type: "tool_result",
+    payload: { turn_id: T0, ref_id: use!.id, async: true },
+    agent: self,
+    envelope: here,
+    parts: [{ type: "data", kind: "tool_result", data: { output: "[still running after 0s]" } }],
+  });
+  await pre.publish({
+    ts: new Date().toISOString(),
+    type: "message",
+    payload: { turn_id: T0, stop_reason: "end_turn" },
+    agent: self,
+    envelope: here,
+    parts: [{ type: "text", kind: "text", text: "quedó corriendo" }],
+  });
+  await pre.close();
+
+  const { transport: script, calls } = scripted([reply("se cayó, lo vuelvo a levantar")]);
+  const requests: string[] = [];
+  const transport: ModelTransport = (params, emit) => {
+    requests.push(JSON.stringify(params.messages));
+    return script(params, emit);
+  };
+  const main = await start({ dir, debounceMs: 0, principals: [agent("1")] }, { transport });
+  try {
+    await waitFor(() => calls() === 1);
+    const results = await main.log.read({ types: ["tool_result"] }) as ToolResultEvent[];
+    const update = results.find((e) => e.payload.update)!;
+    assertEquals(update.payload.ref_id, use!.id);
+    assertEquals(update.payload.final, true);
+    assert(
+      requests[0].includes(
+        '<system kind=\\"tool_result\\" update final>bash(make serve) → lost when the harness went down',
+      ),
+      requests[0],
+    );
+    assertEquals(await main.log.unended("bash"), []); // told once
   } finally {
     await main.stop();
     await Deno.remove(dir, { recursive: true });

@@ -1,5 +1,6 @@
 /**
- * store/gates.ts — the open asks (§9): standing state read off the whole log.
+ * store/gates.ts — the open asks and the unended calls (§9): standing state read off the
+ * whole log.
  *
  * A gate is two rows pointing at one `tool_use`: the `permission_request` the harness raised
  * from inside the call, and the `permission_response` that settles it. Open is the ABSENCE
@@ -14,6 +15,11 @@
  * holds its immediate `pending_approval` result and no gated outcome yet. Both are the
  * SQL of the derivations `xi` states over an event list, and the store test holds the two
  * to the same answer.
+ *
+ * An unended call is the third anti-join on the same index: a call answered `async` whose
+ * `final` update never came. While the harness runs, the process holding the work owes
+ * that word; one that went down mid-call cannot pay it, and its successor reads what is
+ * owed here, at boot, and says the call was lost (late.ts).
  */
 
 import type { DatabaseSync } from "node:sqlite";
@@ -39,6 +45,9 @@ export interface Gates {
   /** A session's rulings whose outcome is still owed (§9): the errand `act` runs on the
    *  model's behalf. One per use, the earliest ruling when several landed. */
   owed(agentId: string, sessionId: string): Promise<Owed[]>;
+  /** The calls of tool `name` answered `async` with no `final` update since, oldest first,
+   *  org-wide: what a harness that went down mid-call left owed. */
+  unended(name: string): Promise<ToolUseEvent[]>;
 }
 
 /** The ref join: request, response and result all name their use in `payload.ref_id`. */
@@ -97,6 +106,18 @@ export function createGates(db: DatabaseSync, eventOf: (row: unknown) => Event):
            AND json_extract(t.payload, '$.gated') = 1)
      ORDER BY a.id`,
   );
+  const unended = db.prepare(
+    `SELECT DISTINCT u.* FROM events t
+     JOIN events u ON u.id = ${REF.replace("payload", "t.payload")}
+     WHERE t.type = 'tool_result' AND json_extract(t.payload, '$.async') = 1
+       AND u.type = 'tool_use' AND json_extract(u.parts, '$[0].data.name') = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM events f WHERE f.type = 'tool_result' AND ${
+      REF.replace("payload", "f.payload")
+    } = u.id
+           AND json_extract(f.payload, '$.final') = 1)
+     ORDER BY u.id`,
+  );
   return {
     gates(scope) {
       const rows = scope ? mine.all(scope.agentId, scope.sessionId) : all.all();
@@ -104,6 +125,9 @@ export function createGates(db: DatabaseSync, eventOf: (row: unknown) => Event):
     },
     owed(agentId, sessionId) {
       return Promise.resolve(owedOf(rulings.all(agentId, sessionId) as RulingRow[], eventOf));
+    },
+    unended(name) {
+      return Promise.resolve(unended.all(name).map((r) => eventOf(r) as ToolUseEvent));
     },
   };
 }

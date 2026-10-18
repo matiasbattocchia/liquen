@@ -5527,3 +5527,17 @@ Open: a 429 that comes back as an empty, zero-token run is not an error row, so 
 does not see it. A wake that finds nothing still costs a model call; a check that skips the
 model is designed (exit 0 work, 1 nothing, else wake anyway) and not built. Wakes missed
 while the host slept are not logged.
+
+### A command the harness went down with is told lost (2026-10-18) — LANDED
+
+Every job ends in a final update while the harness lives, and shutdown reaps each one told
+"stopped with the harness". A harness that dies without its shutdown (SIGKILL, OOM, the
+machine) tells nothing, and the agent waits on an end that never comes, with nothing to say
+it should stop waiting. The log is what survives, so it is what remembers: a call that left
+work running answers `async` (a `cmd &` now does too, not only one past its wait), and at
+boot main reads the bash calls answered `async` with no `final` update (`Log.unended`, the
+store's anti-join beside the open asks, SQLite and Postgres) and tells each final, lost.
+The group is not adopted: its pgid may name a stranger after a reboot.
+
+Left: a `cmd &` whose own command fails is answered as an error, which carries no `async`,
+so if the harness goes down before that job ends, nothing is told.

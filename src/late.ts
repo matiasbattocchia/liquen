@@ -98,6 +98,41 @@ export function shellUpdate(u: SessionUpdate): Update {
   };
 }
 
+/** What a harness that went down while a command ran can say of it: nothing it knows. The
+ *  process that read its output and waited on its status is gone with the harness. */
+export const LOST =
+  "lost when the harness went down while it ran: it may have ended or may still run, " +
+  "and nothing more is told of it";
+
+/** The boot's pass over the shell's calls left owed (§9): each command answered async
+ *  whose final word never came was held by a harness that is gone, so it is told final,
+ *  lost. Runs before any shell does, when no call of this harness is owed yet. Returns how
+ *  many were told. */
+export async function reportLost(
+  log: Pick<Log, "unended" | "publish">,
+  now: number = Date.now(),
+): Promise<number> {
+  const nowIso = new Date(now).toISOString();
+  let told = 0;
+  for (const use of await log.unended("bash")) {
+    if (!use.agent) continue;
+    const { command } = use.parts[0].data.input as { command?: string };
+    await log.publish(updateDraft(
+      shellUpdate({
+        agentId: use.agent.id,
+        sessionId: use.agent.session_id ?? MIND,
+        use: { id: use.id, turn_id: use.payload.turn_id },
+        command: command ?? "",
+        output: LOST,
+        final: true,
+      }),
+      nowIso,
+    ));
+    told++;
+  }
+  return told;
+}
+
 /** One row by id, off the log's id-ordered read. */
 async function rowOf(log: Pick<Log, "read">, id: EventId): Promise<Event | undefined> {
   const [row] = await log.read({ beforeId: `${id}0`, limit: 1 });

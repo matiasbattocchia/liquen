@@ -38,7 +38,7 @@ import {
 import { type Gates, owedOf, type RulingRow } from "../gates.ts";
 import { RETRY_BACKOFF_MS, type Sweeper } from "../sweep.ts";
 import { newId } from "../id.ts";
-import type { Event, PermissionRequestEvent } from "../../types.ts";
+import type { Event, PermissionRequestEvent, ToolUseEvent } from "../../types.ts";
 import { count, type Db, rows } from "./sql.ts";
 
 export function pgLeases(db: Db): LeaseRows {
@@ -488,6 +488,20 @@ export function pgGates(db: Db, eventOf: (row: unknown) => Event): Gates {
         ),
         eventOf,
       );
+    },
+    async unended(name) {
+      return (await rows(
+        db,
+        `SELECT DISTINCT u.* FROM events t
+         JOIN events u ON u.id = t.payload ->> 'ref_id'
+         WHERE t.type = 'tool_result' AND flag(t.payload, 'async')
+           AND u.type = 'tool_use' AND u.parts -> 0 -> 'data' ->> 'name' = $1::text
+           AND NOT EXISTS (
+             SELECT 1 FROM events f WHERE f.type = 'tool_result'
+               AND f.payload ->> 'ref_id' = u.id AND flag(f.payload, 'final'))
+         ORDER BY u.id`,
+        [name],
+      )).map((r) => eventOf(r) as ToolUseEvent);
     },
   };
 }

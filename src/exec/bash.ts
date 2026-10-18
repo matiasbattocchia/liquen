@@ -478,7 +478,13 @@ export function bashTool(opts: BashOptions): ExecTool {
         release();
       }
       const end = { code: status.code, timedOut: false, aborted: signal.aborted, waitMs };
-      return await settle(raw ?? spool.answered(), end, call, state, spill, report, note);
+      const answer = await settle(raw ?? spool.answered(), end, call, state, spill, report, note);
+      if (!left) return answer;
+      // what it left is told later, so the answer is async like one past its wait: a
+      // harness that goes down first owes its end (late.ts)
+      return typeof answer === "string"
+        ? { output: answer, files: [], async: true }
+        : { ...(answer as ExecOutcome), async: true };
     },
   };
 }
