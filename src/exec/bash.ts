@@ -398,9 +398,9 @@ export function bashTool(opts: BashOptions): ExecTool {
       if (signal.aborted) onAbort();
       else signal.addEventListener("abort", onAbort, { once: true });
       let waitTimer: ReturnType<typeof setTimeout> | undefined;
-      const waited = new Promise<undefined>((
-        r,
-      ) => (waitTimer = setTimeout(() => r(undefined), waitMs)));
+      const waited = new Promise<undefined>((r) => {
+        waitTimer = setTimeout(() => r(undefined), waitMs);
+      });
       const started = Date.now();
       const status = await Promise.race([child.status, waited]);
       clearTimeout(waitTimer);
@@ -413,8 +413,16 @@ export function bashTool(opts: BashOptions): ExecTool {
         const so = spool.open(path);
         await own(path, opts.user);
         report?.({ bytes: new TextEncoder().encode(so).length });
-        const job: Job = { pgid: pgid ?? child.pid, command: command.trim(), since: started };
-        Object.assign(job, { spool, pipe: pumps, running: true, release, ...(use ? { use } : {}) });
+        const job: Job = {
+          pgid: pgid ?? child.pid,
+          command: command.trim(),
+          since: started,
+          ...(use ? { use } : {}),
+          spool,
+          pipe: pumps,
+          running: true,
+          release,
+        };
         if (pgid !== undefined) jobs.add(job);
         if (wake) jobs.wake(job, wake);
         child.status.then((s) => jobs.answer(job, s, call))
@@ -433,9 +441,9 @@ export function bashTool(opts: BashOptions): ExecTool {
       // pipe closed) and they win at once; a job holding the pipe leaves them reading, and
       // the grace flushes what is already written
       let graceTimer: ReturnType<typeof setTimeout> | undefined;
-      const grace = new Promise<"grace">((
-        r,
-      ) => (graceTimer = setTimeout(() => r("grace"), GRACE_MS)));
+      const grace = new Promise<"grace">((r) => {
+        graceTimer = setTimeout(() => r("grace"), GRACE_MS);
+      });
       const held = (await Promise.race([pumps, grace])) === "grace";
       clearTimeout(graceTimer);
       // a group that still has members after bash exited is a job the command left (`cmd
@@ -444,14 +452,20 @@ export function bashTool(opts: BashOptions): ExecTool {
       let note: string | undefined;
       let raw: string | undefined;
       if (left) {
-        const job: Job = { pgid: pgid!, command: command.trim(), since: started };
-        if (use) job.use = use;
+        const job: Job = {
+          pgid: pgid!,
+          command: command.trim(),
+          since: started,
+          ...(use ? { use } : {}),
+        };
         if (held) {
           // it writes to the pipe: read on into the spool, so it lives past the call
           const path = await outPath();
           raw = spool.open(path);
           await own(path, opts.user);
-          Object.assign(job, { spool, pipe: pumps, release });
+          job.spool = spool;
+          job.pipe = pumps;
+          job.release = release;
           if (wake) jobs.wake(job, wake);
         }
         jobs.add(job);
