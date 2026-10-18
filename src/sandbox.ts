@@ -15,7 +15,7 @@ import {
   type ExecGround,
   type ExecPlane,
   installExecGround,
-  type Job,
+  type ShellUpdate,
   shippedAt,
 } from "./exec/bash.ts";
 import { type Files, localFiles } from "./store/media.ts";
@@ -52,16 +52,12 @@ export interface Sandbox {
   forAgent(agentId: string): SandboxAgent;
   /** Reap every shell's jobs and stop the proxy: nothing outlives the process. */
   close(): Promise<void>;
-  /** The background jobs that ended since the last ask, across every session's shell, each
-   *  answered once with whose it was (late.ts). */
-  ended(): EndedJob[];
 }
 
-/** A background job that ended, and the session whose shell started it. */
-export interface EndedJob {
+/** What a shell told of a call after its answer, and the session whose shell it is. */
+export interface SessionUpdate extends ShellUpdate {
   agentId: string;
   sessionId: string;
-  job: Job;
 }
 
 export interface LocalSandboxOptions {
@@ -73,11 +69,14 @@ export interface LocalSandboxOptions {
    *  the shell speaks the org's language, and a script the agent runs by hand does too.
    *  Null is the catalog's word for none. */
   locale?: string | null;
-  /** The `system.bashTimeoutMs` knob: a call's default timeout. */
-  bashTimeoutMs?: number;
+  /** The `system.bashWaitMs` knob: how long a call is waited on by default. */
+  bashWaitMs?: number;
   /** Each agent's `export` knob: the variables of this process's environment its shells
    *  inherit, read at each call. One the environment does not hold is not issued. */
   exports?: Record<string, string[]>;
+  /** Where every shell tells what its calls do after their answers (late.ts), with the
+   *  session whose shell it is. */
+  tell?: (u: SessionUpdate) => void;
 }
 
 /** The local provider: subprocesses on this machine, ONE GROUND PER AGENT, ONE SHELL PER
@@ -90,7 +89,7 @@ export interface LocalSandboxOptions {
  *  refused broker-side, before any byte is read. */
 export async function openLocalSandbox(
   dir: string,
-  { store, agents, locale, bashTimeoutMs, exports = {} }: LocalSandboxOptions,
+  { store, agents, locale, bashWaitMs, exports = {}, tell }: LocalSandboxOptions,
 ): Promise<Sandbox> {
   // the egress proxy (§9): front every credential row that declares an env var — user
   // space gets the placeholder + proxy env, never a real credential
@@ -110,9 +109,9 @@ export async function openLocalSandbox(
       ...(await proxy.env(agentId)),
       ...localeEnv,
     });
-    grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashTimeoutMs));
+    grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashWaitMs));
   }
-  const shells = new Map<string, ExecPlane & { agentId: string; sessionId: string }>();
+  const shells = new Map<string, ExecPlane>();
   const homeOf = (agentId: string) => `${dir}/agents/${agentId}`;
   const filesOf = (agentId: string, shell: ExecPlane): Files => {
     const home = homeOf(agentId);
@@ -131,7 +130,8 @@ export async function openLocalSandbox(
           const key = sessionAddress(agentId, sessionId);
           let shell = shells.get(key);
           if (!shell) {
-            shell = { ...ground.shell(), agentId, sessionId };
+            const told = tell && ((u: ShellUpdate) => tell({ ...u, agentId, sessionId }));
+            shell = ground.shell(told);
             shells.set(key, shell);
           }
           return { ...shell, home: homeOf(agentId), files: filesOf(agentId, shell) };
@@ -142,11 +142,6 @@ export async function openLocalSandbox(
       // each session's own jobs, reaped with its own shell (§9)
       for (const shell of shells.values()) await shell.reap();
       await proxy.close(); // stop the egress proxy and close its vault handle
-    },
-    ended() {
-      return [...shells.values()].flatMap((s) =>
-        (s.ended?.() ?? []).map((job) => ({ agentId: s.agentId, sessionId: s.sessionId, job }))
-      );
     },
   };
 }
@@ -159,7 +154,7 @@ export interface CloudflareSandboxOptions {
   /** The agents that run: each gets a sandbox of its own. */
   agents: string[];
   locale?: string | null;
-  bashTimeoutMs?: number;
+  bashWaitMs?: number;
   /** The `system.sandboxSleepMinutes` knob: a sandbox's life after its last bash call. */
   sleepMinutes?: number;
 }
@@ -191,7 +186,7 @@ const REMOTE_ENV: Record<string, string> = {
  *  sandboxes to the gateway's sleep. */
 export function openCloudflareSandbox(
   dir: string,
-  { url, token, agents, locale, bashTimeoutMs, sleepMinutes }: CloudflareSandboxOptions,
+  { url, token, agents, locale, bashWaitMs, sleepMinutes }: CloudflareSandboxOptions,
 ): Sandbox {
   const env = { ...REMOTE_ENV, ...(locale ? { LANG: locale } : {}) };
   const minutes = sleepMinutes ?? DEFAULT_SANDBOX_SLEEP_MINUTES;
@@ -213,7 +208,7 @@ export function openCloudflareSandbox(
             shell = remoteShell(gateway, {
               workspace: REMOTE_HOME,
               env: () => env,
-              ...(bashTimeoutMs ? { defaultTimeoutMs: bashTimeoutMs } : {}),
+              ...(bashWaitMs ? { defaultWaitMs: bashWaitMs } : {}),
               lease,
             });
             shells.set(key, shell);
@@ -244,9 +239,6 @@ export function openCloudflareSandbox(
     async close() {
       for (const shell of shells.values()) await shell.reap();
     },
-    // a remote job's end is seen only when the shell is asked for its ambient lines, a
-    // look that keeps the sandbox awake, so a watch here would hold it up forever
-    ended: () => [],
   };
 }
 

@@ -96,7 +96,7 @@ function cases(
         const shell = remoteShell(place.gateway, {
           workspace: place.workspace,
           env: () => place.env,
-          defaultTimeoutMs: 20_000,
+          defaultWaitMs: 20_000,
         });
         try {
           await body(shell, place);
@@ -155,13 +155,13 @@ cases("the environment is the issued one alone", async (shell) => {
   );
 });
 
-cases("a timeout kills the command's whole tree and says so", async (shell, place) => {
+cases("a wait run out kills the command's whole tree and says so", async (shell, place) => {
   const late = `${place.workspace}/late`;
   await assertRejects(
     () =>
       run(shell, {
         command: `(sleep 5; touch ${quote(late)}) & sleep 5; echo never`,
-        timeout: 1,
+        wait: 1,
       }),
     Error,
     "timed out after 1s",

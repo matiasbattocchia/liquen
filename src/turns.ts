@@ -17,7 +17,7 @@
 import type { Event, EventId, SessionRef, ToolResultEvent } from "./types.ts";
 import type { ReadQuery, UsageRow } from "./store/log.ts";
 import { sessionAddress } from "./session.ts";
-import { hhmm, ownVoice, shortId, textOf } from "./render.ts";
+import { hhmm, ownComplex, ownVoice, shortId, textOf } from "./render.ts";
 import { openStore } from "./store/mod.ts";
 import { findRoot, orgFlag, readConfig } from "./config.ts";
 import { entry } from "./entry.ts";
@@ -34,7 +34,16 @@ export interface Tokens {
 
 /** What opened a turn — the news its first step read last. */
 export interface Opener {
-  kind: "message" | "wake" | "alarm" | "verdict" | "call" | "cancel" | "checkpoint" | "unknown";
+  kind:
+    | "message"
+    | "wake"
+    | "alarm"
+    | "update"
+    | "verdict"
+    | "call"
+    | "cancel"
+    | "checkpoint"
+    | "unknown";
   id?: EventId;
   ts?: string;
   /** Who said it: a message's or a verdict's sender. */
@@ -43,7 +52,8 @@ export interface Opener {
   via?: string;
   /** A wake's handle (`liquen schedule --name`). */
   name?: string;
-  /** What it said: a message's words, an alarm's note, a call's tool. */
+  /** What it said: a message's words, an alarm's note, a call's tool, the call an update
+   *  tells about. */
   text?: string;
 }
 
@@ -73,10 +83,13 @@ export interface Turn {
 const CONTINUING = new Set(["tool_use", "pause_turn", "max_tokens"]);
 const zero = (): Tokens => ({ input: 0, output: 0, cache_read: 0, cache_write: 0 });
 
-/** A step row of this session's own model: its turn key, never a door call's (`job:`). */
+/** A step row of this session's own model: its turn key, never a door call's (`job:`), and
+ *  never an update's — it names the step of the call it tells about, but it is news that
+ *  came after (late.ts). */
 function stepOf(e: Event, ref: SessionRef): string | undefined {
   const turn = e.payload?.turn_id;
   if (typeof turn !== "string" || turn.startsWith("job:")) return undefined;
+  if (e.type === "tool_result" && e.payload?.update) return undefined;
   if (e.agent?.id !== ref.agentId || e.agent.session_id !== ref.id) return undefined;
   return turn;
 }
@@ -119,6 +132,9 @@ export function openerOf(e: Event, ref: SessionRef): Opener | undefined {
       return { kind: "cancel", ...at };
     case "summary":
       return { kind: "checkpoint", ...at };
+    case "tool_result":
+      if (!e.payload.update || !ownComplex(e, ref)) return undefined;
+      return { kind: "update", ...at, text: e.parts[0].text ?? "" };
     default:
       return undefined;
   }
@@ -409,6 +425,8 @@ export function openedBy(o: Opener): string {
       return "cancel";
     case "checkpoint":
       return "checkpoint";
+    case "update":
+      return `update on ${o.text || "a call"}`;
     default:
       return o.id ? `unknown (${shortId(o.id)})` : "unknown";
   }

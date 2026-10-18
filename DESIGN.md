@@ -2169,41 +2169,55 @@ names the text it replaces, and text that is no longer there matches nothing.
   credentials), over the storage port; execution plane = bash + agent binaries (+ browser,
   code) in the **sandbox** (subprocess in the org container; micro-VM/E2B/Fly later behind
   a SandboxProvider). Exec-plane security = OS (Unix perms + mounts + egress), not tool gating.
-- **Background processes**: `bash` detaches (`cmd >/work/log 2>&1 &`) and samples
-  (`tail`); the buffer is a file in the sandbox, **out of the log** (same principle as
-  EventLog vs Stream — high-frequency output never enters the log). No dedicated tool.
-  - **Lifetime is harness-bounded (containment, no registry).** A background job must
-    outlive its *call* (that's the feature) but never the *harness* (the leak). Each bash
-    command runs in its own **process group** (`setsid`); on timeout/abort the whole group
-    is killed (a runaway foreground drags its children down, not just bash), and a group
-    that still has members after the call (a `cmd &` job) is recorded and **reaped on
-    shutdown** (`main.stop()` / task-mode exit). So no orphan survives the process that
-    spawned it — the container-teardown guarantee, extended to the long-running org.
-    Managed *visibility* has two halves. **Passive (shipped):** the ambient block lists each
-    live job with a **pid kill-handle** + full command on the `Job` (§5) — enough to see and
-    kill what's running. **Active: an update on job death** (`late.ts`, §10). main
-    probes every shell's registry every `JOB_PROBE_MS` (2s — push from the agent's
-    perspective; a poll underneath, since a `cmd &` grandchild is not our child to await):
-    a group with no member left moves out of the registry into the shell's `ended` list
-    (the ambient look settles the same way, so a death it sees first is still told), and
-    each one becomes the final update on the call that left it. A mid-turn
-    death (the agent's own `kill`) lands while the turn runs and is consumed by its next
-    step; a **lone** death wakes a fresh turn. Exit *codes* are unknowable — the signal
-    says "gone"; the agent `tail`s what the job wrote for the outcome. Shutdown's reap is
-    no news: what it kills is not told. A remote sandbox's shell tells nothing: its jobs
-    are seen only by a look that keeps the container awake.
-    **The exit event generalizes to arbitrary conditions**: a watcher is just a background
-    job whose death IS the signal — `(tail -f train.log | grep -qm1 DONE) &` or
-    `(inotifywait -e close_write out/) &` exits when the condition fires → lone-death →
-    update → wake, and the call the update names tells the agent *which* watch fired.
-    Condition-watching (Claude Code's Monitor tool) thus costs zero harness code — a
-    **skill** teaches the incantations; latency is the probe's. (Claude Code's own model,
-    for reference: completion pushes an injected notification; progress is never pushed — the model pulls the output file; mid-run
-    conditions exist only via an explicitly armed, filtered watcher.)
-    Kill-across-invocations / per-job output tools
-    are a further v0.2 item only if long background work becomes common; the unix-native path
-    (raw `&`/`tail`/`kill` + the ambient HUD) is the default. macOS lacks `setsid` → falls
-    back to a bare spawn (isolation off, so no tracked job).
+- **Background processes are bash calls that outlive their wait** — one tool for the
+  foreground, the background and the watch, and no registry the agent has to drive.
+  - **The turn waits; the command doesn't have to.** A call is waited on up to its `wait`
+    (`system.bashWaitMs`, 120s). A command that ends inside it answers SYNC, as any tool
+    does. One still running is never killed for it: the call answers ASYNC (§3) with what
+    it printed so far and the file the rest goes to, and the command runs on as a **job**.
+    `wait` is the agent's knob for how much it wants to see before going on — 0 for a
+    server, a few seconds to see one boot, the default for a build it would wait for anyway.
+    The harness is the command's parent, so its END is known: the update that tells it
+    carries the **exit status** and the lines printed since the answer, `final` when
+    nothing the command started is still running.
+  - **The spool: the harness keeps reading the pipe.** Both streams are pumped into the
+    call's output, and past the answer into `.out/bash-<id>.log` — a file in the workspace,
+    **out of the log** (same principle as EventLog vs Stream — high-frequency output never
+    enters the log). Reading on is what lets anything the call started outlive it: a
+    writer whose pipe nobody reads dies on its next write. So a `cmd &` that never
+    redirected keeps running, and what it prints is spooled like the rest.
+  - **Attention is a ladder over the spool.** The FILE holds everything (pulled with
+    `aread`/`tail`). The **glance** is the latest line, standing beside the job's line in
+    the ambient block (§5) — cheap, current, never news. A **wake** is a regular
+    expression the call carries: each line printed after the answer that matches it is an
+    update — news that wakes the agent — batched (`WAKE_BATCH_MS`), spaced
+    (`WAKE_GAP_MS`) and capped (`WAKE_LINES`), so a flood wakes it every few seconds,
+    never on every line. Condition-watching (Claude Code's Monitor tool) is therefore a
+    call, `bash(tail -F app.log, wait: 0, wake: "ERROR")`, and a build watched for its
+    errors is the build itself with a `wake`. The filter is declarative and lives at the
+    harness, beside the pipe it reads.
+  - **What a command leaves behind is a job too.** A group that still has members after
+    its command's bash exited (a `cmd &`) stays on the shell's list, its call's answer
+    saying so. Its end is a probe's: every `JOB_PROBE_MS` (2s — push from the agent's
+    perspective, a poll underneath, since a `cmd &` grandchild is not our child to await),
+    and at every ambient look, a group with no member left is told ended, final, with
+    what it printed since if it printed into the pipe. Its exit status is unknowable — the
+    signal says "gone" — so the tool doc teaches the `echo "exit $?"` line, and prefers a
+    `wait` to a `&`.
+  - **Lifetime is harness-bounded (containment).** A job must outlive its *call* (that's
+    the feature) but never the *harness* (the leak). Each bash command runs in its own
+    **process group** (`setsid`); an abort kills the whole group (a runaway foreground
+    drags its children down, not just bash), and every job is **reaped on shutdown**
+    (`main.stop()` / task-mode exit), each told final — "stopped with the harness" — so
+    the agent learns at its next turn what died with the process. No orphan survives the
+    process that spawned it — the container-teardown guarantee, extended to the
+    long-running org. Nothing caps a job's age: it is visible in the ambient block, with
+    its kill handle, for as long as it runs.
+  - Every update lands against the call (§3, `late.ts`): a mid-turn one is consumed by the
+    turn's next step; a **lone** one wakes a fresh turn. A remote sandbox's shell has none
+    of this: its output is a file in the container, a call is killed at its wait, and a
+    job's end is seen only by an ambient look, one that keeps the container awake. macOS
+    lacks `setsid` → falls back to a bare spawn (isolation off, so no tracked job).
   - **Shutdown itself is bounded** — `main.stop()` awaits the in-flight turn's queue to
     settle before reaping, but that wait is capped (`stopTimeoutMs`, default 5s). Without
     the cap a turn wedged on a hung model connection (an API/network outage exactly at
@@ -2313,7 +2327,7 @@ read/write/edit triad, mediated by Unix perms (the agent's uid) or RLS (the agen
 The `bash` tool and the binaries take their semantics from the two references — pi's
 truncation discipline and edit engine, Claude Code's timeout and workspace discipline:
 
-- **`bash(command, timeout?)`** — starts in the agent's **workspace**, which IS its own
+- **`bash(command, wait?, wake?)`** — starts in the agent's **workspace**, which IS its own
   scope folder (`{dir}/agents/<id>`): one GROUND per agent — the folder, the PATH cascade,
   the uid — and one SHELL per session on it, so where a session stands and what it left
   running is never another's, while the docs a shell writes land where the doc
@@ -2332,8 +2346,9 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   from the workspace. The `.out` spool stays in the workspace wherever the shell stands, so
   a spill never lands in a repo the agent walked into. PATH is prefixed with the scope cascade in binary form — `{dir}/system/bin` · `{dir}/org/bin` ·
   `{dir}/agents/<id>/bin` — ahead of the process's inherited PATH. stdout+stderr
-  merged in arrival order. **Default timeout 120s** (a hung command otherwise holds the turn lock until
-  the TTL steal); long work uses the background pattern (`cmd > log 2>&1 &` + `tail`).
+  merged in arrival order. **Default wait 120s**: the turn holds its lock that long at
+  most, and a command still running then answers async and runs on as a job (§9,
+  background processes).
   Non-zero exit ⇒ `is_error` result carrying the output + exit code — the agent's
   self-correction path, not a harness failure.
 - **Truncation discipline** (pi's, wholesale): two independent limits, whichever hits
@@ -2411,8 +2426,9 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
 beats a bespoke tool):
 - **Scheduling** = write a timer row (control-plane SQL/RLS) or `at`/cron (files/OS); a
   firing peripheral runs it (§2 clock). No `schedule_*` tool — a **skill** teaches it.
-- **Background processes** = `bash("cmd > /work/log 2>&1 &")` then `bash("tail /work/log")`.
-  No `check_output`/`kill` tool — the agent owns its processes via bash + a **skill**.
+- **Background processes and watches** = `bash` with a short `wait` (and a `wake`), its
+  end and its lines told as updates; `aread`/`tail` on the spool for the rest. No
+  `check_output`/`kill`/monitor tool — the agent owns its processes via bash.
 - **docs / memory / cron reads/writes** = substrate CRUD via the one primitive: `bash`
   (`aread`/`awrite`/`aedit` on files) or `read`/`write`/`edit` (the same contracts as
   functions on db).
@@ -3042,7 +3058,7 @@ roster into registry rows and
 homes, everything else funneled to the deepest function that needs it (main → xi → nu →
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
 the store's tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
-tuning, every deployment works on the defaults: bashTimeoutMs ·
+tuning, every deployment works on the defaults: bashWaitMs ·
 compactAt · keepRecent · windowLimit · debounceMs · database — where the
 store lives: null is SQLite in `data/log`, a Postgres URL is a schema of that database,
 its password in `PGPASSWORD`), `organization`

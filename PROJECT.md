@@ -5429,3 +5429,36 @@ to recover. Two kinds:
 Open: a transient failure is not told until the ladder ends (a day out), though the agent
 already said it was sent. The Cloudflare sandbox reports no job ends: its jobs are probed
 only by a look that keeps the container awake.
+
+### A call's later word is a late tool_result, and bash is its own monitor (2026-10-17) — LANDED
+
+The report alarms of 2026-10-15 told how work ended, but in a voice of their own, apart from
+the call they were about, and only at the end. Two things followed from looking at them
+beside Claude Code's Monitor: what a call does after its answer is the call's business, and
+a watch over a command's output is a property of the call that runs it, not a tool.
+
+**Late results** (`src/late.ts`, §3, §9). A `tool_result` carries flags that place it in its
+call's life: `gated` (the approved call's outcome, the field's new name), `async` (the call
+answered before its work was done: a wire send, a command past its wait), `update` (a later
+word the harness writes against the call) and `final` (nothing it set in motion still runs).
+A late result renders `<system kind="tool_result" …flags>call → output</system>` and drops
+with the tool traffic when its turn closes; an update is news that wakes now, as an alarm
+does. The undelivered send is the final update on its send call; reports and
+`<system kind="report">` are gone. `liquen turns` reads an update as a turn's opener.
+
+**Bash** (`src/exec/bash.ts`). `timeout` became `wait` (`system.bashWaitMs`): a command still
+running at its wait is answered async with what it printed so far and runs on; its end is an
+update carrying the exit status and the lines printed since. The harness keeps reading the
+pipe into the spool (`.out/bash-<id>.log`), which also ends a quiet killer: the readers used
+to be cancelled 150ms after bash exited, so a `cmd &` that wrote to the call's output died of
+SIGPIPE on its next write. `wake` (a regular expression) turns matching lines printed after
+the answer into updates, batched and spaced; each job's ambient line wears its glance, the
+last line it printed. Jobs are told final when reaped at shutdown ("stopped with the
+harness"). The shell probes its own jobs; main only publishes what it tells.
+
+Migration: `payload.deferred` → `payload.gated` in each org's events (one UPDATE), and
+`system.bashTimeoutMs` → `system.bashWaitMs` in each org's `config.jsonc`.
+
+Open: the Cloudflare sandbox kills at the wait and tells nothing (its output is a container
+file, its end needs a long-held exec, the door cannot reach it). Tracking async calls as
+standing state (open calls in the anchor, cancel, lost on restart) is not built.

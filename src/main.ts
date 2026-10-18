@@ -40,7 +40,7 @@ import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runne
 import type { Log, UsageRow } from "./store/log.ts";
 import { databaseOf, storeAt } from "./store/mod.ts";
 import { type ClockSettings, tick } from "./tick.ts";
-import { JOB_PROBE_MS, jobUpdate, reportUndelivered, updateDraft } from "./late.ts";
+import { reportUndelivered, shellUpdate, updateDraft } from "./late.ts";
 import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import type { AgentRow } from "./store/agents.ts";
@@ -73,7 +73,7 @@ import { checkToolDocs } from "./tooldoc.ts";
 import { bashShape } from "./exec/bash.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
 import {
-  DEFAULT_BASH_TIMEOUT_MS,
+  DEFAULT_BASH_WAIT_MS,
   DEFAULT_DEBOUNCE_MS,
   findRoot,
   type OrgConfig,
@@ -210,7 +210,7 @@ export async function start(
     await checkToolDocs(
       [
         ...OWN_TOOLS,
-        bashShape(catalog?.system.bashTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS),
+        bashShape(catalog?.system.bashWaitMs ?? DEFAULT_BASH_WAIT_MS),
         ...Object.values(DOC_TOOLS),
       ],
       (name) => docs.read(ctx, { scope: "system", kind: "tool", name }),
@@ -225,10 +225,11 @@ export async function start(
   // holds only the provider, and every session's exec, ambient and files come from it —
   // this machine's, or the sandbox gateway's the catalog names
   const remote = catalog?.system.sandbox ?? null;
+  const updating = new Set<Promise<void>>();
   const planeOptions = {
     agents: principals.map((p) => p.agentId),
     locale: catalog?.organization.locale,
-    bashTimeoutMs: catalog?.system.bashTimeoutMs,
+    bashWaitMs: catalog?.system.bashWaitMs,
   };
   const sandbox = remote
     ? openCloudflareSandbox(dir, {
@@ -240,6 +241,15 @@ export async function start(
     : await openLocalSandbox(dir, {
       store,
       exports: Object.fromEntries(principals.map((p) => [p.agentId, p.settings?.export ?? []])),
+      tell: (u) => {
+        // a shell's word on a call (late.ts): published as the update it is. Held until
+        // stored, so the shutdown that reaps every job tells each one before the log closes
+        const told: Promise<void> = log
+          .publish(updateDraft(shellUpdate(u), new Date().toISOString()))
+          .then(() => {}, (err) => console.error("[main] update:", err))
+          .then(() => void updating.delete(told));
+        updating.add(told);
+      },
       ...planeOptions,
     });
   // the ports stand whether or not a service is connected yet: a leg is only ever reached
@@ -625,17 +635,6 @@ export async function start(
       .finally(() => beating = undefined);
     agents.forEach((a) => invoke(a)());
   }, TICK_MS);
-  // a background job that ended is told against the call that left it (late.ts): the
-  // ambient block lists what still runs, and this says what stopped, unasked
-  const jobWatch = setInterval(() => {
-    const now = Date.now();
-    for (const ended of sandbox.ended()) {
-      const update = jobUpdate(ended, now);
-      if (!update) continue;
-      log.publish(updateDraft(update, new Date(now).toISOString()))
-        .catch((err) => console.error("[main] job update:", err));
-    }
-  }, JOB_PROBE_MS);
 
   return {
     log,
@@ -643,7 +642,6 @@ export async function start(
     async stop() {
       stopped = true;
       clearInterval(ticker);
-      clearInterval(jobWatch);
       for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
       settling.clear();
       for (const unsub of unsubs) unsub();
@@ -658,6 +656,7 @@ export async function start(
         config.stopTimeoutMs ?? STOP_TIMEOUT_MS,
       );
       await sandbox.close(); // every shell's jobs reaped, the egress proxy stopped
+      await Promise.all([...updating]); // …and each one told stopped, before the log goes
       await docs.close();
       await creds.close();
       await log.close();

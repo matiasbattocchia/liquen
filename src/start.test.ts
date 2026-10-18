@@ -102,7 +102,7 @@ Deno.test("reads: each process restarts on its own part of the file and nothing 
     "edge",
   ]);
   // a shared section is every liquen process's
-  const system = { ...base.system, bashTimeoutMs: 1 };
+  const system = { ...base.system, bashWaitMs: 1 };
   assertEquals(changed(catalog({ connections: base.connections, system })), [
     "main",
     "slack",

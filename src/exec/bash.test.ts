@@ -5,7 +5,7 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
-import { bashTool, installExecGround, type Job, shippedAt } from "./bash.ts";
+import { bashTool, installExecGround, Jobs, type ShellUpdate, shippedAt } from "./bash.ts";
 import type { ExecFacts } from "../xi.ts";
 
 const live = () => new AbortController().signal;
@@ -15,15 +15,14 @@ const wsOf = (dir: string) => `${dir}/agents/a1`;
 
 async function withPlane(
   fn: (t: {
-    run: (command: string, timeout?: number) => Promise<string>;
+    run: (command: string) => Promise<string>;
     dir: string;
   }) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const { exec, reap } = (await installExecGround(dir, "a1")).shell();
   try {
-    const run = async (command: string, timeout?: number) =>
-      String(await exec.bash.execute({ command, ...(timeout ? { timeout } : {}) }, live()));
+    const run = async (command: string) => String(await exec.bash.execute({ command }, live()));
     await fn({ run, dir });
   } finally {
     await reap(); // kill any background jobs a test left running
@@ -138,17 +137,87 @@ Deno.test("bash: non-zero exit → error carrying output + code", async () => {
   });
 });
 
-Deno.test("bash: timeout kills and reports", async () => {
+/** A shell whose updates are kept, for a test to read: `told()` waits for the n-th. */
+function telling() {
+  const updates: ShellUpdate[] = [];
+  const jobs = new Jobs((u) => updates.push(u));
+  const told = async (n: number, ms = 5000) => {
+    const until = Date.now() + ms;
+    while (updates.length < n && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+    assert(updates.length >= n, `told ${updates.length} of ${n}: ${JSON.stringify(updates)}`);
+    return updates[n - 1];
+  };
+  return { jobs, updates, told };
+}
+
+const USE = { id: "u1", turn_id: "t1" };
+
+Deno.test("bash: a command still running at its wait is answered async, and its end is told", async () => {
+  const dir = await Deno.makeTempDir();
+  const { jobs, updates, told } = telling();
+  try {
+    const bash = bashTool({ workspace: dir, defaultWaitMs: 300, jobs });
+    const answer = await bash.execute(
+      { command: "echo started; sleep 0.6; echo done; exit 3" },
+      live(),
+      undefined,
+      USE,
+    ) as { output: string; async?: true };
+    assertEquals(answer.async, true);
+    assertStringIncludes(answer.output, "started");
+    assertMatch(answer.output, /still running after 0\.3s as group \d+: what it prints goes on/);
+    assert(!answer.output.includes("done"));
+    const end = await told(1);
+    assertEquals(end.use, USE);
+    assertMatch(end.output, /^exited 3 after \d+s\ndone$/); // what it printed since the answer
+    assertEquals(end.is_error, true);
+    assertEquals(end.final, true); // nothing it started runs on
+    // the spool holds the whole of it
+    const path = /goes on in (\S+),/.exec(answer.output)![1];
+    assertEquals(await Deno.readTextFile(path).then((s) => s.split("\n").slice(0, 2)), [
+      "started",
+      "done",
+    ]);
+    assertEquals(jobs.size, 0);
+    assertEquals(updates.length, 1); // told once
+  } finally {
+    jobs.reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("bash: the lines a call wakes on are told as they come, a few at a time", async () => {
+  const dir = await Deno.makeTempDir();
+  const { jobs, updates, told } = telling();
+  try {
+    const bash = bashTool({ workspace: dir, jobs });
+    const command =
+      'for i in 1 2 3 4 5; do echo "step $i"; [ $i = 2 ] && echo "ERROR at $i"; sleep 0.3; done';
+    const answer = await bash.execute({ command, wait: 0, wake: "^ERROR" }, live(), undefined, USE);
+    assertEquals((answer as { async?: true }).async, true);
+    const woke = await told(1);
+    assertEquals(woke.output, "ERROR at 2");
+    assertEquals(woke.final, undefined); // it runs on
+    const end = await told(2);
+    assertEquals(end.final, true);
+    assertStringIncludes(end.output, "step 3");
+    assertEquals(updates.length, 2);
+  } finally {
+    jobs.reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("bash: a wake that is not a pattern is refused before anything runs", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    await Deno.mkdir(`${dir}/workspace`, { recursive: true });
-    const bash = bashTool({ workspace: `${dir}/workspace`, defaultTimeoutMs: 300 });
-    const err = await assertRejects(
-      () => bash.execute({ command: "echo started; sleep 10" }, live()),
+    const bash = bashTool({ workspace: dir });
+    await assertRejects(
+      () => bash.execute({ command: "touch ran", wake: "(" }, live()),
       Error,
+      "wake:",
     );
-    assertStringIncludes(err.message, "started");
-    assertStringIncludes(err.message, "timed out");
+    assertEquals(await Deno.stat(`${dir}/ran`).then(() => true, () => false), false);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -454,20 +523,41 @@ const pgrepCount = (pattern: string): number => {
 Deno.test("bash: a backgrounded job returns immediately (pipe not held open)", async () => {
   const dir = await Deno.makeTempDir();
   const marker = `mu_bg_${crypto.randomUUID().slice(0, 8)}`;
+  const jobs = new Jobs();
   try {
     await Deno.mkdir(`${dir}/workspace`, { recursive: true });
-    const jobs = new Set<Job>();
-    const bash = bashTool({ workspace: `${dir}/workspace`, defaultTimeoutMs: 30_000, jobs });
+    const bash = bashTool({ workspace: `${dir}/workspace`, defaultWaitMs: 30_000, jobs });
     const t0 = Date.now();
-    // a long sleeper (uniquely named via exec -a) that would hold the pipe unless we cut it
+    // a long sleeper (uniquely named via exec -a) that holds the pipe
     const out = String(
       await bash.execute({ command: `echo launched; exec -a ${marker} sleep 30 &` }, live()),
     );
     const ms = Date.now() - t0;
     assertStringIncludes(out, "launched");
+    assertMatch(out, /\[left running as group \d+: what it prints goes on in \S+; you are told/);
     assert(ms < 5000, `backgrounded call took ${ms}ms — pipe held open`);
   } finally {
-    new Deno.Command("pkill", { args: ["-f", marker] }).outputSync();
+    jobs.reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("bash: a job that prints into the call's pipe lives past the call, its output told at its end", async () => {
+  const dir = await Deno.makeTempDir();
+  const { jobs, told } = telling();
+  try {
+    const bash = bashTool({ workspace: dir, jobs });
+    // no redirect: the job writes where the call's output went, after the call answered
+    const command = "(for i in 1 2 3; do echo tick $i; sleep 0.3; done; touch finished) &";
+    const out = String(await bash.execute({ command }, live(), undefined, USE));
+    assertStringIncludes(out, "left running as group");
+    const end = await told(1);
+    assertEquals(end.final, true);
+    assertMatch(end.output, /^what it left running ended after \d+s \(group \d+\); its exit/);
+    assertStringIncludes(end.output, "tick 3"); // read on, so the job lived to print it
+    assertEquals(await Deno.stat(`${dir}/finished`).then(() => true, () => false), true);
+  } finally {
+    jobs.reap();
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -490,17 +580,56 @@ Deno.test("exec plane: reap() kills background jobs the agent left running (no o
   }
 });
 
-Deno.test("exec plane: a background job that ends is answered by ended() once, ambient look or not", async () => {
+Deno.test("exec plane: a background job that ends is told once, ambient look or not", async () => {
   const dir = await Deno.makeTempDir();
-  const { exec, ambient, ended, reap } = (await installExecGround(dir, "a1")).shell();
+  const updates: ShellUpdate[] = [];
+  const { exec, ambient, reap } = (await installExecGround(dir, "a1")).shell((u) =>
+    updates.push(u)
+  );
   try {
-    await exec.bash.execute({ command: "sleep 0.5 &" }, live());
-    assertEquals(ended!(), []); // still running
+    await exec.bash.execute({ command: "sleep 0.5 > /dev/null 2>&1 &" }, live(), undefined, USE);
+    assertEquals(updates, []); // still running
     await new Promise((r) => setTimeout(r, 900));
-    await ambient(); // the every-think look settles it, and keeps it for the report
-    const [job] = ended!();
-    assertEquals(job.command, "sleep 0.5 &");
-    assertEquals(ended!(), []); // told once
+    await ambient(); // the every-think look settles it before the probe does
+    await new Promise((r) => setTimeout(r, 2500)); // …and the probe finds nothing left
+    assertEquals(updates.length, 1);
+    assertEquals(updates[0].command, "sleep 0.5 > /dev/null 2>&1 &");
+    assertEquals(updates[0].final, true);
+    assertStringIncludes(updates[0].output, "what it wrote holds the outcome");
+  } finally {
+    await reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("exec plane: reap tells each job it stopped with the harness", async () => {
+  const dir = await Deno.makeTempDir();
+  const updates: ShellUpdate[] = [];
+  const { exec, reap } = (await installExecGround(dir, "a1")).shell((u) => updates.push(u));
+  try {
+    await exec.bash.execute({ command: "sleep 300", wait: 0 }, live(), undefined, USE);
+    await reap();
+    assertEquals(updates.length, 1);
+    assertMatch(updates[0].output, /^stopped with the harness after \d+s \(group \d+\)$/);
+    assertEquals(updates[0].final, true);
+    await new Promise((r) => setTimeout(r, 300)); // the killed bash's own end is not told again
+    assertEquals(updates.length, 1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("exec plane: a job's line wears the last line it printed", async () => {
+  const dir = await Deno.makeTempDir();
+  const { exec, ambient, reap } = (await installExecGround(dir, "a1")).shell();
+  try {
+    await exec.bash.execute({
+      command: "printf 'building\\n10%%\\r50%%\\r90%%'; sleep 300",
+      wait: 0.3,
+    }, live());
+    await new Promise((r) => setTimeout(r, 200));
+    const line = (await ambient()).find((l) => l.startsWith("· "));
+    assertMatch(line!, /— running \d+s, last line "90%" · pid \d+/);
   } finally {
     await reap();
     await Deno.remove(dir, { recursive: true });

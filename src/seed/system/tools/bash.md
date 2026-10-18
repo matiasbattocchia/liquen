@@ -6,13 +6,26 @@ Run a bash command. Each call is a fresh shell in the folder the cwd: line under
 a cd lasts its call, and so does shell/env state (exported vars, activated venvs), so chain
 those. stdout+stderr merged; output truncated to the last {{max_lines}} lines / {{max_kb}}KB
 (override with max_lines/max_bytes when you deliberately need more or less); when truncated,
-the full output is saved to a file the footer names (page it with aread). Default timeout
-{{timeout}}s; run long work in the background, with its exit status as its last line:
-{ cmd; echo "exit $?"; } > out.log 2>&1 &. You are told when it ends, but not how: the
-harness cannot see a background job's status, so without that line a crash and a success
-look alike; tail out.log then. What you left running is listed under now: by its live
-process: kill <pid> stops it, kill -- -<group> all of its group. The call runs as bash -c with your text, so a pkill -f on words from your
-own command kills the shell running it.
+the full output is saved to a file the footer names (page it with aread).
+
+The turn waits for a command up to wait seconds (default {{wait}}). One still running then is
+not killed: the call answers with what it printed so far, the command runs on, and you are
+told when it ends, with its exit status and the lines it printed since. So set wait to what
+you want to see before going on: 0 to start a server and go on at once, a few seconds to see
+it boot, longer for a build you would wait for anyway. While it runs, its output goes to the
+file the answer names, its last line stands beside it under now:, and kill <pid> stops it,
+kill -- -<group> all of its group.
+
+wake is a regular expression: each line the command prints after the call answered that
+matches it is told to you as it comes, a few lines at a time, and wakes you; the rest only
+go to the file. Watch a build for its errors, a log for a pattern, a deploy for its last
+step: bash(command: "tail -F app.log", wait: 0, wake: "ERROR|panic").
+
+A command that leaves work in the background (cmd &) answers at once, and you are told when
+what it left ends, but not how: the harness can see a background job's status only when it
+is the command itself, so prefer wait to &. When you do use &, write the exit status as its
+last line: { cmd; echo "exit $?"; } > out.log 2>&1 &. The call runs as bash -c with your
+text, so a pkill -f on words from your own command kills the shell running it.
 
 Prefer fat commands: chain independent steps with && or ; in ONE call, and emit multiple bash
 calls in one turn when they don't depend on each other; every separate call is a full
@@ -49,6 +62,7 @@ on stderr, so a search that hides stderr (2>/dev/null) and finds nothing proves 
 with command -v rg first, or search with grep -rn and find, which are always there.
 
 - command: bash command to execute
-- timeout: seconds (optional; default {{timeout}})
+- wait: seconds the turn waits before answering with what it printed so far; the command runs on, and its end is told (optional; default {{wait}})
+- wake: a regular expression; the lines printed after the answer that match it are told as they come (optional)
 - max_lines: output truncation: keep the last N lines (optional; default {{max_lines}})
 - max_bytes: output truncation: byte cap (optional; default {{max_bytes}})

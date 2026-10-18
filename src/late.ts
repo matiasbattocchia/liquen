@@ -17,6 +17,7 @@ import type { CallRef } from "./xi.ts";
 import type { Log } from "./store/log.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { describeCall, nameResolver } from "./describe.ts";
+import type { SessionUpdate } from "./sandbox.ts";
 
 export interface Update {
   agentId: string;
@@ -83,36 +84,17 @@ export function undeliveredUpdate(e: Event, use: CallRef, call: string): Update 
   };
 }
 
-/** How often main looks for background jobs that ended: a probe of each live group, cheap
- *  enough to run often, so an end arrives seconds after it happens. */
-export const JOB_PROBE_MS = 2_000;
-
-const took = (ms: number): string => {
-  const s = Math.floor(ms / 1000);
-  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
-};
-
-/** The update of a background job that ended, on the call that left it: how long it ran.
- *  Its exit status is unknowable (a `cmd &` grandchild is not the harness's to wait on),
- *  so the update says where the outcome is: whatever the job wrote. */
-export function jobUpdate(
-  ended: {
-    agentId: string;
-    sessionId: string;
-    job: { pgid: number; command: string; since: number; use?: CallRef };
-  },
-  now: number = Date.now(),
-): Update | undefined {
-  const { job } = ended;
-  if (!job.use) return undefined;
+/** A shell's word on one of its session's calls (exec/bash.ts: the lines a call woke on,
+ *  its end, what it left running ending), the call named the way its row reads. */
+export function shellUpdate(u: SessionUpdate): Update {
   return {
-    agentId: ended.agentId,
-    sessionId: ended.sessionId,
-    use: job.use,
-    call: describeCall({ name: "bash", input: { command: job.command } }),
-    output: `what it left running ended after ${took(now - job.since)} (group ${job.pgid}); ` +
-      "its exit status is not known: what it wrote holds the outcome",
-    final: true,
+    agentId: u.agentId,
+    sessionId: u.sessionId,
+    use: u.use,
+    call: describeCall({ name: "bash", input: { command: u.command } }),
+    output: u.output,
+    ...(u.is_error ? { is_error: true } : {}),
+    ...(u.final ? { final: true } : {}),
   };
 }
 

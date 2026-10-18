@@ -88,7 +88,7 @@ export const DEFAULT_GATE_HOURS = 24;
 // raising it past an orchestrator's own kill deadline would quietly turn every graceful
 // stop into a hard one.
 export const STOP_TIMEOUT_MS = 5_000;
-export const DEFAULT_BASH_TIMEOUT_MS = 120_000; // a bash call's cap unless the model asks
+export const DEFAULT_BASH_WAIT_MS = 120_000; // how long a turn waits on a bash call before answering it async
 // est. tokens of RAW EVENT JSON (`estTokens`, chars/4) — roughly 1.8x the prompt those
 // events render to, since the estimate counts ids, envelopes and the tool traffic the
 // closed region drops. It has to sit BELOW what a full window weighs or the count cap
@@ -181,7 +181,7 @@ const IDENTITY_DOC =
 
 export interface OrgConfig {
   system: {
-    bashTimeoutMs: number;
+    bashWaitMs: number;
     compactAt: number;
     keepRecent: number;
     windowLimit: number;
@@ -254,9 +254,11 @@ export interface ConnectorSpec {
 
 const SYSTEM: Entry[] = [
   {
-    key: "bashTimeoutMs",
-    value: DEFAULT_BASH_TIMEOUT_MS,
-    doc: "a bash call's wall cap unless the model asks for another",
+    key: "bashWaitMs",
+    value: DEFAULT_BASH_WAIT_MS,
+    doc: "how long a turn waits on a bash call unless the model asks for another; one still " +
+      "running then is answered with what it printed so far, and runs on: its end is told " +
+      "when it comes",
   },
   {
     key: "compactAt",

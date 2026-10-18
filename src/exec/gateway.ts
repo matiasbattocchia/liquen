@@ -10,9 +10,11 @@
  *     arrival order — a job it leaves in the background holds that file, never the
  *     gateway's pipe, so the call returns when the command does; the file is the spill
  *     when the output is past the window, and is removed when it is not
- *   • `timeout -s KILL` bounds the call and, when it fires, kills the command's whole
- *     process group — the group whose id the script writes beside the output, so an abort
- *     kills it too and the ambient block can ask whether a job still runs in it
+ *   • `timeout -s KILL` bounds the call at its `wait` and, when it fires, kills the
+ *     command's whole process group — the group whose id the script writes beside the
+ *     output, so an abort kills it too and the ambient block can ask whether a job still
+ *     runs in it. A remote shell has no updates to tell (late.ts) and no `wake`: what
+ *     outlives its wait here is killed, and a job's end is seen only by the ambient look
  *   • the environment is `env -i` and the names the shell is issued, as the local shell's
  *     cleared pocket; where the shell stands is a `cd` the script makes, since the command
  *     may leave the workspace and the next call starts where it left
@@ -35,7 +37,7 @@ import type { ExecFacts, ExecOutcome, ExecTool } from "../xi.ts";
 import type { Json } from "../types.ts";
 import { newId } from "../store/id.ts";
 import { MAX_BYTES, MAX_LINES } from "./truncate.ts";
-import { DEFAULT_BASH_TIMEOUT_MS } from "../config.ts";
+import { DEFAULT_BASH_WAIT_MS } from "../config.ts";
 import {
   type BashInput,
   bashShape,
@@ -185,7 +187,7 @@ export interface RemoteShellOptions {
   /** The environment every call runs with, alone (`env -i`): PATH, HOME, LANG, and what
    *  the egress proxy hands user space. */
   env: () => Record<string, string>;
-  defaultTimeoutMs?: number;
+  defaultWaitMs?: number;
   /** The sandbox's life by the harness's clock, shared by every session of its agent; the
    *  shell without one probes at every step and says nothing of a window. */
   lease?: Lease;
@@ -275,7 +277,7 @@ const alive = (pgid: string) =>
  *  bash tool, its ambient lines, `stand` and `reap` — carried by the script each call
  *  sends. */
 export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPlane {
-  const timeoutMsDefault = opts.defaultTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
+  const waitMsDefault = opts.defaultWaitMs ?? DEFAULT_BASH_WAIT_MS;
   const { lease } = opts;
   let generation = lease?.generation() ?? 0;
   let restarts = lease?.restarts() ?? 0;
@@ -302,14 +304,14 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
   const out = `${opts.workspace}/.out`;
 
   const bash: ExecTool = {
-    ...bashShape(timeoutMsDefault),
+    ...bashShape(waitMsDefault),
     async execute(
       input: Json,
       signal: AbortSignal,
       report?: (facts: ExecFacts) => void,
     ): Promise<Json | ExecOutcome> {
       const call = input as unknown as BashInput;
-      const timeoutMs = call.timeout !== undefined ? call.timeout * 1000 : timeoutMsDefault;
+      const waitMs = call.wait !== undefined ? call.wait * 1000 : waitMsDefault;
       const log = `${out}/bash-${newId()}.log`;
       const env = Object.entries(opts.env()).map(([k, v]) => quote(`${k}=${v}`)).join(" ");
       // the command's end — where it stood, how it exited — goes beside the log, so the log
@@ -324,7 +326,7 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
         `[ -f ${UP} ] || echo ${FRESH}; touch ${UP}`,
         `mkdir -p ${quote(out)}`,
         `cd ${quote(state.cwd)} 2>/dev/null || exit ${LOST}`,
-        `env -i ${env} timeout -s KILL ${Math.ceil(timeoutMs / 1000)} ` +
+        `env -i ${env} timeout -s KILL ${Math.ceil(waitMs / 1000)} ` +
         `bash -c ${quote(inner)} < /dev/null > ${quote(log)} 2>&1 &`,
         `pgid=$!; echo "$pgid" > ${quote(`${log}.pgid`)}; wait "$pgid"; rc=$?`,
         `cat ${quote(log)}`,
@@ -372,7 +374,7 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
       const timedOut = end.code === TIMED_OUT && !raw.includes(CWD_MARK);
       return await settle(
         raw,
-        { code: end.code, timedOut, aborted: signal.aborted, timeoutMs },
+        { code: end.code, timedOut, aborted: signal.aborted, waitMs },
         call,
         state,
         () => Promise.resolve(log),

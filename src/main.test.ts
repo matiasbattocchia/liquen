@@ -848,6 +848,47 @@ Deno.test("a cancel mid-act kills the running tool: its result says so and the t
   }
 });
 
+Deno.test("a command that outlives its wait wakes the agent with its end, told against the call", async () => {
+  const dir = await Deno.makeTempDir();
+  const { transport: script, calls } = scripted([
+    canned(
+      [{ kind: "tool_use", name: "bash", input: { command: "sleep 0.4; echo built", wait: 0 } }],
+      "tool_use",
+    ),
+    reply("lo dejé compilando"),
+    reply("compiló"),
+  ]);
+  const requests: string[] = [];
+  const transport: ModelTransport = (params, emit) => {
+    requests.push(JSON.stringify(params.messages));
+    return script(params, emit);
+  };
+  const main = await start({ dir, debounceMs: 0, principals: [agent("1")] }, { transport });
+  try {
+    await main.log.publish(principalMsg("mind@a1", "compilá"));
+    // the call answers at once, async, and the turn closes on it
+    await waitFor(async () => calls() === 2);
+    const [answer] = await main.log.read({ types: ["tool_result"] }) as ToolResultEvent[];
+    assertEquals(answer.payload.async, true);
+    // the command's end is an update on the call, and it wakes a turn of its own
+    await waitFor(async () => calls() === 3);
+    const results = await main.log.read({ types: ["tool_result"] }) as ToolResultEvent[];
+    const update = results.find((e) => e.payload.update)!;
+    assertEquals(update.payload.ref_id, answer.payload.ref_id);
+    assertEquals(update.payload.final, true);
+    assert(
+      requests[2].includes(
+        '<system kind=\\"tool_result\\" update final>bash(sleep 0.4; echo built) → exited 0 after',
+      ),
+      requests[2],
+    );
+    assert(requests[2].includes("built"));
+  } finally {
+    await main.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a cancel mid-think aborts the model call: no reply, the turn ends on the cancel", async () => {
   const dir = await Deno.makeTempDir();
   let entered!: () => void;
