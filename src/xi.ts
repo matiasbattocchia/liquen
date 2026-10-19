@@ -24,6 +24,7 @@
  * sees a log; and xi itself never subscribes: the tail belongs to main.
  */
 
+import { type Inputs, inputsOf, packageVersion, sameInputs } from "./inputs.ts";
 import type {
   About,
   Action,
@@ -1074,22 +1075,39 @@ async function think(
   // window over budget — the checkpoint, whose summary's insert wakes the next look (§5). A
   // paced/truncated turn continues via `meta.stop` and `decide` (§2). xi only gathers the
   // I/O, the same for both.
-  return await (what === "compact" ? checkpoint : nu)(
+  const bins = ports.bins ? await ports.bins() : undefined;
+  // each tool's words are its doc (tooldoc.ts), read fresh like any doc
+  const tools = await wordedAll(
+    specsOf(ports, config, await accounts({ id: config.agentId }, ports)),
+    (name) =>
+      ports.docs.read({ agent: config.agentId, conversation: home }, {
+        scope: "system",
+        kind: "tool",
+        name,
+      }),
+  );
+  // what this request is made of, stamped on the step only when it differs from the last
+  // set this session stamped (inputs.ts)
+  const inputs = what === "think"
+    ? await inputsOf({
+      docs,
+      read: (ref) => ports.docs.read({ agent: config.agentId, conversation: home }, ref),
+      tools,
+      ...(bins ? { bins } : {}),
+      settings: settingsOf(config),
+      version: await packageVersion(),
+    })
+    : undefined;
+  const stamped = stampsOf(ports.log);
+  const fresh = inputs !== undefined && !sameInputs(stamped.get(home), inputs);
+  const out = await (what === "compact" ? checkpoint : nu)(
     {
       events,
       docs,
       docsOn: ports.docs.on,
-      ...(ports.bins ? { bins: await ports.bins() } : {}),
-      // each tool's words are its doc (tooldoc.ts), read fresh like any doc
-      tools: await wordedAll(
-        specsOf(ports, config, await accounts({ id: config.agentId }, ports)),
-        (name) =>
-          ports.docs.read({ agent: config.agentId, conversation: home }, {
-            scope: "system",
-            kind: "tool",
-            name,
-          }),
-      ),
+      ...(bins ? { bins } : {}),
+      tools,
+      ...(fresh ? { inputs } : {}),
       config,
       surfaces: surfaces.map(surfaceOf),
       principals: org.principals,
@@ -1130,6 +1148,33 @@ async function think(
     ports.transport,
     ports.onDelta,
   );
+  if (fresh && out.some((e) => e.extra?.inputs !== undefined)) stamped.set(home, inputs);
+  return out;
+}
+
+/** The input set each session last stamped into a log, by its room — the process's own
+ *  memory, so the first step after a start stamps its set again. */
+const stamps = new WeakMap<object, Map<string, Inputs>>();
+function stampsOf(log: object): Map<string, Inputs> {
+  let m = stamps.get(log);
+  if (!m) stamps.set(log, m = new Map());
+  return m;
+}
+
+/** The agent's settings that shape a request, as one input. */
+function settingsOf(config: AgentConfig): Record<string, unknown> {
+  return {
+    model: config.model,
+    maxTokens: config.maxTokens,
+    effort: config.effort ?? null,
+    compactAt: config.compactAt ?? null,
+    keepRecent: config.keepRecent ?? null,
+    windowLimit: config.windowLimit ?? null,
+    timezone: config.timezone ?? null,
+    locale: config.locale ?? null,
+    tools: config.tools ?? null,
+    rules: config.rules ?? null,
+  };
 }
 
 /** The trailing attachments' bytes (§5): render says which uris it will inline

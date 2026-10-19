@@ -173,6 +173,18 @@ CREATE TABLE IF NOT EXISTS usage (
   cache_read_tokens  integer,
   cache_write_tokens integer
 );
+CREATE INDEX IF NOT EXISTS usage_created ON usage (created_at);
+
+CREATE TABLE IF NOT EXISTS egress (
+  created_at ${T} NOT NULL,
+  agent_id   ${T},
+  method     ${T} NOT NULL,
+  host       ${T} NOT NULL,
+  path       ${T} NOT NULL,
+  status     integer NOT NULL,
+  swapped    boolean NOT NULL
+);
+CREATE INDEX IF NOT EXISTS egress_created ON egress (created_at);
 
 CREATE TABLE IF NOT EXISTS locks (
   name   ${T} PRIMARY KEY,

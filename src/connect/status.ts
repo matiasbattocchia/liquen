@@ -10,7 +10,7 @@
  * this prints it — the first thing a live smoke checks ("did the grant land?"). Every line
  * is read through the store's ports, so it prints the same wherever the catalog put the
  * store. Secrets never print: the vault lists keys, owners, and the FIELD NAMES of each
- * value blob, never values. A turn is read the way `liquen turns` reads it (`turns.ts`);
+ * value blob, never values. A turn is read the way `liquen log turns` reads it (`turns.ts`);
  * whether one is running is the session's lease, read without taking it. Env: the store's
  * password when the catalog names Postgres.
  */
@@ -256,7 +256,7 @@ if (import.meta.main) {
       }
 
       console.log(
-        "\nturns (each agent's mind — `liquen turns` lists them, `liquen tail` watches):",
+        "\nturns (each agent's mind — `liquen log turns` lists them, `liquen log tail` watches):",
       );
       for (const t of s.turns) {
         console.log(`  ${t.agent}`);

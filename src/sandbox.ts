@@ -22,7 +22,7 @@ import { type Files, localFiles } from "./store/media.ts";
 import type { Store } from "./store/mod.ts";
 import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
-import { startProxy } from "./proxy/proxy.ts";
+import { defaultAudit, startProxy } from "./proxy/proxy.ts";
 import { sessionAddress } from "./session.ts";
 import {
   type Gateway,
@@ -293,6 +293,7 @@ async function writeTrustBundle(dir: string, caPath: string): Promise<string> {
 
 async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
   const creds = await store.vault();
+  const log = await store.log();
   const broker = createGrantBroker({ creds });
   const ca = await openCA(dir);
   // the vault as the last spawn read it: a grant stored while the org runs is fronted from
@@ -302,6 +303,17 @@ async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
   const proxy = startProxy({
     ca,
     broker,
+    // every request said on stderr and kept in the egress table (`liquen log requests`)
+    audit: (a) => {
+      defaultAudit(a);
+      const { agentId, ...made } = a;
+      void log.egress({
+        created_at: new Date().toISOString(),
+        ...(agentId !== undefined ? { agent_id: agentId } : {}),
+        ...made,
+      })
+        .catch((err) => console.error("[proxy] its request could not be recorded:", err));
+    },
     terminates: (authority) => fronted.some((r) => hostAllowed(r.extra?.hosts, authority)),
   });
   const bundle = await writeTrustBundle(dir, proxy.caPath);
@@ -332,6 +344,7 @@ async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
     async close() {
       await proxy.shutdown();
       await creds.close();
+      await log.close();
     },
   };
 }

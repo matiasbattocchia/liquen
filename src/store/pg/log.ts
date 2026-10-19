@@ -21,6 +21,9 @@
 
 import type {
   DeliveryPatch,
+  EgressQuery,
+  EgressRow,
+  EgressTableRow,
   Law,
   Listener,
   Log,
@@ -30,7 +33,7 @@ import type {
   SubscribeOptions,
   UsageRow,
 } from "../log.ts";
-import { usageOf } from "../log.ts";
+import { egressOf, usageOf } from "../log.ts";
 import { createLocker, type Lease, LeaseLost } from "../lock.ts";
 import {
   build,
@@ -151,6 +154,30 @@ WHERE id = $3::text`;
 
 /** Open a Log on the Postgres database at `url`, in `schema` (created when absent). `now`
  *  is the clock the lease reads (§9). */
+/** A telemetry read's time window, as WHERE terms on `created_at`. */
+function windowed(
+  q: { after?: string; before?: string },
+  where: string[],
+  params: unknown[],
+): void {
+  if (q.after !== undefined) {
+    params.push(q.after);
+    where.push(`created_at > $${params.length}::text`);
+  }
+  if (q.before !== undefined) {
+    params.push(q.before);
+    where.push(`created_at < $${params.length}::text`);
+  }
+}
+
+/** A telemetry read in the order it was written: the most recent `limit`, when there is one. */
+function recent(filtered: string, q: { limit?: number }, params: unknown[]): string {
+  if (q.limit === undefined) return `${filtered} ORDER BY created_at`;
+  params.push(q.limit);
+  return `SELECT * FROM (${filtered} ORDER BY created_at DESC LIMIT $${params.length}::integer)
+    recent ORDER BY created_at`;
+}
+
 export async function openPgLog(
   url: string,
   opts: { schema?: string; now?: () => number } = {},
@@ -348,15 +375,38 @@ export async function openPgLog(
         params.push(JSON.stringify(q.turns));
         where.push(`turn_id IN (SELECT jsonb_array_elements_text($${params.length}::jsonb))`);
       }
+      windowed(q, where, params);
       const filtered = `SELECT * FROM usage${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
-      let text = `${filtered} ORDER BY created_at`;
-      if (q.limit !== undefined) {
-        params.push(q.limit);
-        text =
-          `SELECT * FROM (${filtered} ORDER BY created_at DESC LIMIT $${params.length}::integer)
-          recent ORDER BY created_at`;
+      return (await rows<SpendRow>(sql, recent(filtered, q, params), params)).map(usageOf);
+    },
+
+    async egress(row: EgressRow): Promise<void> {
+      await count(
+        sql,
+        `INSERT INTO egress (created_at, agent_id, method, host, path, status, swapped)
+         VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::integer, $7::boolean)`,
+        [
+          row.created_at,
+          row.agent_id ?? null,
+          row.method,
+          row.host,
+          row.path,
+          row.status,
+          row.swapped,
+        ],
+      );
+    },
+
+    async requests(q: EgressQuery = {}): Promise<EgressRow[]> {
+      const where: string[] = [];
+      const params: unknown[] = [];
+      if (q.agentId !== undefined) {
+        params.push(q.agentId);
+        where.push(`agent_id = $${params.length}::text`);
       }
-      return (await rows<SpendRow>(sql, text, params)).map(usageOf);
+      windowed(q, where, params);
+      const filtered = `SELECT * FROM egress${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
+      return (await rows<EgressTableRow>(sql, recent(filtered, q, params), params)).map(egressOf);
     },
 
     lock: locker.lock,

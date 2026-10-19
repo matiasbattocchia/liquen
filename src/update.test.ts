@@ -1,6 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
 import { parse } from "@std/jsonc";
-import { linked, PACKAGE, pinned, scaffoldTasks, syncTasks } from "./update.ts";
+import { linked, PACKAGE, packageCommands, pinned, scaffoldTasks, syncTasks } from "./update.ts";
 
 Deno.test("syncTasks: what the org lacks is added in its own lines; what it has stays its own", async () => {
   const tmp = Deno.makeTempDirSync();
@@ -89,4 +89,56 @@ Deno.test("linked: a checkout standing in for the registry is the org's version,
   } finally {
     Deno.removeSync(tmp, { recursive: true });
   }
+});
+
+Deno.test("syncTasks: a package task whose command the release no longer has goes; an org's is named", async () => {
+  const tmp = Deno.makeTempDirSync();
+  try {
+    const raw = [
+      "{",
+      '  "tasks": {',
+      '    "turns": {',
+      '      "command": "deno run -A --env-file=.env @liquen/liquen/turns",',
+      '      "description": "each agent\'s last turns"',
+      "    },",
+      '    "mine": "deno run -A @liquen/liquen/turns --limit 5", // ours',
+      '    "gone": "deno run -A @liquen/liquen/gone"',
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    Deno.writeTextFileSync(`${tmp}/deno.jsonc`, raw);
+    const { removed, broken } = await syncTasks(tmp, {}, ["log", "start"]);
+    assertEquals(removed, ["turns", "gone"]);
+    assertEquals(broken, ["mine"]);
+    const after = Deno.readTextFileSync(`${tmp}/deno.jsonc`);
+    assertEquals(
+      after,
+      [
+        "{",
+        '  "tasks": {',
+        '    "mine": "deno run -A @liquen/liquen/turns --limit 5" // ours',
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+    );
+  } finally {
+    Deno.removeSync(tmp, { recursive: true });
+  }
+});
+
+Deno.test("the release's commands are its manifest's exports, by subpath", async () => {
+  const commands = (await packageCommands())!;
+  assert(commands.includes("log"));
+  assert(commands.includes("start"));
+  assert(!commands.includes(""));
+});
+
+Deno.test("a checkout's release is its deno.json: the version and the exports", async () => {
+  const { read } = await import("./package.ts");
+  const manifest = (await import("../deno.json", { with: { type: "json" } })).default;
+  const here = await read(new URL("./update.ts", import.meta.url).href);
+  assertEquals(here.version, manifest.version);
+  assertEquals(here.exports, manifest.exports);
 });

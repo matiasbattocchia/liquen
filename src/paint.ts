@@ -98,7 +98,7 @@ export interface Surface {
    *  principal (a voice front, a second REPL) sends lines the screen has never shown, and
    *  those are painted. Absent: every principal line is the surface's own. */
   typed?(text: string): boolean;
-  /** A surface that WATCHES rather than speaks (`liquen tail`): every call's outcome is a
+  /** A surface that WATCHES rather than speaks (`liquen log tail`): every call's outcome is a
    *  row of its own — the output's head and the run's facts, not only a failure — the
    *  recap carries the thinking the live screen streams, and spend is painted. */
   watch?: boolean;

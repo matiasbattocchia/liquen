@@ -2553,7 +2553,7 @@ from the same connections:
 reaps itself after a linger with zero attachments — and "is one running?" is a
 `connect()`, never a `stat()`.
 
-**Watching is a tail that says nothing.** `liquen tail` is the door's plainest client: it
+**Watching is a tail that says nothing.** `liquen log tail` is the door's plainest client: it
 opens the session's tail with `observe` and sends no other verb — no line, no verdict, no
 cut, no `cwd`, no model — so it is no principal and nothing it does reaches the agent. An
 observer's tail carries what a watcher needs and a principal's surface folds away: the
@@ -2570,8 +2570,23 @@ from a session's room the way render derives the boundary — the steps (`turn_i
 look that opened it to the closing, terminal error or cut that ended it, its opener the
 news its first step read last (`extra.consumed`), its cost the spend its steps metered.
 That one reading is main's line in the run log when a session falls from busy to idle,
-`liquen turns` over history, the turns `liquen status` reports beside the lease, and the
+`liquen log turns` over history, the turns `liquen status` reports beside the lease, and the
 document `liquen log export` writes of one.
+
+**What a turn read is a hash per input, stamped when it changes.** A step's request is
+made of documents, tool specs, the programs on PATH, the agent's settings and the package;
+xi hashes each (`inputs.ts`) and nu stamps the whole set on the step's first row
+(`extra.inputs`) only when it differs from the last set that session stamped. The log
+then says which turn first read an edited instruction or a swapped program without
+holding a copy of either, and it says it the same over files or the docs table.
+
+**The rest of the reading is `liquen log`'s views, each a pure function of rows.** The
+errors group by message with what varies masked; the calls join each `tool_use` to its
+latest result; the egress proxy's requests are a telemetry table beside `usage`
+(`egress`: method, host, path, status, the grant's agent — never a header or a body),
+matched to turns by time; and spend is priced at read time from rows that carry the day
+a price took effect (`prices.ts` and `system.prices`), so a corrected price reprices
+history and a call nobody can price is counted as unpriced, never as $0.
 
 **Presence is a typed fact in the mind, and a message on the wire — the gate's own
 shape.** While a turn runs and the PRINCIPAL is waiting, main writes a `delta` event into
@@ -2693,7 +2708,7 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   a small jump to Postgres. The lost "just `cat` it" was never real: the agent can't read the
   raw log anyway (it holds other principals' private events — `log.read` is the privacy
   chokepoint), and a multi-producer log is human-unreadable regardless of format. Readability is
-  served by an **export** (`liquen log export`, one turn as a document), not by the
+  served by an **export** (`liquen log export`, the log as documents), not by the
   on-disk format.
 - **SQLite hardens "the sandbox never writes the durable store."** With JSONL the agent's `bash`
   could in principle `echo >> log.jsonl`; a binary SQLite db it has no tool for and no business

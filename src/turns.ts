@@ -4,7 +4,7 @@
  * one per model call) from the look that opened it to the closing that ended it — a
  * closing message (`end_turn`), a terminal error, or the principal's cut. One reading
  * serves the turn that just ended (main's line in `liquen.log`) and every turn before it
- * (`liquen turns`, `liquen log export`, `liquen status --json`), so the live line and the
+ * (`liquen log turns`, `liquen log export`, `liquen status --json`), so the live line and the
  * history agree by construction.
  *
  * A turn's handle is its first step's `turn_id`. What opened it is the news the first
@@ -16,12 +16,10 @@
 
 import type { Event, EventId, SessionRef, ToolResultEvent } from "./types.ts";
 import type { ReadQuery, UsageRow } from "./store/log.ts";
+import { changedInputs, type Inputs } from "./inputs.ts";
+import { type Cost, costOfAll, dollars, type Price } from "./prices.ts";
 import { sessionAddress } from "./session.ts";
-import { hhmm, ownComplex, ownVoice, shortId, textOf } from "./render.ts";
-import { openStore } from "./store/mod.ts";
-import { findRoot, orgFlag, readConfig } from "./config.ts";
-import { entry } from "./entry.ts";
-import { helpFlag } from "./connect/help.ts";
+import { ownComplex, ownVoice, shortId, textOf } from "./render.ts";
 import { userInfo } from "node:os";
 
 /** Token counts, summed over usage rows. */
@@ -76,6 +74,13 @@ export interface Turn {
   end: TurnEnd;
   error?: string; // a terminal error's sentence
   checkpoint?: { id: EventId; ts: string; turn_id?: string; tokens: Tokens };
+  /** What its first stamped step was made of (inputs.ts), when a step of it stamped one. */
+  inputs?: Inputs;
+  /** The inputs that differ from the session's previous stamp in the rows read: absent when
+   *  no stamp came before it there. */
+  changed?: string[];
+  /** What its steps' calls cost (prices.ts), when `price` was handed prices. */
+  cost?: Cost;
   /** The turn's rows by id: the opener (or first step) through its last row. */
   span: { from: EventId; to: EventId };
 }
@@ -154,6 +159,16 @@ export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
   let erred: Event | undefined; // the open turn's last row was an error
   let news: Opener | undefined; // the freshest news since the last turn ended
   let lastNewsBefore = new Map<EventId, Opener>(); // news by id, for the consumed horizon
+  let stamp: Inputs | undefined; // the last input set a step stamped, in the rows so far
+  const noteInputs = (t: Turn, e: Event) => {
+    const inputs = e.extra?.inputs as Inputs | undefined;
+    if (inputs === undefined || typeof inputs !== "object") return;
+    if (t.inputs === undefined) {
+      t.inputs = inputs;
+      if (stamp !== undefined) t.changed = changedInputs(stamp, inputs);
+    }
+    stamp = inputs;
+  };
 
   const close = (t: Turn, end: TurnEnd, at: Event) => {
     t.end = end;
@@ -186,6 +201,7 @@ export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
           if (is_error && !refused && !cancelled) owner.tool_errors++;
         }
         if (e.type === "tool_use") owner.calls++;
+        noteInputs(owner, e);
         if (owner === open) erred = undefined;
         touch(owner, e);
         if (owner === open) closeOnStop(owner, e);
@@ -219,6 +235,7 @@ export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
       const t = open;
       if (!t.steps.includes(step)) t.steps.push(step);
       byStep.set(step, t);
+      noteInputs(t, e);
       if (e.type === "tool_use") t.calls++;
       erred = undefined;
       touch(t, e);
@@ -282,8 +299,9 @@ function horizon(news: Map<EventId, Opener>, consumed: EventId): Opener | undefi
   return best;
 }
 
-/** Fill each turn's tokens (and its checkpoint's) from the usage rows its steps metered. */
-export function price(turns: Turn[], spend: UsageRow[]): Turn[] {
+/** Fill each turn's tokens (and its checkpoint's) from the usage rows its steps metered,
+ *  and, handed the org's prices, what those calls cost. */
+export function price(turns: Turn[], spend: UsageRow[], prices?: Price[]): Turn[] {
   const rows = new Map<string, UsageRow[]>();
   for (const r of spend) {
     if (r.turn_id === undefined) continue;
@@ -298,6 +316,7 @@ export function price(turns: Turn[], spend: UsageRow[]): Turn[] {
   for (const t of turns) {
     t.tokens = zero();
     for (const s of t.steps) for (const r of rows.get(s) ?? []) add(t.tokens, r);
+    if (prices !== undefined) t.cost = costOfAll(t.steps.flatMap((s) => rows.get(s) ?? []), prices);
     if (t.checkpoint?.turn_id !== undefined) {
       t.checkpoint.tokens = zero();
       for (const r of rows.get(t.checkpoint.turn_id) ?? []) add(t.checkpoint.tokens, r);
@@ -328,12 +347,13 @@ export async function readTurns(
   ref: SessionRef,
   want?: number,
   page = PAGE,
+  opts: { prices?: Price[]; pages?: number } = {},
 ): Promise<Turn[]> {
   const conversation = sessionAddress(ref.agentId, ref.id);
   let rows: Event[] = [];
   let whole = false;
   let turns: Turn[] = [];
-  for (let n = 0; n < PAGES; n++) {
+  for (let n = 0; n < (opts.pages ?? PAGES); n++) {
     const older = await log.read({
       conversation,
       limit: page,
@@ -362,7 +382,7 @@ export async function readTurns(
     ...(t.checkpoint?.turn_id ? [t.checkpoint.turn_id] : []),
   ]);
   if (keys.length === 0) return turns;
-  return price(turns, await log.spend({ agentId: ref.agentId, turns: keys }));
+  return price(turns, await log.spend({ agentId: ref.agentId, turns: keys }), opts.prices);
 }
 
 /** One row by its id, through the reader's law: the newest row at or below it — ids are
@@ -432,8 +452,8 @@ export function openedBy(o: Opener): string {
   }
 }
 
-/** The turn as one line — what `liquen.log` carries at every turn's end, and `liquen turns`
- *  prints per row. */
+/** The turn as one line — what `liquen.log` carries at every turn's end, and `liquen log
+ *  turns` prints per row. */
 export function turnLine(t: Turn): string {
   const k = t.tokens;
   return [
@@ -443,6 +463,7 @@ export function turnLine(t: Turn): string {
     `${t.calls} call${t.calls === 1 ? "" : "s"}`,
     `${t.tool_errors} tool error${t.tool_errors === 1 ? "" : "s"}`,
     `tokens ${count(k.input)} in / ${count(k.output)} out / ${count(k.cache_read)} cache-read`,
+    ...(t.cost ? [dollars(t.cost)] : []),
     `${t.end}${t.end === "error" && t.error ? `: ${oneLine(t.error)}` : ""}`,
     took(t.duration_ms),
     t.checkpoint ? `checkpoint ${shortId(t.checkpoint.id)}` : "no checkpoint",
@@ -453,86 +474,3 @@ const oneLine = (s: string) => {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > 80 ? `${t.slice(0, 79)}…` : t;
 };
-
-export const USAGE =
-  `usage: liquen turns [--dir <org>] [--agent <name>] [--session <name>] [--limit <n>]
-                    [--json]
-
-  The last turns of each agent's session, oldest first, one line each: what opened it,
-  its steps and calls, the tool errors, the tokens its steps metered, how it ended, how
-  long it took, and whether a checkpoint followed. Read off the log and the usage table,
-  so it answers for history and for an org that is not running.
-
-  --agent <name>    one agent (a roster name); default: every agent
-  --session <name>  the session; default: the mind
-  --limit <n>       how many turns, the most recent; default: 20
-  --json            one JSON object per turn, a line each`;
-
-/** The flags `turns` takes, and the export's `--agent`/`--session` alike. */
-export function parseTurnsArgs(args: string[]): {
-  agent?: string;
-  session: string;
-  limit: number;
-  json: boolean;
-  rest: string[];
-} {
-  const out = { session: "mind", limit: 20, json: false } as {
-    agent?: string;
-    session: string;
-    limit: number;
-    json: boolean;
-    rest: string[];
-  };
-  const rest: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    const value = () => {
-      const v = args[++i];
-      if (v === undefined || v.startsWith("--")) throw new Error(`${a} needs a value\n${USAGE}`);
-      return v;
-    };
-    if (a === "--agent") out.agent = value();
-    else if (a === "--session") out.session = value();
-    else if (a === "--limit") {
-      out.limit = Number(value());
-      if (!Number.isInteger(out.limit) || out.limit < 1) {
-        throw new Error(`--limit is a positive whole number\n${USAGE}`);
-      }
-    } else if (a === "--json") out.json = true;
-    else rest.push(a);
-  }
-  out.rest = rest;
-  return out;
-}
-
-if (import.meta.main) {
-  await entry(async () => {
-    const org = orgFlag();
-    helpFlag(org.args, USAGE);
-    const args = parseTurnsArgs(org.args);
-    if (args.rest.length) throw new Error(`unknown argument ${args.rest[0]}\n${USAGE}`);
-    const root = findRoot(org);
-    const catalog = await readConfig(root);
-    const agents = args.agent !== undefined ? [args.agent] : Object.keys(catalog.agents);
-    if (args.agent !== undefined && !(args.agent in catalog.agents)) {
-      throw new Error(`no agent "${args.agent}" in ${root}/config.jsonc`);
-    }
-    const log = await (await openStore(root)).log();
-    try {
-      const all: Turn[] = [];
-      for (const agentId of agents) {
-        all.push(...await readTurns(log, { agentId, id: args.session }, args.limit));
-      }
-      all.sort((a, b) => a.started < b.started ? -1 : a.started > b.started ? 1 : 0);
-      for (const t of all.slice(Math.max(0, all.length - args.limit))) {
-        console.log(
-          args.json
-            ? JSON.stringify(t)
-            : `${hhmm(t.started, catalog.organization.timezone, true)}  ${turnLine(t)}`,
-        );
-      }
-    } finally {
-      await log.close();
-    }
-  });
-}

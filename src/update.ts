@@ -32,9 +32,10 @@
  */
 
 import { parse } from "@std/jsonc";
-import { findRoot, orgFlag, withMember } from "./config.ts";
+import { findRoot, orgFlag, withMember, withoutMember } from "./config.ts";
 import { entry } from "./entry.ts";
 import { running } from "./stop.ts";
+import { packageManifest } from "./package.ts";
 
 /** The package an org runs on — the one dependency this command is about. */
 export const PACKAGE = "@liquen/liquen";
@@ -93,14 +94,30 @@ export async function scaffoldTasks(): Promise<Record<string, Task>> {
   return (parse(await res.text()) as Manifest).tasks ?? {};
 }
 
+/** The commands this release exports, by subpath (`log`, `start`, …), or undefined when
+ *  its manifest cannot be read (`package.ts`). */
+export async function packageCommands(): Promise<string[] | undefined> {
+  const exports = (await packageManifest()).exports;
+  return exports && Object.keys(exports).map((k) => k.replace(/^\.\/?/, "")).filter(Boolean);
+}
+
+/** The package command a task runs, when it runs one: `@liquen/liquen/<subpath>`. */
+const runsOf = (t: Task): string | undefined =>
+  commandOf(t).match(new RegExp(`${escape(PACKAGE)}/([a-z][a-z0-9-]*)`))?.[1];
+
 /** The org's task list brought up to `scaffold`: each task it lacks inserted, whole lines
  *  in its manifest with every other byte as it was; one it holds as the package's command
  *  alone given the package's description; one it holds with a different command named,
- *  untouched. */
+ *  untouched. A task running a command the release does not export (`commands`) is gone
+ *  when it is the package's own, named after the command, and named as broken when it is
+ *  the org's. */
 export async function syncTasks(
   root: string,
   scaffold: Record<string, Task>,
-): Promise<{ added: string[]; differing: [string, string][] }> {
+  commands?: string[],
+): Promise<
+  { added: string[]; differing: [string, string][]; removed: string[]; broken: string[] }
+> {
   const path = manifestPath(root);
   if (path === null) throw new Error(`${root} has no deno.json or deno.jsonc`);
   const raw = await Deno.readTextFile(path);
@@ -126,11 +143,21 @@ export async function syncTasks(
       text = next;
     }
   }
-  if (added.length > 0 || described) {
+  const removed: string[] = [];
+  const broken: string[] = [];
+  for (const [name, task] of Object.entries(have)) {
+    const runs = runsOf(task);
+    if (commands === undefined || runs === undefined || commands.includes(runs)) continue;
+    if (name === runs && !(name in scaffold)) {
+      text = withoutMember(text, "tasks", name, path);
+      removed.push(name);
+    } else broken.push(name);
+  }
+  if (added.length > 0 || described || removed.length > 0) {
     parse(text); // a manifest that would not read back is never written
     await Deno.writeTextFile(path, text);
   }
-  return { added, differing };
+  return { added, differing, removed, broken };
 }
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -138,8 +165,16 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** The sync, said: what was added, and each task of the org's own the package spells
  *  otherwise. */
 async function tasks(root: string): Promise<void> {
-  const { added, differing } = await syncTasks(root, await scaffoldTasks());
+  const { added, differing, removed, broken } = await syncTasks(
+    root,
+    await scaffoldTasks(),
+    await packageCommands(),
+  );
   if (added.length > 0) console.log(`tasks added: ${added.join(" · ")}`);
+  if (removed.length > 0) console.log(`tasks removed: ${removed.join(" · ")}`);
+  for (const name of broken) {
+    console.log(`task ${name} runs a command this release does not have — edit or remove it`);
+  }
   for (const [name, command] of differing) {
     console.log(`task ${name} is your own — the package's runs: ${command}`);
   }

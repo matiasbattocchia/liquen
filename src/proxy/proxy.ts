@@ -302,7 +302,7 @@ function headEnd(buf: Uint8Array, n: number): number {
   return -1;
 }
 
-function defaultAudit(a: EgressAudit): void {
+export function defaultAudit(a: EgressAudit): void {
   console.error(
     `[proxy] ${a.agentId ?? "-"} ${a.method} ${a.host}${a.path} → ${a.status}` +
       (a.swapped ? " (swapped)" : ""),

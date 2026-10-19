@@ -262,12 +262,61 @@ export interface UsageRow {
   cache_write_tokens?: number;
 }
 
-/** A read of spend: one agent's rows, those its steps metered (`turns`, by `turn_id`), the
+/** A read of spend: one agent's rows, those its steps metered (`turns`, by `turn_id`), those
+ *  metered strictly inside a time window (`after`, `before`: ISO stamps on `created_at`), the
  *  most recent `limit` — in the order they were metered either way. */
 export interface SpendQuery {
   agentId?: string;
   turns?: string[];
+  after?: string;
+  before?: string;
   limit?: number;
+}
+
+/** One request the egress proxy re-originated toward a fronted host (§2: a table, not the
+ *  log — like spend, recording it never wakes anyone). Never the token, the headers or the
+ *  body: what was asked of which host, and what the host answered. */
+export interface EgressRow {
+  created_at: string;
+  agent_id?: string;
+  method: string;
+  host: string; // the dialed authority: `host`, or `host:port` off 443
+  path: string;
+  status: number;
+  swapped: boolean; // a placeholder got a real credential
+}
+
+/** A read of egress, the spend read's shape: one agent's, inside a window, the most recent
+ *  `limit`, in the order they were made. */
+export interface EgressQuery {
+  agentId?: string;
+  after?: string;
+  before?: string;
+  limit?: number;
+}
+
+/** The egress table's columns as a row hands them. */
+export interface EgressTableRow {
+  created_at: string;
+  agent_id: string | null;
+  method: string;
+  host: string;
+  path: string;
+  status: number;
+  swapped: number | boolean;
+}
+
+/** An egress row as `egress` took it. */
+export function egressOf(r: EgressTableRow): EgressRow {
+  return {
+    created_at: r.created_at,
+    ...(r.agent_id !== null ? { agent_id: r.agent_id } : {}),
+    method: r.method,
+    host: r.host,
+    path: r.path,
+    status: Number(r.status),
+    swapped: Boolean(r.swapped),
+  };
 }
 
 /** The usage table's columns as a row hands them, a null standing for an absent field. */
@@ -315,6 +364,10 @@ export type Log =
     /** Read spend back: what the metered calls cost, joined to the log by `turn_id` — an
      *  operator's read, never the hot path's. */
     spend(query?: SpendQuery): Promise<UsageRow[]>;
+    /** Record one request the egress proxy made. Fire-and-forget like `meter`. */
+    egress(row: EgressRow): Promise<void>;
+    /** Read the proxy's requests back — an operator's read, never the hot path's. */
+    requests(query?: EgressQuery): Promise<EgressRow[]>;
     /** Delivery bookkeeping on an already-published event: backfill `external_id`, merge
      *  `status` stages. An UPDATE — no new row: the append stream never sees it, only a
      *  subscriber that asked for `updates` does (§3, §4). */
@@ -446,6 +499,17 @@ export async function openLog(
        cache_read_tokens  INTEGER,
        cache_write_tokens INTEGER
      );
+     CREATE TABLE IF NOT EXISTS egress (  -- telemetry, NOT events (§2): the proxy's requests
+       created_at TEXT NOT NULL,
+       agent_id   TEXT,
+       method     TEXT NOT NULL,
+       host       TEXT NOT NULL,
+       path       TEXT NOT NULL,
+       status     INTEGER NOT NULL,
+       swapped    INTEGER NOT NULL
+     );
+     CREATE INDEX IF NOT EXISTS egress_created ON egress(created_at);
+     CREATE INDEX IF NOT EXISTS usage_created ON usage(created_at);
      ${LOCKS_DDL}
      ${AGENTS_DDL}
      ${RULES_DDL}
@@ -736,6 +800,10 @@ export async function openLog(
     `INSERT INTO usage (created_at, agent_id, turn_id, kind, model, input_tokens, output_tokens,
        cache_read_tokens, cache_write_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  const egressed = db.prepare(
+    `INSERT INTO egress (created_at, agent_id, method, host, path, status, swapped)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
 
   return {
     meter(row: UsageRow): Promise<void> {
@@ -764,6 +832,14 @@ export async function openLog(
         where.push("turn_id IN (SELECT value FROM json_each(?))");
         params.push(JSON.stringify(q.turns));
       }
+      if (q.after !== undefined) {
+        where.push("created_at > ?");
+        params.push(q.after);
+      }
+      if (q.before !== undefined) {
+        where.push("created_at < ?");
+        params.push(q.before);
+      }
       const filtered = `SELECT rowid AS n, * FROM usage${
         where.length ? ` WHERE ${where.join(" AND ")}` : ""
       }`;
@@ -774,6 +850,47 @@ export async function openLog(
       if (q.limit !== undefined) params.push(q.limit);
       return Promise.resolve(
         (db.prepare(text).all(...params) as unknown as SpendRow[]).map(usageOf),
+      );
+    },
+
+    egress(row: EgressRow): Promise<void> {
+      egressed.run(
+        row.created_at,
+        row.agent_id ?? null,
+        row.method,
+        row.host,
+        row.path,
+        row.status,
+        row.swapped ? 1 : 0,
+      );
+      return Promise.resolve();
+    },
+
+    requests(q: EgressQuery = {}): Promise<EgressRow[]> {
+      const where: string[] = [];
+      const params: (string | number)[] = [];
+      if (q.agentId !== undefined) {
+        where.push("agent_id = ?");
+        params.push(q.agentId);
+      }
+      if (q.after !== undefined) {
+        where.push("created_at > ?");
+        params.push(q.after);
+      }
+      if (q.before !== undefined) {
+        where.push("created_at < ?");
+        params.push(q.before);
+      }
+      const filtered = `SELECT rowid AS n, * FROM egress${
+        where.length ? ` WHERE ${where.join(" AND ")}` : ""
+      }`;
+      const text = q.limit !== undefined
+        ? `SELECT * FROM (${filtered} ORDER BY created_at DESC, n DESC LIMIT ?)
+           ORDER BY created_at, n`
+        : `${filtered} ORDER BY created_at, n`;
+      if (q.limit !== undefined) params.push(q.limit);
+      return Promise.resolve(
+        (db.prepare(text).all(...params) as unknown as EgressTableRow[]).map(egressOf),
       );
     },
 

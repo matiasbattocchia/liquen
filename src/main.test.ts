@@ -14,6 +14,7 @@ import type { Draft, Event, MessageEvent, ToolResultEvent } from "./types.ts";
 import type { ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
 import { type OrgConfig, readConfig } from "./config.ts";
+import { readTurns } from "./turns.ts";
 
 type Principal = AgentConfig & Policy;
 
@@ -84,6 +85,34 @@ Deno.test("a live message flows tail → fan-out → xi → reply; stop is clean
       .filter((e) => e.agent?.id === "a1");
     assertEquals(r.envelope.conversation.address, "mind@a1");
     assertEquals(calls(), 1);
+  } finally {
+    await main.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a turn stamps what it read only when that changed, and the turn that read the change names it", async () => {
+  const dir = await Deno.makeTempDir();
+  const { transport } = scripted([reply("uno"), reply("dos"), reply("tres")]);
+  const main = await start({ dir, debounceMs: 0, principals: [agent("1")] }, { transport });
+  const replies = async () =>
+    (await main.log.read({ types: ["message"] })).filter((e) => e.agent?.id === "a1").length;
+  try {
+    for (const [i, text] of ["hola", "otra"].entries()) {
+      await main.log.publish(principalMsg("mind@a1", text));
+      await waitFor(async () => await replies() === i + 1);
+    }
+    await Deno.mkdir(`${dir}/agents/a1/instructions`, { recursive: true });
+    await Deno.writeTextFile(
+      `${dir}/agents/a1/instructions/brief.md`,
+      "---\nkind: instruction\nload: always\n---\nbe brief\n",
+    );
+    await main.log.publish(principalMsg("mind@a1", "y otra"));
+    await waitFor(async () => await replies() === 3);
+    const stamped = (await main.log.read({})).filter((e) => e.extra?.inputs !== undefined);
+    assertEquals(stamped.length, 2); // the first turn's set, and the one after the edit
+    const turns = await readTurns(main.log, { agentId: "a1", id: "mind" });
+    assertEquals(turns.map((t) => t.changed), [undefined, undefined, ["agent/instructions/brief"]]);
   } finally {
     await main.stop();
     await Deno.remove(dir, { recursive: true });
@@ -867,11 +896,11 @@ Deno.test("a command that outlives its wait wakes the agent with its end, told a
   try {
     await main.log.publish(principalMsg("mind@a1", "compilá"));
     // the call answers at once, async, and the turn closes on it
-    await waitFor(async () => calls() === 2);
+    await waitFor(() => calls() === 2);
     const [answer] = await main.log.read({ types: ["tool_result"] }) as ToolResultEvent[];
     assertEquals(answer.payload.async, true);
     // the command's end is an update on the call, and it wakes a turn of its own
-    await waitFor(async () => calls() === 3);
+    await waitFor(() => calls() === 3);
     const results = await main.log.read({ types: ["tool_result"] }) as ToolResultEvent[];
     const update = results.find((e) => e.payload.update)!;
     assertEquals(update.payload.ref_id, answer.payload.ref_id);

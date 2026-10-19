@@ -307,7 +307,7 @@ export async function start(
   };
   // the turn's line: when a session falls from busy to idle, the turn that just ended is
   // read back off its log — what opened it, its steps, what they cost, how it ended,
-  // whether a checkpoint followed — and said once, the reading `liquen turns` prints
+  // whether a checkpoint followed — and said once, the reading `liquen log turns` prints
   const told = new Map<string, string>();
   const sayTurn = (agentId: string, sessionId: string) => {
     const who = sessionAddress(agentId, sessionId);
@@ -315,7 +315,9 @@ export async function start(
       ? agents.find((a) => a.config.agentId === agentId)?.log
       : named.get(who)?.log;
     if (!port) return;
-    readTurns(port, { agentId, id: sessionId }, 1, TURN_PAGE)
+    readTurns(port, { agentId, id: sessionId }, 1, TURN_PAGE, {
+      prices: catalog?.system.prices ?? [],
+    })
       .then(([t]) => {
         if (!t || t.end === "open" || told.get(who) === t.id) return;
         told.set(who, t.id);

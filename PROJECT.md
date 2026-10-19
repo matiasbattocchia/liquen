@@ -5486,3 +5486,44 @@ event's own parts, and `extra.via` gains `type`, `turn_id`, `sender`, `surface` 
 Open: an agent's edit of its own line quotes nothing on a raw surface, so its dispatcher
 cannot tell which row it edits. `extra.agent` names one agent, so two agents sharing an org
 account share no room yet.
+
+### One `liquen log` reads what the agents did (2026-10-19) — LANDED
+
+Reading a week of a live agent to find what broke took SQL against `log.db`: the commands
+and their outcomes joined by hand, failures found by grepping output, spend summed without
+prices, and an instruction swap found only by file times. The readers it had were spread
+over three commands (`turns`, `tail`, `log export`), and `export` covered one turn.
+
+**One command, views over one set of filters** (`log.ts`, `views.ts`). `liquen log` prints
+the views and what each is for; every view that reads history takes `--agent`, `--session`,
+`--turn`, `--since`, `--until`, `--match` and `--json`. The views: `turns`, `export` (every
+session the filters keep, markdown or JSON lines), `errors` (grouped by message, kinds
+tool · provider · system · proxy), `tool-calls`, `requests`, `spend` (by day, turn,
+session, model or agent) and `tail`. The `turns` and `tail` commands are gone: `liquen
+update` removes the package's own tasks for commands a release no longer exports, and
+names an org's own task that runs one.
+
+**Requests** (`store/log.ts`, `store/pg/log.ts`, `sandbox.ts`). The egress proxy's audit
+line is also a row of a new `egress` table — method, host, path, status, the grant's
+agent, whether a credential was swapped in. A request carries no turn; the view matches
+it to the turn of its agent whose span holds its time. The Cloudflare sandbox's egress
+does not pass through this proxy and has no rows.
+
+**Errors' kinds.** A model call's failure carries `origin: "model"` on its error row; an
+error row without it is the harness's own. Rows written before read as `system`.
+
+**Inputs** (`inputs.ts`, `xi.ts`, `nu.ts`). A step stamps `extra.inputs`, a hash per input
+— each doc but memories, each tool spec, each file under a program folder on PATH, the
+agent's settings, liquen's version — when the set differs from the session's last stamp.
+`turns` prints `── changed: …` before the turn whose inputs changed; only hashes are
+kept.
+
+**Prices** (`prices.ts`, `system.prices`). Rows of model, `valid_since` and rates per
+million tokens, the package's list under the org's; cost is computed when read, never
+stored. The package's Anthropic rows start on the day they were read off the pricing page,
+since the page dates no model; earlier Claude calls read as unpriced.
+
+Open: a 429 that comes back as an empty, zero-token run is not an error row, so `errors`
+does not see it. A wake that finds nothing still costs a model call; a check that skips the
+model is designed (exit 0 work, 1 nothing, else wake anyway) and not built. Wakes missed
+while the host slept are not logged.

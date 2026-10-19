@@ -116,6 +116,9 @@ export interface TurnInput {
    *  which tells the model to wait for the words rather than open the file. */
   processors?: string[];
   ambient?: string[]; // volatile env lines for the anchor block (§5) — xi composes them
+  /** What the request is made of, by input (inputs.ts) — present when it differs from the
+   *  session's last stamp, and then stamped on the step's first row. */
+  inputs?: Record<string, string>;
   /** Lazy source for the checkpoint instruction (the `system/instructions/compaction` doc) —
    *  xi resolves the I/O, nu only calls it when a checkpoint actually runs (§5). Null ⇒ the
    *  doc is gone, and the checkpoint fails as one that could not be written. */
@@ -269,7 +272,8 @@ export async function nu(
     ts: ts(),
     type: "error",
     envelope: here, // harness-authored: no `agent` (§3)
-    parts: [{ type: "data", kind: "error", data: { error } }],
+    // the model call itself failed, past its retries: the provider's error, not the harness's
+    parts: [{ type: "data", kind: "error", data: { error, origin: "model" } }],
   });
 
   const now = ts();
@@ -373,6 +377,12 @@ export async function nu(
       anchor: anchorText(now, config.timezone, input.ambient),
       ...(read ? { consumed: read.id } : {}),
     };
+  }
+
+  // the step's inputs, on the row that opens it — the whole set, a reader compares it with
+  // the session's previous stamp
+  if (input.inputs && events.length > 0) {
+    events[0].extra = { ...events[0].extra, inputs: input.inputs };
   }
 
   // A step that produced nothing to log — no words, no call — still ended, and the ending

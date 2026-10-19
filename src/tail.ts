@@ -1,8 +1,8 @@
 /**
- * tail.ts — `liquen tail`: watch an agent work, saying nothing.
+ * tail.ts — `liquen log tail`: watch an agent work, saying nothing.
  *
- *   liquen tail [--dir <org>] [--agent <name>] [--session <name>] [--recall <n>]
- *               [--follow] [--json]
+ *   liquen log tail [--dir <org>] [--agent <name>] [--session <name>] [--recall <n>]
+ *                   [--follow] [--json]
  *
  * An ATTACH client like the REPL and the CLI (§9), and the door's plainest one: it opens
  * the session's tail as an observer and publishes nothing — no line, no verdict, no cut,
@@ -14,7 +14,7 @@
  *
  * It never raises a daemon: a daemon's boot answers whatever the log owes, and watching
  * must not be what set the agent working. With nothing running there is nothing to watch,
- * and it says so — `liquen turns` and `liquen log export` read the history off the store.
+ * and it says so — `liquen log turns` and `liquen log export` read the history off the store.
  *
  * The human view is the painter's (`paint.ts`, `watch`), the transcript every attach
  * client prints. `--json` is one object per line, written as it arrives: every row has
@@ -27,18 +27,16 @@ import { DIM, painter, RED, RESET, spendAfter } from "./paint.ts";
 import { tailOf } from "./line.ts";
 import { describeCall, lineOf } from "./describe.ts";
 import { textOf } from "./render.ts";
-import { findRoot, orgFlag, readConfig } from "./config.ts";
+import { findRoot, readConfig } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
-import { entry } from "./entry.ts";
-import { helpFlag } from "./connect/help.ts";
 import { defaultAgent } from "./turns.ts";
 import type { Status } from "./door.ts";
 import type { UsageRow } from "./store/log.ts";
 import type { Event, Json } from "./types.ts";
 
 export const USAGE =
-  `usage: liquen tail [--dir <org>] [--agent <name>] [--session <name>] [--recall <n>]
-                   [--follow] [--json]
+  `usage: liquen log tail [--dir <org>] [--agent <name>] [--session <name>] [--recall <n>]
+                       [--follow] [--json]
 
   Watch an agent's session through its door without speaking: the recent history — its
   messages, every call with its outcome, the thinking, each model call's tokens, the
@@ -193,10 +191,11 @@ export function parseTailArgs(args: string[]): {
   return out;
 }
 
-if (import.meta.main) {
-  await entry(async () => {
-    const org = orgFlag();
-    helpFlag(org.args, USAGE);
+/** Watch a session through its door, as `args` say (`parseTailArgs`); `dir` is the org's
+ *  `--dir`. It exits the process: on hangup, at the recap's end without `--follow`. */
+export async function runTail(args: string[], dir?: string): Promise<void> {
+  {
+    const org = { dir, args };
     const flags = parseTailArgs(org.args);
     const root = findRoot(org);
     const roster = Object.keys((await readConfig(root)).agents);
@@ -208,7 +207,7 @@ if (import.meta.main) {
     } catch (err) {
       console.error(
         `${err instanceof Error ? err.message : String(err)}\n` +
-          "`liquen turns` and `liquen log export --turn last` read what it did",
+          "`liquen log turns` and `liquen log export --turn last` read what it did",
       );
       Deno.exit(1);
     }
@@ -286,5 +285,5 @@ if (import.meta.main) {
       Deno.exit(0);
     });
     await w.hangup;
-  });
+  }
 }

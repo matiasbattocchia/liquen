@@ -39,9 +39,11 @@ liquen agent ana         # add a teammate
 liquen start -D          # keep the org running in the background
 liquen connect           # list the services you can bring in
 liquen status            # see who and what the org holds
-liquen tail -f           # watch an agent work, without a word to it
-liquen turns             # its last turns: what opened each, the errors, the tokens
+liquen log               # what the agents did: the views, and the filters they share
+liquen log turns         # the last turns: what opened each, the errors, the tokens, the cost
+liquen log errors        # what went wrong, grouped by message
 liquen log export --turn last   # one turn as a transcript
+liquen log tail -f       # watch an agent work, without a word to it
 liquen schedule --help   # wake an agent on a clock
 liquen update            # move to the newest release
 liquen stop              # end the run

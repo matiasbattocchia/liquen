@@ -124,7 +124,7 @@ Deno.test("tail: an observer raises no daemon — nothing running is its answer"
 
 Deno.test({
   name:
-    "liquen tail --follow --json: it watches a running org through the door, and the org hears nothing from it",
+    "liquen log tail --follow --json: it watches a running org through the door, and the org hears nothing from it",
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
@@ -149,7 +149,8 @@ Deno.test({
       args: [
         "run",
         "-A",
-        new URL("./tail.ts", import.meta.url).pathname,
+        new URL("./log.ts", import.meta.url).pathname,
+        "tail",
         "--dir",
         root,
         "--agent",

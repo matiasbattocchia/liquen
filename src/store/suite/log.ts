@@ -890,6 +890,42 @@ export function logSuite(s: Substrate): void {
         "t4",
       ]);
       assertEquals(await log.spend({ turns: [] }), []);
+      // a window is strict on both ends, on the time the call was metered
+      const inside = await log.spend({
+        after: "2026-07-16T00:00:01Z",
+        before: "2026-07-16T00:00:04Z",
+      });
+      assertEquals(inside.map((r) => r.turn_id), ["t2", "t3"]);
+    });
+  });
+
+  /* ── egress ─────────────────────────────────────────────────────────── */
+
+  Deno.test("requests reads back what egress wrote: by agent, in a window, the most recent N", async () => {
+    await withLog(async (log) => {
+      const row = (n: number, agent?: string) => ({
+        created_at: `2026-07-16T00:00:0${n}Z`,
+        ...(agent ? { agent_id: agent } : {}),
+        method: n % 2 ? "GET" : "PUT",
+        host: "api.example.com",
+        path: `/things/${n}`,
+        status: n === 3 ? 404 : 200,
+        swapped: agent !== undefined,
+      });
+      for (const r of [row(1, "ana"), row(2, "bo"), row(3, "ana"), row(4)]) await log.egress(r);
+      assertEquals((await log.requests()).length, 4);
+      assertEquals(await log.requests({ agentId: "ana" }), [row(1, "ana"), row(3, "ana")]);
+      assertEquals((await log.requests({ limit: 2 })).map((r) => r.path), [
+        "/things/3",
+        "/things/4",
+      ]);
+      const inside = await log.requests({
+        after: "2026-07-16T00:00:01Z",
+        before: "2026-07-16T00:00:04Z",
+      });
+      assertEquals(inside.map((r) => r.path), ["/things/2", "/things/3"]);
+      assertEquals(inside[1].status, 404);
+      assertEquals((await log.requests())[3], row(4)); // no agent reads back absent
     });
   });
 }

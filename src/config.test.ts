@@ -599,3 +599,28 @@ Deno.test("system.sandboxSleepMinutes: whole minutes, 10 unless said", async () 
     }
   });
 });
+
+Deno.test("system.prices: the org's own rows, none unless said, checked at boot", async () => {
+  await withDir(async (root) => {
+    const write = (prices: unknown) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system: { prices } }));
+    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    assertEquals((await readConfig(root)).system.prices, []);
+    const row = { model: "m", valid_since: "2026-01-01", input: 1, output: 2, cache_read: 0.1 };
+    await write([row]);
+    assertEquals((await readConfig(root)).system.prices, [row]);
+    for (
+      const [bad, says] of [
+        [{}, "must be an array"],
+        [[{ ...row, valid_since: "2026-01" }], "valid_since as YYYY-MM-DD"],
+        [[{ ...row, input: -1 }], "input must be a rate"],
+        [[{ ...row, output: undefined }], "output must be a rate"],
+        [[{ ...row, source: "invoice" }], 'unknown key "source"'],
+        [[{ ...row, tiers: [{ input: 1, output: 2 }] }], "needs above_context"],
+      ] as const
+    ) {
+      await write(bad);
+      await assertRejects(() => readConfig(root), Error, says);
+    }
+  });
+});

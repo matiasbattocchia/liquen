@@ -18,9 +18,7 @@
     "./schedule": "./src/schedule.ts",
     "./connect": "./src/connect/connect.ts",
     "./status": "./src/connect/status.ts",
-    "./turns": "./src/turns.ts",
-    "./log": "./src/export.ts",
-    "./tail": "./src/tail.ts"
+    "./log": "./src/log.ts"
   },
   "publish": {
     "exclude": [
@@ -49,7 +47,6 @@
     "smoke": "deno test -A --env-file=.env src/transport/",
     "cli": "deno run -A --env-file=.env src/cli.ts",
     "repl": "deno run -A --env-file=.env src/repl.ts",
-    "tail": "deno run -A src/tail.ts",
     "start": "deno run -A --env-file=.env src/start.ts",
     "stop": "deno run -A src/stop.ts",
     "reload": "deno run -A src/reload.ts",
@@ -59,8 +56,7 @@
     "schedule": "deno run -A src/schedule.ts",
     "connect": "deno run -A --env-file=.env src/connect/connect.ts",
     "status": "deno run -A --env-file=.env src/connect/status.ts",
-    "turns": "deno run -A --env-file=.env src/turns.ts",
-    "log": "deno run -A --env-file=.env src/export.ts",
+    "log": "deno run -A --env-file=.env src/log.ts",
     "proxy": "deno run -A --env-file=.env src/proxy/proxy.ts",
     "run:slack": "deno run -A --env-file=.env src/connect/slack/run.ts",
     "connect:slack": "deno run -A --env-file=.env src/connect/slack/connect.ts",

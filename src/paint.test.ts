@@ -810,7 +810,7 @@ Deno.test("live: a verdict typed here paints its row, not its line again", () =>
   assertEquals(plain(live.screen()).trim(), "— bbc24a allowed once");
 });
 
-/* ── a watching surface (`liquen tail`) ───────────────────────────────── */
+/* ── a watching surface (`liquen log tail`) ─────────────────────────── */
 
 const watched = (): Event[] => {
   const room = {

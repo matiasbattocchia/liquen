@@ -55,7 +55,7 @@ Deno.test("nu: persistent step failure → a single harness-authored error event
   assertEquals(out.length, 1);
   const [err] = out;
   assert(err.type === "error");
-  assertEquals(err.parts[0].data, { error: "overloaded" });
+  assertEquals(err.parts[0].data, { error: "overloaded", origin: "model" });
   assertEquals(err.agent, undefined); // harness-authored (§3)
 });
 

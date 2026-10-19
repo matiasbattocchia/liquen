@@ -103,7 +103,7 @@ Deno.test("export: one turn as a transcript — thinking, words, each call's ful
     await assertRejects(
       () => exportTurn(log, { agentId: "ana", id: "mind" }, "nope"),
       Error,
-      "liquen turns",
+      "liquen log turns",
     );
   } finally {
     await log.close();

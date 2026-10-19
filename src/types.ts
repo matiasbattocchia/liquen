@@ -609,7 +609,9 @@ export interface AlarmEvent extends EventBase {
 /** Permanent mu failure — rendered `system` (model awareness) + Stream (operator) (§2). */
 export interface ErrorEvent extends EventBase {
   type: "error";
-  parts: [DataPart<"error", { error: string }>];
+  /** `origin: "model"` — the model call failed (the provider's answer); absent — the
+   *  harness's own failure: a checkpoint, a verdict that could not settle. */
+  parts: [DataPart<"error", { error: string; origin?: "model" }>];
 }
 
 /** What a presence line says the mind is doing: the two stream deltas worth a word. */

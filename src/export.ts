@@ -1,18 +1,17 @@
 /**
- * export.ts — `liquen log export`: one turn of the log as a document a person reads (§9 —
- * readability is an export, never the on-disk format).
+ * export.ts — `liquen log export`: the log as documents a person reads (§9 — readability is
+ * an export, never the on-disk format), or as JSON lines a program reads.
  *
- *   liquen log export --turn <id|last> [--agent <name>] [--session <name>] [--md]
- *
- * The turn is the one `liquen turns` lists (`turns.ts`): its opener, then each step in
+ * A turn is the one `liquen log turns` lists (`turns.ts`): its opener, then each step in
  * order — the thinking it showed, the words it said, every call with its full output and
  * the run's facts (`extra.exec`), the step's own spend — the lines that reached the room
  * while it ran, how it ended, the totals, and the checkpoint text that covers any of it.
- * Read off the store like `liquen turns`, so it answers for an org that is not running.
- * On a terminal the document is shown styled; `--md`, or a pipe, gets the markdown itself.
+ * An export is every turn of every session the filters keep, session by session, oldest
+ * first. Read off the store, so it answers for an org that is not running. On a terminal
+ * the markdown is shown styled; `--md`, or a pipe, gets the markdown itself.
  */
 
-import type { Event, ToolResultEvent, ToolUseEvent } from "./types.ts";
+import type { Event, Json, SessionRef, ToolResultEvent, ToolUseEvent } from "./types.ts";
 import type { UsageRow } from "./store/log.ts";
 import type { ExecRecord } from "./xi.ts";
 import { describeCall, lineOf } from "./describe.ts";
@@ -20,34 +19,19 @@ import { errorTextOf, hhmm, ownVoice, shortId, textOf } from "./render.ts";
 import { sessionAddress } from "./session.ts";
 import {
   count,
-  defaultAgent,
   openedBy,
-  parseTurnsArgs,
+  openerOf,
+  price,
   readTurns,
   rowById,
   took,
   type Turn,
   type TurnReader,
+  turnsOf,
 } from "./turns.ts";
-import { renderMarkdown } from "./md.ts";
-import { openStore } from "./store/mod.ts";
-import { findRoot, orgFlag, readConfig } from "./config.ts";
-import { entry } from "./entry.ts";
-import { helpFlag } from "./connect/help.ts";
-
-export const USAGE = `usage: liquen log export --turn <id|last> [--dir <org>] [--agent <name>]
-                         [--session <name>] [--md]
-
-  One turn as a transcript: what opened it, each step's thinking, words and calls with
-  their full output, each step's tokens, how it ended, the totals, and the checkpoint
-  that covers it.
-
-  --turn <id|last>  the turn — the handle \`liquen turns\` prints or any of its steps'
-                    ids (whole, or their last six characters), the id of any row in it,
-                    or \`last\`
-  --agent <name>    whose turn (a roster name); default: the only agent, or your username
-  --session <name>  the session; default: the mind
-  --md              the markdown itself, even on a terminal`;
+import { jsonRecap } from "./tail.ts";
+import type { Price } from "./prices.ts";
+import { matches } from "./views.ts";
 
 /** A turn found by what a reader has to hand: its handle or a step's, in full or by the six
  *  characters every surface shows; the id of one of its rows; or `last`. */
@@ -115,6 +99,7 @@ export function transcript(
       `**ended** ${turn.end}${turn.error ? ` — ${turn.error}` : ""}`,
     `- **tokens** ${k.input} in · ${k.output} out · ${k.cache_read} cache-read · ` +
       `${k.cache_write} cache-write`,
+    ...(turn.changed?.length ? [`- **inputs changed** ${turn.changed.join(", ")}`] : []),
     ...(turn.checkpoint
       ? [
         `- **checkpoint** ${
@@ -207,18 +192,162 @@ export function transcript(
 /** How many of a turn's rows one export reads at most. */
 const ROWS = 20_000;
 
-/** The turn `key` names, as markdown, read through `log`. */
+/** How many rows one page of a read is. */
+const PAGE = 2_000;
+
+/** Every row a read reaches, oldest first: a room's when `conversation` is named, the whole
+ *  log's otherwise. */
+export async function readAll(
+  log: Pick<TurnReader, "read">,
+  conversation?: string,
+): Promise<Event[]> {
+  let rows: Event[] = [];
+  for (;;) {
+    const older = await log.read({
+      ...(conversation ? { conversation } : {}),
+      limit: PAGE,
+      ...(rows.length ? { beforeId: rows[0].id } : {}),
+    });
+    rows = [...older, ...rows];
+    if (older.length < PAGE) return rows;
+  }
+}
+
+/** The sessions whose rooms hold rows — a session's room is where its steps speak. */
+export function sessionsIn(rows: Event[], agents: string[]): SessionRef[] {
+  const seen = new Map<string, SessionRef>();
+  for (const e of rows) {
+    const a = e.agent;
+    if (!a?.id || !a.session_id || !agents.includes(a.id)) continue;
+    if (e.envelope.conversation.address !== sessionAddress(a.id, a.session_id)) continue;
+    seen.set(`${a.id}\u0000${a.session_id}`, { agentId: a.id, id: a.session_id });
+  }
+  const mindFirst = (r: SessionRef) => `${r.agentId}\u0000${r.id === "mind" ? "" : r.id}`;
+  return [...seen.values()].sort((a, b) => mindFirst(a) < mindFirst(b) ? -1 : 1);
+}
+
+/** What keeps a turn in an export: its start inside the window, the turn named, words in
+ *  its transcript. */
+export interface ExportScope {
+  since?: string;
+  until?: string;
+  turn?: string;
+  match?: string;
+}
+
+/** One session's turns, read off `rows` (its room, oldest first) and `byId` (every row in
+ *  hand, for openers said elsewhere), priced, each with the rows its transcript covers. */
+export async function sessionTurns(
+  log: TurnReader,
+  ref: SessionRef,
+  rows: Event[],
+  byId: Map<string, Event>,
+  prices?: Price[],
+): Promise<{ turn: Turn; rows: Event[]; spend: UsageRow[]; checkpoint?: Event }[]> {
+  const turns = turnsOf(rows, ref);
+  for (const t of turns) {
+    if (t.opener.kind !== "unknown" || t.opener.id === undefined) continue;
+    const seen = byId.get(t.opener.id) ?? await rowById(log, t.opener.id);
+    const o = seen && openerOf(seen, ref);
+    if (o) {
+      t.opener = o;
+      t.started = o.ts ?? t.started;
+      t.duration_ms = Math.max(0, Date.parse(t.ended) - Date.parse(t.started));
+    }
+  }
+  const steps = turns.flatMap((
+    t,
+  ) => [...t.steps, ...(t.checkpoint?.turn_id ? [t.checkpoint.turn_id] : [])]);
+  const spend = steps.length ? await log.spend({ agentId: ref.agentId, turns: steps }) : [];
+  price(turns, spend, prices);
+  const summaries = rows.filter((e) => e.type === "summary");
+  return turns.map((turn) => {
+    const own = rows.filter((e) => e.id >= turn.span.from && e.id <= turn.span.to);
+    if (turn.opener.id && !own.some((e) => e.id === turn.opener.id)) {
+      const opener = byId.get(turn.opener.id);
+      if (opener) own.unshift(opener);
+    }
+    const checkpoint = summaries.find((c) => {
+      const [from, to] = (c.payload?.covers ?? []) as string[];
+      return from !== undefined && from <= turn.span.to && to >= turn.span.from;
+    });
+    const mine = new Set(turn.steps);
+    return {
+      turn,
+      rows: own,
+      spend: spend.filter((r) => r.turn_id !== undefined && mine.has(r.turn_id)),
+      ...(checkpoint ? { checkpoint } : {}),
+    };
+  });
+}
+
+/** The sessions as an export, turn by turn: markdown transcripts between rules, or one JSON
+ *  object per row (each with its `agent`, `session` and `turn`) and per metered call. */
+export async function* exportSessions(
+  log: TurnReader,
+  sessions: SessionRef[],
+  opts: {
+    format: "md" | "jsonl";
+    scope?: ExportScope;
+    zone?: string;
+    prices?: Price[];
+    /** Every row in hand, when the caller read the whole log already. */
+    rows?: Event[];
+  },
+): AsyncGenerator<string> {
+  const scope = opts.scope ?? {};
+  const all = opts.rows;
+  const byId = new Map((all ?? []).map((e) => [e.id, e]));
+  let first = true;
+  for (const ref of sessions) {
+    const room = sessionAddress(ref.agentId, ref.id);
+    const rows = all
+      ? all.filter((e) => e.envelope.conversation.address === room)
+      : await readAll(log, room);
+    for (const t of await sessionTurns(log, ref, rows, byId, opts.prices)) {
+      if (scope.since !== undefined && t.turn.started < scope.since) continue;
+      if (scope.until !== undefined && t.turn.started >= scope.until) continue;
+      if (scope.turn !== undefined && !isTurn(t.turn, scope.turn)) continue;
+      if (opts.format === "md") {
+        const doc = transcript(t.turn, t.rows, t.spend, t.checkpoint, opts.zone);
+        if (!matches(doc, scope.match)) continue;
+        yield `${first ? "" : "\n---\n\n"}${doc}`;
+      } else {
+        const lines = jsonRecap(t.rows, t.spend).map((o) => ({
+          ...o,
+          agent: ref.agentId,
+          session: ref.id,
+          turn: t.turn.id,
+        } as Record<string, Json>));
+        const text = lines.map((o) => JSON.stringify(o)).join("\n");
+        if (!matches(text, scope.match)) continue;
+        yield `${text}\n`;
+      }
+      first = false;
+    }
+  }
+}
+
+/** Whether `key` names this turn, the way `findTurn` reads a key. */
+function isTurn(t: Turn, key: string): boolean {
+  return findTurn([t], key) === t;
+}
+
+/** One turn as markdown, found by `key` through `readTurns`. */
 export async function exportTurn(
   log: TurnReader,
   ref: { agentId: string; id: string },
   key: string,
   zone?: string,
+  prices?: Price[],
 ): Promise<string> {
-  const turns = await readTurns(log, ref);
+  const turns = await readTurns(log, ref, undefined, undefined, { prices });
   const turn = findTurn(turns, key);
   if (!turn) {
     throw new Error(
-      `no turn "${key}" in ${sessionAddress(ref.agentId, ref.id)} — \`liquen turns\` lists them`,
+      `no turn "${key}" in ${
+        sessionAddress(ref.agentId, ref.id)
+      } — \`liquen log turns\` lists them`,
     );
   }
   const conversation = sessionAddress(ref.agentId, ref.id);
@@ -231,47 +360,9 @@ export async function exportTurn(
   const spend = await log.spend({ agentId: ref.agentId, turns: turn.steps });
   // the checkpoint that covers it: the first whose range reaches into the turn's rows
   const checkpoint = (await log.read({ conversation, types: ["summary"], afterId: turn.span.from }))
-    .find((s) => {
-      const [from, to] = (s.payload?.covers ?? []) as string[];
+    .find((c) => {
+      const [from, to] = (c.payload?.covers ?? []) as string[];
       return from !== undefined && from <= turn.span.to && to >= turn.span.from;
     });
   return transcript(turn, rows, spend, checkpoint, zone);
-}
-
-if (import.meta.main) {
-  await entry(async () => {
-    const org = orgFlag();
-    helpFlag(org.args, USAGE);
-    const [verb, ...rest] = org.args;
-    if (verb !== "export") throw new Error(USAGE);
-    const args = parseTurnsArgs(rest);
-    let key: string | undefined;
-    let md = false;
-    for (let i = 0; i < args.rest.length; i++) {
-      const a = args.rest[i];
-      if (a === "--turn") key = args.rest[++i];
-      else if (a === "--md") md = true;
-      else throw new Error(`unknown argument ${a}\n${USAGE}`);
-    }
-    if (!key) throw new Error(`--turn names the turn\n${USAGE}`);
-    const root = findRoot(org);
-    const catalog = await readConfig(root);
-    const agentId = args.agent ?? defaultAgent(Object.keys(catalog.agents));
-    if (!(agentId in catalog.agents)) {
-      throw new Error(`no agent "${agentId}" in ${root}/config.jsonc`);
-    }
-    const log = await (await openStore(root)).log();
-    try {
-      const doc = await exportTurn(
-        log,
-        { agentId, id: args.session },
-        key,
-        catalog.organization.timezone,
-      );
-      const styled = !md && Deno.stdout.isTerminal();
-      await Deno.stdout.write(new TextEncoder().encode(styled ? renderMarkdown(doc) : doc));
-    } finally {
-      await log.close();
-    }
-  });
 }
