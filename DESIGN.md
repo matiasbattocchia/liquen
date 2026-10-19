@@ -953,7 +953,7 @@ ownership) only if double-answers show up.
 
 **A mind surface is a conversation whose every counterpart is a principal of the agent.**
 Nobody else can read it or write into it, so whatever lands there is steering and
-whatever the agent says there reaches its principals and no one else. Two shapes satisfy
+whatever the agent says there reaches its principals and no one else. Three shapes satisfy
 it, and conversation identity (§3) says which platforms can host them:
 
 - **Self-talk on the account the agent acts as** — the alter-ego's, whose one principal
@@ -962,8 +962,17 @@ it, and conversation identity (§3) says which platforms can host them:
 - **A DM between a principal and the agent's own account** — the org agent's shape, one
   DM per principal, N surfaces of one mind. A DM has no third party, so no membership
   is tracked and no admin on the wire can seat a stranger in it.
+- **A steering room on an org account** — a group on a system the org itself runs, where
+  being in the room is being a principal: whoever writes there steers. The connection
+  names its agent (`extra.agent`) and says it hosts one (`extra.steering`), and the room
+  is the conversation addressed by the agent's own name — derived, like the WA self-chat,
+  nothing recorded. No binding can name one person, so each line is signed by the sender
+  the wire names, and a line naming none crosses as nothing. The roster's `principals`
+  does not reach it: `[]` still says no member steers through a DM, and the room's writers
+  steer all the same. Who may enter the room is the org's own system's rule, a deployment
+  rule like the alter-ego's below — it cannot be checked here, only kept.
 
-Nothing with more than two parties hosts a mind. A group or a channel is room-defined —
+No other room hosts a mind. A group or a channel on a wire is room-defined —
 its identity survives churn, and whoever administers it on the wire decides who reads it;
 a Slack mpim is member-defined and would qualify on paper, but it is a room all the same
 and is served as one. They are world conversations the agent serves, whoever is in them,
@@ -1027,7 +1036,8 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     only input/output distinction; the log needs none, authorship is the bit), a
     principal's own words as `[via <surface>] …` (input replayed as output — fan-out over
     fan-in's own copy is what cross-syncs surfaces; on a surface that is another
-    principal's the tag names who spoke, by username: `[matias via whatsapp] …`). A
+    principal's the tag names who spoke, by username: `[matias via whatsapp] …`, or by the
+    wire's name for a steering room's writer, who is on no roster). A
     principal's answer crosses as the line its settlement carries — a `/y` typed at the
     terminal, a thumb on a card — quoting the card's own crossing, which is how a surface
     points where a terminal names the card by its handle. Tool calls cross as redacted one-liners under a tag of their
@@ -1046,6 +1056,13 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     `/y` and `/n` are commands, a tool's detail is API surface, an error is upstream's
     words. Model-facing render (§5 stamps) stays English on purpose. A CC is an ordinary
     outbound event on its service — the dispatchers post it, the platform echo merges into it (§4 echo-dedup).
+    A **raw** surface (`extra.raw` on its connection) is one whose dispatcher renders a
+    crossing itself — a UI the org owns, where a tool call is a card and presence a status
+    line. Its CC carries what the event is instead of the tagged line: the event's own
+    parts, and on `extra.via` its type, the step that produced it (`turn_id`), its author
+    and the surface it came through, and the action it takes. What crosses is the same for
+    every surface; only the rendering moves, and the log holds exactly what that
+    dispatcher sends.
     Fan-in guards that echo twice, because in an alias conversation an unmerged one reads
     as the principal speaking and cross-broadcasts to the other surfaces, which echo in
     turn: it settles briefly and re-reads, so an early echo the backfill absorbs copies
@@ -1079,7 +1096,10 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
   profile and rename events pushing changes), a display fact the row keeps — and which
   agent speaks
   through the bot, an account with no handle at all, is recorded at the paste
-  (`liquen connect slack bot --agent`, `extra.agent`); local, native.
+  (`liquen connect slack bot --agent`, `extra.agent`); a steering room, derived — the
+  conversation addressed by the agent's own name on an org account whose row names the
+  agent and declares the room (`extra.steering`), which a bot row never does, so no Slack
+  channel can take the agent's name for one; local, native.
   The agent must never treat any of its principals as a peer/customer.
 - **`send` exteriorizes the mind.** The one door from the mind to the world: `send`
   targets peer conversations only — no principal is ever a send target, on any surface,

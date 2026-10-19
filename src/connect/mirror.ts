@@ -176,6 +176,20 @@ async function fanIn(
   settleMs: number,
   now: () => string,
 ): Promise<void> {
+  // who signs the copy. The binding says who is on the other side (§4): the row is signed
+  // with their username and the roster's word for them, never the wire's display name — a
+  // self-chat carries no sender at all (the account spoke), a principal's DM carries the
+  // phone's. A steering room names nobody: whoever writes there steers, so the line is
+  // signed by the sender the wire names, and a line that names none crosses as nothing.
+  const wire = e.envelope.sender;
+  const sender = binding.principal !== undefined
+    ? {
+      address: binding.principal,
+      name: (await deps.nameOf?.(binding.principal)) ?? binding.principal,
+    }
+    : wire && { address: wire.address, name: wire.name ?? wire.address };
+  if (!sender) return;
+
   // settle, then re-read: an early echo of our own CC is absorbed by the dispatcher's
   // backfill (dropped, merged into the CC) — if the row is gone, there is nothing to copy
   await new Promise((r) => setTimeout(r, settleMs));
@@ -219,14 +233,7 @@ async function fanIn(
       service: "local" as const,
       connection_address: "agent",
       conversation: { address: mind },
-      // the binding says who is on the other side (§4): the row is signed with their
-      // username and the roster's word for them, never the wire's display name — a
-      // self-chat carries no sender at all (the account spoke), a principal's DM carries
-      // the phone's
-      sender: {
-        address: binding.principal,
-        name: (await deps.nameOf?.(binding.principal)) ?? binding.principal,
-      },
+      sender,
     },
     extra: {
       via: {
@@ -402,13 +409,36 @@ async function fanOut(
       connection_address: a.connection,
       conversation: { address: a.conversation },
     },
-    parts: cc(a),
+    // a raw surface's dispatcher renders the crossing itself, so the copy carries what the
+    // event is — its own parts, and on `via` the facts the tagged line would have spelled —
+    // and the log holds exactly what that dispatcher sends. What crosses is decided above,
+    // the same for every surface.
+    parts: a.raw ? (e.parts ?? []) as Part[] : cc(a),
     extra: {
-      via: { event: e.id, service: "local", conversation: sessionAddress(agentId, MIND) },
+      via: {
+        event: e.id,
+        service: "local",
+        conversation: sessionAddress(agentId, MIND),
+        ...(a.raw ? rawVia(e) : {}),
+      },
       // presence is only true while the turn runs: the sweeper never re-offers it
       ...(e.type === "delta" ? { delta: true } : {}),
     },
   })));
+}
+
+/** What a raw surface reads off a crossing besides its parts: what kind of event it was,
+ *  the step that produced it (`turn_id`, the voice and its calls), who said it and through
+ *  which surface (a principal's line), and the action it takes on what it points at. */
+function rawVia(e: Event): Record<string, unknown> {
+  const origin = viaOf(e)?.service;
+  return {
+    type: e.type,
+    ...(e.payload?.turn_id !== undefined ? { turn_id: e.payload.turn_id } : {}),
+    ...(e.envelope.sender ? { sender: e.envelope.sender } : {}),
+    ...(origin ? { surface: origin } : {}),
+    ...(e.payload?.action ? { action: e.payload.action } : {}),
+  };
 }
 
 /** The card raised for a use, in the room it was raised in. */
@@ -459,10 +489,12 @@ const same = (parts: Part[]): CC => () => parts;
  *  — handle, lapse and withdrawal all — is the terminal's). */
 async function ccParts(
   e: Event,
-  deps: Pick<MirrorDeps, "read">,
+  deps: Pick<MirrorDeps, "read" | "aliases">,
   w: Words,
 ): Promise<CC | null> {
   const read = deps.read;
+  const line = async (words: string, files: Part[]) =>
+    principalLine(e, words, files, w, await fromRoom(deps, e));
   if (silent(e)) return null; // the model said nothing (§5) — nothing crosses to a surface
   if (e.type === "tool_use") {
     // the same rendering the card gets (§9), addresses and all: a surface is where the
@@ -493,7 +525,7 @@ async function ccParts(
   if (e.type === "control") {
     // the principal's hard stop is their line (`/cancel`), and the whole of the cut
     const said = (e as ControlEvent).parts[0]?.text ?? "";
-    return said ? principalLine(e, said, [], w) : null;
+    return said ? line(said, []) : null;
   }
   if (e.type === "error") {
     // the harness's own voice reaching the principal (§2): it speaks when the model can't
@@ -534,7 +566,7 @@ async function ccParts(
     const said = answerLine(e as PermissionResponseEvent);
     if (said === undefined) return null;
     const handle = shortId(e.payload.ref_id);
-    return principalLine(e, said.replace(new RegExp(`(^|\\s+)${handle}(?=\\s|$)`), ""), [], w);
+    return line(said.replace(new RegExp(`(^|\\s+)${handle}(?=\\s|$)`), ""), []);
   }
   if (e.type !== "message") return null;
   const m = e as MessageEvent;
@@ -557,21 +589,24 @@ async function ccParts(
   const said = glyph === undefined ? text : e.payload?.action === "remove" ? "" : glyph;
   const files = parts.filter((p) => p.type === "file");
   if (!said && files.length === 0) return null;
-  return principalLine(e, said, files, w);
+  return line(said, files);
 }
 
 /** A principal's row on a surface: the same tag shape as the voice, saying where it was
  *  typed — the terminal when the mind itself is where it landed (the REPL and `liquen cli`
  *  both speak through the door). On a surface that is another principal's (§4), it says
- *  who, by username. */
-function principalLine(e: Event, words: string, files: Part[], w: Words): CC {
+ *  who, by username — by the wire's name for them when the line came through a steering
+ *  room, whose writers are on no roster. */
+function principalLine(e: Event, words: string, files: Part[], w: Words, room: boolean): CC {
   const where = viaOf(e)?.service ?? "terminal";
   const by = e.envelope.sender?.address;
+  // a steering room's writer is no roster username: the wire's name for them says who
+  const named = room ? e.envelope.sender?.name ?? by : by;
   return (a) => [
     {
       type: "text",
       kind: "text",
-      text: `\`[${w.via(where, by && by !== a.principal ? by : undefined)}]\`${
+      text: `\`[${w.via(where, by && by !== a.principal ? named : undefined)}]\`${
         words ? ` ${words}` : ""
       }`,
     },
@@ -605,6 +640,15 @@ interface Via {
   service?: string;
   connection?: string;
   conversation?: string;
+}
+
+/** Did a mind row come in through a steering room — the binding of the surface it was
+ *  copied from names no principal? */
+async function fromRoom(deps: Pick<MirrorDeps, "aliases">, e: Event): Promise<boolean> {
+  const via = viaOf(e);
+  if (!via?.service || !via.conversation || !via.connection) return false;
+  const binding = aliasOf(await deps.aliases(), via.service, via.connection, via.conversation);
+  return binding !== undefined && binding.principal === undefined;
 }
 
 function viaOf(e: Event): Via | undefined {

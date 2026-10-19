@@ -133,6 +133,24 @@ service's echo of the send merges into the committed row by `external_id` the wa
 echo does. The CC is marked `extra.delta`, and the one thing that mark means is that the
 sweeper never re-offers it. See §9 in DESIGN.md.
 
+### A surface that renders: `raw`, and the steering room
+
+A connector serving a UI the org owns can draw a crossing better than a tagged line: a
+tool call as a card, presence as a status, the agent's words as a bubble. Its connect door
+writes `extra.raw: true` on the connection row, and every mind crossing bound for that
+connection carries the event's own parts instead of the line, with what the line would
+have said on `extra.via`: `type` (the event's: `message`, `tool_use`, `delta`, …),
+`turn_id` (the step that produced it — distinct ones count the steps of a turn), `sender`
+(who said it), `surface` (the service a principal's line came through) and `action`. The
+mirror still decides what crosses; the dispatcher maps those parts onto its wire and adds
+nothing, so the row in the log is what was sent.
+
+An org account can also host its agent's **steering room** (DESIGN §4): the row names the
+agent (`extra.agent`) and says so (`extra.steering: true`), and the ingest files the room
+under the agent's own name as the conversation address, kind `group`. Whoever writes there
+steers — the mind copy is signed with the sender the ingest stamps, so stamp a stable id as
+`address` and the person's name as `name`, and stamp none on a row of your own making.
+
 ### The address book: the service keeps it, the name carries it
 
 A service that keeps an address book — the phone's, behind WhatsApp; Google Contacts —

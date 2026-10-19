@@ -70,12 +70,17 @@ export function bindRoster(db: DatabaseSync): void {
  *   principals  (agent_id, principal, rank)
  *               who steers each agent: the declared list in its order, else every member
  *               when the agent acts as the org, else itself
- *   aliases     (service, connection, conversation, agent_id, principal, live)
+ *   aliases     (service, connection, conversation, agent_id, principal, live, raw)
  *               the mind surfaces: an owned connection's self-conversation (recorded in
  *               `extra.self_conversation`, or the number itself on WhatsApp) — a revoked
  *               one still listed, `live` 0 — and, on every connection an agent speaks
  *               through, each principal's DM with it: on WhatsApp their own number, on
- *               Slack the id the ingest recorded (`extra.dms`, member → channel) */
+ *               Slack the id the ingest recorded (`extra.dms`, member → channel) — and the
+ *               steering room: on an org account that names its agent (`extra.agent`)
+ *               and says it hosts one (`extra.steering`), the conversation addressed by
+ *               the agent's own name, `principal` null
+ *               because whoever writes there steers. `raw` is the connection's
+ *               `extra.raw`: its dispatcher renders a crossing itself */
 export const ROSTER_VIEWS = `
 CREATE TEMP VIEW IF NOT EXISTS speaks AS
   SELECT a.agent_id, c.agent_id AS owner, c.service, c.address, c.extra
@@ -102,19 +107,28 @@ CREATE TEMP VIEW IF NOT EXISTS aliases AS
   SELECT service, address AS connection,
          coalesce(json_extract(extra, '$.self_conversation'),
                   CASE service WHEN 'whatsapp' THEN address END) AS conversation,
-         agent_id, agent_id AS principal, deleted_at IS NULL AS live
+         agent_id, agent_id AS principal, deleted_at IS NULL AS live,
+         json_extract(extra, '$.raw') IS 1 AS raw
   FROM connections
   WHERE agent_id IS NOT NULL
     AND (json_extract(extra, '$.self_conversation') IS NOT NULL OR service = 'whatsapp')
   UNION ALL
-  SELECT s.service, s.address, digits(w.phone), s.agent_id, p.principal, 1
+  SELECT s.service, s.address, digits(w.phone), s.agent_id, p.principal, 1,
+         json_extract(s.extra, '$.raw') IS 1
   FROM speaks s
     JOIN principals p ON p.agent_id = s.agent_id
     JOIN agents w ON w.agent_id = p.principal
   WHERE s.service = 'whatsapp' AND w.phone IS NOT NULL AND w.phone <> ''
     AND digits(s.address) <> digits(w.phone)
   UNION ALL
-  SELECT s.service, s.address, d.value, s.agent_id, d.key, 1
+  SELECT s.service, s.address, d.value, s.agent_id, d.key, 1,
+         json_extract(s.extra, '$.raw') IS 1
   FROM speaks s, json_each(json_extract(s.extra, '$.dms')) d
     JOIN principals p ON p.agent_id = s.agent_id AND p.principal = d.key
-  WHERE s.service = 'slack' AND d.type = 'text';`;
+  WHERE s.service = 'slack' AND d.type = 'text'
+  UNION ALL
+  SELECT s.service, s.address, s.agent_id, s.agent_id, NULL, 1,
+         json_extract(s.extra, '$.raw') IS 1
+  FROM speaks s
+  WHERE s.owner IS NULL AND json_extract(s.extra, '$.agent') = s.agent_id
+    AND json_extract(s.extra, '$.steering') IS 1;`;

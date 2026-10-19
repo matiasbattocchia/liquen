@@ -5462,3 +5462,27 @@ Migration: `payload.deferred` → `payload.gated` in each org's events (one UPDA
 Open: the Cloudflare sandbox kills at the wait and tells nothing (its output is a container
 file, its end needs a long-held exec, the door cannot reach it). Tracking async calls as
 standing state (open calls in the anchor, cancel, lost on restart) is not built.
+
+### A steering room on an org account, and surfaces that render (2026-10-19) — LANDED
+
+Sonar, the CRM the org runs, wants a group chat with its agent: every portal user of the
+tenant talks to the agent in one room, and the room shows the agent's work as the UI draws
+it (a tool call as a card, presence as a status, a turn folded by its steps). Neither fit:
+a mind surface was a self-talk or a DM, and every crossing reached a surface as a tagged
+line in the org's tongue.
+
+**The steering room** (§4, `store/roster.ts`, both backends). A fourth branch of the
+`aliases` view: on an org account that names its agent (`extra.agent`) and declares a room
+(`extra.steering`), the conversation addressed by the agent's own name is a surface of its
+mind, `principal` null. Fan-in signs a room line with the sender the wire names; a line
+naming none crosses as nothing. A room line on another surface is tagged with the writer's
+name. The declaration is what keeps a Slack bot row, which also names its agent, from
+having a room that `chat.postMessage` would resolve as a channel named after the agent.
+
+**Raw surfaces** (`connect/mirror.ts`). `extra.raw` on a connection: its crossings carry the
+event's own parts, and `extra.via` gains `type`, `turn_id`, `sender`, `surface` and
+`action`. `AliasRow` gains `raw`; `principal` became optional.
+
+Open: an agent's edit of its own line quotes nothing on a raw surface, so its dispatcher
+cannot tell which row it edits. `extra.agent` names one agent, so two agents sharing an org
+account share no room yet.

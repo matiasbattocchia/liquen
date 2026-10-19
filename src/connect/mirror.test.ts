@@ -992,3 +992,149 @@ Deno.test("mirror fan-out: presence crosses as the tag alone, and the CC is mark
     assertEquals((await inConv("mind@ana")).length, 0); // inConv reads messages only
   });
 });
+
+/** An org whose agent `sonar` has a steering room on an org account (`sonar:t1`, raw: its
+ *  dispatcher renders) and a Slack self-DM of its own (`D1`, tagged lines), so a crossing
+ *  can be read on both kinds of surface. */
+async function withRoom(
+  fn: (t: {
+    publish: (e: Draft<Event>) => Promise<Event>;
+    inConv: (conversation: string) => Promise<MessageEvent[]>;
+    waitFor: (cond: () => Promise<boolean>) => Promise<void>;
+  }) => Promise<void>,
+): Promise<void> {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "sonar", mind: "mind@sonar", principals: [] }]);
+  await log.upsertConnections([
+    { service: "sonar", address: "t1", extra: { agent: "sonar", steering: true, raw: true } },
+    { service: "slack", address: "T1:U1", agentId: "sonar", extra: { self_conversation: "D1" } },
+  ]);
+  const stop = createMirror({
+    subscribe: (l, o) => log.subscribe(l, o),
+    publish: log.publish,
+    read: (q) => log.read(q),
+    gates: (scope) => log.gates(scope),
+    aliases: () => log.aliases(),
+    setDelivery: (id, patch) => log.setDelivery(id, patch),
+  }, 30);
+  const waitFor = async (cond: () => Promise<boolean>) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 20_000) {
+      if (await cond()) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error("waitFor timeout");
+  };
+  try {
+    await new Promise((r) => setTimeout(r, 50));
+    await fn({
+      publish: (e) => log.publish(e) as Promise<Event>,
+      inConv: async (conversation) =>
+        (await log.read({ conversation, types: ["message"] })) as MessageEvent[],
+      waitFor,
+    });
+  } finally {
+    stop();
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+const roomLine = (
+  text: string,
+  sender?: { address: string; name: string },
+): Draft<MessageEvent> => ({
+  ts: new Date().toISOString(),
+  type: "message",
+  envelope: {
+    service: "sonar" as Event["envelope"]["service"],
+    connection_address: "t1",
+    conversation: { address: "sonar", kind: "group" },
+    ...(sender ? { sender } : {}),
+    external_id: `sonar:${crypto.randomUUID()}`,
+  },
+  parts: [{ type: "text", kind: "text", text }],
+});
+
+Deno.test("mirror fan-in: a steering room line is signed by its own sender, and reaches another surface by their name", async () => {
+  await withRoom(async ({ publish, inConv, waitFor }) => {
+    await publish(roomLine("who owns the Acme deal?", { address: "u-ana", name: "Ana" }));
+    await waitFor(async () => (await inConv("mind@sonar")).length === 1);
+    const [copy] = await inConv("mind@sonar");
+    // whoever writes in the room steers: no roster username, the wire's own sender
+    assertEquals(copy.envelope.sender, { address: "u-ana", name: "Ana" });
+    assertEquals(copy.agent, { id: "sonar", session_id: "mind" });
+    assertEquals(textOf(copy), "who owns the Acme deal?");
+    // the agent's own surface hears it by the writer's name; the room, its origin, gets no echo
+    await waitFor(async () => (await inConv("D1")).length === 1);
+    assertEquals(textOf((await inConv("D1"))[0]), "`[Ana via sonar]` who owns the Acme deal?");
+    assertEquals((await inConv("sonar")).length, 1);
+  });
+});
+
+Deno.test("mirror fan-in: a steering room line that names no sender crosses as nothing", async () => {
+  await withRoom(async ({ publish, inConv }) => {
+    await publish(roomLine("anyone?"));
+    await new Promise((r) => setTimeout(r, 300));
+    assertEquals((await inConv("mind@sonar")).length, 0);
+  });
+});
+
+Deno.test("mirror fan-out: a raw surface gets what the event is — its parts, its kind and step on via", async () => {
+  await withRoom(async ({ publish, inConv, waitFor }) => {
+    const mind = {
+      service: "local" as const,
+      connection_address: "agent",
+      conversation: { address: "mind@sonar" },
+    };
+    const use = await publish({
+      ts: new Date().toISOString(),
+      type: "tool_use",
+      payload: { turn_id: "t7" },
+      agent: { id: "sonar", session_id: "mind" },
+      envelope: mind,
+      parts: [{
+        type: "data",
+        kind: "tool_use",
+        data: { name: "bash", input: { command: "sonar batch" } },
+      }],
+    } as Draft<ToolUseEvent>);
+    // a call that went fine says nothing again, on a raw surface as on any other
+    await publish({
+      ts: new Date().toISOString(),
+      type: "tool_result",
+      payload: { turn_id: "t7", ref_id: use.id },
+      agent: { id: "sonar", session_id: "mind" },
+      envelope: mind,
+      parts: [{ type: "data", kind: "tool_result", data: { output: "ok", is_error: false } }],
+    } as Draft<Event>);
+    await publish(mindMsg("Acme is Sol's.", {
+      payload: { turn_id: "t8" },
+      agent: { id: "sonar", session_id: "mind" },
+      envelope: { ...mind, sender: undefined },
+    } as Partial<MessageEvent>));
+
+    await waitFor(async () => (await inConv("sonar")).length === 2);
+    const [call, voice] = await inConv("sonar");
+    // the call as it was made, untruncated, for the dispatcher to render
+    assertEquals(call.parts, [{
+      type: "data",
+      kind: "tool_use",
+      data: { name: "bash", input: { command: "sonar batch" } },
+    }]);
+    assertEquals(call.extra?.via, {
+      event: use.id,
+      service: "local",
+      conversation: "mind@sonar",
+      type: "tool_use",
+      turn_id: "t7",
+    });
+    // the voice as its words, no tag
+    assertEquals(textOf(voice), "Acme is Sol's.");
+    assertEquals((voice.extra?.via as { turn_id?: string }).turn_id, "t8");
+    // the tagged surface reads the same crossings as lines
+    await waitFor(async () => (await inConv("D1")).length === 2);
+    assertEquals(textOf((await inConv("D1"))[0]), "`[agent tool]` **bash**(sonar batch)");
+  });
+});

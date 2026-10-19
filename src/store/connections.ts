@@ -74,21 +74,27 @@ export interface ConversationRow {
 }
 
 /** A mind-alias binding (§4): a conversation on the wire whose every counterpart is a
- *  principal of the agent — self-talk on an OWNED connection, or a principal's DM with
- *  the agent's own account. DERIVED where platform structure gives it away (a WA
- *  self-chat is addressed by the connection's own number, a principal's DM by their own;
- *  `store/roster.ts` derives the latter), RECORDED (`extra.self_conversation`, the
- *  connect flow's discovery) where the platform's id is opaque (the Slack self-DM). */
+ *  principal of the agent — self-talk on an OWNED connection, a principal's DM with the
+ *  agent's own account, or the agent's steering room on an org account. DERIVED where
+ *  platform structure gives it away (a WA self-chat is addressed by the connection's own
+ *  number, a principal's DM by their own, a steering room by the agent's name;
+ *  `store/roster.ts` derives them), RECORDED (`extra.self_conversation`, the connect
+ *  flow's discovery) where the platform's id is opaque (the Slack self-DM). */
 export interface AliasRow {
   service: string;
   connection: string; // the binding row's own address (grant / paired number)
   conversation: string; // the self-conversation on the wire
   agentId: string; // whose mind the surface faces
-  principal: string; // who is on the other side of it — a roster username
+  /** Who is on the other side of it — a roster username. Absent on a steering room,
+   *  where whoever writes steers and each line is signed by its own sender. */
+  principal?: string;
   /** The grant still stands (no `deleted_at`): the surface is one somebody holds, so a
    *  mind copy sent there reaches them. A revoked binding is listed too — it keeps
    *  recognizing the history it ingested — but nothing is sent to it. */
   live: boolean;
+  /** The connection's `extra.raw`: its dispatcher renders a crossing itself, so the mind
+   *  copy carries the event's own parts instead of the tagged line. */
+  raw?: boolean;
 }
 
 /** Does this envelope land in an alias conversation? Events may anchor to a sibling of the
@@ -126,8 +132,8 @@ export interface Connections {
    *  has. What the anchor reads to say which surfaces exist and which are down (§5). */
   connections(): Promise<ConnectionRow[]>;
   /** The mind-alias bindings (§4), in (service, connection, conversation) order: every owned connection's self-conversation, derived
-   *  or recorded, and each principal's DM with an account the agent speaks through (the
-   *  `aliases` view, `store/roster.ts`). A soft-deleted binding KEEPS answering, with
+   *  or recorded, each principal's DM with an account the agent speaks through, and each
+   *  org account's steering room (the `aliases` view, `store/roster.ts`). A soft-deleted binding KEEPS answering, with
    *  `live: false` — a revocation closes the gate, never the hiding: the mind copies
    *  already there are that surface's record, and the binding still names whose they are. */
   aliases(): Promise<AliasRow[]>;
@@ -297,8 +303,9 @@ export interface AliasColumns {
   connection: string;
   conversation: string;
   agent_id: string;
-  principal: string;
+  principal: string | null;
   live: number;
+  raw: number;
 }
 
 /** A row of the `aliases` view as the port answers it. */
@@ -308,8 +315,9 @@ export function aliasRowOf(r: AliasColumns): AliasRow {
     connection: r.connection,
     conversation: r.conversation,
     agentId: r.agent_id,
-    principal: r.principal,
+    ...(r.principal !== null ? { principal: r.principal } : {}),
     live: r.live === 1,
+    ...(r.raw === 1 ? { raw: true } : {}),
   };
 }
 
@@ -340,7 +348,7 @@ export function createConnections(db: DatabaseSync): Connections {
   const rowOf = connectionOf;
   // the `aliases` view (`store/roster.ts`): the store's own bindings and the derived DMs
   const getAliases = db.prepare(
-    `SELECT service, connection, conversation, agent_id, principal, live FROM aliases
+    `SELECT service, connection, conversation, agent_id, principal, live, raw FROM aliases
      ORDER BY service, connection, conversation, agent_id, principal`,
   );
   const putM = db.prepare(

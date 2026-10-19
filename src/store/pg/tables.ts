@@ -242,7 +242,7 @@ export function pgConnections(db: Db): Connections {
     async aliases() {
       return (await rows<AliasColumns>(
         db,
-        `SELECT service, connection, conversation, agent_id, principal, live FROM aliases
+        `SELECT service, connection, conversation, agent_id, principal, live, raw FROM aliases
          ORDER BY service, connection, conversation, agent_id, principal`,
       )).map(aliasRowOf);
     },

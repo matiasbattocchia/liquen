@@ -285,24 +285,33 @@ CREATE OR REPLACE VIEW aliases AS
   SELECT service, address AS connection,
          coalesce(extra ->> 'self_conversation',
                   CASE service WHEN 'whatsapp' THEN address END) COLLATE "C" AS conversation,
-         agent_id, agent_id AS principal, (deleted_at IS NULL)::integer AS live
+         agent_id, agent_id AS principal, (deleted_at IS NULL)::integer AS live,
+         (extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer AS raw
   FROM connections
   WHERE agent_id IS NOT NULL
     AND (extra ->> 'self_conversation' IS NOT NULL OR service = 'whatsapp')
   UNION ALL
-  SELECT s.service, s.address, digits(w.phone), s.agent_id, p.principal, 1
+  SELECT s.service, s.address, digits(w.phone), s.agent_id, p.principal, 1,
+         (s.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
   FROM speaks s
     JOIN principals p ON p.agent_id = s.agent_id
     JOIN agents w ON w.agent_id = p.principal
   WHERE s.service = 'whatsapp' AND w.phone IS NOT NULL AND w.phone <> ''
     AND digits(s.address) <> digits(w.phone)
   UNION ALL
-  SELECT s.service, s.address, d.value #>> '{}', s.agent_id, d.key, 1
+  SELECT s.service, s.address, d.value #>> '{}', s.agent_id, d.key, 1,
+         (s.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
   FROM speaks s
     CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(s.extra -> 'dms') = 'object'
                                        THEN s.extra -> 'dms' END) d
     JOIN principals p ON p.agent_id = s.agent_id AND p.principal = d.key
-  WHERE s.service = 'slack' AND jsonb_typeof(d.value) = 'string';
+  WHERE s.service = 'slack' AND jsonb_typeof(d.value) = 'string'
+  UNION ALL
+  SELECT s.service, s.address, s.agent_id, s.agent_id, NULL, 1,
+         (s.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
+  FROM speaks s
+  WHERE s.owner IS NULL AND s.extra ->> 'agent' = s.agent_id
+    AND s.extra -> 'steering' = 'true'::jsonb;
 `;
 
 /** The vault's tables (§4): one schema holds the log and the vault, as one file does. */

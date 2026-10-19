@@ -190,6 +190,43 @@ export function connectionsSuite(s: Substrate): void {
     }
   });
 
+  Deno.test("aliases: an org account naming its agent hosts the agent's steering room, addressed by its name (§4)", async () => {
+    const store = await s.fresh();
+    const log = await store.open();
+    try {
+      await log.syncAgents([{ agentId: "sonar", mind: "mind@sonar", principals: [] }]);
+      await log.upsertConnections([
+        { service: "sonar", address: "t1", extra: { agent: "sonar", steering: true, raw: true } },
+        {
+          service: "sonar",
+          address: "t2",
+          agentId: "sonar",
+          extra: { agent: "sonar", steering: true },
+        }, // owned
+        { service: "sonar", address: "t3", extra: { agent: "nobody", steering: true } }, // names no roster entry
+        { service: "slack", address: "T1:B1", extra: { agent: "sonar" } }, // a bot row: hosts no room
+      ]);
+      // nobody on the roster steers it, and the room still does: whoever writes there
+      assertEquals(await log.principalsOf("sonar"), []);
+      assertEquals(await log.aliases(), [
+        {
+          service: "sonar",
+          connection: "t1",
+          conversation: "sonar",
+          agentId: "sonar",
+          live: true,
+          raw: true,
+        },
+      ]);
+      // a revoked org account takes its room with it, as every derived surface goes
+      await log.deleteConnections([{ service: "sonar", address: "t1" }]);
+      assertEquals(await log.aliases(), []);
+    } finally {
+      await log.close();
+      await store.drop();
+    }
+  });
+
   Deno.test("aliases: a principal's DM with the org number is a surface of the org agent's mind (§4)", async () => {
     const store = await s.fresh();
     const log = await store.open();
