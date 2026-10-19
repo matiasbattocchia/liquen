@@ -40,7 +40,7 @@ import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runne
 import type { Log, UsageRow } from "./store/log.ts";
 import { databaseOf, storeAt } from "./store/mod.ts";
 import { type ClockSettings, tick } from "./tick.ts";
-import { reportLost, reportUndelivered, shellUpdate, updateDraft } from "./late.ts";
+import { reportUndelivered, resumeUnended, shellUpdate, updateDraft } from "./late.ts";
 import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import type { AgentRow } from "./store/agents.ts";
@@ -52,7 +52,7 @@ import {
   providerOf,
   transports,
 } from "./transport/mod.ts";
-import { openCloudflareSandbox, openLocalSandbox } from "./sandbox.ts";
+import { openCloudflareSandbox, openLocalSandbox, type SessionUpdate } from "./sandbox.ts";
 import { whatsappContact } from "./connect/whatsapp/contact.ts";
 import { whatsappRooms } from "./connect/whatsapp/rooms.ts";
 import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
@@ -70,7 +70,7 @@ import { readTurns, turnLine } from "./turns.ts";
 import { loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import type { About, Delta, Event } from "./types.ts";
 import { checkToolDocs } from "./tooldoc.ts";
-import { bashShape } from "./exec/bash.ts";
+import { type BashInput, bashShape } from "./exec/bash.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
 import {
   DEFAULT_BASH_WAIT_MS,
@@ -122,7 +122,10 @@ export interface Main {
   /** Live door connections — what an attachment-derived lifetime reads (the ephemeral
    *  entry below; `liquen start`'s daemon never reads it). */
   attachments(): number;
-  stop(): Promise<void>;
+  /** Stop the org's main. `jobs: "end"` (the default) kills what the agents' commands left
+   *  running: the org itself was stopped. `"leave"` leaves it running for the next main to
+   *  adopt: main restarts (§9). */
+  stop(opts?: { jobs?: "end" | "leave" }): Promise<void>;
 }
 
 /** Boot the org: open the substrate, poke every agent, tail the log, fan out. */
@@ -230,13 +233,16 @@ export async function start(
     agents: principals.map((p) => p.agentId),
     locale: catalog?.organization.locale,
     bashWaitMs: catalog?.system.bashWaitMs,
+    tell: (u: SessionUpdate) => {
+      // a shell's word on a call (late.ts): published as the update it is. Held until
+      // stored, so the shutdown that kills every job tells each one before the log closes
+      const told: Promise<void> = log
+        .publish(updateDraft(shellUpdate(u), new Date().toISOString()))
+        .then(() => {}, (err) => console.error("[main] update:", err))
+        .then(() => void updating.delete(told));
+      updating.add(told);
+    },
   };
-  // a command the last run answered async and never told the end of went down with it
-  // (late.ts): told lost before this run's shells owe anything of their own
-  const lost = await reportLost(log);
-  if (lost) {
-    console.log(`[main] ${lost} command${lost === 1 ? "" : "s"} lost with the last run, told`);
-  }
   const sandbox = remote
     ? openCloudflareSandbox(dir, {
       url: remote,
@@ -247,17 +253,23 @@ export async function start(
     : await openLocalSandbox(dir, {
       store,
       exports: Object.fromEntries(principals.map((p) => [p.agentId, p.settings?.export ?? []])),
-      tell: (u) => {
-        // a shell's word on a call (late.ts): published as the update it is. Held until
-        // stored, so the shutdown that reaps every job tells each one before the log closes
-        const told: Promise<void> = log
-          .publish(updateDraft(shellUpdate(u), new Date().toISOString()))
-          .then(() => {}, (err) => console.error("[main] update:", err))
-          .then(() => void updating.delete(told));
-        updating.add(told);
-      },
       ...planeOptions,
     });
+  // a command the last run answered async and never told the end of is followed on where
+  // its shell runs (late.ts), before any turn of this run looks at the log
+  const unended = await resumeUnended(log, (use) => {
+    const agentId = use.agent!.id;
+    if (!principals.some((p) => p.agentId === agentId)) return Promise.resolve(false);
+    return sandbox.forAgent(agentId).session(use.agent!.session_id ?? MIND).resume(
+      { id: use.id, turn_id: use.payload.turn_id },
+      use.parts[0].data.input as unknown as BashInput,
+    );
+  });
+  if (unended.followed || unended.lost) {
+    console.log(
+      `[main] commands the last run left: ${unended.followed} followed on, ${unended.lost} lost`,
+    );
+  }
   // the ports stand whether or not a service is connected yet: a leg is only ever reached
   // through one of the agent's accounts, and a service connected while main runs has its
   // ports already there
@@ -647,7 +659,7 @@ export async function start(
   return {
     log,
     attachments: () => doors.attachments(),
-    async stop() {
+    async stop({ jobs = "end" } = {}) {
       stopped = true;
       clearInterval(ticker);
       for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
@@ -663,8 +675,8 @@ export async function start(
         Promise.all([...outstanding]),
         config.stopTimeoutMs ?? STOP_TIMEOUT_MS,
       );
-      await sandbox.close(); // every shell's jobs reaped, the egress proxy stopped
-      await Promise.all([...updating]); // …and each one told stopped, before the log goes
+      await sandbox.close({ jobs }); // every shell's jobs ended or left, the proxy stopped
+      await Promise.all([...updating]); // …and each one ended told so, before the log goes
       await docs.close();
       await creds.close();
       await log.close();
@@ -825,9 +837,14 @@ if (import.meta.main) {
     }
     const main = await start({ dir, catalog });
     console.error(`agents: ${Object.keys(catalog.agents).join(", ")} · log: ${dir}/log`);
+    // the signal says whether the org stops or main restarts (§9): SIGINT is a stop — a
+    // ctrl-c, `liquen stop`, the supervisor's own stop — and kills what the agents' commands
+    // left running; SIGTERM is a restart — a reload, a deploy — and leaves it for the next
+    // main to adopt
+    const stops = { SIGINT: "end", SIGTERM: "leave" } as const;
     for (const sig of ["SIGTERM", "SIGINT"] as const) {
       Deno.addSignalListener(sig, () => {
-        void main.stop().finally(() => Deno.exit(0));
+        void main.stop({ jobs: stops[sig] }).finally(() => Deno.exit(0));
       });
     }
     if (org.args.includes("--ephemeral")) {
@@ -836,7 +853,8 @@ if (import.meta.main) {
         if (main.attachments() > 0) occupied = Date.now();
         else if (Date.now() - occupied >= LINGER_MS) {
           clearInterval(reaper);
-          void main.stop().finally(() => Deno.exit(0));
+          // nobody is attached, which is not a stop: the next main adopts what runs
+          void main.stop({ jobs: "leave" }).finally(() => Deno.exit(0));
         }
       }, REAP_POLL_MS);
     }

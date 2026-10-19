@@ -33,7 +33,9 @@
  *
  * Death is loud on stderr and nowhere else — the supervisor never opens the log; the
  * outer layer (docker restart, systemd, the terminal) supervises `liquen start` itself.
- * SIGTERM fans out to the children, waits `STOP_TIMEOUT_MS`, then SIGKILLs.
+ * SIGTERM fans out to the children, waits `STOP_TIMEOUT_MS`, then SIGKILLs. Main is asked
+ * with SIGINT then, the signal that ends what the agents' commands left running; a reload
+ * restarts it with SIGTERM, which leaves that running for the next main to adopt (§9).
  *
  * Every line a child writes arrives stamped — `HH:MM:SS [name] …` — so attribution is
  * the harness's property, not a convention each service must remember: panics and
@@ -405,13 +407,15 @@ if (import.meta.main) {
     };
 
     /** End one process: its loop told to stop, its child asked, then made to. Resolves once
-     *  the child is gone, so what replaces it never meets it on a socket or a port. */
-    const retire = async (name: string): Promise<void> => {
+     *  the child is gone, so what replaces it never meets it on a socket or a port. The ask
+     *  is SIGTERM, a restart; `stopping` asks main with SIGINT, which ends what the agents'
+     *  commands left running with it (§9). */
+    const retire = async (name: string, stopping = false): Promise<void> => {
       const held = kept.get(name);
       if (!held) return;
       held.off.abort();
       try {
-        live.get(name)?.kill("SIGTERM");
+        live.get(name)?.kill(stopping && name === MAIN ? "SIGINT" : "SIGTERM");
       } catch { /* already gone */ }
       const hammer = setTimeout(() => {
         try {
@@ -427,7 +431,7 @@ if (import.meta.main) {
       if (halting) return;
       halting = true;
       stamp(SUPERVISOR, `stopping ${live.size} process(es)`);
-      for (const name of kept.keys()) void retire(name);
+      for (const name of kept.keys()) void retire(name, true);
     };
 
     /** Bring the run in line with the file as it reads now, restarting `named` besides;
@@ -450,7 +454,9 @@ if (import.meta.main) {
             );
           }
           const moves = plan(kept, next, cfg, named);
-          await Promise.all([...moves.stop, ...moves.restart.map((p) => p.name)].map(retire));
+          await Promise.all(
+            [...moves.stop, ...moves.restart.map((p) => p.name)].map((name) => retire(name)),
+          );
           for (const name of moves.stop) kept.delete(name);
           if (halting) throw new Error("the run is stopping");
           for (const proc of [...moves.restart, ...moves.start]) launch(proc, cfg);

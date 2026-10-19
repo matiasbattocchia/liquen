@@ -2084,6 +2084,58 @@ Deno.test("recovery: a stale lock (crashed holder) → pending uses swept, then 
   }
 });
 
+Deno.test("recovery: a crashed turn's call whose tool finds what it left is answered from that", async () => {
+  const dir = await Deno.makeTempDir();
+  let skew = 0;
+  const log = await openLog(dir, { now: () => Date.now() + skew });
+  await log.publish(principalMsg("seguís ahí?"));
+  const use = (await log.publish(orphanUse()))!;
+  const dead = await openLog(dir);
+  assertEquals(await dead.lock("turn-mind@a1").acquire(), "acquired");
+  await dead.close();
+  skew = LOCK_TTL_MS + 1;
+
+  const asked: unknown[] = [];
+  const echo = {
+    ...echoTool,
+    // a failure whose work still runs: an error, and async
+    recover: (
+      input: unknown,
+      call: unknown,
+    ) => (asked.push({ input, call }),
+      Promise.resolve(
+        {
+          output: "exited 2; what it left runs on",
+          files: [],
+          async: true,
+          is_error: true,
+        } as never,
+      )),
+  };
+  const { transport, calls } = scripted([
+    ok([{ kind: "assistant", text: "acá estoy" }], "end_turn"),
+  ]);
+  const main = fanOut(CONFIG, log, {
+    log,
+    docs: await docsAt(`${dir}/docs`),
+    transport,
+    exec: { echo },
+  });
+  try {
+    await waitFor(async () => (await log.read({ types: ["tool_result"] })).length === 1);
+    const [swept] = await log.read({ types: ["tool_result"] });
+    assert(swept.type === "tool_result");
+    assertEquals(asked, [{ input: { v: 1 }, call: { id: use.id, turn_id: "T-crashed" } }]);
+    assertEquals(swept.payload, { turn_id: "T-crashed", ref_id: use.id, async: true });
+    assertEquals(swept.parts[0].data, { output: "exited 2; what it left runs on", is_error: true });
+    await waitFor(() => calls() >= 1);
+  } finally {
+    await main.stop();
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("recovery: a pending use with a cleanly released lock is simply run at boot", async () => {
   // no lock left behind ⇒ nothing crashed mid-flight — the act just never ran; execute it
   await scenario(

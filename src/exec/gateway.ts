@@ -2,22 +2,23 @@
  * exec/gateway.ts — an agent's shell in a remote sandbox, through the gateway's HTTP API
  * (DESIGN §9; `sandbox/cloudflare/` is the Worker that serves it).
  *
- * The gateway runs one command per call and answers what it printed and how it exited; the
- * rest of a shell is carried by the script each call sends, so the sandbox holds nothing
- * of ours between calls but files:
+ * The gateway runs one script per request and answers what it printed and how it exited;
+ * the rest of a shell is carried by the scripts the harness sends, so the sandbox holds
+ * nothing of ours but files and the jobs that write them:
  *
- *   • the command's output goes to a file under the workspace's `.out/`, both streams in
- *     arrival order — a job it leaves in the background holds that file, never the
- *     gateway's pipe, so the call returns when the command does; the file is the spill
- *     when the output is past the window, and is removed when it is not
- *   • `timeout -s KILL` bounds the call at its `wait` and, when it fires, kills the
- *     command's whole process group — the group whose id the script writes beside the
- *     output, so an abort kills it too and the ambient block can ask whether a job still
- *     runs in it. A remote shell has no updates to tell (late.ts) and no `wake`: what
- *     outlives its wait here is killed, and a job's end is seen only by the ambient look
+ *   • a call starts its job (jobs.ts) — the same job shell the local one runs, in a session
+ *     of its own, writing its log and its status under the workspace's `.out/` — and waits
+ *     for it up to its `wait` in the script. A job still running then, or one that left
+ *     something running in its group, is answered async and followed: every
+ *     `REMOTE_PROBE_MS` one script looks at all of a shell's jobs, and their news is told
+ *     as the local shell tells it (late.ts). A followed job holds the sandbox on (`lease`)
+ *   • the log is the spill when the output is past the window, and is removed with the
+ *     job's other files when nothing of the job runs and it fits
  *   • the environment is `env -i` and the names the shell is issued, as the local shell's
  *     cleared pocket; where the shell stands is a `cd` the script makes, since the command
  *     may leave the workspace and the next call starts where it left
+ *   • a container found new under a followed job (it slept, or the platform replaced it)
+ *     took the job with it: told final, lost
  */
 
 import { encodeBase32 } from "@std/encoding";
@@ -33,22 +34,45 @@ import {
   saveMedia,
   sniffMime,
 } from "../store/media.ts";
-import type { ExecFacts, ExecOutcome, ExecTool } from "../xi.ts";
+import type { CallRef, ExecFacts, ExecOutcome, ExecTool } from "../xi.ts";
 import type { Json } from "../types.ts";
 import { newId } from "../store/id.ts";
 import { MAX_BYTES, MAX_LINES } from "./truncate.ts";
 import { DEFAULT_BASH_WAIT_MS } from "../config.ts";
 import {
+  answered,
   type BashInput,
   bashShape,
   type BashState,
-  CWD_MARK,
   type ExecPlane,
-  type Job,
-  jobLines,
-  parseMembers,
-  settle,
+  recovered,
+  resumed,
+  STICKY_CWD,
+  wakeOf,
+  windowOf,
 } from "./bash.ts";
+import {
+  type Found,
+  type Job,
+  JOB_ENV,
+  JOB_SHELL,
+  jobCommand,
+  type JobFiles,
+  jobFiles,
+  type JobHost,
+  jobLines,
+  Jobs,
+  type Look,
+  LOOK_BYTES,
+  parseMembers,
+  quote,
+  type ShellUpdate,
+  Spool,
+  SPOOL_CAP,
+  SPOOL_KEEP_MS,
+} from "./jobs.ts";
+
+export { quote };
 
 /** One command's end, as the gateway reports it. */
 export interface GatewayExec {
@@ -177,9 +201,6 @@ export function gatewayFiles(
   };
 }
 
-/** Single-quoted for bash: the one quoting that needs no escaping but of `'` itself. */
-export const quote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
-
 /** Where a remote shell stands and what it is issued. */
 export interface RemoteShellOptions {
   /** The agent's folder in the sandbox, where every session starts. */
@@ -194,21 +215,27 @@ export interface RemoteShellOptions {
 }
 
 /** A sandbox's life, as the harness keeps it: a bash call starts it, and it stays on while
- *  one runs and for the window after the last one ended. A step past the window stops it
- *  (`settle`), so a quiet harness stops nothing: the gateway's own sleep, the same window
- *  counted from any request, does. Only bash moves the clock — the ambient probe and file
- *  reads keep the container awake at the gateway but never keep it on here. */
+ *  a call runs or a job is followed, and for the window after the last of them ended. A
+ *  step past the window stops it (`settle`), so a quiet harness stops nothing: the
+ *  gateway's own sleep, the same window counted from any request, does — and a followed
+ *  job's probe is a request every `REMOTE_PROBE_MS`, so the gateway keeps the container
+ *  awake while one runs. Only bash moves the clock: the ambient probe and file reads keep
+ *  the container awake at the gateway but never keep it on here. */
 export interface Lease {
   readonly minutes: number;
-  /** A bash call is running, or one ended within the window. */
+  /** A bash call or a job is running, or one ended within the window. */
   on(): boolean;
-  /** A bash call ended within the window: the container holds what the calls left. */
+  /** One ended within the window: the container holds what the calls left. */
   warm(): boolean;
-  /** How long until the window closes, counted from the last bash call's end. */
+  /** How long until the window closes, counted from the last end. */
   leftMs(): number;
   /** The gateway call of a bash command: in flight it holds the sandbox on, and an answer
    *  restarts the window. A call the gateway refused never reached the container. */
   bash<T>(call: () => Promise<T>): Promise<T>;
+  /** A job followed holds the sandbox on; the return lets go, and restarts the window. */
+  hold(): () => void;
+  /** A followed job holds it now. */
+  held(): boolean;
   /** Past the window with no call running: the container is stopped, once. */
   settle(): Promise<void>;
   /** The container turned out new under a warm lease: what it held is gone. */
@@ -221,16 +248,18 @@ export interface Lease {
 
 export function lease(gateway: Gateway, minutes: number, now = Date.now): Lease {
   const windowMs = minutes * 60_000;
-  let last: number | undefined; // when the last bash call ended; none ⇒ off
-  let running = 0;
+  let last: number | undefined; // when the last bash call or job ended; none ⇒ off
+  let running = 0; // bash calls in flight
+  let holds = 0; // jobs followed
   let restarts = 0;
   let generation = 0;
   const warm = () => last !== undefined && now() - last < windowMs;
+  const busy = () => running > 0 || holds > 0;
   return {
     minutes,
-    on: () => running > 0 || warm(),
+    on: () => busy() || warm(),
     warm,
-    leftMs: () => running > 0 || last === undefined ? windowMs : windowMs - (now() - last),
+    leftMs: () => busy() || last === undefined ? windowMs : windowMs - (now() - last),
     async bash(call) {
       running++;
       try {
@@ -241,8 +270,19 @@ export function lease(gateway: Gateway, minutes: number, now = Date.now): Lease 
         running--;
       }
     },
+    hold() {
+      holds++;
+      let held = true;
+      return () => {
+        if (!held) return;
+        held = false;
+        last = now();
+        holds--;
+      };
+    },
+    held: () => holds > 0,
     async settle() {
-      if (running > 0 || last === undefined || warm()) return;
+      if (busy() || last === undefined || warm()) return;
       last = undefined;
       generation++;
       await gateway.destroy().catch(() => {}); // the gateway's own sleep stops it otherwise
@@ -256,52 +296,178 @@ export function lease(gateway: Gateway, minutes: number, now = Date.now): Lease 
   };
 }
 
-/** The file whose absence tells a call the container is new: the container's own scratch,
+/** The file whose absence tells a script the container is new: the container's own scratch,
  *  which a stopped container does not keep. Every bash call and probe leaves it. */
 const UP = "/tmp/.liquen-up";
-/** The line a bash call's script opens with when it found no `UP`. */
+/** The line a script opens with when it found no `UP`. */
 const FRESH = "__MU_FRESH__";
-
-/** The exit code `timeout` answers when it had to kill the command. */
-const TIMED_OUT = 137;
 /** The exit code the script answers when the shell cannot stand where it was. */
 const LOST = 97;
+/** How often a remote shell looks at its jobs: one round trip for all of them, and the
+ *  request that keeps the container awake at the gateway while one runs. */
+export const REMOTE_PROBE_MS = 5_000;
+/** A call waits on its job in steps this long (s). */
+const STEP_S = 0.2;
 
-/** The test that a process group still runs something: a member that is not a zombie. The
- *  container's init leaves an orphan unreaped, so a finished job stays in the table as
- *  `Z` until the container goes, and would count as running by its presence alone. */
+/** The test that a process still runs: present and not a zombie. The container's init
+ *  leaves an orphan unreaped, so a finished process stays in the table as `Z` until the
+ *  container goes, and would count as running by its presence alone. */
+const running = (pid: string) => `ps -o stat= -p ${pid} 2>/dev/null | grep -q '^[^Z]'`;
+/** The same of a whole group: a member that is not a zombie. */
 const alive = (pgid: string) =>
   `ps -eo pgid=,stat= | awk -v g=${pgid} '$1 == g && $2 !~ /^Z/ { f = 1 } END { exit !f }'`;
 
-/** One session's shell in a remote sandbox: the same contract as the local one — the
- *  bash tool, its ambient lines, `stand` and `reap` — carried by the script each call
- *  sends. */
-export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPlane {
+/** The lines that look at a job, as `parseLook` reads them: whether its shell and its group
+ *  still run (also left in `$r` and `$a`), its status, and its log from `from` on — the
+ *  older half dropped first past `SPOOL_CAP`, and only the last `LOOK_BYTES` when more than
+ *  that is new. `pg` is the group as the script names it. The processes are asked first and
+ *  the files after: a shell seen gone has written its status. */
+function lookAt(f: JobFiles, pg: string, from: number): string[] {
+  const [log, cut] = [quote(f.log), quote(`${f.log}~`)];
+  return [
+    `r=0; ${running(pg)} && r=1; a=0; ${alive(pg)} && a=1; echo "running $r"; echo "alive $a"`,
+    `[ -f ${quote(f.rc)} ] && echo "rc $(cat ${quote(f.rc)})"`,
+    `[ -f ${quote(f.end)} ] && echo told`,
+    `from=${from}; size=$(stat -c %s ${log} 2>/dev/null || echo 0)`,
+    // the newer half, from a line's start: the file emptied and appended to, as the job
+    // writes it, so a line it adds meanwhile is never overwritten
+    `if [ "$size" -gt ${SPOOL_CAP} ]; then tail -c ${
+      SPOOL_CAP / 2
+    } ${log} | tail -n +2 > ${cut}; ` +
+    `: > ${log}; cat ${cut} >> ${log}; cut=$((size - $(stat -c %s ${cut}))); rm -f ${cut}; ` +
+    `echo shifted; if [ "$from" -lt "$cut" ]; then from=0; echo skipped; ` +
+    `else from=$((from - cut)); fi; size=$(stat -c %s ${log}); fi`,
+    `if [ $((size - from)) -gt ${LOOK_BYTES} ]; then from=$((size - ${LOOK_BYTES})); ` +
+    `echo skipped; fi`,
+    `echo "size $size"`,
+    `echo "bytes $(tail -c +$((from + 1)) ${log} 2>/dev/null | head -c $((size - from)) | ` +
+    `base64 -w0)"`,
+  ];
+}
+
+/** A look's lines → the look. */
+function parseLook(lines: string[]): Look {
+  const val = (key: string) => lines.find((l) => l.startsWith(`${key} `))?.slice(key.length + 1);
+  const rc = Number(val("rc"));
+  const b64 = val("bytes") ?? "";
+  return {
+    bytes: b64 ? Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)) : new Uint8Array(),
+    size: Number(val("size") ?? 0),
+    shifted: lines.includes("shifted"),
+    skipped: lines.includes("skipped"),
+    ...(val("rc") !== undefined && Number.isInteger(rc) ? { rc } : {}),
+    ...(lines.includes("told") ? { told: true } : {}),
+    running: val("running") === "1",
+    alive: val("alive") === "1",
+  };
+}
+
+/** The logs no job runs behind any more, removed once `SPOOL_KEEP_MS` passed since their
+ *  last word: the sandbox's own sweep, as a script line. */
+const sweep = (out: string) =>
+  `for f in ${quote(out)}/bash-*.log; do b="\${f%.log}"; [ -e "$b.pgid" ] && continue; ` +
+  `[ -n "$(find "$f" -mmin +${SPOOL_KEEP_MS / 60_000} 2>/dev/null)" ] && rm -f "$b".*; done`;
+
+/** A remote sandbox as the host of one shell's jobs (jobs.ts): one script looks at all of
+ *  them. A container found new, or one the lease has since stopped or seen restart, no
+ *  longer has them. */
+function remoteHost(gateway: Gateway, out: string, lease?: Lease): JobHost {
+  const run = async (script: string) => (await gateway.exec(script)).stdout;
+  /** The lease's generation each followed job started in. */
+  const born = new WeakMap<Job, number>();
+  const gone = "the sandbox it ran in stopped or was replaced, and the job with it";
+  return {
+    probeMs: REMOTE_PROBE_MS,
+    async look(jobs) {
+      const said = await run([
+        `[ -f ${UP} ] || echo ${FRESH}; touch ${UP}`,
+        ...jobs.flatMap((j, i) => [`echo "@@ ${i}"`, ...lookAt(j.files, String(j.pgid), j.read)]),
+        "true",
+      ].join("\n"));
+      // under a followed job, a new container is one that restarted behind the harness
+      const fresh = said.startsWith(`${FRESH}\n`);
+      if (fresh && jobs.some((j) => born.has(j))) lease?.restarted();
+      const blocks = new Map<number, string[]>();
+      let at = -1;
+      for (const line of said.split("\n")) {
+        const m = /^@@ (\d+)$/.exec(line);
+        if (m) blocks.set(at = Number(m[1]), []);
+        else if (at >= 0) blocks.get(at)!.push(line);
+      }
+      const looks = new Map<Job, Look>();
+      jobs.forEach((job, i) => {
+        const look = parseLook(blocks.get(i) ?? []);
+        const moved = lease !== undefined && born.has(job) &&
+          born.get(job) !== lease.generation();
+        looks.set(job, fresh || moved ? { ...look, running: false, alive: false, gone } : look);
+      });
+      return looks;
+    },
+    async find(id): Promise<Found | null> {
+      const f = jobFiles(out, id);
+      const said = await run([
+        `[ -f ${quote(f.pgid)} ] || exit 0`,
+        `pg=$(cat ${quote(f.pgid)}); echo "pgid $pg"; echo "since $(stat -c %Y ${quote(f.pgid)})"`,
+        `for p in $(ps -eo pid=,pgid= | awk -v g="$pg" '$2 == g { print $1 }'); do ` +
+        `tr '\\0' '\\n' < /proc/$p/environ 2>/dev/null | grep -qx ${
+          quote(`${JOB_ENV}=${id}`)
+        } && { echo ours; break; }; done`,
+        "true",
+      ].join("\n"));
+      const pgid = Number(/^pgid (\d+)$/m.exec(said)?.[1]);
+      if (!Number.isInteger(pgid) || pgid <= 1) return null;
+      const since = Number(/^since (\d+)$/m.exec(said)?.[1]) * 1000;
+      return { pgid, since: since || Date.now(), ours: /^ours$/m.test(said) };
+    },
+    async told(job) {
+      await run(`mv -f ${quote(job.files.rc)} ${quote(job.files.end)} 2>/dev/null; true`);
+    },
+    async done(job) {
+      const f = job.files;
+      await run(
+        `rm -f ${[f.pgid, f.rc, `${f.rc}~`, f.end, f.cwd].map(quote).join(" ")}; ` +
+          `touch -c ${quote(f.log)}; ${sweep(out)}; true`,
+      );
+    },
+    async kill(jobs) {
+      if (jobs.length === 0) return;
+      await run(jobs.map((j) => `kill -KILL -${j.pgid} 2>/dev/null`).join("; ") + "; true");
+    },
+    hold(job) {
+      if (!lease) return () => {};
+      born.set(job, lease.generation());
+      return lease.hold();
+    },
+  };
+}
+
+/** One session's shell in a remote sandbox: the same contract as the local one — the bash
+ *  tool, its jobs, its ambient lines, `stand`, `reap` and `leave` — carried by the scripts
+ *  it sends. */
+export function remoteShell(
+  gateway: Gateway,
+  opts: RemoteShellOptions,
+  tell?: (u: ShellUpdate) => void,
+): ExecPlane {
   const waitMsDefault = opts.defaultWaitMs ?? DEFAULT_BASH_WAIT_MS;
   const { lease } = opts;
-  let generation = lease?.generation() ?? 0;
   let restarts = lease?.restarts() ?? 0;
-  /** This session's jobs ran in a container the lease has since stopped or seen restart:
-   *  they are gone with it, and a pgid of theirs may name a new process there. */
-  const forgetGone = () => {
-    if (!lease || lease.generation() === generation) return;
-    generation = lease.generation();
-    jobs.clear();
-  };
   /** The sandbox's line in the ambient block, in the anchor's grammar: when it stops, and
    *  that jobs and files go with it — or that a restart this session has not yet been told
    *  of took them. */
   const sandboxLine = (): string => {
     const restarted = lease!.restarts() !== restarts;
     restarts = lease!.restarts();
-    const stops = `stops in ${Math.max(1, Math.ceil(lease!.leftMs() / 60_000))}m`;
+    const stops = lease!.held()
+      ? `on while a job runs, then ${lease!.minutes}m`
+      : `stops in ${Math.max(1, Math.ceil(lease!.leftMs() / 60_000))}m`;
     return restarted
       ? `sandbox: restarted · ${stops} · earlier jobs and files are gone`
-      : `sandbox: idle · ${stops} · jobs and files go with it`;
+      : `sandbox: ${lease!.held() ? "busy" : "idle"} · ${stops} · jobs and files go with it`;
   };
   const state: BashState = { cwd: opts.workspace };
-  const jobs = new Set<Job>();
   const out = `${opts.workspace}/.out`;
+  const jobs = new Jobs(remoteHost(gateway, out, lease), tell);
 
   const bash: ExecTool = {
     ...bashShape(waitMsDefault),
@@ -309,78 +475,96 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
       input: Json,
       signal: AbortSignal,
       report?: (facts: ExecFacts) => void,
+      use?: CallRef,
     ): Promise<Json | ExecOutcome> {
       const call = input as unknown as BashInput;
       const waitMs = call.wait !== undefined ? call.wait * 1000 : waitMsDefault;
-      const log = `${out}/bash-${newId()}.log`;
+      const wake = wakeOf(call.wake);
+      // the call's id names its job: a harness that finds the call unanswered finds the job
+      const id = use?.id ?? newId();
+      const f = jobFiles(out, id);
       const env = Object.entries(opts.env()).map(([k, v]) => quote(`${k}=${v}`)).join(" ");
-      // the command's end — where it stood, how it exited — goes beside the log, so the log
-      // is the output alone and the spill it may become is the output alone
-      const inner = `${call.command}\n__mu_rc=$?; printf '%s:%s' "$(pwd)" "$__mu_rc" > ` +
-        quote(`${log}.end`);
-      // the log is removed only when its output fits the window the call asked for: a
-      // truncation (past the lines or the bytes) always finds its spill
+      const q = quote;
+      // the log goes with the rest only when nothing of the job runs and its output fits
+      // the window the call asked for: a truncation always finds its spill
       const lines = call.max_lines ?? MAX_LINES;
       const bytes = call.max_bytes ?? MAX_BYTES;
       const script = [
         `[ -f ${UP} ] || echo ${FRESH}; touch ${UP}`,
-        `mkdir -p ${quote(out)}`,
-        `cd ${quote(state.cwd)} 2>/dev/null || exit ${LOST}`,
-        `env -i ${env} timeout -s KILL ${Math.ceil(waitMs / 1000)} ` +
-        `bash -c ${quote(inner)} < /dev/null > ${quote(log)} 2>&1 &`,
-        `pgid=$!; echo "$pgid" > ${quote(`${log}.pgid`)}; wait "$pgid"; rc=$?`,
-        `cat ${quote(log)}`,
-        `if [ -f ${quote(`${log}.end`)} ]; then ` +
-        `printf '\\n${CWD_MARK}%s\\n' "$(cat ${quote(`${log}.end`)})"; fi`,
-        `if ${alive('"$pgid"')}; then echo "__MU_JOB__$pgid"; fi`,
-        `if [ "$(wc -l < ${quote(log)})" -lt ${lines} ] && ` +
-        `[ "$(wc -c < ${quote(log)})" -le ${bytes} ]; then rm -f ${quote(log)}; fi`,
-        `rm -f ${quote(`${log}.pgid`)} ${quote(`${log}.end`)}`,
-        `exit "$rc"`,
+        `mkdir -p ${q(out)}; ${sweep(out)}`,
+        `cd ${q(state.cwd)} 2>/dev/null || exit ${LOST}`,
+        `setsid env -i ${env} ${JOB_ENV}=${q(id)} bash -c ${q(JOB_SHELL)} liquen-job ` +
+        `${q(f.base)} ${q(jobCommand(call.command, f))} < /dev/null > /dev/null 2>&1 &`,
+        // the job's shell records its group as it starts
+        `n=50; while [ ! -s ${q(f.pgid)} ] && [ "$n" -gt 0 ]; do sleep 0.02; n=$((n - 1)); done`,
+        `pg=$(cat ${q(f.pgid)} 2>/dev/null); echo "@@ answer"; echo "pgid $pg"`,
+        `n=${Math.ceil(waitMs / 1000 / STEP_S)}`,
+        `while [ "$n" -gt 0 ] && [ ! -f ${q(f.rc)} ] && ${running('"$pg"')}; do ` +
+        `sleep ${STEP_S}; n=$((n - 1)); done`,
+        ...lookAt(f, '"$pg"', 0),
+        `[ -f ${q(f.cwd)} ] && echo "cwd $(cat ${q(f.cwd)})"`,
+        `if [ "$r$a" = 00 ]; then ` +
+        `if [ "$(wc -l < ${q(f.log)})" -lt ${lines} ] && ` +
+        `[ "$(wc -c < ${q(f.log)})" -le ${bytes} ]; then rm -f ${q(f.log)}; fi; ` +
+        `rm -f ${[f.pgid, f.rc, f.end, f.cwd].map(q).join(" ")}; fi 2>/dev/null`,
+        "true",
       ].join("\n");
 
       // a container new under a warm lease restarted behind the harness; under a cold one,
       // this call is what starts it
       const warm = lease?.warm() ?? false;
+      const started = Date.now();
       let end;
       try {
         const send = () => gateway.exec(script, signal);
         end = await (lease ? lease.bash(send) : send());
       } catch (err) {
         if (signal.aborted) {
-          // the gateway's call is gone, the command is not: kill its group by the id it left
-          await gateway.exec(`kill -KILL -"$(cat ${quote(`${log}.pgid`)})" 2>/dev/null`)
-            .catch(() => {});
+          // the gateway's call is gone, the job is not: kill its group by the id it left
+          await gateway.exec(`kill -KILL -"$(cat ${q(f.pgid)})" 2>/dev/null`).catch(() => {});
           throw new Error("Command aborted");
         }
         throw err;
       }
-      if (end.stdout.startsWith(`${FRESH}\n`)) {
-        end = { ...end, stdout: end.stdout.slice(FRESH.length + 1) };
+      let said = end.stdout;
+      if (said.startsWith(`${FRESH}\n`)) {
+        said = said.slice(FRESH.length + 1);
         if (warm) lease!.restarted();
       }
-      forgetGone();
-      if (end.code === LOST && end.stdout === "") {
+      if (end.code === LOST && !said.includes("@@ answer")) {
         const lost = state.cwd;
         state.cwd = opts.workspace;
         throw new Error(`${lost}: cannot stand there — the next call starts in ${opts.workspace}`);
       }
-      let raw = end.stdout;
-      const job = /\n?__MU_JOB__(\d+)\n?$/.exec(raw);
-      if (job) {
-        raw = raw.slice(0, job.index);
-        jobs.add({ pgid: Number(job[1]), command: call.command.trim(), since: Date.now() });
+      const answer = said.slice(said.indexOf("@@ answer\n") + "@@ answer\n".length).split("\n");
+      const pgid = Number(answer.find((l) => l.startsWith("pgid "))?.slice(5));
+      if (!Number.isInteger(pgid) || pgid <= 1) {
+        throw new Error(`the command did not start: ${end.stderr.trim() || "no job shell"}`);
       }
-      const timedOut = end.code === TIMED_OUT && !raw.includes(CWD_MARK);
-      return await settle(
-        raw,
-        { code: end.code, timedOut, aborted: signal.aborted, waitMs },
-        call,
-        state,
-        () => Promise.resolve(log),
-        report,
-      );
+      const cwd = answer.find((l) => l.startsWith("cwd "))?.slice(4);
+      if (STICKY_CWD && cwd) state.cwd = cwd;
+      const job: Job = {
+        id,
+        files: f,
+        pgid,
+        command: call.command.trim(),
+        since: started,
+        ...(use ? { use } : {}),
+        window: windowOf(call),
+        read: 0,
+        spool: new Spool(f.log),
+        ended: false,
+      };
+      return await answered(jobs, job, parseLook(answer), {
+        input: call,
+        waitMs,
+        ...(wake ? { wake } : {}),
+        ...(report ? { report } : {}),
+        aborted: signal.aborted,
+        isolated: true,
+      });
     },
+    recover: (input, use) => recovered(jobs, out, input as unknown as BashInput, use),
   };
 
   return {
@@ -390,18 +574,17 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
       const lines = [`cwd: ${state.cwd}`];
       if (lease) {
         await lease.settle();
-        forgetGone();
         // off, the probe would be what starts a container: the harness answers alone
         if (!lease.on()) return [...lines, "sandbox: off · a bash call starts it"];
       }
+      await jobs.look().catch(() => {}); // an end this look sees first is told before the list
       const pgids = [...jobs].map((j) => j.pgid);
       const probe = [
         `[ -f ${UP} ] || echo fresh; touch ${UP}`,
         `cd ${quote(state.cwd)} 2>/dev/null || exit 0`,
         `b=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) && ` +
         `echo "git: $b · $(git status --porcelain | grep -c .)"`,
-        ...pgids.map((p) => `${alive(String(p))} && echo "live ${p}"`),
-        // the members of each live group, for the job lines (none when ps is missing)
+        // the members of each job's group, for the job lines (none when ps is missing)
         ...(pgids.length
           ? [
             `ps -e -o pgid=,pid=,args= 2>/dev/null | awk '${
@@ -420,7 +603,6 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
       }
       if (lease) {
         if (/^fresh$/m.test(said) && lease.warm()) lease.restarted();
-        forgetGone();
         lines.push(sandboxLine());
       }
       const git = /^git: (.+) · (\d+)$/m.exec(said);
@@ -428,10 +610,8 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
         const dirty = Number(git[2]);
         lines.push(`git: ${git[1]}${dirty ? ` · ${dirty} uncommitted` : " · clean"}`);
       }
-      const live = new Set([...said.matchAll(/^live (\d+)$/gm)].map((m) => Number(m[1])));
-      for (const j of jobs) if (!live.has(j.pgid)) jobs.delete(j);
       const members = [...said.matchAll(/^member (.*)$/gm)].map((m) => m[1]).join("\n");
-      return [...lines, ...jobLines(jobs, parseMembers(members, live))];
+      return [...lines, ...jobLines(jobs, parseMembers(members, pgids))];
     },
     async stand(path?: string) {
       if (path === undefined) {
@@ -444,13 +624,8 @@ export function remoteShell(gateway: Gateway, opts: RemoteShellOptions): ExecPla
       }
       state.cwd = path;
     },
-    async reap() {
-      forgetGone();
-      const pgids = [...jobs].map((j) => j.pgid);
-      jobs.clear();
-      if (pgids.length === 0 || (lease && !lease.on())) return;
-      await gateway.exec(pgids.map((p) => `kill -KILL -${p} 2>/dev/null`).join("; ") + "; true")
-        .catch(() => {});
-    },
+    reap: () => jobs.reap(),
+    leave: () => jobs.leave(),
+    resume: (use, input) => resumed(jobs, out, input, use),
   };
 }

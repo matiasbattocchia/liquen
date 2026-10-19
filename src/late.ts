@@ -12,7 +12,7 @@
  * turn to act on it — try again, try another way, or tell its principal.
  */
 
-import type { Draft, Event, EventId, ToolResultEvent } from "./types.ts";
+import type { Draft, Event, EventId, ToolResultEvent, ToolUseEvent } from "./types.ts";
 import type { CallRef } from "./xi.ts";
 import type { Log } from "./store/log.ts";
 import { MIND, sessionAddress } from "./session.ts";
@@ -98,24 +98,36 @@ export function shellUpdate(u: SessionUpdate): Update {
   };
 }
 
-/** What a harness that went down while a command ran can say of it: nothing it knows. The
- *  process that read its output and waited on its status is gone with the harness. */
+/** What a harness can say of a command whose job it cannot find: nothing it knows. */
 export const LOST =
-  "lost when the harness went down while it ran: it may have ended or may still run, " +
-  "and nothing more is told of it";
+  "lost when the harness went down while it ran: it left nothing to find it by, so it may " +
+  "have ended or may still run, and nothing more is told of it";
 
-/** The boot's pass over the shell's calls left owed (§9): each command answered async
- *  whose final word never came was held by a harness that is gone, so it is told final,
- *  lost. Runs before any shell does, when no call of this harness is owed yet. Returns how
- *  many were told. */
-export async function reportLost(
+/** The boot's pass over the shell's calls left owed (§9): each command answered async whose
+ *  final word never came was followed by a harness that is gone. Its job is followed on
+ *  where its shell runs (`resume`, which tells its end when it comes, at once when it came
+ *  meanwhile); one that left no job to find is told final, lost. A shell that could not be
+ *  asked leaves the call owed, for the next boot. Runs before any turn does. */
+export async function resumeUnended(
   log: Pick<Log, "unended" | "publish">,
+  resume: (use: ToolUseEvent) => Promise<boolean>,
   now: number = Date.now(),
-): Promise<number> {
+): Promise<{ followed: number; lost: number }> {
   const nowIso = new Date(now).toISOString();
-  let told = 0;
+  const count = { followed: 0, lost: 0 };
   for (const use of await log.unended("bash")) {
     if (!use.agent) continue;
+    let found: boolean;
+    try {
+      found = await resume(use);
+    } catch (err) {
+      console.error(`[late] ${use.id}: its job could not be looked for:`, err);
+      continue;
+    }
+    if (found) {
+      count.followed++;
+      continue;
+    }
     const { command } = use.parts[0].data.input as { command?: string };
     await log.publish(updateDraft(
       shellUpdate({
@@ -128,9 +140,9 @@ export async function reportLost(
       }),
       nowIso,
     ));
-    told++;
+    count.lost++;
   }
-  return told;
+  return count;
 }
 
 /** One row by id, off the log's id-ordered read. */

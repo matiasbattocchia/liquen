@@ -689,6 +689,9 @@ export interface ExecOutcome {
   files: string[];
   /** The work goes on after this answer (`Payload.async`), and updates follow. */
   async?: true;
+  /** The answer is a failure that still has work going on: an error that can be async,
+   *  where a throw cannot. */
+  is_error?: true;
 }
 
 /** The call an executor runs: its `tool_use` and the step that made it, which is what an
@@ -798,6 +801,10 @@ export interface ExecTool extends ToolShape {
     report?: (facts: ExecFacts) => void,
     call?: CallRef,
   ) => Promise<Json | ExecOutcome>;
+  /** The outcome of a call a crashed turn left unanswered, from what it left where it ran
+   *  (a bash call's job, §9); undefined when it left nothing, and the call is answered
+   *  orphaned. Throws as `execute` does. */
+  recover?: (input: Json, call: CallRef) => Promise<Json | ExecOutcome | undefined>;
   /** How a call READS to a person — the approval card, the anchor's pending list, the
    *  mirror's tool line (§9). Optional: `describeCall`'s default already renders a
    *  one-argument tool as `bash(git status)`, which is what most tools want. */
@@ -1464,9 +1471,9 @@ async function act(
     /** An exec tool's run (§9): its facts and its wall time, for `extra.exec`. */
     run?: { facts: ExecFacts; ms: number },
   ): Promise<Draft<ToolResultEvent>> => {
-    const { output: raw, files, async } = isOutcome(outcome)
+    const { output: raw, files, async, is_error } = isOutcome(outcome)
       ? outcome
-      : { output: outcome, files: [], async: undefined };
+      : { output: outcome, files: [], async: undefined, is_error: undefined };
     const { parts, pinned, refused } = await attachmentsOf(files, ports.files ?? localFiles());
     const output = refused.length && typeof raw === "string"
       ? `${raw}${raw ? "\n" : ""}${refused.map((r) => `[attachment refused: ${r}]`).join("\n")}`
@@ -1495,7 +1502,7 @@ async function act(
         {
           type: "data",
           kind: "tool_result",
-          data: { output, ...flags },
+          data: { output, ...(is_error ? { is_error } : {}), ...flags },
           ...(call !== undefined ? { text: call } : {}),
         },
         ...parts,
@@ -1509,6 +1516,23 @@ async function act(
       ? `lapsed — nobody answered${v.reason ? ` (${v.reason})` : ""}; the call did NOT run. ` +
         "Make it again if it is still worth doing."
       : `refused by your principal${v.reason ? `: ${v.reason}` : ""}`;
+
+  // a call the previous holder left unanswered when it crashed mid-act: what it left where
+  // it ran, when its tool can say (a bash call's job, §9); else its execution state is
+  // unknown — cancelled, never re-run (a send may already have reached the peer), and the
+  // model re-decides
+  const orphaned = async (use: ToolUseEvent, call?: string): Promise<Draft<ToolResultEvent>> => {
+    const { name, input } = use.parts[0].data;
+    const recover = ports.exec?.[name]?.recover;
+    try {
+      const outcome = await recover?.(input, { id: use.id, turn_id: use.payload.turn_id });
+      if (outcome !== undefined) return await resultOf(use, outcome, undefined, call);
+    } catch (err) {
+      const said = err instanceof Error ? err.message : String(err);
+      return await resultOf(use, said, { is_error: true }, call);
+    }
+    return await resultOf(use, "orphaned by a crashed turn", { is_error: true }, call);
+  };
 
   // every write this act produces is collected and committed ONCE, with the lease release
   // (§2) — the barrier completes atomically, and no half-batch can wake anyone
@@ -1626,9 +1650,7 @@ async function act(
       continue;
     }
     if (stolen) {
-      // the previous holder crashed mid-act: execution state unknown — cancel, don't
-      // re-run (a send may already have reached the peer); the model re-decides
-      out.push(await resultOf(use, "orphaned by a crashed turn", { is_error: true }));
+      out.push(await orphaned(use));
       continue;
     }
     runnable.push({ use });
@@ -1643,7 +1665,7 @@ async function act(
     if (verdict.behavior === "deny") {
       out.push(await resultOf(use, refused(verdict), { is_error: true, refused: true }, call));
     } else if (stolen) {
-      out.push(await resultOf(use, "orphaned by a crashed turn", { is_error: true }, call));
+      out.push(await orphaned(use, call));
     } else {
       runnable.push({ use, call });
     }

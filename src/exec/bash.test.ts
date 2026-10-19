@@ -5,8 +5,9 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
-import { bashTool, installExecGround, Jobs, type ShellUpdate, shippedAt } from "./bash.ts";
-import type { ExecFacts } from "../xi.ts";
+import { bashTool, installExecGround, localHost, shippedAt, sweepLogs } from "./bash.ts";
+import { Jobs, type ShellUpdate, SPOOL_CAP } from "./jobs.ts";
+import type { ExecFacts, ExecOutcome } from "../xi.ts";
 
 const live = () => new AbortController().signal;
 
@@ -140,7 +141,7 @@ Deno.test("bash: non-zero exit → error carrying output + code", async () => {
 /** A shell whose updates are kept, for a test to read: `told()` waits for the n-th. */
 function telling() {
   const updates: ShellUpdate[] = [];
-  const jobs = new Jobs((u) => updates.push(u));
+  const jobs = new Jobs(localHost(), (u) => updates.push(u));
   const told = async (n: number, ms = 5000) => {
     const until = Date.now() + ms;
     while (updates.length < n && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
@@ -172,16 +173,17 @@ Deno.test("bash: a command still running at its wait is answered async, and its 
     assertMatch(end.output, /^exited 3 after \d+s\ndone$/); // what it printed since the answer
     assertEquals(end.is_error, true);
     assertEquals(end.final, true); // nothing it started runs on
-    // the spool holds the whole of it
+    // the log, named by the call, holds the whole of it, and outlives the job's record
     const path = /goes on in (\S+),/.exec(answer.output)![1];
-    assertEquals(await Deno.readTextFile(path).then((s) => s.split("\n").slice(0, 2)), [
-      "started",
-      "done",
+    assertEquals(path, `${dir}/.out/bash-u1.log`);
+    assertEquals(await Deno.readTextFile(path), "started\ndone\n");
+    assertEquals((await Array.fromAsync(Deno.readDir(`${dir}/.out`))).map((e) => e.name), [
+      "bash-u1.log",
     ]);
     assertEquals(jobs.size, 0);
     assertEquals(updates.length, 1); // told once
   } finally {
-    jobs.reap();
+    await jobs.reap();
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -203,7 +205,7 @@ Deno.test("bash: the lines a call wakes on are told as they come, a few at a tim
     assertStringIncludes(end.output, "step 3");
     assertEquals(updates.length, 2);
   } finally {
-    jobs.reap();
+    await jobs.reap();
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -474,21 +476,20 @@ Deno.test("bash: a cd lasts its call (STICKY_CWD off), and so does env", async (
   }
 });
 
-Deno.test("bash: the sentinel never leaks into output, and real exit codes survive it", async () => {
+Deno.test("bash: the exit status rides beside the output, and a call that ended leaves nothing", async () => {
   const dir = await Deno.makeTempDir();
   try {
     await Deno.mkdir(`${dir}/workspace`, { recursive: true });
     const bash = bashTool({ workspace: `${dir}/workspace` });
     const out = String(await bash.execute({ command: "echo hello" }, live()));
-    assertEquals(out, "hello"); // no __MU_CWD__ tail
-    // a non-zero exit is still an error even though a print was appended after it
-    const err = await assertRejects(
-      () => bash.execute({ command: "echo oops; exit 5" }, live()),
-      Error,
-    );
-    assertStringIncludes(err.message, "exited with code 5");
-    assertStringIncludes(err.message, "oops");
-    assert(!err.message.includes("__MU_CWD__"));
+    assertEquals(out, "hello");
+    // a non-zero exit is an error, whether the command ran to its end or called exit
+    for (const command of ["echo oops; false; (exit 5)", "echo oops; exit 5"]) {
+      const err = await assertRejects(() => bash.execute({ command }, live()), Error);
+      assertStringIncludes(err.message, "exited with code 5");
+      assertStringIncludes(err.message, "oops");
+    }
+    assertEquals(await Array.fromAsync(Deno.readDir(`${dir}/workspace/.out`)), []);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -520,15 +521,15 @@ const pgrepCount = (pattern: string): number => {
   return Number(new TextDecoder().decode(out.stdout).trim() || "0");
 };
 
-Deno.test("bash: a backgrounded job returns immediately (pipe not held open)", async () => {
+Deno.test("bash: a backgrounded job returns the call at once", async () => {
   const dir = await Deno.makeTempDir();
   const marker = `mu_bg_${crypto.randomUUID().slice(0, 8)}`;
-  const jobs = new Jobs();
+  const jobs = new Jobs(localHost());
   try {
     await Deno.mkdir(`${dir}/workspace`, { recursive: true });
     const bash = bashTool({ workspace: `${dir}/workspace`, defaultWaitMs: 30_000, jobs });
     const t0 = Date.now();
-    // a long sleeper (uniquely named via exec -a) that holds the pipe
+    // a long sleeper (uniquely named via exec -a) that holds the log
     const answer = await bash.execute(
       { command: `echo launched; exec -a ${marker} sleep 30 &` },
       live(),
@@ -538,14 +539,14 @@ Deno.test("bash: a backgrounded job returns immediately (pipe not held open)", a
     assertEquals(answer.async, true); // its end is owed, as one past its wait
     assertStringIncludes(out, "launched");
     assertMatch(out, /\[left running as group \d+: what it prints goes on in \S+; you are told/);
-    assert(ms < 5000, `backgrounded call took ${ms}ms — pipe held open`);
+    assert(ms < 5000, `backgrounded call took ${ms}ms — waited on the job`);
   } finally {
-    jobs.reap();
+    await jobs.reap();
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("bash: a job that prints into the call's pipe lives past the call, its output told at its end", async () => {
+Deno.test("bash: a job the call left prints on into its log, told at its end", async () => {
   const dir = await Deno.makeTempDir();
   const { jobs, told } = telling();
   try {
@@ -560,7 +561,7 @@ Deno.test("bash: a job that prints into the call's pipe lives past the call, its
     assertStringIncludes(end.output, "tick 3"); // read on, so the job lived to print it
     assertEquals(await Deno.stat(`${dir}/finished`).then(() => true, () => false), true);
   } finally {
-    jobs.reap();
+    await jobs.reap();
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -598,14 +599,14 @@ Deno.test("exec plane: a background job that ends is told once, ambient look or 
     assertEquals(updates.length, 1);
     assertEquals(updates[0].command, "sleep 0.5 > /dev/null 2>&1 &");
     assertEquals(updates[0].final, true);
-    assertStringIncludes(updates[0].output, "what it wrote holds the outcome");
+    assertMatch(updates[0].output, /its exit status is not known, and it printed nothing more$/);
   } finally {
     await reap();
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("exec plane: reap tells each job it stopped with the harness", async () => {
+Deno.test("exec plane: reap kills each job and tells it the org was stopped", async () => {
   const dir = await Deno.makeTempDir();
   const updates: ShellUpdate[] = [];
   const { exec, reap } = (await installExecGround(dir, "a1")).shell((u) => updates.push(u));
@@ -613,12 +614,150 @@ Deno.test("exec plane: reap tells each job it stopped with the harness", async (
     await exec.bash.execute({ command: "sleep 300", wait: 0 }, live(), undefined, USE);
     await reap();
     assertEquals(updates.length, 1);
-    assertMatch(updates[0].output, /^stopped with the harness after \d+s \(group \d+\)$/);
+    assertMatch(updates[0].output, /^killed after \d+s when the org was stopped \(group \d+\)$/);
     assertEquals(updates[0].final, true);
     await new Promise((r) => setTimeout(r, 300)); // the killed bash's own end is not told again
     assertEquals(updates.length, 1);
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Waits for the n-th of `updates`. */
+async function nth(updates: ShellUpdate[], n: number, ms = 5000): Promise<ShellUpdate> {
+  const until = Date.now() + ms;
+  while (updates.length < n && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+  assert(updates.length >= n, `told ${updates.length} of ${n}: ${JSON.stringify(updates)}`);
+  return updates[n - 1];
+}
+
+Deno.test("exec plane: a job outlives the harness that left it, and the next one tells its end", async () => {
+  const dir = await Deno.makeTempDir();
+  const ground = await installExecGround(dir, "a1");
+  const before: ShellUpdate[] = [];
+  const after: ShellUpdate[] = [];
+  const first = ground.shell((u) => before.push(u));
+  const next = ground.shell((u) => after.push(u));
+  const ended = { command: "echo started; sleep 0.5; echo done; exit 4", wait: 0 };
+  const runs = { command: "sleep 1; echo late", wait: 0 };
+  const U2 = { id: "u2", turn_id: "t1" };
+  try {
+    await first.exec.bash.execute(ended, live(), undefined, USE);
+    await first.exec.bash.execute(runs, live(), undefined, U2);
+    first.leave(); // the harness goes down: the jobs run on, and nobody follows them
+    await new Promise((r) => setTimeout(r, 800));
+    assertEquals(before, []);
+    // one ended meanwhile: its end is told at once, from what it wrote
+    assertEquals(await next.resume(USE, ended), true);
+    const end = await nth(after, 1);
+    assertEquals([end.use, end.final, end.is_error], [USE, true, true]);
+    assertEquals(end.output, "exited 4 while the harness was down\nstarted\ndone");
+    // one still running is followed on, and its end told when it comes
+    assertEquals(await next.resume(U2, runs), true);
+    const late = await nth(after, 2);
+    assertEquals(late.use, U2);
+    assertMatch(late.output, /^exited 0 after 1s\nlate$/);
+    // a call that left no job is not found
+    assertEquals(await next.resume({ id: "u9", turn_id: "t1" }, runs), false);
+  } finally {
+    await first.reap();
+    await next.reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("exec plane: a call a crashed turn left unanswered is answered from its job", async () => {
+  const dir = await Deno.makeTempDir();
+  const ground = await installExecGround(dir, "a1");
+  const updates: ShellUpdate[] = [];
+  const first = ground.shell();
+  const next = ground.shell((u) => updates.push(u));
+  const runs = { command: "echo early; sleep 0.8; echo late", wait: 0 };
+  const failed = { command: "echo quick; sleep 0.2; exit 2", wait: 0 };
+  const U2 = { id: "u2", turn_id: "t1" };
+  let stranger: Deno.ChildProcess | undefined;
+  try {
+    await first.exec.bash.execute(runs, live(), undefined, USE);
+    await first.exec.bash.execute(failed, live(), undefined, U2);
+    first.leave();
+    await new Promise((r) => setTimeout(r, 400));
+    // still running: answered async with what it printed, and followed on
+    const answer = await next.exec.bash.recover!(runs, USE) as ExecOutcome;
+    assertEquals(answer.async, true);
+    assertMatch(
+      String(answer.output),
+      /^early\n\n\[the harness went down while it ran; it runs on as group \d+: what it prints/,
+    );
+    const end = await nth(updates, 1);
+    assertMatch(end.output, /^exited 0 after \d+s\nlate$/); // what it printed since the answer
+    // ended meanwhile: answered with how it ended
+    const err = await assertRejects(() => next.exec.bash.recover!(failed, U2), Error);
+    assertStringIncludes(
+      err.message,
+      "quick\n\n[the harness went down while it ran, and it ended]",
+    );
+    assertStringIncludes(err.message, "Command exited with code 2");
+    // a group that took the job's number is a stranger's: the job is gone
+    stranger = new Deno.Command("setsid", { args: ["sleep", "30"] }).spawn();
+    await Deno.writeTextFile(`${dir}/agents/a1/.out/bash-u7.pgid`, `${stranger.pid}\n`);
+    const gone = await assertRejects(
+      () => next.exec.bash.recover!({ command: "x" }, { id: "u7", turn_id: "t1" }),
+      Error,
+    );
+    assertStringIncludes(gone.message, "killed before its exit status was written");
+    // a call that left nothing is the caller's to answer
+    assertEquals(
+      await next.exec.bash.recover!({ command: "x" }, { id: "u9", turn_id: "t1" }),
+      undefined,
+    );
+  } finally {
+    stranger?.kill("SIGKILL");
+    await stranger?.status;
+    await next.reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("bash: a log past the cap drops its older half, and the agent is told once", async () => {
+  const dir = await Deno.makeTempDir();
+  const { jobs, updates, told } = telling();
+  try {
+    const bash = bashTool({ workspace: dir, jobs });
+    const command = `head -c ${SPOOL_CAP + 4 * 1024 * 1024} /dev/zero | tr '\\0' x | fold -w 99; ` +
+      "echo; sleep 0.5; echo end";
+    await bash.execute({ command, wait: 0 }, live(), undefined, USE);
+    const end = await told(1, 20_000);
+    assertMatch(
+      end.output,
+      /\nend\n\n\[its last lines — full output: \S+\]\n\n\[its output passed 50 MB: the older half of \S+ was dropped\]$/,
+    );
+    assertEquals(updates.length, 1);
+    const size = (await Deno.stat(`${dir}/.out/bash-u1.log`)).size;
+    assert(size < SPOOL_CAP, `${size}`);
+  } finally {
+    await jobs.reap();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("bash: a finished job's log goes a week after its last word; a running one's stays", async () => {
+  const out = await Deno.makeTempDir();
+  try {
+    const old = new Date(Date.now() - 8 * 86_400_000);
+    for (const id of ["old", "fresh", "running"]) {
+      await Deno.writeTextFile(`${out}/bash-${id}.log`, "x\n");
+    }
+    await Deno.writeTextFile(`${out}/bash-old.end`, "0\n");
+    await Deno.writeTextFile(`${out}/bash-running.pgid`, "1\n");
+    for (const id of ["old", "running"]) await Deno.utime(`${out}/bash-${id}.log`, old, old);
+    await sweepLogs(out);
+    assertEquals((await Array.fromAsync(Deno.readDir(out))).map((e) => e.name).sort(), [
+      "bash-fresh.log",
+      "bash-running.log",
+      "bash-running.pgid",
+    ]);
+  } finally {
+    await Deno.remove(out, { recursive: true });
   }
 });
 

@@ -5541,3 +5541,34 @@ The group is not adopted: its pgid may name a stranger after a reboot.
 
 Left: a `cmd &` whose own command fails is answered as an error, which carries no `async`,
 so if the harness goes down before that job ends, nothing is told.
+
+### Jobs are files, and outlive the harness (2026-10-19) — LANDED
+
+Every bash call runs as a job from its start (`exec/jobs.ts`): a small job shell, in a
+session of its own, writes the command's output, its group and its exit status under
+`.out/`, named by the call's id, and carries the call's id in its environment. The harness
+answers from those files and follows a job past its answer from them, so nothing about a
+job lives only in the harness. Decided with the user:
+
+- A restart leaves jobs running: reload, deploy (`liquen reload main`), crash and respawn.
+  Jobs are closed explicitly, by `liquen stop` (main is asked with SIGINT and kills them,
+  each told) or by a kill. A restart is SIGTERM, which leaves them for the next main.
+- The next harness adopts what the last left. At boot, each call answered async with no
+  final word is followed on (its end told at once when it came meanwhile); one that left
+  no job is told lost. A call a crashed turn left unanswered is answered from its job
+  instead of "orphaned" (`ExecTool.recover`). A group found again is believed only when one
+  of its processes carries the call's id (`/proc/<pid>/environ`): after a reboot the
+  number may be a stranger's.
+- The spool is capped at 50 MB (its older half dropped, the agent told once) and a
+  finished job's log is swept 7 days after its last word: constants, not knobs.
+- A remote sandbox runs the same job shell; one script looks at all of a shell's jobs
+  every 5s, a followed job holds the lease on, and `sandboxSleepMinutes` counts from the
+  last job's end. Cloudflare promises no runtime: an instance replaced takes its jobs and
+  files, and that is told as lost.
+- An outcome can be an error and async at once (`ExecOutcome.is_error`): a `cmd &` whose
+  command failed is owed its end like any other.
+
+The cap's cut races the job's own writes: a line the job appends while the harness rewrites
+the kept half can land first, so the log's first line after a cut may be a fragment. The
+alternatives (collapsing the file's head in place, rotating it) either need filesystem
+support or lose the job's later writes.

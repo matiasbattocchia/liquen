@@ -18,6 +18,9 @@ import {
 import { newId } from "../store/id.ts";
 import { pathOf } from "../store/media.ts";
 import type { ExecFacts, ExecOutcome } from "../xi.ts";
+import type { ShellUpdate } from "./jobs.ts";
+
+const USE = { id: "u1", turn_id: "t1" };
 
 /** A gateway whose sandbox is this machine: each script runs under the local bash, as the
  *  bridge would run it in the container. */
@@ -83,9 +86,17 @@ const PLACES: [string, (() => Promise<Place>) | null][] = [
 
 type Shell = ReturnType<typeof remoteShell>;
 
+/** Waits for the n-th of `updates`. */
+async function nth(updates: ShellUpdate[], n: number, ms = 15_000): Promise<ShellUpdate> {
+  const until = Date.now() + ms;
+  while (updates.length < n && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+  assert(updates.length >= n, `told ${updates.length} of ${n}: ${JSON.stringify(updates)}`);
+  return updates[n - 1];
+}
+
 function cases(
   name: string,
-  body: (shell: Shell, place: Place) => Promise<void>,
+  body: (shell: Shell, place: Place, updates: ShellUpdate[]) => Promise<void>,
 ) {
   for (const [label, open] of PLACES) {
     Deno.test({
@@ -93,13 +104,14 @@ function cases(
       ignore: open === null,
       async fn() {
         const place = await open!();
+        const updates: ShellUpdate[] = [];
         const shell = remoteShell(place.gateway, {
           workspace: place.workspace,
           env: () => place.env,
           defaultWaitMs: 20_000,
-        });
+        }, (u) => updates.push(u));
         try {
-          await body(shell, place);
+          await body(shell, place, updates);
         } finally {
           await shell.reap();
           await place.gateway.exec(`rm -rf ${quote(place.workspace)}`);
@@ -147,42 +159,93 @@ cases(
   },
 );
 
-cases("the environment is the issued one alone", async (shell) => {
+cases("the environment is the issued one alone, and the call's id", async (shell) => {
   const env = String(await run(shell, { command: "env | sort" }));
   assertEquals(
     env.split("\n").map((l) => l.split("=")[0]).filter((k) => !["PWD", "SHLVL", "_"].includes(k)),
-    ["LANG", "PATH"],
+    ["LANG", "LIQUEN_JOB", "PATH"],
   );
-});
-
-cases("a wait run out kills the command's whole tree and says so", async (shell, place) => {
-  const late = `${place.workspace}/late`;
-  await assertRejects(
-    () =>
-      run(shell, {
-        command: `(sleep 5; touch ${quote(late)}) & sleep 5; echo never`,
-        wait: 1,
-      }),
-    Error,
-    "timed out after 1s",
-  );
-  await new Promise((r) => setTimeout(r, 300));
-  const left = await place.gateway.exec(`pgrep -f ${quote(`touch ${late}`)}`);
-  assertEquals(left.code, 1, "nothing of the tree is left running");
 });
 
 cases(
+  "a wait run out answers async, the job runs on, and its end and its wake lines are told",
+  async (shell, _place, updates) => {
+    const answer = await shell.exec.bash.execute(
+      {
+        // the probe looks every 5s: the wake line is seen while the job still runs
+        command: "echo early; sleep 1.5; echo 'ERROR one'; sleep 5; echo done; exit 3",
+        wait: 1,
+        wake: "^ERROR",
+      },
+      new AbortController().signal,
+      undefined,
+      USE,
+    ) as ExecOutcome;
+    assertEquals(answer.async, true);
+    assert(
+      /^early\n\n\[still running after 1s as group \d+: what it prints goes on in \S+\/\.out\/bash-u1\.log, and you are told when it ends\]$/
+        .test(String(answer.output)),
+      String(answer.output),
+    );
+    const woke = await nth(updates, 1);
+    assertEquals([woke.use, woke.output, woke.final], [USE, "ERROR one", undefined]);
+    const end = await nth(updates, 2);
+    assertEquals([end.final, end.is_error], [true, true]);
+    assert(/^exited 3 after \d+s\nERROR one\ndone$/.test(end.output), end.output);
+  },
+);
+
+cases(
   "a background job returns the call, shows in the ambient block, and is reaped",
-  async (shell) => {
+  async (shell, _place, updates) => {
     const t0 = Date.now();
-    assertEquals(await run(shell, { command: "sleep 30 & echo started" }), "started");
+    const answer = await shell.exec.bash.execute(
+      { command: "sleep 30 & echo started" },
+      new AbortController().signal,
+      undefined,
+      USE,
+    ) as ExecOutcome;
     assert(Date.now() - t0 < 10_000, "the call did not wait for the job");
+    assertEquals(answer.async, true);
+    const said = String(answer.output);
+    assert(said.startsWith("started\n\n[left running as group "), said);
     const lines = (await shell.ambient()).join("\n");
     assertStringIncludes(lines, "background — 1 job:");
-    assert(/^· sleep 30 — running \d+s · pid \d+$/m.test(lines), lines); // by its live process
+    // by its live process, wearing the last line its log holds
+    assert(/^· sleep 30 — running \d+s, last line "started" · pid \d+$/m.test(lines), lines);
     await shell.reap();
-    await new Promise((r) => setTimeout(r, 300));
+    assertEquals(updates.length, 1);
+    assert(/^killed after \d+s when the org was stopped/.test(updates[0].output));
     assertEquals((await shell.ambient()).some((l) => l.startsWith("background")), false);
+  },
+);
+
+cases(
+  "a job outlives the shell that left it, and the next one finds it by the call",
+  async (shell, place) => {
+    const later: ShellUpdate[] = [];
+    const next = remoteShell(place.gateway, {
+      workspace: place.workspace,
+      env: () => place.env,
+    }, (u) => later.push(u));
+    const runs = { command: "echo early; sleep 1.5; echo late", wait: 0 };
+    try {
+      await shell.exec.bash.execute(runs, new AbortController().signal, undefined, USE);
+      shell.leave();
+      const answer = await next.exec.bash.recover!(runs, USE) as ExecOutcome;
+      assertEquals(answer.async, true);
+      assert(
+        /^early\n\n\[the harness went down while it ran; it runs on as group \d+/.test(
+          String(answer.output),
+        ),
+        String(answer.output),
+      );
+      const end = await nth(later, 1);
+      assert(/^exited 0 after \d+s\nlate$/.test(end.output), end.output);
+      assertEquals(await next.resume({ id: "u9", turn_id: "t1" }, runs), false);
+    } finally {
+      await next.reap();
+    }
   },
 );
 
@@ -293,7 +356,7 @@ Deno.test("the ambient block: off without a probe, idle with its countdown, a re
   try {
     assertEquals(await line(), "sandbox: off · a bash call starts it");
     assertEquals(calls.exec, 0, "off, nothing reaches the gateway");
-    await run(shell, { command: "sleep 30 & echo started" });
+    await run(shell, { command: "echo started" });
     assertEquals(await line(), "sandbox: idle · stops in 10m · jobs and files go with it");
     pass(4);
     assertEquals(await line(), "sandbox: idle · stops in 6m · jobs and files go with it");
@@ -303,14 +366,22 @@ Deno.test("the ambient block: off without a probe, idle with its countdown, a re
       "sandbox: idle · stops in 5m · jobs and files go with it",
       "the probe keeps nothing on",
     );
+    // a job followed holds the sandbox on, however long it runs
+    await run(shell, { command: "sleep 3 & echo started" });
+    pass(30);
+    assertEquals(
+      await line(),
+      "sandbox: busy · on while a job runs, then 10m · jobs and files go with it",
+    );
     assertStringIncludes((await shell.ambient()).join("\n"), "background — 1 job:");
     await Deno.remove("/tmp/.liquen-up"); // the container a restart brings has none
     assertEquals(
       await line(),
-      "sandbox: restarted · stops in 5m · earlier jobs and files are gone",
+      "sandbox: restarted · stops in 10m · earlier jobs and files are gone",
     );
     assertEquals((await shell.ambient()).some((l) => l.startsWith("background")), false);
-    assertEquals(await line(), "sandbox: idle · stops in 5m · jobs and files go with it");
+    assertEquals(await line(), "sandbox: idle · stops in 10m · jobs and files go with it");
+    pass(5);
     await Deno.remove("/tmp/.liquen-up");
     assertEquals(await run(shell, { command: "echo again" }), "again", "the marker is no output");
     assertEquals(

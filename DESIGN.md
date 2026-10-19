@@ -2197,15 +2197,22 @@ names the text it replaces, and text that is no longer there matches nothing.
     it printed so far and the file the rest goes to, and the command runs on as a **job**.
     `wait` is the agent's knob for how much it wants to see before going on — 0 for a
     server, a few seconds to see one boot, the default for a build it would wait for anyway.
-    The harness is the command's parent, so its END is known: the update that tells it
-    carries the **exit status** and the lines printed since the answer, `final` when
-    nothing the command started is still running.
-  - **The spool: the harness keeps reading the pipe.** Both streams are pumped into the
-    call's output, and past the answer into `.out/bash-<id>.log` — a file in the workspace,
-    **out of the log** (same principle as EventLog vs Stream — high-frequency output never
-    enters the log). Reading on is what lets anything the call started outlive it: a
-    writer whose pipe nobody reads dies on its next write. So a `cmd &` that never
-    redirected keeps running, and what it prints is spooled like the rest.
+    The update that tells its END carries the **exit status** and the lines printed since
+    the answer, `final` when nothing the command started is still running.
+  - **Every call is a job from its start, and the job's record is files** (`exec/jobs.ts`).
+    The command runs under a small **job shell** of its own, in a session and process
+    group of its own (`setsid`), and the job shell writes everything the harness needs to
+    know under `.out/`, named by the call's id: what the command prints, both streams in
+    arrival order (`bash-<id>.log`, the **spool** — a file in the workspace, **out of the
+    log**, same principle as EventLog vs Stream), its group as it starts (`.pgid`, the
+    job's record), where the command ended (`.cwd`) and its exit status once it did
+    (`.rc`, renamed `.end` once told). Nothing about a job is held only in the harness:
+    the call waits on the job and answers from its files, a job past its answer is
+    **followed** — its log read on, at every change to its files where the host can see
+    them (inotify locally) and on a probe (`JOB_PROBE_MS`, 2s locally; `REMOTE_PROBE_MS`,
+    5s in a sandbox) — and a harness that goes down leaves the job running and its files
+    written. A call that ended and left nothing running leaves nothing: its files go, the
+    log kept only when the answer names it as the spill.
   - **Attention is a ladder over the spool.** The FILE holds everything (pulled with
     `aread`/`tail`). The **glance** is the latest line, standing beside the job's line in
     the ambient block (§5) — cheap, current, never news. A **wake** is a regular
@@ -2215,57 +2222,63 @@ names the text it replaces, and text that is no longer there matches nothing.
     never on every line. Condition-watching (Claude Code's Monitor tool) is therefore a
     call, `bash(tail -F app.log, wait: 0, wake: "ERROR")`, and a build watched for its
     errors is the build itself with a `wake`. The filter is declarative and lives at the
-    harness, beside the pipe it reads.
+    harness, beside the log it reads.
+  - **The spool is capped, and kept a week.** A log past `SPOOL_CAP` (50 MB) drops its
+    older half as the harness reads it — rewritten in append mode, as the job writes it, so
+    a line it adds meanwhile is never overwritten — and the agent is told once, in the
+    call's next update. A finished job's log stays `SPOOL_KEEP_MS` (seven days) from its
+    last word, then a sweep removes it; a log whose job still runs is never swept.
   - **What a command leaves behind is a job too.** A group that still has members after
-    its command's bash exited (a `cmd &`) stays on the shell's list, its call's answer
-    saying so. Its end is a probe's: every `JOB_PROBE_MS` (2s — push from the agent's
-    perspective, a poll underneath, since a `cmd &` grandchild is not our child to await),
-    and at every ambient look, a group with no member left is told ended, final, with
-    what it printed since if it printed into the pipe. Its exit status is unknowable — the
-    signal says "gone" — so the tool doc teaches the `echo "exit $?"` line, and prefers a
+    the command ended (a `cmd &`) stays followed, its call's answer saying so (async, as an
+    error when the command failed: an outcome can be both). A group with no member left is
+    told ended, final, with what it printed since. Its exit status is unknowable — the
+    group says "gone" — so the tool doc teaches the `echo "exit $?"` line, and prefers a
     `wait` to a `&`.
-  - **Lifetime is harness-bounded (containment).** A job must outlive its *call* (that's
-    the feature) but never the *harness* (the leak). Each bash command runs in its own
-    **process group** (`setsid`); an abort kills the whole group (a runaway foreground
-    drags its children down, not just bash), and every job is **reaped on shutdown**
-    (`main.stop()` / task-mode exit), each told final — "stopped with the harness" — so
-    the agent learns at its next turn what died with the process. No orphan survives the
-    process that spawned it — the container-teardown guarantee, extended to the
-    long-running org. Nothing caps a job's age: it is visible in the ambient block, with
-    its kill handle, for as long as it runs. A harness that goes down without its
-    shutdown (a SIGKILL, the OOM killer, the machine) tells nothing, and a job is held
-    only in its memory — so the log is what remembers: every call that left work running
-    answers `async`, and at boot, before any shell runs, main reads the bash calls
-    answered `async` with no `final` update (`unended`, the store's anti-join beside the
-    open asks) and tells each final, **lost**: it may have ended or may still run, and
-    nothing more is told. The next run cannot adopt the group — a pgid outlives no reboot,
-    and after one the number may name a stranger.
+  - **A job ends when its group does: by itself, by a kill, or by a stop.** A job must
+    outlive its *call* (that's the feature) and a *restart* of the harness (a reload, a
+    deploy, a crash and the supervisor's respawn), and it is never ended on the agent's
+    behalf. What ends the jobs is an explicit order: `liquen stop` (or a ctrl-c of
+    `liquen start`) asks main with **SIGINT**, which kills every job, each told final, so
+    the agent learns at its next turn what was killed; a restart asks with **SIGTERM**,
+    which stops following and leaves them running (`main.stop({ jobs })`). An abort kills
+    the call's whole group (a runaway foreground drags its children down, not just bash).
+    Nothing caps a job's age: it is visible in the ambient block, with its kill handle, for
+    as long as it runs.
+  - **The next harness adopts what the last one left** (`adopt`), found by the call's id —
+    the log says which calls are owed, the files say how each job stands. Every process
+    of a job carries the call's id in its environment (`LIQUEN_JOB`), so a group found
+    again is checked to be the job's (`/proc/<pid>/environ`) before it is believed: after
+    a reboot its number may name a stranger, and a stranger's group means the job is gone.
+    Two passes: at boot, before any turn, main reads the bash calls answered `async` with
+    no `final` update (`unended`, the store's anti-join beside the open asks) and follows
+    each job on, telling at once an end that came while nobody watched; a call that left no
+    job to find is told final, **lost**. And a call a crashed turn left with no answer at
+    all, which xi's orphan sweep would answer "orphaned", is answered from its job instead
+    (`ExecTool.recover`): how it ended, or async and followed on while it still runs.
   - Every update lands against the call (§3, `late.ts`): a mid-turn one is consumed by the
-    turn's next step; a **lone** one wakes a fresh turn. A remote sandbox's shell has none
-    of this: its output is a file in the container, a call is killed at its wait, and a
-    job's end is seen only by an ambient look, one that keeps the container awake. macOS
-    lacks `setsid` → falls back to a bare spawn (isolation off, so no tracked job).
+    turn's next step; a **lone** one wakes a fresh turn. A remote sandbox's shell is the
+    same contract over the gateway: the job shell runs in the container, a call waits on
+    its job in the script it sends, and one script looks at all of a shell's jobs every
+    `REMOTE_PROBE_MS`. A followed job holds the sandbox on (`lease`), and the probe is the
+    request that keeps the gateway from putting it to sleep; a container found new under a
+    followed job took the job with it, told final, lost. macOS lacks `setsid` → falls back
+    to a bare spawn (isolation off, so what a command leaves is not followed).
   - **Shutdown itself is bounded** — `main.stop()` awaits the in-flight turn's queue to
-    settle before reaping, but that wait is capped (`stopTimeoutMs`, default 5s). Without
-    the cap a turn wedged on a hung model connection (an API/network outage exactly at
-    shutdown) blocks teardown *forever* — the reap and `log.close` never run, so the very
-    safety net above is defeated. The orphaned turn is swallowed by the fan-out queue's
+    settle before it ends or leaves the jobs, but that wait is capped (`stopTimeoutMs`,
+    default 5s). Without the cap a turn wedged on a hung model connection (an API/network
+    outage exactly at shutdown) blocks teardown *forever* — a stop never kills the jobs and
+    `log.close` never runs. The orphaned turn is swallowed by the fan-out queue's
     catch. The deeper
     fix — threading an `AbortSignal` through `step`→transport so shutdown actively cancels
     the model call — is deferred; the cap is the correctness floor. (Surfaced by a
     Terminal-Bench run where a mid-outage trial wrote its trace but hung in `stop()`.)
-  - **Shutdown-reap is containment, NOT leak prevention** — for an org agent running days/
-    weeks, `main.stop()` ~never fires, so a *forgotten* job (or a loop spawning jobs) leaks
-    within one lifetime. Three layers address the in-run leak: **(1) deploy floor** —
-    container cgroup limits (`--pids-limit`, memory, CPU) so a runaway can't exhaust the
-    host (Docker story, not harness code); **(2) harness hygiene on the clock (v0.1)** —
-    the periodic alarm prunes dead groups and enforces a per-job **max-age TTL** (kill
-    groups older than ~1h unless marked persistent; job-reaping is periodic maintenance
-    under the lock, the alarm's exact shape); **(3) agent visibility (v0.2)** — surface the
-    live-job set in the ambient block + a hygiene skill (only the agent knows if a job is
-    still needed). For a *delegate* (conversational) agent bg jobs are rare/short, so a
-    generous TTL rarely bites a legit job. The registry already self-prunes dead groups so it stays bounded to
-    live jobs even before the clock lands.
+  - **A forgotten job is the agent's to kill.** Nothing ends a job on the agent's behalf,
+    so a job it forgot (or a loop spawning jobs) runs until a stop. Two layers bound it:
+    **(1) deploy floor** — container cgroup limits (`--pids-limit`, memory, CPU) so a
+    runaway can't exhaust the host (Docker story, not harness code); **(2) agent
+    visibility** — every job stands in the ambient block with its age, its last line and
+    its kill handle, and the tool doc says nothing stops a job for the agent (only the agent
+    knows if a job is still needed).
 - **Control seam** (CLI, web console — clients that *drive* the harness): harness-as-server
   (OpenCode model), HTTP/WS + SSE, OpenAPI-defined. **Driver API** (the same for every
   control client): `submit(conversation, parts)` (write a principal `message` into the
@@ -2803,18 +2816,21 @@ travels inside it because it exists for bash — the local provider starts it, a
 sandbox brings its own, and a host with no exec plane has neither. The remote provider is
 Cloudflare's (`openCloudflareSandbox`): one sandbox per agent behind a gateway Worker
 (`sandbox/cloudflare/`, the Sandbox SDK's bridge), and a session's shell is the bash
-contract carried by the script each call sends (`src/exec/gateway.ts`) — its output to a
-file a background job holds instead of the gateway's pipe, `timeout` killing the group,
-`env -i` and the issued names, the cwd a `cd` — so the container keeps nothing of ours
-between calls but files. The harness keeps each sandbox's life (`lease`): the agent's
-first bash call starts it, and it stays on while a call runs and for
-`system.sandboxSleepMinutes` after the last one ended, whatever else runs in it. Only
-bash moves that clock. The ambient probe runs at each step while the sandbox is on and
-never while it is off, since a request is what starts a container; the first step past the
-window stops the container. The gateway holds the same window counted from any request,
-carried on every call and set on whichever container answered, so a harness that goes
-quiet or dies still leaves nothing running. The ambient block tells the agent the
-countdown, and its own bash calls are what keep a job alive. **The runner is a
+contract carried by the scripts the harness sends (`src/exec/gateway.ts`) — the job shell
+started in the container and waited on there, its files read back by a probe, `env -i` and
+the issued names, the cwd a `cd` — so the container keeps nothing of ours but files and
+the jobs that write them. The harness keeps each sandbox's life (`lease`): the agent's
+first bash call starts it, and it stays on while a call runs or a job is followed, and for
+`system.sandboxSleepMinutes` after the last of them ended. Only bash moves that clock. The
+ambient probe runs at each step while the sandbox is on and never while it is off, since a
+request is what starts a container; the first step past the window stops the container.
+The gateway holds the same window counted from any request, carried on every call and set
+on whichever container answered: a followed job's probe is such a request every
+`REMOTE_PROBE_MS`, and a harness that goes quiet or dies still leaves nothing running
+past the window. The platform keeps no promise past that: an instance can be replaced
+(a host restart, an image rollout: SIGTERM, then SIGKILL after 15 minutes) and its disk
+goes with it, so a job there can be lost however it is followed, and is told so. The
+ambient block tells the agent the countdown, or that a job holds the sandbox on. **The runner is a
 module** (`runnerFor`, `src/runner.ts`): a session is built from the store, the agent's
 row and a `Host` — the ports a host wires once — so main and an edge function build the
 same session from the same three things, and what main keeps of its own is the `Host`.

@@ -5,18 +5,21 @@
  * Deliberately ungated — gates are for outward effects (`send`); the workspace is the
  * agent's own. Discipline (from the pi / Agent-SDK study):
  *
+ *   • every call runs as a job (jobs.ts): its own shell, in a process group of its own,
+ *     writes what it prints to `{workspace}/.out/bash-<call id>.log` and its exit status
+ *     beside it, so the job outlives the harness as well as the call
  *   • the turn waits for the command up to `wait` (120s by default); one still running
- *     then is answered ASYNC with what it printed so far, and runs on as a job: the
- *     harness keeps reading its output into the spool, and tells its end — exit status
- *     and last lines — as an update on the call (late.ts)
+ *     then is answered ASYNC with what it printed so far, and runs on: the harness follows
+ *     its log, and tells its end — exit status and last lines — as an update on the call
+ *     (late.ts)
  *   • stdout+stderr merged in arrival order
- *   • tail-truncation (2000 lines / 50KB); the FULL output is persisted to
- *     {workspace}/.out/<id>.log and the footer says so — `aread` pages the rest
+ *   • tail-truncation (2000 lines / 50KB); the FULL output stays in the log and the footer
+ *     names it — `aread` pages the rest
  *   • non-zero exit ⇒ error result carrying the output + exit code (the agent's
  *     self-correction path)
  *   • `wake`, a regular expression: the lines a call's output prints after its answer
- *     that match it are told as updates, which wake the agent; the rest stay in the
- *     spool, the latest of them standing under the job's line in the ambient block
+ *     that match it are told as updates, which wake the agent; the rest stay in the log,
+ *     the latest of them standing under the job's line in the ambient block
  */
 
 import type { CallRef, ExecFacts, ExecOutcome, ExecTool } from "../xi.ts";
@@ -24,44 +27,31 @@ import { type AgentUser, agentUser, own, ownTree } from "./user.ts";
 import type { BinDir, Json } from "../types.ts";
 import { newId } from "../store/id.ts";
 import { MEDIA_MARK } from "../store/media.ts";
-import { clipEnd, MAX_BYTES, MAX_LINES, truncateTail } from "./truncate.ts";
+import { MAX_BYTES, MAX_LINES, truncateTail } from "./truncate.ts";
 import { DEFAULT_BASH_WAIT_MS } from "../config.ts";
 import { USAGE } from "../bin/usage.ts";
 import type { ToolShape } from "../tooldoc.ts";
+import {
+  type Found,
+  type Job,
+  JOB_ENV,
+  JOB_SHELL,
+  jobCommand,
+  jobFiles,
+  type JobHost,
+  jobLines,
+  Jobs,
+  type Look,
+  LOOK_BYTES,
+  type Member,
+  parseMembers,
+  type ShellUpdate,
+  Spool,
+  SPOOL_CAP,
+  SPOOL_KEEP_MS,
+} from "./jobs.ts";
 
 const kb = (n: number) => n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} kB`;
-
-/** A background job: a call still running past its wait, or the process group a call left
- *  running after its command ended. */
-export interface Job {
-  pgid: number; // == the setsid child's pid. The leader is often gone by the time the job
-  //                is seen (a `cmd &` from a subshell outlives its bash): `kill -- -<pgid>`
-  //                stops the tree, `kill <pid>` a member the ambient line names.
-  command: string; // the FULL launch command — the ambient line truncates; a UI/control
-  //                  client shows it whole (§9). Kept verbatim, never parsed.
-  since: number; // Date.now() at launch — the age its line and its end say
-  use?: CallRef; // the call that started it, which its updates are told against (late.ts)
-  /** The call's output, still read off its pipe: absent when nothing the call left holds
-   *  the pipe (a job that sent its output elsewhere). */
-  spool?: Spool;
-  /** The pipe's readers, settled once it closes. */
-  pipe?: Promise<unknown>;
-  /** The call's own bash is still running: its end is the call's answer, told by the call
-   *  (an update with the exit status), not by the probe. */
-  running?: boolean;
-  /** Stops reading the pipe and anything still pending for the call: run once it is told
-   *  final. */
-  release?: () => void;
-}
-
-/** What a shell tells of a call after its answer (late.ts), against the call. */
-export interface ShellUpdate {
-  use: CallRef;
-  command: string;
-  output: string;
-  is_error?: boolean;
-  final?: boolean;
-}
 
 /** Sticky cwd shared with the plane so it can report the current directory. */
 export interface BashState {
@@ -72,11 +62,10 @@ export interface BashOptions {
   workspace: string; // the agent's cwd; created on install
   binPath?: string; // prepended to PATH — one or more dirs, `:`-joined (shipped, then org)
   defaultWaitMs?: number; // default 120s
-  /** Per-SESSION job registry (§9): each command runs in its own process group, and a
-   *  call still running past its wait, or a group that still has members after the call
-   *  (a `cmd &` job), is recorded here, so the shell can list it in the ambient block,
-   *  tell its end, and reap it on shutdown. Jobs outlive the CALL, never the harness. One
-   *  registry per shell → ownership. */
+  /** Per-SESSION jobs (§9): each command runs in its own process group, and a call still
+   *  running past its wait, or a group that still has members after the call (a `cmd &`
+   *  job), is followed here, so the shell can list it in the ambient block and tell its
+   *  end. One set per shell → ownership. */
   jobs?: Jobs;
   state?: BashState; // sticky cwd, published for the plane's ambient snapshot
   /** Extra env ISSUED into every spawn (evaluated per call — placeholders can rotate).
@@ -106,12 +95,8 @@ function hasSetsid(): boolean {
   return _hasSetsid;
 }
 
-// Fresh subprocess per call; a tail sentinel reports the shell's final pwd + exit code, so
-// the true exit status survives the appended print (§9 audit find), and the pwd can be kept
-// as the next call's start — the sticky cwd, off below.
-export const CWD_MARK = "__MU_CWD__";
-
-/** Whether a `cd` in a call moves where the next one starts. Off: every call starts where
+/** Whether a `cd` in a call moves where the next one starts: the job writes where its
+ *  command ended (`.cwd`), and with this on that is the next call's start. Off: every call starts where
  *  the shell stands (the workspace, or the place `stand` was given), and a `cd` lasts its
  *  call. The model writes `cd dir && …` at the head of a call by habit; with the cwd kept,
  *  that `cd` fails on the next call from inside dir, silently in a `;` chain (a vibes
@@ -131,26 +116,13 @@ export const STICKY_CWD = false;
 // for a browser someone watches) is its agents' `export` knob, issued through `env` below.
 // This list and that knob are what user space is allowed to know.
 const ENV_ALLOWLIST = ["HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "LOGNAME", "SHELL"];
-/** How long the readers are given once bash itself has exited, to flush what is already
- *  written. A job the call left running may hold the pipe for hours, so the answer cannot
- *  wait for the pipe to close: the harness reads on into the spool instead. */
-const GRACE_MS = 150;
-/** How often the shell looks for jobs whose group has no member left: a probe of each live
- *  group (a `cmd &` grandchild is not ours to await), cheap enough to run often, so an end
- *  is told seconds after it happens. */
+/** How often the shell looks at its jobs with nothing else asking: a probe of each group (a
+ *  `cmd &` grandchild is not ours to await), cheap enough to run often, so an end the files
+ *  do not show — a group emptied by a kill — is told seconds after it happens. */
 export const JOB_PROBE_MS = 2_000;
-/** The lines a `wake` matches within this long ride one update… */
-const WAKE_BATCH_MS = 500;
-/** …and one call's wake updates are at least this far apart, the lines between gathered: a
- *  flood wakes the agent every few seconds, never on every line. */
-const WAKE_GAP_MS = 5_000;
-/** The most lines one wake update carries; the rest are counted. */
-const WAKE_LINES = 20;
-/** A line as a wake or a glance shows it, at most. */
-const LINE_CHARS = 300;
-/** The output kept since the last thing told of a call, for the next update's tail: the
- *  spool holds all of it, and a tail never shows more than the byte window. */
-const SINCE_CHARS = 4 * MAX_BYTES;
+/** A job's files change in bursts: a look follows the first change by this long, and
+ *  takes the rest of the burst with it. */
+const WATCH_SETTLE_MS = 50;
 
 function userSpaceEnv(binPath?: string): Record<string, string> {
   const env: Record<string, string> = { TERM: "dumb" };
@@ -202,88 +174,60 @@ export interface BashInput {
   max_bytes?: number;
 }
 
-/** The command as the shell runs it: followed by a sentinel line that prints the shell's
- *  final pwd and the command's REAL exit code (the appended print would otherwise mask a
- *  non-zero exit). The pwd it reports is the next call's start only with STICKY_CWD on. */
-export function wrapCommand(command: string): string {
-  return `${command}\n__mu_rc=$?; printf '\\n${CWD_MARK}%s:%s\\n' "$(pwd)" "$__mu_rc"`;
-}
-
-/** How a call ended, beside what it printed. */
-export interface BashEnd {
-  code: number; // the process's own status, when the sentinel never printed (`exit`)
-  /** A shell that kills the command at its wait (the gateway's) did. */
-  timedOut: boolean;
-  aborted: boolean;
-  waitMs: number;
-}
-
-/** The sentinel peeled off a call's output: the output itself, and the exit code it
- *  carried (`code` when it never printed: the command called `exit`, or was killed).
- *  Moves `state.cwd` with STICKY_CWD on. */
-export function peel(raw: string, code: number, state?: BashState): {
+/** A call's output as its answer has it: what the log held when the call answered. */
+export interface Printed {
   output: string;
-  exitCode: number;
-} {
-  const mark = raw.lastIndexOf(`\n${CWD_MARK}`);
-  if (mark === -1) return { output: raw, exitCode: code };
-  let exitCode = code;
-  const line = raw.slice(mark + 1 + CWD_MARK.length).trim();
-  const sep = line.lastIndexOf(":");
-  if (sep !== -1) {
-    const dir = line.slice(0, sep);
-    const rc = Number(line.slice(sep + 1));
-    if (dir && STICKY_CWD && state) state.cwd = dir;
-    if (Number.isFinite(rc)) exitCode = rc;
-  }
-  return { output: raw.slice(0, mark), exitCode };
+  /** The log's whole size, past any part of it this text leaves out. */
+  bytes: number;
+  /** The text is the log's end only: its head was too much to read (`LOOK_BYTES`), or was
+   *  dropped at the cap. */
+  partial: boolean;
+  /** Where the whole of it lies. */
+  log: string;
 }
 
-/** Output in the call's window: tail-truncated, the footer naming where the whole of it
- *  lies (`spill` answers that) when the window cut it. Empty when nothing was printed. */
-async function windowed(
-  output: string,
-  input: BashInput,
-  spill: (output: string) => Promise<string>,
-): Promise<string> {
-  // the raw output is what gets persisted; the model may widen/narrow the window
-  const t = truncateTail(output.trimEnd(), {
+/** Output in the call's window: tail-truncated, the footer naming the log when the window
+ *  cut it — `spill` is told so, since the log is then the answer's to keep. Empty when
+ *  nothing was printed. */
+export function windowed(printed: Printed, input: BashInput, spill?: () => void): string {
+  // the model may widen/narrow the window
+  const t = truncateTail(printed.output.trimEnd(), {
     maxLines: input.max_lines,
     maxBytes: input.max_bytes,
   });
-  if (!t.truncated) return t.text;
-  const path = await spill(output);
-  const shown = t.clippedLineBytes === undefined
+  if (!t.truncated && !printed.partial) return t.text;
+  if (!t.text) return "";
+  spill?.();
+  const shown = printed.partial
+    ? `showing its last lines of ${kb(printed.bytes)}`
+    : t.clippedLineBytes === undefined
     ? `showing lines ${t.startLine}-${t.totalLines} of ${t.totalLines}`
     : `showing only the end of line ${t.startLine} of ${t.totalLines}: its last ${
       kb(new TextEncoder().encode(t.text).length)
     } of ${kb(t.clippedLineBytes)}`;
-  return `${t.text}\n\n[${shown} — full output: ${path}]`;
+  return `${t.text}\n\n[${shown} — full output: ${printed.log}]`;
 }
 
-/** A call's raw output → its result: the sentinel peeled off the tail (recovering the exit
- *  code), the text tail-truncated — the whole of it handed to `spill`, which answers where
- *  it now lies — `note` after it, and a non-zero exit, a timeout or an abort thrown as the
- *  error result carrying the output. Media marks (`aread` on a bytes file, §5) come off
- *  the text as the result's attachments. */
-export async function settle(
-  raw: string,
-  end: BashEnd,
+/** A call's output and exit status → its result: the text tail-truncated (`spill` told when
+ *  the log must stay, the answer naming it), `note` after it, and a non-zero exit or an
+ *  abort thrown as the error result carrying the output. Media marks (`aread` on a bytes
+ *  file, §5) come off the text as the result's attachments. */
+export function settle(
+  printed: Printed,
+  end: { exitCode: number; aborted?: boolean },
   input: BashInput,
-  state: BashState,
-  spill: (output: string) => Promise<string>,
+  spill?: () => void,
   report?: (facts: ExecFacts) => void,
   note?: string,
-): Promise<Json | ExecOutcome> {
-  const { output, exitCode } = peel(raw, end.code, state);
+): Json | ExecOutcome {
+  const { exitCode } = end;
   // the run's facts, said before any window narrows the output or a failure throws it
-  report?.({ exit_code: exitCode, bytes: new TextEncoder().encode(output).length });
+  report?.({ exit_code: exitCode, bytes: printed.bytes });
 
-  let text = (await windowed(output, input, spill)) || "(no output)";
+  let text = windowed(printed, input, spill) || "(no output)";
   if (note) text += `\n\n${note}`;
 
   if (end.aborted) throw new Error(`${text}\n\nCommand aborted`);
-  if (end.timedOut) throw new Error(`${text}\n\nCommand timed out after ${end.waitMs / 1000}s`);
   if (exitCode !== 0) throw new Error(`${text}\n\nCommand exited with code ${exitCode}`);
 
   const files: string[] = [];
@@ -297,25 +241,187 @@ export async function settle(
   return outcome;
 }
 
+/** The window an update's tail is cut to: the call's own. */
+export const windowOf = (input: BashInput): Job["window"] => ({
+  ...(input.max_lines !== undefined ? { max_lines: input.max_lines } : {}),
+  ...(input.max_bytes !== undefined ? { max_bytes: input.max_bytes } : {}),
+});
+
+/** What a look found in a job's log, as the answer reads it. */
+const printedOf = (look: Look, log: string): Printed => ({
+  output: new TextDecoder().decode(look.bytes),
+  bytes: look.size,
+  partial: look.skipped || look.shifted,
+  log,
+});
+
+/** An answer whose job runs on: its end is owed, so the result is async (late.ts), an error
+ *  one included — a thrown error carries no such word. */
+function asAsync(answer: () => Json | ExecOutcome): ExecOutcome {
+  try {
+    const a = answer();
+    return typeof a === "string"
+      ? { output: a, files: [], async: true }
+      : { ...(a as ExecOutcome), async: true };
+  } catch (err) {
+    const output = err instanceof Error ? err.message : String(err);
+    return { output, files: [], async: true, is_error: true };
+  }
+}
+
+/** Follow a job on, waking on what the call asked to be woken by. */
+function follow(jobs: Jobs, job: Job, wake?: RegExp): void {
+  jobs.follow(job);
+  if (wake) jobs.wake(job, wake);
+}
+
+/** How a call's wait ended, beside the look at its job. */
+export interface Waited {
+  input: BashInput;
+  waitMs: number;
+  wake?: RegExp;
+  report?: (facts: ExecFacts) => void;
+  aborted: boolean;
+  /** Its shell's own status, where the harness awaited it: the exit status when the job
+   *  wrote none (it was killed). */
+  code?: number;
+  /** The job leads a group of its own: what it leaves running is told by the group. */
+  isolated: boolean;
+}
+
+/** A call's answer once its wait is over (§9), wherever its job ran: what it printed and how
+ *  it exited — or, still running, or with something left running in its group, the job
+ *  followed on and the answer async. `spill` is told when the answer names the log, which
+ *  then stays. A failure throws, as `settle` does. */
+export async function answered(
+  jobs: Jobs,
+  job: Job,
+  look: Look,
+  w: Waited,
+  spill?: () => void,
+): Promise<Json | ExecOutcome> {
+  job.read = look.size;
+  job.spool.feed(look.bytes, false); // what it printed is the answer's; its last line, the glance
+  const printed = printedOf(look, job.files.log);
+  const group = w.isolated ? ` as group ${job.pgid}` : "";
+  if (look.rc === undefined && look.running && !w.aborted) {
+    // still running at the end of its wait: answered with what it printed so far, and
+    // followed on
+    w.report?.({ bytes: printed.bytes });
+    follow(jobs, job, w.wake);
+    const text = windowed(printed, w.input) || "(no output yet)";
+    return {
+      output: `${text}\n\n[still running after ${w.waitMs / 1000}s${group}: what it prints ` +
+        `goes on in ${job.files.log}, and you are told when it ends]`,
+      files: [],
+      async: true,
+    };
+  }
+  // its shell exited, or was killed: the exit status is the one it wrote, unless the kill
+  // came first
+  const exitCode = look.rc ?? w.code;
+  if (exitCode === undefined) {
+    w.report?.({ bytes: printed.bytes });
+    throw new Error(
+      `${windowed(printed, w.input, spill) || "(no output)"}\n\n[killed before its exit ` +
+        "status was written]",
+    );
+  }
+  // a group that still has members after its shell exited is a job the command left
+  // (`cmd &`): the OS says so, never a parse of the command
+  if (w.isolated && !w.aborted && look.alive) {
+    job.ended = true;
+    await jobs.host.told(job);
+    follow(jobs, job, w.wake);
+    const note = `[left running${group}: what it prints goes on in ${job.files.log}; you are ` +
+      "told when it ends]";
+    // what it left is told later, so the answer is async like one past its wait: a
+    // harness that goes down first owes its end (late.ts)
+    return asAsync(() => settle(printed, { exitCode }, w.input, undefined, w.report, note));
+  }
+  return settle(printed, { exitCode, aborted: w.aborted }, w.input, spill, w.report);
+}
+
+/** A call's `wake`, as a job found again follows it: one that will not compile was refused
+ *  when the call was made, and is none here. */
+function wakeAgain(pattern: string | undefined): RegExp | undefined {
+  try {
+    return wakeOf(pattern);
+  } catch {
+    return undefined;
+  }
+}
+
+const WENT = "the harness went down while it ran";
+
+/** What a call the last harness never answered left, as the call's answer (§9): how its job
+ *  ended, or — still running — answered async and followed on, its end told later.
+ *  Undefined when the call left no job. */
+export async function recovered(
+  jobs: Jobs,
+  out: string,
+  input: BashInput,
+  use: CallRef,
+): Promise<Json | ExecOutcome | undefined> {
+  const found = await jobs.adopt(use.id, out, use, input.command, windowOf(input));
+  if (!found) return undefined;
+  const { job, look } = found;
+  job.spool.take(); // the answer is what it printed so far
+  const printed = printedOf(look, job.files.log);
+  const runs = `it runs on as group ${job.pgid}: what it prints goes on in ${job.files.log}, ` +
+    "and you are told when it ends";
+  if (look.gone) throw new Error(`[${WENT}; ${look.gone}]`);
+  if (look.rc !== undefined && !look.running) {
+    const exitCode = look.rc;
+    job.ended = true;
+    if (look.alive) {
+      await jobs.host.told(job);
+      follow(jobs, job, wakeAgain(input.wake));
+      return asAsync(() =>
+        settle(printed, { exitCode }, input, undefined, undefined, `[${WENT}; what ${runs}]`)
+      );
+    }
+    await jobs.host.done(job);
+    return settle(printed, { exitCode }, input, undefined, undefined, `[${WENT}, and it ended]`);
+  }
+  if (look.running || look.alive) {
+    job.unseen = false; // seen running, by this answer
+    follow(jobs, job, wakeAgain(input.wake));
+    const text = windowed(printed, input) || "(no output yet)";
+    return { output: `${text}\n\n[${WENT}; ${runs}]`, files: [], async: true };
+  }
+  await jobs.host.done(job);
+  throw new Error(
+    `${windowed(printed, input) || "(no output)"}\n\n[${WENT}, and it was killed before its ` +
+      "exit status was written]",
+  );
+}
+
+/** A call the last harness answered async and never told the end of, followed on (§9):
+ *  its end is told when it comes — at once, when it came while nobody followed it. False
+ *  when the call left no job. */
+export async function resumed(
+  jobs: Jobs,
+  out: string,
+  input: BashInput,
+  use: CallRef,
+): Promise<boolean> {
+  const found = await jobs.adopt(use.id, out, use, input.command, windowOf(input));
+  if (!found) return false;
+  follow(jobs, found.job, wakeAgain(input.wake));
+  await jobs.look();
+  return true;
+}
+
 export function bashTool(opts: BashOptions): ExecTool {
   const waitMsDefault = opts.defaultWaitMs ?? DEFAULT_BASH_WAIT_MS;
   // the cwd lives in the shared state when the plane provides one (so it can report it),
   // else in a local closure var
   const state = opts.state ?? { cwd: opts.workspace };
-  const jobs = opts.jobs ?? new Jobs();
-  // the spool and the spill sit in the agent's own folder wherever the shell stands —
-  // never in a repo it walked into; written by the harness, the agent's to keep
-  const outPath = async () => {
-    await Deno.mkdir(`${opts.workspace}/.out`, { recursive: true });
-    await own(`${opts.workspace}/.out`, opts.user);
-    return `${opts.workspace}/.out/bash-${newId()}.log`;
-  };
-  const spill = async (output: string) => {
-    const path = await outPath();
-    await Deno.writeTextFile(path, output);
-    await own(path, opts.user);
-    return path;
-  };
+  const jobs = opts.jobs ?? new Jobs(localHost());
+  // the jobs' files sit in the agent's own folder wherever the shell stands — never in a
+  // repo it walked into; written by the job as the agent's uid, the agent's to keep
+  const out = `${opts.workspace}/.out`;
 
   return {
     ...bashShape(waitMsDefault),
@@ -335,22 +441,28 @@ export function bashTool(opts: BashOptions): ExecTool {
         // the identity trio follows the uid, not the harness process
         Object.assign(env, { HOME: opts.user.home, USER: opts.user.name, LOGNAME: opts.user.name });
       }
+      await Deno.mkdir(out, { recursive: true });
+      await own(out, opts.user);
+      // the call's id names its job: a harness that finds the call unanswered finds the job
+      const id = use?.id ?? newId();
+      const files = jobFiles(out, id);
 
-      const wrapped = wrapCommand(command);
-      // isolate the command in its own process group (setsid) so a runaway foreground tree
-      // OR a leftover background job can be reaped by the group — see killGroup / opts.jobs
+      // the job's shell in a session and process group of its own (setsid): an abort kills
+      // the whole tree, a background job the command leaves is told by the group, and
+      // nothing of it dies with the harness
       const isolated = hasSetsid();
+      const args = ["-c", JOB_SHELL, "liquen-job", files.base, jobCommand(command, files)];
       let child: Deno.ChildProcess;
       try {
         child = new Deno.Command(isolated ? "setsid" : "bash", {
-          args: isolated ? ["bash", "-c", wrapped] : ["-c", wrapped],
+          args: isolated ? ["bash", ...args] : args,
           cwd: state.cwd,
           clearEnv: true,
-          env,
+          env: { ...env, [JOB_ENV]: id },
           ...(opts.user ? { uid: opts.user.uid, gid: opts.user.gid } : {}),
           stdin: "null",
-          stdout: "piped",
-          stderr: "piped",
+          stdout: "null",
+          stderr: "null",
         }).spawn();
       } catch (err) {
         // the shell could not stand where it was: the directory is gone, or this uid may
@@ -364,36 +476,14 @@ export function bashTool(opts: BashOptions): ExecTool {
             ` — the next call starts in ${opts.workspace}`,
         );
       }
-      const pgid = isolated ? child.pid : undefined; // setsid exec's bash → pid == group id
+      const pgid = child.pid; // setsid exec's bash → pid == group id
       const killGroup = () => {
         try {
-          if (pgid !== undefined) Deno.kill(-pgid, "SIGKILL"); // the whole tree
-          else child.kill("SIGKILL");
+          Deno.kill(isolated ? -pgid : pgid, "SIGKILL"); // the whole tree
         } catch { /* already gone */ }
       };
 
-      // Merge both streams in arrival order, into the spool. A job the command leaves
-      // running (`cmd &`) may hold the pipe long after bash exits, so the answer never
-      // waits for the pipe to close: it waits for bash's OWN exit and a short grace, and
-      // the readers go on into the spool for as long as anything writes.
-      const spool = new Spool();
-      const r1 = child.stdout.getReader();
-      const r2 = child.stderr.getReader();
-      const pump = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
-        try {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            spool.push(value);
-          }
-        } catch { /* cancelled: nothing is told of the call any more */ }
-      };
-      const pumps = Promise.allSettled([pump(r1), pump(r2)]).finally(() => spool.close());
-      const release = () => {
-        r1.cancel().catch(() => {});
-        r2.cancel().catch(() => {});
-      };
-
+      const started = Date.now();
       const onAbort = () => killGroup();
       if (signal.aborted) onAbort();
       else signal.addEventListener("abort", onAbort, { once: true });
@@ -401,96 +491,55 @@ export function bashTool(opts: BashOptions): ExecTool {
       const waited = new Promise<undefined>((r) => {
         waitTimer = setTimeout(() => r(undefined), waitMs);
       });
-      const started = Date.now();
       const status = await Promise.race([child.status, waited]);
       clearTimeout(waitTimer);
       signal.removeEventListener("abort", onAbort);
 
+      const job: Job = {
+        id,
+        files,
+        pgid,
+        command: command.trim(),
+        since: started,
+        ...(use ? { use } : {}),
+        window: windowOf(call),
+        read: 0,
+        spool: new Spool(files.log),
+        ended: false,
+      };
       if (status === undefined) {
-        // still running at the end of its wait: the call is answered with what it printed
-        // so far, and the command runs on as a job, its output into the spool
-        const path = await outPath();
-        const so = spool.open(path);
-        await own(path, opts.user);
-        report?.({ bytes: new TextEncoder().encode(so).length });
-        const job: Job = {
-          pgid: pgid ?? child.pid,
-          command: command.trim(),
-          since: started,
-          ...(use ? { use } : {}),
-          spool,
-          pipe: pumps,
-          running: true,
-          release,
-        };
-        if (pgid !== undefined) jobs.add(job);
-        if (wake) jobs.wake(job, wake);
-        child.status.then((s) => jobs.answer(job, s, call))
+        child.status.then(() => jobs.look())
           .catch((err) => console.error(`[bash] group ${pgid}:`, err));
-        const text = (await windowed(so, call, () => Promise.resolve(path))) || "(no output yet)";
-        const where = pgid !== undefined ? ` as group ${pgid}` : "";
-        return {
-          output: `${text}\n\n[still running after ${waitMs / 1000}s${where}: what it prints ` +
-            `goes on in ${path}, and you are told when it ends]`,
-          files: [],
-          async: true,
-        };
+      } else if (STICKY_CWD && !signal.aborted) {
+        const dir = (await Deno.readTextFile(files.cwd).catch(() => "")).trim();
+        if (dir) state.cwd = dir;
       }
-
-      // bash itself exited (or was killed). Normal command: the pumps are already done (the
-      // pipe closed) and they win at once; a job holding the pipe leaves them reading, and
-      // the grace flushes what is already written
-      let graceTimer: ReturnType<typeof setTimeout> | undefined;
-      const grace = new Promise<"grace">((r) => {
-        graceTimer = setTimeout(() => r("grace"), GRACE_MS);
-      });
-      const held = (await Promise.race([pumps, grace])) === "grace";
-      clearTimeout(graceTimer);
-      // a group that still has members after bash exited is a job the command left (`cmd
-      // &`): the OS says so, never a parse of the command
-      const left = pgid !== undefined && !signal.aborted && groupAlive(pgid);
-      let note: string | undefined;
-      let raw: string | undefined;
-      if (left) {
-        const job: Job = {
-          pgid: pgid!,
-          command: command.trim(),
-          since: started,
-          ...(use ? { use } : {}),
-        };
-        if (held) {
-          // it writes to the pipe: read on into the spool, so it lives past the call
-          const path = await outPath();
-          raw = spool.open(path);
-          await own(path, opts.user);
-          job.spool = spool;
-          job.pipe = pumps;
-          job.release = release;
-          if (wake) jobs.wake(job, wake);
-        }
-        jobs.add(job);
-        note = `[left running as group ${pgid}${
-          job.spool ? `: what it prints goes on in ${job.spool.path}` : ""
-        }; you are told when it ends]`;
-      } else if (held) {
-        // something outside the group holds the pipe (a daemon that left it): nothing
-        // tracks it, so the readers stop here
-        release();
+      const look = (await jobs.host.look([job])).get(job)!;
+      const how: Waited = {
+        input: call,
+        waitMs,
+        ...(wake ? { wake } : {}),
+        ...(report ? { report } : {}),
+        aborted: signal.aborted,
+        ...(status ? { code: status.code } : {}),
+        isolated,
+      };
+      let spilled = false;
+      try {
+        return await answered(jobs, job, look, how, () => spilled = true);
+      } finally {
+        // nothing of it runs: the job is over and its files go, the log kept when the
+        // answer names it
+        if (!jobs.has(job)) await forget(files, spilled);
       }
-      const end = { code: status.code, timedOut: false, aborted: signal.aborted, waitMs };
-      const answer = await settle(raw ?? spool.answered(), end, call, state, spill, report, note);
-      if (!left) return answer;
-      // what it left is told later, so the answer is async like one past its wait: a
-      // harness that goes down first owes its end (late.ts)
-      return typeof answer === "string"
-        ? { output: answer, files: [], async: true }
-        : { ...(answer as ExecOutcome), async: true };
     },
+
+    recover: (input, use) => recovered(jobs, out, input as unknown as BashInput, use),
   };
 }
 
 /** The `wake` pattern a call carries, compiled; absent when it carries none. */
-function wakeOf(pattern: string | undefined): RegExp | undefined {
+export function wakeOf(pattern: string | undefined): RegExp | undefined {
   if (pattern === undefined || pattern === "") return undefined;
   try {
     return new RegExp(pattern);
@@ -499,265 +548,209 @@ function wakeOf(pattern: string | undefined): RegExp | undefined {
   }
 }
 
-const took = (ms: number): string => {
-  const s = Math.floor(ms / 1000);
-  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
+const ignoreGone = (err: unknown) => {
+  if (!(err instanceof Deno.errors.NotFound)) throw err;
 };
 
-/** A line as it last stood on a terminal: what follows its last carriage return (a
- *  progress bar redraws itself on one line), clipped. */
-function lineOf(raw: string): string {
-  const line = raw.slice(raw.lastIndexOf("\r") + 1).trimEnd();
-  return line.length > LINE_CHARS ? `${clipEnd(line, LINE_CHARS - 1)}…` : line;
-}
-
-/**
- * A call's output as the harness reads it off the pipe (§9). Until the call is answered it
- * is held for the answer. From then on, while anything still writes to the pipe, every byte
- * goes to the spool file — what was held first, so the file is the whole output — and the
- * harness keeps three things of it: the text since the last thing told of the call (the
- * next update's tail), the latest line (the job's glance), and each line, for a `wake`.
- * Reading on is what lets a job outlive its call: a writer whose pipe nobody reads dies on
- * its next write.
- */
-export class Spool {
-  private held: Uint8Array[] = [];
-  private file?: Deno.FsFile;
-  private decoder = new TextDecoder();
-  private partial = "";
-  private since = "";
-  private cut = false;
-  /** Where the output goes once the call is answered. */
-  path?: string;
-  /** The latest line printed after the answer. */
-  glance = "";
-  onLine?: (line: string) => void;
-
-  push(bytes: Uint8Array): void {
-    if (!this.file) {
-      if (this.path === undefined) this.held.push(bytes);
-      return;
-    }
-    for (let at = 0; at < bytes.length;) at += this.file.writeSync(bytes.subarray(at));
-    this.read(this.decoder.decode(bytes, { stream: true }));
+/** A job's record gone, its log kept (touched: its days count from now) or removed. */
+async function forget(files: ReturnType<typeof jobFiles>, keepLog: boolean): Promise<void> {
+  for (const path of [files.pgid, files.rc, `${files.rc}~`, files.end, files.cwd]) {
+    await Deno.remove(path).catch(ignoreGone);
   }
-
-  /** What was printed before the answer, whole. */
-  answered(): string {
-    const all = new Uint8Array(this.held.reduce((n, c) => n + c.length, 0));
-    let at = 0;
-    for (const c of this.held) {
-      all.set(c, at);
-      at += c.length;
-    }
-    return new TextDecoder().decode(all);
-  }
-
-  /** From now on the output goes to `path`, after everything printed so far — which is
-   *  handed back for the answer, and no longer held. */
-  open(path: string): string {
-    const so = this.answered();
-    this.path = path;
-    this.file = Deno.openSync(path, { write: true, create: true, truncate: true });
-    for (const c of this.held) {
-      for (let at = 0; at < c.length;) at += this.file.writeSync(c.subarray(at));
-    }
-    this.held = [];
-    // what it printed so far is the answer's, but its last line is the glance until a
-    // newer one comes
-    this.read(so, false);
-    return so;
-  }
-
-  /** The text since the last take, and whether its head was dropped (the file has it). */
-  take(): { text: string; cut: boolean } {
-    const taken = { text: this.since, cut: this.cut };
-    this.since = "";
-    this.cut = false;
-    return taken;
-  }
-
-  close(): void {
-    if (this.file) this.read(this.decoder.decode());
-    this.file?.close();
-    this.file = undefined;
-  }
-
-  /** `told`: the text is news after the answer — kept for the next update, and offered to
-   *  a wake. */
-  private read(text: string, told = true): void {
-    if (told) this.since += text;
-    if (this.since.length > SINCE_CHARS) {
-      this.since = this.since.slice(-SINCE_CHARS);
-      this.cut = true;
-    }
-    const lines = (this.partial + text).split("\n");
-    this.partial = lines.pop()!;
-    for (const raw of lines) {
-      const line = lineOf(raw);
-      if (!line || line.startsWith(CWD_MARK)) continue; // the shell's end, not the command's
-      this.glance = line;
-      if (told) this.onLine?.(line);
-    }
-    const now = lineOf(this.partial);
-    if (now && !now.startsWith(CWD_MARK)) this.glance = now;
+  if (!keepLog) await Deno.remove(files.log).catch(ignoreGone);
+  else {
+    const now = new Date();
+    await Deno.utime(files.log, now, now).catch(ignoreGone);
   }
 }
 
-/** Output told after the answer: its tail in the call's window, the footer naming the
- *  spool when the window (or the kept text) does not hold all of it. */
-function tailOf(
-  taken: { text: string; cut: boolean },
-  input: Pick<BashInput, "max_lines" | "max_bytes">,
-  path?: string,
-): string {
-  const t = truncateTail(taken.text.trimEnd(), {
-    maxLines: input.max_lines,
-    maxBytes: input.max_bytes,
-  });
-  if (!t.text) return "";
-  return t.truncated || taken.cut ? `${t.text}\n\n[its last lines — full output: ${path}]` : t.text;
+/** The logs no job runs behind any more, removed once `SPOOL_KEEP_MS` passed since their
+ *  last word. */
+export async function sweepLogs(out: string, now = Date.now()): Promise<void> {
+  try {
+    for await (const entry of Deno.readDir(out)) {
+      const m = /^bash-(.+)\.log$/.exec(entry.name);
+      if (!m) continue;
+      const files = jobFiles(out, m[1]);
+      const running = await Deno.stat(files.pgid).then(() => true, () => false);
+      const stat = await Deno.stat(files.log).catch(() => undefined);
+      if (running || !stat?.mtime || now - stat.mtime.getTime() < SPOOL_KEEP_MS) continue;
+      await forget(files, false);
+    }
+  } catch (err) {
+    ignoreGone(err);
+  }
 }
 
-/**
- * One shell's jobs (§9): the calls still running past their wait, and the process groups
- * calls left running. Each is told against the call that started it (`tell`, late.ts) —
- * the lines it was asked to wake on, the call's own end with its exit status, and the end
- * of everything it started, final — and reaped with the shell.
- */
-export class Jobs {
-  private live = new Set<Job>();
-  private probe?: ReturnType<typeof setInterval>;
-  constructor(private tell?: (u: ShellUpdate) => void) {}
-
-  get size(): number {
-    return this.live.size;
+async function readAt(file: Deno.FsFile, start: number, end: number): Promise<Uint8Array> {
+  const buf = new Uint8Array(Math.max(0, end - start));
+  await file.seek(start, Deno.SeekMode.Start);
+  let at = 0;
+  while (at < buf.length) {
+    const n = await file.read(buf.subarray(at));
+    if (n === null) break;
+    at += n;
   }
-  [Symbol.iterator](): Iterator<Job> {
-    return this.live.values();
-  }
+  return buf.subarray(0, at);
+}
 
-  add(job: Job): void {
-    this.live.add(job);
-    this.probe ??= setInterval(() => {
-      this.settle().catch((err) => console.error("[bash] job probe:", err));
-    }, JOB_PROBE_MS);
+/** A job's log from `from` on, as one look reads it: its older half dropped first when it
+ *  passed `SPOOL_CAP`, and only its last `LOOK_BYTES` when more than that is new. */
+async function readLog(
+  path: string,
+  from: number,
+): Promise<Pick<Look, "bytes" | "size" | "shifted" | "skipped">> {
+  let file: Deno.FsFile;
+  try {
+    file = await Deno.open(path, { read: true, append: true });
+  } catch (err) {
+    ignoreGone(err);
+    return { bytes: new Uint8Array(), size: 0, shifted: false, skipped: false };
   }
-
-  private say(job: Job, output: string, flags: { is_error?: boolean; final?: boolean } = {}) {
-    if (!job.use || !this.tell) return;
-    this.tell({ use: job.use, command: job.command, output, ...flags });
-  }
-
-  /** The job's last word, told final, and the job off the list. Once: false when another
-   *  path told it already. */
-  private end(job: Job, output: string, is_error?: boolean): boolean {
-    if (!this.live.delete(job)) return false;
-    job.release?.();
-    this.say(job, output, { ...(is_error ? { is_error } : {}), final: true });
-    if (this.live.size === 0) {
-      clearInterval(this.probe);
-      this.probe = undefined;
+  try {
+    let size = (await file.stat()).size;
+    let shifted = false;
+    let skipped = false;
+    if (size > SPOOL_CAP) {
+      // the newer half, from a line's start: read, the file emptied and written back in
+      // append mode — as the job writes it, so a line it adds meanwhile is never overwritten
+      const half = await readAt(file, size - SPOOL_CAP / 2, size);
+      const kept = half.subarray(half.indexOf(10) + 1);
+      const cut = size - kept.length;
+      await file.truncate(0);
+      for (let at = 0; at < kept.length;) at += await file.write(kept.subarray(at));
+      shifted = true;
+      skipped = from < cut;
+      from = skipped ? 0 : from - cut;
+      size = (await file.stat()).size;
     }
+    if (size - from > LOOK_BYTES) {
+      from = size - LOOK_BYTES;
+      skipped = true;
+    }
+    const bytes = await readAt(file, from, size);
+    return { bytes, size: from + bytes.length, shifted, skipped };
+  } finally {
+    file.close();
+  }
+}
+
+/** Is the process still running? (harmless probe.) */
+function pidAlive(pid: number): boolean {
+  try {
+    Deno.kill(pid, "SIGWINCH");
     return true;
-  }
-
-  /** The call's own bash exited after its answer: its exit status and what it printed
-   *  since, final when its group went with it. A group that lives on stays a job, and the
-   *  probe tells its end. */
-  async answer(job: Job, status: Deno.CommandStatus, input: BashInput): Promise<void> {
-    await drained(job.pipe);
-    job.running = false;
-    if (!this.live.has(job)) return; // reaped: the harness said so already
-    const taken = job.spool!.take();
-    const { output, exitCode } = peel(taken.text, status.code);
-    const killed = status.signal !== null && exitCode === status.code;
-    const how = `${killed ? `killed by ${status.signal}` : `exited ${exitCode}`} after ${
-      took(Date.now() - job.since)
-    }`;
-    const body = tailOf({ text: output, cut: taken.cut }, input, job.spool!.path);
-    const said = body ? `${how}\n${body}` : `${how}, printing nothing more`;
-    if (groupAlive(job.pgid)) {
-      this.say(job, `${said}\n\n[what it started runs on as group ${job.pgid}]`, {
-        ...(exitCode !== 0 ? { is_error: true } : {}),
-      });
-    } else this.end(job, said, exitCode !== 0);
-  }
-
-  /** The jobs whose group has no member left, told ended. A call whose own bash still
-   *  runs is the call's to tell (`answer`). */
-  async settle(): Promise<void> {
-    for (const job of [...this.live]) {
-      if (job.running || groupAlive(job.pgid)) continue;
-      await drained(job.pipe);
-      if (!this.live.has(job)) continue;
-      const head = `what it left running ended after ${took(Date.now() - job.since)} ` +
-        `(group ${job.pgid}); its exit status is not known`;
-      const tail = job.spool ? tailOf(job.spool.take(), {}, job.spool.path) : "";
-      this.end(
-        job,
-        job.spool
-          ? (tail ? `${head}; it printed:\n${tail}` : `${head}, and it printed nothing more`)
-          : `${head}: what it wrote holds the outcome`,
-      );
-    }
-  }
-
-  /** The lines of the job's output that match `re` are told as they come, a few at a time
-   *  (`WAKE_BATCH_MS`, `WAKE_GAP_MS`, `WAKE_LINES`): news that wakes the agent. Lines still
-   *  waiting when the job ends are dropped — its last word carries its tail. */
-  wake(job: Job, re: RegExp): void {
-    if (!job.spool) return;
-    let pending: string[] = [];
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let last = 0;
-    const flush = () => {
-      timer = undefined;
-      const lines = pending;
-      pending = [];
-      if (!this.live.has(job) || lines.length === 0) return;
-      last = Date.now();
-      const more = lines.length - WAKE_LINES;
-      this.say(
-        job,
-        lines.slice(0, WAKE_LINES).join("\n") +
-          (more > 0 ? `\n[and ${more} more line${more === 1 ? "" : "s"} like these]` : ""),
-      );
-    };
-    job.spool.onLine = (line) => {
-      if (!re.test(line)) return;
-      pending.push(line);
-      timer ??= setTimeout(flush, Math.max(WAKE_BATCH_MS, last + WAKE_GAP_MS - Date.now()));
-    };
-    const release = job.release;
-    job.release = () => {
-      clearTimeout(timer);
-      pending = [];
-      release?.();
-    };
-  }
-
-  /** Kill every job (§9), each told final: nothing outlives the harness, and the agent
-   *  learns at its next turn what stopped with it. */
-  reap(): void {
-    for (const job of [...this.live]) {
-      try {
-        Deno.kill(-job.pgid, "SIGKILL");
-      } catch { /* already gone */ }
-      this.end(
-        job,
-        `stopped with the harness after ${took(Date.now() - job.since)} (group ${job.pgid})`,
-      );
-    }
+  } catch {
+    return false;
   }
 }
 
-/** Waits for the pipe to close, at most the grace: what is already written is read. */
-async function drained(pumps: Promise<unknown> | undefined): Promise<void> {
-  if (!pumps) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([pumps, new Promise((r) => (timer = setTimeout(r, GRACE_MS)))]);
-  clearTimeout(timer);
+/** Does a process of group `pgid` carry the call's id (`JOB_ENV`)? What tells a job's group
+ *  from a stranger's that took its number — read off `/proc`, so never where there is
+ *  none. */
+async function marked(pgid: number, id: string): Promise<boolean> {
+  const mark = `${JOB_ENV}=${id}`;
+  try {
+    for await (const entry of Deno.readDir("/proc")) {
+      if (!/^\d+$/.test(entry.name)) continue;
+      try {
+        const stat = await Deno.readTextFile(`/proc/${entry.name}/stat`);
+        // `pid (comm) state ppid pgrp …`: the command may hold spaces and parentheses
+        if (Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2]) !== pgid) continue;
+        const environ = await Deno.readTextFile(`/proc/${entry.name}/environ`);
+        if (environ.split("\0").includes(mark)) return true;
+      } catch { /* gone meanwhile, or not ours to read */ }
+    }
+  } catch { /* no /proc */ }
+  return false;
+}
+
+/** This machine as the jobs' host (jobs.ts): the files read where they lie, the group asked
+ *  of the kernel, and every change to the files seen as it happens (inotify). */
+export function localHost(): JobHost {
+  return {
+    probeMs: JOB_PROBE_MS,
+    async look(jobs) {
+      const looks = new Map<Job, Look>();
+      for (const job of jobs) {
+        // the processes first, the files after: a shell seen gone has written its status
+        const running = pidAlive(job.pgid);
+        const alive = running || groupAlive(job.pgid);
+        const rc = await Deno.readTextFile(job.files.rc).then((s) => Number(s.trim()), () => NaN);
+        const told = await Deno.stat(job.files.end).then(() => true, () => false);
+        const log = await readLog(job.files.log, job.read);
+        looks.set(job, {
+          ...log,
+          ...(Number.isInteger(rc) ? { rc } : {}),
+          ...(told ? { told } : {}),
+          running,
+          alive,
+        });
+      }
+      return looks;
+    },
+    async find(id, out): Promise<Found | null> {
+      const files = jobFiles(out, id);
+      try {
+        const [text, stat] = await Promise.all([
+          Deno.readTextFile(files.pgid),
+          Deno.stat(files.pgid),
+        ]);
+        const pgid = Number(text.trim());
+        if (!Number.isInteger(pgid) || pgid <= 1) return null;
+        return {
+          pgid,
+          since: stat.mtime?.getTime() ?? Date.now(),
+          ours: await marked(pgid, id),
+        };
+      } catch (err) {
+        ignoreGone(err);
+        return null;
+      }
+    },
+    told: (job) => Deno.rename(job.files.rc, job.files.end).catch(ignoreGone),
+    async done(job) {
+      await forget(job.files, true);
+      await sweepLogs(job.files.base.slice(0, job.files.base.lastIndexOf("/")));
+    },
+    kill(jobs) {
+      for (const job of jobs) {
+        try {
+          Deno.kill(-job.pgid, "SIGKILL");
+        } catch {
+          try {
+            Deno.kill(job.pgid, "SIGKILL"); // no group of its own (no setsid)
+          } catch { /* already gone */ }
+        }
+      }
+      return Promise.resolve();
+    },
+    watch(job, changed) {
+      let watcher: Deno.FsWatcher;
+      try {
+        watcher = Deno.watchFs(job.files.base.slice(0, job.files.base.lastIndexOf("/")), {
+          recursive: false,
+        });
+      } catch {
+        return () => {}; // the probe alone, then
+      }
+      const name = `bash-${job.id}.`;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      (async () => {
+        for await (const e of watcher) {
+          if (timer !== undefined || !e.paths.some((p) => p.includes(name))) continue;
+          timer = setTimeout(() => {
+            timer = undefined;
+            changed();
+          }, WATCH_SETTLE_MS);
+        }
+      })().catch(() => {});
+      return () => {
+        clearTimeout(timer);
+        watcher.close();
+      };
+    },
+  };
 }
 
 /** One SESSION's shell on its agent's ground (§9): its own cwd and its own job set.
@@ -771,10 +764,15 @@ export interface ExecPlane {
   /** Live environment lines for the ambient block (§5): cwd · git (if a repo) · background
    *  jobs (dead ones pruned here — the reliable, every-think place, not at registration). */
   ambient(): Promise<string[]>;
-  /** Kill every background job this shell left running (§9): called on harness shutdown so
-   *  nothing outlives the process that spawned it. Each is told stopped, where the shell
-   *  tells its jobs. */
+  /** Kill every job this shell follows (§9): the org was stopped (`liquen stop`). Each is
+   *  told killed, where the shell tells its jobs. */
   reap(): Promise<void>;
+  /** Stop following this shell's jobs and leave them running: the harness restarts, and
+   *  the next one adopts them (`resume`). */
+  leave(): void;
+  /** Follow on a job a call left, which the last harness answered async and never told
+   *  the end of (late.ts): false when the call left none. */
+  resume(use: CallRef, input: BashInput): Promise<boolean>;
   /** Where the next call starts: the principal's own directory while an interface attached
    *  from one is connected (the door passes it along), the workspace when none is given.
    *  The place is tried first, by the same spawn a call makes and as the same uid, so a
@@ -826,42 +824,15 @@ async function gitLine(cwd: string): Promise<string | null> {
   }
 }
 
-const ageOf = (since: number): string => {
-  const s = Math.floor((Date.now() - since) / 1000);
-  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
-};
-
-/** A shell's ambient lines (§5): cwd · git (if a repo) · background jobs. Settles dead
- *  groups out of `jobs` here too — the every-think place — so a death this look sees first
- *  is told before the list leaves it out. */
+/** A shell's ambient lines (§5): cwd · git (if a repo) · background jobs. Looks at the jobs
+ *  here too — the every-think place — so an end this look sees first is told before the
+ *  list leaves it out. */
 export async function bashAmbient(state: BashState, jobs: Jobs): Promise<string[]> {
   const lines = [`cwd: ${state.cwd}`];
   const git = await gitLine(state.cwd);
   if (git) lines.push(git);
-  await jobs.settle();
+  await jobs.look();
   return [...lines, ...jobLines(jobs, await groupMembers(jobs))];
-}
-
-/** A process alive in a job's group: its pid, the kill handle, and its command line. */
-export interface Member {
-  pid: number;
-  args: string;
-}
-
-/** `ps -e -o pgid=,pid=,args=` lines (Linux and macOS print the same three columns) → the
- *  members of each group asked for, by pid. A group with no line has no entry. */
-export function parseMembers(ps: string, pgids: Iterable<number>): Map<number, Member[]> {
-  const want = new Set(pgids);
-  const members = new Map<number, Member[]>();
-  for (const line of ps.split("\n")) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
-    if (!m || !want.has(Number(m[1]))) continue;
-    const pgid = Number(m[1]);
-    const list = members.get(pgid) ?? [];
-    list.push({ pid: Number(m[2]), args: m[3].trim() });
-    members.set(pgid, list.sort((a, b) => a.pid - b.pid));
-  }
-  return members;
 }
 
 /** The live members of the jobs' groups, from one `ps`. Empty when there are no jobs, or
@@ -879,38 +850,6 @@ async function groupMembers(jobs: Jobs): Promise<Map<number, Member[]>> {
   } catch {
     return new Map();
   }
-}
-
-/** A command line for the ambient line: the program by its basename, one line, and when
- *  long, its head and its tail (the tail is where a script's name is). */
-function brief(args: string): string {
-  const one = args.replace(/\s+/g, " ").trim().replace(/^\S*\//, "");
-  return one.length > 72 ? `${one.slice(0, 44)}…${one.slice(-27)}` : one;
-}
-
-/** The background section of the ambient block, one section in the anchor's grammar (xi's
- *  standing lists): `· what — when · handle`. What runs is the group's live members, not
- *  the call that launched them (a write that ended with `vite &` would otherwise be listed
- *  as the write, running on, and get killed for it): the first member's command line, and
- *  how many more; `pid` is the first member, `kill <pid>` stops it, and with more than one
- *  the group is named too, `kill -- -<group>` stops them all. Without members (no ps), the
- *  launch command clipped, and the group as the handle. The full launch text lives on the
- *  Job. A job whose output the harness reads wears its GLANCE beside its age: the latest
- *  line it printed. None when nothing runs. */
-export function jobLines(jobs: Iterable<Job>, members = new Map<number, Member[]>()): string[] {
-  const all = [...jobs];
-  if (all.length === 0) return [];
-  const line = (j: Job) => {
-    const live = members.get(j.pgid) ?? [];
-    const glance = j.spool?.glance;
-    const said = glance && glance.length > 60 ? `${clipEnd(glance, 59)}…` : glance;
-    const when = `running ${ageOf(j.since)}${said ? `, last line "${said}"` : ""}`;
-    if (live.length === 0) return `· ${brief(j.command)} — ${when} · group ${j.pgid}`;
-    const more = live.length > 1 ? `, and ${live.length - 1} more` : "";
-    const group = live.length > 1 ? ` · group ${j.pgid}` : "";
-    return `· ${brief(live[0].args)}${more} — ${when} · pid ${live[0].pid}${group}`;
-  };
-  return [`background — ${all.length} job${all.length === 1 ? "" : "s"}:`, ...all.map(line)];
 }
 
 /** This process's module cache — the one the shims read. Asked of the deno that runs the
@@ -1044,9 +983,11 @@ export async function installExecGround(
   // the uid that works here must be able to edit them
   await ownTree(workspace, user);
   if (user) console.error(`[exec] ${agentId}: spawns run as uid ${user.uid}`);
+  await sweepLogs(`${workspace}/.out`);
+  const host = localHost();
   return {
     shell(tell?: (u: ShellUpdate) => void): ExecPlane {
-      const jobs = new Jobs(tell);
+      const jobs = new Jobs(host, tell);
       const state: BashState = { cwd: workspace };
       return {
         exec: {
@@ -1087,10 +1028,9 @@ export async function installExecGround(
           }
           state.cwd = path;
         },
-        reap() {
-          jobs.reap();
-          return Promise.resolve();
-        },
+        reap: () => jobs.reap(),
+        leave: () => jobs.leave(),
+        resume: (use, input) => resumed(jobs, `${workspace}/.out`, input, use),
       };
     },
   };

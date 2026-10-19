@@ -6,18 +6,13 @@
  * folder, the PATH cascade, its uid), and the shell each session opens there. One provider
  * owns all of it, and main holds only the provider: `sandbox.forAgent(id).session(sid)` is
  * where a session's `exec`, `ambient`, `stand`, `reap` and `files` come from, and `close`
- * reaps every shell and stops the proxy. The proxy travels with bash because it exists for
- * bash — user space is what must hold a placeholder instead of a credential — so a host
+ * ends or leaves every shell's jobs and stops the proxy. The proxy travels with bash because
+ * it exists for bash — user space is what must hold a placeholder instead of a credential — so a host
  * with no exec plane has no proxy either, and a remote sandbox brings its own.
  */
 
-import {
-  type ExecGround,
-  type ExecPlane,
-  installExecGround,
-  type ShellUpdate,
-  shippedAt,
-} from "./exec/bash.ts";
+import { type ExecGround, type ExecPlane, installExecGround, shippedAt } from "./exec/bash.ts";
+import type { ShellUpdate } from "./exec/jobs.ts";
 import { type Files, localFiles } from "./store/media.ts";
 import type { Store } from "./store/mod.ts";
 import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
@@ -50,8 +45,17 @@ export interface SandboxAgent {
  *  for and refuses any other: a ground is prepared, never improvised. */
 export interface Sandbox {
   forAgent(agentId: string): SandboxAgent;
-  /** Reap every shell's jobs and stop the proxy: nothing outlives the process. */
-  close(): Promise<void>;
+  /** Stop the proxy, and with `jobs: "end"` kill every shell's jobs (the org was stopped);
+   *  else leave them running for the next harness to adopt (§9). */
+  close(opts?: { jobs?: "end" | "leave" }): Promise<void>;
+}
+
+/** Each shell's jobs, as `close` was asked. */
+async function closeShells(shells: Iterable<ExecPlane>, jobs: "end" | "leave"): Promise<void> {
+  for (const shell of shells) {
+    if (jobs === "end") await shell.reap();
+    else shell.leave();
+  }
 }
 
 /** What a shell told of a call after its answer, and the session whose shell it is. */
@@ -138,9 +142,8 @@ export async function openLocalSandbox(
         },
       };
     },
-    async close() {
-      // each session's own jobs, reaped with its own shell (§9)
-      for (const shell of shells.values()) await shell.reap();
+    async close({ jobs = "end" } = {}) {
+      await closeShells(shells.values(), jobs); // each session's own jobs (§9)
       await proxy.close(); // stop the egress proxy and close its vault handle
     },
   };
@@ -157,6 +160,8 @@ export interface CloudflareSandboxOptions {
   bashWaitMs?: number;
   /** The `system.sandboxSleepMinutes` knob: a sandbox's life after its last bash call. */
   sleepMinutes?: number;
+  /** Where every shell tells what its calls do after their answers (late.ts). */
+  tell?: (u: SessionUpdate) => void;
 }
 
 /** Where an agent stands in its Cloudflare sandbox: the container's workspace, which is the
@@ -182,11 +187,11 @@ const REMOTE_ENV: Record<string, string> = {
  *  agent's id, started by its first bash call and kept by one lease its sessions share
  *  (`lease`); its workspace is the agent's folder, scratch that a stopped container does
  *  not keep — the docs are in the table. A file the agent attaches is copied onto the
- *  conversation's media shelf under `dir`. Closing reaps every shell's jobs and leaves the
- *  sandboxes to the gateway's sleep. */
+ *  conversation's media shelf under `dir`. Closing ends or leaves every shell's jobs, and
+ *  leaves the sandboxes to the gateway's sleep. */
 export function openCloudflareSandbox(
   dir: string,
-  { url, token, agents, locale, bashWaitMs, sleepMinutes }: CloudflareSandboxOptions,
+  { url, token, agents, locale, bashWaitMs, sleepMinutes, tell }: CloudflareSandboxOptions,
 ): Sandbox {
   const env = { ...REMOTE_ENV, ...(locale ? { LANG: locale } : {}) };
   const minutes = sleepMinutes ?? DEFAULT_SANDBOX_SLEEP_MINUTES;
@@ -205,12 +210,16 @@ export function openCloudflareSandbox(
           const key = sessionAddress(agentId, sessionId);
           let shell = shells.get(key);
           if (!shell) {
-            shell = remoteShell(gateway, {
-              workspace: REMOTE_HOME,
-              env: () => env,
-              ...(bashWaitMs ? { defaultWaitMs: bashWaitMs } : {}),
-              lease,
-            });
+            shell = remoteShell(
+              gateway,
+              {
+                workspace: REMOTE_HOME,
+                env: () => env,
+                ...(bashWaitMs ? { defaultWaitMs: bashWaitMs } : {}),
+                lease,
+              },
+              tell && ((u: ShellUpdate) => tell({ ...u, agentId, sessionId })),
+            );
             shells.set(key, shell);
           }
           // off, the container and what it held are gone: a read there would start a new one
@@ -236,8 +245,8 @@ export function openCloudflareSandbox(
         },
       };
     },
-    async close() {
-      for (const shell of shells.values()) await shell.reap();
+    async close({ jobs = "end" } = {}) {
+      await closeShells(shells.values(), jobs);
     },
   };
 }

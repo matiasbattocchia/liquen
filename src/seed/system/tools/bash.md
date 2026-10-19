@@ -14,7 +14,9 @@ told when it ends, with its exit status and the lines it printed since. So set w
 you want to see before going on: 0 to start a server and go on at once, a few seconds to see
 it boot, longer for a build you would wait for anyway. While it runs, its output goes to the
 file the answer names, its last line stands beside it under now:, and kill <pid> stops it,
-kill -- -<group> all of its group.
+kill -- -<group> all of its group. It runs until it ends or is killed, through restarts of
+the harness, and you are told its end all the same: nothing stops it for you, so kill what
+you no longer need.
 
 wake is a regular expression: each line the command prints after the call answered that
 matches it is told to you as it comes, a few lines at a time, and wakes you; the rest only

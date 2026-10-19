@@ -24,6 +24,8 @@
  *   stopped ahead of its parent earns nothing but a restart — and then whatever is still
  *   standing, which was nobody's child. An ephemeral main a REPL raised is stopped like the
  *   rest; the interface attached to it hangs up, which is what an explicit order means.
+ *   The jobs the agents' commands left running end with it: a main stopped by this order
+ *   kills them, where one that restarts leaves them for the next to adopt (§9).
  *
  * Each signal is followed by a WAIT for that lock to come free — the process actually gone,
  * not merely asked, which is what makes `liquen stop && liquen start` safe to say in one
@@ -128,10 +130,11 @@ export async function running(dir: string): Promise<Map<string, number>> {
   return live;
 }
 
-/** SIGTERM one role's holder and wait for its lock to come free. */
+/** Signal one role's holder and wait for its lock to come free: SIGTERM, but a main gets
+ *  SIGINT, which ends what the agents' commands left running with it (§9). */
 async function end(dir: string, role: string, pid: number, root: string): Promise<void> {
   try {
-    Deno.kill(pid, "SIGTERM");
+    Deno.kill(pid, role === MAIN ? "SIGINT" : "SIGTERM");
   } catch (err) {
     // it let go between the probe and the signal: asked and gone is what was wanted
     if (!(err instanceof Deno.errors.NotFound)) throw err;
@@ -140,7 +143,7 @@ async function end(dir: string, role: string, pid: number, root: string): Promis
   while (await holder(dir, role) !== null) {
     if (Date.now() >= deadline) {
       throw new Error(
-        `${role} (pid ${pid}) still holds ${root} ${GONE_MS / 1000}s after SIGTERM — it is ` +
+        `${role} (pid ${pid}) still holds ${root} ${GONE_MS / 1000}s after asked — it is ` +
           `wedged, and killing it would orphan whatever still holds its ports`,
       );
     }
