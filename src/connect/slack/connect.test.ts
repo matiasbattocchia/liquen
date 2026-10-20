@@ -32,6 +32,10 @@ import type { Appender } from "../../store/log.ts";
 import type { Draft, Event } from "../../types.ts";
 import { newId } from "../../store/id.ts";
 
+const LINKED_AT = "2026-10-20T00:00:00.000Z";
+/** What a door writes on the row it links: up, no reason left standing. */
+const UP = { state: "connected", connected_at: LINKED_AT, error: null };
+
 function harness() {
   const connections: ConnectionRow[] = [];
   const memberships: MembershipRow[] = [];
@@ -44,6 +48,7 @@ function harness() {
     published,
     deps: {
       principal: "matias",
+      now: () => LINKED_AT,
       openSelfIm: () => Promise.resolve<string | undefined>("D0SELF"),
       creds: {
         put: (row: CredentialRow) => {
@@ -87,8 +92,9 @@ Deno.test("connect: a verified paste registers the workspace + the owned grant +
       address: "T1:U7",
       agentId: "matias",
       credentialKey: "slack:T1:matias",
-      // the mind-alias binding (§4): the self-DM, resolved with the grant in hand
-      extra: { self_conversation: "D0SELF" },
+      // linked, so up; and the mind-alias binding (§4): the self-DM, resolved with the
+      // grant in hand
+      extra: { ...UP, self_conversation: "D0SELF" },
     },
   ]);
   assertEquals(h.credentials, [
@@ -113,6 +119,7 @@ Deno.test("connect: an unresolvable self-DM still grants — just without the al
     address: "T1:U7",
     agentId: "matias",
     credentialKey: "slack:T1:matias",
+    extra: UP,
   });
   assertEquals(h.published.length, 1); // the note still crosses (and says the alias is unbound)
 });
@@ -207,7 +214,7 @@ Deno.test("bot door: xoxb → the org-credentialed anchor + the vault blob", asy
   // neither has an owner or a membership (§6)
   assertEquals(h.connections, [
     { service: "slack", address: "T1" },
-    { service: "slack", address: "T1:UBOT", credentialKey: "slack:T1:org" },
+    { service: "slack", address: "T1:UBOT", credentialKey: "slack:T1:org", extra: UP },
   ]);
   assertEquals(h.memberships.length, 0);
   assertEquals(h.credentials[0].key, "slack:T1:org");
@@ -461,7 +468,7 @@ Deno.test("bot door: --agent records who speaks through the bot on its row, stil
     service: "slack",
     address: "T1:UBOT",
     credentialKey: "slack:T1:org",
-    extra: { agent: "ventas" },
+    extra: { ...UP, agent: "ventas" },
   });
   assertEquals(h.connections[1].agentId, undefined);
 });

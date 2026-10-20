@@ -33,11 +33,29 @@ import type {
   Reader,
   Subscriber,
 } from "../../connector.ts";
-import { createDispatcher, DispatchError, findRoot, orgFlag } from "../../connector.ts";
+import {
+  createDispatcher,
+  type DispatcherDeps,
+  DispatchError,
+  findRoot,
+  orgFlag,
+  SignedOut,
+  tokenOf,
+} from "../../connector.ts";
 import { entry } from "../../entry.ts";
 
 /** How long one post to GitHub may take, spawn to exit. */
 const API_TIMEOUT_MS = 30_000;
+
+/** What a failed `gh api` said, classed by the HTTP status it ends with (`gh: Not Found
+ *  (HTTP 404)`): a 401 is a token GitHub no longer takes — the grant `key` signed out —
+ *  any other status its class for the sweeper, and none at all a call that never got an
+ *  answer (a timeout, a spawn), offered again. */
+export function ghError(stderr: string, key: string): Error {
+  const status = stderr.match(/\(HTTP (\d{3})\)/)?.[1];
+  if (status === "401") return new SignedOut(stderr, key);
+  return status ? new DispatchError(stderr, Number(status)) : new Error(stderr);
+}
 
 export interface GhTarget {
   owner: string;
@@ -70,6 +88,7 @@ export interface GithubDispatchDeps {
   /** Delivery bookkeeping — bind the log's `setDelivery`. Backfills `external_id` (the echo
    *  key, prefixed like the ingest stamps it) + `status.dispatched_at` after a post. */
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
+  store?: DispatcherDeps<unknown>["store"];
   read: Reader["read"];
   onError?: (event: MessageEvent, err: unknown) => void;
   onSent?: (event: MessageEvent, externalId: string | undefined) => void;
@@ -85,6 +104,7 @@ export function createGithubDispatch(deps: GithubDispatchDeps): () => Promise<vo
     select: outbound,
     read: deps.read,
     setDelivery: deps.setDelivery,
+    store: deps.store,
     onError: deps.onError,
     onSent: deps.onSent,
     post: async ({ target, text, re }, event) => {
@@ -172,24 +192,23 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   // the token resolver (§4, dispatcher-internal): the author's own grant (alter-ego)
   // → the org's — through the broker, which returns a static PAT as-is and mints the
   // App's hourly installation token when that is what `github:org` records
-  const tokenFor = async (author?: string): Promise<string> => {
+  const grantOf = async (author?: string) => {
     const user = author ? await creds.get(`github:${author}`) : null;
-    const key = grantKeyFor(author, user);
-    const token = await broker.accessTokenFor(broker.issue(key, user?.agentId));
-    if (!token) throw new Error(`no github credential for ${key} — \`liquen connect github\``);
-    return token;
+    return { key: grantKeyFor(author, user), agentId: user?.agentId };
   };
 
   // one `gh api` call; returns its stdout (the JSON body, empty on a 204)
   const ghApi = async (args: string[], author?: string): Promise<string> => {
+    const { key, agentId } = await grantOf(author);
     const out = await new Deno.Command("gh", {
       args: ["api", ...args],
-      env: { GH_TOKEN: await tokenFor(author) }, // gh's env, this spawn only — never exported
+      // gh's env, this spawn only — never exported
+      env: { GH_TOKEN: await tokenOf(broker, key, agentId) },
       stdout: "piped",
       stderr: "piped",
       signal: AbortSignal.timeout(API_TIMEOUT_MS), // a stalled gh fails like a refused post
     }).output();
-    if (!out.success) throw new Error(new TextDecoder().decode(out.stderr).trim());
+    if (!out.success) throw ghError(new TextDecoder().decode(out.stderr).trim(), key);
     return new TextDecoder().decode(out.stdout);
   };
 
@@ -226,6 +245,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     post: ghPost,
     amend: ghAmend,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
+    store: log,
     onSent: (e, id) =>
       console.error(`[dispatch] sent → ${e.envelope.conversation.address} (comment ${id})`),
     onError: (e, err) =>

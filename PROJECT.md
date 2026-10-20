@@ -5685,3 +5685,38 @@ fail on main too).
 
 Open: a send whose own connector process is down is told stalled, but the anchor says
 nothing of a connector that is not running, only of the accounts it reports on.
+
+### One word for a down account, and a connector that is not there (2026-10-20) — LANDED
+
+The anchor's down block read whatever each connector wrote: WhatsApp's bridge words
+(`disconnected`, `logged_out`), the probe's (`bridge_unreachable`, `unpaired`), the polls'
+`failing`; Slack and GitHub wrote nothing, so a revoked token left the row silent. Now
+every row speaks `ConnectionState`, and the line is `<reason> since <time>`:
+
+- `signed_out`: the service ended the access. An OAuth refresh refused as `invalid_grant`
+  (the broker now keeps the issuer's reason instead of a bare null: `refusal`, `tokenOf`),
+  an installation GitHub no longer knows, a vault grant gone, a Slack `token_revoked` /
+  `invalid_auth` / `account_inactive` on a send or on the socket's open, a gh 401, a phone
+  that unlinked the device (and a session the bridge does not hold, which is the same
+  thing heard late). A send refused so is `SignedOut`, permanent, and marks the account;
+  the next post that lands, or the door, brings it back.
+- `unavailable`: a WhatsApp socket dropped; every Slack socket gone two minutes.
+- `failing`: a poll three sweeps without a read. Each poll keeps its own word on the row
+  (`error_calendar`, `error_mail`, `error_teams`), so the row fails while any does.
+- `bridge_down`: the probe's three silent rounds.
+- `suspended`: WhatsApp's `TemporaryBan`, which the bridge now posts as `temporary_ban`.
+- `connector_down`, never stored: each connector process stamps `heard_at` on its rows
+  every 30s (`heartbeat`), and the anchor reads two minutes of silence as the connector
+  stopped, since the last stamp, over whatever the row says.
+
+Silent faults this closed: the polls' "since" moved with every restart (a state was
+written when a process's memory changed, not the row), and Microsoft's three polls on one
+row flipped it between `connected` and `failing`; one revoked grant restarted the whole
+Google or Microsoft process every five minutes (the wedge counted any failure, now only a
+sweep that reached nothing); a gh failure had no class, so a revoked token was retried for
+17 hours; a missing access token was a permanent 401 even when the token endpoint was
+merely unreachable.
+
+The org's stale WhatsApp row `5492615682044` (a sole-bot session whose device WhatsApp
+removed on 401 `device_removed`, its logout posted to sole-bot's webhook while sole-bot
+was down) was removed with `liquen connect --remove`.

@@ -62,14 +62,14 @@ import { encodeBase64Url } from "@std/encoding/base64url";
 import { APP_PREFIX } from "./connect.ts";
 import { htmlToText, mediaShelf, type SaveFile } from "../mail.ts";
 import { createPoller, FETCH_TIMEOUT_MS, granted, type PollIngestDeps } from "../poll.ts";
-import { createDispatcher } from "../dispatcher.ts";
+import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import { DispatchError } from "../errors.ts";
 import { claimMentions, type Directory, logDirectory, type NameEntry } from "../mentions.ts";
 import { isExternal, pathOf } from "../../store/media.ts";
 import type { Appender, DeliveryPatch, Log, Reader, Subscriber } from "../../store/log.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
-import type { GrantBroker } from "../../proxy/grants.ts";
+import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import type {
   Draft,
   Event,
@@ -373,7 +373,7 @@ export interface TeamsWebhookDeps {
   /** The vault: the grants and their subscription records — what a notice is checked
    *  against, and whose token reads the message back. */
   creds: Pick<Credentials, "list" | "get" | "put">;
-  broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
+  broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
   /** The memberships mirror (§4): a member whose subscription delivers a chat is in it —
    *  and the kind stamp, for the rows a place already has. Absent ⇒ pure mapping. */
   store?: Pick<Connections, "upsertMemberships"> & Partial<Pick<Log, "stampKind">>;
@@ -464,8 +464,7 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
     if (!n.resource) return;
     const at = parseResource(n.resource);
     if (!at) return;
-    const token = await deps.broker.accessTokenFor(deps.broker.issue(grant.key, grant.agentId));
-    if (!token) throw new Error(`no access token for ${grant.key}`);
+    const token = await tokenOf(deps.broker, grant.key, grant.agentId);
     const graph = graphFor(fetchApi, token);
     const res = await graph(messagePath(at.place, at.id, at.root));
     if (res.status === 404) {
@@ -491,8 +490,7 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
       return;
     }
     if (event === "reauthorizationRequired" && sub) {
-      const token = await deps.broker.accessTokenFor(deps.broker.issue(grant.key, grant.agentId));
-      if (!token) throw new Error(`no access token for ${grant.key}`);
+      const token = await tokenOf(deps.broker, grant.key, grant.agentId);
       const renewed = await renew(graphFor(fetchApi, token), sub, now);
       subs[resource] = renewed;
       await writeSubs(deps.creds, grant.key, subs);
@@ -750,7 +748,7 @@ export interface TeamsCatchUpDeps {
   /** The log, read: where the listening stopped, and what a message already is there. */
   read: Reader["read"];
   creds: Pick<Credentials, "list">;
-  broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
+  broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
   store?: TeamsWebhookDeps["store"];
   save: SaveFile;
   fetchApi?: typeof fetch;
@@ -831,8 +829,7 @@ export function createTeamsCatchUp(
     const upn = grant.key.slice(GRANT_PREFIX.length);
     const since = await newest(upn);
     if (since === undefined) return 0; // nothing was ever heard on this grant: no gap
-    const token = await deps.broker.accessTokenFor(deps.broker.issue(grant.key, grant.agentId));
-    if (!token) throw new Error(`no access token for ${grant.key}`);
+    const token = await tokenOf(deps.broker, grant.key, grant.agentId);
     const graph = graphFor(fetchApi, token);
     const drafts = new Map<string, Draft<MessageEvent>>();
     const keep = (rows: Draft<MessageEvent>[]) => {
@@ -956,8 +953,8 @@ async function collect<T>(items: AsyncGenerator<T>): Promise<T[]> {
 
 export interface TeamsKeeperDeps {
   creds: Pick<Credentials, "list" | "get" | "put">;
-  broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
-  store?: Pick<Connections, "upsertConnections">;
+  broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
+  store?: Pick<Connections, "connections" | "upsertConnections">;
   /** Where Graph dials the ingest — `<edge.publicUrl>/microsoft/ingest`, sent as the
    *  `notificationUrl` and `lifecycleNotificationUrl` of every subscription made. */
   notificationUrl: string;
@@ -982,8 +979,7 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
     if (typeof oid !== "string" || !oid) return 0;
     if (resource === "chats" && !granted(grant, CHAT_SCOPES)) return 0;
     if (resource === "channels" && !granted(grant, CHANNEL_SCOPES)) return 0;
-    const token = await deps.broker.accessTokenFor(deps.broker.issue(grant.key, grant.agentId));
-    if (!token) throw new Error(`no access token for ${grant.key}`);
+    const token = await tokenOf(deps.broker, grant.key, grant.agentId);
     const graph = graphFor(fetchApi, token);
     const all = resource === "chats"
       ? [`/users/${oid}/chats/getAllMessages`]
@@ -1051,6 +1047,7 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
 
   return createPoller({
     service: SERVICE,
+    name: "teams",
     grantPrefix: GRANT_PREFIX,
     appPrefix: APP_PREFIX,
     creds: deps.creds,
@@ -1177,6 +1174,7 @@ export interface TeamsDispatchDeps {
    *  user ids. Absent ⇒ names stay words. */
   directory?: Directory;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
+  store?: DispatcherDeps<unknown>["store"];
   onError?: (event: MessageEvent, err: unknown) => void;
   onSent?: (event: MessageEvent, id: string | undefined) => void;
 }
@@ -1200,6 +1198,7 @@ export function createTeamsDispatch(deps: TeamsDispatchDeps): () => Promise<void
     read: deps.read,
     service: SERVICE,
     setDelivery: deps.setDelivery,
+    store: deps.store,
     onError: deps.onError,
     onSent: deps.onSent,
     select: (event) => {
@@ -1334,7 +1333,7 @@ export function toTeamsHtml(text: string, dir: NameEntry[]): { html: string; men
 /* ── the wire: messages, replies, amendments, reactions, files ─────────────────────── */
 
 export interface TeamsWireDeps {
-  broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
+  broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
   fetchApi: typeof fetch;
 }
 
@@ -1342,8 +1341,7 @@ export interface TeamsWireDeps {
 export function teamsWire(deps: TeamsWireDeps): TeamsWire {
   const tokenFor = async (grant: { connection: string; agentId?: string }): Promise<Graph> => {
     const key = `${GRANT_PREFIX}${grant.connection}`;
-    const token = await deps.broker.accessTokenFor(deps.broker.issue(key, grant.agentId));
-    if (!token) throw new DispatchError(`no access token for ${key}`, 401);
+    const token = await tokenOf(deps.broker, key, grant.agentId);
     return graphFor(deps.fetchApi, token);
   };
   const call = async (graph: Graph, what: string, url: string, init: RequestInit) => {
@@ -1590,6 +1588,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     wire: teamsWire({ broker, fetchApi: timedFetch }),
     directory: logDirectory((q) => log.read(q) as Promise<Event[]>),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
+    store: log,
     onSent: (e, id) =>
       console.error(`[dispatch] sent → ${e.envelope.conversation.address} (${id})`),
     onError: (e, err) =>

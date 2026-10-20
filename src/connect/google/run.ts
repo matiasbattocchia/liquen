@@ -18,6 +18,7 @@ import { runIngest as runCalendar } from "./calendar.ts";
 import { runDispatch as runMailDispatch, runIngest as runMail } from "./mail.ts";
 import { googleConfig } from "./config.ts";
 import { exitOnStop, listening } from "../stop.ts";
+import { heartbeat } from "../health.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { entry } from "../../entry.ts";
 
@@ -26,5 +27,6 @@ await entry(async () => {
   exitOnStop([
     ...await listening("google", listen, { calendar: runCalendar, mail: runMail }),
     await runMailDispatch(),
+    await heartbeat("google"),
   ]);
 });

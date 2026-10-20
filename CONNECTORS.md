@@ -123,6 +123,25 @@ When a connector also **prints an app definition** — slack's manifest, the pre
 mode); what the app may do comes from `connections.slack`, so the consent the door asks
 Slack for and the consent the app declares are one list, not two that drift.
 
+### Down: one word per account, and a heartbeat
+
+The agent's anchor lists the accounts that are down (DESIGN §5), off the account's
+`connections` row: `extra.state`, one of `ConnectionState`'s words (`connected`,
+`signed_out`, `unavailable`, `failing`, `bridge_down`, `suspended`), stamped `<state>_at`
+when the row moves. A connector writes it with `setState` from the seam, which compares
+against the row as stored, so a restarted process never moves the "since". What a
+connector owes:
+
+- **The heartbeat.** Put `heartbeat("<service>")` among the stops `exitOnStop` takes: it
+  stamps `extra.heard_at` on the service's rows every 30s, and a row unstamped for two
+  minutes reads `connector down`. Without it, a connector that dies says nothing.
+- **A refusal for good is `SignedOut`.** A token the service revoked, a grant it ended:
+  throw `SignedOut` from `post`, and the dispatcher marks the account `signed_out` (the
+  grant named by `key`, else the row the send rode) and marks it back when a later post
+  lands. `tokenOf(broker, key)` already throws it for a grant the issuer refused.
+- **A door writes the account up** (`state: connected`, `error` cleared): it is how a
+  signed-out account comes back.
+
 ### Presence: nothing to build
 
 `[agent thinking...]` and `[agent compacting...]` reach a surface as ordinary log rows: the

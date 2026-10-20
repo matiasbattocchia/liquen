@@ -18,11 +18,17 @@
  * `queued_at`) is posted once per process however often it is seen. Its turn come, the row
  * is read once more: one the agent took back meanwhile (`withdrawn`) is not posted.
  *
+ * A post refused because the service ended the account's access (`SignedOut`) says so of
+ * the account too: its row reads `signed_out` (§5) — the grant the refusal names, else the
+ * row the send rode — and the next post through it that lands reads it `connected` again.
+ *
  * What differs per wire is injected: `select` maps a row to the service's send shape (or
  * null — nothing to send), `post` puts it on the wire and answers with what to stamp.
  */
 
-import { failedStatus } from "./errors.ts";
+import { failedStatus, SignedOut } from "./errors.ts";
+import { rowsOf, setState } from "./health.ts";
+import type { Connections } from "../store/connections.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type { Event, EventId, MessageEvent, Service } from "../types.ts";
 
@@ -52,6 +58,8 @@ export interface DispatcherDeps<W> {
   /** Put one send on the wire. Throws to fail the send — `DispatchError` carries the class. */
   post: (work: W, event: MessageEvent) => Promise<Posted>;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
+  /** The connections map, where a signed-out account is said down (§5). */
+  store?: Pick<Connections, "connections" | "upsertConnections">;
   onError?: (event: MessageEvent, err: unknown) => void;
   onSent?: (event: MessageEvent, id: string | undefined) => void;
 }
@@ -95,13 +103,34 @@ export function createDispatcher<W>(deps: DispatcherDeps<W>): () => Promise<void
           status: { state: "dispatched", dispatched_at: new Date().toISOString() },
         });
         deps.onSent?.(event, posted.id);
+        await account(event, "connected").catch((err) => deps.onError?.(event, err));
       } catch (err) {
         try {
           await deps.setDelivery?.(event.id, { status: failedStatus(err) });
         } catch { /* the stamp failed too — onError still reports */ }
         deps.onError?.(event, err);
+        if (err instanceof SignedOut) {
+          await account(event, "signed_out", err).catch((e) => deps.onError?.(event, e));
+        }
       }
     });
+  };
+  // the account a post spoke for: signed out by a refusal, back up by the next post that
+  // lands — and only from signed_out, the one word a post is the judge of
+  const account = async (
+    event: MessageEvent,
+    state: "connected" | "signed_out",
+    err?: SignedOut,
+  ) => {
+    if (!deps.store) return;
+    const rows = await rowsOf(deps.store, deps.service, {
+      ...(err?.key ? { key: err.key } : {}),
+      address: event.envelope.connection_address,
+    });
+    for (const row of rows) {
+      if (state === "connected" && row.extra?.state !== "signed_out") continue;
+      await setState(deps.store, row, state, err ? { error: err.message } : {});
+    }
   };
   const ours = (e: Event) => isOutbound(e, deps.service);
   // listen first, then read: an offer that lands in between is seen twice and posted once

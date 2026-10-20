@@ -6,6 +6,8 @@ import { newId } from "../../store/id.ts";
 import type { Appender } from "../../store/log.ts";
 import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
 
+const LINKED_AT = "2026-10-20T00:00:00.000Z";
+
 const CONFIG = {
   clientId: "cid",
   clientSecret: "sec",
@@ -68,6 +70,7 @@ async function withOAuth(
       return Promise.resolve(stored);
     }) as Appender["publish"],
     openSelfIm: () => Promise.resolve("D0SELF"),
+    now: () => LINKED_AT,
     ...(opts.defaultExchange ? {} : {
       exchange: (code) => {
         exchanged.push(code);
@@ -159,7 +162,12 @@ Deno.test("callback: exchanges the code and lands the leg as a paste would — b
           address: "T1:U9",
           agentId: "ana",
           credentialKey: "slack:T1:ana",
-          extra: { self_conversation: "D0SELF" },
+          extra: {
+            state: "connected",
+            connected_at: LINKED_AT,
+            error: null,
+            self_conversation: "D0SELF",
+          },
         },
       ]);
       // the principal sees their own grant note even on a stub workspace (§6)

@@ -52,6 +52,33 @@ export interface ConnectionRow {
   extra?: Record<string, unknown>; // discovered account facts (slack: {url, …})
 }
 
+/** What a connection's row says of it (`extra.state`, stamped `<state>_at`), one word for
+ *  every connector (§5): up, or down for a reason the anchor names.
+ *
+ *   connected     up
+ *   signed_out    the service ended the account's access; the principal links it again
+ *   unavailable   the link is down while the access stands; it usually comes back alone
+ *   failing       the service answers, with refusals or errors
+ *   bridge_down   the process between the connector and the service is not there
+ *   suspended     the service barred the account for a while
+ *
+ * One word is never stored: `connector_down`, the anchor's reading of a row whose
+ * connector has stopped beating (`extra.heard_at`, `connect/health.ts`). It outranks the
+ * row's own word, which nobody is there to keep true. */
+export type ConnectionState =
+  | "connected"
+  | "signed_out"
+  | "unavailable"
+  | "failing"
+  | "bridge_down"
+  | "suspended";
+
+/** How often a running connector stamps `extra.heard_at` on its rows, and how long a row
+ *  may go unstamped before its connector reads as down: four beats missed, so a restart
+ *  passes without a word. */
+export const HEARD_EVERY_MS = 30_000;
+export const SILENT_AFTER_MS = 120_000;
+
 export interface MembershipRow {
   service: string;
   connection: string; // the connection address the conversation anchors to

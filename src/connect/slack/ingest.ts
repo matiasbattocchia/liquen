@@ -54,7 +54,10 @@ import type {
 } from "@slack/types";
 import { roomPart } from "../../room.ts";
 import type { Appender } from "../../store/log.ts";
-import type { Connections } from "../../store/connections.ts";
+import type { ConnectionRow, Connections, ConnectionState } from "../../store/connections.ts";
+import { SignedOut } from "../errors.ts";
+import { setState } from "../health.ts";
+import { SIGNED_OUT_NAMES } from "./dispatch.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
 import type { Conversation, Draft, FilePart, MessageEvent, Part, RoomMember } from "../../types.ts";
@@ -781,6 +784,68 @@ const RECONNECT_MS = 1_000;
 const RECONNECT_ERROR_MS = 5_000;
 /** A socket back after this long was an outage, not a blip, and the gap is read back. */
 const CATCH_UP_AFTER_MS = 5_000;
+/** How long every socket may be gone before the workspaces read `unavailable` (§5): a
+ *  refresh or a dropped socket is back in seconds and passes without a word. */
+export const UNAVAILABLE_AFTER_MS = 120_000;
+
+/** What the sockets say of the workspace rows (§5): an app token Slack refused for good
+ *  signs them out at once; every socket gone `after` ms makes them `unavailable`; a socket
+ *  up again brings back what the sockets themselves took down — an unavailable row, or one
+ *  signed out by a refused open — and leaves a token a send found revoked to its own door. */
+export function socketHealth(deps: {
+  carriers: number;
+  store: Pick<Connections, "connections" | "upsertConnections">;
+  after?: number;
+  onError?: (err: unknown) => void;
+}): { up(i: number): void; down(i: number, err?: unknown): void; stop(): Promise<void> } {
+  const after = deps.after ?? UNAVAILABLE_AFTER_MS;
+  const gone = new Set<number>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let marking: Promise<void> = Promise.resolve();
+  const rows = async () => (await deps.store.connections()).filter((r) => r.service === "slack");
+  const ours = (r: ConnectionRow) =>
+    r.extra?.state === "unavailable" ||
+    (r.extra?.state === "signed_out" &&
+      String(r.extra?.error ?? "").startsWith("connections.open"));
+  const mark = (pick: (r: ConnectionRow) => boolean, state: ConnectionState, error?: string) => {
+    marking = marking
+      .then(async () => {
+        for (const r of (await rows()).filter(pick)) {
+          await setState(deps.store, r, state, error ? { error } : {});
+        }
+      })
+      .catch((err) => deps.onError?.(err));
+  };
+  const settle = () => {
+    clearTimeout(timer);
+    timer = undefined;
+  };
+  return {
+    up(i) {
+      gone.delete(i);
+      settle();
+      mark(ours, "connected");
+    },
+    down(i, err) {
+      gone.add(i);
+      if (err instanceof SignedOut) {
+        settle();
+        return mark(() => true, "signed_out", err.message);
+      }
+      if (gone.size < deps.carriers || timer !== undefined) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (gone.size === deps.carriers) {
+          mark((r) => r.extra?.state !== "signed_out", "unavailable");
+        }
+      }, after);
+    },
+    stop() {
+      settle();
+      return marking;
+    },
+  };
+}
 
 async function verify(
   secret: string,
@@ -840,6 +905,9 @@ async function openSocketUrl(appToken: string): Promise<string> {
     headers: { authorization: `Bearer ${appToken}` },
   });
   const open = await res.json() as { ok: boolean; url?: string; error?: string };
+  if (SIGNED_OUT_NAMES.has(open.error ?? "")) {
+    throw new SignedOut(`connections.open: ${open.error}`);
+  }
   if (!open.ok || !open.url) throw new Error(`connections.open: ${open.error}`);
   return open.url;
 }
@@ -852,6 +920,9 @@ export interface SlackSocketCarrierDeps {
    *  workspace said in the gap is only in its history — so this is where the catch-up
    *  (catchup.ts) is asked for. */
   onOpen?: (down: number | null) => void;
+  /** The socket is not there: it fell, or an open failed with `err` (a `SignedOut` when
+   *  Slack ended the app token's access). */
+  onDown?: (err?: unknown) => void;
 }
 
 /** Open the `xapp` socket and feed every events_api envelope to `handler` (built WITHOUT
@@ -937,10 +1008,13 @@ export function slackSocket(
       socket.onclose = () => {
         if (ws !== socket) return; // handed over: its successor is already up
         downSince ??= Date.now();
-        if (!closed) setTimeout(() => void connect(), RECONNECT_MS);
+        if (closed) return;
+        deps.onDown?.();
+        setTimeout(() => void connect(), RECONNECT_MS);
       };
     } catch (err) {
       downSince ??= Date.now();
+      deps.onDown?.(err);
       console.error("[ingest] socket error:", err instanceof Error ? err.message : err);
       if (!closed) setTimeout(() => void connect(), RECONNECT_ERROR_MS);
     }
@@ -1070,15 +1144,23 @@ export async function runIngest(): Promise<() => Promise<void>> {
     // a refresh hands over with no gap and asks for nothing
     console.error(`[ingest] socket mode, ${carriers.length} carrier(s) → ${dir}/log`);
     const handler = createSlackWebhook(base);
-    const stops = carriers.map((t) =>
+    const health = socketHealth({
+      carriers: carriers.length,
+      store: log,
+      onError: (err) => console.error("[ingest] socket state FAILED:", err),
+    });
+    const stops = carriers.map((t, i) =>
       slackSocket(t, handler, {
         onOpen: (down) => {
+          health.up(i);
           if (down === null || down > CATCH_UP_AFTER_MS) void catchUp.run();
         },
+        onDown: (err) => health.down(i, err),
       })
     );
     return async () => {
       await Promise.allSettled(stops.map((stop) => stop()));
+      await health.stop();
       await catchUp.settle();
       await release();
     };

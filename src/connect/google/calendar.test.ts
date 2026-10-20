@@ -1,9 +1,10 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { createGoogleWebhook } from "./calendar.ts";
+import { createPoller } from "../poll.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
-import type { Appender, Reader } from "../../store/log.ts";
-import type { ConnectionRow, Connections } from "../../store/connections.ts";
+import { type Appender, type Log, openLog, type Reader } from "../../store/log.ts";
+import type { Connections } from "../../store/connections.ts";
 import type { CalendarPart, Draft, Event, MessageEvent } from "../../types.ts";
 
 const KEY = "google:ana@example.com";
@@ -58,7 +59,7 @@ function poller(
   fetchApi: typeof fetch,
   publish: Appender["publish"] = captor().publish,
   calendars?: string[],
-  store?: Pick<Connections, "upsertConnections">,
+  store?: Pick<Connections, "connections" | "upsertConnections">,
   read?: Reader["read"],
 ): { tick(): Promise<void> } {
   return createGoogleWebhook({
@@ -83,48 +84,156 @@ function syncOf(creds: Awaited<ReturnType<typeof openCredentials>>): Promise<
   return creds.get(KEY).then((r) => r!.extra?.calendar_sync as Record<string, string> | undefined);
 }
 
+/** The org's connections map, on a log of its own, with the grant's row in it. */
+async function withRow(fn: (log: Log) => Promise<void>): Promise<void> {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  try {
+    await log.upsertConnections([{ service: "google", address: "ana@example.com" }]);
+    await fn(log);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+const rowOf = async (log: Log) =>
+  (await log.connections()).find((r) => r.address === "ana@example.com")!.extra ?? {};
+
 Deno.test("a grant's state is written on the transition: failing once sweeps in a row cannot read, connected when it reads again", async () => {
-  await withVault(async (creds) => {
-    const upserts: ConnectionRow[] = [];
-    const store = {
-      upsertConnections: (rows: ConnectionRow[]) => {
-        upserts.push(...rows);
-        return Promise.resolve();
-      },
-    };
-    let ok = false;
-    const p = poller(
-      creds,
-      (() =>
-        Promise.resolve(
-          ok ? jsonResponse({ items: [], nextSyncToken: "t" }) : jsonResponse({}, 503),
-        )) as typeof fetch,
-      undefined,
-      undefined,
-      store,
-    );
-    // a blip is not an outage: the first misses are tolerated in silence
-    await p.tick();
-    await p.tick();
-    assertEquals(upserts.length, 0);
+  await withVault((creds) =>
+    withRow(async (log) => {
+      let ok = false;
+      let at = "2026-08-24T00:00:00.000Z";
+      const p = createGoogleWebhook({
+        publish: captor().publish,
+        creds,
+        broker: createGrantBroker({ creds }),
+        store: log,
+        fetchApi: (() =>
+          Promise.resolve(
+            ok ? jsonResponse({ items: [], nextSyncToken: "t" }) : jsonResponse({}, 503),
+          )) as typeof fetch,
+        now: () => at,
+      });
+      // a blip is not an outage: the first misses are tolerated in silence
+      await p.tick();
+      await p.tick();
+      assertEquals((await rowOf(log)).state, undefined);
 
-    await p.tick(); // the third in a row is the grant giving up
-    await p.tick(); // still failing: no second row — the state is written once per change
-    assertEquals(upserts.length, 1);
-    assertEquals(upserts[0].service, "google");
-    assertEquals(upserts[0].address, "ana@example.com"); // the grant's row, by its address
-    assertEquals(upserts[0].extra?.state, "failing");
-    assertEquals(upserts[0].extra?.failing_at, "2026-08-24T00:00:00.000Z");
-    assert(typeof upserts[0].extra?.error === "string");
+      await p.tick(); // the third in a row is the grant giving up
+      at = "2026-08-24T00:05:00.000Z";
+      await p.tick(); // still failing: the stamp is the moment it moved, not the latest sweep
+      const failing = await rowOf(log);
+      assertEquals(failing.state, "failing");
+      assertEquals(failing.failing_at, "2026-08-24T00:00:00.000Z");
+      assert(typeof failing.error === "string");
+      assert(typeof failing.error_calendar === "string"); // this poll's own word
 
-    ok = true;
-    await p.tick();
-    assertEquals(upserts.length, 2);
-    assertEquals(upserts[1].extra, {
-      state: "connected",
-      connected_at: "2026-08-24T00:00:00.000Z",
-    });
-  });
+      ok = true;
+      await p.tick();
+      const back = await rowOf(log);
+      assertEquals(back.state, "connected");
+      assertEquals(back.connected_at, "2026-08-24T00:05:00.000Z");
+      assertEquals(back.error, undefined);
+      assertEquals(back.error_calendar, undefined);
+    })
+  );
+});
+
+Deno.test("a process restarted into a failing grant keeps its since: the row is compared, not the memory", async () => {
+  await withVault((creds) =>
+    withRow(async (log) => {
+      const failing = (at: string) =>
+        createGoogleWebhook({
+          publish: captor().publish,
+          creds,
+          broker: createGrantBroker({ creds }),
+          store: log,
+          fetchApi: (() => Promise.resolve(jsonResponse({}, 503))) as typeof fetch,
+          now: () => at,
+        });
+      const first = failing("2026-08-24T00:00:00.000Z");
+      for (let i = 0; i < 3; i++) await first.tick();
+      const second = failing("2026-08-24T00:06:00.000Z"); // the supervisor's fresh process
+      for (let i = 0; i < 3; i++) await second.tick();
+      assertEquals((await rowOf(log)).failing_at, "2026-08-24T00:00:00.000Z");
+    })
+  );
+});
+
+Deno.test("two polls on one row: it reads failing while either fails, and connected only once both read", async () => {
+  await withVault((creds) =>
+    withRow(async (log) => {
+      const at = "2026-08-24T00:00:00.000Z";
+      let calendarOk = false;
+      const calendar = createGoogleWebhook({
+        publish: captor().publish,
+        creds,
+        broker: createGrantBroker({ creds }),
+        store: log,
+        fetchApi: (() =>
+          Promise.resolve(
+            calendarOk ? jsonResponse({ items: [], nextSyncToken: "t" }) : jsonResponse({}, 503),
+          )) as typeof fetch,
+        now: () => at,
+      });
+      // a second poll of the same service, whose answer the test sets
+      let mailOk = true;
+      const mail = createPoller({
+        service: "google",
+        name: "mail",
+        grantPrefix: "google:",
+        appPrefix: "google:app:",
+        creds,
+        store: log,
+        resources: ["inbox"],
+        poll: () => mailOk ? Promise.resolve(0) : Promise.reject(new Error("mail 500")),
+        now: () => at,
+      });
+      for (let i = 0; i < 3; i++) await calendar.tick();
+      await mail.tick(); // mail reads, but the calendar's failure stands
+      assertEquals((await rowOf(log)).state, "failing");
+      calendarOk = true;
+      mailOk = false;
+      await calendar.tick();
+      for (let i = 0; i < 3; i++) await mail.tick();
+      assertEquals((await rowOf(log)).state, "failing");
+      assertEquals((await rowOf(log)).error, "mail 500");
+      mailOk = true;
+      await mail.tick();
+      assertEquals((await rowOf(log)).state, "connected");
+    })
+  );
+});
+
+Deno.test("a grant its issuer refused for good is signed out at once, with the issuer's reason", async () => {
+  await withVault((creds) =>
+    withRow(async (log) => {
+      // the stored token has expired: the sweep asks the token endpoint, which says no
+      await creds.put({ key: KEY, value: { access_token: "" }, extra: { expiry: "2000-01-01" } });
+      const p = createGoogleWebhook({
+        publish: captor().publish,
+        creds,
+        broker: createGrantBroker({
+          creds,
+          refresh: () =>
+            Promise.resolve({
+              error: "invalid_grant",
+              error_description: "Token has been expired or revoked.",
+            }),
+        }),
+        store: log,
+        fetchApi: (() => Promise.reject(new Error("never reached"))) as typeof fetch,
+        now: () => "2026-08-24T00:00:00.000Z",
+      });
+      await p.tick();
+      const row = await rowOf(log);
+      assertEquals(row.state, "signed_out");
+      assertEquals(row.signed_out_at, "2026-08-24T00:00:00.000Z");
+      assertStringIncludes(String(row.error), "invalid_grant: Token has been expired or revoked.");
+    })
+  );
 });
 
 Deno.test("first run bootstraps from now forward: seeds a cursor, publishes nothing", async () => {

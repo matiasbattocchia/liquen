@@ -1,6 +1,7 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { type createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
-import { appJwt, createGrantBroker, frontedFor, type TokenResponse } from "./grants.ts";
+import { appJwt, createGrantBroker, frontedFor, tokenOf, type TokenResponse } from "./grants.ts";
+import { SignedOut } from "../connect/errors.ts";
 import { openCredentials } from "../store/credentials.ts";
 
 async function withVault(
@@ -114,6 +115,65 @@ Deno.test("accessTokenFor: a failed refresh yields null — the proxy will 401",
       refresh: () => Promise.resolve({ error: "invalid_grant" } as TokenResponse),
     });
     assertEquals(await broker.accessTokenFor(broker.issue(KEY)), null);
+  });
+});
+
+Deno.test("refusal: why a grant gave no token — signed out when the issuer ended it, ours to fix otherwise", async () => {
+  await withVault(async (creds) => {
+    await seed(creds, { access_token: "ya29.old", refresh_token: "1//r" }, {});
+    let answer: TokenResponse = { error: "invalid_grant", error_description: "revoked" };
+    const broker = createGrantBroker({ creds, refresh: () => Promise.resolve(answer) });
+    const h = broker.issue(KEY);
+    assertEquals(await broker.accessTokenFor(h), null);
+    assertEquals(broker.refusal!(h), { reason: "invalid_grant: revoked", signedOut: true });
+    await assertRejects(() => tokenOf(broker, KEY), SignedOut, "invalid_grant: revoked");
+
+    // an issuer that refuses the CLIENT is our app to fix, not the person's grant
+    answer = { error: "invalid_client" };
+    assertEquals(await broker.accessTokenFor(h), null);
+    assertEquals(broker.refusal!(h)?.signedOut, false);
+    const err = await assertRejects(() => tokenOf(broker, KEY), Error, "invalid_client");
+    assert(!(err instanceof SignedOut));
+
+    // a token handed out clears the refusal
+    answer = { access_token: "ya29.new", expires_in: 3600 };
+    assertEquals(await tokenOf(broker, KEY), "ya29.new");
+    assertEquals(broker.refusal!(h), undefined);
+  });
+});
+
+Deno.test("refusal: a grant gone from the vault is signed out; an app row missing is ours", async () => {
+  await withVault(async (creds) => {
+    const broker = createGrantBroker({ creds });
+    await assertRejects(() => tokenOf(broker, "google:nobody@x.io"), SignedOut, "no such grant");
+    await creds.put({
+      key: "google:bo@x.io",
+      value: { access_token: "", refresh_token: "1//r" },
+      extra: { client_id: "gone" },
+    });
+    const err = await assertRejects(
+      () => tokenOf(broker, "google:bo@x.io"),
+      Error,
+      "no secret for the app gone",
+    );
+    assert(!(err instanceof SignedOut));
+  });
+});
+
+Deno.test("refusal: an installation GitHub no longer knows is an app uninstalled — signed out", async () => {
+  await withVault(async (creds) => {
+    const { pem } = rsaPair();
+    await creds.put({ key: "github:app:7", value: { private_key: pem } });
+    await creds.put({
+      key: "github:org",
+      value: {},
+      extra: { app_id: "7", installation_id: "42" },
+    });
+    const broker = createGrantBroker({
+      creds,
+      installationToken: () => Promise.resolve({ message: "Not Found" }),
+    });
+    await assertRejects(() => tokenOf(broker, "github:org"), SignedOut, "Not Found");
   });
 });
 

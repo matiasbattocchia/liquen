@@ -5,6 +5,7 @@ import {
   anchored,
   attachmentsOf,
   decide,
+  downOn,
   gateOf,
   relevant,
   specsOf,
@@ -60,6 +61,41 @@ const result = (refId: string) =>
   ev("tool_result", { ...SELF, payload: { turn_id: "T1", ref_id: refId } } as Partial<Event>);
 
 /* ── policy: a table, not a branch ────────────────────────────────────── */
+
+Deno.test("downOn: one shape for every reason, and a connector gone silent outranks the row's own word", () => {
+  const now = Date.parse("2026-10-20T14:30:00Z");
+  const lines = downOn(
+    [
+      {
+        service: "whatsapp",
+        address: "549",
+        extra: { name: "Ana", state: "bridge_down", bridge_down_at: "2026-10-20T01:19:00Z" },
+      },
+      {
+        service: "google",
+        address: "ana@x.io",
+        extra: { state: "signed_out", signed_out_at: "2026-10-18T09:12:00Z" },
+      },
+      // its connector stopped beating at 13:55: the row's "connected" is nobody's word now
+      {
+        service: "slack",
+        address: "acme",
+        extra: { state: "connected", heard_at: "2026-10-20T13:55:00Z" },
+      },
+      // beating, and up: not listed
+      { service: "github", address: "github", extra: { heard_at: "2026-10-20T14:29:40Z" } },
+    ],
+    "UTC",
+    now,
+  );
+  assertEquals(lines, [
+    "down — 3 connections:",
+    "· Ana — whatsapp, bridge down since 20 Oct 1:19",
+    "· ana@x.io — google, signed out since 18 Oct 9:12",
+    "· acme — slack, connector down since 20 Oct 13:55",
+  ]);
+  assertEquals(downOn([{ service: "github", address: "github" }], "UTC", now), []);
+});
 
 Deno.test("gateOf: the default asks for send and for nothing else — bash by rule, not by name", () => {
   const gate = gateOf();

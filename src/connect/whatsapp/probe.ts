@@ -1,34 +1,28 @@
 /**
  * connect/whatsapp/probe.ts — whether the whatsmeow bridge is there at all.
  *
- * The bridge tells its sessions' lifecycle itself (`connected`, `disconnected`,
- * `logged_out`, ingest.ts writes each on the connections map), and a bridge that is not
- * running tells nothing: its rows go on saying `connected` while no message comes in and
- * every send fails. The probe is the one word the bridge cannot say: it asks after each
- * WhatsApp session (`GET /sessions/{address}`) and, `MISSES` rounds in a row with no
- * answer, writes `state: bridge_unreachable` on the rows, which the anchor shows as down
- * (§5). A round it answers sets each row to the bridge's word where the row says
- * otherwise: `connected`, `disconnected`, or `unpaired` for a session the bridge does not
- * hold (a row the map kept after the bridge lost it says `connected` while nothing flows).
- * A row the bridge reported logged out stays the bridge's: re-pairing, not the probe,
- * revives it.
+ * The bridge tells its sessions' lifecycle itself (ingest.ts writes each on the
+ * connections map), and a bridge that is not running tells nothing: its rows go on saying
+ * `connected` while no message comes in and every send fails. The probe is the one word
+ * the bridge cannot say: it asks after each WhatsApp session (`GET /sessions/{address}`)
+ * and, `MISSES` rounds in a row with no answer, writes `bridge_down` on the rows, which
+ * the anchor shows as down (§5). A round it answers sets each row to the bridge's word:
+ * `connected`, `unavailable`, or `signed_out` for a session the bridge does not hold — a
+ * device unlinked while its notice went nowhere, which the map would otherwise keep as
+ * `connected` forever. A `suspended` row stays so until the bridge says it is connected:
+ * a banned number is not connected either, and the ban is the truer word.
  */
 
-import type { ConnectionRow, Connections } from "../../store/connections.ts";
+import type { ConnectionRow, Connections, ConnectionState } from "../../store/connections.ts";
 import { SERVICE } from "./ingest.ts";
 import { timedFetch } from "../http.ts";
+import { setState } from "../health.ts";
 
 /** How often the bridge is asked after its sessions. */
 export const PROBE_MS = 30_000;
-/** Rounds in a row without an answer before the sessions are marked unreachable: a
- *  restart of the bridge passes without a word. */
+/** Rounds in a row without an answer before the sessions are marked down: a restart of the
+ *  bridge passes without a word. */
 export const MISSES = 3;
-
-const UNREACHABLE = "bridge_unreachable";
-
-/** The states an answer settles: the bridge's word on whether a session is up, and the
- *  probe's own. Any other (`logged_out`) is the bridge's to change. */
-const SAID = new Set(["connected", "disconnected", "unpaired", UNREACHABLE]);
 
 /** One session as the bridge sees it; null when the bridge holds no such session. Throws
  *  when the bridge does not answer. */
@@ -73,12 +67,8 @@ export interface BridgeProbeDeps {
 export function createBridgeProbe(deps: BridgeProbeDeps): { tick(): Promise<void> } {
   const now = deps.now ?? (() => new Date().toISOString());
   let missed = 0;
-  const mark = (row: ConnectionRow, state: string) =>
-    deps.store.upsertConnections([{
-      service: SERVICE,
-      address: row.address,
-      extra: { state, [`${state}_at`]: now() },
-    }]);
+  const mark = (row: ConnectionRow, state: ConnectionState) =>
+    setState(deps.store, row, state, { now: now() });
   return {
     async tick() {
       const rows = (await deps.store.connections()).filter((r) => r.service === SERVICE);
@@ -95,20 +85,16 @@ export function createBridgeProbe(deps: BridgeProbeDeps): { tick(): Promise<void
       }
       if (silent) {
         if (++missed < MISSES) return;
-        for (const row of rows) {
-          const state = row.extra?.state;
-          if (state !== UNREACHABLE && state !== "logged_out") await mark(row, UNREACHABLE);
-        }
+        for (const row of rows) await mark(row, "bridge_down");
         return;
       }
       missed = 0;
       deps.onAnswered?.();
       for (const row of rows) {
-        const state = row.extra?.state;
-        if (state !== undefined && !(typeof state === "string" && SAID.has(state))) continue;
         const said = heard.get(row.address);
-        const word = said === null ? "unpaired" : said?.connected ? "connected" : "disconnected";
-        if (word !== state) await mark(row, word);
+        const word = said === null ? "signed_out" : said?.connected ? "connected" : "unavailable";
+        if (word === "unavailable" && row.extra?.state === "suspended") continue;
+        await mark(row, word);
       }
     },
   };

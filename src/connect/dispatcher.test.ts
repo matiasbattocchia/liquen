@@ -1,7 +1,7 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { createDispatcher, isOutbound } from "./dispatcher.ts";
-import { DispatchError } from "./errors.ts";
-import type { DeliveryPatch, Subscriber } from "../store/log.ts";
+import { DispatchError, SignedOut } from "./errors.ts";
+import { type DeliveryPatch, openLog, type Subscriber } from "../store/log.ts";
 import type { Draft, Event, EventId, MessageEvent } from "../types.ts";
 import { newId } from "../store/id.ts";
 
@@ -134,6 +134,50 @@ Deno.test("dispatcher: a throwing post ALWAYS stamps failed (error_code when it 
   assertEquals(b.error_code, null); // no class — and the merge removes any earlier one
   assertEquals(c.state, "dispatched");
   assertEquals(typeof c.dispatched_at, "string");
+});
+
+Deno.test("dispatcher: a post refused as signed out says so of the account, and the next one that lands brings it back", async () => {
+  const dir = await Deno.makeTempDir();
+  const store = await openLog(dir);
+  try {
+    await store.upsertConnections([
+      { service: "github", address: "conn", credentialKey: "github:org" },
+      { service: "github", address: "ana-dev", agentId: "ana", credentialKey: "github:ana" },
+    ]);
+    const log = fakeLog();
+    const answers = [
+      () => Promise.reject(new SignedOut("token revoked")), // the row the send rode
+      () => Promise.reject(new SignedOut("bad_refresh_token", "github:ana")), // the grant named
+      () => Promise.resolve({ id: "ok" }),
+    ];
+    createDispatcher<string>({
+      subscribe: log.subscribe,
+      read: log.read,
+      service: "github",
+      select: () => "x",
+      post: () => answers.shift()!(),
+      setDelivery: log.setDelivery,
+      store,
+    });
+    const extraOf = async (address: string) =>
+      (await store.connections()).find((r) => r.address === address)?.extra ?? {};
+    log.push(outbound({ id: "e1" }));
+    log.push(outbound({ id: "e2" }));
+    await settle();
+    await settle();
+    assertEquals((await extraOf("conn")).state, "signed_out");
+    assertEquals((await extraOf("conn")).error, "token revoked");
+    assertEquals((await extraOf("ana-dev")).state, "signed_out");
+    assertEquals(log.patches[0].patch.status!.error_code, 401); // permanent: told, not retried
+    log.push(outbound({ id: "e3" }));
+    await settle();
+    await settle();
+    assertEquals((await extraOf("conn")).state, "connected");
+    assertEquals((await extraOf("ana-dev")).state, "signed_out"); // its own door brings it back
+  } finally {
+    await store.close();
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("dispatcher: a stamp that itself fails still reaches onError", async () => {

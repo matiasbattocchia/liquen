@@ -36,6 +36,7 @@ import { findRoot, orgFlag, readConfig } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { requireIngest } from "../declare.ts";
 import { SPEC } from "./config.ts";
+import { linked } from "../health.ts";
 import { entry } from "../../entry.ts";
 
 /** The bridge's pairing poll response (sessions.go `PairingState`) — verbatim. */
@@ -130,7 +131,7 @@ export async function connectWhatsApp(
     service: SERVICE,
     address,
     ...(deps.principal ? { agentId: deps.principal } : { credentialKey: `${SERVICE}:${address}` }),
-    extra: { state: "connected", connected_at: now(), organization_id: deps.organizationId },
+    extra: { ...linked(now()), organization_id: deps.organizationId },
   }]);
   if (deps.principal) {
     await deps.store.upsertMemberships([

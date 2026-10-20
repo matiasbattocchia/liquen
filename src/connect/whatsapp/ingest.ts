@@ -44,7 +44,7 @@
  */
 
 import type { Appender } from "../../store/log.ts";
-import type { Connections } from "../../store/connections.ts";
+import type { Connections, ConnectionState } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
 import type {
@@ -169,8 +169,9 @@ export interface WAGroup {
 export interface WASessionEvent {
   /** `connected` on every (re)connect of a paired number, `disconnected` when its socket
    *  drops (whatsmeow reconnects by itself; the pair brackets the outage), `logged_out`
-   *  when the phone unpairs it. */
-  event: "connected" | "disconnected" | "logged_out";
+   *  when the phone unpairs it, `temporary_ban` when WhatsApp bars the number for a while
+   *  (`extra.expire`, seconds, when it says). */
+  event: keyof typeof STATE_OF;
   organization_id: string;
   address: string;
   /** Set for a personal session: the member the pairing bound (bridge SessionMapping). */
@@ -677,6 +678,15 @@ async function media(req: Request, deps: WhatsAppWebhookDeps): Promise<Response>
 
 /* ── the sessions/events route: the bridge's lifecycle → the connections map (§4) ── */
 
+/** The bridge's lifecycle words, in the connections map's (§5): a socket that dropped is
+ *  `unavailable`, a phone that unlinked the device `signed_out`, a ban `suspended`. */
+const STATE_OF = {
+  connected: "connected",
+  disconnected: "unavailable",
+  logged_out: "signed_out",
+  temporary_ban: "suspended",
+} as const satisfies Record<string, ConnectionState>;
+
 function session(
   req: Request,
   deps: WhatsAppWebhookDeps,
@@ -684,18 +694,21 @@ function session(
 ): Promise<Response> {
   return req.json().then(async (e: WASessionEvent) => {
     if (!e.address || !e.event) return text(400, "missing address or event");
+    const state: ConnectionState | undefined = STATE_OF[e.event];
+    if (!state) return text(400, `unknown session event ${e.event}`);
     // `connected` is the moment the paired number becomes KNOWN — the row it writes is
     // the frontier gate the very next publish checks (§4). The other events only record
-    // state, stamped `<state>_at` — what the anchor reads to say a surface is down (§5):
-    // the gate stays open (history stays readable), and a reconnect or re-pairing
-    // revives by upsert.
+    // state, stamped `<state>_at` when the row moves to it — what the anchor reads to say
+    // a surface is down, and since when (§5): the gate stays open (history stays
+    // readable), and a reconnect or re-pairing revives by upsert.
+    const prior = await deps.store?.connection(SERVICE, e.address);
     await deps.store?.upsertConnections([{
       service: SERVICE,
       address: e.address,
       ...(e.agent_id ? { agentId: e.agent_id } : {}), // personal session ⇒ owned grant (§6)
       extra: {
-        state: e.event,
-        [`${e.event}_at`]: now(),
+        state,
+        ...(prior?.extra?.state !== state ? { [`${state}_at`]: now() } : {}),
         organization_id: e.organization_id,
         ...(e.extra ?? {}),
       },

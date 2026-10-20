@@ -67,6 +67,7 @@ import type { Appender, Reader } from "./store/log.ts";
 import type { AgentRow, Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { ConnectionRow, Connections } from "./store/connections.ts";
+import { SILENT_AFTER_MS } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { sameHandle, speaksThrough } from "./store/roster.ts";
@@ -1067,7 +1068,7 @@ async function think(
   const org = await company(config, ports);
   const ambient = [
     ...(ports.ambient ? await ports.ambient() : []),
-    ...downOn(surfaces, config),
+    ...downOn(surfaces, config.timezone),
     ...(await armedOn(config, ports)),
     ...waitingOn(
       await ports.log.gates({ agentId: config.agentId, sessionId: config.sessionId }),
@@ -1292,22 +1293,29 @@ async function company(
   };
 }
 
-/** Surfaces that are down: a connector recorded a state other than `connected` on the
- *  row (`extra.state`, stamped `<state>_at`). Silence means every surface is up. No handle
- *  — nothing in the model's hands acts on it; the principal re-pairs or re-grants. Named
- *  the way every line is: the account's name, its address only when it has none — the
- *  prefix's `connections:` line is where the address and whose voice it is are stated. */
-function downOn(surfaces: ConnectionRow[], config: AgentConfig): string[] {
-  const down = surfaces.filter((c) =>
-    typeof c.extra?.state === "string" && c.extra.state !== "connected"
-  );
+/** Surfaces that are down (§5): a connector recorded a state other than `connected` on the
+ *  row (`extra.state`, stamped `<state>_at`), or the connector itself stopped beating on it
+ *  (`extra.heard_at` older than `SILENT_AFTER_MS`) — `connector down` since the last beat,
+ *  which outranks the row's own word: nobody is there to keep that one true. Silence means
+ *  every surface is up. No handle — nothing in the model's hands acts on it; the principal
+ *  re-pairs or re-grants. Named the way every line is: the account's name, its address only
+ *  when it has none — the prefix's `connections:` line is where the address and whose
+ *  voice it is are stated. */
+export function downOn(surfaces: ConnectionRow[], zone?: string, now = Date.now()): string[] {
+  const down = surfaces.flatMap((c) => {
+    const heard = c.extra?.heard_at;
+    if (typeof heard === "string" && now - Date.parse(heard) > SILENT_AFTER_MS) {
+      return [{ c, state: "connector_down", since: heard }];
+    }
+    const state = c.extra?.state;
+    if (typeof state !== "string" || state === "connected") return [];
+    return [{ c, state, since: c.extra?.[`${state}_at`] }];
+  });
   if (down.length === 0) return [];
   return [
     `down — ${down.length} connection${down.length === 1 ? "" : "s"}:`,
-    ...down.map((c) => {
-      const state = c.extra!.state as string;
-      const since = c.extra![`${state}_at`];
-      const when = typeof since === "string" ? ` since ${hhmm(since, config.timezone)}` : "";
+    ...down.map(({ c, state, since }) => {
+      const when = typeof since === "string" ? ` since ${hhmm(since, zone)}` : "";
       const name = typeof c.extra?.name === "string" && c.extra.name ? c.extra.name : c.address;
       return `· ${name} — ${c.service}, ${state.replaceAll("_", " ")}${when}`;
     }),

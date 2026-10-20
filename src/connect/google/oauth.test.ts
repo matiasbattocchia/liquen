@@ -6,6 +6,8 @@ import { newId } from "../../store/id.ts";
 import type { Appender } from "../../store/log.ts";
 import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
 
+const LINKED_AT = "2026-10-20T00:00:00.000Z";
+
 const CONFIG = {
   clientId: "cid",
   clientSecret: "sec",
@@ -52,6 +54,7 @@ async function withOAuth(
     config: CONFIG,
     creds,
     onGrant: (g) => grants.push(g),
+    now: () => LINKED_AT,
     // the map's write side in miniature: the grant creates anchor + binding (§4)
     store: {
       upsertConnections: (rows) => {
@@ -150,6 +153,8 @@ Deno.test("callback: the grant writes the map — vault, connection, membership,
       address: "ana@example.com",
       agentId: "ana",
       credentialKey: "google:ana@example.com",
+      // linked: up, whatever the row said before (a signed-out grant comes back here)
+      extra: { state: "connected", connected_at: LINKED_AT, error: null },
     }]);
     assertEquals(t.memberships.length, 1);
     // the grant event names the account and the principal

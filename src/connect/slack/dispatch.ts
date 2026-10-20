@@ -20,8 +20,8 @@
 
 import type { ChatPostMessageResponse } from "@slack/web-api";
 import { isExternal, pathOf } from "../../store/media.ts";
-import { DispatchError } from "../errors.ts";
-import { createDispatcher } from "../dispatcher.ts";
+import { DispatchError, SignedOut } from "../errors.ts";
+import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../../types.ts";
@@ -51,6 +51,22 @@ const TRANSIENT_NAMES = new Set(["fatal_error", "internal_error", "service_unava
 export function slackErrorCode(error?: string): number {
   if (error === "ratelimited") return 429;
   return TRANSIENT_NAMES.has(error ?? "") ? 503 : 400;
+}
+
+/** The names Slack ends a token's access with: revoked, never valid, or its account
+ *  deactivated — the account is signed out (§5), not this one send refused. */
+export const SIGNED_OUT_NAMES = new Set([
+  "token_revoked",
+  "invalid_auth",
+  "not_authed",
+  "account_inactive",
+]);
+
+/** A named `ok: false` as the error the dispatcher stamps: signed out, or its class. */
+function refusal(method: string, error?: string): DispatchError {
+  return SIGNED_OUT_NAMES.has(error ?? "")
+    ? new SignedOut(`${method}: ${error}`)
+    : new DispatchError(`${method}: ${error}`, slackErrorCode(error));
 }
 
 /** Slack names its reactions (`thumbsup`), WhatsApp draws them (👍) — and the log carries
@@ -150,6 +166,7 @@ export interface SlackDispatchDeps {
    *  thread — right for a root, and the only answer a deployment without the log has. */
   rootOf?: (externalId: string) => Promise<string | undefined>;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
+  store?: DispatcherDeps<unknown>["store"];
   read: Reader["read"];
   onError?: (event: MessageEvent, err: unknown) => void;
   onSent?: (event: MessageEvent, ts: string | undefined) => void;
@@ -165,6 +182,7 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void
     select: outbound,
     read: deps.read,
     setDelivery: deps.setDelivery,
+    store: deps.store,
     onError: deps.onError,
     onSent: deps.onSent,
     post: async ({ target, text, files, re, ref, glyph }, event) => {
@@ -300,7 +318,7 @@ export function slackWire(
       throw new DispatchError(`${method}: HTTP ${res.status}`, res.status);
     }
     const out = await res.json() as T;
-    if (!out.ok) throw new DispatchError(`${method}: ${out.error}`, slackErrorCode(out.error));
+    if (!out.ok) throw refusal(method, out.error);
     return out;
   };
 
@@ -362,9 +380,7 @@ export function slackWire(
       throw new DispatchError(`chat.postMessage: HTTP ${res.status}`, res.status);
     }
     const out = await res.json() as ChatPostMessageResponse;
-    if (!out.ok) {
-      throw new DispatchError(`chat.postMessage: ${out.error}`, slackErrorCode(out.error));
-    }
+    if (!out.ok) throw refusal("chat.postMessage", out.error);
     // `message.user` = the wire naming who posted — the send-response sender fact (§4)
     return { ts: out.ts, user: out.message?.user };
   };
@@ -381,7 +397,7 @@ export function slackWire(
     });
     // already there / already gone is the state we wanted, not a failure
     if (!out.ok && out.error !== "already_reacted" && out.error !== "no_reaction") {
-      throw new DispatchError(`${method}: ${out.error}`, slackErrorCode(out.error));
+      throw refusal(method, out.error);
     }
   };
 
@@ -393,7 +409,7 @@ export function slackWire(
       ts,
       ...(action === "edit" ? { text } : {}),
     });
-    if (!out.ok) throw new DispatchError(`${method}: ${out.error}`, slackErrorCode(out.error));
+    if (!out.ok) throw refusal(method, out.error);
   };
 
   return { post, react, amend };
@@ -445,6 +461,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     directory: logDirectory((q) => log.read(q)),
     rootOf,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
+    store: log,
     onSent: (e, ts) =>
       console.error(`[dispatch] sent → ${e.envelope.conversation.address} (ts ${ts})`),
     onError: (e, err) =>

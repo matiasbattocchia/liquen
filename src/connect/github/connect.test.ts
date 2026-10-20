@@ -126,9 +126,14 @@ Deno.test("bot door: binds the single installation — anchor org-credentialed, 
         (c) => c.charCodeAt(0),
       ),
     ));
-    // ONE row: the service anchor, org-credentialed (§6)
+    // ONE row: the service anchor, org-credentialed (§6), and up
     assertEquals(h.connections, [
-      { service: "github", address: "github", credentialKey: ORG_KEY },
+      {
+        service: "github",
+        address: "github",
+        credentialKey: ORG_KEY,
+        extra: { state: "connected", connected_at: "2026-08-25T00:00:00Z", error: null },
+      },
     ]);
     const row = (await creds.get(ORG_KEY))!;
     assertEquals(row.extra, {
@@ -185,7 +190,13 @@ Deno.test("user door: a verified paste writes the anchor, the owned leg, and the
     assertEquals(out, { login: "ana-dev" });
     assertEquals(h.connections, [
       { service: "github", address: "github" }, // the anchor — what opens the publish gate
-      { service: "github", address: "ana-dev", agentId: "ana", credentialKey: "github:ana" },
+      {
+        service: "github",
+        address: "ana-dev",
+        agentId: "ana",
+        credentialKey: "github:ana",
+        extra: { state: "connected", connected_at: "2026-08-25T00:00:00Z", error: null },
+      },
     ]);
     assertEquals(h.memberships, [
       { service: "github", connection: "github", conversation: "connect", agentId: "ana" },
@@ -410,7 +421,12 @@ Deno.test("user door, --org: the anchor itself carries the credential — no own
     assertEquals(out, { login: "acme-bot" });
     // ONE row, the shape the installation route writes — dispatch cannot tell them apart
     assertEquals(h.connections, [
-      { service: "github", address: "github", credentialKey: ORG_KEY },
+      {
+        service: "github",
+        address: "github",
+        credentialKey: ORG_KEY,
+        extra: { state: "connected", connected_at: "2026-09-10T00:00:00Z", error: null },
+      },
     ]);
     assertEquals(h.memberships, []);
     const row = (await creds.get(ORG_KEY))!;

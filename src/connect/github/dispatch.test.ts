@@ -1,7 +1,7 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import { createGithubDispatch, type GhTarget, grantKeyFor } from "./dispatch.ts";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { createGithubDispatch, ghError, type GhTarget, grantKeyFor } from "./dispatch.ts";
 import type { MessageEvent } from "../../connector.ts";
-import { DispatchError } from "../../connector.ts";
+import { DispatchError, SignedOut } from "../../connector.ts";
 import { openLog } from "../../store/log.ts";
 
 /** An agent-authored (outbound) message to `conversation`. */
@@ -216,4 +216,16 @@ Deno.test("grantKeyFor: the author's own grant in either shape, else the org's",
   assertEquals(grantKeyFor("ana", null), "github:org");
   assertEquals(grantKeyFor("ana", { value: { token: "", access_token: "" } }), "github:org");
   assertEquals(grantKeyFor(undefined, null), "github:org");
+});
+
+Deno.test("ghError: gh's status names the class — a 401 is the grant signed out, no status is offered again", () => {
+  const revoked = ghError("gh: Bad credentials (HTTP 401)", "github:ana");
+  assert(revoked instanceof SignedOut);
+  assertEquals(revoked.key, "github:ana");
+  assertEquals(revoked.code, 401);
+  const gone = ghError("gh: Not Found (HTTP 404)", "github:org");
+  assert(gone instanceof DispatchError && !(gone instanceof SignedOut));
+  assertEquals((gone as DispatchError).code, 404);
+  const silent = ghError("error connecting to api.github.com", "github:org");
+  assert(!(silent instanceof DispatchError)); // classless: the sweeper offers it again
 });

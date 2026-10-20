@@ -3397,7 +3397,7 @@ Deno.test("the surfaces: the prefix names them, the anchor lists the ones that a
         service: "whatsapp",
         address: "549",
         agentId: "a1",
-        extra: { state: "logged_out", logged_out_at: "2026-09-07T14:02:00Z" },
+        extra: { state: "signed_out", signed_out_at: "2026-09-07T14:02:00Z" },
       },
       // the org's, up — and named by its url, not its opaque id
       {
@@ -3420,7 +3420,7 @@ Deno.test("the surfaces: the prefix names them, the anchor lists the ones that a
     assert(!env.includes("other@x.io"), "another agent's grant is not this agent's surface");
     const anchor = JSON.stringify(last?.messages.at(-1)?.content);
     assertStringIncludes(anchor, "down — 1 connection:");
-    assertStringIncludes(anchor, "· 549 — whatsapp, logged out since 7 Sep 14:02");
+    assertStringIncludes(anchor, "· 549 — whatsapp, signed out since 7 Sep 14:02");
     assert(!anchor.includes("slack"), "an up surface is not listed — silence means up");
   } finally {
     await log.close();

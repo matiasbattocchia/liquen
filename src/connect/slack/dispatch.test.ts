@@ -8,7 +8,7 @@ import {
   slackWire,
 } from "./dispatch.ts";
 import { withTimeout } from "../http.ts";
-import { DispatchError } from "../errors.ts";
+import { DispatchError, SignedOut } from "../errors.ts";
 import { type DeliveryPatch, openLog } from "../../store/log.ts";
 import type { FilePart, MessageEvent } from "../../types.ts";
 
@@ -410,6 +410,32 @@ const hang =
     new Promise<Response>((_, reject) => {
       init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
     })) as typeof fetch;
+
+Deno.test("slack wire: a token Slack ended is signed out, on every leg; another refusal keeps its class", async () => {
+  let error = "token_revoked";
+  const wire = slackWire({
+    tokenFor: () => Promise.resolve("xoxb-t"),
+    fetch: (() => Promise.resolve(Response.json({ ok: false, error }))) as typeof fetch,
+  });
+  const at = { connection: "T1", channel: "C1" };
+  await assertRejects(() => wire.post(at, "hola"), SignedOut, "chat.postMessage: token_revoked");
+  error = "account_inactive";
+  await assertRejects(
+    () => wire.react(at, { ts: "1.2", glyph: "👍", remove: false }),
+    SignedOut,
+    "reactions.add: account_inactive",
+  );
+  error = "invalid_auth";
+  await assertRejects(
+    () => wire.amend(at, { ts: "1.2", action: "delete", text: "" }),
+    SignedOut,
+    "chat.delete: invalid_auth",
+  );
+  error = "channel_not_found";
+  const other = await assertRejects(() => wire.post(at, "hola"), DispatchError);
+  assert(!(other instanceof SignedOut));
+  assertEquals(other.code, 400);
+});
 
 Deno.test("slack wire: a hung API call fails inside the fetch's bound — the drain never stalls", async () => {
   const wire = slackWire({

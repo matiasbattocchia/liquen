@@ -34,6 +34,7 @@
 import { createPrivateKey, createSign } from "node:crypto";
 import { encodeBase64Url } from "@std/encoding";
 import type { CredentialRow, Credentials } from "../store/credentials.ts";
+import { SignedOut } from "../connect/errors.ts";
 
 export interface Grant {
   credentialKey: string;
@@ -53,6 +54,37 @@ export interface GrantBroker {
    *  token anyway (a dispatcher's spawn env). null ⇒ unknown handle, a host outside the
    *  declaration, or a failed refresh (the proxy answers 401). */
   accessTokenFor(handle: string, host?: string): Promise<string | null>;
+  /** Why the last `accessTokenFor` on this handle answered null, when the grant was the
+   *  reason: `signedOut` when the issuer ended the access for good (a refresh refused as
+   *  `invalid_grant`, an app uninstalled, the vault row gone) — the principal links the
+   *  account again — else a refusal of ours to fix (an app row missing). Cleared by the
+   *  next token it hands out. */
+  refusal?(handle: string): Refusal | undefined;
+}
+
+export interface Refusal {
+  reason: string;
+  signedOut: boolean;
+}
+
+/** The OAuth refusals that end a grant: the refresh token is dead (revoked, expired, the
+ *  password changed), or the issuer wants the person back at the consent screen. */
+const DEAD_GRANT = new Set(["invalid_grant", "bad_refresh_token", "interaction_required"]);
+
+/** A live token for the vault grant `key`, or the refusal thrown: `SignedOut` when the
+ *  issuer ended the access (the caller marks the account down for it, §5), else a sentence
+ *  naming the cause. What every broker-side caller spends instead of a bare null. */
+export async function tokenOf(
+  broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">,
+  key: string,
+  agentId?: string,
+): Promise<string> {
+  const handle = broker.issue(key, agentId);
+  const token = await broker.accessTokenFor(handle);
+  if (token) return token;
+  const why = broker.refusal?.(handle);
+  const said = `no access token for ${key}${why ? `: ${why.reason}` : ""}`;
+  throw why?.signedOut ? new SignedOut(said, key) : new Error(said);
 }
 
 export interface BrokerDeps {
@@ -97,18 +129,33 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
   const byHandle = new Map<string, Grant>();
   const byKey = new Map<string, string>(); // credentialKey → handle (idempotence)
   const inflight = new Map<string, Promise<string | null>>(); // credentialKey → refresh
+  const refusals = new Map<string, Refusal>(); // credentialKey → why the last re-issue failed
+  const refuse = (key: string, reason: string, signedOut = false): null => {
+    refusals.set(key, { reason, signedOut });
+    return null;
+  };
+  // an issuer's own refusal, as the token endpoint words it
+  const refused = (key: string, tok: TokenResponse): null =>
+    refuse(
+      key,
+      [tok.error ?? "no token in the answer", tok.error_description].filter(Boolean).join(": "),
+      DEAD_GRANT.has(tok.error ?? ""),
+    );
 
   // github: the grant names an App installation — sign the app's JWT, mint an hourly token
   const refreshGithub = async (key: string, row: CredentialRow): Promise<string | null> => {
     const appId = String(row.extra?.app_id ?? "");
     const app = appId ? await deps.creds.get(`github:app:${appId}`) : null;
     const pem = app?.value.private_key;
-    if (!pem) return null;
+    if (!pem) return refuse(key, `no private key for the GitHub app ${appId} in the vault`);
     const tok = await installationToken(
       appJwt(appId, pem, now()),
       String(row.extra!.installation_id),
     );
-    if (!tok.token) return null;
+    // an installation GitHub no longer knows is an app uninstalled
+    if (!tok.token) {
+      return refuse(key, tok.message ?? "no token in the answer", tok.message === "Not Found");
+    }
     await deps.creds.put({
       key,
       value: { access_token: tok.token },
@@ -129,7 +176,8 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
     const app = appId ? await deps.creds.get(`github:app:${appId}`) : null;
     const clientId = app?.value.client_id;
     const clientSecret = app?.value.client_secret;
-    if (!refreshToken || !clientId) return null;
+    if (!refreshToken) return refuse(key, "the grant holds no refresh token", true);
+    if (!clientId) return refuse(key, `no client id for the GitHub app ${appId} in the vault`);
 
     const tok = await userToken(
       new URLSearchParams({
@@ -139,7 +187,7 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
         ...(clientSecret ? { client_secret: clientSecret } : {}),
       }),
     );
-    if (!tok.access_token) return null;
+    if (!tok.access_token) return refused(key, tok);
 
     await deps.creds.put({
       key,
@@ -158,10 +206,11 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
   const refreshGoogle = async (key: string, row: CredentialRow): Promise<string | null> => {
     const refreshToken = row.value.refresh_token;
     const clientId = typeof row.extra?.client_id === "string" ? row.extra.client_id : undefined;
-    if (!refreshToken || !clientId) return null;
+    if (!refreshToken) return refuse(key, "the grant holds no refresh token", true);
+    if (!clientId) return refuse(key, "the grant names no OAuth app");
     const app = await deps.creds.get(`google:app:${clientId}`);
     const clientSecret = app?.value.client_secret;
-    if (!clientSecret) return null;
+    if (!clientSecret) return refuse(key, `no secret for the app ${clientId} in the vault`);
 
     const tok = await refresh(
       GOOGLE_TOKEN_URL,
@@ -172,7 +221,7 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
         client_secret: clientSecret,
       }),
     );
-    if (!tok.access_token) return null;
+    if (!tok.access_token) return refused(key, tok);
 
     await deps.creds.put({
       key,
@@ -188,11 +237,14 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
   const refreshMicrosoft = async (key: string, row: CredentialRow): Promise<string | null> => {
     const refreshToken = row.value.refresh_token;
     const clientId = typeof row.extra?.client_id === "string" ? row.extra.client_id : undefined;
-    if (!refreshToken || !clientId) return null;
+    if (!refreshToken) return refuse(key, "the grant holds no refresh token", true);
+    if (!clientId) return refuse(key, "the grant names no OAuth app");
     const app = await deps.creds.get(`microsoft:app:${clientId}`);
     const clientSecret = app?.value.client_secret;
     const tenant = app?.extra?.tenant;
-    if (!clientSecret || typeof tenant !== "string") return null;
+    if (!clientSecret || typeof tenant !== "string") {
+      return refuse(key, `no secret or tenant for the app ${clientId} in the vault`);
+    }
 
     const tok = await refresh(
       `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
@@ -203,7 +255,7 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
         client_secret: clientSecret,
       }),
     );
-    if (!tok.access_token) return null;
+    if (!tok.access_token) return refused(key, tok);
 
     await deps.creds.put({
       key,
@@ -220,7 +272,7 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
 
   const doRefresh = async (key: string): Promise<string | null> => {
     const row = await deps.creds.get(key);
-    if (!row) return null;
+    if (!row) return refuse(key, "the vault holds no such grant", true);
     // the row itself says which issuer re-issues it (see header)
     if (row.extra?.installation_id !== undefined) return refreshGithub(key, row);
     if (row.extra?.app_id !== undefined) return refreshGithubUser(key, row);
@@ -248,8 +300,9 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
       const key = grant.credentialKey;
 
       const row = await deps.creds.get(key);
-      if (!row) return null;
+      if (!row) return refuse(key, "the vault holds no such grant", true);
       if (host !== undefined && !hostAllowed(row.extra?.hosts, host)) return null;
+      refusals.delete(key);
       if (row.value.token) return row.value.token; // static — nothing expires, nothing refreshes
       const expiry = typeof row.extra?.expiry === "string" ? Date.parse(row.extra.expiry) : NaN;
       if (row.value.access_token && Number.isFinite(expiry) && expiry - now() > SKEW_MS) {
@@ -263,6 +316,11 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
         inflight.set(key, flight);
       }
       return await flight;
+    },
+
+    refusal(handle: string): Refusal | undefined {
+      const grant = byHandle.get(handle);
+      return grant ? refusals.get(grant.credentialKey) : undefined;
     },
   };
 }

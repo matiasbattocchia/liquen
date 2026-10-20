@@ -18,6 +18,16 @@ export class DispatchError extends Error {
   }
 }
 
+/** The service ended an account's access (§5 `signed_out`): a refresh it refused for good
+ *  (`invalid_grant`), an app uninstalled, a token revoked. Permanent — the same send is
+ *  refused until the principal links the account again — and it names what to mark down:
+ *  the vault grant (`key`) when the refusal knows it, else the row the send rode. */
+export class SignedOut extends DispatchError {
+  constructor(message: string, readonly key?: string) {
+    super(message, 401);
+  }
+}
+
 /** The `failed` delivery stamp for `setDelivery` (§5: the agent's only sign a queued
  *  send never left). */
 export function failedStatus(err: unknown): Record<string, string | number | null> {

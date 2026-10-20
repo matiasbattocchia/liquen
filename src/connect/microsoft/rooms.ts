@@ -28,13 +28,13 @@
 
 import type { RoomsPort } from "../../xi.ts";
 import type { Credentials } from "../../store/credentials.ts";
-import type { GrantBroker } from "../../proxy/grants.ts";
+import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import { DispatchError } from "../errors.ts";
 import { timedFetch } from "../http.ts";
 import { GRAPH, placeOf } from "./teams.ts";
 
 export interface TeamsRoomsDeps {
-  broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
+  broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
   /** The grant rows — a leg reads the account's own user id (`extra.oid`) off its row. */
   creds: Pick<Credentials, "get">;
   /** Every Graph call goes through this — bounded by `API_TIMEOUT_MS` unless injected. */
@@ -68,8 +68,7 @@ export function teamsRooms(deps: TeamsRoomsDeps): RoomsPort {
   /** The account as a caller: its token and its own user id. */
   const as = async (connection: string) => {
     const key = `${GRANT_PREFIX}${connection}`;
-    const token = await deps.broker.accessTokenFor(deps.broker.issue(key));
-    if (!token) throw new DispatchError(`no access token for ${key}`, 401);
+    const token = await tokenOf(deps.broker, key);
     const self = (await deps.creds.get(key))?.extra?.oid;
     if (typeof self !== "string") throw new DispatchError(`${key} carries no user id`, 401);
     const call = async (what: string, needs: string, url: string, init: RequestInit = {}) => {

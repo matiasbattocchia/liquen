@@ -58,7 +58,7 @@ import { DispatchError } from "../errors.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
-import type { GrantBroker } from "../../proxy/grants.ts";
+import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import { entry } from "../../entry.ts";
 
 const SERVICE = "microsoft" as const;
@@ -140,8 +140,8 @@ export interface OutlookMailDeps {
   /** The vault: grants (the connections + the refresh_token) and the deltaLink cursors. */
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
-  broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
-  store?: Pick<Connections, "upsertConnections">;
+  broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
+  store?: Pick<Connections, "connections" | "upsertConnections">;
   /** Where attachments land. */
   save: SaveFile;
   /** Injectable for tests; defaults to global `fetch` against Graph. */
@@ -156,6 +156,7 @@ export interface OutlookMailDeps {
 export function createOutlookPoller(deps: OutlookMailDeps): { tick(): Promise<void> } {
   return createPoller({
     service: SERVICE,
+    name: "mail",
     grantPrefix: GRANT_PREFIX,
     appPrefix: APP_PREFIX,
     creds: deps.creds,
@@ -181,8 +182,7 @@ async function pollFolder(
 ): Promise<number> {
   const now = deps.now ?? (() => new Date().toISOString());
   const fetchApi = deps.fetchApi ?? fetch;
-  const token = await deps.broker.accessTokenFor(deps.broker.issue(key, agentId));
-  if (!token) throw new Error(`no access token for ${key}`);
+  const token = await tokenOf(deps.broker, key, agentId);
   const graph: Graph = (url, headers = {}) =>
     fetchApi(url, {
       headers: { authorization: `Bearer ${token}`, ...headers },
@@ -336,8 +336,7 @@ async function getMessage(graph: Graph, id: string): Promise<GraphMessage | unde
 export function outlookSend(deps: MailWireDeps): MailSend {
   return async ({ connection, agentId }, { mime }) => {
     const key = `${GRANT_PREFIX}${connection}`;
-    const token = await deps.broker.accessTokenFor(deps.broker.issue(key, agentId));
-    if (!token) throw new DispatchError(`no access token for ${key}`, 401);
+    const token = await tokenOf(deps.broker, key, agentId);
     const authorization = `Bearer ${token}`;
     const made = await deps.fetchApi(`${GRAPH}/messages`, {
       method: "POST",

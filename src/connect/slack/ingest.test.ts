@@ -6,11 +6,13 @@ import {
   slackNames,
   slackSocket,
   type SlackWebhookDeps,
+  socketHealth,
   type WebhookHandler,
 } from "./ingest.ts";
+import { SignedOut } from "../errors.ts";
 import type { Draft, Event, MessageEvent } from "../../types.ts";
 import { newId } from "../../store/id.ts";
-import type { Appender } from "../../store/log.ts";
+import { type Appender, type Log, openLog } from "../../store/log.ts";
 import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
 
 const SECRET = "sl-s3cret";
@@ -1115,4 +1117,71 @@ Deno.test("a member's DM with the bot is recorded on the bot's row (§4): extra.
     })),
   );
   assertEquals(written.length, 1);
+});
+
+/** The org's connections map on a log of its own: two workspace rows of the app. */
+async function withRows(fn: (log: Log) => Promise<void>): Promise<void> {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  try {
+    await log.upsertConnections([
+      { service: "slack", address: "T1:UBOT", credentialKey: "slack:T1:org" },
+      { service: "slack", address: "T1:U7", agentId: "ana", credentialKey: "slack:T1:ana" },
+    ]);
+    await fn(log);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+/** The bot's row, then the user's. */
+const statesOf = async (log: Log) => {
+  const rows = await log.connections();
+  return ["T1:UBOT", "T1:U7"].map((a) => rows.find((r) => r.address === a)?.extra?.state);
+};
+
+Deno.test("socket health: every socket gone past the wait is unavailable; one back brings the rows back", async () => {
+  await withRows(async (log) => {
+    const health = socketHealth({ carriers: 2, store: log, after: 10 });
+    health.down(0);
+    await new Promise((r) => setTimeout(r, 30));
+    assertEquals(await statesOf(log), [undefined, undefined]); // the other socket still carries
+    health.down(1);
+    await new Promise((r) => setTimeout(r, 30));
+    await health.stop();
+    assertEquals(await statesOf(log), ["unavailable", "unavailable"]);
+    health.up(1);
+    await health.stop();
+    assertEquals(await statesOf(log), ["connected", "connected"]);
+  });
+});
+
+Deno.test("socket health: a blip that comes back inside the wait says nothing", async () => {
+  await withRows(async (log) => {
+    const health = socketHealth({ carriers: 1, store: log, after: 50 });
+    health.down(0);
+    health.up(0);
+    await new Promise((r) => setTimeout(r, 80));
+    await health.stop();
+    assertEquals(await statesOf(log), [undefined, undefined]);
+  });
+});
+
+Deno.test("socket health: an app token Slack ended signs the rows out at once; its socket back clears only that", async () => {
+  await withRows(async (log) => {
+    const health = socketHealth({ carriers: 1, store: log, after: 60_000 });
+    health.down(0, new SignedOut("connections.open: token_revoked"));
+    await health.stop();
+    assertEquals(await statesOf(log), ["signed_out", "signed_out"]);
+    // a send found the user's own token revoked meanwhile: that one is its door's
+    await log.upsertConnections([{
+      service: "slack",
+      address: "T1:U7",
+      extra: { error: "chat.postMessage: token_revoked" },
+    }]);
+    health.up(0);
+    await health.stop();
+    assertEquals(await statesOf(log), ["connected", "signed_out"]);
+  });
 });

@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { teamsChannelName, teamsRooms, teamsTopic } from "./rooms.ts";
-import { DispatchError } from "../errors.ts";
+import { DispatchError, SignedOut } from "../errors.ts";
 
 const OID = "oid-ana";
 const UPN = "ana@contoso.com";
@@ -41,6 +41,8 @@ const deps = {
   broker: {
     issue: (key: string) => `h:${key}`,
     accessTokenFor: (handle: string) => Promise.resolve(handle === `h:${KEY}` ? "eyJ.ana" : null),
+    // the broker's word on a key with no grant in the vault: signed out
+    refusal: () => ({ reason: "the vault holds no such grant", signedOut: true }),
   },
   creds: {
     get: (key: string) =>
@@ -228,11 +230,11 @@ Deno.test("teams rooms: a 403 names the permission the leg needs; another refusa
   );
   assertEquals(bad.code, 400);
 
-  // an account the vault has no grant for
+  // an account the vault has no grant for: signed out, permanent
   const nobody = await assertRejects(
     () => port.members!({ connection: "bo@contoso.com", agent: "bo", conversation: CHAT }),
-    DispatchError,
-    "no access token for microsoft:bo@contoso.com",
+    SignedOut,
+    "no access token for microsoft:bo@contoso.com: the vault holds no such grant",
   );
   assertEquals(nobody.code, 401);
 });

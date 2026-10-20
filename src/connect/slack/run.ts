@@ -14,6 +14,9 @@
 import { runIngest } from "./ingest.ts";
 import { runDispatch } from "./dispatch.ts";
 import { exitOnStop } from "../stop.ts";
+import { heartbeat } from "../health.ts";
 import { entry } from "../../entry.ts";
 
-await entry(async () => exitOnStop([await runIngest(), await runDispatch()]));
+await entry(async () =>
+  exitOnStop([await runIngest(), await runDispatch(), await heartbeat("slack")])
+);

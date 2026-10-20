@@ -57,7 +57,7 @@ import { DispatchError } from "../errors.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
-import type { GrantBroker } from "../../proxy/grants.ts";
+import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import { entry } from "../../entry.ts";
 
 const SERVICE = "google" as const;
@@ -114,8 +114,8 @@ export interface GmailDeps {
   /** The vault: grants (the connections + the refresh_token) and the historyId cursor. */
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
-  broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
-  store?: Pick<Connections, "upsertConnections">;
+  broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
+  store?: Pick<Connections, "connections" | "upsertConnections">;
   /** Where attachments land. */
   save: SaveFile;
   /** Injectable for tests; defaults to global `fetch` against the Gmail API. */
@@ -129,6 +129,7 @@ export interface GmailDeps {
 export function createGmailPoller(deps: GmailDeps): { tick(): Promise<void> } {
   return createPoller({
     service: SERVICE,
+    name: "mail",
     grantPrefix: GRANT_PREFIX,
     appPrefix: APP_PREFIX,
     creds: deps.creds,
@@ -148,8 +149,7 @@ type Api = (path: string) => Promise<Response>;
  *  publish a row per message, advance the cursor. Returns the number published. */
 async function pollMailbox(deps: GmailDeps, key: string, agentId?: string): Promise<number> {
   const fetchApi = deps.fetchApi ?? fetch;
-  const token = await deps.broker.accessTokenFor(deps.broker.issue(key, agentId));
-  if (!token) throw new Error(`no access token for ${key}`);
+  const token = await tokenOf(deps.broker, key, agentId);
   const api: Api = (path) =>
     fetchApi(`${GMAIL}${path}`, {
       headers: { authorization: `Bearer ${token}` },
@@ -343,8 +343,7 @@ async function getMessage(api: Api, id: string): Promise<GmailMessage | undefine
 export function gmailSend(deps: MailWireDeps): MailSend {
   return async ({ connection, agentId }, { mime, thread }) => {
     const key = `${GRANT_PREFIX}${connection}`;
-    const token = await deps.broker.accessTokenFor(deps.broker.issue(key, agentId));
-    if (!token) throw new DispatchError(`no access token for ${key}`, 401);
+    const token = await tokenOf(deps.broker, key, agentId);
     const res = await deps.fetchApi(`${GMAIL}/messages/send`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },

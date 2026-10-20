@@ -21,6 +21,7 @@ import { runDispatch as runMailDispatch, runIngest as runMail } from "./mail.ts"
 import { runDispatch as runTeamsDispatch, runIngest as runTeams } from "./teams.ts";
 import { microsoftConfig } from "./config.ts";
 import { exitOnStop, listening } from "../stop.ts";
+import { heartbeat } from "../health.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { entry } from "../../entry.ts";
 
@@ -34,5 +35,6 @@ await entry(async () => {
     }),
     await runMailDispatch(),
     await runTeamsDispatch(),
+    await heartbeat("microsoft"),
   ]);
 });

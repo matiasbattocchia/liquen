@@ -54,6 +54,7 @@ import {
   requireIngest,
 } from "../../connector.ts";
 import { SPEC } from "./config.ts";
+import { linked } from "../health.ts";
 import { entry } from "../../entry.ts";
 
 export const APP_PREFIX = "github:app:";
@@ -218,7 +219,7 @@ export async function connectGithubBot(
   // identity on GitHub (§6); the mint coordinates are vault sidecar, the token itself is
   // minted hourly by the broker and only ever cached
   await deps.store.upsertConnections([
-    { service: "github", address: "github", credentialKey: ORG_KEY },
+    { service: "github", address: "github", credentialKey: ORG_KEY, extra: linked(now()) },
   ]);
   await deps.creds.put({
     key: ORG_KEY,
@@ -389,9 +390,15 @@ export async function connectGithubUser(
     deps.principal
       ? [
         { service: "github", address: "github" },
-        { service: "github", address: who.login, agentId: deps.principal, credentialKey },
+        {
+          service: "github",
+          address: who.login,
+          agentId: deps.principal,
+          credentialKey,
+          extra: linked(now()),
+        },
       ]
-      : [{ service: "github", address: "github", credentialKey }],
+      : [{ service: "github", address: "github", credentialKey, extra: linked(now()) }],
   );
   if (deps.principal) {
     await deps.store.upsertMemberships([

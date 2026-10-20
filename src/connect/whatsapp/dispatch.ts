@@ -28,7 +28,7 @@
 
 import { isExternal } from "../../store/media.ts";
 import { DispatchError } from "../errors.ts";
-import { createDispatcher } from "../dispatcher.ts";
+import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
 import type {
   EventId,
@@ -75,6 +75,7 @@ export interface WhatsAppDispatchDeps {
    *  Absent ⇒ mentions ship as literal text. */
   directory?: Directory;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
+  store?: DispatcherDeps<unknown>["store"];
   read: Reader["read"];
   onError?: (event: MessageEvent, err: unknown) => void;
   onSent?: (event: MessageEvent, wmwId: string | undefined) => void;
@@ -89,6 +90,7 @@ export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => Promis
     select: outbound,
     read: deps.read,
     setDelivery: deps.setDelivery,
+    store: deps.store,
     onError: deps.onError,
     onSent: deps.onSent,
     post: async ({ contents }, event) => {
@@ -317,6 +319,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     mediaUrl,
     directory: logDirectory((q) => log.read(q)),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
+    store: log,
     onSent: (e, id) =>
       console.error(`[dispatch] sent → ${e.envelope.conversation.address} (${id})`),
     onError: (e, err) =>

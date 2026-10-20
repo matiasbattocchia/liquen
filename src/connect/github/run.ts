@@ -13,7 +13,8 @@
 
 import { runIngest } from "./ingest.ts";
 import { runDispatch } from "./dispatch.ts";
-import { exitOnStop } from "../../connector.ts";
-import { entry } from "../../connector.ts";
+import { entry, exitOnStop, heartbeat } from "../../connector.ts";
 
-await entry(async () => exitOnStop([await runIngest(), await runDispatch()]));
+await entry(async () =>
+  exitOnStop([await runIngest(), await runDispatch(), await heartbeat("github")])
+);

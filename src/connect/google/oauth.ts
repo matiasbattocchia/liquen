@@ -40,6 +40,7 @@ import type { Connections } from "../../store/connections.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { timedFetch } from "../http.ts";
+import { linked } from "../health.ts";
 
 export interface GoogleOAuthConfig {
   clientId: string;
@@ -154,6 +155,7 @@ export function createGoogleOAuth(deps: GoogleOAuthDeps): OAuthHandler {
         address: id.email,
         ...(agent ? { agentId: agent } : {}),
         credentialKey,
+        extra: linked(now()),
       }]);
       if (agent) {
         // the grant note is the principal's to see (§6)

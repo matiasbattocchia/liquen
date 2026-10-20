@@ -6,6 +6,8 @@ import { newId } from "../../store/id.ts";
 import type { Appender } from "../../store/log.ts";
 import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
 
+const LINKED_AT = "2026-10-20T00:00:00.000Z";
+
 const CONFIG = {
   clientId: "cid",
   clientSecret: "sec",
@@ -52,6 +54,7 @@ async function withOAuth(
     config: CONFIG,
     creds,
     onGrant: (g) => grants.push(g),
+    now: () => LINKED_AT,
     store: {
       upsertConnections: (rows) => {
         connections.push(...rows);
@@ -130,6 +133,7 @@ Deno.test("callback: the grant writes the map — vault, connection, membership,
       address: "ana@contoso.com",
       agentId: "ana",
       credentialKey: "microsoft:ana@contoso.com",
+      extra: { state: "connected", connected_at: LINKED_AT, error: null },
     }]);
     assertEquals(t.memberships.length, 1);
     assertEquals(t.published.length, 1);

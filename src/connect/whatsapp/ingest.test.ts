@@ -707,10 +707,10 @@ Deno.test("sessions/events: connected upserts the connection row (the gate)", as
   assertEquals(upserts[0].extra?.state, "connected");
 });
 
-Deno.test("sessions/events: a drop and a logout record state, stamped — what the anchor reads", async () => {
+Deno.test("sessions/events: a drop, a logout and a ban record the map's words, stamped — what the anchor reads", async () => {
   const { store, upserts } = fakeStore();
   const { handler } = harness({ store });
-  for (const event of ["disconnected", "logged_out"]) {
+  for (const event of ["disconnected", "logged_out", "temporary_ban"]) {
     const res = await handler(
       post("/whatsapp-web-management/sessions/events", {
         event,
@@ -720,12 +720,41 @@ Deno.test("sessions/events: a drop and a logout record state, stamped — what t
     );
     assertEquals(res.status, 200);
   }
-  assertEquals(upserts.length, 2);
-  assertEquals(upserts[0].extra?.state, "disconnected");
-  assert(typeof upserts[0].extra?.disconnected_at === "string");
+  assertEquals(upserts.length, 3);
+  assertEquals(upserts[0].extra?.state, "unavailable");
+  assert(typeof upserts[0].extra?.unavailable_at === "string");
   assertEquals(upserts[0].agentId, undefined); // the owner is already on the row; unchanged
-  assertEquals(upserts[1].extra?.state, "logged_out");
-  assert(typeof upserts[1].extra?.logged_out_at === "string");
+  assertEquals(upserts[1].extra?.state, "signed_out");
+  assert(typeof upserts[1].extra?.signed_out_at === "string");
+  assertEquals(upserts[2].extra?.state, "suspended");
+});
+
+Deno.test("sessions/events: a word the row already says keeps its stamp; an unknown one is refused", async () => {
+  const row = {
+    service: "whatsapp",
+    address: "5491100000000",
+    extra: { state: "unavailable", unavailable_at: "2026-10-20T00:00:00.000Z" },
+  };
+  const { store, upserts } = fakeStore(row);
+  const { handler } = harness({ store });
+  const again = await handler(
+    post("/whatsapp-web-management/sessions/events", {
+      event: "disconnected",
+      organization_id: "org-1",
+      address: "5491100000000",
+    }),
+  );
+  assertEquals(again.status, 200);
+  assertEquals(upserts[0].extra?.unavailable_at, undefined); // since stays where it was
+  const odd = await handler(
+    post("/whatsapp-web-management/sessions/events", {
+      event: "stream_replaced",
+      organization_id: "org-1",
+      address: "5491100000000",
+    }),
+  );
+  assertEquals(odd.status, 400);
+  assertEquals(upserts.length, 1);
 });
 
 Deno.test("media route stores bytes and answers the uri", async () => {

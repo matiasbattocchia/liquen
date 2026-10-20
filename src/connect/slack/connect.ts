@@ -59,6 +59,7 @@ import {
   terminalUser,
 } from "../door.ts";
 import { missingScopes, SPEC } from "./config.ts";
+import { linked } from "../health.ts";
 import { entry } from "../../entry.ts";
 
 /** auth.test's answer, plus what the token may DO: the granted scopes ride the response
@@ -122,7 +123,7 @@ export async function landSlackUser(grant: SlackUserGrant, deps: SlackGrantDeps)
       address: leg,
       agentId: deps.principal,
       credentialKey,
-      ...(selfIm ? { extra: { self_conversation: selfIm } } : {}),
+      extra: { ...linked(now()), ...(selfIm ? { self_conversation: selfIm } : {}) },
     },
   ]);
   // the grant note below is the principal's to see — on a personal-only workspace the
@@ -314,7 +315,7 @@ export async function connectSlackBot(
       service: "slack",
       address: `${team}:${botUser}`,
       credentialKey,
-      ...(agent ? { extra: { agent } } : {}),
+      extra: { ...linked(now()), ...(agent ? { agent } : {}) },
     },
   ]);
   await deps.creds.put({

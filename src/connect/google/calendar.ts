@@ -46,7 +46,7 @@ import {
 import type { Appender, Reader } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
-import type { GrantBroker } from "../../proxy/grants.ts";
+import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import type { CalendarData } from "../../types.ts";
 import { entry } from "../../entry.ts";
 
@@ -98,8 +98,8 @@ export interface GoogleWebhookDeps {
   /** The vault: grants (the connections + the refresh_token) and the syncToken cursor. */
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
-  broker: Pick<GrantBroker, "issue" | "accessTokenFor">;
-  store?: Pick<Connections, "upsertConnections">;
+  broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
+  store?: Pick<Connections, "connections" | "upsertConnections">;
   /** Which calendars to watch on each grant. Default `DEFAULT_CALENDARS`. */
   calendars?: string[];
   /** Injectable for tests; defaults to global `fetch` against the Calendar API. */
@@ -113,6 +113,7 @@ export interface GoogleWebhookDeps {
 export function createGoogleWebhook(deps: GoogleWebhookDeps): { tick(): Promise<void> } {
   return createPoller({
     service: SERVICE,
+    name: "calendar",
     grantPrefix: GRANT_PREFIX,
     appPrefix: APP_PREFIX,
     creds: deps.creds,
@@ -135,8 +136,7 @@ async function pollCalendar(
 ): Promise<number> {
   const now = deps.now ?? (() => new Date().toISOString());
   const fetchApi = deps.fetchApi ?? fetch;
-  const token = await deps.broker.accessTokenFor(deps.broker.issue(key, agentId));
-  if (!token) throw new Error(`no access token for ${key}`);
+  const token = await tokenOf(deps.broker, key, agentId);
 
   const syncToken = await cursorFor(deps.creds, key, CALENDAR_SYNC, calendarId);
   if (!syncToken) {

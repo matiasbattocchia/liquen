@@ -29,6 +29,8 @@ import type { Connections } from "../store/connections.ts";
 import type { GrantBroker } from "../proxy/grants.ts";
 import type { Service } from "../types.ts";
 import { findRoot, orgFlag } from "../config.ts";
+import { SignedOut } from "./errors.ts";
+import { setState } from "./health.ts";
 
 /* ── the cursor: one per resource, on the grant's `extra` ─────────────────────────── */
 
@@ -81,20 +83,26 @@ export function granted(grant: CredentialRow, scopes: string[]): boolean {
 /** A sweep that cannot read a grant is not yet an outage: one slow answer from the API is a
  *  blip, and calling it a disconnection wakes the anchor to announce nothing. A grant is
  *  `failing` once it has missed this many sweeps in a row — minutes, at the entry's cadence.
- *  Recovery stays instant: the first sweep that reads is `connected` again. */
+ *  A grant its issuer refused for good (`SignedOut`) is `signed_out` at once: no sweep will
+ *  read it again. Recovery stays instant: the first sweep that reads is `connected` again. */
 const FAILING_AFTER_SWEEPS = 3;
 
 export interface PollerDeps {
   service: Service;
+  /** Which poll this is (`calendar`, `mail`, `teams`): one account's row is read by every
+   *  poll of its service, and each keeps its own word there (`error_<name>`), so the row is
+   *  `failing` while any of them fails — not whichever spoke last. */
+  name: string;
   /** The vault namespace of this service's grants, and of its app rows within it: the app
    *  rows are the client's credentials, not accounts, and are never polled. */
   grantPrefix: string;
   appPrefix: string;
   creds: Pick<Credentials, "list">;
-  /** The connections map (§4): a grant's state is written on the transition — `failing`
-   *  when a sweep cannot read it (a refresh refused, the API unreachable), `connected`
-   *  when it reads again — so the anchor can say a surface is down (§5). */
-  store?: Pick<Connections, "upsertConnections">;
+  /** The connections map (§4): a grant's state is written on the transition, against the
+   *  row as stored (`connect/health.ts`) — `signed_out` when its issuer ended the access,
+   *  `failing` when a sweep cannot read it, `connected` when every poll reads it again — so
+   *  the anchor can say a surface is down, and since when (§5). */
+  store?: Pick<Connections, "connections" | "upsertConnections">;
   /** Which resources to poll on each grant — calendars, mail folders — as the connector
    *  names them. */
   resources: string[];
@@ -115,19 +123,28 @@ export interface PollerDeps {
  *  and race the write-back, and a stalled poll must not pile intervals behind it. */
 export function createPoller(deps: PollerDeps): { tick(): Promise<void> } {
   const now = deps.now ?? (() => new Date().toISOString());
-  // one state per grant, written only when it changes: a sweep that reads is `connected`,
-  // one that cannot is `failing` — the row carries the reason
-  const known = new Map<string, string>();
   // consecutive sweeps a grant has missed — reset by the first one that reads
   const missed = new Map<string, number>();
-  const mark = async (key: string, state: string, error?: string) => {
-    if (!deps.store || known.get(key) === state) return;
-    known.set(key, state);
-    await deps.store.upsertConnections([{
-      service: deps.service,
-      address: key.slice(deps.grantPrefix.length),
-      extra: { state, [`${state}_at`]: now(), ...(error !== undefined ? { error } : {}) },
-    }]);
+  const field = `error_${deps.name}`;
+  // this poll's word on the grant's row, and the row's state from every poll's: signed
+  // out when this one was refused for good, failing while any poll's error stands
+  const verdict = async (key: string, error?: string, signedOut = false) => {
+    if (!deps.store) return;
+    const address = key.slice(deps.grantPrefix.length);
+    const row = (await deps.store.connections()).find((r) =>
+      r.service === deps.service && r.address === address
+    );
+    if (!row) return;
+    const others = Object.entries(row.extra ?? {})
+      .filter(([k, v]) => k.startsWith("error_") && k !== field && typeof v === "string")
+      .map(([, v]) => v as string);
+    const reason = error ?? others[0];
+    const state = signedOut ? "signed_out" : reason === undefined ? "connected" : "failing";
+    await setState(deps.store, row, state, {
+      extra: { [field]: error ?? null },
+      ...(reason !== undefined ? { error: reason } : {}),
+      now: now(),
+    });
   };
   const sweep = async (): Promise<void> => {
     const grants = (await deps.creds.list(deps.grantPrefix))
@@ -135,22 +152,24 @@ export function createPoller(deps: PollerDeps): { tick(): Promise<void> } {
       .filter((r) => deps.watches?.(r) ?? true);
     for (const grant of grants) {
       let failure: string | undefined;
+      let signedOut = false;
       for (const resource of deps.resources) {
         try {
           const n = await deps.poll(grant, resource);
           deps.onPolled?.(grant.key, resource, n);
         } catch (err) {
           failure ??= err instanceof Error ? err.message : String(err);
+          signedOut ||= err instanceof SignedOut;
           deps.onError?.(grant.key, err);
         }
       }
       if (failure === undefined) {
         missed.delete(grant.key);
-        await mark(grant.key, "connected");
+        await verdict(grant.key);
       } else {
         const n = (missed.get(grant.key) ?? 0) + 1;
         missed.set(grant.key, n);
-        if (n >= FAILING_AFTER_SWEEPS) await mark(grant.key, "failing", failure);
+        if (signedOut || n >= FAILING_AFTER_SWEEPS) await verdict(grant.key, failure, signedOut);
       }
     }
   };
@@ -194,7 +213,7 @@ export interface PollIngestDeps {
   read: Reader["read"];
   creds: Credentials;
   broker: GrantBroker;
-  store: Pick<Connections, "upsertConnections">;
+  store: Pick<Connections, "connections" | "upsertConnections">;
   /** The data root the media shelf hangs off (`saveMedia`). */
   dir: string;
   resources: string[];
@@ -220,7 +239,10 @@ export async function runPollIngest(
    *  writes and never answer, so every poll after that times out against the same dead pool
    *  and no amount of retrying reaches the network again. Only a fresh process clears it, and
    *  the supervisor makes one in a second — so a poller this far gone stands down and lets it.
-   *  Well past FAILING_AFTER_SWEEPS: the connection is called down before anyone gives up. */
+   *  Well past FAILING_AFTER_SWEEPS: the connection is called down before anyone gives up.
+   *  Only a sweep that reached NOTHING counts: a grant refused or failing while another
+   *  reads, or an issuer saying a grant is signed out, is the wire answering — a fresh
+   *  process would read the same refusal, and every other grant would pay the restart. */
   const WEDGED_AFTER_SWEEPS = 5;
   const { openStore } = await import("../store/mod.ts");
   const { createGrantBroker } = await import("../proxy/grants.ts");
@@ -233,7 +255,7 @@ export async function runPollIngest(
   const creds = await store.vault();
   const broker = createGrantBroker({ creds });
   // this sweep's verdict, and how many in a row have come back empty-handed
-  const swept = { failed: false, inARow: 0 };
+  const swept = { failed: false, reached: false, inARow: 0 };
   const client = pollingClient();
   const poller = create({
     publish: log.publish,
@@ -246,9 +268,13 @@ export async function runPollIngest(
     fetchApi: (input, init) => fetch(input, { ...init, client }),
     onError: (key, err) => {
       swept.failed = true;
+      if (err instanceof SignedOut) swept.reached = true;
       console.error(`[ingest] ${what} poll FAILED on ${key}:`, err);
     },
-    onPolled: (key, res, n) => n && console.error(`[ingest] ${key} ${res}: +${n} ${what}`),
+    onPolled: (key, res, n) => {
+      swept.reached = true;
+      if (n) console.error(`[ingest] ${key} ${res}: +${n} ${what}`);
+    },
   });
   console.error(
     `[ingest] ${service} ${what} poll every ${POLL_MS}ms → ${dir}/log  (${resources.join(", ")})`,
@@ -264,8 +290,10 @@ export async function runPollIngest(
     counted = tick;
     // then(f, f): a rejected `finally` would be a second, unhandled rejection
     const settled = () => {
-      swept.inARow = swept.failed ? swept.inARow + 1 : 0;
-      swept.failed = false; // the verdict is in; the next sweep starts clean
+      swept.inARow = swept.failed && !swept.reached ? swept.inARow + 1 : 0;
+      // the verdict is in; the next sweep starts clean
+      swept.failed = false;
+      swept.reached = false;
       if (swept.inARow < WEDGED_AFTER_SWEEPS) return;
       console.error(
         `[ingest] ${swept.inARow} sweeps in a row reached nothing — standing down for a ` +

@@ -2,7 +2,7 @@ import { assertEquals } from "@std/assert";
 import { bridgeStatus, createBridgeProbe, MISSES } from "./probe.ts";
 import type { ConnectionRow } from "../../store/connections.ts";
 
-/** The connections map as the probe reads and writes it: `extra` merges. */
+/** The connections map as the probe reads and writes it: `extra` merges, a null drops. */
 function map(rows: ConnectionRow[]) {
   const byKey = new Map(rows.map((r) => [`${r.service}:${r.address}`, r]));
   return {
@@ -10,24 +10,23 @@ function map(rows: ConnectionRow[]) {
     upsertConnections: (put: ConnectionRow[]) => {
       for (const r of put) {
         const was = byKey.get(`${r.service}:${r.address}`);
-        byKey.set(`${r.service}:${r.address}`, {
-          ...was,
-          ...r,
-          extra: { ...was?.extra, ...r.extra },
-        });
+        const extra = { ...was?.extra, ...r.extra };
+        for (const [k, v] of Object.entries(extra)) if (v === null) delete extra[k];
+        byKey.set(`${r.service}:${r.address}`, { ...was, ...r, extra });
       }
       return Promise.resolve();
     },
     state: (address: string) => byKey.get(`whatsapp:${address}`)?.extra?.state,
+    extra: (address: string) => byKey.get(`whatsapp:${address}`)?.extra ?? {},
   };
 }
 
 const T = "2026-10-20T12:00:00.000Z";
 
-Deno.test("probe: a bridge silent MISSES rounds running marks its sessions unreachable; a logged-out one stays the bridge's", async () => {
+Deno.test("probe: a bridge silent MISSES rounds running marks its sessions bridge_down", async () => {
   const store = map([
     { service: "whatsapp", address: "549111", extra: { state: "connected" } },
-    { service: "whatsapp", address: "549222", extra: { state: "logged_out" } },
+    { service: "whatsapp", address: "549222", extra: { state: "signed_out" } },
     { service: "slack", address: "T1", extra: { state: "connected" } },
   ]);
   let asked = 0;
@@ -42,19 +41,20 @@ Deno.test("probe: a bridge silent MISSES rounds running marks its sessions unrea
   for (let i = 1; i < MISSES; i++) await probe.tick();
   assertEquals(store.state("549111"), "connected"); // a restart passes without a word
   await probe.tick();
-  assertEquals(store.state("549111"), "bridge_unreachable");
-  assertEquals((await store.connections())[0].extra?.bridge_unreachable_at, T);
-  assertEquals(store.state("549222"), "logged_out");
+  // the outermost broken piece is what the rows say: nothing past the bridge is known
+  assertEquals(store.state("549111"), "bridge_down");
+  assertEquals(store.extra("549111").bridge_down_at, T);
+  assertEquals(store.state("549222"), "bridge_down");
   assertEquals((await store.connections())[2].extra?.state, "connected"); // not WhatsApp's
   assertEquals(asked, MISSES); // one silence per round is the bridge's
 });
 
-Deno.test("probe: the bridge's first answer takes the mark back, with the state it gives each session", async () => {
+Deno.test("probe: the bridge's first answer sets each session to its word", async () => {
   const store = map([
-    { service: "whatsapp", address: "549111", extra: { state: "bridge_unreachable" } },
-    { service: "whatsapp", address: "549222", extra: { state: "bridge_unreachable" } },
-    { service: "whatsapp", address: "549333", extra: { state: "bridge_unreachable" } },
-    { service: "whatsapp", address: "549444", extra: { state: "disconnected" } },
+    { service: "whatsapp", address: "549111", extra: { state: "bridge_down" } },
+    { service: "whatsapp", address: "549222", extra: { state: "bridge_down" } },
+    { service: "whatsapp", address: "549333", extra: { state: "bridge_down" } },
+    { service: "whatsapp", address: "549444", extra: { state: "unavailable" } },
   ]);
   const said: Record<string, { connected: boolean } | null> = {
     "549111": { connected: true },
@@ -64,79 +64,63 @@ Deno.test("probe: the bridge's first answer takes the mark back, with the state 
   };
   let answered = 0;
   const probe = createBridgeProbe({
-    status: (address) => Promise.resolve(said[address]),
+    status: (a) => Promise.resolve(said[a]),
     store,
     now: () => T,
     onAnswered: () => answered++,
   });
   await probe.tick();
-  assertEquals(
-    ["549111", "549222", "549333", "549444"].map(store.state),
-    ["connected", "disconnected", "unpaired", "connected"],
-  );
+  assertEquals(store.state("549111"), "connected");
+  assertEquals(store.extra("549111").connected_at, T);
+  assertEquals(store.state("549222"), "unavailable");
+  assertEquals(store.state("549333"), "signed_out"); // a session the bridge does not hold
+  assertEquals(store.state("549444"), "connected");
   assertEquals(answered, 1);
 });
 
-Deno.test("probe: an answered round sets a row the bridge disagrees with to its word; logged out stays the bridge's", async () => {
+Deno.test("probe: an answered round sets a row the bridge disagrees with to its word, and keeps the since of one it agrees with", async () => {
   const store = map([
-    // the map kept it, the bridge lost it: it says connected while nothing flows
+    // the map kept it after the bridge forgot it (a device unlinked while nobody heard)
     { service: "whatsapp", address: "549111", extra: { state: "connected" } },
-    { service: "whatsapp", address: "549222", extra: { state: "connected" } },
-    { service: "whatsapp", address: "549333", extra: { state: "logged_out" } },
-  ]);
-  const writes: string[] = [];
-  const probe = createBridgeProbe({
-    status: (address) => Promise.resolve(address === "549222" ? { connected: true } : null),
-    store: {
-      ...store,
-      upsertConnections: (rows) => {
-        writes.push(...rows.map((r) => r.address));
-        return store.upsertConnections(rows);
-      },
+    {
+      service: "whatsapp",
+      address: "549222",
+      extra: { state: "unavailable", unavailable_at: "x" },
     },
-  });
-  await probe.tick();
-  assertEquals(["549111", "549222", "549333"].map(store.state), [
-    "unpaired",
-    "connected",
-    "logged_out",
+    { service: "whatsapp", address: "549333", extra: { state: "suspended", suspended_at: "y" } },
+    // a re-paired number the row still calls signed out
+    { service: "whatsapp", address: "549444", extra: { state: "signed_out" } },
   ]);
-  assertEquals(writes, ["549111"]); // only where the row said otherwise
+  const said: Record<string, { connected: boolean } | null> = {
+    "549111": null,
+    "549222": { connected: false },
+    "549333": { connected: false },
+    "549444": { connected: true },
+  };
+  const probe = createBridgeProbe({ status: (a) => Promise.resolve(said[a]), store, now: () => T });
   await probe.tick();
-  assertEquals(writes, ["549111"]);
+  assertEquals(store.state("549111"), "signed_out");
+  assertEquals(store.extra("549222").unavailable_at, "x"); // agreed: the since stays
+  assertEquals(store.extra("549333").suspended_at, "y"); // a ban is truer than not connected
+  assertEquals(store.state("549444"), "connected");
 });
 
-Deno.test("probe: one answered round between silences starts the count again", async () => {
-  const store = map([{ service: "whatsapp", address: "549111", extra: { state: "connected" } }]);
-  let up = false;
-  const probe = createBridgeProbe({
-    status: () => up ? Promise.resolve({ connected: true }) : Promise.reject(new Error("down")),
-    store,
-  });
-  for (let i = 1; i < MISSES; i++) await probe.tick();
-  up = true;
-  await probe.tick();
-  up = false;
-  for (let i = 1; i < MISSES; i++) await probe.tick();
-  assertEquals(store.state("549111"), "connected");
-});
-
-Deno.test("bridgeStatus: the session's state on 200, null on 404, a throw on any other answer", async () => {
-  const calls: string[] = [];
-  const fake =
-    (status: number, body = "{}") => (url: string | URL | Request, init?: RequestInit) => {
-      calls.push(`${url} ${new Headers(init?.headers).get("authorization")}`);
-      return Promise.resolve(new Response(body, { status }));
-    };
-  assertEquals(
-    await bridgeStatus("http://b", "tok", fake(200, '{"connected":true}') as typeof fetch)("549 1"),
-    { connected: true },
+Deno.test("bridgeStatus: 404 is a session it does not hold, a refusal is a bridge not there", async () => {
+  const answer = (status: number, body = "{}") => () =>
+    Promise.resolve(new Response(body, { status }));
+  const seen: string[] = [];
+  const ok = bridgeStatus(
+    "http://b",
+    "tok",
+    ((url: string, init: RequestInit) => {
+      seen.push(`${url} ${(init.headers as Record<string, string>).authorization}`);
+      return Promise.resolve(new Response('{"connected":true}'));
+    }) as typeof fetch,
   );
-  assertEquals(calls, ["http://b/sessions/549%201 Bearer tok"]);
-  assertEquals(await bridgeStatus("http://b", "tok", fake(404) as typeof fetch)("549111"), null);
+  assertEquals(await ok("549 111"), { connected: true });
+  assertEquals(seen, ["http://b/sessions/549%20111 Bearer tok"]);
+  assertEquals(await bridgeStatus("http://b", "t", answer(404) as typeof fetch)("549"), null);
   let threw = false;
-  await bridgeStatus("http://b", "tok", fake(502) as typeof fetch)("549111").catch(() =>
-    threw = true
-  );
+  await bridgeStatus("http://b", "t", answer(401) as typeof fetch)("549").catch(() => threw = true);
   assertEquals(threw, true);
 });

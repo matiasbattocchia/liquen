@@ -1663,15 +1663,26 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   counted: the block is paid on every request, and a long standing list is furniture.
   A surface is down when its
   connector wrote a state other than `connected` on the row (`extra.state`, stamped
-  `<state>_at`): the WhatsApp bridge posts `disconnected`/`logged_out`, and its connector,
-  asking after each session every 30s, writes `bridge_unreachable` when the bridge has not
-  answered three rounds running (a bridge that is not there says nothing of itself) and,
-  on a round it answers, the bridge's own word wherever a row says otherwise (`unpaired` for
-  a session the bridge does not hold); the Google poll writes `failing` on the sweep
-  that cannot read a grant and `connected` on the one that reads again — transitions
-  only, never a heartbeat. Its line is `· <name> — <service>,
-  <state> since <stamp>`: every item in the block is named the same way, by the name the
-  service shows and by the address only when there is none. Better than Claude Code's session-start env snapshot: we re-render
+  `<state>_at` when the row moves to it, against the row as stored, so a restart never
+  moves the "since"), one word for every connector (`ConnectionState`): `signed_out` (the
+  service ended the access: an OAuth refresh refused as `invalid_grant`, an app
+  uninstalled, a Slack token revoked, a phone that unlinked the device; the principal
+  links it again, and the door's write brings the row back), `unavailable` (the link is
+  down while the access stands: a WhatsApp socket dropped, every Slack socket gone two
+  minutes), `failing` (the service answers with refusals or errors: a poll three sweeps
+  without a read, each poll of the account keeping its own word on the row so it fails
+  while any does), `bridge_down` (the WhatsApp connector asks after each session every
+  30s, and three rounds without an answer are a bridge not there, which says nothing of
+  itself; a round it answers writes the bridge's word, `signed_out` for a session it does
+  not hold), `suspended` (WhatsApp barred the number for a while). A send the service
+  refused as signed out (`SignedOut`) marks the account too, and the next one that lands
+  marks it back. Over all of them stands `connector_down`, which no row stores: a running
+  connector stamps `extra.heard_at` on its rows every 30s, and a row unstamped for two
+  minutes reads as its connector stopped, since the last stamp — the supervisor never
+  opens the log and a dead process says nothing, so the silence is the signal. It
+  outranks the row's own word, which nobody is there to keep true. Its line is
+  `· <name> — <service>, <state> since <stamp>`: every item in the block is named the
+  same way, by the name the service shows and by the address only when there is none. Better than Claude Code's session-start env snapshot: we re-render
   every step, so it's *fresh*, not stale — and cache-free, since this block is already the
   only volatile one. Self-scoping: git appears only in a repo, jobs only when some run — so
   a conversational delegate sees a clean `cwd`+`now`, a coding/task agent sees the full set.

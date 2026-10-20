@@ -39,7 +39,7 @@
  */
 
 import { encodeBase64 } from "@std/encoding/base64";
-import { createDispatcher } from "./dispatcher.ts";
+import { createDispatcher, type DispatcherDeps } from "./dispatcher.ts";
 import { DispatchError } from "./errors.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type { Credentials } from "../store/credentials.ts";
@@ -460,6 +460,7 @@ export interface MailDispatchDeps {
    *  its rows are that wire's dispatch's, and this one leaves them queued for it. */
   elsewhere?: (address: string) => boolean;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
+  store?: DispatcherDeps<unknown>["store"];
   /** The clock the Date header and the mint read. */
   now?: () => string;
   onError?: (event: MessageEvent, err: unknown) => void;
@@ -489,6 +490,7 @@ export function createMailDispatch(deps: MailDispatchDeps): () => Promise<void> 
     read: deps.read,
     service: deps.service,
     setDelivery: deps.setDelivery,
+    store: deps.store,
     onError: deps.onError,
     onSent: deps.onSent,
     select: (event) => {
@@ -630,6 +632,7 @@ export async function runMailDispatch(
     send: wire({ creds, broker, fetchApi: timedFetch }),
     ...(elsewhere ? { elsewhere } : {}),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
+    store: log,
     onSent: (e, id) =>
       console.error(`[dispatch] sent → ${e.envelope.conversation.address} (${id})`),
     onError: (e, err) =>
