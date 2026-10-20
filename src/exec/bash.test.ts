@@ -631,6 +631,17 @@ async function nth(updates: ShellUpdate[], n: number, ms = 5000): Promise<ShellU
   return updates[n - 1];
 }
 
+/** Waits until the job agent a1's call `id` left has written its exit status, the moment
+ *  it counts as ended to a harness that looks: a timed wait is outrun on a loaded machine. */
+async function exited(dir: string, id: string, ms = 5000): Promise<void> {
+  const rc = `${dir}/agents/a1/.out/bash-${id}.rc`;
+  const until = Date.now() + ms;
+  while (!await Deno.stat(rc).then(() => true, () => false)) {
+    assert(Date.now() < until, `${rc} never written`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 Deno.test("exec plane: a job outlives the harness that left it, and the next one tells its end", async () => {
   const dir = await Deno.makeTempDir();
   const ground = await installExecGround(dir, "a1");
@@ -639,13 +650,15 @@ Deno.test("exec plane: a job outlives the harness that left it, and the next one
   const first = ground.shell((u) => before.push(u));
   const next = ground.shell((u) => after.push(u));
   const ended = { command: "echo started; sleep 0.5; echo done; exit 4", wait: 0 };
-  const runs = { command: "sleep 1; echo late", wait: 0 };
+  // runs until the test lets it: a timed sleep ends early on a loaded machine, and the job
+  // would be found already over
+  const runs = { command: `until [ -e ${dir}/go ]; do sleep 0.05; done; echo late`, wait: 0 };
   const U2 = { id: "u2", turn_id: "t1" };
   try {
     await first.exec.bash.execute(ended, live(), undefined, USE);
     await first.exec.bash.execute(runs, live(), undefined, U2);
     first.leave(); // the harness goes down: the jobs run on, and nobody follows them
-    await new Promise((r) => setTimeout(r, 800));
+    await exited(dir, USE.id);
     assertEquals(before, []);
     // one ended meanwhile: its end is told at once, from what it wrote
     assertEquals(await next.resume(USE, ended), true);
@@ -654,9 +667,10 @@ Deno.test("exec plane: a job outlives the harness that left it, and the next one
     assertEquals(end.output, "exited 4 while the harness was down\nstarted\ndone");
     // one still running is followed on, and its end told when it comes
     assertEquals(await next.resume(U2, runs), true);
+    await Deno.writeTextFile(`${dir}/go`, "");
     const late = await nth(after, 2);
     assertEquals(late.use, U2);
-    assertMatch(late.output, /^exited 0 after 1s\nlate$/);
+    assertMatch(late.output, /^exited 0 after \d+s\nlate$/);
     // a call that left no job is not found
     assertEquals(await next.resume({ id: "u9", turn_id: "t1" }, runs), false);
   } finally {
@@ -672,7 +686,11 @@ Deno.test("exec plane: a call a crashed turn left unanswered is answered from it
   const updates: ShellUpdate[] = [];
   const first = ground.shell();
   const next = ground.shell((u) => updates.push(u));
-  const runs = { command: "echo early; sleep 0.8; echo late", wait: 0 };
+  // runs until the test lets it, so it is still running when the next harness looks
+  const runs = {
+    command: `echo early; until [ -e ${dir}/go ]; do sleep 0.05; done; echo late`,
+    wait: 0,
+  };
   const failed = { command: "echo quick; sleep 0.2; exit 2", wait: 0 };
   const U2 = { id: "u2", turn_id: "t1" };
   let stranger: Deno.ChildProcess | undefined;
@@ -680,7 +698,7 @@ Deno.test("exec plane: a call a crashed turn left unanswered is answered from it
     await first.exec.bash.execute(runs, live(), undefined, USE);
     await first.exec.bash.execute(failed, live(), undefined, U2);
     first.leave();
-    await new Promise((r) => setTimeout(r, 400));
+    await exited(dir, U2.id);
     // still running: answered async with what it printed, and followed on
     const answer = await next.exec.bash.recover!(runs, USE) as ExecOutcome;
     assertEquals(answer.async, true);
@@ -688,6 +706,7 @@ Deno.test("exec plane: a call a crashed turn left unanswered is answered from it
       String(answer.output),
       /^early\n\n\[the harness went down while it ran; it runs on as group \d+: what it prints/,
     );
+    await Deno.writeTextFile(`${dir}/go`, "");
     const end = await nth(updates, 1);
     assertMatch(end.output, /^exited 0 after \d+s\nlate$/); // what it printed since the answer
     // ended meanwhile: answered with how it ended
