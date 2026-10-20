@@ -2643,9 +2643,28 @@ async function execute(
         await ports.log.disarm(timer.id, self.id, self.session_id);
         return { disarmed: shortId(timer.id), note: timer.note };
       }
+      // and a message of this agent's still waiting to go: withdrawn, never offered again
+      // (store/sweep.ts), and the dispatcher reads the row once more before it posts
+      const mine = (e: Event) => byId(e.id) && e.agent?.id === self.id;
+      const waiting = [
+        ...await ports.log.read({ types: ["message"], state: "queued", filter: mine }),
+        ...await ports.log.read({ types: ["message"], state: "failed", filter: mine }),
+      ];
+      if (waiting.length > 1) {
+        throw new Error(`"${id}" names ${waiting.length} messages — ambiguous`);
+      }
+      if (waiting.length === 1) {
+        if (await ports.log.withdraw(waiting[0].id, new Date().toISOString())) {
+          return { withdrawn: true, event_id: waiting[0].id };
+        }
+        throw new Error(
+          `message "${id}" went out just now — to take it back from the wire: send with ` +
+            `action delete and re ${id}`,
+        );
+      }
       throw new Error(
-        `"${id}" is not an open ask of yours — it was answered, or lapsed, or the id is not ` +
-          "one your pending and scheduled lists name",
+        `"${id}" is not an open ask, a scheduled wake or an unsent message of yours — it was ` +
+          "answered, lapsed, fired or went out, or the id is not one your window and lists name",
       );
     }
     const call = card.parts[0].data.call;
@@ -2794,7 +2813,7 @@ async function execute(
       : opened
       ? opened.kind ?? aimed.wire!.open.kind
       : prior?.envelope.conversation.kind;
-    let target = args.re === undefined
+    const target = args.re === undefined
       ? undefined
       : await referent(ports, to, String(args.re), prior?.envelope.connection_address);
     // a wire conversation's name is its record's — a send carries no rename; on first
@@ -2879,23 +2898,6 @@ async function execute(
         `only this account's own messages can be ${action === "edit" ? "edited" : "deleted"}` +
           " — that one is not",
       );
-    }
-    if (target && !target.envelope.external_id) {
-      const unsent = `message "${args.re}" has not reached the wire yet`;
-      if (action !== "delete") throw new Error(`${unsent} — nothing to point at`);
-      // ours and not yet out: taken back before it goes, never offered again
-      if (await ports.log.withdraw(target.id, new Date().toISOString())) {
-        return { withdrawn: true, event_id: target.id };
-      }
-      // it moved meanwhile: gone out (a delete on the wire follows), or already taken back
-      target = await referent(ports, to, String(args.re), prior?.envelope.connection_address);
-      if (!target.envelope.external_id) {
-        throw new Error(
-          target.envelope.status === "withdrawn"
-            ? `message "${args.re}" is already taken back`
-            : `${unsent}, and is not waiting to go either — nothing to take back`,
-        );
-      }
     }
     if (action === "edit" && !body) throw new Error("`edit` needs the replacement text");
     if (action === "remove" && !glyph) throw new Error("`remove` needs the reaction it lifts");
@@ -3317,7 +3319,20 @@ async function referent(
   });
   if (matches.length === 0) throw new Error(`no message "${re}" in ${conversation}`);
   if (matches.length > 1) throw new Error(`"${re}" names ${matches.length} messages — ambiguous`);
-  return matches[0];
+  const target = matches[0];
+  // the wire knows a message by the id it gave it: one not out yet has none to point at,
+  // and is not the send tool's at all — withdrawing it is `cancel`'s
+  if (!target.envelope.external_id) {
+    const state = target.envelope.status;
+    throw new Error(
+      state === "withdrawn"
+        ? `message "${re}" was taken back — it never went out`
+        : state === "queued" || state === "failed"
+        ? `message "${re}" has not gone out yet — nothing to point at; to take it back: cancel ${re}`
+        : `message "${re}" has not reached the wire yet — nothing to point at`,
+    );
+  }
+  return target;
 }
 
 /** How many matches a search page holds when the model names no `limit` — the same

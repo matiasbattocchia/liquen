@@ -26,7 +26,6 @@ principal because they are present in this same conversation.
 - action: create (default for text or files) | edit | delete | add (default for react) |
   remove. Text or files: create without `re` sends a new message, with `re` *replies to* the
   target message; edit *replaces* content and delete *takes* it back (both require `re`).
-  A message of yours not yet delivered is withdrawn by delete: it never goes out
   Reactions: add *reacts to* the target message, remove *takes* back the glyph you put on it
 - files: file paths to attach. A relative path resolves from your shell's cwd
 - location: a map pin, sent as its own message after any text or files. WhatsApp

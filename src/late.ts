@@ -123,8 +123,7 @@ export function stalledUpdate(
     call,
     output: `not delivered yet, ${took(now - Date.parse(e.ts))} after it was sent: ${why}. ` +
       `${retried}, and you are told when it goes out or is given up. To keep it from ` +
-      `going out late, take it back: send to the same conversation with action delete and ` +
-      `re ${shortId(e.id)}.`,
+      `going out late, take it back: cancel ${shortId(e.id)}.`,
     is_error: true,
   };
 }

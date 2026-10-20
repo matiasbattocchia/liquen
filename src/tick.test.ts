@@ -207,8 +207,7 @@ Deno.test("a send not out past the stall is told so, still tried, and told again
       "send(to: Banco Hipotecario SA, text: hola) — not delivered yet, 16m after it was " +
         "sent: bridge /dispatch: connection refused. It is retried for about 17h more, and " +
         "you are told when it goes out or is given up. To keep it from going out late, take " +
-        "it back: send to the same conversation with action delete and re " +
-        `${shortId(retrying.id)}.`,
+        `it back: cancel ${shortId(retrying.id)}.`,
     );
     assertStringIncludes(
       outcomeLine(told[1]),

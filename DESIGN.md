@@ -543,9 +543,10 @@ at fire time against today's window, which is what keeps the permission table me
 **Scheduling is a tool**, `schedule` — `at` a moment, `in` a delay, or `cron` to repeat,
 plus the note. Gated like every other call (§9): one path, so a policy on `schedule` rules
 scripts and model alike. The horizon is a year: a wake fires in the future and within one —
-a fact further out belongs in the agent's files, not a timer. `cancel` is the universal unset — an open approval or an armed
-wake, by id. **A wake belongs to the session that armed it** (§4): the row carries the
-session, that session's anchor lists it beside the background jobs and the open asks (§5) —
+a fact further out belongs in the agent's files, not a timer. `cancel` is the universal
+unset — an open approval, an armed wake or a send not yet out (§9), by id. **A wake
+belongs to the session that armed it** (§4): the row carries the session, that session's
+anchor lists it beside the background jobs and the open asks (§5) —
 which is where the ids come from — that session alone can cancel it, and the alarm lands in
 `session.conversation`, where it speaks. Not in the conversation the `tool_use` carries:
 that is the plane every call is stamped on, which names a plane, not a session.
@@ -600,12 +601,14 @@ presence line have no turn to tell):
 - **corrected** — a send told stalled or undelivered, or withdrawn, went out after all:
   the final update says how late (`status.corrected_at`).
 
-A send not yet out is the agent's to take back: `send` with action delete on it withdraws
-the row (`state: withdrawn`), never offered again, and the dispatcher reads a row once
-more before it posts, so one withdrawn while it waited its turn does not go. main also runs
-the report passes the moment the update stream shows a row of the model's own go `failed`,
-or go out after it was told of, so a refused send is told in seconds and the beat is the
-guarantee for one stamped while nobody listened.
+A send not yet out is the agent's to take back: `cancel` with its id withdraws the row
+(`state: withdrawn`), never offered again, and the dispatcher reads a row once more before
+it posts, so one withdrawn while it waited its turn does not go. `send` cannot point at it:
+the wire has no name for it yet, so a reply, reaction, edit or delete on it is refused,
+naming `cancel` while it still waits. main also runs the report passes the moment the
+update stream shows a row of the model's own go `failed`, or go out after it was told of,
+so a refused send is told in seconds and the beat is the guarantee for one stamped while
+nobody listened.
 
 The shell tells the rest: a command's lines, its end, and what it left running (§9, the
 exec plane).
@@ -2505,8 +2508,8 @@ beats a bespoke tool):
 So the core surface is **`send` · `search` · the substrate primitive (`bash` / the doc
 calls)** +
 the two that act on the agent's own standing state (**`schedule`** arms a wake, **`cancel`**
-unsets a wake or an open approval, §10) + dynamic MCP. Everything else is helpers
-(binaries/functions) + skill.
+unsets a wake, an open approval or a send not yet out, §10) + dynamic MCP. Everything else
+is helpers (binaries/functions) + skill.
 
 ### The door (`src/door.ts` + `src/script.ts`) — a script's syscalls are tool_use events
 

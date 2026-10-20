@@ -2459,7 +2459,7 @@ Deno.test("send action: the account may unsay its own words, and lift its own re
   }
 });
 
-Deno.test("send action delete: a message of ours not yet out is withdrawn, and never offered again", async () => {
+Deno.test("cancel: a message of ours not yet out is withdrawn, never offered again, and send cannot point at it", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   await log.upsertConnections([{ service: "whatsapp", address: "org" }]);
@@ -2492,16 +2492,17 @@ Deno.test("send action delete: a message of ours not yet out is withdrawn, and n
       parts: [{ type: "text", kind: "text", text: "¿venís?" }],
     });
     const re = shortId(waiting.id);
-    const take = { to: "wa:g1", re, action: "delete" };
+    const del = { to: "wa:g1", re, action: "delete" };
     const reply = { to: "wa:g1", re, text: "¿ya?" };
     const { transport } = scripted([
-      ok([{ kind: "tool_use", name: "send", input: take }], "tool_use"),
+      ok([{ kind: "tool_use", name: "send", input: del }], "tool_use"),
+      ok([{ kind: "tool_use", name: "cancel", input: { id: re } }], "tool_use"),
       ok([{ kind: "tool_use", name: "send", input: reply }], "tool_use"),
-      ok([{ kind: "tool_use", name: "send", input: take }], "tool_use"),
+      ok([{ kind: "tool_use", name: "cancel", input: { id: re } }], "tool_use"),
       ok([{ kind: "assistant", text: "listo" }], "end_turn"),
     ]);
     const ports = { log, docs: await docsAt(`${dir}/docs`), transport };
-    for (let i = 0; i < 6; i++) await xi(CONFIG, ports);
+    for (let i = 0; i < 8; i++) await xi(CONFIG, ports);
 
     const row = (await log.read({ types: ["message"] })).find((e) => e.id === waiting.id)!;
     assertEquals(row.envelope.status, "withdrawn");
@@ -2513,9 +2514,15 @@ Deno.test("send action delete: a message of ours not yet out is withdrawn, and n
     const results = (await log.read({ types: ["tool_result"] })).map((e) =>
       JSON.stringify(e.parts)
     );
-    assertStringIncludes(results[0], '"withdrawn":true');
-    assertStringIncludes(results[1], "has not reached the wire yet");
-    assertStringIncludes(results[2], "is already taken back");
+    // anything send points at it is refused: still waiting, it names cancel; taken back, it
+    // says so
+    assertStringIncludes(
+      results[0],
+      `has not gone out yet — nothing to point at; to take it back: cancel ${re}`,
+    );
+    assertStringIncludes(results[1], '"withdrawn":true');
+    assertStringIncludes(results[2], "was taken back — it never went out");
+    assertStringIncludes(results[3], "not an open ask, a scheduled wake or an unsent message");
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

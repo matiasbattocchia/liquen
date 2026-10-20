@@ -5662,11 +5662,13 @@ after a reboot, which nothing reported either: its rows went on saying `connecte
   and how to take it back. 15 minutes falls while the row waits for its third retry.
 - **Corrected:** a send told stalled or undelivered, or withdrawn, that goes out after all
   is told final, with how late.
-- **Withdraw:** `send` action delete on one of ours that has not gone out marks it
-  `withdrawn` instead of sending a delete the wire could not place. The sweeper never
-  offers it again, the claims skip it, and the window shows `status="withdrawn"`. The
-  dispatcher reads a row once more before posting, so one withdrawn while waiting its turn
-  does not go; one withdrawn while its post is already on the wire may still land, and is
+- **Withdraw:** `cancel` with the id of one of ours that has not gone out marks it
+  `withdrawn`: the one "withdraw by id" verb, beside open asks and scheduled wakes. `send`
+  pointing `re` at a message not yet out (reply, react, edit, delete) is refused, naming
+  `cancel` when the message is still waiting to go. The sweeper never offers it again, the
+  claims skip it, and the window shows `status="withdrawn"`. The dispatcher reads a row
+  once more before posting, so one withdrawn while waiting its turn does not go; one
+  withdrawn while its post is already on the wire may still land, and is
   then told as corrected.
 - **Bridge probe:** the WhatsApp connector asks `GET /sessions/{address}` every 30s; three
   silent rounds mark the sessions `bridge_unreachable`, which the anchor's down block
