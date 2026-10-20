@@ -77,7 +77,10 @@ export function mirrorsOf(row: ConnectionRow): Mirrors {
  *
  * One word is never stored: `connector_down`, the anchor's reading of a row whose
  * connector has stopped beating (`extra.heard_at`, `connect/health.ts`). It outranks the
- * row's own word, which nobody is there to keep true. */
+ * row's own word, which nobody is there to keep true. Next comes `extra.inbound`,
+ * `tunnel_down` or `edge_down`: the path a pushed service dials is not answering
+ * (`connect/health.ts`), which says nothing of the account, so it sits beside `state`
+ * rather than in it. */
 export type ConnectionState =
   | "connected"
   | "signed_out"

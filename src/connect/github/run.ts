@@ -16,5 +16,5 @@ import { runDispatch } from "./dispatch.ts";
 import { entry, exitOnStop, heartbeat } from "../../connector.ts";
 
 await entry(async () =>
-  exitOnStop([await runIngest(), await runDispatch(), await heartbeat("github")])
+  exitOnStop([await runIngest(), await runDispatch(), await heartbeat("github", { pushed: true })])
 );

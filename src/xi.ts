@@ -1307,6 +1307,9 @@ export function downOn(surfaces: ConnectionRow[], zone?: string, now = Date.now(
     if (typeof heard === "string" && now - Date.parse(heard) > SILENT_AFTER_MS) {
       return [{ c, state: "connector_down", since: heard }];
     }
+    // the path the service pushes over is down: the account's own word waits behind it
+    const inbound = c.extra?.inbound;
+    if (typeof inbound === "string") return [{ c, state: inbound, since: c.extra?.inbound_at }];
     const state = c.extra?.state;
     if (typeof state !== "string" || state === "connected") return [];
     return [{ c, state, since: c.extra?.[`${state}_at`] }];

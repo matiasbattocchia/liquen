@@ -84,15 +84,28 @@ Deno.test("downOn: one shape for every reason, and a connector gone silent outra
       },
       // beating, and up: not listed
       { service: "github", address: "github", extra: { heard_at: "2026-10-20T14:29:40Z" } },
+      // beating, but the path Graph pushes over is not answering: that, not its own word
+      {
+        service: "microsoft",
+        address: "bo@x.io",
+        extra: {
+          state: "failing",
+          failing_at: "2026-10-19T08:00:00Z",
+          heard_at: "2026-10-20T14:29:40Z",
+          inbound: "tunnel_down",
+          inbound_at: "2026-10-20T14:02:00Z",
+        },
+      },
     ],
     "UTC",
     now,
   );
   assertEquals(lines, [
-    "down — 3 connections:",
+    "down — 4 connections:",
     "· Ana — whatsapp, bridge down since 20 Oct 1:19",
     "· ana@x.io — google, signed out since 18 Oct 9:12",
     "· acme — slack, connector down since 20 Oct 13:55",
+    "· bo@x.io — microsoft, tunnel down since 20 Oct 14:02",
   ]);
   assertEquals(downOn([{ service: "github", address: "github" }], "UTC", now), []);
 });

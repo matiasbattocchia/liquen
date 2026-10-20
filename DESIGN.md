@@ -1694,7 +1694,12 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   connector stamps `extra.heard_at` on its rows every 30s, and a row unstamped for two
   minutes reads as its connector stopped, since the last stamp — the supervisor never
   opens the log and a dead process says nothing, so the silence is the signal. It
-  outranks the row's own word, which nobody is there to keep true. Its line is
+  outranks the row's own word, which nobody is there to keep true. Next comes the path a
+  pushed service dials (GitHub's webhooks, Graph's Teams notifications): its connector
+  fetches its own public ingest each beat, and three misses in a row put `tunnel_down` on
+  its rows, or `edge_down` when this machine's edge does not answer either
+  (`extra.inbound`, stamped `inbound_at`); the first answer takes it off. It sits beside
+  the row's word rather than in it, since it says nothing of the account. Its line is
   `· <name> — <service>, <state> since <stamp>`: every item in the block is named the
   same way, by the name the service shows and by the address only when there is none. Better than Claude Code's session-start env snapshot: we re-render
   every step, so it's *fresh*, not stale — and cache-free, since this block is already the
