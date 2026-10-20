@@ -226,8 +226,9 @@ export async function start(
     overrides.transport ?? transportOf(providerOf(p.provider));
   // the exec plane (§9): one provider owns the proxy, the grounds and the shells; main
   // holds only the provider, and every session's exec, ambient and files come from it —
-  // this machine's, or the sandbox gateway's the catalog names
-  const remote = catalog?.system.sandbox ?? null;
+  // this machine's, bare or in bubbles, or the sandbox gateway's the catalog names
+  const bubble = catalog?.system.sandbox === "bwrap";
+  const remote = bubble ? null : catalog?.system.sandbox ?? null;
   const updating = new Set<Promise<void>>();
   const planeOptions = {
     agents: principals.map((p) => p.agentId),
@@ -252,6 +253,7 @@ export async function start(
     })
     : await openLocalSandbox(dir, {
       store,
+      bubble,
       exports: Object.fromEntries(principals.map((p) => [p.agentId, p.settings?.export ?? []])),
       ...planeOptions,
     });

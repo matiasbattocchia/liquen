@@ -300,10 +300,12 @@ const SYSTEM: Entry[] = [
   {
     key: "sandbox",
     value: null,
-    doc: "where the agents' shells run: null ⇒ this machine; the URL of a Cloudflare " +
-      "sandbox gateway (sandbox/cloudflare in the package) ⇒ one sandbox per agent there, " +
-      "its bearer token read from SANDBOX_API_KEY; needs docs: table, since the sandbox " +
-      "cannot reach files on this machine",
+    doc: 'where the agents\' shells run: null ⇒ this machine, as you; "bwrap" ⇒ this ' +
+      "machine, each agent in a bubble of its own (bubblewrap) that sees its own folder, the shared floor " +
+      "and the system, and reaches the network only through the egress proxy; the URL of " +
+      "a Cloudflare sandbox gateway (sandbox/cloudflare in the package) ⇒ one sandbox per " +
+      "agent there, its bearer token read from SANDBOX_API_KEY; needs docs: table, since " +
+      "the sandbox cannot reach files on this machine",
   },
   {
     key: "sandboxSleepMinutes",
@@ -1128,22 +1130,23 @@ export function checkDocs(v: unknown, database: unknown): string | null {
   return database === null ? "table needs system.database to name a Postgres database" : null;
 }
 
-/** What `system.sandbox` may hold: null, or the https URL of a sandbox gateway — plain
- *  http only toward this machine, where `wrangler dev` serves one — when the docs are in
- *  the table. A complaint, or null when the value is fine. */
+/** What `system.sandbox` may hold: null, `"bwrap"`, or the https URL of a sandbox gateway —
+ *  plain http only toward this machine, where `wrangler dev` serves one — when the docs are
+ *  in the table. A complaint, or null when the value is fine. */
 export function checkSandbox(v: unknown, docs: unknown): string | null {
-  if (v === null) return null;
+  if (v === null || v === "bwrap") return null;
+  const shape = 'must be null, "bwrap", or a gateway\'s https URL';
   let url: URL;
   try {
     url = new URL(String(v));
   } catch {
-    return "must be null or a gateway's https URL";
+    return shape;
   }
   const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
   if (
     typeof v !== "string" || !(url.protocol === "https:" || (local && url.protocol === "http:"))
   ) {
-    return "must be null or a gateway's https URL";
+    return shape;
   }
   if (url.username || url.password) {
     return "must not carry a credential — SANDBOX_API_KEY in .env holds it";

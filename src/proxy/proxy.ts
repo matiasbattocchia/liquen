@@ -170,10 +170,12 @@ export interface Proxy {
   shutdown(): Promise<void>;
 }
 
-/** Start the proxy on loopback. `port: 0` picks an ephemeral one (read `.port` back). */
+/** Start the proxy on loopback. `port: 0` picks an ephemeral one (read `.port` back).
+ *  `socket` is a unix socket it also accepts on, the same protocol: the way in for a shell
+ *  whose network is its own loopback and nothing else (exec/bubble.ts). */
 export function startProxy(
   deps: ProxyDeps,
-  opts: { port?: number; hostname?: string } = {},
+  opts: { port?: number; hostname?: string; socket?: string } = {},
 ): Proxy {
   const hostname = opts.hostname ?? "127.0.0.1";
   // per-authority decrypting backend: a loopback TLS `Deno.serve` with the host's leaf
@@ -200,10 +202,18 @@ export function startProxy(
 
   const listener = Deno.listen({ hostname, port: opts.port ?? 0 });
   const port = (listener.addr as Deno.NetAddr).port;
+  const listeners: Deno.Listener[] = [listener];
+  if (opts.socket) {
+    try {
+      Deno.removeSync(opts.socket); // a socket a stopped harness left behind
+    } catch { /* none */ }
+    listeners.push(Deno.listen({ transport: "unix", path: opts.socket }));
+  }
 
-  const serve = async () => {
-    for await (const conn of listener) handleConn(conn).catch(() => {});
-  };
+  const serve = () =>
+    Promise.all(listeners.map(async (l) => {
+      for await (const conn of l) handleConn(conn).catch(() => {});
+    }));
   // a conn we can't tunnel gets an ANSWER and a close — never a silent hang
   const deny = async (conn: Deno.Conn, status: string): Promise<void> => {
     await conn.write(new TextEncoder().encode(`HTTP/1.1 ${status}\r\n\r\n`)).catch(() => {});
@@ -252,9 +262,11 @@ export function startProxy(
     port,
     caPath: deps.ca.caPath,
     async shutdown(): Promise<void> {
-      try {
-        listener.close();
-      } catch { /* already closed */ }
+      for (const l of listeners) {
+        try {
+          l.close();
+        } catch { /* already closed */ }
+      }
       await running.catch(() => {});
       await Promise.all(servers.map((s) => s.shutdown().catch(() => {})));
     },

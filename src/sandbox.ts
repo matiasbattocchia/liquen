@@ -28,6 +28,7 @@ import {
   sandboxIdOf,
 } from "./exec/gateway.ts";
 import { DEFAULT_SANDBOX_SLEEP_MINUTES } from "./config.ts";
+import { openBubble } from "./exec/bubble.ts";
 
 /** One session's place in the sandbox: its shell (where it stands, what it left running),
  *  the agent's folder on this ground, and the files port its references resolve through. */
@@ -81,6 +82,8 @@ export interface LocalSandboxOptions {
   /** Where every shell tells what its calls do after their answers (late.ts), with the
    *  session whose shell it is. */
   tell?: (u: SessionUpdate) => void;
+  /** Each agent's shells run in its bubble (exec/bubble.ts): `system.sandbox: "bwrap"`. */
+  bubble?: boolean;
 }
 
 /** The local provider: subprocesses on this machine, ONE GROUND PER AGENT, ONE SHELL PER
@@ -93,11 +96,14 @@ export interface LocalSandboxOptions {
  *  refused broker-side, before any byte is read. */
 export async function openLocalSandbox(
   dir: string,
-  { store, agents, locale, bashWaitMs, exports = {}, tell }: LocalSandboxOptions,
+  { store, agents, locale, bashWaitMs, exports = {}, tell, bubble }: LocalSandboxOptions,
 ): Promise<Sandbox> {
   // the egress proxy (§9): front every credential row that declares an env var — user
-  // space gets the placeholder + proxy env, never a real credential
-  const proxy = await installProxy(dir, store);
+  // space gets the placeholder + proxy env, never a real credential. A bubble reaches it
+  // through its socket, which sits with the broker's state, where no shell sees it
+  const socket = bubble ? `${dir}/log/egress.sock` : undefined;
+  if (socket) await Deno.mkdir(`${dir}/log`, { recursive: true });
+  const proxy = await installProxy(dir, store, socket);
   const localeEnv: Record<string, string> = locale ? { LANG: locale } : {};
   const grounds = new Map<string, ExecGround>();
   for (const agentId of agents) {
@@ -113,7 +119,10 @@ export async function openLocalSandbox(
       ...(await proxy.env(agentId)),
       ...localeEnv,
     });
-    grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashWaitMs));
+    const bubbled = socket === undefined
+      ? undefined
+      : () => openBubble({ dir, agentId, socket, port: proxy.port });
+    grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashWaitMs, bubbled));
   }
   const shells = new Map<string, ExecPlane>();
   const homeOf = (agentId: string) => `${dir}/agents/${agentId}`;
@@ -144,6 +153,7 @@ export async function openLocalSandbox(
     },
     async close({ jobs = "end" } = {}) {
       await closeShells(shells.values(), jobs); // each session's own jobs (§9)
+      for (const ground of grounds.values()) await ground.close(jobs);
       await proxy.close(); // stop the egress proxy and close its vault handle
     },
   };
@@ -265,6 +275,8 @@ export function openCloudflareSandbox(
  *  that agent holds, and the audit line's agent is the caller. */
 interface ProxyHandle {
   env: (agentId: string) => Promise<Record<string, string>>;
+  /** The loopback port `HTTPS_PROXY` names. */
+  port: number;
   close(): Promise<void>;
 }
 
@@ -300,7 +312,7 @@ async function writeTrustBundle(dir: string, caPath: string): Promise<string> {
   return out;
 }
 
-async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
+async function installProxy(dir: string, store: Store, socket?: string): Promise<ProxyHandle> {
   const creds = await store.vault();
   const log = await store.log();
   const broker = createGrantBroker({ creds });
@@ -324,7 +336,7 @@ async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
         .catch((err) => console.error("[proxy] its request could not be recorded:", err));
     },
     terminates: (authority) => fronted.some((r) => hostAllowed(r.extra?.hosts, authority)),
-  });
+  }, socket ? { socket } : {});
   const bundle = await writeTrustBundle(dir, proxy.caPath);
   const base: Record<string, string> = {
     HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
@@ -338,6 +350,7 @@ async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
   const said = new Map<string, string>();
   console.error(`egress proxy on :${proxy.port}`);
   return {
+    port: proxy.port,
     env: async (agentId) => {
       fronted = await read();
       const env = { ...base };

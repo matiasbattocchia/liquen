@@ -78,9 +78,11 @@ export function jobFiles(out: string, id: string): JobFiles {
 
 /** The job's shell, run as `bash -c JOB_SHELL liquen-job <base> <command>` in a session of
  *  its own: it records its group, runs the command with the log for its output, and writes
- *  the command's exit status — the rename makes the status appear whole or not at all. */
+ *  the command's exit status — the rename makes the status appear whole or not at all. A
+ *  group already recorded was written by what entered a bubble for it (bash.ts), outside
+ *  the bubble's pid namespace, and stands. */
 export const JOB_SHELL = [
-  `echo "$$" > "$1.pgid"`,
+  `[ -s "$1.pgid" ] || echo "$$" > "$1.pgid"`,
   `bash -c "$2" < /dev/null >> "$1.log" 2>&1`,
   `printf '%s\\n' "$?" > "$1.rc~" && mv -f "$1.rc~" "$1.rc"`,
 ].join("\n");

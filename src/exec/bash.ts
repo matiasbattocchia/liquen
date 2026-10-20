@@ -24,6 +24,7 @@
 
 import type { CallRef, ExecFacts, ExecOutcome, ExecTool } from "../xi.ts";
 import { type AgentUser, agentUser, own, ownTree } from "./user.ts";
+import type { Bubble } from "./bubble.ts";
 import type { BinDir, Json } from "../types.ts";
 import { newId } from "../store/id.ts";
 import { MEDIA_MARK } from "../store/media.ts";
@@ -45,6 +46,7 @@ import {
   LOOK_BYTES,
   type Member,
   parseMembers,
+  quote,
   type ShellUpdate,
   Spool,
   SPOOL_CAP,
@@ -78,6 +80,9 @@ export interface BashOptions {
    *  an empty pocket but a different owner — the kernel enforces the data classification.
    *  Only meaningful when the harness runs as root; absent, spawns keep the process uid. */
   user?: AgentUser;
+  /** The bubble every spawn runs inside (exec/bubble.ts): the classification enforced by
+   *  what the shell can see, and the egress proxy its only network. */
+  bubble?: Bubble;
 }
 
 // Process-group isolation (`setsid`) lets us kill a command's whole tree — including a
@@ -441,6 +446,9 @@ export function bashTool(opts: BashOptions): ExecTool {
         // the identity trio follows the uid, not the harness process
         Object.assign(env, { HOME: opts.user.home, USER: opts.user.name, LOGNAME: opts.user.name });
       }
+      // a bubble shows neither the user's home nor their temp dir: the agent's folder is
+      // HOME and the bubble's own /tmp is TMPDIR
+      if (opts.bubble) Object.assign(env, { HOME: opts.workspace, TMPDIR: "/tmp" });
       await Deno.mkdir(out, { recursive: true });
       await own(out, opts.user);
       // the call's id names its job: a harness that finds the call unanswered finds the job
@@ -454,8 +462,15 @@ export function bashTool(opts: BashOptions): ExecTool {
       const args = ["-c", JOB_SHELL, "liquen-job", files.base, jobCommand(command, files)];
       let child: Deno.ChildProcess;
       try {
-        child = new Deno.Command(isolated ? "setsid" : "bash", {
-          args: isolated ? ["bash", ...args] : args,
+        // in a bubble the job's shell has the bubble's own pid: its group is written from
+        // outside, where the number is the one the harness probes and kills
+        const entry = opts.bubble
+          ? ["sh", "-c", `echo "$$" > ${quote(files.pgid)} && exec "$@"`, "liquen-job"]
+            .concat(await opts.bubble.enter(state.cwd))
+          : [];
+        const shell = [...entry, "bash", ...args];
+        child = new Deno.Command(isolated ? "setsid" : shell[0], {
+          args: isolated ? shell : shell.slice(1),
           cwd: state.cwd,
           clearEnv: true,
           env: { ...env, [JOB_ENV]: id },
@@ -794,6 +809,10 @@ export interface ExecPlane {
  *  after their answers (late.ts). */
 export interface ExecGround {
   shell(tell?: (u: ShellUpdate) => void): ExecPlane;
+  /** Let go of the ground's bubbles: with `jobs: "end"` they end, and what runs in them;
+   *  else they stay for the next harness, holding the jobs it adopts. Nothing to do
+   *  without a bubble. */
+  close(jobs: "end" | "leave"): Promise<void>;
 }
 
 /** Is a process group still alive? (harmless probe.) */
@@ -861,7 +880,7 @@ async function groupMembers(jobs: Jobs): Promise<Map<number, Member[]>> {
  *  harness (once per process), since the default is per user and the shims run as the
  *  agent's uid. */
 let harnessDenoDir: Promise<string> | undefined;
-function denoDir(): Promise<string> {
+export function denoDir(): Promise<string> {
   return harnessDenoDir ??= new Deno.Command("deno", {
     args: ["info", "--json"],
     stdout: "piped",
@@ -968,6 +987,8 @@ export function shippedAt(dir: string): BinDir {
  *                             binary it fetched is as private as its notes.
  *    the process's own PATH   inherited verbatim: the system underneath.
  *  `env` (optional) is issued into every spawn — the egress proxy's handoff vars (§9).
+ *  `openBubble` (optional) opens the agent's bubble on this ground: every spawn runs
+ *  inside it.
  *  What is per SESSION — the cwd, the job set — is the shell's, opened per session
  *  on this ground. */
 export async function installExecGround(
@@ -975,6 +996,7 @@ export async function installExecGround(
   agentId: string,
   env?: () => Promise<Record<string, string>>,
   defaultWaitMs?: number, // the system.bashWaitMs knob, funneled by main
+  openBubble?: () => Promise<Bubble>,
 ): Promise<ExecGround> {
   const workspace = `${dir}/agents/${agentId}`;
   const shipped = await layShims(dir);
@@ -984,6 +1006,15 @@ export async function installExecGround(
   await Deno.mkdir(`${dir}/shared/bin`, { recursive: true });
   await Deno.mkdir(`${workspace}/bin`, { recursive: true });
   const user = agentUser(agentId);
+  if (user && openBubble) {
+    throw new Error(
+      `agent ${agentId}: a bubble runs as the harness's own user, and this harness drops to ` +
+        `${user.name}'s — system.sandbox "bwrap" is for a harness that is not root`,
+    );
+  }
+  // the folders the bubble binds exist before it opens
+  await Deno.mkdir(`${dir}/system`, { recursive: true });
+  const bubble = await openBubble?.();
   // the folder is the agent's: the seeded docs and `bin/` were laid by the harness, and
   // the uid that works here must be able to edit them
   await ownTree(workspace, user);
@@ -1004,6 +1035,7 @@ export async function installExecGround(
             state,
             ...(env ? { env } : {}),
             ...(user ? { user } : {}),
+            ...(bubble ? { bubble } : {}),
           }),
         },
         cwd: () => state.cwd,
@@ -1015,15 +1047,17 @@ export async function installExecGround(
             return;
           }
           try {
-            await new Deno.Command("bash", {
-              args: ["-c", ":"],
+            const shell = [...(await bubble?.enter(path) ?? []), "bash", "-c", ":"];
+            const o = await new Deno.Command(shell[0], {
+              args: shell.slice(1),
               cwd: path,
               clearEnv: true,
               ...(user ? { uid: user.uid, gid: user.gid } : {}),
               stdin: "null",
               stdout: "null",
-              stderr: "null",
-            }).spawn().status;
+              stderr: "piped",
+            }).output();
+            if (!o.success) throw new Error(new TextDecoder().decode(o.stderr).trim());
           } catch (err) {
             throw new Error(
               `${path}: the agent cannot stand there (${
@@ -1038,5 +1072,6 @@ export async function installExecGround(
         resume: (use, input) => resumed(jobs, `${workspace}/.out`, input, use),
       };
     },
+    close: (jobs) => bubble?.close(jobs) ?? Promise.resolve(),
   };
 }
