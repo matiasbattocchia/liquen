@@ -1047,11 +1047,12 @@ Deno.test("a person alone (mind: false, §4): a registry row, a door, no session
     // a person alone has a DOOR — its socket is all the folder holds — and no workspace
     await Deno.stat(`${dir}/agents/sol/door.sock`);
     await assertRejects(() => Deno.stat(`${dir}/agents/sol/instructions`), Deno.errors.NotFound);
-    // the org number, paired to nobody: ventas speaks through it and the roster steers it
+    // the org number, paired to nobody: ventas owns no account, so the org's people steer
+    // it — sol, a person alone
     await main.log.upsertConnections([
       { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" },
     ]);
-    assertEquals(await main.log.principalsOf("ventas"), ["sol", "ventas"]);
+    assertEquals(await main.log.principalsOf("ventas"), ["sol"]);
   } finally {
     await main.stop();
     await Deno.remove(root, { recursive: true });

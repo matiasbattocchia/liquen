@@ -8,7 +8,7 @@
  * database's own locale says.
  *
  * The functions are what the shared SQL calls and Postgres does not have: the law's
- * `routed` and `instr`, the roster's `digits` and `same_handle`, the read's `fold`, and
+ * `routed` and `instr`, the roster's `digits`, the read's `fold`, and
  * `json_patch` with SQLite's semantics (RFC 7396). A trigger on `events` rings the
  * change feed — `NOTIFY` on `<schema>.events` — for every statement that lands or moves
  * a row; the tail listens on it.
@@ -91,18 +91,6 @@ $f$;
 
 CREATE OR REPLACE FUNCTION digits(s text) RETURNS text LANGUAGE sql IMMUTABLE AS $f$
   SELECT regexp_replace(s, '[^0-9]', '', 'g')
-$f$;
-
-CREATE OR REPLACE FUNCTION same_handle(a text, b text) RETURNS boolean
-LANGUAGE sql IMMUTABLE AS $f$
-  SELECT CASE
-    WHEN coalesce(a, '') = '' OR coalesce(b, '') = '' THEN false
-    WHEN regexp_replace(a, '^\\s+|\\s+$', '', 'g') ~ '^[0-9\\s+().-]+$'
-     AND regexp_replace(b, '^\\s+|\\s+$', '', 'g') ~ '^[0-9\\s+().-]+$'
-      THEN digits(a) <> '' AND digits(a) = digits(b)
-    ELSE lower(regexp_replace(a, '^\\s+|\\s+$', '', 'g'))
-       = lower(regexp_replace(b, '^\\s+|\\s+$', '', 'g'))
-  END
 $f$;
 
 CREATE OR REPLACE FUNCTION instr(haystack text, needle text) RETURNS integer
@@ -271,14 +259,6 @@ CREATE INDEX IF NOT EXISTS timers_due ON timers (fire_at);
 CREATE UNIQUE INDEX IF NOT EXISTS timers_named ON timers (agent_id, session_id, name)
   WHERE name IS NOT NULL;
 
-CREATE OR REPLACE VIEW speaks AS
-  SELECT a.agent_id, c.agent_id AS owner, c.service, c.address, c.extra
-  FROM agents a JOIN connections c
-    ON c.deleted_at IS NULL
-   AND (c.agent_id = a.agent_id
-        OR (c.agent_id IS NULL
-            AND (c.extra ->> 'agent' = a.agent_id
-                 OR same_handle(c.address, a.phone) OR same_handle(c.address, a.email))));
 CREATE OR REPLACE VIEW principals AS
   SELECT a.agent_id, p.value COLLATE "C" AS principal, (p.ord - 1)::integer AS rank
   FROM agents a,
@@ -287,43 +267,48 @@ CREATE OR REPLACE VIEW principals AS
   SELECT a.agent_id, b.agent_id, 0
   FROM agents a CROSS JOIN agents b
   WHERE a.principals IS NULL
-    AND EXISTS (SELECT 1 FROM speaks s WHERE s.agent_id = a.agent_id AND s.owner IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM connections c WHERE c.agent_id = a.agent_id)
+    AND (b.runs = 0 OR EXISTS (SELECT 1 FROM connections c WHERE c.agent_id = b.agent_id))
   UNION ALL
   SELECT a.agent_id, a.agent_id, 0
   FROM agents a
   WHERE a.principals IS NULL
-    AND NOT EXISTS (SELECT 1 FROM speaks s WHERE s.agent_id = a.agent_id AND s.owner IS NULL);
+    AND EXISTS (SELECT 1 FROM connections c WHERE c.agent_id = a.agent_id);
 CREATE OR REPLACE VIEW aliases AS
   SELECT service, address AS connection,
-         coalesce(extra ->> 'self_conversation',
+         coalesce(extra #>> '{mirrors,self}',
                   CASE service WHEN 'whatsapp' THEN address END) COLLATE "C" AS conversation,
          agent_id, agent_id AS principal, (deleted_at IS NULL)::integer AS live,
          (extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer AS raw
   FROM connections
   WHERE agent_id IS NOT NULL
-    AND (extra ->> 'self_conversation' IS NOT NULL OR service = 'whatsapp')
+    AND (extra #>> '{mirrors,self}' IS NOT NULL OR service = 'whatsapp')
   UNION ALL
-  SELECT s.service, s.address, digits(w.phone), s.agent_id, p.principal, 1,
-         (s.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
-  FROM speaks s
-    JOIN principals p ON p.agent_id = s.agent_id
+  SELECT c.service, c.address, digits(w.phone), c.agent_id, p.principal, 1,
+         (c.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
+  FROM connections c
+    JOIN principals p ON p.agent_id = c.agent_id
     JOIN agents w ON w.agent_id = p.principal
-  WHERE s.service = 'whatsapp' AND w.phone IS NOT NULL AND w.phone <> ''
-    AND digits(s.address) <> digits(w.phone)
+  WHERE c.deleted_at IS NULL AND c.service = 'whatsapp'
+    AND w.phone IS NOT NULL AND w.phone <> '' AND digits(c.address) <> digits(w.phone)
   UNION ALL
-  SELECT s.service, s.address, d.value #>> '{}', s.agent_id, d.key, 1,
-         (s.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
-  FROM speaks s
-    CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(s.extra -> 'dms') = 'object'
-                                       THEN s.extra -> 'dms' END) d
-    JOIN principals p ON p.agent_id = s.agent_id AND p.principal = d.key
-  WHERE s.service = 'slack' AND jsonb_typeof(d.value) = 'string'
+  SELECT c.service, c.address, d.value #>> '{}', c.agent_id, d.key, 1,
+         (c.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
+  FROM connections c
+    CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(c.extra #> '{mirrors,dms}') = 'object'
+                                       THEN c.extra #> '{mirrors,dms}' END) d
+    JOIN principals p ON p.agent_id = c.agent_id AND p.principal = d.key
+  WHERE c.deleted_at IS NULL AND jsonb_typeof(d.value) = 'string'
   UNION ALL
-  SELECT s.service, s.address, s.agent_id, s.agent_id, NULL, 1,
-         (s.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
-  FROM speaks s
-  WHERE s.owner IS NULL AND s.extra ->> 'agent' = s.agent_id
-    AND s.extra -> 'steering' = 'true'::jsonb;
+  SELECT c.service, c.address, r.value #>> '{}', r.key, NULL, 1,
+         (c.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
+  FROM connections c
+    CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(c.extra #> '{mirrors,rooms}') = 'object'
+                                       THEN c.extra #> '{mirrors,rooms}' END) r
+    JOIN agents a ON a.agent_id = r.key
+  WHERE c.deleted_at IS NULL AND c.agent_id IS NULL AND jsonb_typeof(r.value) = 'string';
+DROP VIEW IF EXISTS speaks;
+DROP FUNCTION IF EXISTS same_handle(text, text);
 `;
 
 /** The vault's tables (§4): one schema holds the log and the vault, as one file does. */

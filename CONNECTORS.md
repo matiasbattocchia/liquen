@@ -145,11 +145,24 @@ have said on `extra.via`: `type` (the event's: `message`, `tool_use`, `delta`, �
 mirror still decides what crosses; the dispatcher maps those parts onto its wire and adds
 nothing, so the row in the log is what was sent.
 
-An org account can also host its agent's **steering room** (DESIGN §4): the row names the
-agent (`extra.agent`) and says so (`extra.steering: true`), and the ingest files the room
-under the agent's own name as the conversation address, kind `group`. Whoever writes there
-steers — the mind copy is signed with the sender the ingest stamps, so stamp a stable id as
-`address` and the person's name as `name`, and stamp none on a row of your own making.
+### Mind surfaces: `extra.mirrors`
+
+Where a conversation on your wire is a face of an agent's mind (DESIGN §4), the connector
+records it on the connection row under `extra.mirrors`, and the alias view reads it there:
+
+- `self` — the account's self-conversation, on a row an agent owns (the Slack self-DM;
+  WhatsApp derives its own and needs none).
+- `dms` — principal → conversation: a principal's DM with an account an agent owns, written
+  by the ingest the first time that principal writes there, when the DM's id is opaque.
+- `rooms` — agent → conversation: an agent's **steering room** on an org account (no
+  owner). Whoever writes there steers, so the mind copy is signed with the sender the
+  ingest stamps: stamp a stable id as `address` and the person's name as `name`, and stamp
+  none on a row of your own making. A service the org runs writes its own at connect; a
+  wire whose rooms anyone can open adopts one only for an agent that owns no account, by
+  id, and says the adoption in the agent's mind as a room line (Slack's ingest, §4).
+
+The store merges `extra` as an RFC 7396 patch, so a connector writes only the key it
+learns — `{ mirrors: { dms: { sol: "D77" } } }` — and removes one by patching it to `null`.
 
 ### The address book: the service keeps it, the name carries it
 
@@ -442,6 +455,19 @@ own rules pass through the same way — eight besides the opener in a direct roo
 the harness names each the way the log knows them, from the lines they wrote on the
 account. Main wires the port from boot, over the vault, so a workspace connected while it
 runs has its port already there.
+
+**The steering rooms.** On an org bot (`liquen connect slack bot` with no agent), a channel
+named exactly as a roster agent that owns no account is that agent's steering room. The
+ingest adopts it the first time the bot is met there — its own `member_joined_channel`, or
+any line in a public or private channel — writing `mirrors.rooms.<agent>` with the
+channel's id before that line lands, so the line is already the room's; a rename leaves
+the record where it is, and a second channel wearing the name is nobody's while the first
+holds it. The bot leaving (`member_left_channel` for its own user, `channel_left`,
+`group_left`, its `channel_leave` line) or the channel being archived (`channel_archive`,
+`group_archive`) patches the key away. Each move publishes a `room` line into the agent's
+mind — joined, or left, the channel by its `#name` — which the mirror carries to every
+surface as `[system]`. A bot pasted with `--agent` is that agent's own account: it hosts no
+room, and its principals' DMs with it are recorded as `mirrors.dms`.
 
 Remaining:
 

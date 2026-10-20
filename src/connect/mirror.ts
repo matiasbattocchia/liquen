@@ -66,6 +66,7 @@ import {
   silent,
 } from "../render.ts";
 import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
+import { roomWords } from "../room.ts";
 import { type Words, words } from "../i18n.ts";
 import {
   answer,
@@ -89,6 +90,7 @@ import type {
   Part,
   PermissionRequestEvent,
   PermissionResponseEvent,
+  RoomPart,
   Service,
   ToolUseEvent,
 } from "../types.ts";
@@ -482,7 +484,8 @@ const same = (parts: Part[]): CC => () => parts;
  *  `[agent asks] …` for a gate waiting on the principal, `[via <surface>] …` for a
  *  principal's own words replayed as output — `[<username> via <surface>]` on a surface
  *  that is another principal's — a `/y`, a `/n`, a `/cancel` among them — and `[system] …`
- *  for what the harness says there: a failure, a wake, a cut turn. Null ⇒ nothing to say
+ *  for what the harness says there: a failure, a wake, a cut turn, a room joining or
+ *  leaving the mind. Null ⇒ nothing to say
  *  there: a checkpoint (the presence line said the mind was compacting), a result that
  *  went fine, an approved call's included (the card asked for it, the `/y` gave it), a
  *  call refused (its `/n` said so) or cut (its `/cancel` said so), a settlement (the line that gave it said so; its row
@@ -582,6 +585,12 @@ async function ccParts(
       ...(text ? [{ type: "text", kind: "text", text: `\`[${w.agent}]\` ${text}` } as const] : []),
       ...parts.filter((p) => p.type === "file"),
     ]);
+  }
+  // a room joining or leaving the mind — a steering room a connector met or lost — is the
+  // harness's word, carried by no principal
+  const room = parts.find((p): p is RoomPart => p.type === "data" && p.kind === "room");
+  if (room && e.agent === undefined) {
+    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${roomWords(room)}` }]);
   }
   // a principal's own line, coming back as output on another surface: what they said — a
   // reaction says its glyph — and whatever they sent with it

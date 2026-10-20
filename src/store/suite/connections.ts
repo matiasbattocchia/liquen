@@ -136,13 +136,13 @@ export function connectionsSuite(s: Substrate): void {
     }
   });
 
-  Deno.test("aliases: owned rows with a self_conversation, matched on the workspace root (§4)", async () => {
+  Deno.test("aliases: owned rows with a recorded self-conversation, matched on the workspace root (§4)", async () => {
     const store = await s.fresh();
     const log = await store.open();
     try {
       await log.upsertConnections([
         { service: "slack", address: "T1" }, // no owner, no binding — not an alias
-        { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
+        { service: "slack", address: "T1:U1", agentId: "ana", extra: { mirrors: { self: "D1" } } },
         { service: "whatsapp", address: "549", agentId: "ana" }, // DERIVED: self-chat == own number
         { service: "whatsapp", address: "550" }, // ownerless (org number) — never a mind (§4)
         { service: "email", address: "ana@org", agentId: "ana" }, // owned, no binding
@@ -190,25 +190,36 @@ export function connectionsSuite(s: Substrate): void {
     }
   });
 
-  Deno.test("aliases: an org account naming its agent hosts the agent's steering room, addressed by its name (§4)", async () => {
+  Deno.test("aliases: an org account's recorded rooms are its agents' steering rooms (§4)", async () => {
     const store = await s.fresh();
     const log = await store.open();
     try {
       await log.syncAgents([{ agentId: "sonar", mind: "mind@sonar", principals: [] }]);
       await log.upsertConnections([
-        { service: "sonar", address: "t1", extra: { agent: "sonar", steering: true, raw: true } },
+        {
+          service: "sonar",
+          address: "t1",
+          extra: { mirrors: { rooms: { sonar: "sonar" } }, raw: true },
+        },
         {
           service: "sonar",
           address: "t2",
           agentId: "sonar",
-          extra: { agent: "sonar", steering: true },
-        }, // owned
-        { service: "sonar", address: "t3", extra: { agent: "nobody", steering: true } }, // names no roster entry
-        { service: "slack", address: "T1:B1", extra: { agent: "sonar" } }, // a bot row: hosts no room
+          extra: { mirrors: { rooms: { sonar: "sonar" } } },
+        }, // owned: a room is an org account's
+        { service: "sonar", address: "t3", extra: { mirrors: { rooms: { nobody: "x" } } } }, // names no roster entry
+        { service: "slack", address: "T1:B1", extra: { mirrors: { rooms: { sonar: "C7" } } } },
       ]);
       // nobody on the roster steers it, and the room still does: whoever writes there
       assertEquals(await log.principalsOf("sonar"), []);
       assertEquals(await log.aliases(), [
+        {
+          service: "slack",
+          connection: "T1:B1",
+          conversation: "C7",
+          agentId: "sonar",
+          live: true,
+        },
         {
           service: "sonar",
           connection: "t1",
@@ -217,6 +228,10 @@ export function connectionsSuite(s: Substrate): void {
           live: true,
           raw: true,
         },
+      ]);
+      // a released room is no surface: the record's key removed by a null patch
+      await log.upsertConnections([
+        { service: "slack", address: "T1:B1", extra: { mirrors: { rooms: { sonar: null } } } },
       ]);
       // a revoked org account takes its room with it, as every derived surface goes
       await log.deleteConnections([{ service: "sonar", address: "t1" }]);
@@ -227,22 +242,28 @@ export function connectionsSuite(s: Substrate): void {
     }
   });
 
-  Deno.test("aliases: a principal's DM with the org number is a surface of the org agent's mind (§4)", async () => {
+  Deno.test("aliases: a principal's DM with the number the agent owns is a surface of its mind (§4)", async () => {
     const store = await s.fresh();
     const log = await store.open();
     try {
       await log.syncAgents([
         { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "549115550001" },
-        { agentId: "ventas", mind: "mind@ventas", name: "Ventas", phone: "549117770000" },
+        {
+          agentId: "ventas",
+          mind: "mind@ventas",
+          name: "Ventas",
+          phone: "549117770000",
+          principals: ["matias", "ventas"],
+        },
       ]);
       await log.upsertConnections([
         { service: "whatsapp", address: "549115550001", agentId: "matias" },
-        { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" },
+        { service: "whatsapp", address: "549117770000", agentId: "ventas" },
       ]);
       assertEquals(await log.principalsOf("ventas"), ["matias", "ventas"]);
       assertEquals(await log.principalsOf("matias"), ["matias"]);
       assertEquals(await log.aliases(), [
-        // the store's own: the member's self-chat
+        // the store's own: each number's self-chat
         {
           service: "whatsapp",
           connection: "549115550001",
@@ -251,13 +272,21 @@ export function connectionsSuite(s: Substrate): void {
           principal: "matias",
           live: true,
         },
-        // derived: matias's DM with the org number, a surface of ventas's mind
+        // derived: matias's DM with ventas's number, a surface of ventas's mind
         {
           service: "whatsapp",
           connection: "549117770000",
           conversation: "549115550001",
           agentId: "ventas",
           principal: "matias",
+          live: true,
+        },
+        {
+          service: "whatsapp",
+          connection: "549117770000",
+          conversation: "549117770000",
+          agentId: "ventas",
+          principal: "ventas",
           live: true,
         },
       ]);

@@ -159,7 +159,7 @@ Deno.test("callback: exchanges the code and lands the leg as a paste would — b
           address: "T1:U9",
           agentId: "ana",
           credentialKey: "slack:T1:ana",
-          extra: { self_conversation: "D0SELF" },
+          extra: { mirrors: { self: "D0SELF" } },
         },
       ]);
       // the principal sees their own grant note even on a stub workspace (§6)

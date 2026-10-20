@@ -33,7 +33,7 @@ async function withMirror(
   const log = await openLog(dir);
   await log.upsertConnections([
     { service: "slack", address: "T1" }, // the workspace anchor inbounds carry (§4)
-    { service: "slack", address: "T1:U1", agentId: "ana", extra: { self_conversation: "D1" } },
+    { service: "slack", address: "T1:U1", agentId: "ana", extra: { mirrors: { self: "D1" } } },
     { service: "whatsapp", address: "549", agentId: "ana" }, // WA binding is DERIVED (§4)
   ]);
   const stop = createMirror({
@@ -896,16 +896,27 @@ Deno.test("mirror: a SILENCE note reaches no surface — nothing said is nothing
   });
 });
 
-Deno.test("mirror fan-in: a principal's DM with the org number copies to the org agent's mind, signed by the roster (§4)", async () => {
+Deno.test("mirror fan-in: a principal's DM with the agent's own number copies to its mind, signed by the roster (§4)", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   await log.syncAgents([
     { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "549115550001" },
     { agentId: "sol", mind: "mind@sol", name: "Sol", phone: "549115550002", runs: false },
-    { agentId: "ventas", mind: "mind@ventas", name: "Ventas", phone: "549117770000" },
+    {
+      agentId: "ventas",
+      mind: "mind@ventas",
+      name: "Ventas",
+      phone: "549117770000",
+      principals: ["matias", "sol", "ventas"],
+    },
   ]);
   await log.upsertConnections([
-    { service: "whatsapp", address: "549117770000", credentialKey: "whatsapp:549117770000" },
+    {
+      service: "whatsapp",
+      address: "549117770000",
+      agentId: "ventas",
+      credentialKey: "whatsapp:549117770000",
+    },
   ]);
   const stop = createMirror({
     subscribe: (l, o) => log.subscribe(l, o),
@@ -953,7 +964,8 @@ Deno.test("mirror fan-in: a principal's DM with the org number copies to the org
       "`[matias via whatsapp]` mandá los recordatorios",
     );
     assertEquals((await inConv("549115550001")).length, 1); // never back to the origin
-    assertEquals((await inConv("549117770000")).length, 0); // the org number has no self-chat surface
+    // the number's own self-chat is a surface too: the account is the agent's (§4)
+    await waitFor(async () => (await inConv("549117770000")).length === 1);
   } finally {
     stop();
     await log.close();
@@ -1007,8 +1019,12 @@ async function withRoom(
   const log = await openLog(dir);
   await log.syncAgents([{ agentId: "sonar", mind: "mind@sonar", principals: [] }]);
   await log.upsertConnections([
-    { service: "sonar", address: "t1", extra: { agent: "sonar", steering: true, raw: true } },
-    { service: "slack", address: "T1:U1", agentId: "sonar", extra: { self_conversation: "D1" } },
+    {
+      service: "sonar",
+      address: "t1",
+      extra: { mirrors: { rooms: { sonar: "sonar" } }, raw: true },
+    },
+    { service: "slack", address: "T1:U1", agentId: "sonar", extra: { mirrors: { self: "D1" } } },
   ]);
   const stop = createMirror({
     subscribe: (l, o) => log.subscribe(l, o),
@@ -1078,6 +1094,27 @@ Deno.test("mirror fan-in: a steering room line that names no sender crosses as n
     await publish(roomLine("anyone?"));
     await new Promise((r) => setTimeout(r, 300));
     assertEquals((await inConv("mind@sonar")).length, 0);
+  });
+});
+
+Deno.test("mirror fan-out: a room joining the mind, said by the connector that met it, crosses as the harness's word", async () => {
+  await withRoom(async ({ publish, inConv, waitFor }) => {
+    await publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      envelope: {
+        service: "local",
+        connection_address: "agent",
+        conversation: { address: "mind@sonar" },
+      },
+      parts: [{
+        type: "data",
+        kind: "room",
+        data: { joined: [{ address: "C9", name: "#sonar" }] },
+      }],
+    } as Draft<MessageEvent>);
+    await waitFor(async () => (await inConv("D1")).length === 1);
+    assertEquals(textOf((await inConv("D1"))[0]), "`[system]` joined #sonar");
   });
 });
 

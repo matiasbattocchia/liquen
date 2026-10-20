@@ -5617,3 +5617,39 @@ engine first. Decided with the user:
 Left: UDP has no way out (QUIC falls back to TCP); a port off the list is unreachable; a
 tool installed under the user's home sees only its PATH directory (mise's python lacks its
 library); a fronted host's name is checked by the guard but re-resolved by `fetch`.
+
+### Mind surfaces are recorded under `extra.mirrors`, and ownership decides who steers (2026-10-20) — LANDED
+
+Decided with the user while wiring Sonar's room: three ways a mind meets a wire, each with
+its own condition, and every record in one place on the connection row.
+
+- **Self-talk** only on a connection an agent owns (`mirrors.self`; WhatsApp derives it).
+- **DMs** only with an account the agent owns: a principal of the agent, identified by a
+  handle (phone, email), writing to the agent's own number or bot (`mirrors.dms`; WhatsApp
+  derives it from the roster phone). An org account's DMs stay the world's.
+- **Steering rooms** only on an org account (`mirrors.rooms`, agent → conversation), the
+  one mechanism an account several agents share can host. Slack adopts a channel named
+  exactly as an agent that owns no account, once, by id, and lets it go when the bot is
+  out; both moves are a `room` line in the mind, crossing to surfaces as `[system]`.
+  Sonar's connector will write `{ sonar: "sonar" }` at connect.
+
+`extra.agent` and `extra.steering` are gone, and so is the `speaks` view with its handle
+scan of ownerless rows. An agent speaks through what it owns and every credentialed org
+account (`speaksThrough`, the same rule as the env's surfaces). Its principals, undeclared:
+itself when it owns an account (revoked ones count — a person stays a person), else the
+org's people — members who own an account, and people alone — never another agent that
+holds none, so a local team with no accounts does not become everyone steering everyone.
+`liquen connect slack bot --agent` now makes the bot that agent's own account. The Slack
+manifest gains `channel_left`, `group_left`, `channel_archive`, `group_archive`; an app
+made from the old manifest needs them added.
+
+No heal: rows written with `self_conversation`, `dms` or `extra.agent` stop binding until
+their account is connected again.
+
+Open:
+- **Teams.** Record the self-chat at sign-in (`48:notes`, undocumented; unverified that the
+  all-chats subscription delivers it) and the DM record, which needs the sender's Teams id
+  resolved to an email (`/users/{id}`) to name the principal.
+- **Unverified on a live workspace**: which of the leave and archive events reach the bot.
+- An agent with no account yet can be adopted by a channel wearing its name until its
+  person connects one.

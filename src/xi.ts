@@ -2274,9 +2274,9 @@ async function personOn(
   };
 }
 
-/** The accounts this agent speaks through (§4): the connections that name it as owner and
- *  the org's that its handles claim — `speaksThrough` over the live map. An agent the
- *  registry does not know (an explicit principal, a test) speaks through every row. */
+/** The accounts this agent speaks through (§4): the connections it owns and the org's
+ *  credentialed ones — `speaksThrough` over the live map. An agent the registry does not
+ *  know (an explicit principal, a test) speaks through every row. */
 async function accounts(self: { id: string }, ports: XiPorts): Promise<ConnectionRow[]> {
   const rows = await ports.log.connections();
   const me = (await ports.log.agents()).find((a) => a.agentId === self.id);
