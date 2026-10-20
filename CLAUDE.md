@@ -13,6 +13,11 @@ More than one session works on this repo at a time. Do your work in a git worktr
 own (`git worktree add`), never in the shared checkout, so your changes and commits never
 mix with someone else's.
 
+Local `main` is the trunk. Branch your worktree from it, and land your work by merging
+your branch into local `main`, then pushing `main`. Never branch from `origin/main`,
+never merge into it, never push a branch onto it: whatever reaches origin goes through
+local `main` first, so the next session that branches from it starts from everything.
+
 ## Comments and docs state what IS
 
 A comment earns its place by explaining something non-obvious about the code as it stands: a
