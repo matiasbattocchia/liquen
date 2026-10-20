@@ -97,8 +97,10 @@ async function nth(updates: ShellUpdate[], n: number, ms = 15_000): Promise<Shel
 function cases(
   name: string,
   body: (shell: Shell, place: Place, updates: ShellUpdate[]) => Promise<void>,
+  only?: string,
 ) {
   for (const [label, open] of PLACES) {
+    if (only && label !== only) continue;
     Deno.test({
       name: `${label} shell: ${name}`,
       ignore: open === null,
@@ -205,7 +207,7 @@ cases(
       undefined,
       USE,
     );
-    const end = await nth(updates, 1, 30_000);
+    const end = await nth(updates, 1, 120_000);
     assert(
       /\nx+\nend\n\n\[its last lines — full output: \S+\]\n\n\[its output passed 50 MB: the older half of \S+ was dropped and reads as zero bytes\]$/
         .test(end.output),
@@ -253,12 +255,13 @@ cases(
       workspace: place.workspace,
       env: () => place.env,
     }, (u) => later.push(u));
-    const runs = { command: "echo early; sleep 1.5; echo late", wait: 0 };
+    // long enough to outlast a live sandbox's round trips: the next shell finds it running
+    const runs = { command: "echo early; sleep 6; echo late", wait: 0 };
     try {
       await shell.exec.bash.execute(runs, new AbortController().signal, undefined, USE);
       shell.leave();
       const answer = await next.exec.bash.recover!(runs, USE) as ExecOutcome;
-      assertEquals(answer.async, true);
+      assertEquals(answer.async, true, JSON.stringify(answer));
       assert(
         /^early\n\n\[the harness went down while it ran; it runs on as group \d+/.test(
           String(answer.output),
@@ -288,6 +291,25 @@ cases(
       `${Array.from({ length: 50 }, (_, i) => i + 1).join("\n")}\n`,
     );
   },
+);
+
+cases(
+  "a sandbox replaced under a running job tells it lost, once",
+  async (shell, place, updates) => {
+    await shell.exec.bash.execute(
+      { command: "echo started; sleep 120", wait: 0 },
+      new AbortController().signal,
+      undefined,
+      USE,
+    );
+    await place.gateway.destroy();
+    const lost = await nth(updates, 1, 60_000);
+    assertEquals([lost.final, lost.is_error], [true, true]);
+    assert(/^lost after \d+s: the sandbox it ran in stopped or was replaced/.test(lost.output));
+    assertEquals(await shell.ambient(), [`cwd: ${place.workspace}`]);
+    assertEquals(updates.length, 1);
+  },
+  "live", // the fake has no container to replace
 );
 
 cases("a media mark becomes an attachment", async (shell) => {

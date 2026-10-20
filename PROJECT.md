@@ -5577,6 +5577,13 @@ blocks on disk, so a punched log is not cut again and a restarted harness needs 
 earlier cuts. The cost: the log keeps its apparent size and reads as zeros where the hole
 is, so `cat` or `grep` over a whole cut log meets them; `tail` does not.
 
+Run live on 2026-10-20 against the deployed gateway (`LIQUEN_TEST_SANDBOX`, a `lite`
+container): every gateway case passes, the cap included (the punch works on its ext4), and a
+live-only case shows a sandbox destroyed under a running job told as lost, once. A 150s job
+under a 1-minute gateway sleep ran to its end: the probe's requests keep the container on.
+The harness-side lease (main stopping the sandbox past `sandboxSleepMinutes`) was not run
+live; an org with `sandbox` set is its first live run.
+
 ### Bubbles, and an egress proxy that judges every dial (2026-10-19) — LANDED
 
 Prompted by Deno's future (Deno Land joined Cloudflare 2026-10-09; the runtime gets a year
