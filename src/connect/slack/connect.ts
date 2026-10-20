@@ -29,7 +29,7 @@
  *                  the log) and the GRANT, OWNED — address `<team>:<user>` (a user grant is
  *                  its own connection, §4), `agent_id` = the principal (owned ⇒ private,
  *                  §6), `credential_key` → the vault row below, the self-DM as the
- *                  mind-alias binding
+ *                  mind-alias binding (`extra.mirrors.self`)
  *   → vault:       key `slack:<team>:<principal>` — the `token` field of the blob
  *   → the log:     the grant note, an event (the only legal way to tell the harness)
  *
@@ -123,7 +123,7 @@ export async function landSlackUser(grant: SlackUserGrant, deps: SlackGrantDeps)
       address: leg,
       agentId: deps.principal,
       credentialKey,
-      extra: { ...linked(now()), ...(selfIm ? { self_conversation: selfIm } : {}) },
+      extra: { ...linked(now()), ...(selfIm ? { mirrors: { self: selfIm } } : {}) },
     },
   ]);
   // the grant note below is the principal's to see — on a personal-only workspace the
@@ -274,7 +274,8 @@ export interface SlackBotDeps {
 /** Finish a pasted bot-token grant: verify with Slack, write the bare workspace stub
  *  (membership-only; the anchor of personal-witnessed deliveries) and the bot's own grant
  *  row `<team>:<bot user>` carrying `credential_key` (no owner ⇒ the org's shared inbox,
- *  §6; bot-witnessed deliveries anchor here) — and vault the blob at `slack:<team>:org`.
+ *  §6; `agent` ⇒ that agent's own account; bot-witnessed deliveries anchor here) — and
+ *  vault the blob at `slack:<team>:org`.
  *  The identity and nothing else: the socket carrier is app-scoped where this is
  *  workspace-scoped, and lands under its own key. Throws (writing nothing) on a rejected
  *  token. */
@@ -304,18 +305,18 @@ export async function connectSlackBot(
   const credentialKey = `slack:${team}:org`;
   // the workspace stub opens the log for personal-witnessed deliveries; the bot's own
   // row is where bot-witnessed ones anchor (`<team>:<bot user>`, the ingest's anchor) and
-  // the one that carries the credential — that account itself reads as the org (§6), so
-  // no ownership edge and no membership on either
-  // a bot has no handle a human could declare, so which agent speaks through it is
-  // RECORDED on its row (`extra.agent`) the way an opaque id is (§4) — still nobody's:
-  // the account is the org's, every member reads it, and the roster steers the agent
+  // the one that carries the credential. With no agent the account reads as the org (§6):
+  // every agent reads it, and its steering rooms are recorded on it as the ingest meets
+  // them. Named for an agent it is that agent's own (§4): private to it, and its
+  // principals' DMs with the bot are the agent's mind
   await deps.store.upsertConnections([
     { service: "slack", address: team },
     {
       service: "slack",
       address: `${team}:${botUser}`,
       credentialKey,
-      extra: { ...linked(now()), ...(agent ? { agent } : {}) },
+      ...(agent ? { agentId: agent } : {}),
+      extra: linked(now()),
     },
   ]);
   await deps.creds.put({
@@ -578,7 +579,7 @@ if (import.meta.main) {
     const ask = (label: string): string | undefined =>
       (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
 
-    /** A roster agent, or the reason it cannot speak through a bot. */
+    /** A roster agent, or the reason it cannot own a bot. */
     const rosterAgent = async (name: string): Promise<void> => {
       const entry = (await readConfig(root)).agents[name];
       if (!entry) {
@@ -669,7 +670,7 @@ if (import.meta.main) {
         if (flags.has("bot")) {
           const token = ask("Bot token (xoxb-…):");
           if (token) {
-            const agent = ask("Agent that speaks through it (empty = the org):");
+            const agent = ask("Agent that owns it (empty = the org):");
             if (agent) await rosterAgent(agent);
             const { team, botUser, missing } = await connectSlackBot(token, {
               creds,

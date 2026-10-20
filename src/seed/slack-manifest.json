@@ -20,7 +20,11 @@
         "member_joined_channel",
         "member_left_channel",
         "channel_rename",
-        "group_rename"
+        "group_rename",
+        "channel_left",
+        "group_left",
+        "channel_archive",
+        "group_archive"
       ],
       "user_events": [
         "message.channels",

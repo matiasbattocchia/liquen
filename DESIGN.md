@@ -7,7 +7,8 @@ all of them.*
 
 **Terminology (pinned):** **agent** = the AI. **principal** = a human who steers it, through
 its mind: an **alter-ego** has one, the member whose account it acts as; an **org agent**
-— one whose account is the org's — has every member of the roster. **peer** = the other
+— one that holds no account of its own and speaks through the org's — has the org's
+people, every member with an account of their own and every person alone. **peer** = the other
 party in a conversation (an external contact — a customer — or another agent). The
 agent↔principal conversation is the **principal-DM**.
 
@@ -16,8 +17,9 @@ agent↔principal conversation is the **principal-DM**.
 ## 1. Vision & v0 scope
 
 - **Agents**: each org member gets an alter-ego, an AI agent that acts under their
-  identity and answers to them alone. An account the org owns — a number, a bot — makes an
-  org agent: it acts as the org and every member steers it. Either way the agent reads one
+  identity and answers to them alone. An agent that holds no account of its own is an org
+  agent: it acts as the org through the org's accounts, and the org's people steer it.
+  Either way the agent reads one
   mind, and a principal's line wears their name (§5).
 - Org-level (not personal-agent like OpenClaw/NanoClaw): shared inboxes, handoff between
   AI and humans, audit throughout.
@@ -970,21 +972,27 @@ Nobody else can read it or write into it, so whatever lands there is steering an
 whatever the agent says there reaches its principals and no one else. Three shapes satisfy
 it, and conversation identity (§3) says which platforms can host them:
 
-- **Self-talk on the account the agent acts as** — the alter-ego's, whose one principal
-  is the account's owner: the WA self-chat, the Slack self-DM. The counterpart set is
-  the principal alone.
-- **A DM between a principal and the agent's own account** — the org agent's shape, one
-  DM per principal, N surfaces of one mind. A DM has no third party, so no membership
-  is tracked and no admin on the wire can seat a stranger in it.
-- **A steering room on an org account** — a group on a system the org itself runs, where
-  being in the room is being a principal: whoever writes there steers. The connection
-  names its agent (`extra.agent`) and says it hosts one (`extra.steering`), and the room
-  is the conversation addressed by the agent's own name — derived, like the WA self-chat,
-  nothing recorded. No binding can name one person, so each line is signed by the sender
-  the wire names, and a line naming none crosses as nothing. The roster's `principals`
-  does not reach it: `[]` still says no member steers through a DM, and the room's writers
-  steer all the same. Who may enter the room is the org's own system's rule, a deployment
-  rule like the alter-ego's below — it cannot be checked here, only kept.
+- **Self-talk on an account the agent owns** — the alter-ego's, whose one principal is
+  the account's owner: the WA self-chat, the Slack self-DM. The counterpart set is the
+  principal alone.
+- **A DM between a principal and an account the agent owns** — its own number, its own
+  bot: one DM per principal, N surfaces of one mind. A DM has no third party, so no
+  membership is tracked and no admin on the wire can seat a stranger in it. Owning the
+  account is what makes its DMs the agent's: an org account's DMs are the world's, read by
+  every agent.
+- **A steering room on an org account** — the org-wide shape, and the one an account
+  several agents share can host: a room where being in it is being a principal, so
+  whoever writes there steers. It is recorded on the connection (`extra.mirrors.rooms`,
+  agent → conversation): the connector of a system the org runs writes its own, and the
+  Slack ingest adopts a channel named exactly as an agent that owns no account, the first
+  time the bot is met in it — by id, so a rename never moves it — and lets it go when the
+  bot is out of the channel. Both are said in the agent's mind as room lines, which every
+  surface of the mind hears. No binding can name one person, so each line is signed by
+  the sender the wire names, and a line naming none crosses as nothing. The roster's
+  `principals` does not reach it: `[]` still says no member steers through a DM, and the
+  room's writers steer all the same. Who may enter the room is the rule of the system
+  that hosts it, a deployment rule like the alter-ego's below — it cannot be checked
+  here, only kept.
 
 No other room hosts a mind. A group or a channel on a wire is room-defined —
 its identity survives churn, and whoever administers it on the wire decides who reads it;
@@ -992,19 +1000,19 @@ a Slack mpim is member-defined and would qualify on paper, but it is a room all 
 and is served as one. They are world conversations the agent serves, whoever is in them,
 its principals included (they are then *coexisting*, §2, not steering).
 
-**Whose account.** The connection row carries ownership: `agent_id` names the member whose
-account it is, and null says the org's. The agent that speaks through a connection is the
-roster entry whose `identity` handle IS the connection's address — the registry's handle
-scan, read from the connection's side. A member's account makes its agent an alter-ego;
-an org account a handle claims makes an org agent; an org account no handle claims is
-the shared world every agent reads (§6). The account the agent
+**Whose account.** The connection row carries ownership: `agent_id` names the agent whose
+account it is — a member's alter-ego, or an agent given an account of its own — and null
+says the org's. An agent speaks through the accounts it owns and through every org
+account that holds a credential: an org account is the shared world every agent reads
+(§6), and reaches a mind only through a steering room recorded on it. The account the agent
 acts as must be the agent's alone: a person also running that number on WhatsApp Web
 would read the mind's traffic and could write into it. That is a deployment rule, not a
 classifier's — it cannot be checked, only kept.
 
-**Who steers.** Derived from the same row when the entry says nothing: an alter-ego's
-principal is its owner; an org agent's principals are the roster — every member is a
-driver, which matches the org connection being every agent's to read. `principals` (§9)
+**Who steers.** Derived from the same rows when the entry says nothing: an agent that owns
+an account — a revoked one included — is a person's, and steers itself; an agent that
+owns none is an org agent, and the org's people steer it — every member who owns an
+account and every person alone, never another agent that holds none. `principals` (§9)
 overrides the derivation with the whole list, roster usernames, owner not implied: a list
 of one ties a member to an agent that is not their own, an empty list says nobody steers
 (a service agent, reached only through its door). Every principal is a roster entry; one
@@ -1019,10 +1027,12 @@ verdict rules on a card (§9).
 
 ```
 slack:  self-DM (an alter-ego posts via its owner's xoxp — notes-to-self)
-        a principal's DM with the agent's bot
-wa:     self-chat ("Message Yourself") on the owner's own paired number
-        a principal's DM with the agent's own number (an org-paired connection)
-teams:  later — a principal's oneOnOne chat with the agent's own account, once it has one
+        a principal's DM with a bot the agent owns
+        a steering room: a channel an org bot is met in, named as the agent
+wa:     self-chat ("Message Yourself") on the agent's own paired number
+        a principal's DM with the agent's own number
+teams:  later — the self-chat, and a principal's oneOnOne chat with an account the agent owns
+sonar:  a steering room the connector records on the org account (one per tenant)
 email:  not a mind surface
 cli/ui: native local conversations, through the door (§9) — the socket proves the
         speaker may, `sender` says which principal they are
@@ -1089,31 +1099,26 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
   copies are its face in the window — nothing to hide from the world render, and `send`
   can't reach it. Every agent, not only its own: the classifier stamps a principal's line
   with THEIR agent id wherever it lands, and xi reads a principal's word anywhere as
-  steering (§2) — so a member's DM with an org agent, left visible on the org
-  connection, would wake that member's alter-ego on an instruction meant for someone else. **No backfill**: the mirror tails live — a surface connected
+  steering (§2) — so a member's DM with another agent's account, left visible there,
+  would wake that member's alter-ego on an instruction meant for someone else. **No backfill**: the mirror tails live — a surface connected
   mid-conversation starts mid-stream; history is asked of the log (an interface's `tail`
-  takes a cursor), never replayed onto a surface. Per-service identification of the self-conversation (`aliases()`): **derived
-  where platform structure gives it away, recorded where the id is opaque** — WA, the
+  takes a cursor), never replayed onto a surface. Per-service identification of a mind
+  surface (`aliases()`): **derived where platform structure gives it away, recorded where
+  the id is opaque**, every record on the connection under `extra.mirrors` — WA, the
   self-chat is addressed by the connection's own number, so an owned connection IS the
-  binding, nothing stored, and a principal's DM with the agent's number is addressed by
-  the principal's own number, a registry handle, so the org agent's surfaces are the
-  handle scan too; Slack, the self-DM channel is resolved once at
-  connect (`conversations.open` on the granting user's own id) and recorded as
-  `extra.self_conversation` on the **grant row**,
-  beside the ownership edge that already names the principal — the same "who a wire
-  address IS" semantics as the sender check — and a principal's DM with the bot is
-  recorded by the ingest on the bot's own row (`extra.dms`, member → channel) the first
-  time that member writes there, since the channel id is opaque; which member a Slack
-  user is comes from the email on their profile (`users.info`, the `users:read.email`
-  scope) scanned against the roster, never from a Slack user id; what a Slack user or
-  room is CALLED comes from the same directory (`users.info`, `conversations.info`, the
-  profile and rename events pushing changes), a display fact the row keeps — and which
-  agent speaks
-  through the bot, an account with no handle at all, is recorded at the paste
-  (`liquen connect slack bot --agent`, `extra.agent`); a steering room, derived — the
-  conversation addressed by the agent's own name on an org account whose row names the
-  agent and declares the room (`extra.steering`), which a bot row never does, so no Slack
-  channel can take the agent's name for one; local, native.
+  binding, nothing stored, and a principal's DM with an owned number is addressed by the
+  principal's own number, a registry handle; Slack, the self-DM channel is resolved once
+  at connect (`conversations.open` on the granting user's own id) and recorded as
+  `mirrors.self` on the **grant row**, beside the ownership edge that already names the
+  principal — the same "who a wire address IS" semantics as the sender check — and a
+  principal's DM with an owned bot is recorded by the ingest on the bot's row
+  (`mirrors.dms`, member → channel) the first time that member writes there, since the
+  channel id is opaque; which member a Slack user is comes from the email on their
+  profile (`users.info`, the `users:read.email` scope) scanned against the roster, never
+  from a Slack user id; what a Slack user or room is CALLED comes from the same directory
+  (`users.info`, `conversations.info`, the profile and rename events pushing changes), a
+  display fact the row keeps; a steering room is `mirrors.rooms` on an org account; local,
+  native.
   The agent must never treat any of its principals as a peer/customer.
 - **`send` exteriorizes the mind.** The one door from the mind to the world: `send`
   targets peer conversations only — no principal is ever a send target, on any surface,

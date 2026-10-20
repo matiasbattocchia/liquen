@@ -12,7 +12,7 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { foldName } from "./names.ts";
-import { digits, sameHandle } from "./roster.ts";
+import { digits } from "./roster.ts";
 import { routedSession } from "../session.ts";
 import { connect } from "./pg/sql.ts";
 import { VERSION } from "./pg/schema.ts";
@@ -91,24 +91,10 @@ if (url === undefined) {
     });
   });
 
-  Deno.test("same_handle and digits are the roster's handle rules", async () => {
+  Deno.test("digits is the roster's handle rule", async () => {
     await withSchema(async (sql) => {
-      const pairs: [string, string][] = [
-        ["+54 9 11 555-0001", "549115550001"],
-        ["549115550001", "549115550002"],
-        ["Ana@Acme.co", " ana@acme.co "],
-        ["ana@acme.co", "549115550001"],
-        ["+", "-"],
-        ["", "549"],
-        ["(011) 4555", "0114555"],
-      ];
-      for (const [a, b] of pairs) {
-        assertEquals(
-          await one(sql, "SELECT same_handle($1::text, $2::text) AS v", [a, b]),
-          sameHandle(a, b),
-          `${a} ~ ${b}`,
-        );
-        assertEquals(await one(sql, "SELECT digits($1::text) AS v", [a]), digits(a));
+      for (const a of ["+54 9 11 555-0001", "549115550001", "ana@acme.co", "+", "", "(011) 4555"]) {
+        assertEquals(await one(sql, "SELECT digits($1::text) AS v", [a]), digits(a), a);
       }
     });
   });

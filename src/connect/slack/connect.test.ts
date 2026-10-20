@@ -94,7 +94,7 @@ Deno.test("connect: a verified paste registers the workspace + the owned grant +
       credentialKey: "slack:T1:matias",
       // linked, so up; and the mind-alias binding (§4): the self-DM, resolved with the
       // grant in hand
-      extra: { ...UP, self_conversation: "D0SELF" },
+      extra: { ...UP, mirrors: { self: "D0SELF" } },
     },
   ]);
   assertEquals(h.credentials, [
@@ -458,7 +458,7 @@ Deno.test("config: the bot leg reads files — `url_private` answers a sign-in p
   }
 });
 
-Deno.test("bot door: --agent records who speaks through the bot on its row, still nobody's (§4)", async () => {
+Deno.test("bot door: --agent makes the bot that agent's own account (§4)", async () => {
   const h = harness();
   await connectSlackBot("xoxb-bot", {
     ...h.deps,
@@ -468,7 +468,7 @@ Deno.test("bot door: --agent records who speaks through the bot on its row, stil
     service: "slack",
     address: "T1:UBOT",
     credentialKey: "slack:T1:org",
-    extra: { ...UP, agent: "ventas" },
+    agentId: "ventas",
+    extra: UP,
   });
-  assertEquals(h.connections[1].agentId, undefined);
 });

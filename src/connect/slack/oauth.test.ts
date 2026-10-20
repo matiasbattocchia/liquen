@@ -166,7 +166,7 @@ Deno.test("callback: exchanges the code and lands the leg as a paste would — b
             state: "connected",
             connected_at: LINKED_AT,
             error: null,
-            self_conversation: "D0SELF",
+            mirrors: { self: "D0SELF" },
           },
         },
       ]);

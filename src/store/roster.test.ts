@@ -19,8 +19,9 @@ Deno.test("sameHandle: phones agree on digits, emails on the folded string, noth
   assertEquals(sameHandle("+", "-"), false); // no digits is no phone
 });
 
-Deno.test("speaksThrough: a handle claims the org account, ownership names the member's", () => {
-  assertEquals(speaksThrough(roster[0], connections).map((c) => c.address), ["549115550001"]);
-  assertEquals(speaksThrough(roster[2], connections).map((c) => c.address), ["549117770000"]);
-  assertEquals(speaksThrough(roster[3], connections), []); // the Slack anchor claims nobody
+Deno.test("speaksThrough: an agent's own accounts and the org's credentialed ones", () => {
+  const of = (i: number) => speaksThrough(roster[i], connections).map((c) => c.address);
+  assertEquals(of(0), ["549115550001", "549118880000"]); // matias: his phone, the org's number
+  assertEquals(of(2), ["549117770000", "549118880000"]); // ventas: its own number, the org's
+  assertEquals(of(3), ["549118880000"]); // ops owns nothing: the org's alone; the stub is nobody's
 });

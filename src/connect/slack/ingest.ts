@@ -53,6 +53,7 @@ import type {
   SlackEvent,
 } from "@slack/types";
 import { roomPart } from "../../room.ts";
+import { MIND, sessionAddress } from "../../session.ts";
 import type { Appender } from "../../store/log.ts";
 import type { ConnectionRow, Connections, ConnectionState } from "../../store/connections.ts";
 import { SignedOut } from "../errors.ts";
@@ -234,7 +235,7 @@ export interface SlackWebhookDeps {
       Connections,
       "connection" | "upsertMemberships" | "deleteMemberships" | "upsertConnections"
     >
-    & Partial<Pick<Registry, "agents">>;
+    & Partial<Pick<Registry, "agents"> & Pick<Connections, "connections">>;
   /** File attachments → the media store (absent ⇒ files are dropped, text still flows). */
   media?: SlackMedia;
   /** The name directory (absent ⇒ senders and rooms ship bare ids, mentions decode to
@@ -337,9 +338,29 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       if (c?.id && c.name) deps.names?.learnRoom(team, c.id, c.name);
       return;
     }
-    // the membership mirror, active leg (§4): joins/leaves move rows, nothing published
+    // the membership mirror, active leg (§4): joins/leaves move rows, nothing published —
+    // but the bot's own move is a room it is now in, or out of (steering rooms)
     if (e.type === "member_joined_channel" || e.type === "member_left_channel") {
+      const anchor = anchorOf(team, payload.authorizations);
+      if (e.user !== undefined && e.user === botOf(team, anchor)) {
+        const via = boundUsers(payload.authorizations);
+        if (e.type === "member_joined_channel") {
+          await adoptRoom(deps, team, anchor, e.channel, via, now);
+        } else await releaseRoom(deps, team, anchor, e.channel, via, now);
+        return;
+      }
       await mirrorMember(e, team, deps.store);
+      return;
+    }
+    // a room the bot is out of: it left, or the channel is archived
+    if (
+      e.type === "channel_left" || e.type === "group_left" || e.type === "channel_archive" ||
+      e.type === "group_archive"
+    ) {
+      const channel = (e as { channel?: unknown }).channel;
+      if (typeof channel !== "string") return;
+      const anchor = anchorOf(team, payload.authorizations);
+      await releaseRoom(deps, team, anchor, channel, boundUsers(payload.authorizations), now);
       return;
     }
     // a reaction is an ACTION event (§3): add/remove + the reacted message's id in
@@ -382,6 +403,14 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     if (e.type !== "message") return;
 
     const anchor = anchorOf(team, payload.authorizations);
+    // a room the bot is met in may be an agent's steering room: recorded before the line
+    // that met it lands, so that line is already the room's
+    if (e.channel && (e.channel_type === "channel" || e.channel_type === "group")) {
+      const via = boundUsers(payload.authorizations);
+      const left = e.subtype === "channel_leave" && e.user === botOf(team, anchor);
+      if (left) await releaseRoom(deps, team, anchor, e.channel, via, now);
+      else await adoptRoom(deps, team, anchor, e.channel, via, now);
+    }
     const msgs = await mapMessage(
       e,
       team,
@@ -410,6 +439,11 @@ export type Store = NonNullable<SlackWebhookDeps["store"]>;
 export function anchorOf(team: string, auths: Authorization[] | undefined): string {
   const bot = auths?.find((a) => a.is_bot && a.user_id);
   return bot ? `${team}:${bot.user_id}` : team;
+}
+
+/** The bot user an anchor names, or undefined on the bare workspace. */
+function botOf(team: string, anchor: string): string | undefined {
+  return anchor === team ? undefined : anchor.slice(team.length + 1);
 }
 
 /** The delivery's token-resolution candidates: its bound (non-bot) authorized users. */
@@ -446,10 +480,11 @@ async function memberOf(
   return (await store.agents()).find((a) => sameHandle(a.email, email))?.agentId ?? null;
 }
 
-/** A principal's DM with the bot is a surface of the mind behind it (§4), and Slack's id
- *  for it is opaque — so the first line a member sends the bot in an `im` RECORDS the
- *  channel on the bot's own row (`extra.dms`, member → channel), where the alias
- *  derivation reads it. Which members are principals is decided there, not here. */
+/** A principal's DM with the bot is a surface of the mind of the agent that owns it (§4),
+ *  and Slack's id for it is opaque — so the first line a member sends an owned bot in an
+ *  `im` RECORDS the channel on the bot's row (`extra.mirrors.dms`, member → channel), where
+ *  the alias derivation reads it. Which members are principals is decided there, not
+ *  here. An org bot is no agent's, and its DMs stay the world's. */
 async function recordDm(
   store: Store,
   anchor: string,
@@ -457,14 +492,100 @@ async function recordDm(
   channel: string,
 ): Promise<void> {
   const row = await store.connection("slack", anchor);
-  if (!row) return;
-  const dms = (row.extra?.dms ?? {}) as Record<string, string>;
-  if (dms[member] === channel) return;
+  if (!row?.agentId || mirrorsOf(row).dms?.[member] === channel) return;
   await store.upsertConnections([{
     service: "slack",
     address: anchor,
-    extra: { dms: { ...dms, [member]: channel } },
+    extra: { mirrors: { dms: { [member]: channel } } },
   }]);
+}
+
+/** The surfaces recorded on a connection row (§4). */
+function mirrorsOf(
+  row: ConnectionRow,
+): { dms?: Record<string, string>; rooms?: Record<string, string> } {
+  const m = row.extra?.mirrors;
+  return typeof m === "object" && m !== null ? m as Record<string, Record<string, string>> : {};
+}
+
+/** A steering room (§4): on an org bot, a channel named exactly as a roster agent is that
+ *  agent's room, unless the agent owns an account. It is RECORDED the first time the bot
+ *  is met in it (`extra.mirrors.rooms`, agent → channel), by id, so a rename never moves
+ *  it and another channel wearing the name later is nobody's while the first holds it.
+ *  The adoption is said in the agent's mind, which carries it to every surface of the
+ *  mind, the room among them. */
+async function adoptRoom(
+  deps: SlackWebhookDeps,
+  team: string,
+  anchor: string,
+  channel: string,
+  via: string[],
+  now: () => string,
+): Promise<void> {
+  const { store, names } = deps;
+  if (!store?.agents || !store.connections || !names || anchor === team) return;
+  const row = await store.connection("slack", anchor);
+  if (!row || row.agentId) return;
+  const name = await names.roomOf(team, channel, via);
+  const agent = name ? (await store.agents()).find((a) => a.agentId === name) : undefined;
+  if (!agent || agent.runs === false || mirrorsOf(row).rooms?.[agent.agentId] !== undefined) {
+    return;
+  }
+  // an agent with an account of its own is a person's, steered there and nowhere else
+  if ((await store.connections()).some((c) => c.agentId === agent.agentId)) return;
+  await store.upsertConnections([{
+    service: "slack",
+    address: anchor,
+    extra: { mirrors: { rooms: { [agent.agentId]: channel } } },
+  }]);
+  await deps.publish(
+    roomNote(agent.agentId, { joined: [{ address: channel, name: `#${name}` }] }, now),
+  );
+}
+
+/** The bot is out of a room — it left, or the channel was archived: whatever agent's
+ *  steering room it was is nobody's now, and the next channel to wear the name may be
+ *  adopted. Said in the mind like the adoption. */
+async function releaseRoom(
+  deps: SlackWebhookDeps,
+  team: string,
+  anchor: string,
+  channel: string,
+  via: string[],
+  now: () => string,
+): Promise<void> {
+  const { store } = deps;
+  if (!store || anchor === team) return;
+  const row = await store.connection("slack", anchor);
+  const held = Object.entries(row ? mirrorsOf(row).rooms ?? {} : {})
+    .filter(([, c]) => c === channel).map(([agent]) => agent);
+  if (held.length === 0) return;
+  await store.upsertConnections([{
+    service: "slack",
+    address: anchor,
+    extra: { mirrors: { rooms: Object.fromEntries(held.map((agent) => [agent, null])) } },
+  }]);
+  const name = await deps.names?.roomOf(team, channel, via);
+  const room = { address: channel, ...(name ? { name: `#${name}` } : {}) };
+  await deps.publish(held.map((agent) => roomNote(agent, { left: [room] }, now)));
+}
+
+/** A room joining or leaving the agent's mind, as the mind's own room line (§3). */
+function roomNote(
+  agent: string,
+  change: { joined?: RoomMember[]; left?: RoomMember[] },
+  now: () => string,
+): Draft<MessageEvent> {
+  return {
+    ts: now(),
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: sessionAddress(agent, MIND) },
+    },
+    parts: [roomPart(change)],
+  };
 }
 
 /** `channel_type` → `conversation.kind` (§4): im/mpim are member-DEFINED (direct — the

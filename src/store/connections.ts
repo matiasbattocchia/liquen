@@ -100,13 +100,13 @@ export interface ConversationRow {
   kind: "group" | "channel";
 }
 
-/** A mind-alias binding (§4): a conversation on the wire whose every counterpart is a
- *  principal of the agent — self-talk on an OWNED connection, a principal's DM with the
- *  agent's own account, or the agent's steering room on an org account. DERIVED where
- *  platform structure gives it away (a WA self-chat is addressed by the connection's own
- *  number, a principal's DM by their own, a steering room by the agent's name;
- *  `store/roster.ts` derives them), RECORDED (`extra.self_conversation`, the connect
- *  flow's discovery) where the platform's id is opaque (the Slack self-DM). */
+/** A mind-alias binding (§4): a conversation on the wire that is a face of the agent's
+ *  mind — self-talk on a connection it OWNS, a principal's DM with an account it owns, or
+ *  its steering room on an org account. RECORDED on the connection (`extra.mirrors`:
+ *  `self`, `dms` principal → conversation, `rooms` agent → conversation) where the
+ *  platform's id is opaque, DERIVED where platform structure gives it away (a WA self-chat
+ *  is addressed by the connection's own number, a principal's DM by their own);
+ *  `store/roster.ts` reads both. */
 export interface AliasRow {
   service: string;
   connection: string; // the binding row's own address (grant / paired number)
@@ -158,9 +158,10 @@ export interface Connections {
   /** The map as it stands — live rows only: a soft-deleted grant is not a surface anyone
    *  has. What the anchor reads to say which surfaces exist and which are down (§5). */
   connections(): Promise<ConnectionRow[]>;
-  /** The mind-alias bindings (§4), in (service, connection, conversation) order: every owned connection's self-conversation, derived
-   *  or recorded, each principal's DM with an account the agent speaks through, and each
-   *  org account's steering room (the `aliases` view, `store/roster.ts`). A soft-deleted binding KEEPS answering, with
+  /** The mind-alias bindings (§4), in (service, connection, conversation) order: every
+   *  owned connection's self-conversation, each principal's DM with an account the agent
+   *  owns, and each org account's steering rooms (the `aliases` view, `store/roster.ts`).
+   *  A soft-deleted binding KEEPS answering, with
    *  `live: false` — a revocation closes the gate, never the hiding: the mind copies
    *  already there are that surface's record, and the binding still names whose they are. */
   aliases(): Promise<AliasRow[]>;
