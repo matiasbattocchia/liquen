@@ -729,11 +729,14 @@ Deno.test("bash: a log past the cap drops its older half, and the agent is told 
     const end = await told(1, 20_000);
     assertMatch(
       end.output,
-      /\nend\n\n\[its last lines — full output: \S+\]\n\n\[its output passed 50 MB: the older half of \S+ was dropped\]$/,
+      /\nx+\nend\n\n\[its last lines — full output: \S+\]\n\n\[its output passed 50 MB: the older half of \S+ was dropped and reads as zero bytes\]$/,
     );
     assertEquals(updates.length, 1);
-    const size = (await Deno.stat(`${dir}/.out/bash-u1.log`)).size;
-    assert(size < SPOOL_CAP, `${size}`);
+    // every byte the job wrote is still counted: the x's, fold's newlines, "\nend\n"
+    const xs = SPOOL_CAP + 4 * 1024 * 1024;
+    const log = await Deno.stat(`${dir}/.out/bash-u1.log`);
+    assertEquals(log.size, xs + Math.ceil(xs / 99) - 1 + 5);
+    assert(log.blocks! * 512 < SPOOL_CAP, `${log.blocks}`);
   } finally {
     await jobs.reap();
     await Deno.remove(dir, { recursive: true });

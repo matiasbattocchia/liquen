@@ -18,7 +18,7 @@ import {
 import { newId } from "../store/id.ts";
 import { pathOf } from "../store/media.ts";
 import type { ExecFacts, ExecOutcome } from "../xi.ts";
-import type { ShellUpdate } from "./jobs.ts";
+import { type ShellUpdate, SPOOL_CAP } from "./jobs.ts";
 
 const USE = { id: "u1", turn_id: "t1" };
 
@@ -192,6 +192,31 @@ cases(
     const end = await nth(updates, 2);
     assertEquals([end.final, end.is_error], [true, true]);
     assert(/^exited 3 after \d+s\nERROR one\ndone$/.test(end.output), end.output);
+  },
+);
+
+cases(
+  "a log past the cap drops its older half, keeps every later byte, and is told once",
+  async (shell, place, updates) => {
+    const xs = SPOOL_CAP + 4 * 1024 * 1024;
+    await shell.exec.bash.execute(
+      { command: `head -c ${xs} /dev/zero | tr '\\0' x | fold -w 99; echo; echo end`, wait: 0 },
+      new AbortController().signal,
+      undefined,
+      USE,
+    );
+    const end = await nth(updates, 1, 30_000);
+    assert(
+      /\nx+\nend\n\n\[its last lines — full output: \S+\]\n\n\[its output passed 50 MB: the older half of \S+ was dropped and reads as zero bytes\]$/
+        .test(end.output),
+      end.output.slice(-300),
+    );
+    assertEquals(updates.length, 1);
+    const log = quote(`${place.workspace}/.out/bash-u1.log`);
+    const stat = await place.gateway.exec(`stat -c '%s %b' ${log}`);
+    const [size, blocks] = stat.stdout.trim().split(" ").map(Number);
+    assertEquals(size, xs + Math.ceil(xs / 99) - 1 + 5);
+    assert(blocks * 512 < SPOOL_CAP, `${blocks}`);
   },
 );
 

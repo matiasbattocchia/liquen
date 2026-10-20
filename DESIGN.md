@@ -2223,10 +2223,11 @@ names the text it replaces, and text that is no longer there matches nothing.
     call, `bash(tail -F app.log, wait: 0, wake: "ERROR")`, and a build watched for its
     errors is the build itself with a `wake`. The filter is declarative and lives at the
     harness, beside the log it reads.
-  - **The spool is capped, and kept a week.** A log past `SPOOL_CAP` (50 MB) drops its
-    older half as the harness reads it — rewritten in append mode, as the job writes it, so
-    a line it adds meanwhile is never overwritten — and the agent is told once, in the
-    call's next update. A finished job's log stays `SPOOL_KEEP_MS` (seven days) from its
+  - **The spool is capped, and kept a week.** A log holding more than `SPOOL_CAP` (50 MB)
+    on disk drops its older half as the harness reads it: a hole punched up to the newer
+    half's first line (`fallocate --punch-hole`), so the offsets stay, nothing is rewritten,
+    and what the job appends meanwhile is out of the hole's reach. The log keeps its size and
+    reads as zeros where the hole is; the agent is told once, in the call's next update. A finished job's log stays `SPOOL_KEEP_MS` (seven days) from its
     last word, then a sweep removes it; a log whose job still runs is never swept.
   - **What a command leaves behind is a job too.** A group that still has members after
     the command ended (a `cmd &`) stays followed, its call's answer saying so (async, as an

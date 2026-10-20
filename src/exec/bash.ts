@@ -595,34 +595,32 @@ async function readAt(file: Deno.FsFile, start: number, end: number): Promise<Ui
 }
 
 /** A job's log from `from` on, as one look reads it: its older half dropped first when it
- *  passed `SPOOL_CAP`, and only its last `LOOK_BYTES` when more than that is new. */
+ *  holds more than `SPOOL_CAP` on disk, and only its last `LOOK_BYTES` when more than that
+ *  is new. */
 async function readLog(
   path: string,
   from: number,
 ): Promise<Pick<Look, "bytes" | "size" | "shifted" | "skipped">> {
   let file: Deno.FsFile;
   try {
-    file = await Deno.open(path, { read: true, append: true });
+    file = await Deno.open(path, { read: true });
   } catch (err) {
     ignoreGone(err);
     return { bytes: new Uint8Array(), size: 0, shifted: false, skipped: false };
   }
   try {
-    let size = (await file.stat()).size;
+    const stat = await file.stat();
+    const size = stat.size;
     let shifted = false;
     let skipped = false;
-    if (size > SPOOL_CAP) {
-      // the newer half, from a line's start: read, the file emptied and written back in
-      // append mode — as the job writes it, so a line it adds meanwhile is never overwritten
-      const half = await readAt(file, size - SPOOL_CAP / 2, size);
-      const kept = half.subarray(half.indexOf(10) + 1);
-      const cut = size - kept.length;
-      await file.truncate(0);
-      for (let at = 0; at < kept.length;) at += await file.write(kept.subarray(at));
-      shifted = true;
-      skipped = from < cut;
-      from = skipped ? 0 : from - cut;
-      size = (await file.stat()).size;
+    if ((stat.blocks ?? 0) * 512 > SPOOL_CAP) {
+      // a hole punched up to the newer half's first line: the offsets stay, and what the
+      // job appends meanwhile lies past `size`, out of the hole's reach
+      const start = size - SPOOL_CAP / 2;
+      const head = await readAt(file, start, Math.min(size, start + 64 * 1024));
+      const cut = start + head.indexOf(10) + 1;
+      shifted = await punch(path, cut);
+      if (shifted && from < cut) [from, skipped] = [cut, true];
     }
     if (size - from > LOOK_BYTES) {
       from = size - LOOK_BYTES;
@@ -633,6 +631,13 @@ async function readLog(
   } finally {
     file.close();
   }
+}
+
+/** The file's first `bytes` given back to the disk; they read as zeros after. */
+async function punch(path: string, bytes: number): Promise<boolean> {
+  const args = ["--punch-hole", "--offset", "0", "--length", String(bytes), path];
+  const { success } = await new Deno.Command("fallocate", { args, stderr: "null" }).output();
+  return success;
 }
 
 /** Is the process still running? (harmless probe.) */

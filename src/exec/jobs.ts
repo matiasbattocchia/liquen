@@ -121,7 +121,7 @@ export interface Job {
   spool: Spool;
   /** The command's exit status was told: by the answer, or by an update. */
   ended: boolean;
-  /** Its log passed `SPOOL_CAP`: the next word says so. */
+  /** Its log held more than `SPOOL_CAP`: the next word says so. */
   dropped?: boolean;
   /** What following it holds — its watch, its wake's timer, its host — let go once it is
    *  told final. */
@@ -384,7 +384,7 @@ export class Jobs {
     const note = job.dropped
       ? `\n\n[its output passed ${
         SPOOL_CAP / 1024 / 1024
-      } MB: the older half of ${job.files.log} was dropped]`
+      } MB: the older half of ${job.files.log} was dropped and reads as zero bytes]`
       : "";
     job.dropped = false;
     this.tell({ use: job.use, command: job.command, output: output + note, ...flags });

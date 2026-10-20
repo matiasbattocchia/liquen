@@ -319,24 +319,23 @@ const alive = (pgid: string) =>
 
 /** The lines that look at a job, as `parseLook` reads them: whether its shell and its group
  *  still run (also left in `$r` and `$a`), its status, and its log from `from` on — the
- *  older half dropped first past `SPOOL_CAP`, and only the last `LOOK_BYTES` when more than
- *  that is new. `pg` is the group as the script names it. The processes are asked first and
- *  the files after: a shell seen gone has written its status. */
+ *  older half dropped first when it holds more than `SPOOL_CAP` on disk, and only the last
+ *  `LOOK_BYTES` when more than that is new. `pg` is the group as the script names it. The
+ *  processes are asked first and the files after: a shell seen gone has written its status. */
 function lookAt(f: JobFiles, pg: string, from: number): string[] {
-  const [log, cut] = [quote(f.log), quote(`${f.log}~`)];
+  const log = quote(f.log);
   return [
     `r=0; ${running(pg)} && r=1; a=0; ${alive(pg)} && a=1; echo "running $r"; echo "alive $a"`,
     `[ -f ${quote(f.rc)} ] && echo "rc $(cat ${quote(f.rc)})"`,
     `[ -f ${quote(f.end)} ] && echo told`,
-    `from=${from}; size=$(stat -c %s ${log} 2>/dev/null || echo 0)`,
-    // the newer half, from a line's start: the file emptied and appended to, as the job
-    // writes it, so a line it adds meanwhile is never overwritten
-    `if [ "$size" -gt ${SPOOL_CAP} ]; then tail -c ${
-      SPOOL_CAP / 2
-    } ${log} | tail -n +2 > ${cut}; ` +
-    `: > ${log}; cat ${cut} >> ${log}; cut=$((size - $(stat -c %s ${cut}))); rm -f ${cut}; ` +
-    `echo shifted; if [ "$from" -lt "$cut" ]; then from=0; echo skipped; ` +
-    `else from=$((from - cut)); fi; size=$(stat -c %s ${log}); fi`,
+    `from=${from}; size=$(stat -c %s ${log} 2>/dev/null || echo 0); ` +
+    `blocks=$(stat -c %b ${log} 2>/dev/null || echo 0)`,
+    // a hole punched up to the newer half's first line: the offsets stay, and what the
+    // job appends meanwhile lies past $size, out of the hole's reach
+    `if [ $((blocks * 512)) -gt ${SPOOL_CAP} ]; then cut=$((size - ${SPOOL_CAP / 2})); ` +
+    `cut=$((cut + $(tail -c +$((cut + 1)) ${log} | head -c 65536 | head -n 1 | wc -c))); ` +
+    `if fallocate --punch-hole --offset 0 --length "$cut" ${log}; then echo shifted; ` +
+    `if [ "$from" -lt "$cut" ]; then from=$cut; echo skipped; fi; fi; fi`,
     `if [ $((size - from)) -gt ${LOOK_BYTES} ]; then from=$((size - ${LOOK_BYTES})); ` +
     `echo skipped; fi`,
     `echo "size $size"`,

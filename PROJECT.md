@@ -5568,7 +5568,10 @@ job lives only in the harness. Decided with the user:
 - An outcome can be an error and async at once (`ExecOutcome.is_error`): a `cmd &` whose
   command failed is owed its end like any other.
 
-The cap's cut races the job's own writes: a line the job appends while the harness rewrites
-the kept half can land first, so the log's first line after a cut may be a fragment. The
-alternatives (collapsing the file's head in place, rotating it) either need filesystem
-support or lose the job's later writes.
+The cap first cut by emptying the log and writing its newer half back, which lost what the
+job wrote between the read and the emptying (a flaky test caught it). It now punches a hole
+over the older half (`fallocate --punch-hole`, here and in the remote script): offsets
+stay, nothing is rewritten, and the job's appends lie past the hole. The cap is measured in
+blocks on disk, so a punched log is not cut again and a restarted harness needs no record of
+earlier cuts. The cost: the log keeps its apparent size and reads as zeros where the hole
+is, so `cat` or `grep` over a whole cut log meets them; `tail` does not.
