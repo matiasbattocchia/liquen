@@ -5617,3 +5617,33 @@ engine first. Decided with the user:
 Left: UDP has no way out (QUIC falls back to TCP); a port off the list is unreachable; a
 tool installed under the user's home sees only its PATH directory (mise's python lacks its
 library); a fronted host's name is checked by the guard but re-resolved by `fetch`.
+
+### A bubble's reach: any port by proxy, the org's ports by name, its tools' folders (2026-10-20) — LANDED
+
+The four points the bubbles entry left, decided.
+
+- **Ports.** `system.egressPorts` names the ports a name answers on with no proxy setting
+  (default ssh, http, https, mysql, postgres, git). Each costs a listener per name the
+  bubble has looked up, so the list stays short. A bubble's shell is now issued
+  `HTTPS_PROXY` too, pointing at its holder (`127.0.0.53:3128`), which hands the bytes to
+  the proxy as they came: a client that reads it reaches any port, through the same guard.
+  `HTTP_PROXY` and `ALL_PROXY` are not issued: a plain-HTTP client may reuse a proxy
+  connection for a second host, which a CONNECT-per-connection holder would send to the
+  first, and a `socks5h://` value breaks Python `requests` without PySocks.
+- **Tools in the home.** `system.bubbleMounts` shows more of the machine, read-only; a
+  mount that holds the org's folder or lies in it is refused at open. The boot names a
+  tool folder PATH reaches into that no mount shows whole (mise, nvm, uv). Mounting the
+  parent of every `bin` on PATH was set aside: the explicit list says what every agent
+  reads. A shim (mise's, pyenv's, asdf's, rustup's) finds its tool from `HOME`, which in a
+  bubble is the agent's folder, so tools reach a bubble by their own folders on PATH
+  (mise activate does that).
+- **UDP** stays without a way out.
+- **A fronted host resolved twice** stays: the guard checks the name, then `fetch` resolves
+  it again. Only hosts a grant names are terminated, and their DNS is the org's to trust.
+  Pinning the address means forwarding through `node:https` with a `lookup`, and redoing
+  the compression handling that rests on `fetch`.
+
+Checked end to end with the real proxy and guard: mise's Python 3.12 runs with
+`~/.local/share/mise` mounted and fails without it (the boot names the folder); curl and
+Python's `urllib` reach `tls-v1-2.badssl.com:1012` through `HTTPS_PROXY`, and curl
+without it cannot connect; `127.0.0.1.nip.io:8443` is refused 403.

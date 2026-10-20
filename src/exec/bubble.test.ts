@@ -5,8 +5,9 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
+import { DEFAULT_EGRESS_PORTS } from "../config.ts";
 import { type ExecGround, installExecGround } from "./bash.ts";
-import { EGRESS_SOCKET, openBubble } from "./bubble.ts";
+import { type BubbleOptions, EGRESS_SOCKET, openBubble, partialToolHomes } from "./bubble.ts";
 
 const live = () => new AbortController().signal;
 
@@ -29,7 +30,10 @@ interface Org {
 
 /** An org's folder, and the egress proxy's side of a1's socket: it refuses what names
  *  `refused.example`, and otherwise answers 200 and echoes the tunnel's bytes. */
-async function withOrg(fn: (o: Org) => Promise<void>): Promise<void> {
+async function withOrg(
+  fn: (o: Org) => Promise<void>,
+  opts: Partial<Pick<BubbleOptions, "ports" | "mounts">> = {},
+): Promise<void> {
   const org = await Deno.realPath(await Deno.makeTempDir());
   const dir = `${org}/data`;
   await Deno.writeTextFile(`${org}/config.jsonc`, "{}\n");
@@ -64,7 +68,7 @@ async function withOrg(fn: (o: Org) => Promise<void>): Promise<void> {
       "a1",
       undefined,
       undefined,
-      () => openBubble({ dir, agentId: "a1", egress }),
+      () => openBubble({ dir, agentId: "a1", egress, ports: DEFAULT_EGRESS_PORTS, ...opts }),
     );
   try {
     await fn({ org, dir, asked, ground });
@@ -87,6 +91,7 @@ const runOn = (shell: Shell) => async (command: string) => {
 /** One ground and a shell on it, ended with its bubbles. */
 async function withBubble(
   fn: (t: Org & { run: (command: string) => Promise<string>; shell: Shell }) => Promise<void>,
+  opts: Partial<Pick<BubbleOptions, "ports" | "mounts">> = {},
 ): Promise<void> {
   await withOrg(async (o) => {
     const ground = await o.ground();
@@ -97,7 +102,7 @@ async function withBubble(
       await shell.reap();
       await ground.close("end");
     }
-  });
+  }, opts);
 }
 
 const groupAlive = (pgid: number) => {
@@ -185,6 +190,67 @@ Deno.test({
         "mine",
       );
     }),
+});
+
+Deno.test({
+  name: "bubble: a name answers on the org's ports, and a proxy client reaches any",
+  ignore: !hasBwrap,
+  fn: () =>
+    withBubble(async ({ run, asked }) => {
+      assertEquals(
+        await run("exec 3<>/dev/tcp/example.com/443; printf hi >&3; head -c 2 <&3"),
+        "hi",
+      );
+      await assertRejects(() => run("exec 3<>/dev/tcp/example.com/22"), Error);
+      // the holder hands a CONNECT to the proxy as it came
+      assertEquals(
+        await run(
+          "exec 3<>/dev/tcp/127.0.0.53/3128; printf 'CONNECT example.com:8443 HTTP/1.1\\r\\n\\r\\n' >&3; " +
+            "head -c 39 <&3 | head -1 | tr -d '\\r'; printf hi >&3; head -c 2 <&3",
+        ),
+        "HTTP/1.1 200 Connection Established\nhi",
+      );
+      assertEquals(asked, ["example.com:443", "example.com:8443"]);
+    }, { ports: [443] }),
+});
+
+Deno.test({
+  name: "bubble: the org's mounts show read-only, and none may touch the org's folder",
+  ignore: !hasBwrap,
+  fn: async () => {
+    const tools = await Deno.realPath(await Deno.makeTempDir());
+    await Deno.writeTextFile(`${tools}/lib.txt`, "beside the bin");
+    try {
+      await withBubble(async ({ run }) => {
+        assertEquals(await run(`cat ${tools}/lib.txt`), "beside the bin");
+        assertEquals(await run(`touch ${tools}/x 2>/dev/null || echo refused`), "refused");
+      }, { mounts: [tools] });
+      await withOrg(async ({ org, dir }) => {
+        const open = (mounts: string[]) =>
+          openBubble({ dir, agentId: "a1", egress: `${dir}/log/egress/a1`, ports: [], mounts });
+        await assertRejects(() => open([org]), Error, "holds the org's folder");
+        await assertRejects(() => open([`${org}/connectors`]), Error, "lies in the org's folder");
+      });
+    } finally {
+      await Deno.remove(tools, { recursive: true });
+    }
+  },
+});
+
+Deno.test("partialToolHomes: a tool folder PATH reaches into, until a mount shows it whole", () => {
+  const was = { HOME: Deno.env.get("HOME"), PATH: Deno.env.get("PATH") };
+  try {
+    Deno.env.set("HOME", "/home/u/");
+    Deno.env.set("PATH", "/home/u/.local/share/mise/installs/python/3.12/bin:/usr/bin");
+    assertEquals(partialToolHomes([]), ["~/.local/share/mise"]);
+    assertEquals(partialToolHomes(["~/.local/share/mise"]), []);
+    assertEquals(partialToolHomes(["/home/u/.local/share"]), []);
+    assertEquals(partialToolHomes(["~/.local/share/mise/installs"]), ["~/.local/share/mise"]);
+  } finally {
+    for (const [k, v] of Object.entries(was)) {
+      v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+    }
+  }
 });
 
 Deno.test({

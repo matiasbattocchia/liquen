@@ -71,6 +71,7 @@ import { loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import type { About, Delta, Event } from "./types.ts";
 import { checkToolDocs } from "./tooldoc.ts";
 import { type BashInput, bashShape } from "./exec/bash.ts";
+import { partialToolHomes } from "./exec/bubble.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
 import {
   DEFAULT_BASH_WAIT_MS,
@@ -255,6 +256,8 @@ export async function start(
       store,
       bubble,
       egressRefuses: catalog?.system.egressRefuses,
+      egressPorts: catalog?.system.egressPorts,
+      bubbleMounts: catalog?.system.bubbleMounts,
       exports: Object.fromEntries(principals.map((p) => [p.agentId, p.settings?.export ?? []])),
       ...planeOptions,
     });
@@ -262,6 +265,12 @@ export async function start(
     console.error(
       '[exec] the agents\' shells run bare, as you: system.sandbox "bwrap" gives each a ' +
         "bubble of its own, its folder and the egress proxy and nothing else",
+    );
+  }
+  for (const home of bubble ? partialToolHomes(catalog?.system.bubbleMounts ?? []) : []) {
+    console.error(
+      `[exec] a bubble shows ${home} only by its PATH folders: system.bubbleMounts ` +
+        `["${home}"] shows it whole, so the tools there run`,
     );
   }
   // a command the last run answered async and never told the end of is followed on where

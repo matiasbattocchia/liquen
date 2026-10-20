@@ -13,13 +13,16 @@
  * Nothing is asked of a resolver outside. A name not dialed for long gives its address
  * back once `MAX_NAMES` are held; a client that kept it resolves the name again.
  *
- *   deno run hold.ts <socket> <resolver address> <port,port,…>
+ * Beside the resolver it takes the CONNECT of a client that reads HTTPS_PROXY, and hands
+ * its bytes to the proxy as they are: such a client reaches any port.
+ *
+ *   deno run hold.ts <socket> <resolver address> <port,port,…> <proxy port>
  *
  * It prints `ready` once the resolver listens: the bubble is entered only after that.
  */
 
-const [socket, resolver, portList] = Deno.args;
-const ports = portList.split(",").map(Number);
+const [socket, resolver, portList, proxyPort] = Deno.args;
+const ports = portList ? portList.split(",").map(Number) : [];
 /** The names held at once: each holds a listener per port. */
 const MAX_NAMES = 4096;
 /** How long an answer may be kept by the asker. */
@@ -108,6 +111,21 @@ async function tunnel(conn: Deno.Conn, authority: string): Promise<void> {
   ]);
 }
 
+/** A proxy client's connection, handed to the proxy whole. */
+async function splice(conn: Deno.Conn): Promise<void> {
+  let up: Deno.Conn;
+  try {
+    up = await Deno.connect({ transport: "unix", path: socket });
+  } catch (err) {
+    console.error(`no way to the egress proxy: ${err instanceof Error ? err.message : err}`);
+    return conn.close();
+  }
+  await Promise.all([
+    conn.readable.pipeTo(up.writable).catch(() => {}),
+    up.readable.pipeTo(conn.writable).catch(() => {}),
+  ]);
+}
+
 async function write(conn: Deno.Conn, bytes: Uint8Array): Promise<void> {
   for (let off = 0; off < bytes.length;) off += await conn.write(bytes.subarray(off));
 }
@@ -176,7 +194,12 @@ function answer(query: Uint8Array): Uint8Array | null {
 
 const udp = Deno.listenDatagram({ transport: "udp", hostname: resolver, port: 53 });
 const tcp = Deno.listen({ hostname: resolver, port: 53 });
+const pointed = Deno.listen({ hostname: resolver, port: Number(proxyPort) });
 console.log("ready");
+
+void (async () => {
+  for await (const conn of pointed) void splice(conn);
+})();
 
 void (async () => {
   for await (const [query, from] of udp) {

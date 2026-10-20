@@ -28,8 +28,8 @@ import {
   remoteShell,
   sandboxIdOf,
 } from "./exec/gateway.ts";
-import { DEFAULT_SANDBOX_SLEEP_MINUTES } from "./config.ts";
-import { EGRESS_SOCKET, openBubble } from "./exec/bubble.ts";
+import { DEFAULT_EGRESS_PORTS, DEFAULT_SANDBOX_SLEEP_MINUTES } from "./config.ts";
+import { BUBBLE_PROXY, EGRESS_SOCKET, openBubble } from "./exec/bubble.ts";
 
 /** One session's place in the sandbox: its shell (where it stands, what it left running),
  *  the agent's folder on this ground, and the files port its references resolve through. */
@@ -87,6 +87,10 @@ export interface LocalSandboxOptions {
   bubble?: boolean;
   /** The `system.egressRefuses` knob: ranges the egress proxy refuses, over its own. */
   egressRefuses?: string[];
+  /** The `system.egressPorts` knob: the ports a bubble reaches a name on by itself. */
+  egressPorts?: number[];
+  /** The `system.bubbleMounts` knob: more of the machine a bubble shows, read-only. */
+  bubbleMounts?: string[];
 }
 
 /** The local provider: subprocesses on this machine, ONE GROUND PER AGENT, ONE SHELL PER
@@ -108,6 +112,8 @@ export async function openLocalSandbox(
     tell,
     bubble,
     egressRefuses = [],
+    egressPorts = DEFAULT_EGRESS_PORTS,
+    bubbleMounts = [],
   }: LocalSandboxOptions,
 ): Promise<Sandbox> {
   // the egress proxy (§9): front every credential row that declares an env var — user
@@ -138,7 +144,14 @@ export async function openLocalSandbox(
       ...localeEnv,
     });
     const bubbled = bubble
-      ? () => openBubble({ dir, agentId, egress: egressOf(agentId) })
+      ? () =>
+        openBubble({
+          dir,
+          agentId,
+          egress: egressOf(agentId),
+          ports: egressPorts,
+          mounts: bubbleMounts,
+        })
       : undefined;
     grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashWaitMs, bubbled));
   }
@@ -280,10 +293,10 @@ export function openCloudflareSandbox(
 }
 
 /** The egress proxy — the org's single credential-bearing egress — as the env provider
- *  bash issues into every spawn (§9), PER AGENT. A bare shell is pointed at it by
- *  HTTPS_PROXY, with loopback left to the shell itself (NO_PROXY), since the proxy refuses
- *  to dial this machine; a bubble's every connection reaches it whatever the client reads,
- *  so a bubble is issued neither. The proxy terminates only the authorities a fronted
+ *  bash issues into every spawn (§9), PER AGENT. A shell is pointed at it by HTTPS_PROXY,
+ *  with loopback left to the shell itself (NO_PROXY), since the proxy refuses to dial this
+ *  machine: a bare shell at its port, a bubble's at its holder, which also carries the
+ *  clients that read no proxy setting. The proxy terminates only the authorities a fronted
  *  grant binds (where a placeholder can ride and the swap has to see plaintext) and
  *  bridges every other tunnel blind, so the world answers with its own certificates.
  *  `refuses` are the `system.egressRefuses` ranges (guard.ts). The trust file user space is handed is the system
@@ -363,10 +376,9 @@ async function installProxy(
   }, { sockets });
   const bundle = await writeTrustBundle(dir, proxy.caPath);
   const bubbled = new Set(sockets.map((s) => s.agentId));
-  const pointed = {
-    HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
-    NO_PROXY: "localhost,127.0.0.1,::1",
-  };
+  const pointed = (to: string) => ({ HTTPS_PROXY: to, NO_PROXY: "localhost,127.0.0.1,::1" });
+  const bare = pointed(`http://127.0.0.1:${proxy.port}`);
+  const inBubble = pointed(BUBBLE_PROXY);
   const base: Record<string, string> = {
     SSL_CERT_FILE: bundle, // OpenSSL-based tools: curl, git, wget, Go
     REQUESTS_CA_BUNDLE: bundle, // python requests, and pip through it
@@ -380,7 +392,10 @@ async function installProxy(
   return {
     env: async (agentId) => {
       fronted = await read();
-      const env: Record<string, string> = { ...(bubbled.has(agentId) ? {} : pointed), ...base };
+      const env: Record<string, string> = {
+        ...(bubbled.has(agentId) ? inBubble : bare),
+        ...base,
+      };
       const mine = frontedFor(fronted, agentId);
       for (const r of mine) env[r.extra!.env as string] = broker.issue(r.key, r.agentId);
       const keys = mine.map((r) => r.key).join(", ");

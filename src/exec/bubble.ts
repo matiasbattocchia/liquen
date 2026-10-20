@@ -17,11 +17,17 @@
  * over it again — the data root emptied and refilled, the org's .env unreadable — so standing
  * in the org's own folder shows its code and none of its state.
  *
+ * The org may show more of the machine, read-only (`system.bubbleMounts`): the folders a
+ * tool installed in the user's home runs on beside its PATH folder.
+ *
  * The network is the bubble's own, prepared before bubblewrap runs (`unshare`): loopback
  * alone, every port open to the holder, owned by a user namespace the shells never enter.
  * The holder is its resolver and carries every connection to the egress proxy over the
  * agent's own socket, the one file of `log/` the bubble sees: the proxy is the only way
- * out, and every connection that reaches it is known to be the agent's.
+ * out, and every connection that reaches it is known to be the agent's. A name reaches the
+ * `system.egressPorts` with no proxy setting; a client that reads HTTPS_PROXY is pointed
+ * at the holder (`BUBBLE_PROXY`), which hands its bytes to the proxy as they are, and
+ * reaches any port.
  *
  * A bubble outlives the harness that opened it, as its jobs do: each is recorded under
  * `log/bubbles/<agent>/`, and the next harness adopts the one whose view it would open
@@ -46,16 +52,23 @@ export interface BubbleOptions {
   agentId: string;
   /** The directory that holds the agent's egress socket (`EGRESS_SOCKET`). */
   egress: string;
+  /** The `system.egressPorts` knob: the ports a name is reached on with no proxy setting. */
+  ports: number[];
+  /** The `system.bubbleMounts` knob: more of the machine the bubble shows, read-only. */
+  mounts?: string[];
 }
 
 /** The egress proxy's socket for one agent, in that agent's egress directory. */
 export const EGRESS_SOCKET = "egress.sock";
-/** The ports a bubble's connections leave by: ssh, http, https, mysql, postgres, git. */
-export const EGRESS_PORTS = [22, 80, 443, 3306, 5432, 9418];
-/** Where a bubble sees its agent's egress directory. */
-const INNER_EGRESS = "/run/liquen";
 /** Where in the bubble the holder answers names. */
 const RESOLVER = "127.0.0.53";
+/** Where in the bubble the holder takes a proxy client's CONNECT: its HTTPS_PROXY. */
+const PROXY_PORT = 3128;
+export const BUBBLE_PROXY = `http://${RESOLVER}:${PROXY_PORT}`;
+/** Where a bubble sees its agent's egress directory. */
+const INNER_EGRESS = "/run/liquen";
+/** The folders tools installed in the user's home run on, beside their PATH folders. */
+const TOOL_HOMES = ["~/.local/share/mise", "~/.nvm", "~/.local/share/uv"];
 const HOLD_URL = import.meta.resolve("./hold.ts");
 /** How long a holder is given to say `ready`. */
 const READY_MS = 10_000;
@@ -92,6 +105,23 @@ interface Holder extends Kept {
 }
 
 const under = (path: string, root: string) => path === root || path.startsWith(`${root}/`);
+
+/** A `system.bubbleMounts` path, `~/` read as the harness user's home. */
+const expand = (path: string) =>
+  path.startsWith("~/")
+    ? `${(Deno.env.get("HOME") ?? "").replace(/\/+$/, "")}${path.slice(1)}`
+    : path;
+
+/** The tool folders in the user's home that hold a PATH folder and that no mount shows
+ *  whole: a bubble shows them only by those PATH folders. As written in `TOOL_HOMES`. */
+export function partialToolHomes(mounts: string[]): string[] {
+  const shown = mounts.map(expand);
+  const path = (Deno.env.get("PATH") ?? "").split(":");
+  return TOOL_HOMES.filter((t) => {
+    const home = expand(t);
+    return path.some((d) => under(d, home)) && !shown.some((m) => under(home, m));
+  });
+}
 
 /** The read-only system underneath every view, then the bubble's own /proc, /dev and /tmp. */
 function systemBinds(): string[] {
@@ -194,8 +224,19 @@ async function end(h: Holder): Promise<void> {
   await Deno.remove(h.path).catch(() => {});
 }
 
-export async function openBubble({ dir, agentId, egress }: BubbleOptions): Promise<Bubble> {
+export async function openBubble(
+  { dir, agentId, egress, ports, mounts = [] }: BubbleOptions,
+): Promise<Bubble> {
   const root = dir.replace(/\/[^/]+$/, "");
+  const shown = mounts.map(expand);
+  for (const m of shown) {
+    if (under(root, m) || under(m, root)) {
+      throw new Error(
+        `system.bubbleMounts: ${m} ${under(root, m) ? "holds" : "lies in"} the org's ` +
+          "folder, which a bubble shows by the data classification alone",
+      );
+    }
+  }
   const home = `${dir}/agents/${agentId}`;
   const records = `${dir}/log/bubbles/${agentId}`;
   // the folders the classification shows: a cwd under one of them needs no wider view
@@ -215,6 +256,7 @@ export async function openBubble({ dir, agentId, egress }: BubbleOptions): Promi
 
   const viewFor = (wide?: string): string[] => {
     const args = [...systemBinds(), ...toolBinds(cache)];
+    for (const m of shown) args.push("--ro-bind-try", m, m);
     // the stood-in directory over the system, and the classification over it
     if (wide) args.push("--bind", wide, wide);
     if (wide && under(dir, wide)) args.push("--tmpfs", dir);
@@ -246,7 +288,13 @@ export async function openBubble({ dir, agentId, egress }: BubbleOptions): Promi
     if (living(h)) stale.push(h);
     else await Deno.remove(path).catch(() => {});
   }
-  const viewHash = (view: string[]) => sha256(JSON.stringify([view, code]));
+  const holderArgs = [
+    `${INNER_EGRESS}/${EGRESS_SOCKET}`,
+    RESOLVER,
+    ports.join(","),
+    String(PROXY_PORT),
+  ];
+  const viewHash = (view: string[]) => sha256(JSON.stringify([view, holderArgs, code]));
 
   const hold = (wide?: string): Promise<Holder> => {
     const key = wide ?? "";
@@ -265,7 +313,13 @@ export async function openBubble({ dir, agentId, egress }: BubbleOptions): Promi
       const left = stale.findIndex((h) => h.view === hash && h.path === path);
       if (left >= 0) return stale.splice(left, 1)[0];
       const what = `${agentId}${wide ? ` at ${wide}` : ""}`;
-      const record = await startHolder(view, cache, `${path.slice(0, -5)}.log`, what);
+      const record = await startHolder(
+        view,
+        holderArgs,
+        cache,
+        `${path.slice(0, -5)}.log`,
+        what,
+      );
       const h = { ...record, view: hash, path };
       await Deno.writeTextFile(path, JSON.stringify({ ...record, view: hash }));
       return h;
@@ -338,6 +392,7 @@ async function warm(cache: string): Promise<void> {
  *  read what the processes beside it were started with. */
 async function startHolder(
   view: string[],
+  holderArgs: string[],
   cache: string,
   log: string,
   what: string,
@@ -380,9 +435,7 @@ async function startHolder(
         `--allow-read=${INNER_EGRESS}`,
         `--allow-write=${INNER_EGRESS}`,
         HOLD_URL,
-        `${INNER_EGRESS}/${EGRESS_SOCKET}`,
-        RESOLVER,
-        EGRESS_PORTS.join(","),
+        ...holderArgs,
       ],
       clearEnv: true,
       env: { PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },

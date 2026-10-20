@@ -113,6 +113,8 @@ export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves un
 export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard (§5)
 export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for its burst (§2)
 export const DEFAULT_SANDBOX_SLEEP_MINUTES = 10; // the Sandbox SDK's own sleepAfter
+// ssh, http, https, mysql, postgres, git
+export const DEFAULT_EGRESS_PORTS = [22, 80, 443, 3306, 5432, 9418];
 // The tick is not a knob. It is the RESOLUTION of the attention rules, not one of them:
 // `digestMinutes` says when the agent looks, and the tick only decides how late that look
 // may land. At a minute the promise is kept to the minute; raise it and every interval in
@@ -193,6 +195,8 @@ export interface OrgConfig {
     sandbox: string | null; // null ⇒ agents' shells on this machine; a URL ⇒ that gateway's
     sandboxSleepMinutes: number; // a gateway sandbox's life after its last bash call
     egressRefuses: string[]; // ranges the egress proxy refuses, over its built-in set
+    egressPorts: number[]; // the ports a bubble reaches by name alone
+    bubbleMounts: string[]; // more of this machine a bubble shows, read-only
     prices: Price[]; // the org's own price rows, over the package's list (`prices.ts`)
   };
   organization: {
@@ -317,6 +321,24 @@ const SYSTEM: Entry[] = [
       "always refuses (loopback, link-local, cloud metadata, this machine's own): " +
       '["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"] keeps the agents off ' +
       "the private network",
+  },
+  {
+    key: "egressPorts",
+    value: DEFAULT_EGRESS_PORTS,
+    doc: 'the ports a bubble (sandbox "bwrap") reaches any name on with no proxy setting: ' +
+      "ssh, http, https, mysql, postgres and git; each costs a listener per name the bubble " +
+      "has looked up. A client that reads HTTPS_PROXY reaches every port",
+  },
+  {
+    key: "bubbleMounts",
+    value: [],
+    doc: 'more of this machine a bubble (sandbox "bwrap") shows, read-only, each an absolute ' +
+      "path or one under ~/: a tool installed in your home shows only its PATH folder, so " +
+      'one that runs on files beside it needs its own: mise ("~/.local/share/mise"), nvm ' +
+      '("~/.nvm"), uv ("~/.local/share/uv"). A shim finds its tool from HOME, which in a ' +
+      "bubble is the agent's folder, so the tools need their own folders on PATH (mise " +
+      "activate does that). Every agent reads what is named; none may hold the org's folder " +
+      "or lie in it",
   },
   {
     key: "sandboxSleepMinutes",
@@ -1089,6 +1111,10 @@ function validateOrg(cfg: OrgConfig, path: string): void {
   }
   const refuses = checkRanges(cfg.system.egressRefuses);
   if (refuses) throw new Error(`${path}: system.egressRefuses ${refuses}`);
+  const ports = checkPorts(cfg.system.egressPorts);
+  if (ports) throw new Error(`${path}: system.egressPorts ${ports}`);
+  const mounts = checkMounts(cfg.system.bubbleMounts);
+  if (mounts) throw new Error(`${path}: system.bubbleMounts ${mounts}`);
   const publicUrl = checkPublicUrl(cfg.edge.publicUrl);
   if (publicUrl) {
     throw new Error(
@@ -1165,6 +1191,26 @@ export function checkSandbox(v: unknown, docs: unknown): string | null {
     return "must not carry a credential — SANDBOX_API_KEY in .env holds it";
   }
   return docs === "table" ? null : 'needs system.docs: "table" — a sandbox cannot reach files here';
+}
+
+/** What `system.egressPorts` may hold: distinct ports. A complaint, or null when fine. */
+export function checkPorts(v: unknown): string | null {
+  const shape = "must be an array of distinct ports (1-65535)";
+  if (!Array.isArray(v)) return shape;
+  const bad = v.find((p, i) => !Number.isInteger(p) || p < 1 || p > 65535 || v.indexOf(p) !== i);
+  return bad === undefined ? null : `${shape}: ${JSON.stringify(bad)} is not one`;
+}
+
+/** What `system.bubbleMounts` may hold: absolute paths, or paths under `~/`. A complaint,
+ *  or null when fine. Whether one touches the org's folder is the bubble's to say. */
+export function checkMounts(v: unknown): string | null {
+  const shape = 'must be an array of absolute paths or paths under ~/ ("~/.local/share/mise")';
+  if (!Array.isArray(v)) return shape;
+  const bad = v.find((p) =>
+    typeof p !== "string" || !(p.startsWith("/") || p.startsWith("~/")) ||
+    p.split("/").includes("..")
+  );
+  return bad === undefined ? null : `${shape}: ${JSON.stringify(bad)} is not one`;
 }
 
 /** What `system.database` may hold: null, or a Postgres URL naming the user, host and

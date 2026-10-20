@@ -2919,9 +2919,10 @@ true for exec (kernel handles it), false for control (only harness/human authori
      org/principal tokens readable by conduit uids, never agent uids — the matrix as
      literal file ownership (same move as docs-scopes → groups).
   3. *Egress proxy with header injection (MITM CA)* — **the one rung, for everything,
-     live** (`src/proxy/`, mandatory at start): a bare shell is issued `HTTPS_PROXY`
-     (loopback left to itself, `NO_PROXY`), a bubble's every connection reaches the proxy
-     with no setting at all (below), and both are issued a
+     live** (`src/proxy/`, mandatory at start): every shell is issued `HTTPS_PROXY`
+     (loopback left to itself, `NO_PROXY`), a bubble's pointing at its holder, whose
+     every connection reaches the proxy with no setting at all (below), and both are
+     issued a
      trust file — the system's roots followed by the liquen CA, which ships with the source
      (`src/proxy/ca.pem` + `ca.key`): nothing trusts it but the children we hand it to, so
      it is plumbing that makes a tool accept our proxy, not a credential. The file is
@@ -3053,12 +3054,14 @@ the boot says so on Linux, once per run.
   over it again.
 - **The network is the bubble's own**, prepared before bubblewrap runs: loopback alone,
   owned by a user namespace the shells never enter. The holder is its resolver: every name
-  gets an address of its own in 127.64.0.0/10 and a listener on each egress port at that
-  address (ssh, http, https, mysql, postgres, git), and a connection to one is carried to
-  the egress proxy as `CONNECT name:port`. So a client needs no proxy setting, whatever it
-  speaks reaches the world through the proxy, and the proxy judges the name. Loopback
-  itself stays the agent's: a server it runs on `127.0.0.1:5432` is its own. UDP has no
-  way out, and an address dialed by number has no route.
+  gets an address of its own in 127.64.0.0/10 and a listener on each of the
+  `system.egressPorts` at that address (by default ssh, http, https, mysql, postgres,
+  git), and a connection to one is carried to the egress proxy as `CONNECT name:port`. So
+  a client needs no proxy setting, whatever it speaks reaches the world through the
+  proxy, and the proxy judges the name. A client that reads `HTTPS_PROXY` is pointed at
+  the holder, which hands its CONNECT to the proxy as it came, and reaches any port.
+  Loopback itself stays the agent's: a server it runs on `127.0.0.1:5432` is its own. UDP
+  has no way out, and an address dialed by number has no route.
 - **The proxy knows the agent before a byte is read.** Each bubble reaches it over a unix
   socket of its agent's own, the one file of `log/` the bubble sees, so every audit line
   names the agent, and a handle naming another agent's grant is refused there.
@@ -3069,7 +3072,9 @@ the boot says so on Linux, once per run.
 - **What it asks of the machine**: Linux, bubblewrap, util-linux and iproute2, and a
   harness that is not root (the per-agent users of a root harness are the other way to
   enforce the same classification). A tool installed under the user's home is visible by
-  its PATH directory alone.
+  its PATH directory alone; `system.bubbleMounts` shows more of the machine, read-only,
+  never the org's folder, and the boot names a tool folder PATH reaches into that no
+  mount shows whole (mise, nvm, uv).
 
 ### How a process ends when it cannot go on
 

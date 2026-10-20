@@ -615,6 +615,28 @@ Deno.test("system.egressRefuses: ranges over the built-in set, none unless said"
   });
 });
 
+Deno.test("system.egressPorts and bubbleMounts: the bubble's reach, checked at boot", async () => {
+  await withDir(async (root) => {
+    const write = (system: unknown) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system }));
+    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    const cfg = await readConfig(root);
+    assertEquals(cfg.system.egressPorts, [22, 80, 443, 3306, 5432, 9418]);
+    assertEquals(cfg.system.bubbleMounts, []);
+    await write({ egressPorts: [443, 8443], bubbleMounts: ["~/.local/share/mise", "/opt/x"] });
+    assertEquals((await readConfig(root)).system.egressPorts, [443, 8443]);
+    assertEquals((await readConfig(root)).system.bubbleMounts, ["~/.local/share/mise", "/opt/x"]);
+    for (const egressPorts of [[0], [443, 443], ["443"], 443]) {
+      await write({ egressPorts });
+      await assertRejects(() => readConfig(root), Error, "system.egressPorts must be");
+    }
+    for (const bubbleMounts of [["relative"], ["~user/x"], ["/opt/../etc"], "/opt"]) {
+      await write({ bubbleMounts });
+      await assertRejects(() => readConfig(root), Error, "system.bubbleMounts must be");
+    }
+  });
+});
+
 Deno.test("system.prices: the org's own rows, none unless said, checked at boot", async () => {
   await withDir(async (root) => {
     const write = (prices: unknown) =>
