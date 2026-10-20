@@ -5720,6 +5720,20 @@ The org's stale WhatsApp row `5492615682044` (a sole-bot session whose device Wh
 removed on 401 `device_removed`, its logout posted to sole-bot's webhook while sole-bot
 was down) was removed with `liquen connect --remove`.
 
+### The path a pushed service dials is watched (2026-10-20) — LANDED
+
+A tunnel that died left GitHub's webhooks and Graph's Teams notifications with nowhere to
+land, while every connector stayed up and beating: nothing said so, and what was missed
+was read back only at the next boot's catch-up. Now a pushed connector (`heartbeat(service,
+{ pushed: true })`: GitHub, and Microsoft when it listens to Teams) fetches its own
+`<publicUrl>/<service>/ingest` on each 30s beat, the same `GET /` the doors check by
+hand. Three misses in a row ask the edge on this machine too, and put `tunnel_down` (the
+edge answers) or `edge_down` (it does not) on the service's rows as `extra.inbound`,
+stamped `inbound_at` when it moves; the run log says it once each way. It is not the
+row's `state`: the account is whatever it was, and the anchor shows the path over it
+until the first answer takes it off. Slack rides its socket and WhatsApp its bridge on
+this host, so neither probes.
+
 ### Mind surfaces are recorded under `extra.mirrors`, and ownership decides who steers (2026-10-20) — LANDED
 
 Decided with the user while wiring Sonar's room: three ways a mind meets a wire, each with

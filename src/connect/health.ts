@@ -14,11 +14,21 @@
  * `SILENT_AFTER_MS` as `connector_down` since the last stamp. Nothing else can say it —
  * the supervisor never opens the log, and a dead process says nothing. The first beat
  * waits one interval, so a connector that dies at boot over and over never stamps.
+ *
+ * A connector the service pushes to over the internet also checks, each beat, that its
+ * own public address answers as it (`reached`, edge.ts) — the path the service dials,
+ * tunnel and edge included, which nothing else watches: a tunnel that dies leaves the
+ * connector up and beating, and the pushes are only read back at the next boot's
+ * catch-up. `UNREACHED_ROUNDS` misses in a row put the piece that is not answering on
+ * the rows as `extra.inbound` (`Inbound`), stamped `inbound_at` when it moved; the first
+ * answer takes it off. It is not the row's `state`: the account is what it was, and comes
+ * back as it was when the path does.
  */
 
 import type { ConnectionRow, Connections, ConnectionState } from "../store/connections.ts";
 import { HEARD_EVERY_MS } from "../store/connections.ts";
-import { findRoot, orgFlag } from "../config.ts";
+import { findRoot, orgFlag, readConfig } from "../config.ts";
+import { ingestAddress, localBase, reached } from "../edge.ts";
 
 type Rows = Pick<Connections, "connections" | "upsertConnections">;
 
@@ -72,25 +82,96 @@ export async function rowsOf(
   return byKey.length ? byKey : rows.filter((r) => r.address === at.address);
 }
 
-/** One beat: `heard_at` on every live row of `service`. */
-export async function beat(store: Rows, service: string, now: string): Promise<void> {
+/** The piece between the internet and a pushed connector that does not answer: the
+ *  tunnel, when the edge answers on this machine, else the edge itself. */
+export type Inbound = "tunnel_down" | "edge_down";
+
+/** A probe's verdict: the piece down and what the address said, null when it answered as
+ *  the service, undefined while misses are too few to say. */
+export type InboundVerdict = { down: Inbound; error: string } | null | undefined;
+
+/** Misses in a row before the path is called down: one is a blip, not a fact. */
+export const UNREACHED_ROUNDS = 3;
+
+/** The check a pushed connector makes each beat, keeping its run of misses: its public
+ *  ingest, and on a miss the edge on this machine, which tells the tunnel from the edge. */
+export function inboundProbe(
+  service: string,
+  edge: { publicUrl: string; port: number },
+  reach: typeof reached = reached,
+): () => Promise<InboundVerdict> {
+  let misses = 0;
+  return async () => {
+    const error = await reach(ingestAddress(edge.publicUrl, service), service);
+    if (error === null) {
+      misses = 0;
+      return null;
+    }
+    if (++misses < UNREACHED_ROUNDS) return undefined;
+    const local = await reach(ingestAddress(localBase(edge.port), service), service);
+    return { down: local === null ? "tunnel_down" : "edge_down", error };
+  };
+}
+
+/** One beat: `heard_at` on every live row of `service`, and the probe's verdict when it
+ *  gave one (`inboundProbe`). */
+export async function beat(
+  store: Rows,
+  service: string,
+  now: string,
+  inbound?: InboundVerdict,
+): Promise<void> {
   const rows = (await store.connections()).filter((r) => r.service === service);
   if (rows.length === 0) return;
-  await store.upsertConnections(
-    rows.map((r) => ({ service: r.service, address: r.address, extra: { heard_at: now } })),
-  );
+  await store.upsertConnections(rows.map((r) => {
+    const was = r.extra?.inbound ?? null;
+    const path = inbound === undefined
+      ? {}
+      : inbound === null
+      ? (was === null ? {} : { inbound: null, inbound_at: null, inbound_error: null })
+      : {
+        inbound: inbound.down,
+        inbound_error: inbound.error,
+        ...(was === inbound.down ? {} : { inbound_at: now }),
+      };
+    return { service: r.service, address: r.address, extra: { heard_at: now, ...path } };
+  }));
 }
 
 /** The heartbeat of a connector process over the org's store — resident once it returns.
- *  Returns stop: no more beats, the handle released. */
-export async function heartbeat(service: string): Promise<() => Promise<void>> {
+ *  `pushed`: the service dials this org from the internet, so each beat probes the path
+ *  (`inboundProbe`) when the org has a public address. Returns stop: no more beats, the
+ *  handle released. */
+export async function heartbeat(
+  service: string,
+  opts: { pushed?: boolean } = {},
+): Promise<() => Promise<void>> {
   const { openStore } = await import("../store/mod.ts");
-  const store = await openStore(findRoot(orgFlag()));
+  const root = findRoot(orgFlag());
+  const { publicUrl, port } = (await readConfig(root)).edge;
+  const probe = opts.pushed && publicUrl !== null
+    ? inboundProbe(service, { publicUrl, port })
+    : null;
+  const store = await openStore(root);
   const log = await store.log();
   let beating: Promise<void> = Promise.resolve();
+  let said: Inbound | null = null;
   const timer = setInterval(() => {
     beating = beating
-      .then(() => beat(log, service, new Date().toISOString()))
+      .then(async () => {
+        const inbound = probe ? await probe() : undefined;
+        // the run log says it once each way, not every beat
+        if (inbound !== undefined && (inbound?.down ?? null) !== said) {
+          said = inbound?.down ?? null;
+          console.error(
+            inbound === null
+              ? `[${service}] ${publicUrl} answers again`
+              : `[${service}] ${publicUrl} does not answer as ${service} (${inbound.error}): ` +
+                inbound.down.replace("_", " "),
+          );
+        }
+        await beat(log, service, new Date().toISOString(), inbound);
+      })
       .catch((err) => console.error(`[${service}] heartbeat FAILED:`, err));
   }, HEARD_EVERY_MS);
   return async () => {

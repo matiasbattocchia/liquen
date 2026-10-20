@@ -134,7 +134,11 @@ connector owes:
 
 - **The heartbeat.** Put `heartbeat("<service>")` among the stops `exitOnStop` takes: it
   stamps `extra.heard_at` on the service's rows every 30s, and a row unstamped for two
-  minutes reads `connector down`. Without it, a connector that dies says nothing.
+  minutes reads `connector down`. Without it, a connector that dies says nothing. A
+  service that pushes to the org over the internet passes `{ pushed: true }`: with an
+  `edge.publicUrl`, each beat fetches the service's public ingest, and three misses in a
+  row mark the rows `tunnel down` (or `edge down`, when this machine's edge does not
+  answer either) until it answers again.
 - **A refusal for good is `SignedOut`.** A token the service revoked, a grant it ended:
   throw `SignedOut` from `post`, and the dispatcher marks the account `signed_out` (the
   grant named by `key`, else the row the send rode) and marks it back when a later post

@@ -35,6 +35,7 @@ await entry(async () => {
     }),
     await runMailDispatch(),
     await runTeamsDispatch(),
-    await heartbeat("microsoft"),
+    // Teams is what Graph pushes; the polls dial out
+    await heartbeat("microsoft", { pushed: listen.includes("teams") }),
   ]);
 });
