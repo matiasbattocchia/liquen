@@ -361,11 +361,21 @@ function parseLook(lines: string[]): Look {
   };
 }
 
+/** Whether a process of group `pg` carries `mark` (`LIQUEN_JOB=<id>`): the job's own, not a
+ *  stranger that took its number. Both are shell words. */
+const ours = (pg: string, mark: string) =>
+  `{ o=1; for p in $(ps -eo pid=,pgid= | awk -v g=${pg} '$2 == g { print $1 }'); do ` +
+  `tr '\\0' '\\n' < /proc/$p/environ 2>/dev/null | grep -qxF ${mark} && { o=0; break; }; ` +
+  `done; [ $o = 0 ]; }`;
+
 /** The logs no job runs behind any more, removed once `SPOOL_KEEP_MS` passed since their
- *  last word: the sandbox's own sweep, as a script line. */
+ *  last word: the sandbox's own sweep, as a script line. A group file left by a harness gone
+ *  before it cleaned up holds no job: the group must still carry the call's mark. */
 const sweep = (out: string) =>
-  `for f in ${quote(out)}/bash-*.log; do b="\${f%.log}"; [ -e "$b.pgid" ] && continue; ` +
-  `[ -n "$(find "$f" -mmin +${SPOOL_KEEP_MS / 60_000} 2>/dev/null)" ] && rm -f "$b".*; done`;
+  `for f in ${quote(out)}/bash-*.log; do b="\${f%.log}"; ` +
+  `[ -n "$(find "$f" -mmin +${SPOOL_KEEP_MS / 60_000} 2>/dev/null)" ] || continue; ` +
+  `[ -e "$b.pgid" ] && ${ours('"$(cat "$b.pgid")"', `"${JOB_ENV}=\${b##*/bash-}"`)} && continue; ` +
+  `rm -f "$b".*; done`;
 
 /** A remote sandbox as the host of one shell's jobs (jobs.ts): one script looks at all of
  *  them. A container found new, or one the lease has since stopped or seen restart, no
@@ -407,10 +417,7 @@ function remoteHost(gateway: Gateway, out: string, lease?: Lease): JobHost {
       const said = await run([
         `[ -f ${quote(f.pgid)} ] || exit 0`,
         `pg=$(cat ${quote(f.pgid)}); echo "pgid $pg"; echo "since $(stat -c %Y ${quote(f.pgid)})"`,
-        `for p in $(ps -eo pid=,pgid= | awk -v g="$pg" '$2 == g { print $1 }'); do ` +
-        `tr '\\0' '\\n' < /proc/$p/environ 2>/dev/null | grep -qx ${
-          quote(`${JOB_ENV}=${id}`)
-        } && { echo ours; break; }; done`,
+        `${ours('"$pg"', quote(`${JOB_ENV}=${id}`))} && echo ours`,
         "true",
       ].join("\n"));
       const pgid = Number(/^pgid (\d+)$/m.exec(said)?.[1]);

@@ -18,7 +18,7 @@ import {
 import { newId } from "../store/id.ts";
 import { pathOf } from "../store/media.ts";
 import type { ExecFacts, ExecOutcome } from "../xi.ts";
-import { type ShellUpdate, SPOOL_CAP } from "./jobs.ts";
+import { JOB_ENV, type ShellUpdate, SPOOL_CAP } from "./jobs.ts";
 
 const USE = { id: "u1", turn_id: "t1" };
 
@@ -290,6 +290,36 @@ cases(
       new TextDecoder().decode((await place.gateway.read(path))!),
       `${Array.from({ length: 50 }, (_, i) => i + 1).join("\n")}\n`,
     );
+  },
+);
+
+cases(
+  "a finished job's log goes a week after its last word; a running one's stays",
+  async (shell, place) => {
+    const out = `${place.workspace}/.out`;
+    const q = (id: string, ext: string) => quote(`${out}/bash-${id}.${ext}`);
+    const pid = (await place.gateway.exec([
+      `mkdir -p ${quote(out)}`,
+      ...["old", "fresh", "running", "left"].map((id) => `echo x > ${q(id, "log")}`),
+      `echo 0 > ${q("old", "end")}`,
+      // a job of its own group that carries its call's mark
+      `setsid env ${JOB_ENV}=running sleep 30 > /dev/null 2>&1 & echo $! > ${q("running", "pgid")}`,
+      // a group file its harness never took away, naming a group that is not the job's
+      `echo 1 > ${q("left", "pgid")}`,
+      ...["old", "running", "left"].map((id) => `touch -d '8 days ago' ${q(id, "log")}`),
+      `cat ${q("running", "pgid")}`,
+    ].join("\n"))).stdout.trim();
+    try {
+      await run(shell, { command: "true" }); // a call sweeps as it starts
+      const listed = await place.gateway.exec(`ls ${quote(out)}`);
+      assertEquals(listed.stdout.trim().split("\n"), [
+        "bash-fresh.log",
+        "bash-running.log",
+        "bash-running.pgid",
+      ]);
+    } finally {
+      await place.gateway.exec(`kill -- -${pid}`);
+    }
   },
 );
 

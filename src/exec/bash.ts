@@ -587,9 +587,12 @@ export async function sweepLogs(out: string, now = Date.now()): Promise<void> {
       const m = /^bash-(.+)\.log$/.exec(entry.name);
       if (!m) continue;
       const files = jobFiles(out, m[1]);
-      const running = await Deno.stat(files.pgid).then(() => true, () => false);
       const stat = await Deno.stat(files.log).catch(() => undefined);
-      if (running || !stat?.mtime || now - stat.mtime.getTime() < SPOOL_KEEP_MS) continue;
+      if (!stat?.mtime || now - stat.mtime.getTime() < SPOOL_KEEP_MS) continue;
+      // a group file left by a harness gone before it cleaned up holds no job: the group
+      // must still carry the call's mark
+      const pgid = await Deno.readTextFile(files.pgid).then((s) => Number(s.trim()), () => NaN);
+      if (Number.isInteger(pgid) && await marked(pgid, m[1])) continue;
       await forget(files, false);
     }
   } catch (err) {

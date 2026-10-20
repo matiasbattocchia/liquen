@@ -6,7 +6,7 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { bashTool, installExecGround, localHost, shippedAt, sweepLogs } from "./bash.ts";
-import { Jobs, type ShellUpdate, SPOOL_CAP } from "./jobs.ts";
+import { JOB_ENV, Jobs, type ShellUpdate, SPOOL_CAP } from "./jobs.ts";
 import type { ExecFacts, ExecOutcome } from "../xi.ts";
 
 const live = () => new AbortController().signal;
@@ -745,14 +745,23 @@ Deno.test("bash: a log past the cap drops its older half, and the agent is told 
 
 Deno.test("bash: a finished job's log goes a week after its last word; a running one's stays", async () => {
   const out = await Deno.makeTempDir();
+  // a job of its own group that carries its call's mark
+  const job = new Deno.Command("setsid", {
+    args: ["sleep", "30"],
+    env: { [JOB_ENV]: "running" },
+  }).spawn();
   try {
     const old = new Date(Date.now() - 8 * 86_400_000);
-    for (const id of ["old", "fresh", "running"]) {
+    for (const id of ["old", "fresh", "running", "left"]) {
       await Deno.writeTextFile(`${out}/bash-${id}.log`, "x\n");
     }
     await Deno.writeTextFile(`${out}/bash-old.end`, "0\n");
-    await Deno.writeTextFile(`${out}/bash-running.pgid`, "1\n");
-    for (const id of ["old", "running"]) await Deno.utime(`${out}/bash-${id}.log`, old, old);
+    await Deno.writeTextFile(`${out}/bash-running.pgid`, `${job.pid}\n`);
+    // a group file its harness never took away, naming a group that is not the job's
+    await Deno.writeTextFile(`${out}/bash-left.pgid`, "1\n");
+    for (const id of ["old", "running", "left"]) {
+      await Deno.utime(`${out}/bash-${id}.log`, old, old);
+    }
     await sweepLogs(out);
     assertEquals((await Array.fromAsync(Deno.readDir(out))).map((e) => e.name).sort(), [
       "bash-fresh.log",
@@ -760,6 +769,8 @@ Deno.test("bash: a finished job's log goes a week after its last word; a running
       "bash-running.pgid",
     ]);
   } finally {
+    job.kill();
+    await job.status;
     await Deno.remove(out, { recursive: true });
   }
 });
