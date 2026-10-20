@@ -5,7 +5,8 @@
  * `<room>`, wherever the room is.
  */
 
-import type { RoomMember, RoomPart } from "./types.ts";
+import { MIND, sessionAddress } from "./session.ts";
+import type { Draft, MessageEvent, RoomMember, RoomPart } from "./types.ts";
 
 /** The part, with only what the change moved: an empty side is left out, so a rename
  *  carries its name alone and a join its joined alone. */
@@ -25,6 +26,25 @@ export function roomPart(change: {
       ...(name ? { name } : {}),
       ...(reason && joined.length ? { reason } : {}),
     },
+  };
+}
+
+/** A steering room adopted into an agent's mind or let go (§4), as the mind's own room
+ *  line, which the mirror carries to every surface of the mind as `[system]`. */
+export function mindRoomLine(
+  agent: string,
+  change: { joined?: RoomMember[]; left?: RoomMember[] },
+  ts: string,
+): Draft<MessageEvent> {
+  return {
+    ts,
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "agent",
+      conversation: { address: sessionAddress(agent, MIND) },
+    },
+    parts: [roomPart(change)],
   };
 }
 

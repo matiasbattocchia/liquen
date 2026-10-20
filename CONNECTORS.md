@@ -180,6 +180,19 @@ records it on the connection row under `extra.mirrors`, and the alias view reads
   wire whose rooms anyone can open adopts one only for an agent that owns no account, by
   id, and says the adoption in the agent's mind as a room line (Slack's ingest, §4).
 
+Teams reads every record off a chat's members, never off the grant whose notice brought the
+line. A chat two connected accounts share reaches both subscriptions, and the row anchors to
+whichever landed first, so `aliasOf` matches a Microsoft account on its domain. The ingest
+writes `self` at the first line in an owned account's chat with itself, by the id the
+notices carry, so a send there and its echo are one row. Someone writing to an owned
+account in a oneOnOne chat is written as `dms.<member>`: the owner of the grant that is
+their account, else the roster entry declaring the email the chat lists for them. On an
+org account, a group chat whose topic is exactly an agent's name becomes that agent's room,
+under Slack's rule, and is let go when the account leaves it. A channel reaches only the
+grant that holds its one subscription, so channels are settled from the org account's own
+hourly listing instead: one named as the agent is adopted, and one the listing stops
+showing is let go.
+
 The store merges `extra` as an RFC 7396 patch, so a connector writes only the key it
 learns — `{ mirrors: { dms: { sol: "D77" } } }` — and removes one by patching it to `null`.
 
@@ -687,8 +700,9 @@ two members' subscriptions merges, as does the member's own send with its echo. 
 its own event keyed by the edit's time, a delete marks the row and adds a delete event, a
 reaction (an `updated` that edited nothing) is one `add` per reactor keyed by who and
 what — a notice repeated lands once. The sender is the Teams user id; one that is a grant's
-`oid` is that member (`agent.id`), and the member whose subscription delivered a chat is a
-member of it. The body is HTML: `<at>` becomes `@Name` and `payload.mentions`, `<emoji>`
+`oid` is that grant's owner (`agent.id`), and anyone else is the roster member declaring the
+email the chat lists for them. The member whose subscription delivered a chat is a member
+of it. The body is HTML: `<at>` becomes `@Name` and `payload.mentions`, `<emoji>`
 its glyph, a hosted image (a pasted screenshot) its bytes on the media shelf, a `reference`
 attachment its bytes through `/shares/<encoded url>/driveItem/content` (`Files.ReadWrite`),
 or a link in the words when the grant cannot read it.
@@ -732,7 +746,7 @@ sees the whole history), `remove` and `leave` find the membership id on the rost
 shows of a change is Teams' own `systemEventMessage` about it — members added, joined,
 deleted or left, the chat or the channel renamed — mapped to the `room` line of §1 from
 Graph's `initiator` (or the one who moved, when there is none), keyed on the message id;
-a rename makes the place's name asked of Graph again. Any other system event is no row. Nobody joins a
+any such change makes the place asked of Graph again, its name and its members. Any other system event is no row. Nobody joins a
 chat or a channel by their own hand on Teams, so the port has no `join`; a standard
 channel's roster is its team's, and Graph refuses a membership leg there in its own
 words. What a leg may do is the grant's consent — `Chat.Create`, `ChatMember.ReadWrite`,

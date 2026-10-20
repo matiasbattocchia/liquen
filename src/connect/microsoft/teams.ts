@@ -68,7 +68,9 @@ import { claimMentions, type Directory, logDirectory, type NameEntry } from "../
 import { isExternal, pathOf } from "../../store/media.ts";
 import type { Appender, DeliveryPatch, Log, Reader, Subscriber } from "../../store/log.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
-import type { Connections } from "../../store/connections.ts";
+import { type ConnectionRow, type Connections, mirrorsOf } from "../../store/connections.ts";
+import type { Registry } from "../../store/agents.ts";
+import { sameHandle } from "../../store/roster.ts";
 import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import type {
   Draft,
@@ -80,7 +82,7 @@ import type {
   ReactionPart,
   RoomMember,
 } from "../../types.ts";
-import { roomPart } from "../../room.ts";
+import { mindRoomLine, roomPart } from "../../room.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { entry } from "../../entry.ts";
@@ -302,10 +304,20 @@ export function bodyOf(msg: ChatMessage): Body {
 interface ChatInfo {
   chatType?: string;
   topic?: string | null;
-  members?: { userId?: string; displayName?: string | null }[];
+  members?: { userId?: string; displayName?: string | null; email?: string | null }[];
 }
 
 type Kind = "direct" | "group" | "channel";
+
+/** A place as the directory knows it. `name` is what a row shows; a chat also carries
+ *  its `title`, the topic people gave it, and its `members`, each with the email the
+ *  tenant lists for them. */
+export interface PlaceInfo {
+  kind: Kind;
+  name?: string;
+  title?: string;
+  members?: { id: string; email?: string }[];
+}
 
 /** What a place's kind is settled from: Teams' own word for the chat or the channel. */
 export function kindOf(info: { chatType?: string; membershipType?: string }): Kind {
@@ -314,8 +326,8 @@ export function kindOf(info: { chatType?: string; membershipType?: string }): Ki
 }
 
 export interface TeamsNames {
-  of(graph: Graph, place: Place, self?: string): Promise<{ kind: Kind; name?: string }>;
-  /** A place renamed: the next `of` asks Graph again. */
+  of(graph: Graph, place: Place, self?: string): Promise<PlaceInfo>;
+  /** A place renamed, or its members moved: the next `of` asks Graph again. */
   forget(place: Place): void;
 }
 
@@ -324,13 +336,13 @@ export interface TeamsNames {
  *  group chat by its topic or its other members, a channel `Team / Channel`. `stamp` is
  *  told the kind the first time a place resolves, for the rows the place already has. */
 export function teamsNames(stamp?: (address: string, kind: Kind) => Promise<void>): TeamsNames {
-  const cache = new Map<string, { kind: Kind; name?: string }>();
+  const cache = new Map<string, PlaceInfo>();
   return {
     async of(graph, place, self) {
       const key = addressOf(place);
       const hit = cache.get(key);
       if (hit) return hit;
-      let found: { kind: Kind; name?: string };
+      let found: PlaceInfo;
       if (place.kind === "chat") {
         const res = await graph(`${GRAPH}/chats/${enc(place.chat)}?$expand=members`);
         const info = res.ok ? await res.json() as ChatInfo : (await res.body?.cancel(), {});
@@ -338,7 +350,15 @@ export function teamsNames(stamp?: (address: string, kind: Kind) => Promise<void
           .filter((m) => m.userId !== self && m.displayName)
           .map((m) => m.displayName as string);
         const name = info.topic || (others.length ? others.join(", ") : undefined);
-        found = { kind: kindOf(info), ...(name ? { name } : {}) };
+        const members = (info.members ?? []).flatMap((m) =>
+          m.userId ? [{ id: m.userId, ...(m.email ? { email: m.email } : {}) }] : []
+        );
+        found = {
+          kind: kindOf(info),
+          ...(name ? { name } : {}),
+          ...(info.topic ? { title: info.topic } : {}),
+          ...(members.length ? { members } : {}),
+        };
         if (!res.ok) return found; // unnamed for now; a later message asks again
       } else {
         const [team, channel] = await Promise.all([
@@ -375,8 +395,9 @@ export interface TeamsWebhookDeps {
   creds: Pick<Credentials, "list" | "get" | "put">;
   broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
   /** The memberships mirror (§4): a member whose subscription delivers a chat is in it —
-   *  and the kind stamp, for the rows a place already has. Absent ⇒ pure mapping. */
-  store?: Pick<Connections, "upsertMemberships"> & Partial<Pick<Log, "stampKind">>;
+   *  the kind stamp, for the rows a place already has, and the account rows and the roster
+   *  the mind surfaces are recorded through. Absent ⇒ pure mapping. */
+  store?: Pick<Connections, "upsertMemberships"> & Partial<SurfaceStore & Pick<Log, "stampKind">>;
   /** Where attachments and pasted images land. */
   save: SaveFile;
   fetchApi?: typeof fetch;
@@ -506,7 +527,7 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
 interface MapperDeps {
   names: TeamsNames;
   save: SaveFile;
-  store?: Pick<Connections, "upsertMemberships">;
+  store?: Pick<Connections, "upsertMemberships"> & Partial<SurfaceStore>;
   now: () => string;
 }
 
@@ -560,28 +581,34 @@ export function teamsMapper(deps: MapperDeps): (
       } as unknown as Draft<MessageEvent>];
     }
 
+    const oid = grant.extra?.oid as string | undefined;
+    const surfaces = surfaceStore(deps.store);
+
     // a room's change is the room's own line (§3): who made it, who moved, or the name
     const change = roomChangeOf(msg);
     if (change) {
-      if (change.name) names.forget(at.place);
-      const { kind, name } = await names.of(
-        graph,
-        at.place,
-        grant.extra?.oid as string | undefined,
-      );
+      names.forget(at.place); // its name or its members moved
+      const info = await names.of(graph, at.place, oid);
       const sender = change.by ?? change.joined?.[0] ?? change.left?.[0];
-      const owner = sender ? whoIs(sender.address, grants) : undefined;
-      return [{
+      const owner = sender ? await memberOf(sender.address, grants, info, deps.store) : undefined;
+      const moves = surfaces && at.place.kind === "chat"
+        ? [
+          ...await leftRooms(surfaces, address, info, change.left ?? [], grants, now),
+          ...await chatSurfaces(surfaces, address, info, undefined, grants, now),
+        ]
+        : [];
+      return [...moves, {
         ts: msg.createdDateTime ?? ts,
         type: "message",
         ...(owner ? { agent: { id: owner } } : {}),
-        envelope: { ...envelope(ref, kind, name), ...(sender ? { sender } : {}) },
+        envelope: { ...envelope(ref, info.kind, info.name), ...(sender ? { sender } : {}) },
         parts: [roomPart(change)],
       }];
     }
 
+    const info = await names.of(graph, at.place, oid);
     const from = msg.from?.user ?? undefined;
-    const who = from?.id ? whoIs(from.id, grants) : undefined;
+    const who = from?.id ? await memberOf(from.id, grants, info, deps.store) : undefined;
     const sender = from?.id
       ? { address: from.id, ...(from.displayName ? { name: from.displayName } : {}) }
       : undefined;
@@ -590,16 +617,17 @@ export function teamsMapper(deps: MapperDeps): (
     // an update that edited nothing is a reaction: one `add` per reaction, keyed by who
     // and what, so the same state told twice lands once
     if (changeType === "updated" && !msg.lastEditedDateTime) {
-      return (msg.reactions ?? []).flatMap((r) => {
+      const rows: Draft<MessageEvent>[] = [];
+      for (const r of msg.reactions ?? []) {
         const u = r.user?.user;
-        if (!r.reactionType || !u?.id) return [];
-        const reactor = whoIs(u.id, grants);
+        if (!r.reactionType || !u?.id) continue;
+        const reactor = await memberOf(u.id, grants, info, deps.store);
         const part: ReactionPart = {
           type: "data",
           kind: "reaction",
           data: { name: r.reactionType, unicode: r.reactionType },
         };
-        return [{
+        rows.push({
           ts,
           type: "message",
           ...(reactor ? { agent: { id: reactor } } : {}),
@@ -609,12 +637,13 @@ export function teamsMapper(deps: MapperDeps): (
             sender: { address: u.id, ...(u.displayName ? { name: u.displayName } : {}) },
           },
           parts: [part],
-        }];
-      });
+        });
+      }
+      return rows;
     }
 
     const body = bodyOf(msg);
-    const { kind, name } = await names.of(graph, at.place, grant.extra?.oid as string | undefined);
+    const { kind, name } = info;
     const parts: Part[] = [];
     if (body.text) parts.push({ type: "text", kind: "text", text: body.text });
     for (const url of body.hosted) {
@@ -656,6 +685,11 @@ export function teamsMapper(deps: MapperDeps): (
         { service: SERVICE, connection: upn, conversation: address, agentId: grant.agentId },
       ]);
     }
+    // the mind surfaces this line meets, written down before it lands, so it is already
+    // a line of the surface
+    const moves = surfaces && at.place.kind === "chat"
+      ? await chatSurfaces(surfaces, address, info, from?.id, grants, now)
+      : [];
 
     const edit = changeType === "updated" && msg.lastEditedDateTime;
     const payload = {
@@ -666,7 +700,7 @@ export function teamsMapper(deps: MapperDeps): (
         : {}),
       ...(body.mentions.length ? { mentions: body.mentions } : {}),
     };
-    return [{
+    return [...moves, {
       ts: edit ? ts : msg.createdDateTime ?? ts,
       type: "message",
       ...stamp,
@@ -709,9 +743,149 @@ function roomChangeOf(
   return name ? { name, ...(by ? { by } : {}) } : null;
 }
 
-/** The member a Teams user id names: the grant whose account (`extra.oid`) it is. */
-function whoIs(userId: string, grants: CredentialRow[]): string | undefined {
-  return grants.find((g) => g.extra?.oid === userId)?.agentId;
+/** The grant whose account (`extra.oid`) a Teams user id is. */
+function grantOf(userId: string, grants: CredentialRow[]): CredentialRow | undefined {
+  return grants.find((g) => g.extra?.oid === userId);
+}
+
+/** The member a Teams user is (§3): the owner of the grant whose account it is, else the
+ *  roster member who declares the email the chat lists for them. A connected account is
+ *  only ever its grant's, so an org account names nobody. */
+async function memberOf(
+  userId: string,
+  grants: CredentialRow[],
+  info: PlaceInfo,
+  store: Partial<Pick<Registry, "agents">> | undefined,
+): Promise<string | undefined> {
+  const grant = grantOf(userId, grants);
+  if (grant || !store?.agents) return grant?.agentId;
+  const email = info.members?.find((m) => m.id === userId)?.email;
+  if (!email) return undefined;
+  return (await store.agents()).find((a) => sameHandle(a.email, email))?.agentId;
+}
+
+/** What the mind surfaces are written through (§4): the account rows, and the roster
+ *  that says who a member is and which agent a room is named for. */
+type SurfaceStore =
+  & Pick<Connections, "connection" | "connections" | "upsertConnections">
+  & Pick<Registry, "agents">;
+
+function surfaceStore(store: Partial<SurfaceStore> | undefined): SurfaceStore | undefined {
+  return store?.connection && store.connections && store.upsertConnections && store.agents
+    ? store as SurfaceStore
+    : undefined;
+}
+
+/** The connected accounts among a chat's members, each with its row. */
+async function accountsIn(
+  s: SurfaceStore,
+  info: PlaceInfo,
+  grants: CredentialRow[],
+): Promise<{ id: string; row: ConnectionRow }[]> {
+  const out: { id: string; row: ConnectionRow }[] = [];
+  for (const m of info.members ?? []) {
+    const grant = grantOf(m.id, grants);
+    const row = grant && await s.connection(SERVICE, grant.key.slice(GRANT_PREFIX.length));
+    if (row) out.push({ id: m.id, row });
+  }
+  return out;
+}
+
+/** The mind surfaces a chat line meets (§4), written on the rows of the connected accounts
+ *  in the chat (`extra.mirrors`) by the address the notices carry, so a send there and its
+ *  echo are one row. They are read off the chat's members, not off the grant whose notice
+ *  this is: a chat two connected accounts share is delivered to each, and either delivery
+ *  writes the same. Each is written the first time it is met.
+ *    self   on an owned account, the chat whose only member is the account
+ *    dms    on an owned account, a oneOnOne chat in which the other member writes, keyed
+ *           by who that member is; the derivation keeps the principals among them
+ *    rooms  on an org account, a group chat whose topic is exactly the name of an agent
+ *           that owns no account; the adoption is said in the agent's mind
+ *  `from` is the line's sender; a room's own line has none. */
+async function chatSurfaces(
+  s: SurfaceStore,
+  address: string,
+  info: PlaceInfo,
+  from: string | undefined,
+  grants: CredentialRow[],
+  now: () => string,
+): Promise<Draft<MessageEvent>[]> {
+  const notes: Draft<MessageEvent>[] = [];
+  const members = info.members ?? [];
+  for (const { id, row } of await accountsIn(s, info, grants)) {
+    const mirrors = mirrorsOf(row);
+    const write = (patch: Record<string, unknown>) =>
+      s.upsertConnections([{ service: SERVICE, address: row.address, extra: { mirrors: patch } }]);
+    if (row.agentId) {
+      if (members.every((m) => m.id === id)) {
+        if (mirrors.self === undefined) await write({ self: address });
+        continue;
+      }
+      if (info.kind !== "direct" || from === undefined || from === id) continue;
+      const member = await memberOf(from, grants, info, s);
+      // the account's own agent is no principal of its own DMs
+      if (member && member !== row.agentId && mirrors.dms?.[member] !== address) {
+        await write({ dms: { [member]: address } });
+      }
+      continue;
+    }
+    if (info.kind !== "group" || !info.title) continue;
+    const agent = await adoptable(s, info.title);
+    if (!agent || mirrors.rooms?.[agent] !== undefined) continue;
+    await write({ rooms: { [agent]: address } });
+    notes.push(mindRoomLine(agent, { joined: [{ address, name: info.name ?? agent }] }, now()));
+  }
+  return notes;
+}
+
+/** The agent a room named `title` steers (§4): one of exactly that name that runs and owns
+ *  no account. An agent with an account of its own is a person's, steered there. */
+async function adoptable(s: SurfaceStore, title: string): Promise<string | undefined> {
+  const agent = (await s.agents()).find((a) => a.agentId === title);
+  if (!agent || agent.runs === false) return undefined;
+  if ((await s.connections()).some((c) => c.agentId === agent.agentId)) return undefined;
+  return agent.agentId;
+}
+
+/** Org accounts out of a chat: whatever agent's steering room it was for them is nobody's
+ *  now, and the next room wearing the name may be adopted. */
+async function leftRooms(
+  s: SurfaceStore,
+  address: string,
+  info: PlaceInfo,
+  left: RoomMember[],
+  grants: CredentialRow[],
+  now: () => string,
+): Promise<Draft<MessageEvent>[]> {
+  const notes: Draft<MessageEvent>[] = [];
+  for (const m of left) {
+    const grant = grantOf(m.address, grants);
+    const row = grant && await s.connection(SERVICE, grant.key.slice(GRANT_PREFIX.length));
+    if (!row || row.agentId) continue;
+    notes.push(...await letGo(s, row, (c) => c === address, now, info.name));
+  }
+  return notes;
+}
+
+/** Drop an org account's steering rooms that `gone` says it is out of, each said in its
+ *  agent's mind. */
+async function letGo(
+  s: Pick<Connections, "upsertConnections">,
+  row: ConnectionRow,
+  gone: (conversation: string) => boolean,
+  now: () => string,
+  name?: string,
+): Promise<Draft<MessageEvent>[]> {
+  const held = Object.entries(mirrorsOf(row).rooms ?? {}).filter(([, c]) => gone(c));
+  if (held.length === 0) return [];
+  await s.upsertConnections([{
+    service: SERVICE,
+    address: row.address,
+    extra: { mirrors: { rooms: Object.fromEntries(held.map(([agent]) => [agent, null])) } },
+  }]);
+  return held.map(([agent, c]) =>
+    mindRoomLine(agent, { left: [{ address: c, ...(name ? { name } : {}) }] }, now())
+  );
 }
 
 /** Read bytes at `url` with the grant's token onto the shelf; null when the wire refuses. */
@@ -954,7 +1128,11 @@ async function collect<T>(items: AsyncGenerator<T>): Promise<T[]> {
 export interface TeamsKeeperDeps {
   creds: Pick<Credentials, "list" | "get" | "put">;
   broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
-  store?: Pick<Connections, "connections" | "upsertConnections">;
+  /** The account rows the sweep marks, and with the roster, where an org account's
+   *  steering rooms in channels are recorded. */
+  store?: Pick<Connections, "connections" | "upsertConnections"> & Partial<SurfaceStore>;
+  /** → the EventLog: a channel room adopted or let go is said in the agent's mind. */
+  publish?: Appender["publish"];
   /** Where Graph dials the ingest — `<edge.publicUrl>/microsoft/ingest`, sent as the
    *  `notificationUrl` and `lifecycleNotificationUrl` of every subscription made. */
   notificationUrl: string;
@@ -962,6 +1140,14 @@ export interface TeamsKeeperDeps {
   now?: () => string;
   onError?: (key: string, err: unknown) => void;
   onPolled?: (key: string, resource: string, published: number) => void;
+}
+
+/** A channel as a grant's listing shows it: its address, its own name, and the name a
+ *  row shows (`Team / Channel`). */
+interface Channel {
+  address: string;
+  title?: string;
+  name?: string;
 }
 
 /** The sweep over `microsoft:` grants: `chats` keeps the one subscription over the
@@ -983,7 +1169,7 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
     const graph = graphFor(fetchApi, token);
     const all = resource === "chats"
       ? [`/users/${oid}/chats/getAllMessages`]
-      : await channelPaths(graph, grant.key);
+      : await channelPaths(graph, grant);
     const foreign = listed.get(grant.key)?.foreign ?? new Set<string>();
     const paths = all.filter((p) => !foreign.has(p));
     // the record as it stands now: another process (the webhook) writes it too
@@ -1027,22 +1213,65 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
   };
 
   /** The channels' resource paths for a grant — listed once an hour. */
-  const channelPaths = async (graph: Graph, key: string): Promise<string[]> => {
-    const hit = listed.get(key);
+  const channelPaths = async (graph: Graph, grant: CredentialRow): Promise<string[]> => {
+    const hit = listed.get(grant.key);
     const t = Date.parse(now());
     if (hit && t - hit.at < CHANNELS_EVERY_MS) return hit.paths;
-    const teams = await page<{ id?: string }>(graph, `${GRAPH}/me/joinedTeams?$select=id`);
+    type Named = { id?: string; displayName?: string };
+    const teams = await page<Named>(graph, `${GRAPH}/me/joinedTeams?$select=id,displayName`);
     const paths: string[] = [];
+    const channels: Channel[] = [];
     for (const team of teams) {
       if (!team.id) continue;
-      const channels = await page<{ id?: string }>(
+      const listing = await page<Named>(
         graph,
-        `${GRAPH}/teams/${enc(team.id)}/channels?$select=id`,
+        `${GRAPH}/teams/${enc(team.id)}/channels?$select=id,displayName`,
       );
-      for (const c of channels) if (c.id) paths.push(`/teams/${team.id}/channels/${c.id}/messages`);
+      for (const c of listing) {
+        if (!c.id) continue;
+        paths.push(`/teams/${team.id}/channels/${c.id}/messages`);
+        channels.push({
+          address: addressOf({ kind: "channel", team: team.id, channel: c.id }),
+          title: c.displayName,
+          name: [team.displayName, c.displayName].filter(Boolean).join(" / ") || undefined,
+        });
+      }
     }
-    listed.set(key, { at: t, paths, foreign: new Set() });
+    await steer(grant, channels);
+    listed.set(grant.key, { at: t, paths, foreign: new Set() });
     return paths;
+  };
+
+  /** An org account's steering rooms in channels (§4), from its own listing: a channel
+   *  named exactly as an agent that owns no account is adopted, once and by id, and a held
+   *  one the listing no longer shows (the channel gone, or the account out of its team) is
+   *  let go. A channel's notices reach whichever grant holds its one subscription, so the
+   *  org account's own view of its channels decides, at the hour the listing is asked. */
+  const steer = async (grant: CredentialRow, channels: Channel[]): Promise<void> => {
+    const s = surfaceStore(deps.store);
+    if (!s || !deps.publish || grant.agentId) return;
+    const row = await s.connection(SERVICE, grant.key.slice(GRANT_PREFIX.length));
+    if (!row || row.agentId) return;
+    const shown = new Set(channels.map((c) => c.address));
+    const gone = (c: string) => c.includes("/") && !shown.has(c);
+    const notes = await letGo(s, row, gone, now);
+    const held = Object.fromEntries(
+      Object.entries(mirrorsOf(row).rooms ?? {}).filter(([, c]) => !gone(c)),
+    );
+    for (const c of channels) {
+      const agent = c.title ? await adoptable(s, c.title) : undefined;
+      if (!agent || held[agent] !== undefined) continue;
+      held[agent] = c.address;
+      await s.upsertConnections([{
+        service: SERVICE,
+        address: row.address,
+        extra: { mirrors: { rooms: { [agent]: c.address } } },
+      }]);
+      notes.push(
+        mindRoomLine(agent, { joined: [{ address: c.address, name: c.name ?? agent }] }, now()),
+      );
+    }
+    if (notes.length) await deps.publish(notes);
   };
 
   return createPoller({

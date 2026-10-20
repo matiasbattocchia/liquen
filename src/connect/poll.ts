@@ -26,6 +26,7 @@
 import type { Appender, Reader } from "../store/log.ts";
 import type { CredentialRow, Credentials } from "../store/credentials.ts";
 import type { Connections } from "../store/connections.ts";
+import type { Registry } from "../store/agents.ts";
 import type { GrantBroker } from "../proxy/grants.ts";
 import type { Service } from "../types.ts";
 import { findRoot, orgFlag } from "../config.ts";
@@ -221,7 +222,10 @@ export interface PollIngestDeps {
   read: Reader["read"];
   creds: Credentials;
   broker: GrantBroker;
-  store: Pick<Connections, "connections" | "upsertConnections">;
+  /** The account rows, and the roster that names who is behind them. */
+  store:
+    & Pick<Connections, "connection" | "connections" | "upsertConnections">
+    & Pick<Registry, "agents">;
   /** The data root the media shelf hangs off (`saveMedia`). */
   dir: string;
   resources: string[];

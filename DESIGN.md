@@ -986,7 +986,9 @@ it, and conversation identity (§3) says which platforms can host them:
   agent → conversation): the connector of a system the org runs writes its own, and the
   Slack ingest adopts a channel named exactly as an agent that owns no account, the first
   time the bot is met in it — by id, so a rename never moves it — and lets it go when the
-  bot is out of the channel. Both are said in the agent's mind as room lines, which every
+  bot is out of the channel. Teams does the same with a group chat by its topic, and with
+  a channel from the org account's own listing of its teams. Both moves are said in the
+  agent's mind as room lines, which every
   surface of the mind hears. No binding can name one person, so each line is signed by
   the sender the wire names, and a line naming none crosses as nothing. The roster's
   `principals` does not reach it: `[]` still says no member steers through a DM, and the
@@ -1031,7 +1033,9 @@ slack:  self-DM (an alter-ego posts via its owner's xoxp — notes-to-self)
         a steering room: a channel an org bot is met in, named as the agent
 wa:     self-chat ("Message Yourself") on the agent's own paired number
         a principal's DM with the agent's own number
-teams:  later — the self-chat, and a principal's oneOnOne chat with an account the agent owns
+teams:  the self-chat of an account the agent owns
+        a principal's oneOnOne chat with an account the agent owns
+        a steering room: a group chat or a channel an org account is in, named as the agent
 sonar:  a steering room the connector records on the org account (one per tenant)
 email:  not a mind surface
 cli/ui: native local conversations, through the door (§9) — the socket proves the
@@ -1117,8 +1121,13 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
   profile (`users.info`, the `users:read.email` scope) scanned against the roster, never
   from a Slack user id; what a Slack user or room is CALLED comes from the same directory
   (`users.info`, `conversations.info`, the profile and rename events pushing changes), a
-  display fact the row keeps; a steering room is `mirrors.rooms` on an org account; local,
-  native.
+  display fact the row keeps; Teams, the ingest records both on the owned account's row
+  the first time it meets them, read off the chat's members rather than the grant that
+  delivered the line, since a chat two connected accounts share reaches both: the chat
+  whose only member is the account (`mirrors.self`, by the id the notices carry, so a send
+  and its echo are one row), and a oneOnOne chat another member writes in (`mirrors.dms`),
+  that member named by their own grant or by the email the chat lists for them; a steering
+  room is `mirrors.rooms` on an org account; local, native.
   The agent must never treat any of its principals as a peer/customer.
 - **`send` exteriorizes the mind.** The one door from the mind to the world: `send`
   targets peer conversations only — no principal is ever a send target, on any surface,

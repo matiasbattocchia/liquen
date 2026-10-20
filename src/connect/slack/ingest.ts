@@ -52,10 +52,14 @@ import type {
   MemberLeftChannelEvent,
   SlackEvent,
 } from "@slack/types";
-import { roomPart } from "../../room.ts";
-import { MIND, sessionAddress } from "../../session.ts";
+import { mindRoomLine, roomPart } from "../../room.ts";
 import type { Appender } from "../../store/log.ts";
-import type { ConnectionRow, Connections, ConnectionState } from "../../store/connections.ts";
+import {
+  type ConnectionRow,
+  type Connections,
+  type ConnectionState,
+  mirrorsOf,
+} from "../../store/connections.ts";
 import { SignedOut } from "../errors.ts";
 import { setState } from "../health.ts";
 import { SIGNED_OUT_NAMES } from "./dispatch.ts";
@@ -500,14 +504,6 @@ async function recordDm(
   }]);
 }
 
-/** The surfaces recorded on a connection row (§4). */
-function mirrorsOf(
-  row: ConnectionRow,
-): { dms?: Record<string, string>; rooms?: Record<string, string> } {
-  const m = row.extra?.mirrors;
-  return typeof m === "object" && m !== null ? m as Record<string, Record<string, string>> : {};
-}
-
 /** A steering room (§4): on an org bot, a channel named exactly as a roster agent is that
  *  agent's room, unless the agent owns an account. It is RECORDED the first time the bot
  *  is met in it (`extra.mirrors.rooms`, agent → channel), by id, so a rename never moves
@@ -539,7 +535,7 @@ async function adoptRoom(
     extra: { mirrors: { rooms: { [agent.agentId]: channel } } },
   }]);
   await deps.publish(
-    roomNote(agent.agentId, { joined: [{ address: channel, name: `#${name}` }] }, now),
+    mindRoomLine(agent.agentId, { joined: [{ address: channel, name: `#${name}` }] }, now()),
   );
 }
 
@@ -567,25 +563,7 @@ async function releaseRoom(
   }]);
   const name = await deps.names?.roomOf(team, channel, via);
   const room = { address: channel, ...(name ? { name: `#${name}` } : {}) };
-  await deps.publish(held.map((agent) => roomNote(agent, { left: [room] }, now)));
-}
-
-/** A room joining or leaving the agent's mind, as the mind's own room line (§3). */
-function roomNote(
-  agent: string,
-  change: { joined?: RoomMember[]; left?: RoomMember[] },
-  now: () => string,
-): Draft<MessageEvent> {
-  return {
-    ts: now(),
-    type: "message",
-    envelope: {
-      service: "local",
-      connection_address: "agent",
-      conversation: { address: sessionAddress(agent, MIND) },
-    },
-    parts: [roomPart(change)],
-  };
+  await deps.publish(held.map((agent) => mindRoomLine(agent, { left: [room] }, now())));
 }
 
 /** `channel_type` → `conversation.kind` (§4): im/mpim are member-DEFINED (direct — the

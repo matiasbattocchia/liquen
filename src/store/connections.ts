@@ -52,6 +52,19 @@ export interface ConnectionRow {
   extra?: Record<string, unknown>; // discovered account facts (slack: {url, …})
 }
 
+/** The mind surfaces recorded on a connection row (§4), `extra.mirrors`: `self` its
+ *  self-conversation, `dms` principal → conversation, `rooms` agent → conversation. */
+export interface Mirrors {
+  self?: string;
+  dms?: Record<string, string>;
+  rooms?: Record<string, string>;
+}
+
+export function mirrorsOf(row: ConnectionRow): Mirrors {
+  const m = row.extra?.mirrors;
+  return typeof m === "object" && m !== null ? m as Mirrors : {};
+}
+
 /** What a connection's row says of it (`extra.state`, stamped `<state>_at`), one word for
  *  every connector (§5): up, or down for a reason the anchor names.
  *
@@ -125,9 +138,11 @@ export interface AliasRow {
 }
 
 /** Does this envelope land in an alias conversation? Events may anchor to a sibling of the
- *  binding row (Slack: the workspace or bot anchor vs the grant `<team>:<user>`), so the
- *  connection matches on its workspace part — the address up to the first `:` (addresses
- *  without one, like a WA number, compare whole). */
+ *  binding row, so the connection matches on what the siblings share: on Slack the
+ *  workspace (the workspace or bot anchor vs the grant `<team>:<user>`), the address up to
+ *  the first `:`; on Microsoft the domain past the `@` of the account's name, since a chat
+ *  two connected accounts are in is delivered to both and the row anchors to whichever
+ *  delivery landed first. Any other address, like a WA number, compares whole. */
 export function aliasOf(
   rows: AliasRow[],
   service: string,
@@ -135,8 +150,9 @@ export function aliasOf(
   conversation: string,
 ): AliasRow | undefined {
   const root = (a: string) => {
-    const at = a.indexOf(":");
-    return at < 0 ? a : a.slice(0, at);
+    const colon = a.indexOf(":");
+    if (colon >= 0) return a.slice(0, colon);
+    return service === "microsoft" ? a.slice(a.lastIndexOf("@") + 1) : a;
   };
   return rows.find((r) =>
     r.service === service && r.conversation === conversation &&

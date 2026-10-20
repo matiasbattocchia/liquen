@@ -973,6 +973,98 @@ Deno.test("mirror fan-in: a principal's DM with the agent's own number copies to
   }
 });
 
+Deno.test("mirror: a Teams account's self-chat and a principal's DM with it both get the CC; the principal's line comes in through their own account's anchor all the same (§4)", async () => {
+  const SELF = "19:aaaa_aaaa@unq.gbl.spaces";
+  const DM = "19:aaaa_mmmm@unq.gbl.spaces";
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([
+    { agentId: "matias", mind: "mind@matias", name: "Matías", email: "matias@contoso.com" },
+    {
+      agentId: "ventas",
+      mind: "mind@ventas",
+      name: "Ventas",
+      email: "ventas@contoso.com",
+      principals: ["matias"],
+    },
+  ]);
+  await log.upsertConnections([
+    {
+      service: "microsoft",
+      address: "ventas@contoso.com",
+      agentId: "ventas",
+      extra: { mirrors: { self: SELF, dms: { matias: DM } } },
+    },
+    { service: "microsoft", address: "matias@contoso.com", agentId: "matias" },
+  ]);
+  const stop = createMirror({
+    subscribe: (l, o) => log.subscribe(l, o),
+    publish: log.publish,
+    read: (q) => log.read(q),
+    gates: (scope) => log.gates(scope),
+    aliases: () => log.aliases(),
+    nameOf: async (id) => (await log.agents()).find((a) => a.agentId === id)?.name ?? id,
+  }, 10);
+  const inConv = async (conversation: string) =>
+    (await log.read({ conversation, types: ["message"] })) as MessageEvent[];
+  const waitFor = async (cond: () => Promise<boolean>) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 10_000) {
+      if (await cond()) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error("waitFor timeout");
+  };
+  try {
+    await new Promise((r) => setTimeout(r, 50));
+    // the agent's voice reaches both faces of its mind, as the account
+    await log.publish(mindMsg("informe listo", {
+      agent: { id: "ventas", session_id: "mind" },
+      envelope: {
+        service: "local",
+        connection_address: "agent",
+        conversation: { address: "mind@ventas" },
+        sender: { address: "ventas", name: "Ventas" },
+      },
+      payload: { turn_id: "t1" },
+    }));
+    await waitFor(async () => (await inConv(SELF)).length === 1 && (await inConv(DM)).length === 1);
+    for (const conv of [SELF, DM]) {
+      const [cc] = await inConv(conv);
+      assertEquals(cc.envelope.service, "microsoft");
+      assertEquals(cc.envelope.connection_address, "ventas@contoso.com");
+      assertEquals(textOf(cc), "`[agent]` informe listo");
+    }
+
+    // matias writes in the DM, and his own account's subscription told it first: the row
+    // anchors to his account, and still reaches the mind of the account he wrote to
+    await log.publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      agent: { id: "matias" },
+      envelope: {
+        service: "microsoft",
+        connection_address: "matias@contoso.com",
+        conversation: { address: DM, kind: "direct" },
+        sender: { address: "u-matias", name: "Matías Battocchia" },
+        external_id: `teams:${DM}:5`,
+      },
+      parts: [{ type: "text", kind: "text", text: "mandalo" }],
+    });
+    await waitFor(async () => (await inConv("mind@ventas")).some((e) => textOf(e) === "mandalo"));
+    const copy = (await inConv("mind@ventas")).find((e) => textOf(e) === "mandalo")!;
+    assertEquals(copy.envelope.sender, { address: "matias", name: "Matías" });
+    // the self-chat hears it, never the DM it came from
+    await waitFor(async () => (await inConv(SELF)).length === 2);
+    assertEquals(textOf((await inConv(SELF))[1]), "`[matias via microsoft]` mandalo");
+    assertEquals((await inConv(DM)).length, 2);
+  } finally {
+    stop();
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("mirror fan-out: presence crosses as the tag alone, and the CC is marked transport", async () => {
   await withMirror(async ({ publish, inConv, waitFor }) => {
     const fact = await publish({

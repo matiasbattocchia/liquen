@@ -5749,9 +5749,46 @@ No heal: rows written with `self_conversation`, `dms` or `extra.agent` stop bind
 their account is connected again.
 
 Open:
-- **Teams.** Record the self-chat at sign-in (`48:notes`, undocumented; unverified that the
-  all-chats subscription delivers it) and the DM record, which needs the sender's Teams id
-  resolved to an email (`/users/{id}`) to name the principal.
 - **Unverified on a live workspace**: which of the leave and archive events reach the bot.
 - An agent with no account yet can be adopted by a channel wearing its name until its
   person connects one.
+
+### Teams mind surfaces: the self-chat, a principal's DM, and steering rooms (2026-10-20) — LANDED
+
+An owned Teams account now has Slack's two surfaces, and an org account hosts steering
+rooms. All three are written by the Microsoft connector on the `(microsoft, <upn>)` row; the
+alias view needed no change.
+
+- **Self-chat** (`mirrors.self`): recorded at ingest, at the first line in an owned
+  account's chat whose only member is the account, by the id the notices carry. The plan
+  was to write `48:notes` at sign-in, but the dispatch takes only `19:…@…` ids, and a
+  record that differs from the notices' id would let the echo of a CC land as a separate
+  row in an alias chat, which fan-in copies into the mind. Recording at ingest is right
+  whichever id Graph uses.
+- **DMs** (`mirrors.dms`): a member writing to an owned account in a oneOnOne chat, named by
+  the grant that is their account, else by the email the chat lists for them
+  (`$expand=members` already carries it; no new scope). The account's own agent is never
+  recorded. The email lookup also stamps `agent.id` on lines and reactions from members
+  with no grant.
+- **Rooms** (`mirrors.rooms`): on an org account, a group chat whose topic is exactly an
+  agent's name (one that runs and owns no account), adopted at its first line or room
+  change and let go when the account is taken out. Channels come from the keeper instead:
+  a channel's one subscription belongs to whichever grant reached it first, so the org
+  account's own hourly listing adopts a channel named as the agent and lets go one it no
+  longer shows. Both moves are a room line in the mind (`mindRoomLine`, now shared with
+  Slack).
+
+A chat two connected accounts share reaches both subscriptions, and the row merges into
+whichever landed first, so a principal with a grant of their own could write to the agent's
+account and the row would anchor to the principal's. Two changes cover it: records are read
+off the chat's members, so either delivery writes the same, and `aliasOf` matches a
+Microsoft account on its domain, the way Slack matches its workspace.
+
+Open:
+- **Unverified on a live tenant** (none is connected on this machine): whether
+  `/users/<oid>/chats/getAllMessages` delivers the self-chat at all (if not, the self-chat
+  is no surface on Teams until a small poll of that one chat exists); whether
+  `/chats/<id>?$expand=members` lists the account alone for it, and a post to its id is
+  accepted; whether the org account's subscription hears its own removal from a group chat.
+- A new channel named as an agent waits for the next hourly listing, the same wait its
+  subscription has.
