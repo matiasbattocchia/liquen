@@ -1,6 +1,12 @@
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { type ExecGround, installExecGround } from "./bash.ts";
-import { openBubble } from "./bubble.ts";
+import { EGRESS_SOCKET, openBubble } from "./bubble.ts";
 
 const live = () => new AbortController().signal;
 
@@ -13,27 +19,25 @@ const hasBwrap = (() => {
   }
 })();
 
-/** The bubble's way out answers a CONNECT the way the egress proxy does, and says who asked. */
-const PORT = 18_080;
+interface Org {
+  org: string;
+  dir: string;
+  /** The authorities the bubble's connections asked the proxy for. */
+  asked: string[];
+  ground: () => Promise<ExecGround>;
+}
 
-async function withBubble(
-  fn: (t: {
-    run: (command: string) => Promise<string>;
-    org: string;
-    dir: string;
-    shell: ReturnType<ExecGround["shell"]>;
-  }) => Promise<void>,
-): Promise<void> {
-  // an org's folder: its declaration and its secrets beside the data root
+/** An org's folder, and the egress proxy's side of a1's socket: it refuses what names
+ *  `refused.example`, and otherwise answers 200 and echoes the tunnel's bytes. */
+async function withOrg(fn: (o: Org) => Promise<void>): Promise<void> {
   const org = await Deno.realPath(await Deno.makeTempDir());
   const dir = `${org}/data`;
   await Deno.writeTextFile(`${org}/config.jsonc`, "{}\n");
   await Deno.writeTextFile(`${org}/.env`, "ANTHROPIC_API_KEY=sk-secret");
-  await Deno.mkdir(`${dir}/log`, { recursive: true });
-  const socket = `${dir}/log/egress.sock`;
-  const proxy = Deno.listen({ transport: "unix", path: socket });
-  // the proxy's side of a tunnel: it reads the CONNECT head, answers, and holds the line
-  // until the client lets go
+  const egress = `${dir}/log/egress/a1`;
+  await Deno.mkdir(egress, { recursive: true });
+  const proxy = Deno.listen({ transport: "unix", path: `${egress}/${EGRESS_SOCKET}` });
+  const asked: string[] = [];
   const tunnel = async (conn: Deno.Conn) => {
     const buf = new Uint8Array(1024);
     let head = "";
@@ -42,37 +46,68 @@ async function withBubble(
       if (n === null) return conn.close();
       head += new TextDecoder().decode(buf.subarray(0, n));
     }
+    const authority = head.split(" ")[1];
+    asked.push(authority);
+    if (authority.startsWith("refused.example")) {
+      await conn.write(new TextEncoder().encode("HTTP/1.1 403 refused here\r\n\r\n"));
+      return conn.close();
+    }
     await conn.write(new TextEncoder().encode("HTTP/1.1 200 Connection Established\r\n\r\n"));
-    while (await conn.read(buf) !== null) { /* the tunnel's bytes: nobody to carry them */ }
-    conn.close();
+    await conn.readable.pipeTo(conn.writable).catch(() => {});
   };
   const serving = (async () => {
     for await (const conn of proxy) tunnel(conn).catch(() => {});
   })();
-  const ground = await installExecGround(
-    dir,
-    "a1",
-    undefined,
-    undefined,
-    () => openBubble({ dir, agentId: "a1", socket, port: PORT }),
-  );
-  const shell = ground.shell();
+  const ground = () =>
+    installExecGround(
+      dir,
+      "a1",
+      undefined,
+      undefined,
+      () => openBubble({ dir, agentId: "a1", egress }),
+    );
   try {
-    const run = async (command: string) => {
-      const answer = await shell.exec.bash.execute({ command }, live());
-      return typeof answer === "object" && answer !== null && "output" in answer
-        ? String(answer.output)
-        : String(answer);
-    };
-    await fn({ run, org, dir, shell });
+    await fn({ org, dir, asked, ground });
   } finally {
-    await shell.reap();
-    await ground.close("end");
     proxy.close();
     await serving.catch(() => {});
     await Deno.remove(org, { recursive: true });
   }
 }
+
+type Shell = ReturnType<ExecGround["shell"]>;
+
+const runOn = (shell: Shell) => async (command: string) => {
+  const answer = await shell.exec.bash.execute({ command }, live());
+  return typeof answer === "object" && answer !== null && "output" in answer
+    ? String(answer.output)
+    : String(answer);
+};
+
+/** One ground and a shell on it, ended with its bubbles. */
+async function withBubble(
+  fn: (t: Org & { run: (command: string) => Promise<string>; shell: Shell }) => Promise<void>,
+): Promise<void> {
+  await withOrg(async (o) => {
+    const ground = await o.ground();
+    const shell = ground.shell();
+    try {
+      await fn({ ...o, run: runOn(shell), shell });
+    } finally {
+      await shell.reap();
+      await ground.close("end");
+    }
+  });
+}
+
+const groupAlive = (pgid: number) => {
+  try {
+    Deno.kill(-pgid, "SIGWINCH");
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 Deno.test({
   name: "bubble: the shell sees its folder, the shared floor and the system — and no more",
@@ -96,15 +131,34 @@ Deno.test({
 });
 
 Deno.test({
-  name: "bubble: the network is the egress proxy and nothing else",
+  name: "bubble: every connection reaches the egress proxy by name, whatever it speaks",
   ignore: !hasBwrap,
   fn: () =>
-    withBubble(async ({ run }) => {
-      const answer = await run(
-        `exec 3<>/dev/tcp/127.0.0.1/${PORT}; printf 'CONNECT example.com:443 HTTP/1.1\\r\\n\\r\\n' >&3; head -1 <&3`,
+    withBubble(async ({ run, asked }) => {
+      // the bubble's resolver gives a name an address of its own, the same each time
+      const address = await run("getent ahostsv4 example.com | head -1 | cut -d' ' -f1");
+      assertMatch(address, /^127\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$/);
+      assertEquals(await run("getent ahostsv4 example.com | head -1 | cut -d' ' -f1"), address);
+      // a connection on any egress port is a CONNECT for the name and port, and carries
+      // what the client says
+      assertEquals(
+        await run("exec 3<>/dev/tcp/example.com/22; printf 'SSH-2.0-x' >&3; head -c 9 <&3"),
+        "SSH-2.0-x",
       );
-      assertStringIncludes(answer, "200 Connection Established");
-      // no route anywhere else: no resolver, no interface but loopback
+      assertEquals(
+        await run("exec 3<>/dev/tcp/example.com/443; printf hi >&3; head -c 2 <&3"),
+        "hi",
+      );
+      assertEquals(asked, ["example.com:22", "example.com:443"]);
+      // a refusal reaches the client as the proxy said it
+      assertEquals(
+        await run(
+          "exec 3<>/dev/tcp/refused.example/80; printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3; " +
+            "head -1 <&3 | tr -d '\\r'",
+        ),
+        "HTTP/1.1 403 refused here",
+      );
+      // no route anywhere else, no interface but loopback
       await assertRejects(() => run("exec 3<>/dev/tcp/1.1.1.1/443"), Error);
       assertEquals(
         await run(
@@ -116,24 +170,95 @@ Deno.test({
 });
 
 Deno.test({
+  name: "bubble: an egress port on loopback is the agent's own to serve",
+  ignore: !hasBwrap,
+  fn: () =>
+    withBubble(async ({ run }) => {
+      await run("getent hosts example.com >/dev/null"); // a name held: its listeners up
+      assertEquals(
+        await run(
+          `deno eval 'const l = Deno.listen({ hostname: "127.0.0.1", port: 5432 }); ` +
+            `const c = await Deno.connect({ hostname: "127.0.0.1", port: 5432 }); ` +
+            `await (await l.accept()).write(new TextEncoder().encode("mine")); ` +
+            `const b = new Uint8Array(4); await c.read(b); console.log(new TextDecoder().decode(b))'`,
+        ),
+        "mine",
+      );
+    }),
+});
+
+Deno.test({
   name: "bubble: a job outlives its call, in the bubble, and is reaped by its group",
   ignore: !hasBwrap,
   fn: () =>
-    withBubble(async ({ run, shell }) => {
+    withBubble(async ({ run, shell, dir }) => {
       const said = await run("sleep 300 & echo started");
       assertStringIncludes(said, "started");
-      assertStringIncludes(said, "left running as group");
       const group = Number(said.match(/as group (\d+)/)![1]);
+      // the group the job's files keep is the one the harness sees
+      const [pgid] = [...Deno.readDirSync(`${dir}/agents/a1/.out`)]
+        .filter((e) => e.name.endsWith(".pgid"))
+        .map((e) => Number(Deno.readTextFileSync(`${dir}/agents/a1/.out/${e.name}`).trim()));
+      assertEquals(pgid, group);
       assert((await shell.ambient()).some((l) => l.includes("sleep 300")));
       await shell.reap();
       await new Promise((r) => setTimeout(r, 200));
-      let alive = true;
+      assert(!groupAlive(group), "the group outlived the reap");
+    }),
+});
+
+Deno.test({
+  name: "bubble: a harness that leaves hands its bubble and its jobs to the next",
+  ignore: !hasBwrap,
+  fn: () =>
+    withOrg(async ({ ground, dir }) => {
+      const first = await ground();
+      const said = await runOn(first.shell())("touch /tmp/here; sleep 300 & echo started");
+      const group = Number(said.match(/as group (\d+)/)![1]);
+      await first.close("leave");
+      const next = await ground();
       try {
-        Deno.kill(-group, "SIGWINCH");
-      } catch {
-        alive = false;
+        // the same bubble: its own /tmp, and the job still in it
+        assertEquals(await runOn(next.shell())("test -e /tmp/here && echo here"), "here");
+        assert(groupAlive(group));
+      } finally {
+        await next.close("end");
       }
-      assert(!alive, "the group outlived the reap");
+      await new Promise((r) => setTimeout(r, 200));
+      assert(!groupAlive(group), "the job outlived its bubble's end");
+      assertEquals(
+        [...Deno.readDirSync(`${dir}/log/bubbles/a1`)].filter((e) => e.name.endsWith(".json")),
+        [],
+      );
+    }),
+});
+
+Deno.test({
+  name: "bubble: one opened for another view stays while its job runs, beside a new one",
+  ignore: !hasBwrap,
+  fn: () =>
+    withOrg(async ({ ground, dir }) => {
+      const first = await ground();
+      const said = await runOn(first.shell())("touch /tmp/here; sleep 300 & echo started");
+      const group = Number(said.match(/as group (\d+)/)![1]);
+      await first.close("leave");
+      // as another version of the harness would have opened it
+      const records = `${dir}/log/bubbles/a1`;
+      for (const e of Deno.readDirSync(records)) {
+        if (!e.name.endsWith(".json")) continue;
+        const kept = JSON.parse(Deno.readTextFileSync(`${records}/${e.name}`));
+        Deno.writeTextFileSync(`${records}/${e.name}`, JSON.stringify({ ...kept, view: "old" }));
+      }
+      const next = await ground();
+      try {
+        // a bubble of its own
+        assertEquals(await runOn(next.shell())("test -e /tmp/here || echo absent"), "absent");
+        assert(groupAlive(group)); // the old one still holds its job
+      } finally {
+        await next.close("end");
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      assert(!groupAlive(group), "the old bubble outlived the end");
     }),
 });
 

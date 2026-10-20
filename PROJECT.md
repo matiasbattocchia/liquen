@@ -5568,6 +5568,7 @@ job lives only in the harness. Decided with the user:
 - An outcome can be an error and async at once (`ExecOutcome.is_error`): a `cmd &` whose
   command failed is owed its end like any other.
 
+<<<<<<< HEAD
 The cap first cut by emptying the log and writing its newer half back, which lost what the
 job wrote between the read and the emptying (a flaky test caught it). It now punches a hole
 over the older half (`fallocate --punch-hole`, here and in the remote script): offsets
@@ -5575,3 +5576,37 @@ stay, nothing is rewritten, and the job's appends lie past the hole. The cap is 
 blocks on disk, so a punched log is not cut again and a restarted harness needs no record of
 earlier cuts. The cost: the log keeps its apparent size and reads as zeros where the hole
 is, so `cat` or `grep` over a whole cut log meets them; `tail` does not.
+
+### Bubbles, and an egress proxy that judges every dial (2026-10-19) — LANDED
+
+Prompted by Deno's future (Deno Land joined Cloudflare 2026-10-09; the runtime gets a year
+of fixes), which made the sandbox seam worth having on its own terms, apart from the
+runtime. `system.sandbox: "bwrap"` runs each agent's shells in a bubblewrap bubble (DESIGN
+§9, "Bubbles"); the proxy work came from comparing ours with Anthropic's
+`@anthropic-ai/sandbox-runtime` (srt 0.0.80), which shares the skeleton (bubblewrap, no
+network namespace, a host proxy over a unix socket, a CA, placeholder swap) but is a policy
+engine first. Decided with the user:
+
+- **Bubbles stay opt-in.** The bare shell is the default; the catalog and the boot line
+  recommend the bubble on Linux. Named "bubble", not "jail".
+- **The proxy refuses this machine** (`proxy/guard.ts`): resolve once, drop refused
+  addresses, dial the survivor. Before it, a bubble could reach any loopback service of
+  the host through `CONNECT 127.0.0.1:<port>`. `system.egressRefuses` adds ranges.
+- **One socket per agent**, so attribution needs no handle and a peer's handle is refused.
+- **Transparent egress in bubbles**: the holder is the resolver (127.64.0.0/10, a name per
+  address, listeners per name on 22, 80, 443, 3306, 5432, 9418), so ssh, plain http and
+  database clients go out with no proxy setting and no per-tool shims (srt sets
+  `GIT_SSH_COMMAND`, a SOCKS proxy and a JVM agent instead, and lists clients that ignore
+  proxy variables as a known gap). Listeners per name, not per port on the wildcard, so
+  the agent's own servers on loopback keep those ports. bubblewrap's own network namespace
+  refuses ports below 1024 even with the capability added, so the harness prepares the
+  namespace (`unshare -r -n`, port floor 0) and bubblewrap shares it.
+- **Refusals say why**, as the status phrase and the body, and are audited.
+- **TLS is decrypted on the tunnel itself** (node:tls server-side over the tunnel's
+  socket, node:http fed the decrypted stream), replacing a loopback TLS server per host.
+- **Bubbles outlive the harness** with the jobs (the entry above): recorded per agent,
+  adopted by matching view, and a stale one kept while it holds a job.
+
+Left: UDP has no way out (QUIC falls back to TCP); a port off the list is unreachable; a
+tool installed under the user's home sees only its PATH directory (mise's python lacks its
+library); a fronted host's name is checked by the guard but re-resolved by `fetch`.

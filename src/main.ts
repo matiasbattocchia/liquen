@@ -254,9 +254,16 @@ export async function start(
     : await openLocalSandbox(dir, {
       store,
       bubble,
+      egressRefuses: catalog?.system.egressRefuses,
       exports: Object.fromEntries(principals.map((p) => [p.agentId, p.settings?.export ?? []])),
       ...planeOptions,
     });
+  if (!remote && !bubble && Deno.build.os === "linux" && principals.length) {
+    console.error(
+      '[exec] the agents\' shells run bare, as you: system.sandbox "bwrap" gives each a ' +
+        "bubble of its own, its folder and the egress proxy and nothing else",
+    );
+  }
   // a command the last run answered async and never told the end of is followed on where
   // its shell runs (late.ts), before any turn of this run looks at the log
   const unended = await resumeUnended(log, (use) => {

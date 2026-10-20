@@ -39,6 +39,7 @@
 import { parse } from "@std/jsonc";
 import type { Effort, PolicyAction, Rule } from "./types.ts";
 import { checkPrices, type Price } from "./prices.ts";
+import { checkRanges } from "./proxy/guard.ts";
 
 /* ── the defaults: the single source ─────────────────────────────────────── */
 
@@ -191,6 +192,7 @@ export interface OrgConfig {
     docs: "files" | "table"; // where the docs live: files under data/, or the store's docs table
     sandbox: string | null; // null ⇒ agents' shells on this machine; a URL ⇒ that gateway's
     sandboxSleepMinutes: number; // a gateway sandbox's life after its last bash call
+    egressRefuses: string[]; // ranges the egress proxy refuses, over its built-in set
     prices: Price[]; // the org's own price rows, over the package's list (`prices.ts`)
   };
   organization: {
@@ -301,11 +303,20 @@ const SYSTEM: Entry[] = [
     key: "sandbox",
     value: null,
     doc: 'where the agents\' shells run: null ⇒ this machine, as you; "bwrap" ⇒ this ' +
-      "machine, each agent in a bubble of its own (bubblewrap) that sees its own folder, the shared floor " +
-      "and the system, and reaches the network only through the egress proxy; the URL of " +
-      "a Cloudflare sandbox gateway (sandbox/cloudflare in the package) ⇒ one sandbox per " +
-      "agent there, its bearer token read from SANDBOX_API_KEY; needs docs: table, since " +
-      "the sandbox cannot reach files on this machine",
+      "machine, each agent in a bubble of its own (bubblewrap, the recommended way on " +
+      "Linux) that sees its own folder, the shared floor and the system, and reaches the " +
+      "network only through the egress proxy; the URL of a Cloudflare sandbox gateway " +
+      "(sandbox/cloudflare in the package) ⇒ one sandbox per agent there, its bearer token " +
+      "read from SANDBOX_API_KEY; needs docs: table, since the sandbox cannot reach files " +
+      "on this machine",
+  },
+  {
+    key: "egressRefuses",
+    value: [],
+    doc: "addresses and CIDR ranges the egress proxy refuses to dial, over the ones it " +
+      "always refuses (loopback, link-local, cloud metadata, this machine's own): " +
+      '["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"] keeps the agents off ' +
+      "the private network",
   },
   {
     key: "sandboxSleepMinutes",
@@ -1076,6 +1087,8 @@ function validateOrg(cfg: OrgConfig, path: string): void {
         `(got ${JSON.stringify(sleep)})`,
     );
   }
+  const refuses = checkRanges(cfg.system.egressRefuses);
+  if (refuses) throw new Error(`${path}: system.egressRefuses ${refuses}`);
   const publicUrl = checkPublicUrl(cfg.edge.publicUrl);
   if (publicUrl) {
     throw new Error(

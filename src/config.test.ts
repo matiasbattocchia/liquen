@@ -600,6 +600,21 @@ Deno.test("system.sandboxSleepMinutes: whole minutes, 10 unless said", async () 
   });
 });
 
+Deno.test("system.egressRefuses: ranges over the built-in set, none unless said", async () => {
+  await withDir(async (root) => {
+    const write = (egressRefuses: unknown) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system: { egressRefuses } }));
+    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    assertEquals((await readConfig(root)).system.egressRefuses, []);
+    await write(["10.0.0.0/8", "fc00::/7"]);
+    assertEquals((await readConfig(root)).system.egressRefuses, ["10.0.0.0/8", "fc00::/7"]);
+    for (const bad of ["10.0.0.0/8", ["intranet"], null]) {
+      await write(bad);
+      await assertRejects(() => readConfig(root), Error, "system.egressRefuses must be");
+    }
+  });
+});
+
 Deno.test("system.prices: the org's own rows, none unless said, checked at boot", async () => {
   await withDir(async (root) => {
     const write = (prices: unknown) =>
