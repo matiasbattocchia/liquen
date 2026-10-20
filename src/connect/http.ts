@@ -46,6 +46,11 @@ function transportFailure(err: unknown): string | null {
   return inner.replace(/^error sending request for url \([^)]*\): /, "");
 }
 
+/** A request that never reached the service, said as a sentence: no host, or no answer
+ *  within the bound. A plain `Error` to `entry` (§9); its class is for a caller that must
+ *  tell "the wire refused" from "the wire was not there" (the poll's wedge). */
+export class Unreached extends Error {}
+
 /** `fetchImpl` whose transport failures are plain `Error`s with a sentence: the runtime's
  *  network failure (`transportFailure`) becomes `cannot reach <host> — <cause>`, and the
  *  bound's TimeoutError becomes
@@ -59,9 +64,9 @@ export function said(fetchImpl: typeof fetch, timeoutMs: number): typeof fetch {
       return await fetchImpl(input, init);
     } catch (err) {
       const cause = transportFailure(err);
-      if (cause !== null) throw new Error(`cannot reach ${hostOf(input)} — ${cause}`);
+      if (cause !== null) throw new Unreached(`cannot reach ${hostOf(input)} — ${cause}`);
       if (err instanceof DOMException && err.name === "TimeoutError") {
-        throw new Error(`no answer from ${hostOf(input)} within ${bound}`);
+        throw new Unreached(`no answer from ${hostOf(input)} within ${bound}`);
       }
       throw err;
     }

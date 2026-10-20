@@ -56,7 +56,7 @@ export async function setState(
 
 /** What a door writes on the row of an account it has just linked: up, and no reason left
  *  standing from before — a signed-out account comes back through its door. */
-export function linked(now = new Date().toISOString()): Record<string, unknown> {
+export function linked(now: string = new Date().toISOString()): Record<string, unknown> {
   return { state: "connected", connected_at: now, error: null };
 }
 

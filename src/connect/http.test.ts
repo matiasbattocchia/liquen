@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { API_TIMEOUT_MS, said, timedFetch, withTimeout } from "./http.ts";
+import { API_TIMEOUT_MS, said, timedFetch, Unreached, withTimeout } from "./http.ts";
+import { fault } from "../entry.ts";
 
 /** A fetch that never answers on its own — only the signal ends it, as a stalled socket
  *  would behave under a real `fetch`. */
@@ -56,7 +57,7 @@ Deno.test("http: said turns the two transport failures into sentences and lets t
   ) {
     const failing = (() => Promise.reject(refused)) as typeof fetch;
     const down = await assertRejects(() => said(failing, 30_000)("http://127.0.0.1:9/x"));
-    assert((down as Error).constructor === Error, "a plain Error — a refusal, not a fault");
+    assert(down instanceof Unreached && !fault(down), "a sentence — a refusal, not a fault");
     assertEquals(
       (down as Error).message,
       "cannot reach 127.0.0.1:9 — client error (Connect): tcp connect error: " +
@@ -68,7 +69,7 @@ Deno.test("http: said turns the two transport failures into sentences and lets t
   const slow = await assertRejects(() =>
     said(withTimeout(hang, 20), 30_000)("https://api.example/x")
   );
-  assert((slow as Error).constructor === Error);
+  assert(slow instanceof Unreached && !fault(slow));
   assertEquals((slow as Error).message, "no answer from api.example within 30s");
 
   // a caller's own abort is the caller's, and a bug is a bug
@@ -87,7 +88,7 @@ Deno.test("http: timedFetch says it for a real refused connection", async () => 
   const port = (probe.addr as Deno.NetAddr).port;
   probe.close(); // nobody is on it now
   const err = await assertRejects(() => timedFetch(`http://127.0.0.1:${port}/x`));
-  assert((err as Error).constructor === Error, String(err));
+  assert(err instanceof Unreached && !fault(err), String(err));
   assert(
     (err as Error).message.startsWith(`cannot reach 127.0.0.1:${port} — `),
     (err as Error).message,

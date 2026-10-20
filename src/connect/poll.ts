@@ -31,6 +31,8 @@ import type { Service } from "../types.ts";
 import { findRoot, orgFlag } from "../config.ts";
 import { SignedOut } from "./errors.ts";
 import { setState } from "./health.ts";
+import { Unreached } from "./http.ts";
+import { fault } from "../entry.ts";
 
 /* ── the cursor: one per resource, on the grant's `extra` ─────────────────────────── */
 
@@ -182,6 +184,12 @@ export function createPoller(deps: PollerDeps): { tick(): Promise<void> } {
   };
 }
 
+/** Whether a poll's failure is the wire not there at all — the runtime's own network or
+ *  timeout error, or a request `said` got no answer to — rather than an answer that said no. */
+export function unreached(err: unknown): boolean {
+  return err instanceof Unreached || !(err instanceof Error) || fault(err);
+}
+
 /* ── the wire's client: bounded calls, a pool that never outlives the gap ──────────── */
 
 // a socket that hangs without closing would stall its grant's polling FOREVER (the tick
@@ -240,9 +248,11 @@ export async function runPollIngest(
    *  and no amount of retrying reaches the network again. Only a fresh process clears it, and
    *  the supervisor makes one in a second — so a poller this far gone stands down and lets it.
    *  Well past FAILING_AFTER_SWEEPS: the connection is called down before anyone gives up.
-   *  Only a sweep that reached NOTHING counts: a grant refused or failing while another
-   *  reads, or an issuer saying a grant is signed out, is the wire answering — a fresh
-   *  process would read the same refusal, and every other grant would pay the restart. */
+   *  Only a sweep that reached NOTHING counts: a poll that read, or any answer at all — a
+   *  refusal, an HTTP error, an issuer saying a grant is signed out — is the wire there,
+   *  and a fresh process would hear the same answer while every other grant paid for the
+   *  restart. What counts is the runtime's own failure, or a request `said` never got an
+   *  answer to (`Unreached`). */
   const WEDGED_AFTER_SWEEPS = 5;
   const { openStore } = await import("../store/mod.ts");
   const { createGrantBroker } = await import("../proxy/grants.ts");
@@ -268,7 +278,7 @@ export async function runPollIngest(
     fetchApi: (input, init) => fetch(input, { ...init, client }),
     onError: (key, err) => {
       swept.failed = true;
-      if (err instanceof SignedOut) swept.reached = true;
+      if (!unreached(err)) swept.reached = true;
       console.error(`[ingest] ${what} poll FAILED on ${key}:`, err);
     },
     onPolled: (key, res, n) => {
