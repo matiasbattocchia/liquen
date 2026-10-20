@@ -1662,8 +1662,9 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   connector wrote a state other than `connected` on the row (`extra.state`, stamped
   `<state>_at`): the WhatsApp bridge posts `disconnected`/`logged_out`, and its connector,
   asking after each session every 30s, writes `bridge_unreachable` when the bridge has not
-  answered three rounds running (a bridge that is not there says nothing of itself) and the
-  bridge's own word when it answers again; the Google poll writes `failing` on the sweep
+  answered three rounds running (a bridge that is not there says nothing of itself) and,
+  on a round it answers, the bridge's own word wherever a row says otherwise (`unpaired` for
+  a session the bridge does not hold); the Google poll writes `failing` on the sweep
   that cannot read a grant and `connected` on the one that reads again — transitions
   only, never a heartbeat. Its line is `· <name> — <service>,
   <state> since <stamp>`: every item in the block is named the same way, by the name the

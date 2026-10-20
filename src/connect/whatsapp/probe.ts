@@ -7,9 +7,11 @@
  * every send fails. The probe is the one word the bridge cannot say: it asks after each
  * WhatsApp session (`GET /sessions/{address}`) and, `MISSES` rounds in a row with no
  * answer, writes `state: bridge_unreachable` on the rows, which the anchor shows as down
- * (§5). The first answer after takes its own word back: the row takes the state the bridge
- * gives for it. A row the bridge reported logged out stays the bridge's: re-pairing, not
- * the probe, revives it.
+ * (§5). A round it answers sets each row to the bridge's word where the row says
+ * otherwise: `connected`, `disconnected`, or `unpaired` for a session the bridge does not
+ * hold (a row the map kept after the bridge lost it says `connected` while nothing flows).
+ * A row the bridge reported logged out stays the bridge's: re-pairing, not the probe,
+ * revives it.
  */
 
 import type { ConnectionRow, Connections } from "../../store/connections.ts";
@@ -23,6 +25,10 @@ export const PROBE_MS = 30_000;
 export const MISSES = 3;
 
 const UNREACHABLE = "bridge_unreachable";
+
+/** The states an answer settles: the bridge's word on whether a session is up, and the
+ *  probe's own. Any other (`logged_out`) is the bridge's to change. */
+const SAID = new Set(["connected", "disconnected", "unpaired", UNREACHABLE]);
 
 /** One session as the bridge sees it; null when the bridge holds no such session. Throws
  *  when the bridge does not answer. */
@@ -98,12 +104,11 @@ export function createBridgeProbe(deps: BridgeProbeDeps): { tick(): Promise<void
       missed = 0;
       deps.onAnswered?.();
       for (const row of rows) {
-        if (row.extra?.state !== UNREACHABLE) continue;
+        const state = row.extra?.state;
+        if (state !== undefined && !(typeof state === "string" && SAID.has(state))) continue;
         const said = heard.get(row.address);
-        await mark(
-          row,
-          said === null ? "unpaired" : said?.connected ? "connected" : "disconnected",
-        );
+        const word = said === null ? "unpaired" : said?.connected ? "connected" : "disconnected";
+        if (word !== state) await mark(row, word);
       }
     },
   };

@@ -72,9 +72,38 @@ Deno.test("probe: the bridge's first answer takes the mark back, with the state 
   await probe.tick();
   assertEquals(
     ["549111", "549222", "549333", "549444"].map(store.state),
-    ["connected", "disconnected", "unpaired", "disconnected"], // the last is the bridge's word
+    ["connected", "disconnected", "unpaired", "connected"],
   );
   assertEquals(answered, 1);
+});
+
+Deno.test("probe: an answered round sets a row the bridge disagrees with to its word; logged out stays the bridge's", async () => {
+  const store = map([
+    // the map kept it, the bridge lost it: it says connected while nothing flows
+    { service: "whatsapp", address: "549111", extra: { state: "connected" } },
+    { service: "whatsapp", address: "549222", extra: { state: "connected" } },
+    { service: "whatsapp", address: "549333", extra: { state: "logged_out" } },
+  ]);
+  const writes: string[] = [];
+  const probe = createBridgeProbe({
+    status: (address) => Promise.resolve(address === "549222" ? { connected: true } : null),
+    store: {
+      ...store,
+      upsertConnections: (rows) => {
+        writes.push(...rows.map((r) => r.address));
+        return store.upsertConnections(rows);
+      },
+    },
+  });
+  await probe.tick();
+  assertEquals(["549111", "549222", "549333"].map(store.state), [
+    "unpaired",
+    "connected",
+    "logged_out",
+  ]);
+  assertEquals(writes, ["549111"]); // only where the row said otherwise
+  await probe.tick();
+  assertEquals(writes, ["549111"]);
 });
 
 Deno.test("probe: one answered round between silences starts the count again", async () => {

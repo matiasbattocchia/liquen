@@ -5670,9 +5670,11 @@ after a reboot, which nothing reported either: its rows went on saying `connecte
   then told as corrected.
 - **Bridge probe:** the WhatsApp connector asks `GET /sessions/{address}` every 30s; three
   silent rounds mark the sessions `bridge_unreachable`, which the anchor's down block
-  shows. The first answer after writes the bridge's own state back (`connected`,
-  `disconnected`, or `unpaired` for a session it no longer holds). A `logged_out` row is
-  left to the bridge.
+  shows. A round it answers sets each row to the bridge's own word wherever the row says
+  otherwise (`connected`, `disconnected`, or `unpaired` for a session it does not hold). A
+  `logged_out` row is left to the bridge. The first run on this machine found the org's
+  second WhatsApp row (`5492615682044`) saying `connected` while the bridge answered 404
+  for it: a session the bridge no longer holds, which the map had kept.
 
 Each tale is one conditional UPDATE on its own stamp (`stalled_at`, `reported_at`,
 `corrected_at`), in SQLite and Postgres alike; the store suite passes on both (the two
