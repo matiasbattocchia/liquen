@@ -583,18 +583,29 @@ update is a `tool_result` the harness writes **against the call** (§3: `payload
 runs), so it lands in the session that made the call; render narrates it as
 `<system kind="tool_result" update final>bash(npm test) → exit 0 after 4m …</system>`,
 and it is news that wakes now, as an alarm does (§2), so the agent takes a turn to act on
-it: try again, try another way, or tell its principal. The clock tells one kind:
+it: try again, try another way, or tell its principal. The clock tells a send's tale, each
+part claimed once by one conditional UPDATE on its own stamp, so two clocks tell a row once;
+a send is one of the model's own (a row with `payload.turn_id`: a mirror's copy and a
+presence line have no turn to tell):
 
-- **undelivered** — one of the model's own sends (a row with `payload.turn_id`: a
-  mirror's copy and a presence line have no turn to tell) failed **for good**: a permanent
-  class (4xx, or a code that is not a number), a transient one the retry ladder (§5) has
-  offered for the last time, or one the wire reported failed after naming the message.
-  A transient failure the ladder will offer again is not news yet. The clock's fourth pass
-  claims such rows (`undelivered`, one conditional UPDATE stamping `status.reported_at`, so
-  two clocks tell a row once) and writes the final update on the send call, the reason as
-  its output; main also runs that pass the moment the update stream shows a row of the
-  model's own go `failed`, so a refused send is told in seconds and the beat is the
-  guarantee for one stamped while nobody listened.
+- **undelivered** — the send failed **for good**: a permanent class (4xx, or a code that
+  is not a number), a transient one the retry ladder (§5) has offered for the last time, or
+  one the wire reported failed after naming the message. The final update on the send
+  call, the reason as its output (`status.reported_at`).
+- **stalled** — the send is still not out fifteen minutes after it was made, queued or
+  failed and waiting for the ladder: past the blips its first rungs absorb, soon enough to
+  change course. Not final: the update says why (the wire's refusal, or no connector there
+  to take it), how much longer the ladder tries, and how to take it back
+  (`status.stalled_at`).
+- **corrected** — a send told stalled or undelivered, or withdrawn, went out after all:
+  the final update says how late (`status.corrected_at`).
+
+A send not yet out is the agent's to take back: `send` with action delete on it withdraws
+the row (`state: withdrawn`), never offered again, and the dispatcher reads a row once
+more before it posts, so one withdrawn while it waited its turn does not go. main also runs
+the report passes the moment the update stream shows a row of the model's own go `failed`,
+or go out after it was told of, so a refused send is told in seconds and the beat is the
+guarantee for one stamped while nobody listened.
 
 The shell tells the rest: a command's lines, its end, and what it left running (§9, the
 exec plane).
@@ -1460,8 +1471,10 @@ constraint, and render derives it **from the window's shape**:
   a dispatcher opens by reading its service's `queued` rows before it listens: what was
   offered while no process was there to take it — a send made during a restart, a
   re-offer during an outage — waits in the row, not on a stream. Nothing posts but the
-  dispatcher, and it never learns a row is a retry. A row that has spent every rung stays `failed`,
-  which is when the mark means what the agent reads. The log stays lossless for the rest
+  dispatcher, and it never learns a row is a retry. The rungs wait 1m, 5m, 15m, 1h, 4h and
+  12h, each from the last failure, so the ladder gives up about seventeen hours after the
+  first. A row that has spent every rung stays `failed`, which is when the mark means what
+  the agent reads; one the agent took back renders `status="withdrawn"`. The log stays lossless for the rest
   (`search` re-fetches denied/errored exchanges).
 - The log stays **lossless**; `search` re-fetches what render drops. Crashproof for free:
   recovery re-renders the same window and gets the same request.
@@ -1647,9 +1660,12 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   counted: the block is paid on every request, and a long standing list is furniture.
   A surface is down when its
   connector wrote a state other than `connected` on the row (`extra.state`, stamped
-  `<state>_at`): the WhatsApp bridge posts `disconnected`/`logged_out`, the Google poll
-  writes `failing` on the sweep that cannot read a grant and `connected` on the one that
-  reads again — transitions only, never a heartbeat. Its line is `· <name> — <service>,
+  `<state>_at`): the WhatsApp bridge posts `disconnected`/`logged_out`, and its connector,
+  asking after each session every 30s, writes `bridge_unreachable` when the bridge has not
+  answered three rounds running (a bridge that is not there says nothing of itself) and the
+  bridge's own word when it answers again; the Google poll writes `failing` on the sweep
+  that cannot read a grant and `connected` on the one that reads again — transitions
+  only, never a heartbeat. Its line is `· <name> — <service>,
   <state> since <stamp>`: every item in the block is named the same way, by the name the
   service shows and by the address only when there is none. Better than Claude Code's session-start env snapshot: we re-render
   every step, so it's *fresh*, not stale — and cache-free, since this block is already the

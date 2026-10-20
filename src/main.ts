@@ -40,7 +40,7 @@ import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runne
 import type { Log, UsageRow } from "./store/log.ts";
 import { databaseOf, storeAt } from "./store/mod.ts";
 import { type ClockSettings, tick } from "./tick.ts";
-import { reportUndelivered, resumeUnended, shellUpdate, updateDraft } from "./late.ts";
+import { reportSends, resumeUnended, shellUpdate, updateDraft } from "./late.ts";
 import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import type { AgentRow } from "./store/agents.ts";
@@ -586,10 +586,10 @@ export async function start(
       }
     }).catch((err) => console.error("[main] route:", err));
   }));
-  // a send that fails for good is told to its call at once (late.ts): the update
-  // stream says a row of the model's own went `failed`, and the clock's report pass runs
-  // now instead of at the next beat, which stays the guarantee for a failure stamped while
-  // nobody listened. A failure landing mid-pass runs the pass once more after it.
+  // a send that fails for good, or goes out after it was told stalled, is told to its call
+  // at once (late.ts): the update stream says a row of the model's own moved, and the
+  // clock's report pass runs now instead of at the next beat, which stays the guarantee for
+  // a move stamped while nobody listened. A move landing mid-pass runs the pass once more.
   let telling: Promise<void> | undefined;
   let again = false;
   const tell = () => {
@@ -597,7 +597,7 @@ export async function start(
       again = true;
       return;
     }
-    telling = reportUndelivered(log)
+    telling = reportSends(log)
       .then(() => undefined, (err) => console.error("[main] report:", err))
       .finally(() => {
         telling = undefined;
@@ -611,7 +611,12 @@ export async function start(
     updates: true,
     filter: (e) =>
       e.type === "message" && e.agent !== undefined && e.payload?.turn_id !== undefined &&
-      e.status?.state === "failed" && e.status.reported_at === undefined,
+      e.status !== undefined && (
+        e.status.state === "failed" && e.status.reported_at === undefined ||
+        (e.status.stalled_at ?? e.status.reported_at ?? e.status.withdrawn_at) !== undefined &&
+          e.status.corrected_at === undefined &&
+          ["dispatched", "delivered", "read"].includes(e.status.state ?? "")
+      ),
   }));
   // the mirror rides the RAW log (§4): it copies between a mind and its alias surfaces, and
   // an agent's own alias conversation is invisible to that agent's scoped port (§6) — the

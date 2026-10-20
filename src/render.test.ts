@@ -1056,6 +1056,22 @@ Deno.test("a failed delivery says why, in the dispatcher's words", () => {
   );
 });
 
+Deno.test("a send taken back renders withdrawn, even when a post already in flight failed after", () => {
+  const t = "2026-08-07T11:00:00Z";
+  const taken = worldMsg(
+    "e3",
+    t,
+    { address: "wa:ana", kind: "direct" },
+    null,
+    "llego en 5",
+    "failed",
+  );
+  taken.status = { state: "failed", withdrawn_at: t, error: "Error: connection refused" };
+  const { messages } = render({ events: [taken], docs: [], session: SESSION, zone: "UTC", now: t });
+  const dump = JSON.stringify(messages);
+  assertStringIncludes(dump, 'self at=\\"7 Aug 11:00\\" status=\\"withdrawn\\">llego en 5</msg>');
+});
+
 Deno.test("ambient env lines join the trailing anchor block after now:", () => {
   const t = "2026-07-21T10:00:00Z";
   const events: Event[] = [mindMsg("e1", t, "hola", false)];

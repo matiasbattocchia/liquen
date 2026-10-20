@@ -220,6 +220,41 @@ Deno.test("dispatcher: a re-offer posts again; the same offer repeated does not 
   assertEquals(posts, 3);
 });
 
+Deno.test("dispatcher: a row taken back while it waited its turn is not posted", async () => {
+  const log = fakeLog();
+  // the rows as they stand, read one at a time the way the dispatcher asks
+  const rows = new Map<string, Event>();
+  const read = (q: { beforeId?: string } = {}) =>
+    Promise.resolve([...rows.values()].filter((e) => `${e.id}0` === q.beforeId));
+  let release!: () => void;
+  const onWire = new Promise<void>((r) => release = r);
+  const posted: string[] = [];
+  const stop = createDispatcher<string>({
+    subscribe: log.subscribe,
+    read,
+    service: "github",
+    select: (e) => e.id,
+    post: async (work) => {
+      posted.push(work);
+      if (work === "first") await onWire;
+      return { id: work };
+    },
+    setDelivery: log.setDelivery,
+  });
+  const first = { ...outbound(), id: "first" } as Event;
+  const second = { ...outbound(), id: "second" } as Event;
+  rows.set("first", first).set("second", second);
+  log.push(first);
+  log.push(second);
+  await settle();
+  // the agent takes the second back while the first is still on the wire
+  rows.set("second", { ...second, envelope: { ...second.envelope, status: "withdrawn" } });
+  release();
+  await stop();
+  assertEquals(posted, ["first"]);
+  assertEquals(log.patches.map((p) => p.id), ["first"]);
+});
+
 Deno.test("dispatcher: it opens on the offers standing before it existed — read off the rows, posted once", async () => {
   const standing = { ...outbound(), id: "old" } as Event;
   const log = fakeLog([

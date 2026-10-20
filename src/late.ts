@@ -18,6 +18,9 @@ import type { Log } from "./store/log.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { describeCall, nameResolver } from "./describe.ts";
 import type { SessionUpdate } from "./sandbox.ts";
+import { RETRY_BACKOFF_MS } from "./store/sweep.ts";
+import { took } from "./exec/jobs.ts";
+import { shortId } from "./render.ts";
 
 export interface Update {
   agentId: string;
@@ -80,6 +83,67 @@ export function undeliveredUpdate(e: Event, use: CallRef, call: string): Update 
     call,
     output: `not delivered: ${whyUndelivered(e)}`,
     is_error: true,
+    final: true,
+  };
+}
+
+/** How long an offer may stand with nobody taking it before the connector counts as
+ *  absent: a post takes seconds, and a re-offer is taken as it lands. */
+const UNTAKEN_MS = 60_000;
+
+/** The update of a send still not out past `STALLED_AFTER_MS`: why, how much longer it is
+ *  tried, and how to take it back. Not final: it may yet go out, and then it is told. */
+export function stalledUpdate(
+  e: Event,
+  use: CallRef,
+  call: string,
+  now: number,
+): Update | undefined {
+  if (!e.agent) return undefined;
+  const status = e.status ?? {};
+  const service = e.envelope.service;
+  const untaken = status.state === "queued" &&
+    now - Date.parse(status.queued_at ?? e.ts) >= UNTAKEN_MS;
+  const error = (status.error ?? "").replace(/^\w*Error: /, "");
+  const why = untaken
+    ? `nothing has taken it to ${service}: its connector is not running`
+    : error || `${service} has not taken it yet`;
+  // the rungs not yet climbed, from the last failure: when the ladder gives up
+  const left = status.state === "failed" && status.failed_at
+    ? Date.parse(status.failed_at) +
+      RETRY_BACKOFF_MS.slice(status.attempts ?? 0).reduce((a, b) => a + b, 0) - now
+    : undefined;
+  const retried = left === undefined
+    ? "It is offered again while it waits"
+    : `It is retried for about ${took(Math.max(left, 0))} more`;
+  return {
+    agentId: e.agent.id,
+    sessionId: e.agent.session_id ?? MIND,
+    use,
+    call,
+    output: `not delivered yet, ${took(now - Date.parse(e.ts))} after it was sent: ${why}. ` +
+      `${retried}, and you are told when it goes out or is given up. To keep it from ` +
+      `going out late, take it back: send to the same conversation with action delete and ` +
+      `re ${shortId(e.id)}.`,
+    is_error: true,
+  };
+}
+
+/** The update of a send told stalled or undelivered, or withdrawn, that went out after
+ *  all: when, against when it was sent. Final: it is out. */
+export function correctedUpdate(e: Event, use: CallRef, call: string): Update | undefined {
+  if (!e.agent) return undefined;
+  const status = e.status ?? {};
+  const out = status.dispatched_at ??
+    (typeof status.delivered_at === "string" ? status.delivered_at : undefined);
+  const late = out ? `, ${took(Date.parse(out) - Date.parse(e.ts))} after it was sent` : "";
+  return {
+    agentId: e.agent.id,
+    sessionId: e.agent.session_id ?? MIND,
+    use,
+    call,
+    output: `delivered after all${late}` +
+      (status.withdrawn_at ? ": it was already on its way when you took it back" : ""),
     final: true,
   };
 }
@@ -151,24 +215,37 @@ async function rowOf(log: Pick<Log, "read">, id: EventId): Promise<Event | undef
   return row?.id === id ? row : undefined;
 }
 
-/** The clock's undelivered pass (§10): every send that failed for good since the last pass
- *  is claimed once and told to the call that sent it. Safe from more than one clock: the
- *  claim is the store's, so a row is told once. Returns how many were told. */
-export async function reportUndelivered(
-  log: Pick<Log, "undelivered" | "read" | "publish">,
+/** The clock's report passes over the agent's sends (§10), in the order a send's tale
+ *  runs: failed for good, still not out past `STALLED_AFTER_MS`, out after all. Each row is
+ *  claimed once by the store and told to the call that sent it. Safe from more than one
+ *  clock: the claim is the store's, so a row is told once. Returns how many were told. */
+export async function reportSends(
+  log: Pick<Log, "undelivered" | "stalled" | "corrected" | "read" | "publish">,
   now: number = Date.now(),
 ): Promise<number> {
   const nowIso = new Date(now).toISOString();
+  return await tellOf(log, await log.undelivered(nowIso), undeliveredUpdate, nowIso) +
+    await tellOf(log, await log.stalled(nowIso), (e, u, c) => stalledUpdate(e, u, c, now), nowIso) +
+    await tellOf(log, await log.corrected(nowIso), correctedUpdate, nowIso);
+}
+
+/** Each claimed send told to its call, the call named the way its card reads. */
+async function tellOf(
+  log: Pick<Log, "read" | "publish">,
+  ids: EventId[],
+  compose: (e: Event, use: CallRef, call: string) => Update | undefined,
+  nowIso: string,
+): Promise<number> {
   let told = 0;
-  for (const id of await log.undelivered(nowIso)) {
+  for (const id of ids) {
     const row = await rowOf(log, id);
     const ref = row?.payload?.ref_id;
     const use = ref ? await rowOf(log, ref) : undefined;
     if (!row || use?.type !== "tool_use") continue;
-    // the card's rendering, addresses named: the line says who it did not reach
+    // the card's rendering, addresses named: the line says who it did or did not reach
     const call = use.parts[0].data;
     const resolve = await nameResolver(log.read, [call]);
-    const update = undeliveredUpdate(
+    const update = compose(
       row,
       { id: use.id, turn_id: use.payload.turn_id },
       describeCall(call, { resolve }),

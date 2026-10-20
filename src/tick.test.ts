@@ -15,7 +15,7 @@ import type {
   ToolResultEvent,
   ToolUseEvent,
 } from "./types.ts";
-import { outcomeLine } from "./render.ts";
+import { outcomeLine, shortId } from "./render.ts";
 
 const at = (hoursAgo: number, now = Date.now()) =>
   new Date(now - hoursAgo * 3_600_000).toISOString();
@@ -168,6 +168,67 @@ Deno.test("a send that failed for good is told against the call that sent it, on
       `still failing after ${RETRY_BACKOFF_MS.length} retries`,
     );
     assertEquals((await tick(log, () => undefined, now)).reported, 0); // told once
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a send not out past the stall is told so, still tried, and told again when it goes out after all", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(`${dir}/log`);
+  try {
+    const now = Date.now();
+    const after = (minutes: number) => new Date(now + minutes * 60_000).toISOString();
+    await log.upsertConnections([{ service: "whatsapp", address: "5491100000000", agentId: "a1" }]);
+    const uses = await log.publish([call("hola", "t1"), call("¿seguís?", "t2")]);
+    const [retrying] = await log.publish([
+      sent("hola", "t1", uses[0].id),
+      sent("¿seguís?", "t2", uses[1].id), // queued, and no connector ever takes it
+    ]);
+    // two re-offers behind it, the last failing six minutes in
+    await log.setDelivery(retrying.id, {
+      status: {
+        state: "failed",
+        failed_at: after(6),
+        error: "Error: bridge /dispatch: connection refused",
+        attempts: 2,
+      },
+    });
+    assertEquals((await tick(log, () => undefined, now + 14 * 60_000)).reported, 0);
+    const stall = now + 16.5 * 60_000;
+    assertEquals((await tick(log, () => undefined, stall)).reported, 2);
+    const told = (await log.read({ types: ["tool_result"] })) as ToolResultEvent[];
+    assertEquals(told.map((r) => r.payload.ref_id), [uses[0].id, uses[1].id]);
+    assertEquals(told[0].payload.final, undefined); // it may yet go out
+    assertEquals(told[0].parts[0].data.is_error, true);
+    assertEquals(
+      outcomeLine(told[0]),
+      "send(to: Banco Hipotecario SA, text: hola) — not delivered yet, 16m after it was " +
+        "sent: bridge /dispatch: connection refused. It is retried for about 17h more, and " +
+        "you are told when it goes out or is given up. To keep it from going out late, take " +
+        "it back: send to the same conversation with action delete and re " +
+        `${shortId(retrying.id)}.`,
+    );
+    assertStringIncludes(
+      outcomeLine(told[1]),
+      "nothing has taken it to whatsapp: its connector is not running. It is offered again " +
+        "while it waits",
+    );
+    assertEquals((await tick(log, () => undefined, stall + 60_000)).reported, 0); // once
+    // the bridge is back: the next re-offer goes out
+    await log.setDelivery(retrying.id, {
+      external_id: "whatsapp:wamid.1",
+      status: { state: "dispatched", dispatched_at: after(21.5) },
+    });
+    assertEquals((await tick(log, () => undefined, now + 22 * 60_000)).reported, 1);
+    const [late] = (await log.read({ types: ["tool_result"] })).slice(2) as ToolResultEvent[];
+    assertEquals(late.payload.ref_id, uses[0].id);
+    assertEquals(late.payload.final, true);
+    assertEquals(
+      outcomeLine(late),
+      "send(to: Banco Hipotecario SA, text: hola) → delivered after all, 21m after it was sent",
+    );
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

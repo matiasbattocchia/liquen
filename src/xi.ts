@@ -77,6 +77,7 @@ import { type ToolShape, wordedAll } from "./tooldoc.ts";
 import type { ConversationRow } from "./store/connections.ts";
 import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
+import type { Sweeper } from "./store/sweep.ts";
 import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./store/media.ts";
 import type { BinDir, Carried, FilePart, LocationPart, SendPreview } from "./types.ts";
 import { directAddress, MIND, parseDirect, parseSession, sessionAddress } from "./session.ts";
@@ -852,7 +853,8 @@ export interface XiPorts {
       | "closeConversation"
     >
     & Pick<Timers, "arm" | "timers" | "disarm">
-    & Pick<Gates, "gates" | "owed">;
+    & Pick<Gates, "gates" | "owed">
+    & Pick<Sweeper, "withdraw">;
   docs: Docs;
   /** The agent's history (§6): the log as the AGENT reads it, whichever of its sessions is
    *  asking — what `search` reads. The window stays the session's own view (`log`); this
@@ -2792,7 +2794,7 @@ async function execute(
       : opened
       ? opened.kind ?? aimed.wire!.open.kind
       : prior?.envelope.conversation.kind;
-    const target = args.re === undefined
+    let target = args.re === undefined
       ? undefined
       : await referent(ports, to, String(args.re), prior?.envelope.connection_address);
     // a wire conversation's name is its record's — a send carries no rename; on first
@@ -2877,6 +2879,23 @@ async function execute(
         `only this account's own messages can be ${action === "edit" ? "edited" : "deleted"}` +
           " — that one is not",
       );
+    }
+    if (target && !target.envelope.external_id) {
+      const unsent = `message "${args.re}" has not reached the wire yet`;
+      if (action !== "delete") throw new Error(`${unsent} — nothing to point at`);
+      // ours and not yet out: taken back before it goes, never offered again
+      if (await ports.log.withdraw(target.id, new Date().toISOString())) {
+        return { withdrawn: true, event_id: target.id };
+      }
+      // it moved meanwhile: gone out (a delete on the wire follows), or already taken back
+      target = await referent(ports, to, String(args.re), prior?.envelope.connection_address);
+      if (!target.envelope.external_id) {
+        throw new Error(
+          target.envelope.status === "withdrawn"
+            ? `message "${args.re}" is already taken back`
+            : `${unsent}, and is not waiting to go either — nothing to take back`,
+        );
+      }
     }
     if (action === "edit" && !body) throw new Error("`edit` needs the replacement text");
     if (action === "remove" && !glyph) throw new Error("`remove` needs the reaction it lifts");
@@ -3298,11 +3317,7 @@ async function referent(
   });
   if (matches.length === 0) throw new Error(`no message "${re}" in ${conversation}`);
   if (matches.length > 1) throw new Error(`"${re}" names ${matches.length} messages — ambiguous`);
-  const target = matches[0];
-  if (!target.envelope.external_id) {
-    throw new Error(`message "${re}" has not reached the wire yet — nothing to point at`);
-  }
-  return target;
+  return matches[0];
 }
 
 /** How many matches a search page holds when the model names no `limit` — the same

@@ -36,7 +36,7 @@ import {
   type Timers,
 } from "../timers.ts";
 import { type Gates, owedOf, type RulingRow } from "../gates.ts";
-import { RETRY_BACKOFF_MS, type Sweeper } from "../sweep.ts";
+import { RETRY_BACKOFF_MS, STALLED_AFTER_MS, type Sweeper } from "../sweep.ts";
 import { newId } from "../id.ts";
 import type { Event, PermissionRequestEvent, ToolUseEvent } from "../../types.ts";
 import { count, type Db, rows } from "./sql.ts";
@@ -528,6 +528,7 @@ export function pgSweeper(
            WHERE type = 'message' AND agent_id IS NOT NULL AND external_id IS NULL
              AND NOT flag(extra, 'delta')
              AND status ->> 'state' = 'failed'
+             AND status ->> 'withdrawn_at' IS NULL
              AND CASE jsonb_typeof(status -> 'error_code')
                    WHEN 'number' THEN (status ->> 'error_code')::numeric = 429
                                    OR (status ->> 'error_code')::numeric >= 500
@@ -549,6 +550,7 @@ export function pgSweeper(
              AND NOT flag(extra, 'delta')
              AND status ->> 'state' = 'failed'
              AND status ->> 'reported_at' IS NULL
+             AND status ->> 'withdrawn_at' IS NULL
              AND (external_id IS NOT NULL
                   OR NOT CASE jsonb_typeof(status -> 'error_code')
                            WHEN 'number' THEN (status ->> 'error_code')::numeric = 429
@@ -558,6 +560,60 @@ export function pgSweeper(
            RETURNING id`,
           [now],
         )).map((r) => r.id).sort()
+      );
+    },
+    stalled(now) {
+      const before = new Date(new Date(now).getTime() - STALLED_AFTER_MS).toISOString();
+      return serial(async (tx) =>
+        (await rows<{ id: string }>(
+          tx,
+          `UPDATE events SET status = json_patch(status, jsonb_build_object('stalled_at', $1::text))
+           WHERE type = 'message' AND agent_id IS NOT NULL AND external_id IS NULL
+             AND payload ->> 'turn_id' IS NOT NULL
+             AND NOT flag(extra, 'delta')
+             AND status ->> 'state' IN ('queued', 'failed')
+             AND status ->> 'stalled_at' IS NULL
+             AND status ->> 'reported_at' IS NULL
+             AND status ->> 'withdrawn_at' IS NULL
+             AND created_at <= $2::text
+           RETURNING id`,
+          [now, before],
+        )).map((r) => r.id).sort()
+      );
+    },
+    corrected(now) {
+      return serial(async (tx) =>
+        (await rows<{ id: string }>(
+          tx,
+          `UPDATE events SET status = json_patch(status, jsonb_build_object('corrected_at', $1::text))
+           WHERE type = 'message' AND agent_id IS NOT NULL
+             AND payload ->> 'turn_id' IS NOT NULL
+             AND NOT flag(extra, 'delta')
+             AND status ->> 'state' IN ('dispatched', 'delivered', 'read')
+             AND status ->> 'corrected_at' IS NULL
+             AND (status ->> 'stalled_at' IS NOT NULL
+                  OR status ->> 'reported_at' IS NOT NULL
+                  OR status ->> 'withdrawn_at' IS NOT NULL)
+           RETURNING id`,
+          [now],
+        )).map((r) => r.id).sort()
+      );
+    },
+    withdraw(id, now) {
+      // a lifecycle move: `updated_at` rides along, so the window and the dispatcher see it
+      return serial(async (tx) =>
+        (await count(
+          tx,
+          `UPDATE events SET
+             status = json_patch(status, jsonb_build_object(
+               'state', 'withdrawn', 'withdrawn_at', $2::text)),
+             updated_at = $2::text
+           WHERE id = $1::text
+             AND type = 'message' AND agent_id IS NOT NULL AND external_id IS NULL
+             AND NOT flag(extra, 'delta')
+             AND status ->> 'state' IN ('queued', 'failed')`,
+          [id, now],
+        )) > 0
       );
     },
   };

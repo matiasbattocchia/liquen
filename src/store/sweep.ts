@@ -20,8 +20,13 @@
  * reads its service's `queued` rows before it listens, so the sweep never repeats itself.
  *
  * The ladder is weather, not a knob: the same for every deployment. It spans the recovery
- * a wedged socket needs after a resume (a quarter hour) and ends a day out, by which time
- * a laptop that was shut has been opened.
+ * a wedged socket needs after a resume (a quarter hour) and ends half a day out, by which
+ * time a laptop that was shut overnight has been opened.
+ *
+ * What the agent is told of its sends is claimed here too, each tale once: a send not out
+ * `STALLED_AFTER_MS` after it was made (`stalled`), one that failed for good
+ * (`undelivered`), and one told either way, or withdrawn, that went out after all
+ * (`corrected`). A withdrawn send (`withdraw`) is never offered again.
  */
 
 import type { DatabaseSync } from "node:sqlite";
@@ -34,8 +39,12 @@ export const RETRY_BACKOFF_MS = [
   900_000,
   3_600_000,
   14_400_000,
-  86_400_000,
+  43_200_000,
 ] as const;
+
+/** How long a send may stay undelivered before its session is told it is still trying:
+ *  past the blips the first rungs absorb, and soon enough to change course. */
+export const STALLED_AFTER_MS = 15 * 60_000;
 
 export interface Sweeper {
   /** One pass at `now` (UTC ISO): re-offer what has waited its rung out. Returns how many. */
@@ -47,6 +56,17 @@ export interface Sweeper {
    *  (`payload.turn_id`): a mirror's copy or a presence line fails without a turn to tell.
    *  A claim is one conditional UPDATE, so two clocks never claim one row. */
   undelivered(now: string): Promise<EventId[]>;
+  /** Claim the agent's own sends still not out `STALLED_AFTER_MS` after they were made,
+   *  queued or failed and not yet told of: stamp `stalled_at` and answer their ids. A send
+   *  told undelivered, or withdrawn, has had its word. */
+  stalled(now: string): Promise<EventId[]>;
+  /** Claim the agent's own sends it was told were stalled or undelivered, or that it
+   *  withdrew, which went out after all: stamp `corrected_at` and answer their ids. */
+  corrected(now: string): Promise<EventId[]>;
+  /** Withdraw a send of the agent's that has not gone out: `state: withdrawn`, stamped
+   *  `withdrawn_at`. Only a row still queued or failed is withdrawn; true when it was. A
+   *  withdrawn row is never offered again, whatever a post already in flight stamps. */
+  withdraw(id: EventId, now: string): Promise<boolean>;
 }
 
 /** The dispatcher's own rows (`isOutbound`, minus the state it reads off the lifecycle).
@@ -76,6 +96,7 @@ export function createSweeper(db: DatabaseSync): Sweeper {
        updated_at = ?1
      WHERE ${OURS}
        AND json_extract(status, '$.state') = 'failed'
+       AND json_extract(status, '$.withdrawn_at') IS NULL
        AND ${TRANSIENT}
        AND json_extract(status, '$.failed_at') <=
            CASE coalesce(json_extract(status, '$.attempts'), 0) ${rung} END`,
@@ -88,19 +109,57 @@ export function createSweeper(db: DatabaseSync): Sweeper {
        AND json_extract(extra, '$.delta') IS NOT 1
        AND json_extract(status, '$.state') = 'failed'
        AND json_extract(status, '$.reported_at') IS NULL
+       AND json_extract(status, '$.withdrawn_at') IS NULL
        AND (external_id IS NOT NULL OR NOT ${TRANSIENT}
             OR coalesce(json_extract(status, '$.attempts'), 0) >= ${RETRY_BACKOFF_MS.length})
      RETURNING id`,
   );
+  const stall = db.prepare(
+    `UPDATE events SET status = json_patch(status, json_object('stalled_at', ?1))
+     WHERE ${OURS}
+       AND json_extract(payload, '$.turn_id') IS NOT NULL
+       AND json_extract(status, '$.state') IN ('queued', 'failed')
+       AND json_extract(status, '$.stalled_at') IS NULL
+       AND json_extract(status, '$.reported_at') IS NULL
+       AND json_extract(status, '$.withdrawn_at') IS NULL
+       AND created_at <= ?2
+     RETURNING id`,
+  );
+  const correct = db.prepare(
+    `UPDATE events SET status = json_patch(status, json_object('corrected_at', ?1))
+     WHERE type = 'message' AND agent_id IS NOT NULL
+       AND json_extract(payload, '$.turn_id') IS NOT NULL
+       AND json_extract(extra, '$.delta') IS NOT 1
+       AND json_extract(status, '$.state') IN ('dispatched', 'delivered', 'read')
+       AND json_extract(status, '$.corrected_at') IS NULL
+       AND (json_extract(status, '$.stalled_at') IS NOT NULL
+            OR json_extract(status, '$.reported_at') IS NOT NULL
+            OR json_extract(status, '$.withdrawn_at') IS NOT NULL)
+     RETURNING id`,
+  );
+  // a lifecycle move: `updated_at` rides along, so the window and the dispatcher see it
+  const unoffer = db.prepare(
+    `UPDATE events SET
+       status = json_patch(status, json_object('state', 'withdrawn', 'withdrawn_at', ?2)),
+       updated_at = ?2
+     WHERE id = ?1 AND ${OURS}
+       AND json_extract(status, '$.state') IN ('queued', 'failed')
+     RETURNING id`,
+  );
+  const ids = (rows: unknown[]) =>
+    Promise.resolve((rows as { id: string }[]).map((r) => r.id).sort());
   return {
     sweep(now) {
       const at = new Date(now).getTime();
       const cutoffs = RETRY_BACKOFF_MS.map((ms) => new Date(at - ms).toISOString());
       return Promise.resolve(Number(requeue.run(now, ...cutoffs).changes));
     },
-    undelivered(now) {
-      const ids = (claim.all(now) as { id: string }[]).map((r) => r.id).sort();
-      return Promise.resolve(ids);
+    undelivered: (now) => ids(claim.all(now)),
+    stalled(now) {
+      const before = new Date(new Date(now).getTime() - STALLED_AFTER_MS).toISOString();
+      return ids(stall.all(now, before));
     },
+    corrected: (now) => ids(correct.all(now)),
+    withdraw: (id, now) => Promise.resolve(unoffer.all(id, now).length > 0),
   };
 }

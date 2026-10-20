@@ -3,8 +3,9 @@
  *
  * Four passes, each a read off the store and a write back into it, none of them needing
  * anything a process remembers: due timers become `alarm` events, unanswered asks lapse,
- * transiently failed sends are re-offered, and sends that failed for good are reported to
- * the session that sent them. main runs them on its ticker; a host whose clock is the
+ * transiently failed sends are re-offered, and a send's tale is reported to the session
+ * that sent it: failed for good, still not out, or out after all. main runs them on its
+ * ticker; a host whose clock is the
  * database's (pg_cron) runs the same function. Every pass is safe to run from more than
  * one clock at once — a timer is won by `claim`, a card lapses once because the settling
  * verdict closes it, the sweep and the report's claim are each one conditional UPDATE — so
@@ -13,7 +14,7 @@
 
 import type { Log } from "./store/log.ts";
 import type { AlarmEvent, Draft, PermissionResponseEvent } from "./types.ts";
-import { reportUndelivered } from "./late.ts";
+import { reportSends } from "./late.ts";
 
 /** The two per-agent settings the clock reads: the zone a cron advances in, and how long
  *  its asks stand. `undefined` for an agent the clock does not know (a paused one, a row
@@ -33,12 +34,21 @@ export interface Beat {
 }
 
 /** One beat: due wakes → alarms, unanswered asks → lapsed, failed sends → queued, sends
- *  that failed for good → reports. The passes are independent — each is its own scan and
+ *  failed for good, stalled or out after all → reports. The passes are independent — each is its own scan and
  *  its own writes — so one that fails is reported in the beat and the next still runs. */
 export async function tick(
   log: Pick<
     Log,
-    "due" | "claim" | "settle" | "gates" | "publish" | "sweep" | "undelivered" | "read"
+    | "due"
+    | "claim"
+    | "settle"
+    | "gates"
+    | "publish"
+    | "sweep"
+    | "undelivered"
+    | "stalled"
+    | "corrected"
+    | "read"
   >,
   settings: ClockSettings,
   now: number = Date.now(),
@@ -56,7 +66,7 @@ export async function tick(
   beat.lapsed = await pass("lapse", () => lapseGates(log, (id) => settings(id)?.gateHours, now));
   beat.swept = await pass("sweep", () => log.sweep(new Date(now).toISOString()));
   // after the sweep: a row it just re-offered is not failed, and one past the ceiling is
-  beat.reported = await pass("report", () => reportUndelivered(log, now));
+  beat.reported = await pass("report", () => reportSends(log, now));
   return beat;
 }
 

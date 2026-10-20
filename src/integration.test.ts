@@ -2459,6 +2459,69 @@ Deno.test("send action: the account may unsay its own words, and lift its own re
   }
 });
 
+Deno.test("send action delete: a message of ours not yet out is withdrawn, and never offered again", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.upsertConnections([{ service: "whatsapp", address: "org" }]);
+  try {
+    // one of ours the bridge never took: born an offer, no wire name yet
+    const waiting = await log.publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      agent: { id: "a1", session_id: "mind" },
+      payload: { turn_id: "t0" },
+      envelope: {
+        service: "whatsapp",
+        connection_address: "org",
+        conversation: { address: "wa:g1", kind: "group" },
+      },
+      parts: [{ type: "text", kind: "text", text: "llego en 5" }],
+    }) as Event;
+    assertEquals(waiting.envelope.status, "queued");
+    // what the turn answers
+    await log.publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "org",
+        external_id: "whatsapp:wmw.caro",
+        conversation: { address: "wa:g1", kind: "group" },
+        sender: { address: "549:caro", name: "Caro" },
+      },
+      parts: [{ type: "text", kind: "text", text: "¿venís?" }],
+    });
+    const re = shortId(waiting.id);
+    const take = { to: "wa:g1", re, action: "delete" };
+    const reply = { to: "wa:g1", re, text: "¿ya?" };
+    const { transport } = scripted([
+      ok([{ kind: "tool_use", name: "send", input: take }], "tool_use"),
+      ok([{ kind: "tool_use", name: "send", input: reply }], "tool_use"),
+      ok([{ kind: "tool_use", name: "send", input: take }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ]);
+    const ports = { log, docs: await docsAt(`${dir}/docs`), transport };
+    for (let i = 0; i < 6; i++) await xi(CONFIG, ports);
+
+    const row = (await log.read({ types: ["message"] })).find((e) => e.id === waiting.id)!;
+    assertEquals(row.envelope.status, "withdrawn");
+    assertEquals(typeof row.status?.withdrawn_at, "string");
+    // nothing went to the wire: no delete row, and the offer is gone from the queue
+    const ours = (await log.read({ types: ["message"] })).filter((e) => e.agent !== undefined);
+    assertEquals(ours.map((e) => e.id), [waiting.id]);
+    assertEquals(await log.read({ service: "whatsapp", types: ["message"], state: "queued" }), []);
+    const results = (await log.read({ types: ["tool_result"] })).map((e) =>
+      JSON.stringify(e.parts)
+    );
+    assertStringIncludes(results[0], '"withdrawn":true');
+    assertStringIncludes(results[1], "has not reached the wire yet");
+    assertStringIncludes(results[2], "is already taken back");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("the boot cutoff: an agent coming up after an absence owes only the recent hours", async () => {
   // A connector keeps ingesting while the agent is down, so the log fills with live rows
   // nobody answered. `since` — a FIXED instant, main sets it to start − `backlogHours` — is

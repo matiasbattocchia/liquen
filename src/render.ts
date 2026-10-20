@@ -1216,7 +1216,8 @@ export function renderHits(
  *  pruned object riding a `data` attribute as a TS literal; a message that IS one data part
  *  hoists the envelope attributes onto that element and spends no `<msg>` wrapper (`<reaction>`
  *  is this rule's oldest instance). Bare defaults: create and add wear no attribute.
- *  `status="failed"` = the dispatcher gave up on delivery (§5).
+ *  `status="failed"` = the dispatcher gave up on delivery (§5); `status="withdrawn"` = the
+ *  agent took it back before it went out.
  *
  *  **References** (§5): every `<msg>` wears an `id` — the handle a reply, a reaction or a
  *  delete points back at with `re`, and the one `send` takes to author them. It is derived
@@ -1290,6 +1291,9 @@ interface LineOpts {
   mark?: string;
 }
 
+/** The states of a message that went out. */
+const OUT = new Set(["dispatched", "delivered", "read"]);
+
 function msgLine(
   e: MessageEvent,
   session: SessionRef,
@@ -1343,8 +1347,11 @@ function msgLine(
   }
 
   // a failure says why, in the dispatcher's words: what the service refused is what to fix
+  // one taken back is withdrawn, whatever a post already in flight stamped after
   const why = e.status?.error?.replace(/^\w*Error: /, "");
-  const failed = e.envelope.status !== "failed"
+  const failed = e.status?.withdrawn_at && !OUT.has(e.envelope.status ?? "")
+    ? ` status="withdrawn"`
+    : e.envelope.status !== "failed"
     ? ""
     : ` status="failed"${why ? ` error="${escAttr(why)}"` : ""}`;
   // the hoisting rule again, for attachments: a message that IS one file part — a bare

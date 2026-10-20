@@ -5647,3 +5647,37 @@ Checked end to end with the real proxy and guard: mise's Python 3.12 runs with
 `~/.local/share/mise` mounted and fails without it (the boot names the folder); curl and
 Python's `urllib` reach `tls-v1-2.badssl.com:1012` through `HTTPS_PROXY`, and curl
 without it cannot connect; `127.0.0.1.nip.io:8443` is refused 403.
+
+### A send's tale, and a bridge that is not there (2026-10-20) — LANDED
+
+A send that failed transiently was told nothing until the ladder's last rung failed, about
+29 hours after the first failure (the rungs wait from each failure, so they add up), and
+the agent believed it sent all along. The realistic cause was the WhatsApp bridge down
+after a reboot, which nothing reported either: its rows went on saying `connected`.
+
+- The ladder's last rung is 12h: the ladder gives up about 17h20m after the first failure.
+- **Stalled:** a send still not out 15 minutes after it was made, queued or failed, is
+  told once, not final: why (the wire's error, or "nothing has taken it: its connector is
+  not running" for an offer nobody took in a minute), how much longer the ladder tries,
+  and how to take it back. 15 minutes falls while the row waits for its third retry.
+- **Corrected:** a send told stalled or undelivered, or withdrawn, that goes out after all
+  is told final, with how late.
+- **Withdraw:** `send` action delete on one of ours that has not gone out marks it
+  `withdrawn` instead of sending a delete the wire could not place. The sweeper never
+  offers it again, the claims skip it, and the window shows `status="withdrawn"`. The
+  dispatcher reads a row once more before posting, so one withdrawn while waiting its turn
+  does not go; one withdrawn while its post is already on the wire may still land, and is
+  then told as corrected.
+- **Bridge probe:** the WhatsApp connector asks `GET /sessions/{address}` every 30s; three
+  silent rounds mark the sessions `bridge_unreachable`, which the anchor's down block
+  shows. The first answer after writes the bridge's own state back (`connected`,
+  `disconnected`, or `unpaired` for a session it no longer holds). A `logged_out` row is
+  left to the bridge.
+
+Each tale is one conditional UPDATE on its own stamp (`stalled_at`, `reported_at`,
+`corrected_at`), in SQLite and Postgres alike; the store suite passes on both (the two
+Postgres failures in the suite are this machine's Spanish locale and a lease test, and
+fail on main too).
+
+Open: a send whose own connector process is down is told stalled, but the anchor says
+nothing of a connector that is not running, only of the accounts it reports on.

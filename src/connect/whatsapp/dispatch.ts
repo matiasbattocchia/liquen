@@ -323,7 +323,34 @@ export async function runDispatch(): Promise<() => Promise<void>> {
       console.error(`[dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
   });
   console.error(`[dispatch] watching ${dir}/log → ${base}/dispatch`);
+
+  // the bridge's absence, which it cannot say itself: written on its sessions' rows
+  const { bridgeStatus, createBridgeProbe, PROBE_MS } = await import("./probe.ts");
+  let quiet = false; // a bridge that stays away is said once, and once when it is back
+  const probe = createBridgeProbe({
+    status: bridgeStatus(base, token),
+    store: log,
+    onError: (err) => {
+      if (!quiet) console.error(`[dispatch] bridge not answering at ${base}:`, err);
+      quiet = true;
+    },
+    onAnswered: () => {
+      if (quiet) console.error(`[dispatch] bridge answering again at ${base}`);
+      quiet = false;
+    },
+  });
+  let probing = Promise.resolve();
+  const round = () => {
+    probing = probing.then(() => probe.tick()).then(
+      () => undefined,
+      (err) => console.error("[dispatch] bridge probe:", err),
+    );
+  };
+  round();
+  const probes = setInterval(round, PROBE_MS);
   return async () => {
+    clearInterval(probes);
+    await probing;
     await stop();
     await creds.close();
     await log.close();

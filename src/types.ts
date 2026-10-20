@@ -232,7 +232,14 @@ export type Service =
   | "microsoft";
 
 /** Delivery bookkeeping — a mutable field, not events (§3). Render marks `failed` only. */
-export type DeliveryStatus = "queued" | "dispatched" | "failed" | "delivered" | "read" | "deleted";
+export type DeliveryStatus =
+  | "queued"
+  | "dispatched"
+  | "failed"
+  | "delivered"
+  | "read"
+  | "deleted"
+  | "withdrawn";
 
 /** The delivery LIFECYCLE (§3): one mutable, `json_patch`-merged column beside the event —
  *  stamps and receipts move it, never new events. Every state has the timestamp of its
@@ -255,6 +262,13 @@ export interface Lifecycle {
   error_code?: number;
   /** When the session that sent it was told it failed for good (late.ts). */
   reported_at?: string;
+  /** When the session was told it is still not out, and still tried (late.ts). */
+  stalled_at?: string;
+  /** When the session was told it went out after all (late.ts). */
+  corrected_at?: string;
+  /** When the agent took it back before it went out (`send` action delete): never offered
+   *  again. */
+  withdrawn_at?: string;
 }
 
 // Naming rule (§3): `address` = a WIRE address (what the platform calls the thing);

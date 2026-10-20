@@ -15,7 +15,8 @@
  * wire, made so again by the sweeper. The dispatcher opens by reading its service's
  * `queued` rows — every offer made while no process was there to take it — and then rides
  * the stream for the rest; a row can arrive by both roads, so an offer (the row plus its
- * `queued_at`) is posted once per process however often it is seen.
+ * `queued_at`) is posted once per process however often it is seen. Its turn come, the row
+ * is read once more: one the agent took back meanwhile (`withdrawn`) is not posted.
  *
  * What differs per wire is injected: `select` maps a row to the service's send shape (or
  * null — nothing to send), `post` puts it on the wire and answers with what to stamp.
@@ -81,6 +82,10 @@ export function createDispatcher<W>(deps: DispatcherDeps<W>): () => Promise<void
     const work = deps.select(event);
     if (work === null) return;
     chain = chain.then(async () => {
+      // the row as it stands when its turn comes: one taken back (withdrawn) while it
+      // waited behind others is not posted
+      const [now] = await deps.read({ beforeId: `${event.id}0`, limit: 1 }).catch(() => []);
+      if (now?.id === event.id && now.envelope.status !== "queued") return;
       try {
         const posted = await deps.post(work, event);
         await deps.setDelivery?.(event.id, {
