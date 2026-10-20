@@ -437,6 +437,24 @@ Deno.test("slack wire: a token Slack ended is signed out, on every leg; another 
   assertEquals(other.code, 400);
 });
 
+Deno.test("slack wire: a reaction already there, or already gone, is the state wanted", async () => {
+  let error = "already_reacted";
+  const wire = slackWire({
+    tokenFor: () => Promise.resolve("xoxb-t"),
+    fetch: (() => Promise.resolve(Response.json({ ok: false, error }))) as typeof fetch,
+  });
+  const at = { connection: "T1", channel: "C1" };
+  await wire.react(at, { ts: "1.2", glyph: "👍", remove: false });
+  error = "no_reaction";
+  await wire.react(at, { ts: "1.2", glyph: "👍", remove: true });
+  error = "message_not_found";
+  await assertRejects(
+    () => wire.react(at, { ts: "1.2", glyph: "👍", remove: false }),
+    DispatchError,
+    "reactions.add: message_not_found",
+  );
+});
+
 Deno.test("slack wire: a hung API call fails inside the fetch's bound — the drain never stalls", async () => {
   const wire = slackWire({
     tokenFor: () => Promise.resolve("xoxb-t"),

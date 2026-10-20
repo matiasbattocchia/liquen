@@ -303,10 +303,12 @@ export function slackWire(
   const { tokenFor } = deps;
 
   // one form-encoded Web-API call (the upload endpoints don't take JSON)
+  /** `settled`: the refusals that name the state already wanted, answered as success. */
   const api = async <T extends { ok?: boolean; error?: string }>(
     method: string,
     token: string,
     params: Record<string, string>,
+    settled: readonly string[] = [],
   ): Promise<T> => {
     const res = await fetchApi(`https://slack.com/api/${method}`, {
       method: "POST",
@@ -318,7 +320,7 @@ export function slackWire(
       throw new DispatchError(`${method}: HTTP ${res.status}`, res.status);
     }
     const out = await res.json() as T;
-    if (!out.ok) throw refusal(method, out.error);
+    if (!out.ok && !settled.includes(out.error ?? "")) throw refusal(method, out.error);
     return out;
   };
 
@@ -390,26 +392,17 @@ export function slackWire(
     const name = slackEmojiName(glyph);
     if (!name) throw new DispatchError(`Slack has no name for ${glyph}`, 400);
     const method = remove ? "reactions.remove" : "reactions.add";
-    const out = await api<{ ok: boolean; error?: string }>(method, token, {
-      channel,
-      timestamp: ts,
-      name,
-    });
     // already there / already gone is the state we wanted, not a failure
-    if (!out.ok && out.error !== "already_reacted" && out.error !== "no_reaction") {
-      throw refusal(method, out.error);
-    }
+    await api(method, token, { channel, timestamp: ts, name }, [
+      "already_reacted",
+      "no_reaction",
+    ]);
   };
 
   const amend: SlackAmend = async ({ connection, channel }, { ts, action, text }, author) => {
     const token = await tokenFor(connection, author);
     const method = action === "edit" ? "chat.update" : "chat.delete";
-    const out = await api<{ ok: boolean; error?: string }>(method, token, {
-      channel,
-      ts,
-      ...(action === "edit" ? { text } : {}),
-    });
-    if (!out.ok) throw refusal(method, out.error);
+    await api(method, token, { channel, ts, ...(action === "edit" ? { text } : {}) });
   };
 
   return { post, react, amend };
