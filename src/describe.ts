@@ -126,11 +126,21 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
   if (p.last) {
     const things = (p.last.carries ?? []).map((c) => `[${labels.carried[carriedWord(c)]}]`);
     const line = [...things, p.last.text].filter((s) => s !== "").join(" ");
-    rows.push(`**${labels.last}** (${p.last.at}):\n${line}`);
+    // the line is named for what the send does to it: an edit or a delete takes it over
+    const label = p.action === "edit"
+      ? labels.toEdit
+      : p.action === "delete"
+      ? labels.toDelete
+      : p.re
+      ? labels.message
+      : labels.last;
+    rows.push(`**${label}** (${p.last.at}):\n${line}`);
   }
   if (p.subject) rows.push(`**${labels.subject}**: ${p.subject}`);
-  if (p.react) rows.push(`**${labels.react}**: ${p.react}`);
-  if (p.text) rows.push(`**${labels.reply}**:\n${p.text}`);
+  if (p.react) {
+    rows.push(`**${p.action === "remove" ? labels.unreact : labels.react}**: ${p.react}`);
+  }
+  if (p.text) rows.push(`**${p.action === "edit" ? labels.newText : labels.reply}**:\n${p.text}`);
   const extras = [
     ...(p.files > 0 ? [`**${labels.files}**: ${p.files}`] : []),
     ...(p.location ? [`**${labels.location}**: ${p.location}`] : []),
@@ -142,9 +152,14 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
 export interface SendCardLabels {
   conversation: string;
   last: string;
+  message: string;
+  toEdit: string;
+  toDelete: string;
   subject: string;
   react: string;
+  unreact: string;
   reply: string;
+  newText: string;
   files: string;
   location: string;
   carried: Record<CarriedWord, string>;

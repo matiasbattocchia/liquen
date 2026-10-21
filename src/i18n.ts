@@ -27,9 +27,14 @@ const TONGUES = {
     card: {
       conversation: "Conversation",
       last: "Last message",
+      message: "Message",
+      toEdit: "Message to edit",
+      toDelete: "Message to delete",
       subject: "Subject",
       react: "Reaction",
+      unreact: "Remove reaction",
       reply: "Reply",
+      newText: "New text",
       files: "Attachments",
       location: "Location",
       // what the answered line carried beside its words, `[image]` before the caption
@@ -63,9 +68,14 @@ const TONGUES = {
     card: {
       conversation: "Conversación",
       last: "Último mensaje",
+      message: "Mensaje",
+      toEdit: "Mensaje a editar",
+      toDelete: "Mensaje a borrar",
       subject: "Asunto",
       react: "Reacción",
+      unreact: "Quitar reacción",
       reply: "Respuesta",
+      newText: "Texto nuevo",
       files: "Adjuntos",
       location: "Ubicación",
       carried: {

@@ -83,6 +83,8 @@ import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./sto
 import type { BinDir, Carried, FilePart, LocationPart, SendPreview } from "./types.ts";
 import { directAddress, MIND, parseDirect, parseSession, sessionAddress } from "./session.ts";
 import {
+  AUTHOR_KEYS,
+  authorKeyOf,
   bookEl,
   closingBoundary,
   cutStands,
@@ -1610,7 +1612,8 @@ async function act(
     // refusal. Cheap to raise, and the model reads the hint and says the thing instead.
     const nowhere = await selfSend(name, input, config, ports) ??
       await unheld(input, self, ports) ??
-      await undeliverable(name, input, self, ports);
+      await undeliverable(name, input, self, ports) ??
+      await unsaveable(name, input, self, ports);
     if (nowhere) {
       out.push(await resultOf(use, nowhere, { is_error: true }));
       continue;
@@ -1729,6 +1732,7 @@ async function act(
 const PENDING_APPROVAL = {
   status: "pending_approval",
   note: "your principal was asked and has not answered yet — the call has NOT run. " +
+    "They are reading its card, so it needs no retelling. " +
     "Do NOT issue it again; you will be told the outcome when they decide. If it stops " +
     "being worth asking, withdraw it with cancel(id) — your pending list names the id.",
 };
@@ -2344,8 +2348,9 @@ async function booked(
 
 /** An account as the model names it — the string `<conn>` showed: its name (`extra.name`,
  *  matched case-insensitively on a substring, as every name here is) or its address (a
- *  phone as a phone). Only the agent's own accounts answer, and ambiguity is refused,
- *  never picked: the account is whose name a send goes out in. */
+ *  phone as a phone). A service names the one account the agent holds on it. Only the
+ *  agent's own accounts answer, and ambiguity is refused, never picked: the account is
+ *  whose name a send goes out in. */
 async function accountNamed(
   handle: string,
   self: { id: string },
@@ -2362,6 +2367,7 @@ async function accountNamed(
   if (hit.length === 1) return hit[0];
   if (hit.length === 0) {
     const onService = mine.filter((c) => c.service.toLowerCase() === wanted);
+    if (onService.length === 1) return onService[0];
     const service = onService.length
       ? ` — "${handle}" is a service; connection names an account on it: ` +
         onService.map((c) => `"${c.address}"`).join(" or ")
@@ -2396,6 +2402,44 @@ async function unheld(
   }
 }
 
+/** Who a `contact` call writes for (`personOn`). Nobody wearing the name leaves a bare
+ *  address — a number the model has and nobody has heard from yet is exactly what saving
+ *  is for. */
+async function personToSave(
+  who: string,
+  self: { id: string },
+  ports: XiPorts,
+): Promise<{ person?: Awaited<ReturnType<typeof personOn>>; address: string }> {
+  const person = await personOn(who, self, ports);
+  if (person) return { person, address: person.address };
+  if (!/^[+\d][\d\s().-]*$/.test(who)) {
+    throw new Error(
+      `nobody named "${who}" has spoken here and no address book of yours has them — ` +
+        "give their address",
+    );
+  }
+  return { address: who.replace(/\D/g, "") };
+}
+
+/** A `contact` whose `who` is nobody, or several people, judged before the gate with
+ *  `personToSave`'s sentence: the card would name nobody, and the model says which. */
+async function unsaveable(
+  name: string,
+  input: Json,
+  self: { id: string },
+  ports: XiPorts,
+): Promise<string | undefined> {
+  if (name !== "contact") return undefined;
+  const who = (input as { who?: unknown } | null)?.who;
+  if (typeof who !== "string" || who.trim() === "") return undefined;
+  try {
+    await personToSave(who.trim(), self, ports);
+    return undefined;
+  } catch (err) {
+    return (err as Error).message;
+  }
+}
+
 /** A `send` with nowhere to land, judged before the gate with `unreachable`'s sentence — the
  *  same rule the send runs again when it executes. A `to` or a `connection` that does not
  *  resolve is the call's own error to raise, so here it is simply no verdict. */
@@ -2418,7 +2462,8 @@ async function undeliverable(
     const book = aimed.book === undefined
       ? undefined
       : (await accounts(self, ports)).find((c) => c.address === aimed.book);
-    return await unreachable(aimed.address, via ?? book, self, ports);
+    const ride = via ?? book ?? await firstRideOf(aimed.address, self, ports);
+    return await unreachable(aimed.address, ride, self, ports);
   } catch {
     return undefined;
   }
@@ -2454,12 +2499,66 @@ async function recordOf(
   return rows.at(-1);
 }
 
+/** What an address is by its look alone: a phone number, a mailbox, or neither. */
+type Shape = "phone" | "mail";
+
+function shapeOf(address: string): Shape | undefined {
+  if (/^[+\d][\d\s().-]*$/.test(address)) return "phone";
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) return "mail";
+  return undefined;
+}
+
+const SHAPE_WORD: Record<Shape, string> = { phone: "phone number", mail: "mail address" };
+
+/** The shapes each shipped wire takes on a first contact. A service missing here, an
+ *  org's own connector, may take any. */
+const FIRST_CONTACT: Record<string, Shape[]> = {
+  whatsapp: ["phone"],
+  google: ["mail"],
+  microsoft: ["mail"],
+  email: ["mail"],
+  slack: [],
+  github: [],
+  instagram: [],
+  teams: [],
+  local: [],
+};
+
+/** The accounts a first send to `to` could ride: those whose wire takes an address of its
+ *  shape. An address of no known shape fits every account. */
+async function reachersOf(
+  to: string,
+  self: { id: string },
+  ports: XiPorts,
+): Promise<ConnectionRow[]> {
+  const mine = await accounts(self, ports);
+  const shape = shapeOf(to);
+  if (!shape) return mine;
+  return mine.filter((c) => FIRST_CONTACT[c.service]?.includes(shape) ?? true);
+}
+
+/** The account a stranger is written to through when no call names one: the only account
+ *  whose wire takes an address of theirs, a phone or a mailbox. An address the log has
+ *  seen rides its record. */
+async function firstRideOf(
+  to: string,
+  self: { id: string },
+  ports: XiPorts,
+): Promise<ConnectionRow | undefined> {
+  if (!shapeOf(to)) return undefined;
+  const seen = await ports.log.read({ conversation: to, limit: 1 });
+  if (seen.length > 0) return undefined;
+  const fit = await reachersOf(to, self, ports);
+  return fit.length === 1 ? fit[0] : undefined;
+}
+
 /** Where a send to a wire address cannot go, in the sentence that says why:
  *  - a BROADCAST the agent receives (a calendar, a list): nobody answers there. A primary
  *    calendar is addressed at its account's own address, and there that string is the
  *    account — a mailbox — so it answers to the rules below instead;
- *  - a STRANGER on no account: first contact is the one send only the model can place, and
- *    an address's shape does not say which wire (`x@y` is Gmail or Outlook);
+ *  - a STRANGER on no account, with no account named and none settled by the address's
+ *    shape (`firstRideOf`): a mailbox may be Gmail or Outlook, so the model says which,
+ *    and is offered only the accounts whose wire takes an address like it;
  *  - the account ITSELF: a send from an account to its own address reaches nobody else. */
 async function unreachable(
   to: string,
@@ -2475,7 +2574,12 @@ async function unreachable(
   const prior = await recordOf(to, via, ports);
   const account = via?.address ?? prior?.envelope.connection_address;
   if (account === undefined) {
-    const yours = (await accounts(self, ports)).map((c) => c.address).join(", ");
+    const shape = shapeOf(to);
+    const fit = await reachersOf(to, self, ports);
+    if (shape && fit.length === 0) {
+      return `${to} is new here, and no account of yours writes to a ${SHAPE_WORD[shape]}`;
+    }
+    const yours = fit.map((c) => c.address).join(", ");
     return `${to} is new here — say \`connection\`: which of your accounts writes to them` +
       (yours ? ` (yours: ${yours})` : "");
   }
@@ -2521,6 +2625,7 @@ async function targetOf(
   const raw = args.to;
   if (typeof raw !== "string" || raw === "") return undefined;
   let to = raw;
+  let local = false;
   // a name nobody answers to is the call's own error to raise; here it is simply no scope
   try {
     const subject = typeof (input as { subject?: unknown })?.subject === "string"
@@ -2531,13 +2636,15 @@ async function targetOf(
     // known here, the address is not yet
     if (aim.wire) return { connection: aim.wire.connection };
     to = aim.address;
+    local = aim.local !== undefined;
   } catch {
     return undefined;
   }
   // an address on two accounts with none named is the call's own error to raise; here it
   // is simply no connection
   const prior = await recordOf(to, account, ports).catch(() => undefined);
-  const connection = named ?? prior?.envelope.connection_address;
+  const connection = named ?? prior?.envelope.connection_address ??
+    (local ? undefined : (await firstRideOf(to, self, ports))?.address);
   return connection !== undefined ? { connection, conversation: to } : { conversation: to };
 }
 
@@ -2804,6 +2911,7 @@ async function execute(
     if (!via && aimed.book !== undefined) {
       via = (await accounts(self, ports)).find((c) => c.address === aimed.book);
     }
+    if (!via && !local && !aimed.wire) via = await firstRideOf(to, self, ports);
     // a wire address the send cannot reach — a broadcast, a stranger on no account, the
     // account itself — is refused here as it was before the gate
     if (!local && !aimed.wire) {
@@ -2814,8 +2922,8 @@ async function execute(
     // events ARE its record: complete service · connection · kind from the latest visible
     // one, so a reply carries the envelope its conversation always had — and the SCOPED
     // read bounds anchoring by visibility. A named account overrides the connection and
-    // settles the service where there is no record: first contact on a wire is the one
-    // send only the model can place. A local room rides the local channel.
+    // settles the service where there is no record, as does the one account whose wire
+    // takes a stranger's address. A local room rides the local channel.
     const prior = await recordOf(to, via, ports);
     // a local room's kind and name are its own (the row's; a direct room's is its shape),
     // stamped on every row so the window names the room by its newest line
@@ -2973,17 +3081,7 @@ async function execute(
     if (verb === "forget" && name !== undefined) {
       throw new Error("`forget` takes no `name` — it removes the entry");
     }
-    // the person (`personOn`). Nobody wearing the name leaves a bare address — a number
-    // the model has and nobody has heard from yet is exactly what saving is for.
-    const person = await personOn(who, self, ports);
-    let address: string;
-    if (person) address = person.address;
-    else if (!/^[+\d][\d\s().-]*$/.test(who)) {
-      throw new Error(
-        `nobody named "${who}" has spoken here and no address book of yours has them — ` +
-          "give their address",
-      );
-    } else address = who.replace(/\D/g, "");
+    const { person, address } = await personToSave(who, self, ports);
     const spoken = person?.spoken;
     const entry = person?.entry; // the book that has them, when a book answered
     const prior = spoken ?? (await ports.log.read({ conversation: address, limit: 1 }))[0] ??
@@ -3258,6 +3356,10 @@ async function sendPreviewOf(
       ...(who?.kind ? { kind: who.kind } : {}),
     },
     ...(answered && heard ? { last: { ...heard, at: hhmm(answered.ts, zone) } } : {}),
+    ...(a.re !== undefined ? { re: true as const } : {}),
+    ...(a.action === "edit" || a.action === "delete" || a.action === "remove"
+      ? { action: a.action }
+      : {}),
     ...(typeof a.subject === "string" && a.subject ? { subject: a.subject } : {}),
     ...(typeof a.react === "string" && a.react ? { react: a.react } : {}),
     ...(typeof a.text === "string" && a.text ? { text: a.text } : {}),
@@ -3394,7 +3496,11 @@ async function search(
   }
   // the filters narrow by ADDRESS; a name is only ever a way to find one (§6). The account
   // is the agent's own, named as `send` names it, and an ambiguous name is refused there
-  const asked = args.from === undefined ? undefined : String(args.from);
+  // an author key the window prints (`self`, `principal`, …) names who among us wrote a
+  // line, not a person, so it asks no book and narrows by the line's author instead
+  const from = args.from === undefined ? undefined : String(args.from);
+  const role = AUTHOR_KEYS.find((k) => k === from?.trim().toLowerCase());
+  const asked = role ? undefined : from;
   const [conversations, spoke, contacts, account] = await Promise.all([
     rooms(log, args.in === undefined ? undefined : String(args.in)),
     people(log, asked),
@@ -3426,6 +3532,9 @@ async function search(
     types: ["message"],
     limit: limit + 1,
     copies: false, // a mirror copy is not a hit — its original is
+    ...(role
+      ? { filter: (e: Event) => authorKeyOf(e as MessageEvent, view.session, view.roster) === role }
+      : {}),
   }) as MessageEvent[];
   const more = rows.length > limit;
   let page = more ? rows.slice(1) : rows;

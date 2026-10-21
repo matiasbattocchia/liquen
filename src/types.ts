@@ -496,9 +496,15 @@ export interface SendPreview {
    *  word the line has — caption, pin label, a voice note's transcript — and may be empty;
    *  `carries` names what came beside the words, so a photo alone still reads as a line. */
   last?: { text: string; at: string; carries?: Carried[] };
+  /** The send names its line (`send(re:)`), so `last` quotes that line, whatever came
+   *  after it. */
+  re?: true;
+  /** What the send does to that line, when it does more than answer it or add a glyph:
+   *  rewrite it, take it back, or take back the glyph `react` names. */
+  action?: "edit" | "delete" | "remove";
   /** The thread the send opens (`send(subject:)`) — a mail's Subject line. */
   subject?: string;
-  /** The glyph a `send(react:)` puts on the line `last` quotes. */
+  /** The glyph a `send(react:)` puts on the line `last` quotes, or takes off it. */
   react?: string;
   text?: string;
   files: number;

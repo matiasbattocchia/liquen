@@ -16,7 +16,10 @@ never heard from is findable too; a book that could not be asked is said in a li
 
 - in: one conversation: its address, or a name (a group's, or the person a direct chat is
   with; any part of it, case doesn't matter)
-- from: one sender: their address, or any part of the name they go by
+- from: one sender: their address, or any part of the name they go by. Or the key a line
+  wears in place of a name, to find lines by who among you wrote them: `principal` for what
+  your principal typed on any device, `self` for your own words, `org` for the account
+  speaking with nobody behind it
 - connection: one of your accounts — a <conn> `name` or `address`: only what rode it
 - before: only messages sent before this moment: ISO-8601, e.g. `2026-09-01` or
   `2026-09-01T17:00` (your org's clock unless it carries an offset), or a stamp as your

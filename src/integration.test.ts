@@ -499,17 +499,18 @@ Deno.test("send `connection`: a named account places first contact on its wire",
   await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+    { service: "whatsapp", address: "5491100000001", agentId: "a1", extra: { name: "Caja" } },
     { service: "slack", address: "T1:U9", credentialKey: "slack:T1:org", extra: { name: "Acme" } },
   ]);
   const gated: { name: string; target?: { connection?: string; conversation?: string } }[] = [];
   const { transport } = scripted([
-    // a number nobody here has written to: the account is the only thing that can place it
+    // a number nobody here has written to, on one of two accounts that take numbers
     ok([{
       kind: "tool_use",
       name: "send",
       input: { to: "5491199999999", connection: "sole", text: "hola" },
     }], "tool_use"),
-    // another number, unplaced: refused before the gate — nothing here says which wire
+    // another number, unplaced: refused before the gate — two accounts could carry it
     ok(
       [{ kind: "tool_use", name: "send", input: { to: "5491188888888", text: "hola" } }],
       "tool_use",
@@ -545,11 +546,68 @@ Deno.test("send `connection`: a named account places first contact on its wire",
     const results = await log.read({ types: ["tool_result"] });
     const output = (i: number) =>
       String((results[i].parts[0] as { data: { output: string } }).data.output);
-    assertStringIncludes(output(1), "5491188888888 is new here — say `connection`");
+    // only the accounts whose wire takes a number are offered
+    assertStringIncludes(
+      output(1),
+      "5491188888888 is new here — say `connection`: which of your accounts writes to them " +
+        "(yours: 5491100000000, 5491100000001)",
+    );
     assertEquals(gated.length, 1); // neither refusal was ever gated
     const refused = output(2);
     assertStringIncludes(refused, 'no account of yours is called "Zeta"');
     assertStringIncludes(refused, "Sole (5491100000000)");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("send: a stranger's number rides the one account whose wire takes numbers", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+    { service: "google", address: "sole@gmail.com", agentId: "a1" },
+    { service: "microsoft", address: "sole@acme.onmicrosoft.com", agentId: "a1" },
+  ]);
+  const gated: { name: string; target?: { connection?: string; conversation?: string } }[] = [];
+  const { transport } = scripted([
+    ok(
+      [{ kind: "tool_use", name: "send", input: { to: "5491199999999", text: "hola" } }],
+      "tool_use",
+    ),
+    // a mailbox may be Gmail or Outlook: the model says which, offered only those two
+    ok(
+      [{ kind: "tool_use", name: "send", input: { to: "ana@example.com", text: "hola" } }],
+      "tool_use",
+    ),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const config: AgentConfig = {
+    ...CONFIG,
+    gate: (name, _input, target) => {
+      gated.push({ name, target });
+      return "allow";
+    },
+  };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("escribile a este número"));
+    for (let i = 0; i < 8; i++) await xi(config, ports);
+    const placed = (await log.read({ types: ["message"] })).find((e) =>
+      e.agent && e.payload?.turn_id && e.envelope.conversation.address === "5491199999999"
+    );
+    assertEquals(placed?.envelope.service, "whatsapp");
+    assertEquals(placed?.envelope.connection_address, "5491100000000");
+    // the gate saw the account the send rides
+    assertEquals(gated[0].target, { connection: "5491100000000", conversation: "5491199999999" });
+    const results = await log.read({ types: ["tool_result"] });
+    assertStringIncludes(
+      String((results[1].parts[0] as { data: { output: string } }).data.output),
+      "(yours: sole@gmail.com, sole@acme.onmicrosoft.com)",
+    );
+    assertEquals(gated.length, 1);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -609,6 +667,59 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
       text: "hola Carlos!\n\nlunes o miércoles",
       files: 2,
       location: "Consultorio",
+    });
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a gated send that names its line carries that line and what it does to it", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const line = (text: string, ts: string, id: string): Draft<MessageEvent> => ({
+    ts,
+    type: "message",
+    envelope: {
+      service: "whatsapp",
+      connection_address: "5491100000000",
+      external_id: id,
+      conversation: { address: "5492614851664", kind: "direct", name: "Ana" },
+      sender: { address: "5492614851664", name: "Ana" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  const unreact: Record<string, Json> = { to: "5492614851664", react: "👍", action: "remove" };
+  const { transport } = scripted([
+    ok([{ kind: "tool_use", name: "send", input: unreact }], "tool_use"),
+    ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
+  ]);
+  const config: AgentConfig = {
+    ...CONFIG,
+    gate: (name) => name === "send" ? "ask" : "allow",
+    timezone: "America/Argentina/Mendoza",
+  };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  try {
+    const thanks = await log.publish(line("Muchas gracias", "2026-10-21T12:00:00Z", "wa:t1"));
+    // a later line: the card quotes the one named, not this one
+    await log.publish(line("Cuando quiera me escribe", "2026-10-21T12:01:00Z", "wa:t2"));
+    unreact.re = shortId((thanks as Event).id);
+    await log.publish(principalMsg("sacale el like"));
+    for (let i = 0; i < 6; i++) await xi(config, ports);
+    const [req] = await log.read({ types: ["permission_request"] });
+    assert(req.type === "permission_request");
+    assertEquals(req.parts[0].data.send, {
+      conversation: { name: "Ana", address: "5492614851664", kind: "direct" },
+      last: { text: "Muchas gracias", at: "21 Oct 9:00" },
+      re: true,
+      action: "remove",
+      react: "👍",
+      files: 0,
     });
   } finally {
     await log.close();
@@ -1303,6 +1414,44 @@ Deno.test("contact: a person is in two places — a name saved on the book is re
   }
 });
 
+Deno.test("contact: a `who` that names several people is refused before it is ever gated", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const contact = {
+    whatsapp: {
+      write: () => Promise.resolve({}),
+      lookup: () =>
+        Promise.resolve([
+          { name: "Ariana Antón", address: "5492615935116" },
+          { name: "Ariel Chang", address: "5492944229349" },
+        ]),
+    },
+  };
+  const { transport } = scripted([
+    ok([{ kind: "tool_use", name: "contact", input: { who: "Ari", name: "Ari" } }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const config: AgentConfig = { ...CONFIG, gate: (name) => name === "contact" ? "ask" : "allow" };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, contact };
+  try {
+    await log.publish(principalMsg("recordale a Ari"));
+    for (let i = 0; i < 6; i++) await xi(config, ports);
+    assertEquals((await log.read({ types: ["permission_request"] })).length, 0);
+    const [result] = (await log.read({ types: ["tool_result"] })).map((e) =>
+      JSON.stringify(e.parts)
+    );
+    assertStringIncludes(result, '\\"Ari\\" names 2 people');
+    assertStringIncludes(result, "Ariana Antón (5492615935116)");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 /** A row on a wire, as an ingest would store it. */
 const wireRow = (
   service: "slack" | "whatsapp",
@@ -1626,7 +1775,8 @@ Deno.test("send on an account the agent does not hold is refused before it is ev
       assertStringIncludes(
         JSON.stringify(answer.parts[0].data.output),
         'no account of yours is called \\"microsoft\\" — \\"microsoft\\" is a service; ' +
-          'connection names an account on it: \\"matias@acme.onmicrosoft.com\\"',
+          'connection names an account on it: \\"matias@acme.onmicrosoft.com\\" or ' +
+          '\\"ops@acme.onmicrosoft.com\\"',
       );
       assertEquals((await read("permission_request")).length, 0);
     },
@@ -1634,7 +1784,41 @@ Deno.test("send on an account the agent does not hold is refused before it is ev
     [],
     {},
     [{ agentId: "a1", mind: "mind@a1" }],
-    [{ service: "microsoft", address: "matias@acme.onmicrosoft.com", agentId: "a1" }],
+    [
+      { service: "microsoft", address: "matias@acme.onmicrosoft.com", agentId: "a1" },
+      { service: "microsoft", address: "ops@acme.onmicrosoft.com", agentId: "a1" },
+    ],
+  );
+});
+
+Deno.test("a service names the one account the agent holds on it", async () => {
+  // gating ON: the call reaches the principal as a call on that account
+  await scenario(
+    [
+      ok(
+        [{
+          kind: "tool_use",
+          name: "send",
+          input: { to: "ana@example.com", connection: "microsoft", text: "hola" },
+        }],
+        "tool_use",
+      ),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("escribile a ana"));
+      await waitFor(async () => (await read("permission_request")).length === 1);
+      const [answer] = await read("tool_result") as ToolResultEvent[];
+      assertEquals(answer.parts[0].data.is_error, undefined);
+    },
+    { gate: () => "ask" },
+    [],
+    {},
+    [{ agentId: "a1", mind: "mind@a1" }],
+    [
+      { service: "microsoft", address: "matias@acme.onmicrosoft.com", agentId: "a1" },
+      { service: "whatsapp", address: "5491100000000", agentId: "a1" },
+    ],
   );
 });
 
@@ -2612,6 +2796,65 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
       old("dale, mañana", { address: "15613518605", name: "Gianvito" }),
     ],
   );
+});
+
+Deno.test("search `from` takes the key a line wears: who among us wrote it, never a name", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([
+    { agentId: "a1", mind: "mind@a1", principals: ["matias"] },
+    { agentId: "matias", mind: "mind@matias", name: "Matías", runs: false },
+  ]);
+  await log.upsertConnections([{ service: "whatsapp", address: "549", agentId: "a1" }]);
+  const row = (
+    text: string,
+    by: Partial<Pick<Draft<MessageEvent>, "agent" | "payload">>,
+    sender = "549",
+  ): Draft<MessageEvent> => ({
+    ts: new Date(Date.now() - 3_600_000).toISOString(),
+    type: "message",
+    ...by,
+    envelope: {
+      service: "whatsapp",
+      connection_address: "549",
+      external_id: `wa:${text}`,
+      conversation: { address: "5492616607927", kind: "direct", name: "Gato" },
+      sender: { address: sender },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  const { transport } = scripted([
+    ok(
+      [{ kind: "tool_use", name: "search", input: { from: "principal", text: "Torre" } }],
+      "tool_use",
+    ),
+    ok([{ kind: "tool_use", name: "search", input: { from: "Self", text: "Torre" } }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  try {
+    // typed on his phone, sent by the agent, and the peer's own line
+    await log.publish(row("Torre norte 8D, tocá el 8", { agent: { id: "matias" } }));
+    await log.publish(
+      row("Torre norte, te espero", {
+        agent: { id: "a1", session_id: "mind" },
+        payload: { turn_id: "t0" },
+      }),
+    );
+    await log.publish(row("Torre norte queda lejos", {}, "5492616607927"));
+    await log.publish(principalMsg("buscá la dirección que le pasé"));
+    for (let i = 0; i < 6; i++) await xi(CONFIG, ports);
+    const [typed, said] = (await log.read({ types: ["tool_result"] })).map((e) =>
+      String((e as ToolResultEvent).parts[0].data.output)
+    );
+    assertStringIncludes(typed, "tocá el 8");
+    assertEquals(typed.includes("te espero") || typed.includes("lejos"), false);
+    assertStringIncludes(said, "te espero");
+    assertEquals(said.includes("tocá el 8") || said.includes("lejos"), false);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("search `connection`: one of the agent's accounts, named as send names it, narrows to what rode it", async () => {

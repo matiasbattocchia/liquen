@@ -1254,24 +1254,38 @@ export function renderHits(
  *  closed and every line wears exactly one, so an unclassified sender lands on `external`:
  *  unknown reads as untrusted, never as one of us. */
 function authorOf(e: MessageEvent, session: SessionRef, roster: Roster): string {
+  const key = authorKeyOf(e, session, roster);
   const id = e.agent?.id;
   if (id === undefined) {
-    if (ownSide(e)) return " org";
+    if (key === "org") return " org";
     const sender = e.envelope.sender!; // not own side ⇒ the wire named someone
-    const key = sender.saved && sender.name ? "contact" : "external";
     const name = sender.name ? ` ${key}="${escAttr(sender.name)}"` : " external";
     const address = sender.address ? ` address="${escAttr(sender.address)}"` : "";
     return `${name}${address}`;
   }
-  const voice = e.payload?.turn_id !== undefined || isSelf(e, session);
-  if (voice && id === session.agentId) return " self";
-  const key = !voice && roster.principals.includes(id) ? "principal" : "agent";
+  if (key === "self") return " self";
   let value = roster.names[id] ?? id;
   if (e.envelope.service === "local") {
     const s = e.agent?.session_id ?? routedSession(e.envelope);
     value = s === MIND ? id : `${s}@${id}`;
   }
   return ` ${key}="${escAttr(value)}"`;
+}
+
+export const AUTHOR_KEYS = ["self", "principal", "agent", "org", "contact", "external"] as const;
+export type AuthorKey = typeof AUTHOR_KEYS[number];
+
+/** Who among us wrote a line, as the key of its author attribute (`authorOf`). */
+export function authorKeyOf(e: MessageEvent, session: SessionRef, roster: Roster): AuthorKey {
+  const id = e.agent?.id;
+  if (id === undefined) {
+    if (ownSide(e)) return "org";
+    const sender = e.envelope.sender!; // not own side ⇒ the wire named someone
+    return sender.saved && sender.name ? "contact" : "external";
+  }
+  const voice = e.payload?.turn_id !== undefined || isSelf(e, session);
+  if (voice && id === session.agentId) return "self";
+  return !voice && roster.principals.includes(id) ? "principal" : "agent";
 }
 
 /** The account itself is the sender: the wire named its own address as the author (the

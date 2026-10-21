@@ -10,8 +10,9 @@ principal because they are present in this same conversation.
   mail addresses) to open a room with them: unnamed, a direct room of up to 8 besides you;
   with `subject`, a group (`ops`) or a channel (`#ops`). A room's address in any order lands
   in the same room
-- connection: which of your accounts it rides — a <conn> `name` or `address`, never a service
-  name like `whatsapp`. Needed only when `to` is an address nobody here has written to yet
+- connection: which of your accounts it rides — a <conn> `name` or `address`, or a service
+  like `whatsapp` where you hold one account. Needed only when `to` is an address nobody here
+  has written to yet, and more than one of your accounts could reach it
 - text: the message body or the attachment caption; omit only when reacting or sending files
   without a caption
 - re: target message `id`. REQUIRED with `react`. OPTIONAL with `text` and/or `files` (depends

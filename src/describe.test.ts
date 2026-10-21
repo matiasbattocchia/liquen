@@ -195,9 +195,14 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   const labels = {
     conversation: "Conversación",
     last: "Último mensaje",
+    message: "Mensaje",
+    toEdit: "Mensaje a editar",
+    toDelete: "Mensaje a borrar",
     subject: "Asunto",
     react: "Reacción",
+    unreact: "Quitar reacción",
     reply: "Respuesta",
+    newText: "Texto nuevo",
     files: "Adjuntos",
     location: "Ubicación",
     carried: {
@@ -261,6 +266,41 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
     "**Conversación**: ✨Somos una gran familia✨\n\n" +
       "**Último mensaje** (30 Sep 16:46):\nEeee yo quiero el de los mosquitos 🤪🤭\n\n" +
       "**Reacción**: 🤣",
+  );
+  // a send that names its line says what it does to that line: a reply answers the line
+  // named, an unreact takes the glyph off it, an edit rewrites it, a delete takes it back
+  const ana = { name: "Ana", address: "5492614851664", kind: "direct" as const };
+  const named = { text: "Muchas gracias", at: "21 Oct 9:00" };
+  assertEquals(
+    describeSendCard(
+      { conversation: ana, last: named, re: true, text: "de nada!", files: 0 },
+      labels,
+    ),
+    "**Conversación**: Ana <5492614851664>\n\n**Mensaje** (21 Oct 9:00):\nMuchas gracias\n\n" +
+      "**Respuesta**:\nde nada!",
+  );
+  assertEquals(
+    describeSendCard(
+      { conversation: ana, last: named, re: true, action: "remove", react: "👍", files: 0 },
+      labels,
+    ),
+    "**Conversación**: Ana <5492614851664>\n\n**Mensaje** (21 Oct 9:00):\nMuchas gracias\n\n" +
+      "**Quitar reacción**: 👍",
+  );
+  assertEquals(
+    describeSendCard(
+      { conversation: ana, last: named, re: true, action: "edit", text: "Mil gracias", files: 0 },
+      labels,
+    ),
+    "**Conversación**: Ana <5492614851664>\n\n**Mensaje a editar** (21 Oct 9:00):\nMuchas gracias\n\n" +
+      "**Texto nuevo**:\nMil gracias",
+  );
+  assertEquals(
+    describeSendCard(
+      { conversation: ana, last: named, re: true, action: "delete", files: 0 },
+      labels,
+    ),
+    "**Conversación**: Ana <5492614851664>\n\n**Mensaje a borrar** (21 Oct 9:00):\nMuchas gracias",
   );
   // a line that is not words says what it carried, ahead of whatever words it has
   const answering = (last: SendPreview["last"]) =>
