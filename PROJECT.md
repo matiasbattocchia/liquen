@@ -4125,7 +4125,7 @@ every call. **A workspace lost to sleep is accepted** for now: docs are on the t
 workspace is scratch; how often the loss bites decides persistence (R2 backup, a mounted
 bucket, `keepAlive`).
 
-Open, phase 1 — the sandbox works, with no credentials in play:
+Phase 1, the sandbox working with no credentials in play, ran (the next entry):
 
 1. The gateway: the container on Cloudflare's sandbox image plus deno and the
    `aread`/`awrite`/`aedit`/`fetch` shims pinned to the package version; a JSON API (exec
@@ -4193,13 +4193,9 @@ run showed, each now carried by the code:
   deadline on an alarm that sleeps up to three minutes, so a window shorter than that is
   kept late.
 
-**Open, a decision:** the docs-table tools never reached the model. `agent.tools` in the
-scaffold names four (`search`, `schedule`, `cancel`, `bash`), and the offer is filtered by
-that list, so `read`, `write` and `edit` were absent until the scratch org set `tools:
-null`. With the docs on the table, those three are the only way to a doc: an agent without
-them cannot read its own instructions. Either the scaffold's list carries them and the
-catalog refuses a `tools` list lacking them when `docs` is `table`, or the substrate tools
-stand outside the filter as the docs' own reach. Not decided here.
+The docs-table tools never reached the model: `agent.tools` in the scaffold names four
+(`search`, `schedule`, `cancel`, `bash`), and the offer is filtered by that list, so
+`read`, `write` and `edit` were absent until the scratch org set `tools: null`.
 
 ### The harness keeps the sandbox's life (2026-09-28)
 
@@ -4279,10 +4275,7 @@ roster, any size, member-defined); `group` and `channel` are rooms whose members
 and are what the table is for; `kind` is never counted from members. The table holds
 local rooms only — a wire room's facts ride its events, and a connector gains nothing
 from a copy it cannot keep in sync. Mail threads as groups (a Cc added mid-thread moves
-the thread to a new `direct` conversation today) is its own rework. Open on other
-services: Slack group DMs need `mpim:write`, channels `channels:manage`; Teams chats
-create under `Chat.ReadWrite`, already asked for; open-bsp-whatsmeow's server exposes no
-group route (whatsmeow underneath has `CreateGroup` and its siblings).
+the thread to a new `direct` conversation today) is its own rework.
 
 ### Ctrl-C in the REPL cancels the running turn (2026-09-28) — LANDED
 
@@ -4305,14 +4298,12 @@ that word is a `message`, the soft stop, and the model decides what to drop.
   (`Credentials.delete`, both engines) unless another live connection shares it, and
   `connections.<service>` out of the catalog with the service's last connection
   (`undeclareConnection`). A token grant has no row and is removed by its vault key; the
-  harness's own keys (`media:sign`) are no target. Open: the platform's side — a Slack
-  install, a Google grant, a paired WhatsApp device — is still revoked by hand on the
-  platform.
+  harness's own keys (`media:sign`) are no target.
 - `liquen connect` bare prints its usage, naming the org's doors, as `agent`, `schedule` and
   `cli` already did; the map is `liquen status` alone.
 - `liquen start -D` detaches: the supervisor in its own session, its bytes appended to
   `data/run/liquen.log`, the prompt back once it holds its lock. On a terminal each process's
-  tag has its own color. Open: the log only grows.
+  tag has its own color.
 - Found: an org's task list is frozen at `init`, so `liquen` bare named only the commands of
   the release it was made from (`~/new` had no `schedule`, `stop` or `update`). `liquen
   update` now syncs the tasks from the release it lands on, and the scaffold's tasks carry
@@ -4806,17 +4797,9 @@ A run against a fresh tenant (`../new`, `matias@liquendev.onmicrosoft.com`), dri
   as "not a mail address", and Teams never saw it queued. The mail dispatch now leaves an
   address another wire of its service carries (`elsewhere`, `isTeamsAddress`).
 
-Still open from the run:
-
-- Outbound mail from the new tenant does not arrive: Riseup bounced an invite with `550
-  5.7.708 … traffic not accepted from this IP` (a new tenant's sending pool), the mails the
-  log stamps dispatched to Riseup never arrived, and Gmail does not show the reply in its
-  thread.
-- A calendar change Exchange makes on its own (after an edit) is published as an edit
-  identical to the one before it.
-- The WhatsApp mirror labels a CLI message `por repl`.
-- The model, whose shell runs in the caller's directory, did not resolve a skill's path
-  from its home and searched the filesystem for it.
+Seen in the run, outside liquen: outbound mail from the new tenant did not arrive. Riseup
+bounced an invite with `550 5.7.708 … traffic not accepted from this IP` (a new tenant's
+sending pool), and Gmail never showed the reply in its thread.
 
 ### Absolute doc paths, the terminal label, CONNECTORS.md brought to the code (2026-09-29) — LANDED
 
@@ -4882,10 +4865,6 @@ wants none of it in the log had no way to say so. A surface left out is said onc
 (`not listened`). Replies to the agent's mail on an unlistened mailbox wake nobody — the
 agent finds them with its tool or not at all. Teams left out keeps no subscription, and
 Graph pushes into a socket nobody serves until the ones it holds expire.
-
-Open: per-account listening (the org's mailbox in, a member's out) is a vault-row fact the
-connection-wide knob cannot say; and a mailbox read only where the agent has written —
-the threads it took part in — would keep replies without the rest of the inbox.
 
 ### A second front's lines show in the REPL; aedit takes git's markers (2026-09-29) — LANDED
 
@@ -4993,11 +4972,6 @@ prose, then one `- name: …` item per parameter; `{{max_lines}}`-style placehol
 numbers code owns. `tooldoc.ts` words each shape every turn and refuses any disagreement,
 and boot runs the same check over every builtin. The bash description gained paragraph
 breaks and a line per helper on the way; the words are otherwise the ones code held.
-
-Open: seeding is write-if-absent per folder and `update` never re-lays, so a release that
-adds a parameter meets an org's older copy at boot as `no item for \`x\``, named, and the
-operator adds the line. Orgs that symlink `system/tools/` at a checkout read the new files
-live.
 
 ### A series is one event wearing its rule; an occurrence wears its series (2026-10-01) — LANDED
 
@@ -5171,9 +5145,6 @@ the approval only through the outcome's JSON.
 - **The `→ <address>: text` row is gone.** A send's row in another conversation repeated
   its `⚙` row, by raw address, and no recall reached it.
 
-Open: a lapse reaches a surface only as the deferred outcome, worded for the model ("Make
-it again if it is still worth doing"), and an allowed send's outcome is raw JSON there.
-
 ### A wake shows; a surface reads what the REPL reads (2026-10-03) — LANDED
 
 The reminder to Mecha fired at 17:56 as an `alarm` in `mind@matias`, and nothing drew it:
@@ -5217,9 +5188,6 @@ para esta conversación` repeated the line that gave them.
   recalled, and the mirror crosses it as `[por terminal] /cancel` ahead of `[sistema]
   cancelled by your principal — the turn stopped here`. The REPL's "cancel sent" is gone.
 
-Open: a lapse now reaches a surface not at all. The card stays on the phone, and a `/y`
-quoting it gets the harness's "that approval was already answered".
-
 ### An approved call speaks only when it fails; a settlement's row stays home (2026-10-07) — LANDED
 
 - **An approved call that went fine draws nothing**, at the terminal or on a surface: the
@@ -5262,9 +5230,6 @@ bare `/y` against several cards as the newest; the gate called it ambiguous.
 - **The room draws the answer off the settlement**: the REPL paints its line (`❯ /y`,
   `❯ [via whatsapp] 👍`) then the verdict row, live and recalled; the mirror crosses the
   line quoting the card, its handle dropped, and a `/y all` once.
-
-Open: two answers racing for one card — a terminal and a phone in the same instant — can
-both land; `owed` takes the earliest, but the room draws both.
 
 ### A card is settled once; a cut is one row; a lease token is not a clock (2026-10-07) — LANDED
 
@@ -5382,10 +5347,8 @@ Watching one real wake took opening `data/log/log.db` with sqlite and hand-decod
 Verified against a real org's log (one 25-step wake, read-only): `liquen turns` and `log
 export --turn last` read it; the per-step tokens sum to the usage table's.
 
-Open: `turns`, `log export` and `status` read the store directly, as `status` always has —
-they must answer for an org that is not running, which the door cannot. The run log's
-turn line is written by main, so a turn of an ephemeral daemon (raised by the REPL) lands
-nowhere. Turn segmentation pages back at most 20,000 rows of a session's room.
+`turns`, `log export` and `status` read the store directly, as `status` always has: they
+must answer for an org that is not running, which the door cannot.
 
 ### The scope everyone writes is `shared` (2026-10-14) — LANDED
 
@@ -5426,10 +5389,6 @@ to recover. Two kinds:
 - `job_ended` — main probes the local shells every 2s (`sandbox.ended()`); the ambient look
   settles dead jobs into the same list, so either look tells a death once.
 
-Open: a transient failure is not told until the ladder ends (a day out), though the agent
-already said it was sent. The Cloudflare sandbox reports no job ends: its jobs are probed
-only by a look that keeps the container awake.
-
 ### A call's later word is a late tool_result, and bash is its own monitor (2026-10-17) — LANDED
 
 The report alarms of 2026-10-15 told how work ended, but in a voice of their own, apart from
@@ -5459,10 +5418,6 @@ harness"). The shell probes its own jobs; main only publishes what it tells.
 Migration: `payload.deferred` → `payload.gated` in each org's events (one UPDATE), and
 `system.bashTimeoutMs` → `system.bashWaitMs` in each org's `config.jsonc`.
 
-Open: the Cloudflare sandbox kills at the wait and tells nothing (its output is a container
-file, its end needs a long-held exec, the door cannot reach it). Tracking async calls as
-standing state (open calls in the anchor, cancel, lost on restart) is not built.
-
 ### A steering room on an org account, and surfaces that render (2026-10-19) — LANDED
 
 Sonar, the CRM the org runs, wants a group chat with its agent: every portal user of the
@@ -5482,10 +5437,6 @@ having a room that `chat.postMessage` would resolve as a channel named after the
 **Raw surfaces** (`connect/mirror.ts`). `extra.raw` on a connection: its crossings carry the
 event's own parts, and `extra.via` gains `type`, `turn_id`, `sender`, `surface` and
 `action`. `AliasRow` gains `raw`; `principal` became optional.
-
-Open: an agent's edit of its own line quotes nothing on a raw surface, so its dispatcher
-cannot tell which row it edits. `extra.agent` names one agent, so two agents sharing an org
-account share no room yet.
 
 ### One `liquen log` reads what the agents did (2026-10-19) — LANDED
 
@@ -5522,11 +5473,6 @@ kept.
 million tokens, the package's list under the org's; cost is computed when read, never
 stored. The package's Anthropic rows start on the day they were read off the pricing page,
 since the page dates no model; earlier Claude calls read as unpriced.
-
-Open: a 429 that comes back as an empty, zero-token run is not an error row, so `errors`
-does not see it. A wake that finds nothing still costs a model call; a check that skips the
-model is designed (exit 0 work, 1 nothing, else wake anyway) and not built. Wakes missed
-while the host slept are not logged.
 
 ### A command the harness went down with is told lost (2026-10-18) — LANDED
 
@@ -5682,9 +5628,6 @@ Each tale is one conditional UPDATE on its own stamp (`stalled_at`, `reported_at
 Postgres failures in the suite are this machine's Spanish locale and a lease test, and
 fail on main too).
 
-Open: a send whose own connector process is down is told stalled, but the anchor says
-nothing of a connector that is not running, only of the accounts it reports on.
-
 ### One word for a down account, and a connector that is not there (2026-10-20) — LANDED
 
 The anchor's down block read whatever each connector wrote: WhatsApp's bridge words
@@ -5762,11 +5705,6 @@ made from the old manifest needs them added.
 No heal: rows written with `self_conversation`, `dms` or `extra.agent` stop binding until
 their account is connected again.
 
-Open:
-- **Unverified on a live workspace**: which of the leave and archive events reach the bot.
-- An agent with no account yet can be adopted by a channel wearing its name until its
-  person connects one.
-
 ### Teams mind surfaces: the self-chat, a principal's DM, and steering rooms (2026-10-20) — LANDED
 
 An owned Teams account now has Slack's two surfaces, and an org account hosts steering
@@ -5798,11 +5736,83 @@ account and the row would anchor to the principal's. Two changes cover it: recor
 off the chat's members, so either delivery writes the same, and `aliasOf` matches a
 Microsoft account on its domain, the way Slack matches its workspace.
 
-Open:
-- **Unverified on a live tenant** (none is connected on this machine): whether
+### What is open (2026-10-20)
+
+Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
+a later note leaned on. What still holds is gathered here and taken out of its entry; a
+note from that span that is not here was closed by later work. Notes older than that span
+were checked only in part: the ones confirmed open are here, the rest stand unverified in
+their entries.
+
+**Agents and surfaces**
+
+- An agent's edit of its own line names no row on its way out. A raw surface gets
+  `action: "edit"` with no `ref_external_id`, since a crossing resolves its target only
+  for a principal's line or a settlement (`fanOut`), and every other surface takes it as a
+  new `[agent]` line (`ccParts`).
+- A lapse reaches no surface. The card stays on the phone, and a `/y` quoting it is
+  answered "that approval was already answered"; only the terminal draws the lapse.
+- A steering room cannot tell a person's agent from an org's: Slack and Teams adopt any
+  agent that runs and owns no account, and the room stays when its person connects one
+  later, since the view's rooms branch asks nothing of ownership.
+- A connector process that never stamped a row, one that dies at boot, shows nowhere:
+  `connector_down` is read off `heard_at`, and the first beat waits one interval.
+- Unsent messages are no standing list in the anchor; the agent hears of one only when it
+  stalls.
+
+**Wakes and the run log**
+
+- A wake that finds nothing still costs a model call. A check that skips the model is
+  designed (exit 0 work, 1 nothing, else wake anyway) and not built.
+- Wakes missed while the host slept are not logged: a cron fires once, late, and its alarm
+  carries neither the occurrences it missed nor when it was due.
+- A turn of a daemon the REPL raised writes no line to `liquen.log`, since the REPL drops
+  its stderr. The store keeps the turn, and `log turns` lists it.
+- `log turns` and a one-turn export page back at most 20,000 rows of a session's room.
+- `data/run/liquen.log` only grows.
+
+**Config, seeding, accounts**
+
+- A decision: with `system.docs: "table"`, `read`, `write` and `edit` are the only way to
+  a doc, and the scaffold's `agent.tools` (`search`, `schedule`, `cancel`, `bash`) filters
+  them out of the offer. Either the scaffold's list carries them and the catalog refuses a
+  `tools` list lacking them when the docs are on the table, or the docs tools stand
+  outside the filter as the docs' own reach.
+- Seeding is write-if-absent per folder and `update` never re-lays. A release that adds a
+  parameter meets an org's older copy at boot as `no item for \`x\``, and a new tool's doc
+  never reaches an existing `system/tools/`. An org that symlinks the folder at a checkout
+  reads the new files live.
+- Listening is one knob per connection. It cannot take the org's mailbox in and leave a
+  member's out, nor read a mailbox only in the threads the agent took part in.
+- Removing an account leaves its platform side, a Slack install, a Google grant, a paired
+  WhatsApp device, to be revoked by hand.
+
+**Infrastructure**
+
+- The Cloudflare sandbox's phase 2, the five steps in "Cloudflare Sandboxes are the first
+  remote exec plane" (2026-09-26). Until the proxy is its outbound handler, its egress
+  passes the proxy by and leaves no audit rows.
+- The proxy's CA key ships with the package; it wants minting per install.
+- Gemini audio is not inlined: `inlineable` is the Anthropic set, hardcoded. The rule and
+  its smoke are in "A second provider" (2026-09-14).
+- The edge host, in "The edge-tier plan is closed" (2026-09-25), is deferred.
+- Gemini's explicit caching is not built: it needs the Google edge on `generateContent`
+  and a cache resource per prefix, weighed in "Gemini's thinking and its prompt cache"
+  (2026-10-13).
+
+**On a live account**
+
+- Teams, with no tenant connected on this machine: whether
   `/users/<oid>/chats/getAllMessages` delivers the self-chat at all (if not, the self-chat
-  is no surface on Teams until a small poll of that one chat exists); whether
-  `/chats/<id>?$expand=members` lists the account alone for it, and a post to its id is
-  accepted; whether the org account's subscription hears its own removal from a group chat.
-- A new channel named as an agent waits for the next hourly listing, the same wait its
-  subscription has.
+  is no surface until a poll of that one chat exists); whether `$expand=members` lists the
+  account alone for it, and a post to its id is accepted; whether the org account hears
+  its own removal from a group chat. A new channel named as an agent waits for the next
+  hourly listing, as its subscription does.
+- Slack: which of the leave and archive events reach the bot.
+
+**Not traced against the code**
+
+- Whether a digest wake gets its own framing in the prompt (2026-08-21).
+- A final `failed` stamp reaching the mind as a wake (2026-09-08).
+- Slack's twin of the member sign-in door (2026-09-11).
+- A docs change mid-turn rebuilding the system prompt (2026-09-26).
