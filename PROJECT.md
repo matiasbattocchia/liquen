@@ -5736,6 +5736,18 @@ account and the row would anchor to the principal's. Two changes cover it: recor
 off the chat's members, so either delivery writes the same, and `aliasOf` matches a
 Microsoft account on its domain, the way Slack matches its workspace.
 
+### A decrypted tunnel answered once and closed (2026-10-21) — FIXED
+
+Every terminated tunnel was destroyed the moment its first answer was out, while that
+answer said `Connection: keep-alive`. A client that pools connections sent its next request
+down the dead one: curl redials on its own, but `fetch` does not, so a CLI firing reads in
+parallel from a bubble lost two to four of them a wake as `fetch failed`, and the proxy's log
+never saw them, since they died before a request was parsed. The runtime's HTTP server
+treats a server that is not `listening` as closing and destroys a connection when its
+response finishes; the decrypting server listens on nothing, so it was closing to the
+runtime from the start. It now reports `listening` until `shutdown`, and a tunnel stays
+open between requests until its keep-alive timeout.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

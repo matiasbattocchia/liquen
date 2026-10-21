@@ -458,3 +458,45 @@ Deno.test("startProxy: a decrypted tunnel carries a body up and every cookie dow
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("startProxy: a decrypted tunnel stays open for the client's next request", async () => {
+  const dir = await Deno.makeTempDir();
+  const ca = await openCA(dir);
+  const proxy = startProxy({
+    ca,
+    broker: fakeBroker(),
+    audit: () => {},
+    guard: anywhere,
+    originFetch: () => Promise.resolve(new Response("ok")),
+  });
+  try {
+    const raw = await Deno.connect({ hostname: "127.0.0.1", port: proxy.port });
+    assert((await connect(raw, "api.example.com:443")).startsWith("HTTP/1.1 200"));
+    const conn = await Deno.startTls(raw, {
+      hostname: "api.example.com",
+      caCerts: [await Deno.readTextFile(ca.caPath)],
+    });
+    // one answer, read to its last chunk; null once the proxy has closed the tunnel
+    const answer = async (): Promise<string | null> => {
+      const req = "GET /x HTTP/1.1\r\nhost: api.example.com\r\n\r\n";
+      await conn.write(new TextEncoder().encode(req));
+      const buf = new Uint8Array(4096);
+      let text = "";
+      while (!text.endsWith("\r\n0\r\n\r\n")) {
+        const n = await conn.read(buf).catch(() => null);
+        if (n === null) return null;
+        text += new TextDecoder().decode(buf.subarray(0, n));
+      }
+      return text;
+    };
+    assert((await answer())?.startsWith("HTTP/1.1 200"));
+    // the client's next request comes once the first is answered, on the same tunnel
+    await new Promise((r) => setTimeout(r, 50));
+    const second = await answer();
+    assert(second?.startsWith("HTTP/1.1 200"), "the tunnel closed after its first answer");
+    conn.close();
+  } finally {
+    await proxy.shutdown();
+    await Deno.remove(dir, { recursive: true });
+  }
+});

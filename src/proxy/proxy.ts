@@ -230,6 +230,12 @@ export function startProxy(
     if (tunnel) void serveDecrypted(tunnel, req, res, deps);
     else res.writeHead(421).end();
   });
+  // A server that is not listening is closing, to the runtime: it destroys a connection
+  // the moment its answer is out instead of keeping it alive for the client's next
+  // request, which a client reusing it meets as a dead connection. This one listens for
+  // nothing and serves until shutdown, so it says so for exactly that long.
+  let serving = true;
+  Object.defineProperty(server, "listening", { get: () => serving });
 
   const listener = Deno.listen({ hostname, port: opts.port ?? 0 });
   const port = (listener.addr as Deno.NetAddr).port;
@@ -335,6 +341,7 @@ export function startProxy(
     port,
     caPath: deps.ca.caPath,
     async shutdown(): Promise<void> {
+      serving = false;
       for (const [l] of listeners) {
         try {
           l.close();
