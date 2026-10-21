@@ -1710,17 +1710,25 @@ function mediaMarker(p: FilePart, head = ""): string {
  *  bare text. Every voice in the user role wears a tag render writes and escapes — the
  *  world, the harness, the summary, the principal — so the model reads who is speaking off
  *  the element's shape, and bare text is the model's own voice alone. Composed like a
- *  world line (escaped text, then markers), stamped with the org clock. A reaction is a
- *  `<reaction>` inside it, and since the room's lines wear no ids, `on` quotes the line it
- *  lands on (`target`, the row its `ref_id` names). */
+ *  world line (escaped text, then markers), stamped with the org clock. The room's lines
+ *  wear no ids (the agent's own are bare text), so a line that acts on another quotes it
+ *  in `on` (`target`, the row its `ref_id` names): an edit, a deletion or a reply wears
+ *  `action` and `on` on the element (an edit's words are the new ones, a deletion says
+ *  nothing), a reaction is a `<reaction on>` inside it. */
 function principalEl(e: MessageEvent, roster: Roster, zone?: string, target?: Event): string {
+  // a copy that quoted nothing names its own surface row as `ref_id`: provenance, no line
+  const on = target && target.id !== e.id ? onAttr(target) : "";
+  const action = e.payload?.action;
   const r = e.parts.find((p): p is ReactionPart => p.type === "data" && p.kind === "reaction");
-  const body = [
+  const body = action === "delete" ? "" : [
     escText(textOf(e)),
     ...filesOf(e).map((p) => mediaMarker(p)),
     ...datasOf(e).map((p) => dataEl(p, "", zone)),
-    ...(r ? [reactionOn(r, e.payload?.action === "remove", target)] : []),
+    ...(r ? [reactionEl(r, action === "remove", on)] : []),
   ].filter((s) => s.length > 0).join("\n");
+  const acts = action === "edit" || action === "delete" || (action === "reply" && on)
+    ? ` action="${action}"${on}`
+    : "";
   // `name` is the roster's word for them (§4): the sender's address is a username — the
   // door's, or the one the mirror wrote from the binding — and the roster names it. With
   // one principal it is a courtesy, with several it is the identity — the element's
@@ -1731,17 +1739,21 @@ function principalEl(e: MessageEvent, roster: Roster, zone?: string, target?: Ev
       escAttr((who.address && roster.names[who.address]) ?? who.name ?? who.address ?? "")
     }"`
     : "";
-  return `<principal${name} at="${hhmm(e.ts, zone)}">${body}</principal>`;
+  return `<principal${name} at="${hhmm(e.ts, zone)}"${acts}>${body}</principal>`;
 }
 
-/** How much of the line a principal's reaction lands on `on` quotes — enough to tell two
+/** How much of the line a principal's line acts on `on` quotes — enough to tell two
  *  reports apart. */
 const ON_QUOTE = 80;
 
-function reactionOn(r: ReactionPart, removed: boolean, target?: Event): string {
-  const said = target ? textOf(target).replace(/\s+/g, " ").trim() : "";
+/** ` on="…"`: the line acted on, quoted; empty when it says nothing. */
+function onAttr(target: Event): string {
+  const said = textOf(target).replace(/\s+/g, " ").trim();
   const quote = said.length > ON_QUOTE ? `${clipEnd(said, ON_QUOTE - 1)}…` : said;
-  const on = quote ? ` on="${escAttr(quote)}"` : "";
+  return quote ? ` on="${escAttr(quote)}"` : "";
+}
+
+function reactionEl(r: ReactionPart, removed: boolean, on: string): string {
   const glyph = r.data.unicode ?? r.data.name ?? "";
   return `<reaction${on}${removed ? ' action="remove"' : ""}>${escText(glyph)}</reaction>`;
 }

@@ -1010,6 +1010,37 @@ Deno.test("a principal's reaction in the room is a <reaction> quoting the line i
   );
 });
 
+Deno.test("a principal's edit, deletion and reply in the room wear action and quote their line", () => {
+  const t = "2026-08-07T10:00:00Z";
+  const at = (m: number) => `2026-08-07T10:0${m}:00Z`;
+  const acting = (id: string, m: number, text: string, payload: Record<string, string>) => ({
+    ...mindMsg(id, at(m), text, false),
+    ...(text ? {} : { parts: [] }),
+    payload,
+  });
+  const events: Event[] = [
+    mindMsg("e1", t, "Lucas espera respuesta", false),
+    mindMsg("e2", at(1), "Le escribo hoy.", true),
+    acting("e3", 2, "Lucas y Agus esperan respuesta", { ref_id: "e1", action: "edit" }),
+    acting("e4", 3, "", { ref_id: "e1", action: "delete" }),
+    acting("e5", 4, "dale", { ref_id: "e2", action: "reply" }),
+    // a quote that resolved to nothing: the copy names itself, and reads as a plain line
+    acting("e6", 5, "otra cosa", { ref_id: "e6", action: "reply" }),
+  ];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: at(6) });
+  const texts = messages.flatMap((m) => m.content as Anthropic.ContentBlockParam[])
+    .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text)
+    .filter((s) => s.startsWith("<principal"));
+  assertEquals(texts.slice(1), [
+    '<principal name="Ana" at="7 Aug 10:02" action="edit" on="Lucas espera respuesta">' +
+    "Lucas y Agus esperan respuesta</principal>",
+    '<principal name="Ana" at="7 Aug 10:03" action="delete" on="Lucas espera respuesta">' +
+    "</principal>",
+    '<principal name="Ana" at="7 Aug 10:04" action="reply" on="Le escribo hoy.">dale</principal>',
+    '<principal name="Ana" at="7 Aug 10:05">otra cosa</principal>',
+  ]);
+});
+
 Deno.test("envelope.status failed renders on the line — the agent sees the delivery die", () => {
   const t = "2026-08-07T11:00:00Z";
   const events: Event[] = [

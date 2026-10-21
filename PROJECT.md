@@ -5748,6 +5748,15 @@ response finishes; the decrypting server listens on nothing, so it was closing t
 runtime from the start. It now reports `listening` until `shutdown`, and a tunnel stays
 open between requests until its keep-alive timeout.
 
+### A principal's edit, deletion and reply say what they act on (2026-10-21) — LANDED
+
+A surface's edit, deletion or reply reaches the mind as a copy carrying its `action` and a
+`ref_id` the mirror translated to the line it names, and the home render drew it as a plain
+`<principal>` line: an edit read as a new line, a deletion as an empty one, a reply as if
+it answered nothing. The element now wears `action` and `on`, the quote a reaction already
+used, since the room's lines have no ids to point at (the agent's own are bare text). A
+copy whose quote resolved to nothing names its own surface row, and stays a plain line.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

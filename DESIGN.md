@@ -1353,7 +1353,11 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
 - **Home (principal-DM)** — the principal's line renders as a `<principal name at>`
   element in the user turn (`name` is the roster's word for them, `identity.name` or the
   username when none is declared — with one principal a courtesy, with several the
-  identity, same element either way); the agent's replies are bare `assistant` text. The element is the mark of
+  identity, same element either way); the agent's replies are bare `assistant` text. The
+  room's lines wear no ids, so a principal's line that acts on another quotes it:
+  `<principal action="edit|delete|reply" on="…">` (an edit carries the new words, a
+  deletion nothing), and a reaction is a `<reaction on="…">` inside the element; `on` is
+  left off when the line acted on is outside the window. The element is the mark of
   the one voice that outranks everything else — the model reads "answer in your own text"
   off its shape, and world text that types the tag arrives escaped, so an unescaped
   `<principal>` can only be render's own. A `/y` · `/n` is no line here: it is a
