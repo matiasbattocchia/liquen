@@ -283,6 +283,34 @@ Deno.test("mirror fan-out: a thumb on a card crosses as its glyph, quoting the c
   });
 });
 
+Deno.test("mirror fan-out: the agent's cancel of an ask crosses as a reply to its card", async () => {
+  await withMirror(async ({ publish, inConv, waitFor, setDelivery }) => {
+    await publish(sendCard());
+    await waitFor(async () => (await inConv("549")).length === 1);
+    await setDelivery((await inConv("549"))[0].id, { external_id: "whatsapp:wmw.card" });
+    const cancel = (id: string): Draft<ToolUseEvent> => ({
+      ts: new Date().toISOString(),
+      type: "tool_use",
+      payload: { turn_id: "t1" },
+      agent: { id: "ana", session_id: "mind" },
+      envelope: {
+        service: "local",
+        connection_address: "agent",
+        conversation: { address: "mind@ana" },
+      },
+      parts: [{ type: "data", kind: "tool_use", data: { name: "cancel", input: { id } } }],
+    });
+    // the card's handle, as the model reads it
+    await publish(cancel("bbc24a"));
+    await waitFor(async () => (await inConv("549")).length === 2);
+    assertEquals((await inConv("549"))[1].payload?.ref_external_id, "whatsapp:wmw.card");
+    // an id nothing open wears quotes nothing
+    await publish(cancel("ffffff"));
+    await waitFor(async () => (await inConv("549")).length === 3);
+    assertEquals((await inConv("549"))[2].payload?.ref_external_id, undefined);
+  });
+});
+
 Deno.test("mirror fan-out: a tool call crosses as one redacted line", async () => {
   await withMirror(async ({ publish, inConv, waitFor }) => {
     const use: Draft<ToolUseEvent> = {
