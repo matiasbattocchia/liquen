@@ -57,6 +57,16 @@ const TONGUES = {
       DeltaKind,
       string
     >,
+    // why an answer settled no card (`Refusal`); `/y` and the scope words stay commands
+    refusal: {
+      notVerdict: "not a verdict — /y[once|conv|conn|always|all] [handle] [reason]",
+      noCard: (handle: string) => `no card ${handle} is waiting`,
+      answered: (waiting: number) =>
+        waiting === 0
+          ? "that approval was already answered"
+          : `that approval was already answered — ${waiting} still waiting, /y answers the newest`,
+      noneWaiting: "no approval is waiting",
+    },
   },
   // one Spanish for every dialect: the hint keeps to the infinitive, which tú and vos share
   es: {
@@ -93,6 +103,17 @@ const TONGUES = {
     },
     via: (where: string, who?: string) => who ? `${who} por ${where}` : `por ${where}`,
     presence: { thinking: "agente pensando...", checkpoint: "agente compactando..." },
+    refusal: {
+      notVerdict: "eso no es una respuesta — /y[once|conv|conn|always|all] [tarjeta] [motivo]",
+      noCard: (handle: string) => `ninguna tarjeta ${handle} está esperando`,
+      answered: (waiting: number) =>
+        waiting === 0
+          ? "esa aprobación ya fue respondida"
+          : `esa aprobación ya fue respondida — ${
+            waiting === 1 ? "queda 1 esperando" : `quedan ${waiting} esperando`
+          }, /y responde la más reciente`,
+      noneWaiting: "no hay ninguna aprobación esperando",
+    },
   },
 };
 // every tongue says everything English says — a half-written one is a type error

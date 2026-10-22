@@ -6,8 +6,10 @@ import {
   answerRows,
   parseVerdict,
   reactionVerdict,
+  refusalText,
   settle,
 } from "./verdict.ts";
+import { words } from "./i18n.ts";
 import type { Draft, Event, PermissionRequestEvent, PermissionResponseEvent } from "./types.ts";
 
 Deno.test("reactionVerdict: a thumb or a heart is /y, a thumb down or a gasp is /n, a robot is /y conv (§9)", () => {
@@ -131,15 +133,37 @@ Deno.test("answer: a line or a reaction finds its cards by one rule, wherever it
     newer.payload.ref_id,
   ]);
   // what settles nothing says why
-  assertEquals(answer({ line: "/y 99ffee" }, open), "no card 99ffee is waiting");
-  assertEquals(answer({ line: "/y" }, []), "no approval is waiting");
+  assertEquals(answer({ line: "/y 99ffee" }, open), { refusal: "no_card", handle: "99ffee" });
+  assertEquals(answer({ line: "/y" }, []), { refusal: "none_waiting" });
+  assertEquals(answer({ line: "/y" }, [newer], older), { refusal: "answered", waiting: 1 });
+  assertEquals(answer({ glyph: "👍" }, [], older), { refusal: "answered", waiting: 0 });
+  assertEquals(answer({ line: "/nope" }, open), { refusal: "not_verdict" });
+  assertEquals(answer({ glyph: "😂" }, open, older), { refusal: "not_verdict" });
+});
+
+Deno.test("refusalText: a refusal in the surface's tongue, English by default", () => {
+  const answered = { refusal: "answered", waiting: 2 } as const;
   assertEquals(
-    answer({ line: "/y" }, [newer], older),
-    "that approval was already answered — 1 still waiting, /y answers the newest",
+    refusalText(answered),
+    "that approval was already answered — 2 still waiting, /y answers the newest",
   );
-  assertEquals(answer({ glyph: "👍" }, [], older), "that approval was already answered");
-  assertEquals(typeof answer({ line: "/nope" }, open), "string");
-  assertEquals(typeof answer({ glyph: "😂" }, open, older), "string");
+  assertEquals(
+    refusalText(answered, words("es_AR.UTF-8")),
+    "esa aprobación ya fue respondida — quedan 2 esperando, /y responde la más reciente",
+  );
+  assertEquals(
+    refusalText({ refusal: "answered", waiting: 1 }, words("es")),
+    "esa aprobación ya fue respondida — queda 1 esperando, /y responde la más reciente",
+  );
+  assertEquals(
+    refusalText({ refusal: "answered", waiting: 0 }, words("es")),
+    "esa aprobación ya fue respondida",
+  );
+  assertEquals(refusalText({ refusal: "no_card", handle: "99ffee" }), "no card 99ffee is waiting");
+  assertEquals(
+    refusalText({ refusal: "none_waiting" }, words("es")),
+    "no hay ninguna aprobación esperando",
+  );
 });
 
 Deno.test("answerRows: one settlement per card, the line on the first and nowhere else", () => {
@@ -194,9 +218,9 @@ Deno.test("settle: the line rides the first card the store keeps — one lost to
   const kept = await settle(store(["u1"]), all, "/y all", from) as PermissionResponseEvent[];
   assertEquals(kept.map((e) => e.payload.ref_id), ["u2", "u3"]);
   assertEquals(kept.map(answerLine), ["/y all", undefined]);
-  // every card lost: the answer is refused, with the sentence
+  // every card lost: the answer is refused
   assertEquals(
     await settle(store(["u1", "u2", "u3"]), all, "/y all", from),
-    "that approval was already answered",
+    { refusal: "answered", waiting: 0 },
   );
 });

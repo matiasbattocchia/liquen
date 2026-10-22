@@ -84,7 +84,7 @@ import type { Log, UsageRow } from "./store/log.ts";
 import { newId } from "./store/id.ts";
 import { sessionAddress } from "./session.ts";
 import { silent } from "./render.ts";
-import { answer, settle } from "./verdict.ts";
+import { answer, isRefusal, refusalText, settle } from "./verdict.ts";
 import { lineOf } from "./describe.ts";
 
 export interface DoorAgent {
@@ -475,12 +475,12 @@ async function handle(
     // mirror reads a surface's reply, and refuses what settles nothing
     const open = await port.gates({ agentId: agent.agentId, sessionId: session });
     const a = answer({ line: text }, open);
-    if (typeof a === "string") throw new Error(a);
+    if (isRefusal(a)) throw new Error(refusalText(a));
     const said = await settle((rows) => port.publish(rows), a, text, {
       agent: { id: agent.agentId, session_id: session },
       envelope: signed(),
     });
-    if (typeof said === "string") throw new Error(said);
+    if (isRefusal(said)) throw new Error(refusalText(said));
     return {
       ok: true,
       id: said[0].id,

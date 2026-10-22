@@ -71,8 +71,10 @@ import { type Words, words } from "../i18n.ts";
 import {
   answer,
   answerLine,
+  isRefusal,
   parseVerdict,
   reactionVerdict,
+  refusalText,
   type Said,
   settle,
 } from "../verdict.ts";
@@ -255,13 +257,13 @@ async function fanIn(
   const said = verdictSaid(e, card);
   if (said) {
     const a = answer(said, await deps.gates({ agentId: binding.agentId, sessionId: MIND }), card);
-    const settled = typeof a === "string" ? a : await settle(
+    const settled = isRefusal(a) ? a : await settle(
       (rows) => deps.publish(rows),
       a,
       "line" in said ? said.line : said.glyph,
       from,
     );
-    if (typeof settled === "string") {
+    if (isRefusal(settled)) {
       await deps.publish({
         ts: now(),
         type: "error",
@@ -270,7 +272,11 @@ async function fanIn(
           connection_address: "agent",
           conversation: { address: mind },
         },
-        parts: [{ type: "data", kind: "error", data: { error: settled } }],
+        parts: [{
+          type: "data",
+          kind: "error",
+          data: { error: refusalText(settled), refusal: settled },
+        }],
       } as Draft<ErrorEvent>);
     }
     return;
@@ -533,8 +539,9 @@ async function ccParts(
   if (e.type === "error") {
     // the harness's own voice reaching the principal (§2): it speaks when the model can't
     // — a gate is waiting, so no turn will be taken to relay this
-    const { error } = (e as ErrorEvent).parts[0].data;
-    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${error}` }]);
+    const { error, refusal } = (e as ErrorEvent).parts[0].data;
+    const said = refusal ? refusalText(refusal, w) : error;
+    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${said}` }]);
   }
   if (e.type === "delta") {
     // presence (§9): what the mind is doing, for the principal on the other side of a

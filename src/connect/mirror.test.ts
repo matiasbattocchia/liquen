@@ -456,8 +456,30 @@ Deno.test("mirror fan-out: under a Spanish locale the harness speaks Spanish —
         },
         parts: [{ type: "data", kind: "delta", data: { kind: "thinking" } }],
       });
-      await waitFor(async () => (await inConv("D1")).length === 2);
-      const [card, presence] = (await inConv("D1")).map(textOf);
+      // a verdict's refusal: the model reads the English `error`, the surface its own tongue
+      await publish({
+        ts: new Date().toISOString(),
+        type: "error",
+        envelope: {
+          service: "local",
+          connection_address: "agent",
+          conversation: { address: "mind@ana" },
+        },
+        parts: [{
+          type: "data",
+          kind: "error",
+          data: {
+            error: "that approval was already answered — 2 still waiting, /y answers the newest",
+            refusal: { refusal: "answered", waiting: 2 },
+          },
+        }],
+      } as Draft<Event>);
+      await waitFor(async () => (await inConv("D1")).length === 3);
+      const [card, presence, refused] = (await inConv("D1")).map(textOf);
+      assertEquals(
+        refused,
+        "`[sistema]` esa aprobación ya fue respondida — quedan 2 esperando, /y responde la más reciente",
+      );
       // the frame translates; the tool detail (API surface) and the commands the verdict
       // parser reads do not — a principal typing off the hint still settles the card
       assertStringIncludes(
