@@ -62,27 +62,30 @@ export function parseVerdict(text: string): PermissionVerdict | undefined {
 }
 
 /** The verdict a REACTION spells: a thumb or a heart on the card is `/y`, a thumb down or
- *  a gasp is `/n` — WhatsApp's quick-reaction bar, plus Slack's names for the same glyphs.
- *  Always `once`: a reaction has no words for a scope or a reason. */
-const REACTIONS: Record<string, PermissionVerdict["behavior"]> = {
-  "👍": "allow",
-  "❤": "allow",
-  "+1": "allow",
-  "thumbsup": "allow",
-  "heart": "allow",
-  "👎": "deny",
-  "😮": "deny",
-  "-1": "deny",
-  "thumbsdown": "deny",
-  "open_mouth": "deny",
+ *  a gasp is `/n` — WhatsApp's quick-reaction bar — and a robot is `/y conv`, the agent
+ *  let loose in that conversation; Slack's names for the same glyphs alike. A reaction has
+ *  no words for a reason. */
+const REACTIONS: Record<string, PermissionVerdict> = {
+  "👍": { behavior: "allow", scope: "once" },
+  "❤": { behavior: "allow", scope: "once" },
+  "+1": { behavior: "allow", scope: "once" },
+  "thumbsup": { behavior: "allow", scope: "once" },
+  "heart": { behavior: "allow", scope: "once" },
+  "🤖": { behavior: "allow", scope: "conversation" },
+  "robot_face": { behavior: "allow", scope: "conversation" },
+  "👎": { behavior: "deny", scope: "once" },
+  "😮": { behavior: "deny", scope: "once" },
+  "-1": { behavior: "deny", scope: "once" },
+  "thumbsdown": { behavior: "deny", scope: "once" },
+  "open_mouth": { behavior: "deny", scope: "once" },
 };
 
 /** A glyph as the table keys it: no variation selector (`❤️` is `❤` + VS16), no skin tone
  *  (`👍🏻` is `👍` + a modifier) — the phone's spelling of the same reaction. */
 export function reactionVerdict(glyph: string): PermissionVerdict | undefined {
   const bare = glyph.replace(/[\u{FE0F}\u{1F3FB}-\u{1F3FF}]/gu, "").trim();
-  const behavior = REACTIONS[bare];
-  return behavior ? { behavior, scope: "once" } : undefined;
+  const verdict = REACTIONS[bare];
+  return verdict ? { ...verdict } : undefined;
 }
 
 /* ── which cards ──────────────────────────────────────────────────────── */

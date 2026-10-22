@@ -10,7 +10,7 @@ import {
 } from "./verdict.ts";
 import type { Draft, Event, PermissionRequestEvent, PermissionResponseEvent } from "./types.ts";
 
-Deno.test("reactionVerdict: a thumb or a heart is /y, a thumb down or a gasp is /n — always once (§9)", () => {
+Deno.test("reactionVerdict: a thumb or a heart is /y, a thumb down or a gasp is /n, a robot is /y conv (§9)", () => {
   assertEquals(reactionVerdict("👍"), { behavior: "allow", scope: "once" });
   assertEquals(reactionVerdict("❤️"), { behavior: "allow", scope: "once" });
   assertEquals(reactionVerdict("👎"), { behavior: "deny", scope: "once" });
@@ -21,6 +21,9 @@ Deno.test("reactionVerdict: a thumb or a heart is /y, a thumb down or a gasp is 
   // Slack names its reactions
   assertEquals(reactionVerdict("+1"), { behavior: "allow", scope: "once" });
   assertEquals(reactionVerdict("-1"), { behavior: "deny", scope: "once" });
+  // a robot lets the agent loose in the conversation, under either spelling
+  assertEquals(reactionVerdict("🤖"), { behavior: "allow", scope: "conversation" });
+  assertEquals(reactionVerdict("robot_face"), { behavior: "allow", scope: "conversation" });
   // the rest of the bar says nothing
   assertEquals(reactionVerdict("😂"), undefined);
   assertEquals(reactionVerdict("🙏"), undefined);
@@ -108,6 +111,10 @@ Deno.test("answer: a line or a reaction finds its cards by one rule, wherever it
   assertEquals(answer({ glyph: "👍🏻" }, open, older), {
     refs: [older.payload.ref_id],
     verdict: once,
+  });
+  assertEquals(answer({ glyph: "🤖" }, open, older), {
+    refs: [older.payload.ref_id],
+    verdict: { behavior: "allow", scope: "conversation" },
   });
   // pointing at nothing answers the newest, and the handle is never read as the reason
   assertEquals(answer({ line: "/n too early" }, open), {

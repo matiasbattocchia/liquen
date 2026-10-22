@@ -830,9 +830,9 @@ and a principal's `/y` to a card is read where it enters the mind, below.
   card already answered, a handle no card wears — is never silent: a terminal is refused
   on the wire, and a surface hears it from the HARNESS, on an `error` the mirror carries.
   **A reaction on the card is a verdict too**: 👍 or ❤️ reads as `/y`, 👎 or 😮 as `/n` —
-  the bar a phone offers on a long press, and Slack's names for the same glyphs
-  (`reactionVerdict`, spelling normalised: no skin tone, no variation selector). Always
-  `once`: a reaction has no words for a scope or a reason. It counts ONLY on a card: a
+  the bar a phone offers on a long press — and 🤖 as `/y conv`; Slack's names for the same
+  glyphs alike (`reactionVerdict`, spelling normalised: no skin tone, no variation
+  selector). A reaction has no words for a reason. It counts ONLY on a card: a
   thumb on any other row, a glyph off the table, an un-react cross into the mind as the
   lines they are.
 - **A gate never blocks the mind** (landed 2026-08-18). The ask happens *inside* the call:
