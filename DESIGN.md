@@ -1306,6 +1306,14 @@ The 3×2 grid, each cell real and distinct:
   execution context, where a generic `bash` sees everything (§9). So "hide it from the agent"
   is entirely the **tool column**, where broker / egress-injection / scoped-ephemeral tokens
   are non-negotiable.
+- **The model key is the harness's own, and sits in the vault like the rest.** A provider's
+  API key is consumed by main's transport, broker-side like a connection's, and never
+  fronted: `liquen connect ai <provider> [--agent <id>]` writes `ai:<provider>` (the org's)
+  or `ai:<provider>:<agent>` (spent by that agent alone, before the org's). The transport
+  reads it at every call, so a key connected or rotated while the org runs is spent from
+  the next call; with none, the provider's SDK reads the environment as it always did
+  (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `.env`), so an org that never connects one runs
+  as before.
 - One **abstract authority model** (*who may act as / access what*), three realizations — Unix
   groups (host), orchestration RBAC (containers), RLS (Postgres) — the companion to the
   connections map (§6: *who may read what*).
@@ -3262,7 +3270,8 @@ org on settings the human believes overridden. The functions are 100% parametriz
 arguments and never read env; their argument defaults are the same exported constants
 (ergonomics for direct callers: tests), so code and file cannot drift. Env is for secrets only
 (the tokens a service holds; `ANTHROPIC_API_KEY` belongs to the SDK's own credential
-chain and `GEMINI_API_KEY` to the Google edge, not to us); session choices — which agent the REPL faces, which principal a connect
+chain and `GEMINI_API_KEY` to the Google edge, not to us — and a model key in the vault,
+`liquen connect ai`, answers before either); session choices — which agent the REPL faces, which principal a connect
 door binds — are CLI arguments, per-invocation by nature.
 **Which numbers are knobs, and how a test moves the rest.** One question sorts every
 number in the codebase: *would two healthy deployments ever want different values?* Yes

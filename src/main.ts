@@ -51,6 +51,7 @@ import {
   type ModelTransport,
   providerOf,
   transports,
+  vaultKeys,
 } from "./transport/mod.ts";
 import { openCloudflareSandbox, openLocalSandbox, type SessionUpdate } from "./sandbox.ts";
 import { whatsappContact } from "./connect/whatsapp/contact.ts";
@@ -220,11 +221,14 @@ export async function start(
       (name) => docs.read(ctx, { scope: "system", kind: "tool", name }),
     );
   }
-  // one transport per provider, shared by every agent declared on it; a test's scripted
-  // edge stands in for all of them
-  const transportOf = transports({ anthropic: config.apiKey });
+  // the vault: the model keys below, and the rooms' grants further down
+  const creds = await store.vault();
+  // one client per provider and key, the key read off the vault at every call (an agent's
+  // own before the org's, the environment's when it holds none); a test's scripted edge
+  // stands in for all of them
+  const transportOf = transports({ anthropic: config.apiKey, keyOf: vaultKeys(creds) });
   const transportFor = (p: AgentRow): ModelTransport =>
-    overrides.transport ?? transportOf(providerOf(p.provider));
+    overrides.transport ?? transportOf(providerOf(p.provider), p.agentId);
   // the exec plane (§9): one provider owns the proxy, the grounds and the shells; main
   // holds only the provider, and every session's exec, ambient and files come from it —
   // this machine's, bare or in bubbles, or the sandbox gateway's the catalog names
@@ -302,7 +306,6 @@ export async function start(
   // the rooms (§9): one port per service whose API opens and changes conversations, over
   // the vault the dispatcher posts with — so a room is opened by the grant that speaks in
   // it; whatsapp's rides the bridge, whose session is the grant
-  const creds = await store.vault();
   const rooms: XiPorts["rooms"] = {
     slack: slackRooms({ tokenFor: slackTokenFor(creds) }),
     microsoft: teamsRooms({ broker: createGrantBroker({ creds }), creds }),
@@ -518,7 +521,7 @@ export async function start(
     r.config.effort = effort;
     r.ports.transport = provider === p.provider
       ? stock.get(agentId)!
-      : meter(agentId, overrides.transport ?? transportOf(providerOf(provider)));
+      : meter(agentId, overrides.transport ?? transportOf(providerOf(provider), agentId));
   };
 
   // the door (§9): a script's syscalls, as gated tool_use events in the caller's name. The

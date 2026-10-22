@@ -19,6 +19,7 @@
 
 import type { ModelTransport } from "../mu.ts";
 import type { UsageRow } from "../store/log.ts";
+import type { Credentials } from "../store/credentials.ts";
 import { EFFORTS, type ProviderName } from "../config.ts";
 import type { Effort } from "../types.ts";
 import { anthropicClient, anthropicTransport } from "./anthropic.ts";
@@ -68,21 +69,60 @@ export function checkProvider(
   }
 }
 
-/** The transports a process holds, one per provider, built on first use: a client is a
- *  connection pool and a credential, and every agent on the same provider shares both. */
-export function transports(keys: { anthropic?: string } = {}): (p: Provider) => ModelTransport {
-  const made = new Map<ProviderName, ModelTransport>();
-  return (p) => {
-    const had = made.get(p.name);
-    if (had) return had;
-    const t: ModelTransport = silenced(
-      p.name === "google"
-        ? googleTransport(googleClient())
-        : anthropicTransport(anthropicClient(keys.anthropic)),
-    );
-    made.set(p.name, t);
+/** The vault key a provider's API key is stored under: the org's, or one agent's own
+ *  (`liquen connect ai`). */
+export function aiKey(provider: ProviderName, agentId?: string): string {
+  return agentId ? `ai:${provider}:${agentId}` : `ai:${provider}`;
+}
+
+/** The API key a call spends, looked up at every call: undefined leaves it to the SDK's own
+ *  chain, the environment's (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, an `ant auth login`). */
+export type KeyOf = (provider: ProviderName, agentId?: string) => Promise<string | undefined>;
+
+/** The vault's keys: the agent's own row before the org's. */
+export function vaultKeys(creds: Pick<Credentials, "get">): KeyOf {
+  return async (provider, agentId) => {
+    const own = agentId ? await creds.get(aiKey(provider, agentId)) : null;
+    const row = own ?? await creds.get(aiKey(provider));
+    return row?.value.api_key || undefined;
+  };
+}
+
+/** The transports a process holds: one client per provider and credential, built on first
+ *  use — a client is a connection pool and a credential, and every agent spending the same
+ *  key on the same provider shares both. The key is looked up at every call (`keyOf`), so a
+ *  key connected or rotated while the org runs is spent from the next call, and a client
+ *  whose key was rotated away is simply never asked again. An explicit `anthropic` key (a
+ *  test's, a library caller's) wins over all of it. */
+export function transports(
+  keys: { anthropic?: string; keyOf?: KeyOf } = {},
+  make: (p: Provider, key: string | undefined) => ModelTransport = clientTransport,
+): (p: Provider, agentId?: string) => ModelTransport {
+  const made = new Map<string, ModelTransport>();
+  const built = (p: Provider, key: string | undefined): ModelTransport => {
+    const id = `${p.name}\0${key ?? ""}`;
+    let t = made.get(id);
+    if (!t) {
+      t = make(p, key);
+      made.set(id, t);
+    }
     return t;
   };
+  return (p, agentId) => {
+    const fixed = p.name === "anthropic" ? keys.anthropic : undefined;
+    const keyOf = keys.keyOf;
+    if (fixed || !keyOf) return silenced(built(p, fixed));
+    return silenced(async (params, emit, meta, signal) =>
+      built(p, await keyOf(p.name, agentId))(params, emit, meta, signal)
+    );
+  };
+}
+
+/** The provider's own client behind a transport: `key` undefined is the SDK's chain. */
+function clientTransport(p: Provider, key: string | undefined): ModelTransport {
+  return p.name === "google"
+    ? googleTransport(googleClient(key))
+    : anthropicTransport(anthropicClient(key));
 }
 
 /** How long a call may go without a delta before it counts as a dropped connection. A

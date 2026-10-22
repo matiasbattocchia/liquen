@@ -29,7 +29,8 @@ cd myorg && liquen repl
 
 The script installs Deno when it is missing, makes the org, adds you to its roster and asks
 for your Anthropic API key. Leave the name off and it installs only the `liquen` command.
-An agent on Gemini reads `GEMINI_API_KEY` from `.env` instead.
+An agent on Gemini reads `GEMINI_API_KEY` from `.env` instead. A key can live in the vault
+instead of `.env`, the org's or one agent's own: `liquen connect ai <provider>`.
 
 ## Use
 

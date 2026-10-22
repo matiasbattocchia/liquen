@@ -5787,6 +5787,20 @@ read as another, an escaped slash, backslash or dot, is refused rather than read
 origin that decodes before it routes would walk `…/42/sonar/..%2F..%2F7/` into tenant 7. A
 refusal is the host binding's 401. Rows written before declare no paths and stay unbound.
 
+### A model key lives in the vault (2026-10-22) — LANDED
+
+The model key was the one secret the harness took from its environment, so a container got
+it as an env var, a laptop as a `.env` line, and a key per agent was not expressible.
+`liquen connect ai <provider> [--agent <id>] [--no-probe]` stores it as `ai:<provider>`, or
+`ai:<provider>:<agent>`, an agent's own, after one model listing through the provider's own
+client has taken it. `transports` now holds a client per provider and key, and every call
+asks the vault which key to spend: the agent's own, else the org's, else nothing, which
+leaves the SDK to read the environment as before. So a key connected or rotated while the
+org runs is spent from the next call, and agents spending one key share its client. The
+row is the harness's own, never fronted, and `connect --remove ai:<provider>` takes it
+back. Tried on Gemini: a bogus key refused with Google's sentence, a real one stored, and a
+call with no `GEMINI_API_KEY` in the environment answered from the agent's row.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

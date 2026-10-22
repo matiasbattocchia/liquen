@@ -66,8 +66,8 @@ export function explained(err: unknown): unknown {
   return typeof message === "string" ? failure(`${status} ${message}`, status) : err;
 }
 
-/** Build a client. An explicit key (a test's) wins; otherwise the key is the environment's
- *  — `GEMINI_API_KEY`, the one secret this edge needs — and mu never reads it. */
+/** Build a client. An explicit key (a test's, or the vault's: `liquen connect ai`) wins;
+ *  otherwise the key is the environment's — `GEMINI_API_KEY` — and mu never reads it. */
 export function googleClient(apiKey?: string): GoogleGenAI {
   const key = apiKey ?? Deno.env.get("GEMINI_API_KEY");
   return new GoogleGenAI(key ? { apiKey: key } : {});

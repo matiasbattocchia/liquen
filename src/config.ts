@@ -31,7 +31,8 @@
  *     never from the environment. Argument defaults are ergonomics for direct callers
  *     (tests); they are the named constants defined here, the single source.
  *   · env is for secrets only (tokens the services hold; `ANTHROPIC_API_KEY` belongs to
- *     the SDK's own credential chain, not to us; `GEMINI_API_KEY` is the Google edge's). The org lives where its config.jsonc
+ *     the SDK's own credential chain, not to us; `GEMINI_API_KEY` is the Google edge's; a key
+ *     in the vault — `liquen connect ai` — answers before either). The org lives where its config.jsonc
  *     lives — cwd selects it, no variable does. Session choices (which agent a REPL faces)
  *     are CLI arguments — per-invocation by nature, no seat in the file.
  */

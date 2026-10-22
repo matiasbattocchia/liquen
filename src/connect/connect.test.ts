@@ -60,6 +60,7 @@ Deno.test("available = shipped + custom doors, doorless connectors excluded", as
       "github",
       "microsoft",
       "token",
+      "ai",
       "acme",
     ]);
   });

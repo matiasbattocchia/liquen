@@ -72,7 +72,7 @@ export function anthropicTransport(
   };
 }
 
-/** Build a client. An explicit key (a test's, or later a vault credential) wins;
+/** Build a client. An explicit key (a test's, or the vault's: `liquen connect ai`) wins;
  *  otherwise credentials are the SDK's own affair — `ANTHROPIC_API_KEY`,
  *  `ANTHROPIC_AUTH_TOKEN`, an `ant auth login` OAuth profile — mu never reads them. */
 export function anthropicClient(apiKey?: string): Anthropic {

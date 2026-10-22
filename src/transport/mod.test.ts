@@ -1,6 +1,16 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
-import { checkProvider, GOOGLE, type ModelTransport, providerOf, silenced } from "./mod.ts";
+import {
+  ANTHROPIC,
+  checkProvider,
+  GOOGLE,
+  type ModelTransport,
+  providerOf,
+  silenced,
+  transports,
+  vaultKeys,
+} from "./mod.ts";
+import { openCredentials } from "../store/credentials.ts";
 import { retryable } from "../nu.ts";
 import type { Delta } from "../types.ts";
 
@@ -152,4 +162,50 @@ Deno.test("checkProvider: a google agent must name a gemini model at a depth the
   // Anthropic's model names are the API's to judge, and every catalog depth is its own
   checkProvider({ agentId: "a", provider: null, model: "claude-x", effort: "max" });
   checkProvider({ agentId: "a", model: "anything", effort: "xhigh" });
+});
+
+/** A `make` that records the key each client was built with, and answers with it. */
+function recorder() {
+  const built: (string | undefined)[] = [];
+  const make = (_p: unknown, key: string | undefined): ModelTransport => {
+    built.push(key);
+    return () => Promise.resolve({ ...DONE, id: key ?? "env" } as Anthropic.Message);
+  };
+  return { built, make };
+}
+const answer = async (t: ModelTransport) => (await t(REQUEST)).id;
+
+Deno.test("transports: the vault's key, the agent's own before the org's, read at every call", async () => {
+  const dir = await Deno.makeTempDir();
+  const creds = await openCredentials(dir);
+  try {
+    const { built, make } = recorder();
+    const of = transports({ keyOf: vaultKeys(creds) }, make);
+    const ana = of(GOOGLE, "ana");
+    const bo = of(GOOGLE, "bo");
+
+    assertEquals(await answer(ana), "env"); // no row: the SDK's own chain
+    await creds.put({ key: "ai:google", value: { api_key: "org-key" } });
+    assertEquals(await answer(ana), "org-key"); // connected while running: the next call
+    assertEquals(await answer(bo), "org-key");
+    await creds.put({ key: "ai:google:ana", value: { api_key: "ana-key" }, agentId: "ana" });
+    assertEquals(await answer(ana), "ana-key"); // her own wins
+    assertEquals(await answer(bo), "org-key"); // and is hers alone
+    await creds.put({ key: "ai:google", value: { api_key: "rotated" } });
+    assertEquals(await answer(bo), "rotated");
+    assertEquals(await answer(of(ANTHROPIC, "bo")), "env"); // a key is one provider's
+    // one client per key, shared by every agent spending it
+    assertEquals(built, [undefined, "org-key", "ana-key", "rotated", undefined]);
+  } finally {
+    await creds.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("transports: an explicit anthropic key wins, and no vault is the SDK's chain", async () => {
+  const { make } = recorder();
+  const keyOf = () => Promise.resolve("vault-key");
+  assertEquals(await answer(transports({ anthropic: "given", keyOf }, make)(ANTHROPIC)), "given");
+  assertEquals(await answer(transports({ anthropic: "given", keyOf }, make)(GOOGLE)), "vault-key");
+  assertEquals(await answer(transports({}, make)(GOOGLE, "ana")), "env");
 });

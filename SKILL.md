@@ -35,6 +35,10 @@ Claude-Code/claude.ai subscription logins do NOT work for the API — only the t
 
 An agent declared `provider: "google"` (a `gemini-*` model) reads `GEMINI_API_KEY` from `.env`.
 
+Or keep the key in the vault, where it wins over the environment and is read at every call
+(no restart): `liquen connect ai <anthropic|google> [--agent <id>]`, pasted or piped. With
+`--agent` it is that agent's own, spent before the org's.
+
 ## 3. First run
 
 ```sh

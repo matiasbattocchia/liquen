@@ -20,9 +20,9 @@ import { removeConnection } from "./remove.ts";
 
 /** The services that ship with the package — each `src/connect/<name>/` a connect door.
  *  A name, not a stat: where the package is may be a URL. */
-export const SHIPPED = ["slack", "google", "whatsapp", "github", "microsoft", "token"];
+export const SHIPPED = ["slack", "google", "whatsapp", "github", "microsoft", "token", "ai"];
 /** The shipped services with a run.ts — the ones that ingest or deliver, so `liquen start`
- *  runs one process each. `token` grants a bearer and runs nothing. */
+ *  runs one process each. `token` grants a bearer and `ai` a model key, and neither runs. */
 export const RUNNING = ["slack", "google", "whatsapp", "github", "microsoft"];
 
 /** The connect door for `name`, as something `deno run` takes: a shipped door by its URL
@@ -71,7 +71,7 @@ export function usage(doors: string[]): string {
   Connect a service to the org. --help on any door. \`liquen status\` is the map of what is
   connected.
 
-  <service>     a door — token is any API's bearer:
+  <service>     a door — token is any API's bearer, ai a model provider's key:
                 ${doors.join(" · ")}
   <path>        a door by module path (anything with a slash) — the org's own live under
                 <org>/connectors/<name>/connect.ts and are named like the shipped ones

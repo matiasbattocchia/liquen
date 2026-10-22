@@ -104,6 +104,9 @@ from the shipped `token` door (`liquen connect token <name> --env <VAR> --hosts 
 `token:<name>:<agent>` (an agent's own), and nothing else — no connection, no membership,
 no event, because a tool credential is capability, not identity. A handle a tool base64s
 or signs over (Basic, SigV4) can't ride this path; such schemes belong broker-side.
+The model key is not a tool credential and is never fronted: `liquen connect ai <provider>
+[--agent <id>]` (`src/connect/ai/connect.ts`) writes `ai:<provider>` or
+`ai:<provider>:<agent>`, which main's transport reads at every call (DESIGN §4).
 
 A connector's subsection holds what is **that service's**: the addresses of its wire, the
 scopes it asks for, the events it maps, the tenant it files the org under. A value that is
