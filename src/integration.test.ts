@@ -22,7 +22,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
 import { shortId, textOf } from "./render.ts";
-import { answer, answerRows, type Said } from "./verdict.ts";
+import { answer, answerRows, isRefusal, refusalText, type Said } from "./verdict.ts";
 import type {
   Draft,
   Event,
@@ -104,7 +104,7 @@ async function answering(
   const open = (await t.read("permission_request") as PermissionRequestEvent[])
     .filter((c) => !ruled.has(c.payload.ref_id));
   const a = answer(said, open, quoted as PermissionRequestEvent | undefined);
-  if (typeof a === "string") throw new Error(a);
+  if (isRefusal(a)) throw new Error(refusalText(a));
   return await t.publishAll(answerRows(a, "line" in said ? said.line : said.glyph, {
     agent: { id: "a1", session_id: "mind" },
     envelope: { ...principalMsg("").envelope },
@@ -2823,12 +2823,18 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
     [
       ok([{ kind: "tool_use", name: "search", input: { in: "gianvito" } }], "tool_use"),
       ok([{ kind: "tool_use", name: "search", input: { from: "Nadie" } }], "tool_use"),
+      // an address is spelled as the wire spells it, and one nobody wrote in is empty
+      ok([{ kind: "tool_use", name: "search", input: { in: "+1 561 351 8605" } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { in: "+5492616921694" } }], "tool_use"),
       ok([{ kind: "assistant", text: "listo" }], "end_turn"),
     ],
     async ({ publish, read }) => {
       await publish(principalMsg("qué me dijo Gianvito"));
-      await waitFor(async () => (await read("tool_result")).length === 2);
-      const [found, missed] = await read("tool_result");
+      await waitFor(async () => (await read("tool_result")).length === 4);
+      const [found, missed, typed, unwritten] = await read("tool_result");
+      const output = (r: Event) => (r as ToolResultEvent).parts[0].data.output as string;
+      assertEquals(output(typed), output(found));
+      assertEquals(output(unwritten), "nothing matched");
 
       // matched case-insensitively, and the page is the window's grammar: the room named
       // AND addressed (the address is what `in`/`send(to:)` take back), each line authored

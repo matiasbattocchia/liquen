@@ -3659,11 +3659,14 @@ const NAME_REACH = 200;
  * Where `send` REFUSES an ambiguous handle, a search WIDENS on one: two people named Ana
  * cost a reader nothing but a longer result, and picking one for them would silently hide
  * the other. A name nobody wears is still an error — an empty result would read as "they
- * never said that" instead of "I don't know who that is".
+ * never said that" instead of "I don't know who that is". An ADDRESS — a phone, a mailbox
+ * — is a conversation whether or not anything was said there yet, spelled as `send`
+ * spells it (`spelled`), so one with no rows matches nothing.
  */
 async function rooms(log: Pick<Reader, "read">, handle?: string): Promise<string[] | undefined> {
   if (handle === undefined) return undefined;
   if ((await log.read({ conversation: handle, limit: 1 })).length > 0) return [handle];
+  if (shapeOf(handle)) return [spelled(handle)];
   const named = await log.read({ conversationName: handle, limit: NAME_REACH });
   // a DM has no subject of its own: it is named by the person on the other end (§3), so a
   // sender's name names their direct chat — never a group's, which wears its own
