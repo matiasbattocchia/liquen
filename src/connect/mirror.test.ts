@@ -387,7 +387,7 @@ Deno.test("mirror fan-out: a send's card is laid out in rows, in the surface's t
         "**Last message** (23 Sep 16:42):\nllegás?\n\n" +
         "**Reply**:\nhola!\nnos vemos\n\n" +
         "**Attachments**: 1\n\n" +
-        "`reply /y to approve · /n <reason> to refuse · or react 👍 / 👎`",
+        "`reply /y to approve · /n <reason> to refuse · or react 👍 / 👎 · 🤖 approves the whole conversation`",
     );
   });
 });
@@ -463,7 +463,7 @@ Deno.test("mirror fan-out: under a Spanish locale the harness speaks Spanish —
       assertStringIncludes(
         card,
         "`[agente pregunta]` aprobar **send**(to: Vivian, text: hola)\n\n" +
-          "`responder /y para aprobar · /n <motivo> para rechazar · o reaccionar 👍 / 👎`",
+          "`responder /y para aprobar · /n <motivo> para rechazar · o reaccionar 👍 / 👎 · 🤖 aprueba toda la conversación`",
       );
       assertEquals(parseVerdict("/y"), { behavior: "allow", scope: "once" });
       assertEquals(presence, "`[agente pensando...]`");
