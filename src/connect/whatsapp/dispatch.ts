@@ -27,7 +27,7 @@
  */
 
 import { isExternal } from "../../store/media.ts";
-import { DispatchError } from "../errors.ts";
+import { httpError } from "../errors.ts";
 import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
 import type {
@@ -275,10 +275,7 @@ export function bridgeSend(
         ...(mediaUrl ? { media_url: mediaUrl } : {}),
       }),
     });
-    if (!res.ok) {
-      const reason = (await res.text()).slice(0, 256).trim();
-      throw new DispatchError(`bridge /dispatch HTTP ${res.status}: ${reason}`, res.status);
-    }
+    if (!res.ok) throw await httpError(res);
     const out = await res.json() as { external_id?: string };
     return out.external_id;
   };

@@ -19,7 +19,7 @@
  */
 
 import type { RoomsPort } from "../../xi.ts";
-import { DispatchError } from "../errors.ts";
+import { DispatchError, httpError } from "../errors.ts";
 import { timedFetch } from "../http.ts";
 
 /** A seat on the roster as the bridge answers it. */
@@ -37,12 +37,9 @@ export function whatsappRooms(
   fetchApi: typeof fetch = timedFetch,
 ): RoomsPort {
   const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
-  const call = async <T>(what: string, path: string, init: RequestInit = {}): Promise<T> => {
+  const call = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
     const res = await fetchApi(`${base}${path}`, { ...init, headers });
-    if (!res.ok) {
-      const reason = (await res.text()).slice(0, 256).trim();
-      throw new DispatchError(`bridge ${what} HTTP ${res.status}: ${reason}`, res.status);
-    }
+    if (!res.ok) throw await httpError(res);
     return await res.json() as T;
   };
   const group = (connection: string, conversation: string) =>
@@ -69,36 +66,35 @@ export function whatsappRooms(
         );
       }
       const made = await call<{ address: string; name?: string }>(
-        "groups",
         `/groups/${encodeURIComponent(connection)}`,
         { method: "POST", body: JSON.stringify({ name: name ?? "", members }) },
       );
       return { address: made.address, kind, ...(made.name ? { name: made.name } : {}) };
     },
     members: async ({ connection, conversation }) => {
-      const out = await call<{ members?: Seat[] }>("groups", group(connection, conversation));
+      const out = await call<{ members?: Seat[] }>(group(connection, conversation));
       return (out.members ?? []).map((s) => ({
         address: s.address,
         ...(s.name ? { name: s.name } : {}),
       }));
     },
     leave: async ({ connection, conversation }) => {
-      await call("groups", group(connection, conversation), { method: "DELETE" });
+      await call(group(connection, conversation), { method: "DELETE" });
     },
     add: async ({ connection, conversation, members }) => {
-      await call("groups", `${group(connection, conversation)}/members`, {
+      await call(`${group(connection, conversation)}/members`, {
         method: "POST",
         ...withMembers(members),
       });
     },
     remove: async ({ connection, conversation, members }) => {
-      await call("groups", `${group(connection, conversation)}/members`, {
+      await call(`${group(connection, conversation)}/members`, {
         method: "DELETE",
         ...withMembers(members),
       });
     },
     rename: async ({ connection, conversation, name }) => {
-      await call("groups", group(connection, conversation), {
+      await call(group(connection, conversation), {
         method: "PATCH",
         body: JSON.stringify({ name }),
       });

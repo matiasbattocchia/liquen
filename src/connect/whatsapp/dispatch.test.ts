@@ -271,7 +271,7 @@ Deno.test("edit and delete act on the referent: one content, no body of their ow
 Deno.test("a bridge refusal stamps failed with the HTTP status as error_code", async () => {
   const { log, failed } = harness(() =>
     Promise.reject(
-      new DispatchError("bridge /dispatch HTTP 422: file part without media_url", 422),
+      new DispatchError("file part without media_url", 422),
     )
   );
   log.push(outboundMessage());
@@ -280,7 +280,7 @@ Deno.test("a bridge refusal stamps failed with the HTTP status as error_code", a
   assertEquals(log.patches.length, 1);
   const status = log.patches[0].patch.status!;
   assertEquals(status.state, "failed");
-  assertStringIncludes(String(status.error), "HTTP 422");
+  assertStringIncludes(String(status.error), "file part without media_url");
   assertEquals(status.error_code, 422);
 });
 

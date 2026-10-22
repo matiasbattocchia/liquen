@@ -125,6 +125,7 @@ Deno.test("whatsapp rooms: the bridge's refusal is the call's failure, class and
       ),
     [`DELETE /groups/${OWN}/${GROUP}`]: () =>
       new Response("session not connected", { status: 503 }),
+    [`GET /groups/${OWN}/${GROUP}`]: () => new Response("", { status: 502 }),
   });
   const port = whatsappRooms("http://b", "tok", fetch);
   const at = { ...actor, conversation: GROUP };
@@ -133,7 +134,15 @@ Deno.test("whatsapp rooms: the bridge's refusal is the call's failure, class and
     DispatchError,
     "join by invite",
   );
+  // the message is the bridge's own words; the status rides as the code
   assertEquals(add.code, 422);
-  const leave = await assertRejects(() => port.leave!(at), DispatchError, "HTTP 503");
-  assertEquals(leave.code, 503);
+  assertEquals(
+    add.message,
+    "not added — 5491: 403 (their settings keep strangers from adding them — they join by invite)",
+  );
+  const leave = await assertRejects(() => port.leave!(at), DispatchError);
+  assertEquals([leave.message, leave.code], ["session not connected", 503]);
+  // a body that says nothing leaves the status line to say it
+  const who = await assertRejects(() => port.members!(at), DispatchError);
+  assertEquals([who.message, who.code], ["HTTP 502", 502]);
 });

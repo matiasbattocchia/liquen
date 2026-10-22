@@ -24,7 +24,7 @@
  */
 
 import type { ContactPort } from "../../xi.ts";
-import { DispatchError } from "../errors.ts";
+import { httpError } from "../errors.ts";
 import { timedFetch } from "../http.ts";
 
 /** Bind the port to a bridge: `base` is `connections.whatsapp.bridgeUrl`, `token` the
@@ -46,10 +46,7 @@ export function whatsappContact(
           contact: { name: name ?? "", remove: remove === true },
         }),
       });
-      if (!res.ok) {
-        const reason = (await res.text()).slice(0, 256).trim();
-        throw new DispatchError(`bridge /dispatch HTTP ${res.status}: ${reason}`, res.status);
-      }
+      if (!res.ok) throw await httpError(res);
       const out = await res.json() as { name?: string };
       return out.name ? { name: out.name } : {};
     },
@@ -58,10 +55,7 @@ export function whatsappContact(
         encodeURIComponent(query)
       }`;
       const res = await fetchApi(url, { headers });
-      if (!res.ok) {
-        const reason = (await res.text()).slice(0, 256).trim();
-        throw new DispatchError(`bridge contacts HTTP ${res.status}: ${reason}`, res.status);
-      }
+      if (!res.ok) throw await httpError(res);
       const out = await res.json() as {
         contacts?: { address: string; extra?: { name?: string } }[];
       };
