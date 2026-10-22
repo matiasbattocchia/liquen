@@ -11,7 +11,9 @@
  *
  * The row carries the token in `value.token` (static: the broker hands it back as-is) and
  * the proxy declaration in `extra`: `env`, the var user space holds the `mu-grant-…` handle
- * under, and `hosts`, the only authorities the swap spends it toward. From the next
+ * under, `hosts`, the only authorities the swap spends it toward, and `paths` when given,
+ * the only paths there (a tenant's `/organization/<id>/`, for a key that opens every
+ * tenant's). From the next
  * `liquen start` the agent's `fetch -H "Authorization: Bearer $VAR" https://<host>/…` is
  * the whole of it (§9), the credential never in user space.
  *
@@ -21,13 +23,14 @@
  * the row it wrote cannot be fronted — another row of the same scope claims the var, or
  * an org row shadows the agent's.
  *
- * Args: `<name> --env <VAR> --hosts <h1,h2,…> [--agent <id> | --org] [--probe <url>]`.
+ * Args: `<name> --env <VAR> --hosts <h1,h2,…> [--paths <p1,p2,…>] [--agent <id> | --org]
+ * [--probe <url>]`.
  * The token is pasted at a prompt, or piped (one line). Env: none.
  */
 
 import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../connector.ts";
-import { hostAllowed } from "../../proxy/grants.ts";
+import { hostAllowed, pathAllowed, plainPath } from "../../proxy/grants.ts";
 import { entry } from "../../entry.ts";
 
 export const TOKEN_PREFIX = "token:";
@@ -36,6 +39,7 @@ export interface TokenArgs {
   name: string;
   env: string;
   hosts: string[];
+  paths?: string[];
   agentId?: string;
   probe?: string;
 }
@@ -51,9 +55,11 @@ export function parseTokenArgs(argv: string[]): TokenArgs {
   let name: string | undefined;
   let env: string | undefined;
   let hosts: string[] | undefined;
+  let paths: string[] | undefined;
   let agentId: string | undefined;
   let org = false;
   let probe: string | undefined;
+  const list = (v: string) => v.split(",").map((x) => x.trim()).filter(Boolean);
   const value = (flag: string, i: number): string => {
     const v = argv[i + 1];
     if (v === undefined || v.startsWith("--")) throw new Error(`${flag} needs a value`);
@@ -62,7 +68,8 @@ export function parseTokenArgs(argv: string[]): TokenArgs {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--env") env = value(a, i++);
-    else if (a === "--hosts") hosts = value(a, i++).split(",").map((h) => h.trim()).filter(Boolean);
+    else if (a === "--hosts") hosts = list(value(a, i++));
+    else if (a === "--paths") paths = list(value(a, i++));
     else if (a === "--agent") agentId = value(a, i++);
     else if (a === "--probe") probe = value(a, i++);
     else if (a === "--org") org = true;
@@ -84,6 +91,14 @@ export function parseTokenArgs(argv: string[]): TokenArgs {
       throw new Error(`--hosts takes hostnames or *.suffix wildcards — got "${h}"`);
     }
   }
+  if (paths !== undefined && !paths.length) throw new Error("--paths names at least one path");
+  for (const p of paths ?? []) {
+    if (!plainPath(p) || /[?#%]/.test(p)) {
+      throw new Error(
+        `--paths takes absolute paths with no dot segments, escapes or query — got "${p}"`,
+      );
+    }
+  }
   if (org && agentId) throw new Error("--org or --agent <id>, not both");
   if (probe !== undefined) {
     let url: URL;
@@ -99,8 +114,22 @@ export function parseTokenArgs(argv: string[]): TokenArgs {
         } — the token would never reach it`,
       );
     }
+    if (!pathAllowed(paths, url.pathname)) {
+      throw new Error(
+        `--probe ${url.pathname} is outside --paths ${
+          paths!.join(",")
+        } — the token would never reach it`,
+      );
+    }
   }
-  return { name, env, hosts, ...(agentId ? { agentId } : {}), ...(probe ? { probe } : {}) };
+  return {
+    name,
+    env,
+    hosts,
+    ...(paths ? { paths } : {}),
+    ...(agentId ? { agentId } : {}),
+    ...(probe ? { probe } : {}),
+  };
 }
 
 /** The vault key the grant lands under: the org's by name, an agent's by name and id. */
@@ -161,7 +190,7 @@ export async function connectToken(
     key,
     value: { token: token.trim() },
     ...(args.agentId ? { agentId: args.agentId } : {}),
-    extra: { env: args.env, hosts: args.hosts },
+    extra: { env: args.env, hosts: args.hosts, ...(args.paths ? { paths: args.paths } : {}) },
   };
   await deps.creds.put(row);
   const said = contention(await deps.creds.list(""), row);
@@ -179,9 +208,8 @@ async function defaultProbe(url: string, token: string): Promise<{ status: numbe
   return { status: res.status };
 }
 
-const USAGE =
-  `usage: liquen connect token <name> --env <VAR> --hosts <h1,h2,…> [--agent <id> | --org]
-                           [--probe <url>]
+const USAGE = `usage: liquen connect token <name> --env <VAR> --hosts <h1,h2,…> [--paths <p1,p2,…>]
+                           [--agent <id> | --org] [--probe <url>]
 
   A bearer token for any API, fronted through the egress proxy: the agent's environment
   holds a handle under <VAR>, and \`fetch -H "Authorization: Bearer $VAR" https://<host>/…\`
@@ -192,6 +220,9 @@ const USAGE =
   --env <VAR>     the environment variable the agent reads the handle from
   --hosts <list>  the only authorities the token is spent toward — exact hostnames or
                   *.suffix wildcards, comma-separated
+  --paths <list>  the only paths the token is spent on there, comma-separated: a path and
+                  everything under it, by whole segments (\`/organization/42/\` holds
+                  \`/organization/42/deals\`, never \`/organization/420\`); default: any
   --agent <id>    file the grant as that agent's own (fronted in its pocket alone; the key
                   becomes token:<name>:<id>); default: the org's, every agent's fallback
   --org           say the default out loud
@@ -224,7 +255,8 @@ if (import.meta.main) {
       `Connecting a token for ${args.name} → ${
         args.agentId ? `agent "${args.agentId}"` : "the org"
       }, ` +
-        `fronted as $${args.env} toward ${args.hosts.join(", ")}.\n`,
+        `fronted as $${args.env} toward ${args.hosts.join(", ")}` +
+        `${args.paths ? `, under ${args.paths.join(", ")}` : ""}.\n`,
     );
     /** TTY: interactive prompt; piped stdin: the first line (secret managers). */
     const token = Deno.stdin.isTerminal()

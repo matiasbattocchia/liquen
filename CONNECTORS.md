@@ -93,11 +93,13 @@ A connector whose CLI should work from agent bash **fronts its grant through the
 proxy by declaration, not by code**: the connect door writes two sidecar fields on the
 credential row — `extra.env`, the env var the placeholder is issued under (what the tool
 reads: `GH_TOKEN`, `GOOGLE_WORKSPACE_CLI_TOKEN`), and `extra.hosts`, the only origins the
-token may be spent toward (exact hostnames or `*.suffix`). main fronts every row that
+token may be spent toward (exact hostnames or `*.suffix`), and optionally `extra.paths`, the
+only paths there (whole segments). main fronts every row that
 declares an env var (the org's own row wins; several contenders for one var → none is
 fronted), and the proxy substitutes the handle wherever it appears in a header value —
 no proxy or main change per tool. A service with no connector at all takes the same row
-from the shipped `token` door (`liquen connect token <name> --env <VAR> --hosts <list>`,
+from the shipped `token` door (`liquen connect token <name> --env <VAR> --hosts <list>
+[--paths <list>]`,
 `src/connect/token/connect.ts`): a pasted bearer under `token:<name>` (the org's) or
 `token:<name>:<agent>` (an agent's own), and nothing else — no connection, no membership,
 no event, because a tool credential is capability, not identity. A handle a tool base64s

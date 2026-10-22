@@ -5774,6 +5774,19 @@ is a 422 when nobody is there; and every refused or failed dispatch is logged wi
 id. Both numbers were landlines
 with no mobile `9`, so whether they are on WhatsApp at all is the check's to say.
 
+### A token is held to its paths (2026-10-22) — LANDED
+
+A grant was bound to hosts only, so a service key that opens every tenant of an API opened
+every tenant for the agent too: Sonar's agent bearer is one such key, and `sonar` pinning
+the tenant is a courtesy the agent's own `fetch` does not owe. `liquen connect token` takes
+`--paths`, written as `extra.paths` beside the hosts, and the broker spends the token only
+on a request whose path lies under one of them, by whole segments (`/organization/42/`
+holds `/organization/42`, never `/organization/420`). The path judged is the one the proxy
+re-originates, dot segments already resolved by the URL parser; one the origin could still
+read as another, an escaped slash, backslash or dot, is refused rather than read, since an
+origin that decodes before it routes would walk `…/42/sonar/..%2F..%2F7/` into tenant 7. A
+refusal is the host binding's 401. Rows written before declare no paths and stay unbound.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

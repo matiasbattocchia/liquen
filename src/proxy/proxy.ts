@@ -145,11 +145,12 @@ export async function proxyRequest(
         });
       }
       agentId ??= owner;
-      const token = await deps.broker.accessTokenFor(handle, host);
+      // the path judged is the one re-originated: `target` is built from it
+      const token = await deps.broker.accessTokenFor(handle, host, url.pathname);
       if (!token) {
         // a placeholder we can't honor never leaves the box as-is (it would 401 upstream
-        // and leak the handle) — fail it here; same answer when the grant's host binding
-        // refuses the dialed origin
+        // and leak the handle) — fail it here; same answer when the grant's host or path
+        // binding refuses the request
         audit({
           method: req.method,
           host,
@@ -159,7 +160,7 @@ export async function proxyRequest(
           swapped: false,
         });
         return new Response(
-          "liquen proxy: no credential for this grant, or grant not valid for this host\n",
+          "liquen proxy: no credential for this grant, or grant not valid for this host or path\n",
           { status: 401 },
         );
       }

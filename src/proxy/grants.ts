@@ -9,13 +9,14 @@
  *
  *   issue(credentialKey)   mint (or return) the handle standing for a vault grant.
  *   resolve(handle)        handle → the grant it names (credentialKey/agentId) — NO secret.
- *   accessTokenFor(handle, host?)
+ *   accessTokenFor(handle, host?, path?)
  *                          a LIVE credential: a static `token` as-is (a pasted PAT, a
  *                          slack xoxb — nothing expires), the stored `access_token` while
  *                          it's fresh, else a re-issue against the grant's issuer, with
- *                          the rotated token written back to the vault. `host` enforces
- *                          the grant's binding: the row's `extra.hosts` names the only
- *                          origins the token may be spent toward (hostAllowed).
+ *                          the rotated token written back to the vault. `host` and `path`
+ *                          enforce the grant's binding: the row's `extra.hosts` names the
+ *                          only origins the token may be spent toward (hostAllowed), its
+ *                          `extra.paths` the only paths there (pathAllowed).
  *
  * The re-issue needs the app that minted the grant, and the grant's `extra` says which
  * issuer that is: `installation_id` names a GitHub App installation — the broker signs the
@@ -49,11 +50,12 @@ export interface GrantBroker {
   /** A live access token for the handle, refreshing when the stored one has expired.
    *  `host` is the dialed authority the token is about to be spent toward: a grant whose
    *  row declares `extra.hosts` is spendable ONLY toward them (exact or `*.` wildcard;
-   *  the port doesn't bind) — the swap's one policy rule, declared where the grant lives.
-   *  A row declaring none is unbound. Omit `host` for broker-side callers that hold the
-   *  token anyway (a dispatcher's spawn env). null ⇒ unknown handle, a host outside the
+   *  the port doesn't bind) — the swap's policy, declared where the grant lives. `path` is
+   *  the request's, held to the row's `extra.paths` the same way (pathAllowed). A row
+   *  declaring neither is unbound. Omit both for broker-side callers that hold the token
+   *  anyway (a dispatcher's spawn env). null ⇒ unknown handle, a host or path outside the
    *  declaration, or a failed refresh (the proxy answers 401). */
-  accessTokenFor(handle: string, host?: string): Promise<string | null>;
+  accessTokenFor(handle: string, host?: string, path?: string): Promise<string | null>;
   /** Why the last `accessTokenFor` on this handle answered null, when the grant was the
    *  reason: `signedOut` when the issuer ended the access for good (a refresh refused as
    *  `invalid_grant`, an app uninstalled, the vault row gone) — the principal links the
@@ -294,7 +296,7 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
       return byHandle.get(handle) ?? null;
     },
 
-    async accessTokenFor(handle: string, host?: string): Promise<string | null> {
+    async accessTokenFor(handle: string, host?: string, path?: string): Promise<string | null> {
       const grant = byHandle.get(handle);
       if (!grant) return null;
       const key = grant.credentialKey;
@@ -302,6 +304,7 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
       const row = await deps.creds.get(key);
       if (!row) return refuse(key, "the vault holds no such grant", true);
       if (host !== undefined && !hostAllowed(row.extra?.hosts, host)) return null;
+      if (path !== undefined && !pathAllowed(row.extra?.paths, path)) return null;
       refusals.delete(key);
       if (row.value.token) return row.value.token; // static — nothing expires, nothing refreshes
       const expiry = typeof row.extra?.expiry === "string" ? Date.parse(row.extra.expiry) : NaN;
@@ -360,6 +363,33 @@ export function hostAllowed(hosts: unknown, authority: string): boolean {
   return hosts.some((h) =>
     typeof h === "string" &&
     (h.startsWith("*.") ? host.endsWith(h.slice(1).toLowerCase()) : host === h.toLowerCase())
+  );
+}
+
+/** The grant's path binding: a row declaring `extra.paths` spends only on a request whose
+ *  path lies under one of them. A prefix ends at a segment — `/org/1/` holds `/org/1` and
+ *  `/org/1/x`, never `/org/10` — written with its trailing slash or without. A path the
+ *  origin could read as another one is refused, not read: the proxy and the origin must
+ *  agree on what it names, and an origin that decodes `%2F` before it routes would walk
+ *  `/org/1/..%2F2/x` into `/org/2/x`. A row declaring none is unbound. */
+export function pathAllowed(paths: unknown, path: string): boolean {
+  if (!Array.isArray(paths)) return true;
+  if (!plainPath(path)) return false;
+  return paths.some((p) => {
+    if (typeof p !== "string") return false;
+    const base = p.replace(/\/$/, "");
+    return path === base || path.startsWith(`${base}/`);
+  });
+}
+
+/** A path that names one thing to anyone who reads it: absolute, no backslash, no dot or
+ *  empty segment (a trailing slash aside), and no escape that decodes into a separator or
+ *  a dot. */
+export function plainPath(path: string): boolean {
+  if (!path.startsWith("/") || path.includes("\\")) return false;
+  const segments = path.slice(1).split("/");
+  return segments.every((s, i) =>
+    s === "" ? i === segments.length - 1 : s !== "." && s !== ".." && !/%(2f|5c|2e)/i.test(s)
   );
 }
 

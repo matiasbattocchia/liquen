@@ -1,6 +1,13 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { type createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
-import { appJwt, createGrantBroker, frontedFor, tokenOf, type TokenResponse } from "./grants.ts";
+import {
+  appJwt,
+  createGrantBroker,
+  frontedFor,
+  pathAllowed,
+  tokenOf,
+  type TokenResponse,
+} from "./grants.ts";
 import { SignedOut } from "../connect/errors.ts";
 import { openCredentials } from "../store/credentials.ts";
 
@@ -234,6 +241,50 @@ Deno.test("accessTokenFor: a `*.` wildcard binds the suffix — never the apex o
     assertEquals(await broker.accessTokenFor(h, "googleapis.com"), null);
     assertEquals(await broker.accessTokenFor(h, "evil-googleapis.com"), null);
   });
+});
+
+Deno.test("accessTokenFor: the path binding — under a declared path spends, beside it is null", async () => {
+  await withVault(async (creds) => {
+    await creds.put({
+      key: "token:sonar",
+      value: { token: "svc" },
+      extra: { hosts: ["api.turtle.xyz"], paths: ["/organization/42/"] },
+    });
+    const broker = createGrantBroker({ creds });
+    const h = broker.issue("token:sonar");
+    assertEquals(
+      await broker.accessTokenFor(h, "api.turtle.xyz", "/organization/42/sonar/events"),
+      "svc",
+    );
+    assertEquals(
+      await broker.accessTokenFor(h, "api.turtle.xyz", "/organization/7/sonar/events"),
+      null,
+    );
+    assertEquals(await broker.accessTokenFor(h, "elsewhere.io", "/organization/42/sonar"), null); // both bind
+    assertEquals(await broker.accessTokenFor(h), "svc"); // a broker-side caller
+  });
+});
+
+Deno.test("pathAllowed: whole segments, and a path the origin could read otherwise is refused", () => {
+  const paths = ["/organization/42/"];
+  assert(pathAllowed(paths, "/organization/42"));
+  assert(pathAllowed(paths, "/organization/42/"));
+  assert(pathAllowed(paths, "/organization/42/sonar/events"));
+  assert(pathAllowed(["/organization/42"], "/organization/42/sonar")); // the slash is optional
+  assert(!pathAllowed(paths, "/organization/420/sonar"));
+  assert(!pathAllowed(paths, "/organization/4"));
+  assert(!pathAllowed(paths, "/"));
+  // under the prefix as text, elsewhere to an origin that resolves or decodes first
+  assert(!pathAllowed(paths, "/organization/42/../7/sonar"));
+  assert(!pathAllowed(paths, "/organization/42/./sonar"));
+  assert(!pathAllowed(paths, "/organization/42/sonar/..%2F..%2F7/sonar"));
+  assert(!pathAllowed(paths, "/organization/42/%2e%2e/7"));
+  assert(!pathAllowed(paths, "/organization/42/sonar%5C..%5C7"));
+  assert(!pathAllowed(paths, "/organization/42\\..\\7"));
+  assert(!pathAllowed(paths, "/organization/42//7"));
+  assert(pathAllowed(paths, "/organization/42/sonar/a%20b")); // an escape that is no separator
+  assert(pathAllowed(undefined, "/anything/../at/all")); // a row declaring none is unbound
+  assert(!pathAllowed([7], "/organization/42")); // a malformed entry binds nothing
 });
 
 Deno.test("accessTokenFor: a row declaring no hosts is unbound — the door's call", async () => {

@@ -163,6 +163,35 @@ Deno.test("proxyRequest: the grant's host binding refuses the swap — the origi
   assert(!originCalled, "a refused handle must not leave the box toward the echo endpoint");
 });
 
+Deno.test("proxyRequest: the broker judges the path the origin is sent — dot segments resolved", async () => {
+  const asked: (string | undefined)[] = [];
+  const sent: string[] = [];
+  await proxyRequest(
+    "api.turtle.xyz",
+    new Request("https://api.turtle.xyz/organization/42/sonar/../../7/sonar/events?limit=1", {
+      headers: { authorization: "Bearer mu-grant-x" },
+    }),
+    {
+      ca: {} as never,
+      broker: fakeBroker({
+        accessTokenFor: (_h, _host, path) => {
+          asked.push(path);
+          return Promise.resolve("ya29.REAL");
+        },
+      }),
+      audit: () => {},
+      originFetch: (url) => {
+        sent.push(String(url));
+        return Promise.resolve(new Response("", { status: 200 }));
+      },
+    },
+  );
+  // the binding sees /organization/7/…, as the origin will: a prefix check on the raw
+  // target would have passed it as the 42's
+  assertEquals(asked, ["/organization/7/sonar/events"]);
+  assertEquals(sent, ["https://api.turtle.xyz/organization/7/sonar/events?limit=1"]);
+});
+
 Deno.test("proxyRequest: a request with no placeholder passes through untouched", async () => {
   let sentAuth: string | null = "unset";
   await proxyRequest(

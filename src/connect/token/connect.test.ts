@@ -30,6 +30,10 @@ Deno.test("parseTokenArgs: name, env, hosts; the org by default, an agent by fla
     parseTokenArgs([...BASE, "--probe", "https://api.crm.io/me"]).probe,
     "https://api.crm.io/me",
   );
+  assertEquals(
+    parseTokenArgs([...BASE, "--paths", "/organization/42/, /v2/42"]).paths,
+    ["/organization/42/", "/v2/42"],
+  );
 });
 
 Deno.test("parseTokenArgs: refuses what the proxy could not front", () => {
@@ -49,6 +53,15 @@ Deno.test("parseTokenArgs: refuses what the proxy could not front", () => {
   bad([...BASE, "--nope"], "unknown flag");
   bad([...BASE, "other"], "one name");
   bad(["crm", "--env"], "needs a value");
+  bad([...BASE, "--paths", "organization/42"], "absolute paths");
+  bad([...BASE, "--paths", "/organization/42/../7"], "absolute paths");
+  bad([...BASE, "--paths", "/organization/42%2F"], "absolute paths");
+  bad([...BASE, "--paths", "/organization/42?x=1"], "absolute paths");
+  bad([...BASE, "--paths", ","], "at least one path");
+  bad(
+    [...BASE, "--paths", "/organization/42/", "--probe", "https://api.crm.io/me"],
+    "outside --paths",
+  );
 });
 
 Deno.test("tokenKey: the org's by name, an agent's by name and id", () => {
@@ -68,6 +81,17 @@ Deno.test("connectToken: one vault row — static token, env + hosts on the side
     // what main fronts: the org's row, in every pocket
     assertEquals(frontedFor([row!], "ana").map((r) => r.key), ["token:crm"]);
     assertEquals(frontedFor([row!], "bo").map((r) => r.key), ["token:crm"]);
+  });
+});
+
+Deno.test("connectToken: --paths lands on the sidecar beside the hosts", async () => {
+  await withVault(async (creds) => {
+    await connectToken(parseTokenArgs([...BASE, "--paths", "/organization/42/"]), "tok", { creds });
+    assertEquals((await creds.get("token:crm"))?.extra, {
+      env: "CRM_TOKEN",
+      hosts: ["api.crm.io", "*.crm.io"],
+      paths: ["/organization/42/"],
+    });
   });
 });
 

@@ -2994,7 +2994,10 @@ true for exec (kernel handles it), false for control (only harness/human authori
      with its own certificates, so a tool verifying against its own roots (pip, python
      `requests`, npm) reaches it untouched, and one honoring the trust file reaches the
      fronted hosts too. A grant declaring no hosts binds every authority, and then every
-     tunnel terminates. The sandbox never holds token material, binary-agnostic (git included): the
+     tunnel terminates. A grant may also declare paths (`extra.paths`): the token is then
+     spent only on requests under them, by whole segments, so one key that opens every
+     tenant of an API can be held to one tenant's `/organization/<id>/`; a path the origin
+     could read as another (a dot segment, an escaped separator) is refused, not read. The sandbox never holds token material, binary-agnostic (git included): the
      swap is a substitution over header values (the handle is the marker, not any
      particular header), so a new tool costs no proxy change — its connect door declares
      the placeholder's env var and the grant's hosts on the vault row (`extra.env`,
