@@ -70,7 +70,7 @@ import type { ConnectionRow, Connections } from "./store/connections.ts";
 import { SILENT_AFTER_MS } from "./store/connections.ts";
 import type { Docs } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
-import { sameHandle, speaksThrough } from "./store/roster.ts";
+import { digits, sameHandle, speaksThrough } from "./store/roster.ts";
 import { foldName, namesMatch, preferProper } from "./store/names.ts";
 import { newId } from "./store/id.ts";
 import { roomPart } from "./room.ts";
@@ -2044,6 +2044,7 @@ async function aimOf(
   if ((await ports.log.read({ conversation: to, broadcasts: false, limit: 1 })).length > 0) {
     return await knownRoom(to, ports);
   }
+  if (spelled(to) !== to) return await aimOf(spelled(to), subject, self, ports, via);
   const parts = to.split(",").map((p) => p.trim()).filter((p) => p !== "");
   if (parts.length > 1) {
     const sessions = parts.map((p) => sessionTarget(p, agents));
@@ -2080,7 +2081,7 @@ async function wireList(
 ): Promise<Aim | undefined> {
   const members: string[] = [];
   const on = new Map<string, { service: string; address: string }>(); // the accounts they are on
-  for (const p of parts) {
+  for (const p of parts.map(spelled)) {
     const person = await personOn(p, self, ports, via?.address);
     if (person) {
       members.push(person.address);
@@ -2506,6 +2507,13 @@ function shapeOf(address: string): Shape | undefined {
   if (/^[+\d][\d\s().-]*$/.test(address)) return "phone";
   if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) return "mail";
   return undefined;
+}
+
+/** An address as the wire spells it. A phone is typed however the typist likes
+ *  (`+54 9 261 707-8202`); the wire addresses it, and the log records its conversation, by
+ *  the digits alone. */
+function spelled(address: string): string {
+  return shapeOf(address) === "phone" && digits(address) !== "" ? digits(address) : address;
 }
 
 const SHAPE_WORD: Record<Shape, string> = { phone: "phone number", mail: "mail address" };

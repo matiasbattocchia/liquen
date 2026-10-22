@@ -5757,6 +5757,23 @@ it answered nothing. The element now wears `action` and `on`, the quote a reacti
 used, since the room's lines have no ids to point at (the agent's own are bare text). A
 copy whose quote resolved to nothing names its own surface row, and stays a plain line.
 
+### A number typed with `+` hung its send (2026-10-22) — FIXED
+
+The mind wrote two first contacts as `+542617078202` and `+542616921694`, numbers it read
+off two clinics' websites. A first contact's address was kept as typed, so the log opened a
+`+…` conversation and the bridge built `+542617078202@s.whatsapp.net` from it. WhatsApp
+never answered the lookup for that JID; whatsmeow waits 75 s for an answer, the dispatcher
+30 s, so each attempt read `no answer from localhost:8081 within 30s`, the rows stalled, and
+the bridge's log said nothing, because it never wrote a refused dispatch down. `aimOf`
+now spells a phone-shaped `to` as its digits after the exact address finds no conversation,
+so a typed form of a known chat lands in that chat and a stranger opens under the wire's
+own address; a list's members are spelled the same way. On the bridge (open-bsp-whatsmeow),
+a dispatch to a number in any other spelling is a 422; a send to a number with no LID on
+file asks `IsOnWhatsApp` first (the answer files the LID, so each number is asked once) and
+is a 422 when nobody is there; and every refused or failed dispatch is logged with its row
+id. Both numbers were landlines
+with no mobile `9`, so whether they are on WhatsApp at all is the check's to say.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

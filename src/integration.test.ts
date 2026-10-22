@@ -614,6 +614,60 @@ Deno.test("send: a stranger's number rides the one account whose wire takes numb
   }
 });
 
+Deno.test("send: a number typed with + and separators is the digits the wire spells", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const gated: { connection?: string; conversation?: string }[] = [];
+  const { transport } = scripted([
+    ok(
+      [{ kind: "tool_use", name: "send", input: { to: "+54 9 11 9999-9999", text: "hola" } }],
+      "tool_use",
+    ),
+    // a conversation the log knows, typed in another form, is that conversation
+    ok(
+      [{ kind: "tool_use", name: "send", input: { to: "+5491188888888", text: "hola" } }],
+      "tool_use",
+    ),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const config: AgentConfig = {
+    ...CONFIG,
+    gate: (_name, _input, target) => {
+      gated.push(target ?? {});
+      return "allow";
+    },
+  };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  try {
+    await log.publish(
+      wireRow(
+        "whatsapp",
+        "5491100000000",
+        { address: "5491188888888", kind: "direct", name: "Ana" },
+        { address: "5491188888888", name: "Ana" },
+        "wa-ana-1",
+      ),
+    );
+    await log.publish(principalMsg("escribiles"));
+    for (let i = 0; i < 8; i++) await xi(config, ports);
+    const placed = (await log.read({ types: ["message"] }))
+      .filter((e) => e.agent && e.payload?.turn_id && e.envelope.service === "whatsapp")
+      .map((e) => [e.envelope.conversation.address, e.envelope.conversation.name]);
+    assertEquals(placed, [["5491199999999", undefined], ["5491188888888", "Ana"]]);
+    assertEquals(gated, [
+      { connection: "5491100000000", conversation: "5491199999999" },
+      { connection: "5491100000000", conversation: "5491188888888" },
+    ]);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a gated send carries its preview: where it lands, the other side's last word, the text", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
