@@ -509,6 +509,9 @@ export interface SendPreview {
   text?: string;
   files: number;
   location?: string;
+  /** A first contact's account as its wire shows it (`ContactPort.profile`): the wire's
+   *  name, whether an account answers there and the name it goes by, when the wire says. */
+  profile?: { service: string; exists: boolean; name?: string };
 }
 
 export interface PermissionVerdict {

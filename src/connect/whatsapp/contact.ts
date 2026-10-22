@@ -1,5 +1,5 @@
 /**
- * connect/whatsapp/contact.ts — the address book, whatsapp's port (§9): both legs.
+ * connect/whatsapp/contact.ts — the address book, whatsapp's port (§9): every leg.
  *
  * `write` is the `contact` tool's wire leg: one `POST /dispatch` of type `contact` at the
  * bridge, which writes the account's address book with the same app-state patch a linked
@@ -11,6 +11,11 @@
  * out of whatsmeow's own contact store — the entries the ACCOUNT named, the same ones
  * `sender_saved` marks a message with. So a person the account saved is findable before
  * they have ever written, and the book stays where it is.
+ *
+ * `profile` is the send card's: `GET /profiles/{address}/{peer}`, which the bridge
+ * answers by asking WhatsApp whether the number has an account, with a business's
+ * verified name or the push name the session holds. It is what the principal judges a
+ * first contact by: whose phone the number reaches.
  *
  * It is bounded (`timedFetch`) and unqueued, so the tool result IS the outcome and the
  * model is its own retry. That is affordable where a message's is not: the book is
@@ -63,6 +68,15 @@ export function whatsappContact(
       return (out.contacts ?? []).flatMap((c) =>
         c.extra?.name ? [{ name: c.extra.name, address: c.address }] : []
       );
+    },
+    profile: async ({ connection, address }) => {
+      const res = await fetchApi(
+        `${base}/profiles/${encodeURIComponent(connection)}/${encodeURIComponent(address)}`,
+        { headers },
+      );
+      if (!res.ok) throw await httpError(res);
+      const out = await res.json() as { on_whatsapp?: boolean; name?: string };
+      return { exists: out.on_whatsapp === true, ...(out.name ? { name: out.name } : {}) };
     },
   };
 }

@@ -685,6 +685,11 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
         files: ["fachada.jpg", "portero.jpg"],
         location: { latitude: -32.9, longitude: -68.8, name: "Consultorio" },
       },
+    }, {
+      // a first contact: the card says who the number reaches, asked of the wire
+      kind: "tool_use",
+      name: "send",
+      input: { to: "+54 9 261 707-8202", text: "hola" },
     }], "tool_use"),
     ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
   ]);
@@ -693,7 +698,20 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
     gate: (name) => name === "send" ? "ask" : "allow",
     timezone: "America/Argentina/Mendoza",
   };
-  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  const asked: { connection: string; address: string }[] = [];
+  const ports: XiPorts = {
+    log,
+    docs: await docsAt(`${dir}/docs`),
+    transport,
+    contact: {
+      whatsapp: {
+        profile: (req) => {
+          asked.push(req);
+          return Promise.resolve({ exists: true, name: "Biobarica Mendoza" });
+        },
+      },
+    },
+  };
   const patient = (text: string, ts: string, own = false): Draft<MessageEvent> => ({
     ts,
     type: "message",
@@ -713,8 +731,8 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
     await log.publish(patient("un momento", "2026-09-23T19:50:00Z", true));
     await log.publish(principalMsg("contestale a Carlos"));
     for (let i = 0; i < 6; i++) await xi(config, ports);
-    const [req] = await log.read({ types: ["permission_request"] });
-    assert(req.type === "permission_request");
+    const [req, stranger] = await log.read({ types: ["permission_request"] });
+    assert(req.type === "permission_request" && stranger.type === "permission_request");
     assertEquals(req.parts[0].data.send, {
       conversation: { name: "Carlos", address: "5492616560401", kind: "direct" },
       last: { text: "hola, tienen turno?", at: "23 Sep 16:42" },
@@ -722,6 +740,14 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
       files: 2,
       location: "Consultorio",
     });
+    assertEquals(stranger.parts[0].data.send, {
+      conversation: { address: "5492617078202" },
+      text: "hola",
+      files: 0,
+      profile: { service: "whatsapp", exists: true, name: "Biobarica Mendoza" },
+    });
+    // only the stranger was asked about, under the address the wire spells
+    assertEquals(asked, [{ connection: "5491100000000", address: "5492617078202" }]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
