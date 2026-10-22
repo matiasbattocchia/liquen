@@ -71,8 +71,10 @@ import { type Words, words } from "../i18n.ts";
 import {
   answer,
   answerLine,
+  isRefusal,
   parseVerdict,
   reactionVerdict,
+  refusalText,
   type Said,
   settle,
 } from "../verdict.ts";
@@ -255,13 +257,13 @@ async function fanIn(
   const said = verdictSaid(e, card);
   if (said) {
     const a = answer(said, await deps.gates({ agentId: binding.agentId, sessionId: MIND }), card);
-    const settled = typeof a === "string" ? a : await settle(
+    const settled = isRefusal(a) ? a : await settle(
       (rows) => deps.publish(rows),
       a,
       "line" in said ? said.line : said.glyph,
       from,
     );
-    if (typeof settled === "string") {
+    if (isRefusal(settled)) {
       await deps.publish({
         ts: now(),
         type: "error",
@@ -270,7 +272,11 @@ async function fanIn(
           connection_address: "agent",
           conversation: { address: mind },
         },
-        parts: [{ type: "data", kind: "error", data: { error: settled } }],
+        parts: [{
+          type: "data",
+          kind: "error",
+          data: { error: refusalText(settled), refusal: settled },
+        }],
       } as Draft<ErrorEvent>);
     }
     return;
@@ -395,6 +401,8 @@ async function fanOut(
     ? e.payload?.ref_id
     : e.type === "permission_response" && !e.parts[0].data.every
     ? (await cardOf(deps, e.envelope.conversation.address, e.payload.ref_id))?.id
+    : e.type === "tool_use"
+    ? await withdrawnBy(deps, e as ToolUseEvent)
     : undefined;
   const quotes = await Promise.all(
     targets.map((a) => pointed ? crossingOf(deps, a.conversation, pointed) : undefined),
@@ -441,6 +449,33 @@ function rawVia(e: Event): Record<string, unknown> {
     ...(origin ? { surface: origin } : {}),
     ...(e.payload?.action ? { action: e.payload.action } : {}),
   };
+}
+
+/** The mind row an agent's `cancel` takes back, as the line its crossing answers: the card
+ *  of the call it withdraws, or the call that wrote the message it keeps from going out.
+ *  The id is the one `cancel` reads, a full id or its handle. */
+async function withdrawnBy(
+  deps: Pick<MirrorDeps, "read">,
+  use: ToolUseEvent,
+): Promise<EventId | undefined> {
+  const { name, input } = use.parts[0].data;
+  if (name !== "cancel") return undefined;
+  const id = String((input as { id?: unknown } | null)?.id ?? "");
+  if (id === "") return undefined;
+  const named = (ref: unknown) => typeof ref === "string" && (ref === id || shortId(ref) === id);
+  const [card] = await deps.read({
+    conversation: use.envelope.conversation.address,
+    types: ["permission_request"],
+    limit: 1,
+    filter: (x) => named(x.payload?.ref_id),
+  });
+  if (card) return card.id;
+  const mine = (x: Event) => named(x.id) && x.agent?.id === use.agent?.id;
+  for (const state of ["queued", "failed"] as const) {
+    const [message] = await deps.read({ types: ["message"], state, limit: 1, filter: mine });
+    if (message?.payload?.ref_id) return message.payload.ref_id;
+  }
+  return undefined;
 }
 
 /** The card raised for a use, in the room it was raised in. */
@@ -533,8 +568,9 @@ async function ccParts(
   if (e.type === "error") {
     // the harness's own voice reaching the principal (§2): it speaks when the model can't
     // — a gate is waiting, so no turn will be taken to relay this
-    const { error } = (e as ErrorEvent).parts[0].data;
-    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${error}` }]);
+    const { error, refusal } = (e as ErrorEvent).parts[0].data;
+    const said = refusal ? refusalText(refusal, w) : error;
+    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${said}` }]);
   }
   if (e.type === "delta") {
     // presence (§9): what the mind is doing, for the principal on the other side of a

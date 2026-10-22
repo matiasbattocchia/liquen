@@ -194,6 +194,9 @@ Deno.test("nameResolver: the directory shows both halves — who, and which", as
 Deno.test("describeSendCard: rows a person judges — where, what it answers, what it says", () => {
   const labels = {
     conversation: "Conversación",
+    account: "Cuenta",
+    unnamed: "existe, sin nombre público",
+    noAccount: "no hay ninguna cuenta en esta dirección",
     last: "Último mensaje",
     message: "Mensaje",
     toEdit: "Mensaje a editar",
@@ -237,6 +240,26 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
       labels,
     ),
     "**Conversación**: 5491100000000\n\n**Respuesta**:\nhola",
+  );
+  // a first contact: who the address reaches, as its wire shows it, right under it
+  const first = (profile: { exists: boolean; name?: string }) =>
+    describeSendCard(
+      {
+        conversation: { address: "5492617078202" },
+        text: "hola",
+        files: 0,
+        profile: { service: "whatsapp", ...profile },
+      },
+      labels,
+    );
+  assertEquals(
+    first({ exists: true, name: "Biobarica Mendoza" }),
+    "**Conversación**: 5492617078202\n\n**Cuenta**: Biobarica Mendoza\n\n**Respuesta**:\nhola",
+  );
+  assertStringIncludes(first({ exists: true }), "**Cuenta**: existe, sin nombre público");
+  assertStringIncludes(
+    first({ exists: false }),
+    "**Cuenta**: no hay ninguna cuenta en esta dirección",
   );
   // a mail opening a thread: the subject is a row of its own, above the words
   assertEquals(

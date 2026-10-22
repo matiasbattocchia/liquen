@@ -15,6 +15,7 @@
  * two copies of the same ask can sit side by side, only one of them live.
  */
 
+import { type Words, words } from "./i18n.ts";
 import { shortId } from "./render.ts";
 import type {
   Draft,
@@ -23,6 +24,7 @@ import type {
   PermissionRequestEvent,
   PermissionResponseEvent,
   PermissionVerdict,
+  Refusal,
 } from "./types.ts";
 
 /* ── the vocabulary ───────────────────────────────────────────────────── */
@@ -102,32 +104,46 @@ export interface Answered {
 /** A card's handle as a line names it: `shortId`'s six hex digits. */
 const HANDLE = /^[0-9a-f]{6}$/;
 
-const ANSWERED = "that approval was already answered";
+const ANSWERED: Refusal = { refusal: "answered", waiting: 0 };
 
-/** What `said` answers among the `open` cards (oldest first), or the sentence it is refused
- *  with. `quoted` is the card a surface's reply or reaction points at, open or not. A
- *  handle in the line is lifted out before the verdict is read, so it is not taken for a
- *  reason. */
+/** A refusal as a sentence, in a surface's tongue — English for the model and a terminal. */
+export function refusalText(r: Refusal, w: Words = words()): string {
+  switch (r.refusal) {
+    case "not_verdict":
+      return w.refusal.notVerdict;
+    case "no_card":
+      return w.refusal.noCard(r.handle);
+    case "answered":
+      return w.refusal.answered(r.waiting);
+    case "none_waiting":
+      return w.refusal.noneWaiting;
+  }
+}
+
+/** Is this what an answer was refused with? */
+export function isRefusal(x: unknown): x is Refusal {
+  return typeof x === "object" && x !== null && "refusal" in x;
+}
+
+/** What `said` answers among the `open` cards (oldest first), or why it settles none.
+ *  `quoted` is the card a surface's reply or reaction points at, open or not. A handle in
+ *  the line is lifted out before the verdict is read, so it is not taken for a reason. */
 export function answer(
   said: Said,
   open: PermissionRequestEvent[],
   quoted?: PermissionRequestEvent,
-): Answered | string {
+): Answered | Refusal {
   const words = "line" in said ? said.line.trim().split(/\s+/) : [];
   const named = open.find((c) => words.includes(shortId(c.payload.ref_id)));
   const verdict = "glyph" in said
     ? reactionVerdict(said.glyph)
     : parseVerdict(words.filter((w) => !named || w !== shortId(named.payload.ref_id)).join(" "));
-  if (!verdict) return "not a verdict — /y[once|conv|conn|always|all] [handle] [reason]";
+  if (!verdict) return { refusal: "not_verdict" };
   const stale = named ? undefined : words.find((w) => HANDLE.test(w));
-  if (stale) return `no card ${stale} is waiting`;
+  if (stale) return { refusal: "no_card", handle: stale };
   const live = (c: PermissionRequestEvent) => open.some((o) => o.id === c.id);
-  if (!named && quoted && !live(quoted)) {
-    return open.length === 0
-      ? ANSWERED
-      : `${ANSWERED} — ${open.length} still waiting, /y answers the newest`;
-  }
-  if (open.length === 0) return "no approval is waiting";
+  if (!named && quoted && !live(quoted)) return { refusal: "answered", waiting: open.length };
+  if (open.length === 0) return { refusal: "none_waiting" };
   if (verdict.every) return { refs: open.map((c) => c.payload.ref_id), verdict };
   return { refs: [(named ?? quoted ?? open.at(-1)!).payload.ref_id], verdict };
 }
@@ -159,14 +175,14 @@ export function answerRows(
 /** The answer logged, as the store kept it: the settlements of the cards no other ruling
  *  reached first — a card is settled once (§9), and a race between two surfaces, or with
  *  the lapse, is the store's to break — or, when every card went to someone else, the
- *  sentence the answer is refused with. The cards go one at a time, so the line rides the
+ *  refusal. The cards go one at a time, so the line rides the
  *  first one the store keeps: a card lost to a race does not take the line with it. */
 export async function settle(
   publish: (rows: Draft<PermissionResponseEvent>[]) => Promise<Event[]>,
   a: Answered,
   line: string,
   from: Pick<Draft<PermissionResponseEvent>, "agent" | "envelope" | "extra">,
-): Promise<PermissionResponseEvent[] | string> {
+): Promise<PermissionResponseEvent[] | Refusal> {
   const stored: PermissionResponseEvent[] = [];
   for (const row of answerRows(a, line, from)) {
     const [data] = row.parts;

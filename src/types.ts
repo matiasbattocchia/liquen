@@ -509,6 +509,9 @@ export interface SendPreview {
   text?: string;
   files: number;
   location?: string;
+  /** A first contact's account as its wire shows it (`ContactPort.profile`): the wire's
+   *  name, whether an account answers there and the name it goes by, when the wire says. */
+  profile?: { service: string; exists: boolean; name?: string };
 }
 
 export interface PermissionVerdict {
@@ -630,9 +633,19 @@ export interface AlarmEvent extends EventBase {
 export interface ErrorEvent extends EventBase {
   type: "error";
   /** `origin: "model"` — the model call failed (the provider's answer); absent — the
-   *  harness's own failure: a checkpoint, a verdict that could not settle. */
-  parts: [DataPart<"error", { error: string; origin?: "model" }>];
+   *  harness's own failure: a checkpoint, a verdict that could not settle. A verdict's
+   *  carries its `refusal` too, so a surface says it in its own tongue while `error` stays
+   *  the English the model reads. */
+  parts: [DataPart<"error", { error: string; origin?: "model"; refusal?: Refusal }>];
 }
+
+/** Why a principal's answer settled no card (`verdict.ts`): not a verdict at all, a handle
+ *  no open card wears, a card already answered (with how many still wait), or none open. */
+export type Refusal =
+  | { refusal: "not_verdict" }
+  | { refusal: "no_card"; handle: string }
+  | { refusal: "answered"; waiting: number }
+  | { refusal: "none_waiting" };
 
 /** What a presence line says the mind is doing: the two stream deltas worth a word. */
 export type DeltaKind = "thinking" | "checkpoint";

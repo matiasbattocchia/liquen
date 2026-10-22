@@ -745,6 +745,12 @@ export interface ContactPort {
     connection: string;
     query: string;
   }) => Promise<{ name: string; address: string }[]>;
+  /** What the wire shows of an address nobody here has written to: whether an account
+   *  answers there, and the name it goes by when the wire tells (a business's). */
+  profile?: (req: {
+    connection: string;
+    address: string;
+  }) => Promise<{ exists: boolean; name?: string }>;
 }
 
 /** Who a rooms leg acts as (§4): the account the act rides — the connection a send there
@@ -1622,7 +1628,8 @@ async function act(
     if (verdict) await standing(use, verdict);
     // the ruling (§9): where a send lands is part of the call, so the table can scope by
     // it. A verdict already given supersedes the table — the principal outranks policy.
-    const ruling = verdict ? undefined : gate(name, input, await targetOf(use, self, ports));
+    const target = verdict ? undefined : await targetOf(use, self, ports);
+    const ruling = verdict ? undefined : gate(name, input, target);
     if (ruling === "deny") {
       out.push(
         await resultOf(use, "refused by policy — a standing rule denies this call", {
@@ -1651,7 +1658,17 @@ async function act(
                 detail: describe(use, true),
                 lands: landings(use.parts[0].data, resolve),
                 ...(name === "send"
-                  ? { send: await sendPreviewOf(use, resolve, ports, session, config.timezone) }
+                  ? {
+                    send: await sendPreviewOf(
+                      use,
+                      resolve,
+                      target,
+                      self,
+                      ports,
+                      session,
+                      config.timezone,
+                    ),
+                  }
                   : {}),
               },
             }],
@@ -3334,6 +3351,8 @@ const REF_REACH = 500;
 async function sendPreviewOf(
   use: ToolUseEvent,
   resolve: Resolve,
+  target: Target | undefined,
+  self: { id: string },
   ports: XiPorts,
   session: SessionRef,
   zone?: string,
@@ -3344,8 +3363,9 @@ async function sendPreviewOf(
     : {};
   const to = a.to === undefined ? "" : String(a.to);
   const who = resolve(to);
-  const address = who?.address ?? to;
+  const address = who?.address ?? target?.conversation ?? to;
   const recent = await ports.log.read({ conversation: address, types: ["message"], limit: 50 });
+  const profile = recent.length === 0 ? await profileOf(address, target, self, ports) : undefined;
   const answered = a.re !== undefined
     ? await referent(ports, address, String(a.re)).catch(() => undefined)
     : recent.findLast((e) =>
@@ -3379,7 +3399,29 @@ async function sendPreviewOf(
           : `${loc.latitude}, ${loc.longitude}`,
       }
       : {}),
+    ...(profile ? { profile } : {}),
   };
+}
+
+/** A first contact's account, asked of the wire the send rides, for the card: who the
+ *  address reaches is what the principal judges a stranger's send by. Best effort, like
+ *  the rest of the preview: a wire with no `profile`, or one that cannot be asked now,
+ *  leaves the row out. */
+async function profileOf(
+  address: string,
+  target: Target | undefined,
+  self: { id: string },
+  ports: XiPorts,
+): Promise<SendPreview["profile"]> {
+  if (!target?.connection) return undefined;
+  const account = (await accounts(self, ports)).find((c) => c.address === target.connection);
+  const ask = account && ports.contact?.[account.service]?.profile;
+  if (!ask) return undefined;
+  try {
+    return { service: account.service, ...await ask({ connection: account.address, address }) };
+  } catch {
+    return undefined;
+  }
 }
 
 /** A line as its card row shows it: every word it has — the text and captions, a pin's
@@ -3659,11 +3701,14 @@ const NAME_REACH = 200;
  * Where `send` REFUSES an ambiguous handle, a search WIDENS on one: two people named Ana
  * cost a reader nothing but a longer result, and picking one for them would silently hide
  * the other. A name nobody wears is still an error — an empty result would read as "they
- * never said that" instead of "I don't know who that is".
+ * never said that" instead of "I don't know who that is". An ADDRESS — a phone, a mailbox
+ * — is a conversation whether or not anything was said there yet, spelled as `send`
+ * spells it (`spelled`), so one with no rows matches nothing.
  */
 async function rooms(log: Pick<Reader, "read">, handle?: string): Promise<string[] | undefined> {
   if (handle === undefined) return undefined;
   if ((await log.read({ conversation: handle, limit: 1 })).length > 0) return [handle];
+  if (shapeOf(handle)) return [spelled(handle)];
   const named = await log.read({ conversationName: handle, limit: NAME_REACH });
   // a DM has no subject of its own: it is named by the person on the other end (§3), so a
   // sender's name names their direct chat — never a group's, which wears its own

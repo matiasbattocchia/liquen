@@ -68,6 +68,24 @@ Deno.test("whatsapp contact: the bridge's refusal is the call's failure, class a
   assertEquals(String((err as Error).message).includes("not a person"), true);
 });
 
+Deno.test("whatsapp contact: a profile asks the bridge whether the number has an account, and its name", async () => {
+  const { calls, fetchApi } = bridge(200, { on_whatsapp: true, name: "Biobarica Mendoza" });
+  const port = whatsappContact("http://bridge.local", "tok", fetchApi);
+  assertEquals(await port.profile!({ connection: "5491100000000", address: "5492617078202" }), {
+    exists: true,
+    name: "Biobarica Mendoza",
+  });
+  assertEquals(calls[0].url, "http://bridge.local/profiles/5491100000000/5492617078202");
+  const { fetchApi: none } = bridge(200, { on_whatsapp: false });
+  assertEquals(
+    await whatsappContact("http://bridge.local", "tok", none).profile!({
+      connection: "5491100000000",
+      address: "5492616921694",
+    }),
+    { exists: false },
+  );
+});
+
 Deno.test("whatsapp contact: a lookup reads the account's book, and a nameless entry is none", async () => {
   const { calls, fetchApi } = bridge(200, {
     contacts: [

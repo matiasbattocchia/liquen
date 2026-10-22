@@ -138,7 +138,7 @@ Deno.test("a send that failed for good is told against the call that sent it, on
       status: {
         state: "failed",
         failed_at: at(48, now),
-        error: "Error: bridge /dispatch HTTP 422: server returned error 479",
+        error: "Error: server returned error 479",
         error_code: code,
         ...(attempts ? { attempts } : {}),
       },
@@ -160,7 +160,7 @@ Deno.test("a send that failed for good is told against the call that sent it, on
     assertEquals(
       outcomeLine(updates[0]),
       "send(to: Banco Hipotecario SA, text: ¡Sigamos!) — not delivered: " +
-        "bridge /dispatch HTTP 422: server returned error 479",
+        "server returned error 479",
     );
     assertEquals(updates[0].parts[0].data.is_error, true);
     assertStringIncludes(

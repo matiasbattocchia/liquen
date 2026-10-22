@@ -22,7 +22,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
 import { shortId, textOf } from "./render.ts";
-import { answer, answerRows, type Said } from "./verdict.ts";
+import { answer, answerRows, isRefusal, refusalText, type Said } from "./verdict.ts";
 import type {
   Draft,
   Event,
@@ -104,7 +104,7 @@ async function answering(
   const open = (await t.read("permission_request") as PermissionRequestEvent[])
     .filter((c) => !ruled.has(c.payload.ref_id));
   const a = answer(said, open, quoted as PermissionRequestEvent | undefined);
-  if (typeof a === "string") throw new Error(a);
+  if (isRefusal(a)) throw new Error(refusalText(a));
   return await t.publishAll(answerRows(a, "line" in said ? said.line : said.glyph, {
     agent: { id: "a1", session_id: "mind" },
     envelope: { ...principalMsg("").envelope },
@@ -685,6 +685,11 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
         files: ["fachada.jpg", "portero.jpg"],
         location: { latitude: -32.9, longitude: -68.8, name: "Consultorio" },
       },
+    }, {
+      // a first contact: the card says who the number reaches, asked of the wire
+      kind: "tool_use",
+      name: "send",
+      input: { to: "+54 9 261 707-8202", text: "hola" },
     }], "tool_use"),
     ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
   ]);
@@ -693,7 +698,20 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
     gate: (name) => name === "send" ? "ask" : "allow",
     timezone: "America/Argentina/Mendoza",
   };
-  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  const asked: { connection: string; address: string }[] = [];
+  const ports: XiPorts = {
+    log,
+    docs: await docsAt(`${dir}/docs`),
+    transport,
+    contact: {
+      whatsapp: {
+        profile: (req) => {
+          asked.push(req);
+          return Promise.resolve({ exists: true, name: "Biobarica Mendoza" });
+        },
+      },
+    },
+  };
   const patient = (text: string, ts: string, own = false): Draft<MessageEvent> => ({
     ts,
     type: "message",
@@ -713,8 +731,8 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
     await log.publish(patient("un momento", "2026-09-23T19:50:00Z", true));
     await log.publish(principalMsg("contestale a Carlos"));
     for (let i = 0; i < 6; i++) await xi(config, ports);
-    const [req] = await log.read({ types: ["permission_request"] });
-    assert(req.type === "permission_request");
+    const [req, stranger] = await log.read({ types: ["permission_request"] });
+    assert(req.type === "permission_request" && stranger.type === "permission_request");
     assertEquals(req.parts[0].data.send, {
       conversation: { name: "Carlos", address: "5492616560401", kind: "direct" },
       last: { text: "hola, tienen turno?", at: "23 Sep 16:42" },
@@ -722,6 +740,14 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
       files: 2,
       location: "Consultorio",
     });
+    assertEquals(stranger.parts[0].data.send, {
+      conversation: { address: "5492617078202" },
+      text: "hola",
+      files: 0,
+      profile: { service: "whatsapp", exists: true, name: "Biobarica Mendoza" },
+    });
+    // only the stranger was asked about, under the address the wire spells
+    assertEquals(asked, [{ connection: "5491100000000", address: "5492617078202" }]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -2823,12 +2849,18 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
     [
       ok([{ kind: "tool_use", name: "search", input: { in: "gianvito" } }], "tool_use"),
       ok([{ kind: "tool_use", name: "search", input: { from: "Nadie" } }], "tool_use"),
+      // an address is spelled as the wire spells it, and one nobody wrote in is empty
+      ok([{ kind: "tool_use", name: "search", input: { in: "+1 561 351 8605" } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { in: "+5492616921694" } }], "tool_use"),
       ok([{ kind: "assistant", text: "listo" }], "end_turn"),
     ],
     async ({ publish, read }) => {
       await publish(principalMsg("qué me dijo Gianvito"));
-      await waitFor(async () => (await read("tool_result")).length === 2);
-      const [found, missed] = await read("tool_result");
+      await waitFor(async () => (await read("tool_result")).length === 4);
+      const [found, missed, typed, unwritten] = await read("tool_result");
+      const output = (r: Event) => (r as ToolResultEvent).parts[0].data.output as string;
+      assertEquals(output(typed), output(found));
+      assertEquals(output(unwritten), "nothing matched");
 
       // matched case-insensitively, and the page is the window's grammar: the room named
       // AND addressed (the address is what `in`/`send(to:)` take back), each line authored

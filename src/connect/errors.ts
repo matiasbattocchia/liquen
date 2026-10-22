@@ -18,6 +18,13 @@ export class DispatchError extends Error {
   }
 }
 
+/** A service's refusal as the error it is: the service's own words, read off the body,
+ *  and its status as the code. The status line stands in only when the body says nothing. */
+export async function httpError(res: Response): Promise<DispatchError> {
+  const reason = (await res.text()).slice(0, 256).trim();
+  return new DispatchError(reason || `HTTP ${res.status}`, res.status);
+}
+
 /** The service ended an account's access (§5 `signed_out`): a refresh it refused for good
  *  (`invalid_grant`), an app uninstalled, a token revoked. Permanent — the same send is
  *  refused until the principal links the account again — and it names what to mark down:
