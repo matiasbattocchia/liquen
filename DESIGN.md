@@ -2237,8 +2237,12 @@ names the text it replaces, and text that is no longer there matches nothing.
   `data/`. The unit of if-absent is the FOLDER: an absent doc is an answer — a deployment
   that deleted `shared/instructions/organization.md`, or emptied `system/skills/`, wants none,
   and no later boot may argue. So a new template reaches new orgs and new agents, not the
-  scopes a live org already has; deleting the folder is how an org asks for the set again,
-  and *edits* to existing seeds reach live orgs only via an explicit migration action
+  scopes a live org already has; deleting the folder is how an org asks for the set again.
+  The tool docs are the exception, since a tool's words are its schema's and no tool goes
+  without them: `liquen update` brings them (`bringToolDocs`), laying one that is missing,
+  giving the new words to one still word for word the release the org ran before, and
+  keeping one the org edited, named. Other
+  *edits* to existing seeds reach live orgs only via an explicit migration action
   (future, ⟺ db migration — on Postgres seeding IS an INSERT-if-absent migration). The Docker image is the *deploy* artifact of whichever mode
   (`deno compile --include src/seed`), not the dev artifact. **Isolation is per
   folder**: all state lives under the project dir (log, locks, docs, keys) — N inits =
@@ -2435,7 +2439,9 @@ same way.
 So the durable substrate is a config switch: **files (`bash` + binaries) ⟺ db (the doc
 calls + functions)**; `bash`-for-scratch rides along regardless. The switch is the docs'
 own, apart from where the store lives: an org whose log is on Postgres may keep its docs
-as files. `aread`/`awrite`/`aedit` ≈ `docs_read`/`docs_write`/`docs_edit` ≈ the same
+as files. On the table, `read · write · edit` stand outside `agent.tools`: they are the
+agent's one way to its docs, its instructions included, so no list can leave it without
+them, and each call is still the gate's. `aread`/`awrite`/`aedit` ≈ `docs_read`/`docs_write`/`docs_edit` ≈ the same
 read/write/edit triad, mediated by Unix perms (the agent's uid) or RLS (the agent role).
 
 ### The exec plane, concretely (v0.0 — from the pi / Agent-SDK study)
@@ -3463,7 +3469,9 @@ loudly, the same law as an unknown config key.
   because an org's own dependencies are its business. New code reaches a running org at its
   next boot and never before, so the command says who is running — and an org that LINKS a
   checkout is refused outright, because it runs that folder's files whatever the lock says,
-  and a version printed about it would not be the code it runs.
+  and a version printed about it would not be the code it runs. Either way the org is then
+  synced to the release it runs, as that release (`update --sync <from>`): the tasks it
+  ships, and its tool docs weighed against the words of `<from>`.
 - **Local dev keeps its inner loop.** `deno task cli` hosts main in-process behind the REPL,
   and `deno task run:<name>` runs one connection alone; `deno task start` is the same
   headless shape a deployment runs.

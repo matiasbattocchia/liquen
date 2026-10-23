@@ -41,6 +41,10 @@ export interface PgDocs extends Docs {
   laid(scope: DocScope, owner: string, folder: string): Promise<boolean>;
   /** Lay a row where none is. Answers whether it wrote. */
   lay(scope: DocScope, owner: string, name: string, text: string): Promise<boolean>;
+  /** One row's whole text, or null where none is. */
+  text(scope: DocScope, owner: string, name: string): Promise<string | null>;
+  /** Replace one row's text with `to` while it is still `from`. Answers whether it wrote. */
+  swap(scope: DocScope, owner: string, name: string, from: string, to: string): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -152,6 +156,23 @@ export async function openPgDocs(url: string, opts: { schema?: string } = {}): P
          VALUES ($1::text, $2::text, $3::text, $4::text, docs_stamp())
          ON CONFLICT (scope, owner, name) DO NOTHING`,
         [scope, owner, name, scrub(text)],
+      ).then((n) => n > 0),
+
+    async text(scope, owner, name) {
+      const [r] = await rows<{ text: string }>(
+        sql,
+        `SELECT text FROM docs WHERE scope = $1::text AND owner = $2::text AND name = $3::text`,
+        [scope, owner, name],
+      );
+      return r?.text ?? null;
+    },
+
+    swap: (scope, owner, name, from, to) =>
+      count(
+        sql,
+        `UPDATE docs SET text = $5::text, updated_at = docs_stamp()
+         WHERE scope = $1::text AND owner = $2::text AND name = $3::text AND text = $4::text`,
+        [scope, owner, name, scrub(from), scrub(to)],
       ).then((n) => n > 0),
 
     close: () => sql.end(),

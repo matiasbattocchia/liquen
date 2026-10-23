@@ -5812,6 +5812,37 @@ sandbox alike, and a tool reads the zone the way every program does, with no fla
 variable of its own. `date` honours it only where the box holds tzdata; Deno carries its
 own zones.
 
+### The docs tools outlive the list, and `update` brings the tool docs (2026-10-23) — LANDED
+
+Two open items, both an org losing its tools' words to a list or a folder it already had.
+
+- **`agent.tools` and the docs table.** With `system.docs: "table"`, `read · write · edit`
+  are the agent's one way to its docs, and the scaffold's list (`search`, `schedule`,
+  `cancel`, `bash`), written into every org's `config.jsonc`, filtered them out, so the
+  agent could not read its own instructions. They now stand outside the list where the
+  docs are the table's (`specsOf`), each call still the gate's. Chosen over a list that
+  must name them, which would have stopped every table org at boot until its file was
+  edited; on files the list decides as before, since there they are no tools of the
+  harness's.
+- **Tool docs on `liquen update`.** Seeding never returns to a folder that exists, so a new
+  tool's doc never reached an org's `system/tools/` (boot: `… is missing`) and a parameter
+  a release added stopped the boot (`no item for \`x\``). The sync that follows the lock
+  now runs as `update --sync <from>` and brings the tool docs (`bringToolDocs`): one
+  missing is laid, one still word for word what `<from>` published (fetched from
+  `jsr.io/@liquen/liquen/<from>/src/seed/…`) takes the new words, one the org edited is
+  kept and named, with the way to take the release's (delete it, run `liquen update`). A
+  doc the release did not reword is never mentioned; a folder linked at a checkout is left
+  alone. The sync reads the org's `.env`, since a docs table is reached with PGPASSWORD,
+  and works through a `Relaybed` (`text`, `swap` while unchanged) on files and on the
+  table alike. Tried against the registry: a scratch org laid with 0.1.60's tool docs took
+  this release's for the four unedited, kept the edited one, and a second run changed
+  nothing.
+
+An org moving from a release before this one runs the new sync as `--tasks`, which
+names no `<from>`, so every tool doc that differs is kept and named rather than brought,
+once; releases before 0.1.60 published no tool docs to compare against, with the same
+effect. Deleting the named files and running `liquen update` again takes the release's.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
@@ -5849,15 +5880,6 @@ their entries.
 
 **Config, seeding, accounts**
 
-- A decision: with `system.docs: "table"`, `read`, `write` and `edit` are the only way to
-  a doc, and the scaffold's `agent.tools` (`search`, `schedule`, `cancel`, `bash`) filters
-  them out of the offer. Either the scaffold's list carries them and the catalog refuses a
-  `tools` list lacking them when the docs are on the table, or the docs tools stand
-  outside the filter as the docs' own reach.
-- Seeding is write-if-absent per folder and `update` never re-lays. A release that adds a
-  parameter meets an org's older copy at boot as `no item for \`x\``, and a new tool's doc
-  never reaches an existing `system/tools/`. An org that symlinks the folder at a checkout
-  reads the new files live.
 - Listening is one knob per connection. It cannot take the org's mailbox in and leave a
   member's out, nor read a mailbox only in the threads the agent took part in.
 - Removing an account leaves its platform side, a Slack install, a Google grant, a paired

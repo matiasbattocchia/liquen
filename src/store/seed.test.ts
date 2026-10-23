@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { onFiles, seedAgent, seedOrg, seedSkill } from "./seed.ts";
+import { bringToolDocs, onFiles, seedAgent, seedOrg, seedSkill } from "./seed.ts";
 import { openFileDocs } from "./docs.ts";
 
 Deno.test("seed installs the cascade; list inlines the always-layers and indexes the skills", async () => {
@@ -112,6 +112,54 @@ Deno.test("the halves are the doors': org alone leaves no agent, and a home is a
       await Deno.readTextFile(`${root}/agents/alter/instructions/agent.md`),
       "What this agent is for",
     );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a release's tool docs reach an org that has its own: laid, brought, or kept", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await seedOrg(onFiles(root));
+    const bed = onFiles(root);
+    const path = (tool: string) => `${root}/system/tools/${tool}.md`;
+    const template = (tool: string) =>
+      fetch(new URL(`../seed/system/tools/${tool}.md`, import.meta.url)).then((r) => r.text());
+    // the org as an older release left it: bash and send in that release's words, cancel
+    // edited by the org, and contact a tool that release had no doc for
+    const older = "---\nkind: tool\n---\nolder words";
+    await Deno.writeTextFile(path("bash"), older);
+    await Deno.writeTextFile(path("send"), older);
+    await Deno.writeTextFile(path("cancel"), "---\nkind: tool\n---\nthe org's own");
+    await Deno.remove(path("contact"));
+    // what the older release published; search it worded as this one does
+    const was = (t: string) =>
+      t.endsWith("/contact.md")
+        ? Promise.resolve(null)
+        : t.endsWith("/search.md")
+        ? template("search")
+        : Promise.resolve(older);
+    assertEquals(await bringToolDocs(bed, was), {
+      laid: ["contact"],
+      updated: ["send", "bash"],
+      kept: ["cancel"],
+    });
+    assertEquals(await Deno.readTextFile(path("bash")), await template("bash"));
+    assertEquals(await Deno.readTextFile(path("contact")), await template("contact"));
+    assertStringIncludes(await Deno.readTextFile(path("cancel")), "the org's own");
+    // an edit the release did not reword is the org's, and goes unsaid
+    await Deno.writeTextFile(path("search"), "---\nkind: tool\n---\nthe org's search");
+    assertEquals(await bringToolDocs(bed, was), { laid: [], updated: [], kept: ["cancel"] });
+    assertStringIncludes(await Deno.readTextFile(path("search")), "the org's search");
+    // a folder linked at a checkout reads the checkout's words live: nothing to bring
+    const linked = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${linked}/system`);
+      await Deno.symlink(`${root}/system/tools`, `${linked}/system/tools`);
+      assertEquals(await bringToolDocs(onFiles(linked), was), null);
+    } finally {
+      await Deno.remove(linked, { recursive: true });
+    }
   } finally {
     await Deno.remove(root, { recursive: true });
   }

@@ -23,12 +23,16 @@
  * whatever the lock resolved, so the version this command would print about it is not the
  * code it runs, and it is said so.
  *
- * Every org's task list is then brought up to the scaffold's (`--tasks` does that alone): a
- * task the package ships and the org lacks is added the way the scaffold spells it, so
- * `liquen` names every command of the release the org runs. A task the org has is its own —
- * one whose command differs from the package's is named with the package's, never
- * rewritten. The scaffold read is the NEW release's: once the lock moves, the sync runs as
- * `update --tasks` through the org's own import map, which now resolves to it.
+ * Every org is then synced to the release it runs (`--sync` does that alone). Its task list
+ * is brought up to the scaffold's: a task the package ships and the org lacks is added the
+ * way the scaffold spells it, so `liquen` names every command of the release the org runs.
+ * A task the org has is its own — one whose command differs from the package's is named
+ * with the package's, never rewritten. Its tool docs are brought too (`bringToolDocs`): one
+ * missing is laid, one still word for word the release it moved from takes the new words,
+ * one the org edited is kept and named. The scaffold and the templates read are the NEW
+ * release's: once the lock moves, the sync runs as `update --sync <from>` through the org's
+ * own import map, which now resolves to it. `--tasks` is the sync as a release without
+ * `--sync` calls it, with no release to weigh an edit against.
  */
 
 import { parse } from "@std/jsonc";
@@ -36,6 +40,8 @@ import { findRoot, orgFlag, withMember, withoutMember } from "./config.ts";
 import { entry } from "./entry.ts";
 import { running } from "./stop.ts";
 import { packageManifest } from "./package.ts";
+import { openStore } from "./store/mod.ts";
+import { bringToolDocs } from "./store/seed.ts";
 
 /** The package an org runs on — the one dependency this command is about. */
 export const PACKAGE = "@liquen/liquen";
@@ -180,6 +186,62 @@ async function tasks(root: string): Promise<void> {
   }
 }
 
+/** A template as `version` published it, or null where that release had none. */
+export async function released(version: string, template: string): Promise<string | null> {
+  const res = await fetch(`https://jsr.io/${PACKAGE}/${version}/src/seed/${template}`);
+  if (res.status === 404) {
+    await res.body?.cancel();
+    return null;
+  }
+  if (!res.ok) throw new Error(`${PACKAGE}@${version} ${template}: HTTP ${res.status}`);
+  return await res.text();
+}
+
+/** The tool docs brought to this release, said: weighed against `from`'s words, the
+ *  release the org ran before, or against none, when that is not known. */
+async function toolDocs(root: string, from: string | null): Promise<void> {
+  const docs = await (await openStore(root)).docs();
+  try {
+    const brought = await bringToolDocs(
+      docs.bed,
+      (template) => from === null ? Promise.resolve(null) : released(from, template),
+    );
+    if (brought === null) return;
+    if (brought.laid.length > 0) console.log(`tool docs laid: ${brought.laid.join(" · ")}`);
+    if (brought.updated.length > 0) {
+      console.log(`tool docs brought to this release: ${brought.updated.join(" · ")}`);
+    }
+    for (const tool of brought.kept) {
+      console.log(
+        `system/tools/${tool}.md is your own and this release words it otherwise — kept; ` +
+          "delete it and run `liquen update` to take the release's",
+      );
+    }
+  } finally {
+    await docs.close();
+  }
+}
+
+/** The org synced to the release it runs: its tasks, then its tool docs. */
+async function sync(root: string, from: string | null): Promise<void> {
+  await tasks(root);
+  await toolDocs(root, from);
+}
+
+/** The sync, run as the release the org's import map resolves to, with the org's `.env`
+ *  where it has one: a docs table is reached with PGPASSWORD. */
+async function synced(root: string, from: string | null): Promise<void> {
+  const env = await Deno.stat(`${root}/.env`).then(() => ["--env-file=.env"], () => []);
+  const status = await new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", ...env, `${PACKAGE}/update`, "--sync", ...(from ? [from] : [])],
+    cwd: root,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn().status;
+  if (!status.success) throw new Error(`the sync exited with ${status.code}`);
+}
+
 /** The checkout this org links the harness to, if it links one — the dev shape, where the
  *  registry is stood in for by a folder. */
 export function linked(root: string): string | null {
@@ -197,14 +259,16 @@ if (import.meta.main) {
   await entry(async () => {
     const org = orgFlag();
     const root = findRoot(org);
-    if (org.args.includes("--tasks")) return await tasks(root);
+    const at = org.args.indexOf("--sync");
+    if (at >= 0) return await sync(root, org.args[at + 1] ?? null);
+    if (org.args.includes("--tasks")) return await sync(root, null);
     const checkout = linked(root);
     if (checkout !== null) {
       console.log(
         `${checkout} is linked into this org — every task already runs that checkout, ` +
           `and no release can update it`,
       );
-      return await tasks(root);
+      return await synced(root, null);
     }
     const before = pinned(root);
     const child = new Deno.Command(Deno.execPath(), {
@@ -227,19 +291,9 @@ if (import.meta.main) {
         ? `${PACKAGE} ${shown(after)} — already the newest release`
         : `${PACKAGE} ${shown(before)} → ${shown(after)}`,
     );
-    if (after === before) await tasks(root);
-    else {
-      const sync = await new Deno.Command(Deno.execPath(), {
-        args: ["run", "-A", `${PACKAGE}/update`, "--tasks"],
-        cwd: root,
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-      }).spawn().status;
-      if (!sync.success) {
-        throw new Error(`the task sync exited with ${sync.code} — tasks unchanged`);
-      }
-    }
+    // weighed against the release the org ran before: the same one, already the newest,
+    // lays only a missing doc
+    await synced(root, before);
     const live = await running(`${root}/data`);
     if (live.size > 0) {
       const who = [...live].map(([role, pid]) => `${role} (${pid})`).join(" · ");
