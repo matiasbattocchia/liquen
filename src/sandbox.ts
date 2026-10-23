@@ -75,6 +75,9 @@ export interface LocalSandboxOptions {
    *  the shell speaks the org's language, and a script the agent runs by hand does too.
    *  Null is the catalog's word for none. */
   locale?: string | null;
+  /** The org's clock, issued into user space as `TZ`: `date`, and every stamp a program
+   *  the agent runs prints, reads the zone its system prompt names, not the machine's. */
+  timezone?: string | null;
   /** The `system.bashWaitMs` knob: how long a call is waited on by default. */
   bashWaitMs?: number;
   /** Each agent's `export` knob: the variables of this process's environment its shells
@@ -107,6 +110,7 @@ export async function openLocalSandbox(
     store,
     agents,
     locale,
+    timezone,
     bashWaitMs,
     exports = {},
     tell,
@@ -128,7 +132,7 @@ export async function openLocalSandbox(
     await Deno.mkdir(egressOf(agentId), { recursive: true });
   }
   const proxy = await installProxy(dir, store, { sockets, refuses: egressRefuses });
-  const localeEnv: Record<string, string> = locale ? { LANG: locale } : {};
+  const localeEnv = orgEnv(locale, timezone);
   const grounds = new Map<string, ExecGround>();
   for (const agentId of agents) {
     const exported = () =>
@@ -198,11 +202,17 @@ export interface CloudflareSandboxOptions {
   /** The agents that run: each gets a sandbox of its own. */
   agents: string[];
   locale?: string | null;
+  timezone?: string | null;
   bashWaitMs?: number;
   /** The `system.sandboxSleepMinutes` knob: a sandbox's life after its last bash call. */
   sleepMinutes?: number;
   /** Where every shell tells what its calls do after their answers (late.ts). */
   tell?: (u: SessionUpdate) => void;
+}
+
+/** The org's language and clock under the names every program reads: `LANG` and `TZ`. */
+function orgEnv(locale?: string | null, timezone?: string | null): Record<string, string> {
+  return { ...(locale ? { LANG: locale } : {}), ...(timezone ? { TZ: timezone } : {}) };
 }
 
 /** Where an agent stands in its Cloudflare sandbox: the container's workspace, which is the
@@ -232,9 +242,10 @@ const REMOTE_ENV: Record<string, string> = {
  *  leaves the sandboxes to the gateway's sleep. */
 export function openCloudflareSandbox(
   dir: string,
-  { url, token, agents, locale, bashWaitMs, sleepMinutes, tell }: CloudflareSandboxOptions,
+  { url, token, agents, locale, timezone, bashWaitMs, sleepMinutes, tell }:
+    CloudflareSandboxOptions,
 ): Sandbox {
-  const env = { ...REMOTE_ENV, ...(locale ? { LANG: locale } : {}) };
+  const env = { ...REMOTE_ENV, ...orgEnv(locale, timezone) };
   const minutes = sleepMinutes ?? DEFAULT_SANDBOX_SLEEP_MINUTES;
   const sandboxes = new Map(agents.map((id) => {
     const gateway = gatewayFor(url, token, sandboxIdOf(id), minutes);

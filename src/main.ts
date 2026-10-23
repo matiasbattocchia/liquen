@@ -238,6 +238,7 @@ export async function start(
   const planeOptions = {
     agents: principals.map((p) => p.agentId),
     locale: catalog?.organization.locale,
+    timezone: catalog?.organization.timezone,
     bashWaitMs: catalog?.system.bashWaitMs,
     tell: (u: SessionUpdate) => {
       // a shell's word on a call (late.ts): published as the update it is. Held until

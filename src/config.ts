@@ -201,7 +201,7 @@ export interface OrgConfig {
     prices: Price[]; // the org's own price rows, over the package's list (`prices.ts`)
   };
   organization: {
-    timezone: string; // the ORG's clock — every stamp, cron and sleep span reads it (§5)
+    timezone: string; // the ORG's clock — every stamp, cron and sleep span reads it (§5); TZ in every agent shell
     locale: string | null; // LANG in every agent shell and media processor
     backlogHours: number;
     agents: AgentDefaults;
@@ -363,7 +363,8 @@ const ORG: Entry[] = [
   {
     key: "timezone",
     value: DEFAULT_TIMEZONE,
-    doc: "the org's clock (IANA) — every rendered stamp, cron and sleep span reads it",
+    doc: "the org's clock (IANA) — every rendered stamp, cron and sleep span reads it, and " +
+      "it is TZ in every agent shell, so what a program there prints is on the same clock",
   },
   {
     key: "locale",

@@ -5801,6 +5801,17 @@ row is the harness's own, never fronted, and `connect --remove ai:<provider>` ta
 back. Tried on Gemini: a bogus key refused with Google's sentence, a real one stored, and a
 call with no `GEMINI_API_KEY` in the environment answered from the agent's row.
 
+### An agent's shell is on the org's clock (2026-10-22) — LANDED
+
+The system prompt names the org's timezone and every stamp the harness renders is on it,
+but a program the agent ran printed on the machine's: the laptop's zone in a bubble, UTC in
+a container. So a tool's own stamps (Sonar's batch, `date`) stood beside the harness's on
+another clock, and the model converted between them. The shell now gets `TZ` from
+`organization.timezone`, beside `LANG` from the locale, locally and in a Cloudflare
+sandbox alike, and a tool reads the zone the way every program does, with no flag or
+variable of its own. `date` honours it only where the box holds tzdata; Deno carries its
+own zones.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

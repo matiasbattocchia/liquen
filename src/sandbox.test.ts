@@ -37,22 +37,28 @@ Deno.test("a session's shell is its own and kept: where one stands, its sibling 
   }
 });
 
-Deno.test("the shell speaks through the proxy's pocket and the org's locale", async () => {
+Deno.test("the shell speaks through the proxy's pocket, in the org's locale and on its clock", async () => {
   const dir = await Deno.makeTempDir();
   const sandbox = await openLocalSandbox(dir, {
     store: storeAt({ engine: "sqlite", dir }),
     agents: ["a1"],
     locale: "es_AR.UTF-8",
+    timezone: "Asia/Tokyo",
   });
   try {
     const { exec } = sandbox.forAgent("a1").session("mind");
     const out = await exec.bash.execute(
-      { command: "echo $LANG; echo $HTTPS_PROXY; test -r $SSL_CERT_FILE && echo trusted" },
+      {
+        command: "echo $LANG; echo $HTTPS_PROXY; test -r $SSL_CERT_FILE && echo trusted; " +
+          "echo $TZ; deno eval 'console.log(Intl.DateTimeFormat().resolvedOptions().timeZone)'",
+      },
       new AbortController().signal,
     );
     const text = typeof out === "string" ? out : (out as { output: string }).output;
     assert(text.startsWith("es_AR.UTF-8\nhttp://127.0.0.1:"), text);
     assert(text.includes("\ntrusted"), text);
+    // a program the agent runs reads the zone by itself: no flag, no variable of its own
+    assert(text.includes("\nAsia/Tokyo\nAsia/Tokyo"), text);
   } finally {
     await sandbox.close();
     await Deno.remove(dir, { recursive: true });
