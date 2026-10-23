@@ -600,39 +600,23 @@ Deno.test("system.sandboxSleepMinutes: whole minutes, 10 unless said", async () 
   });
 });
 
-Deno.test("system.egressRefuses: ranges over the built-in set, none unless said", async () => {
-  await withDir(async (root) => {
-    const write = (egressRefuses: unknown) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system: { egressRefuses } }));
-    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
-    assertEquals((await readConfig(root)).system.egressRefuses, []);
-    await write(["10.0.0.0/8", "fc00::/7"]);
-    assertEquals((await readConfig(root)).system.egressRefuses, ["10.0.0.0/8", "fc00::/7"]);
-    for (const bad of ["10.0.0.0/8", ["intranet"], null]) {
-      await write(bad);
-      await assertRejects(() => readConfig(root), Error, "system.egressRefuses must be");
-    }
-  });
-});
-
-Deno.test("system.egressPorts and bubbleMounts: the bubble's reach, checked at boot", async () => {
+Deno.test("system.mounts: the bubble's view of the machine, checked at boot", async () => {
   await withDir(async (root) => {
     const write = (system: unknown) =>
       Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system }));
     await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
-    const cfg = await readConfig(root);
-    assertEquals(cfg.system.egressPorts, [22, 80, 443, 3306, 5432, 9418]);
-    assertEquals(cfg.system.bubbleMounts, []);
-    await write({ egressPorts: [443, 8443], bubbleMounts: ["~/.local/share/mise", "/opt/x"] });
-    assertEquals((await readConfig(root)).system.egressPorts, [443, 8443]);
-    assertEquals((await readConfig(root)).system.bubbleMounts, ["~/.local/share/mise", "/opt/x"]);
-    for (const egressPorts of [[0], [443, 443], ["443"], 443]) {
-      await write({ egressPorts });
-      await assertRejects(() => readConfig(root), Error, "system.egressPorts must be");
+    assertEquals((await readConfig(root)).system.mounts, []);
+    const mounts = ["~/.local/share/mise", "/opt/x", "~/code/repo:rw"];
+    await write({ mounts });
+    assertEquals((await readConfig(root)).system.mounts, mounts);
+    for (const bad of [["relative"], ["~user/x"], ["/opt/../etc"], "/opt", ["/opt:ro"]]) {
+      await write({ mounts: bad });
+      await assertRejects(() => readConfig(root), Error, "system.mounts must be");
     }
-    for (const bubbleMounts of [["relative"], ["~user/x"], ["/opt/../etc"], "/opt"]) {
-      await write({ bubbleMounts });
-      await assertRejects(() => readConfig(root), Error, "system.bubbleMounts must be");
+    // the reach the proxy no longer judges is no knob
+    for (const gone of [{ egressRefuses: [] }, { egressPorts: [443] }, { bubbleMounts: [] }]) {
+      await write(gone);
+      await assertRejects(() => readConfig(root), Error);
     }
   });
 });

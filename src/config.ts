@@ -40,7 +40,6 @@
 import { parse } from "@std/jsonc";
 import type { Effort, PolicyAction, Rule } from "./types.ts";
 import { checkPrices, type Price } from "./prices.ts";
-import { checkRanges } from "./proxy/guard.ts";
 
 /* ── the defaults: the single source ─────────────────────────────────────── */
 
@@ -114,8 +113,6 @@ export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves un
 export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard (§5)
 export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for its burst (§2)
 export const DEFAULT_SANDBOX_SLEEP_MINUTES = 10; // the Sandbox SDK's own sleepAfter
-// ssh, http, https, mysql, postgres, git
-export const DEFAULT_EGRESS_PORTS = [22, 80, 443, 3306, 5432, 9418];
 // The tick is not a knob. It is the RESOLUTION of the attention rules, not one of them:
 // `digestMinutes` says when the agent looks, and the tick only decides how late that look
 // may land. At a minute the promise is kept to the minute; raise it and every interval in
@@ -195,9 +192,7 @@ export interface OrgConfig {
     docs: "files" | "table"; // where the docs live: files under data/, or the store's docs table
     sandbox: string | null; // null ⇒ agents' shells on this machine; a URL ⇒ that gateway's
     sandboxSleepMinutes: number; // a gateway sandbox's life after its last bash call
-    egressRefuses: string[]; // ranges the egress proxy refuses, over its built-in set
-    egressPorts: number[]; // the ports a bubble reaches by name alone
-    bubbleMounts: string[]; // more of this machine a bubble shows, read-only
+    mounts: string[]; // more of this machine a bubble shows, read-only unless `:rw`
     prices: Price[]; // the org's own price rows, over the package's list (`prices.ts`)
   };
   organization: {
@@ -310,36 +305,21 @@ const SYSTEM: Entry[] = [
     doc: 'where the agents\' shells run: null ⇒ this machine, as you; "bwrap" ⇒ this ' +
       "machine, each agent in a bubble of its own (bubblewrap, the recommended way on " +
       "Linux) that sees its own folder, the shared floor and the system, and reaches the " +
-      "network only through the egress proxy; the URL of a Cloudflare sandbox gateway " +
+      "network as this machine does; the URL of a Cloudflare sandbox gateway " +
       "(sandbox/cloudflare in the package) ⇒ one sandbox per agent there, its bearer token " +
       "read from SANDBOX_API_KEY; needs docs: table, since the sandbox cannot reach files " +
       "on this machine",
   },
   {
-    key: "egressRefuses",
+    key: "mounts",
     value: [],
-    doc: "addresses and CIDR ranges the egress proxy refuses to dial, over the ones it " +
-      "always refuses (loopback, link-local, cloud metadata, this machine's own): " +
-      '["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"] keeps the agents off ' +
-      "the private network",
-  },
-  {
-    key: "egressPorts",
-    value: DEFAULT_EGRESS_PORTS,
-    doc: 'the ports a bubble (sandbox "bwrap") reaches any name on with no proxy setting: ' +
-      "ssh, http, https, mysql, postgres and git; each costs a listener per name the bubble " +
-      "has looked up. A client that reads HTTPS_PROXY reaches every port",
-  },
-  {
-    key: "bubbleMounts",
-    value: [],
-    doc: 'more of this machine a bubble (sandbox "bwrap") shows, read-only, each an absolute ' +
-      "path or one under ~/: a tool installed in your home shows only its PATH folder, so " +
-      'one that runs on files beside it needs its own: mise ("~/.local/share/mise"), nvm ' +
-      '("~/.nvm"), uv ("~/.local/share/uv"). A shim finds its tool from HOME, which in a ' +
-      "bubble is the agent's folder, so the tools need their own folders on PATH (mise " +
-      "activate does that). Every agent reads what is named; none may hold the org's folder " +
-      "or lie in it",
+    doc: 'more of this machine a bubble (sandbox "bwrap") shows, each an absolute path or ' +
+      'one under ~/, read-only unless it ends in ":rw" ("~/code/repo:rw"): a tool installed ' +
+      "in your home shows only its PATH folder, so one that runs on files beside it needs " +
+      'its own: mise ("~/.local/share/mise"), nvm ("~/.nvm"), uv ("~/.local/share/uv"). A ' +
+      "shim finds its tool from HOME, which in a bubble is the agent's folder, so the tools " +
+      "need their own folders on PATH (mise activate does that). Every agent sees what is " +
+      "named; none may hold the org's folder or lie in it",
   },
   {
     key: "sandboxSleepMinutes",
@@ -1112,12 +1092,8 @@ function validateOrg(cfg: OrgConfig, path: string): void {
         `(got ${JSON.stringify(sleep)})`,
     );
   }
-  const refuses = checkRanges(cfg.system.egressRefuses);
-  if (refuses) throw new Error(`${path}: system.egressRefuses ${refuses}`);
-  const ports = checkPorts(cfg.system.egressPorts);
-  if (ports) throw new Error(`${path}: system.egressPorts ${ports}`);
-  const mounts = checkMounts(cfg.system.bubbleMounts);
-  if (mounts) throw new Error(`${path}: system.bubbleMounts ${mounts}`);
+  const mounts = checkMounts(cfg.system.mounts);
+  if (mounts) throw new Error(`${path}: system.mounts ${mounts}`);
   const publicUrl = checkPublicUrl(cfg.edge.publicUrl);
   if (publicUrl) {
     throw new Error(
@@ -1196,23 +1172,19 @@ export function checkSandbox(v: unknown, docs: unknown): string | null {
   return docs === "table" ? null : 'needs system.docs: "table" — a sandbox cannot reach files here';
 }
 
-/** What `system.egressPorts` may hold: distinct ports. A complaint, or null when fine. */
-export function checkPorts(v: unknown): string | null {
-  const shape = "must be an array of distinct ports (1-65535)";
-  if (!Array.isArray(v)) return shape;
-  const bad = v.find((p, i) => !Number.isInteger(p) || p < 1 || p > 65535 || v.indexOf(p) !== i);
-  return bad === undefined ? null : `${shape}: ${JSON.stringify(bad)} is not one`;
-}
-
-/** What `system.bubbleMounts` may hold: absolute paths, or paths under `~/`. A complaint,
- *  or null when fine. Whether one touches the org's folder is the bubble's to say. */
+/** What `system.mounts` may hold: absolute paths, or paths under `~/`, each perhaps ending
+ *  in `:rw`. A complaint, or null when fine. Whether one touches the org's folder is the
+ *  bubble's to say. */
 export function checkMounts(v: unknown): string | null {
-  const shape = 'must be an array of absolute paths or paths under ~/ ("~/.local/share/mise")';
+  const shape = "must be an array of absolute paths or paths under ~/, each read-only unless " +
+    'it ends in ":rw" ("~/.local/share/mise", "~/code/repo:rw")';
   if (!Array.isArray(v)) return shape;
-  const bad = v.find((p) =>
-    typeof p !== "string" || !(p.startsWith("/") || p.startsWith("~/")) ||
-    p.split("/").includes("..")
-  );
+  const bad = v.find((p) => {
+    if (typeof p !== "string") return true;
+    const path = p.replace(/:rw$/, "");
+    return !(path.startsWith("/") || path.startsWith("~/")) || path.split("/").includes("..") ||
+      path.includes(":");
+  });
   return bad === undefined ? null : `${shape}: ${JSON.stringify(bad)} is not one`;
 }
 

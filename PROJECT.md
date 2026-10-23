@@ -5843,6 +5843,47 @@ names no `<from>`, so every tool doc that differs is kept and named rather than 
 once; releases before 0.1.60 published no tool docs to compare against, with the same
 effect. Deleting the named files and running `liquen update` again takes the release's.
 
+### The proxy fronts credentials, and a bubble shares the machine's network (2026-10-23) — LANDED
+
+Decided with the user: what a sandbox buys is protection, and direct internet access is
+fine. Every mode reaches the world directly; the proxy is the credential mechanism, used
+in every mode, and fences nothing. A bubble had made the proxy its only way out, which is
+what kept an org from spending a token on a local service (the Turtle API on
+`localhost:8080`).
+
+- **A bubble shares the machine's network** (bubblewrap with no network namespace). It
+  fences files, processes and the environment. The holder only holds the namespaces open
+  (a shell that waits), so the resolver, the listeners per name, the per-agent egress
+  socket, `unshare -n` and iproute2 went. The user accepted the near side: from a bubble
+  the agent reaches this machine's loopback, the LAN and the machine's abstract unix
+  sockets (X11's among them), as a bare shell does. Of the three ways to a direct internet
+  weighed (no namespace; `pasta`; an nft redirect inside the bubble's namespace to the
+  holder, read back by `SO_ORIGINAL_DST`, which was checked to work unprivileged), the
+  first was chosen for now.
+- **The guard went, and with it `system.egressRefuses` and `system.egressPorts`.** No mode
+  uses the proxy as a fence any more, and in a bare shell a refusal protected nothing,
+  since the agent dials around it. A config naming either is a boot error.
+- **Plain HTTP goes through the proxy.** Shells are issued `HTTP_PROXY` and `http_proxy`
+  (curl reads plain HTTP's only lowercase) beside `HTTPS_PROXY`, and `NO_PROXY` is no
+  longer issued: the proxy shares the agent's loopback, so a local request through it
+  arrives one hop later. The proxy serves absolute-form requests one by one through the
+  same swap, toward `http://`, and bridges an upgrade (WebSocket, a dev server's reload
+  channel) as it came. Checked by hand: Deno's `fetch`, curl (lowercase) and Python's
+  `urllib` send a `localhost` request to the proxy when `NO_PROXY` is unset; Go's
+  `net/http` never proxies `localhost`, by its documentation, so a grant on a loopback
+  name reaches only clients that do.
+- **A grant may bind a port**: `--hosts localhost:8080` spends only there; a host without
+  one binds every port, as before. A placeholder rides plain HTTP only toward a host its
+  grant names with its port: a grant for `api.crm.io` is refused on `http://api.crm.io`,
+  so its token never crosses a network in the clear. The door now takes single-label names and refuses a
+  wildcard over a whole top-level domain.
+- **`system.bubbleMounts` is `system.mounts`**, an entry ending in `:rw` writable (a
+  repository a coding agent works in).
+
+Left: attribution of a blind tunnel. A bubble's connection came over its agent's own
+socket; now a tunnel that swaps nothing is anonymous, as from a bare shell. A swapped
+request still names its agent through the handle.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

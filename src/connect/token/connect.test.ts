@@ -47,6 +47,11 @@ Deno.test("parseTokenArgs: refuses what the proxy could not front", () => {
   bad(["crm", "--env", "crm-token", "--hosts", "a.io"], "environment variable");
   bad(["crm", "--env", "X"], "--hosts is required");
   bad(["crm", "--env", "X", "--hosts", "not a host"], "hostnames");
+  bad(["crm", "--env", "X", "--hosts", "*.io"], "hostnames");
+  bad(
+    ["crm", "--env", "X", "--hosts", "localhost:8080", "--probe", "http://localhost:9090/"],
+    "outside --hosts",
+  );
   bad([...BASE, "--org", "--agent", "ana"], "not both");
   bad([...BASE, "--probe", "nope"], "is a URL");
   bad([...BASE, "--probe", "https://evil.io/echo"], "outside --hosts");
@@ -67,6 +72,19 @@ Deno.test("parseTokenArgs: refuses what the proxy could not front", () => {
 Deno.test("tokenKey: the org's by name, an agent's by name and id", () => {
   assertEquals(tokenKey("crm"), "token:crm");
   assertEquals(tokenKey("crm", "ana"), "token:crm:ana");
+});
+
+Deno.test("parseTokenArgs: a local service by its port, over plain HTTP", () => {
+  const args = parseTokenArgs([
+    "sonar",
+    "--env",
+    "SONAR_TOKEN",
+    "--hosts",
+    "localhost:8080",
+    "--probe",
+    "http://localhost:8080/health",
+  ]);
+  assertEquals(args.hosts, ["localhost:8080"]);
 });
 
 Deno.test("connectToken: one vault row — static token, env + hosts on the sidecar", async () => {

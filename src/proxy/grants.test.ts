@@ -4,6 +4,7 @@ import {
   appJwt,
   createGrantBroker,
   frontedFor,
+  hostAllowed,
   pathAllowed,
   tokenOf,
   type TokenResponse,
@@ -263,6 +264,18 @@ Deno.test("accessTokenFor: the path binding — under a declared path spends, be
     assertEquals(await broker.accessTokenFor(h, "elsewhere.io", "/organization/42/sonar"), null); // both bind
     assertEquals(await broker.accessTokenFor(h), "svc"); // a broker-side caller
   });
+});
+
+Deno.test("hostAllowed: a host binds its every port, a host:port that port alone", () => {
+  const hosts = ["api.crm.io", "*.crm.io", "localhost:8080"];
+  assert(hostAllowed(hosts, "api.crm.io"));
+  assert(hostAllowed(hosts, "API.crm.io:8443"));
+  assert(hostAllowed(hosts, "eu.crm.io"));
+  assert(!hostAllowed(hosts, "crm.io.evil.io"));
+  assert(hostAllowed(hosts, "localhost:8080"));
+  assert(!hostAllowed(hosts, "localhost:9090"));
+  assert(!hostAllowed(hosts, "localhost"));
+  assert(hostAllowed(undefined, "anywhere.io"));
 });
 
 Deno.test("pathAllowed: whole segments, and a path the origin could read otherwise is refused", () => {

@@ -2,7 +2,6 @@ import { assert, assertEquals } from "@std/assert";
 import { type EgressAudit, proxyRequest, startProxy } from "./proxy.ts";
 import { openCA } from "./ca.ts";
 import type { GrantBroker } from "./grants.ts";
-import type { Guard } from "./guard.ts";
 
 /** A broker stub: one handle → one canned token. */
 function fakeBroker(over: Partial<GrantBroker> = {}): GrantBroker {
@@ -13,10 +12,6 @@ function fakeBroker(over: Partial<GrantBroker> = {}): GrantBroker {
     ...over,
   };
 }
-
-/** A guard that lets every dial through, unresolved: the origins these tests stand up are
- *  on loopback, and the names they dial resolve nowhere. */
-const anywhere: Guard = { pick: (h) => Promise.resolve(h) };
 
 /** Read the headers off an origin call the way proxyRequest makes it (string url + init). */
 function headersOf(input: string | URL | Request, init?: RequestInit): Headers {
@@ -221,7 +216,6 @@ Deno.test("startProxy: a real TLS tunnel terminates and the swap reaches the ori
       ca,
       broker: fakeBroker(),
       audit: () => {},
-      guard: anywhere,
       // stand in for Google: capture what actually arrived after TLS termination
       originFetch: (input, init) => {
         originAuth = headersOf(input, init).get("authorization");
@@ -264,7 +258,7 @@ Deno.test("startProxy: a tunnel that can't be stood up answers 502 — it never 
   const dir = await Deno.makeTempDir();
   try {
     const ca = await openCA(dir);
-    const proxy = startProxy({ ca, broker: fakeBroker(), audit: () => {}, guard: anywhere });
+    const proxy = startProxy({ ca, broker: fakeBroker(), audit: () => {} });
     try {
       // `bad_host` fails the CA's host check, so no leaf can be minted for the tunnel
       const conn = await Deno.connect({ hostname: "127.0.0.1", port: proxy.port });
@@ -301,7 +295,6 @@ Deno.test("startProxy: an authority no grant fronts is tunneled blind — the or
     broker: fakeBroker(),
     audit: (a) => seen.push(a),
     terminates: (authority) => authority === "www.googleapis.com",
-    guard: anywhere,
   });
   try {
     const conn = await Deno.connect({ hostname: "127.0.0.1", port: proxy.port });
@@ -377,78 +370,204 @@ async function connect(conn: Deno.Conn, authority: string): Promise<string> {
   return new TextDecoder().decode(buf.subarray(0, n ?? 0));
 }
 
-Deno.test("startProxy: a dial to this machine is refused, and the refusal says why", async () => {
+Deno.test("startProxy: a dial that fails is answered 502, and the answer says why", async () => {
   const dir = await Deno.makeTempDir();
   const ca = await openCA(dir);
   const seen: EgressAudit[] = [];
-  const proxy = startProxy({ ca, broker: fakeBroker(), audit: (a) => seen.push(a) });
+  const closed = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = (closed.addr as Deno.NetAddr).port;
+  closed.close();
+  const proxy = startProxy({
+    ca,
+    broker: fakeBroker(),
+    audit: (a) => seen.push(a),
+    terminates: () => false,
+  });
   try {
     const conn = await Deno.connect({ hostname: "127.0.0.1", port: proxy.port });
-    const answer = await connect(conn, "127.0.0.1:5432");
-    assert(answer.startsWith("HTTP/1.1 403 127.0.0.1 is a loopback address\r\n"), answer);
-    assert(answer.endsWith("liquen proxy: 127.0.0.1 is a loopback address\n"), answer);
+    const answer = await connect(conn, `127.0.0.1:${port}`);
+    assert(answer.startsWith(`HTTP/1.1 502 127.0.0.1:${port} did not answer\r\n`), answer);
     conn.close();
-    assertEquals(seen.map((a) => [a.host, a.status]), [["127.0.0.1:5432", 403]]);
+    assertEquals(seen.map((a) => [a.host, a.status]), [[`127.0.0.1:${port}`, 502]]);
   } finally {
     await proxy.shutdown();
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("startProxy: what comes over an agent's socket is that agent's, blind or not", async () => {
+/** A plain-HTTP origin on loopback that answers each request with `name`, the path it was
+ *  asked and the Authorization it was sent. */
+function plainOrigin(name: string) {
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+    (req) =>
+      new Response(
+        `${name} ${new URL(req.url).pathname} ${req.headers.get("authorization") ?? "-"}`,
+      ),
+  );
+  return { server, authority: `127.0.0.1:${server.addr.port}` };
+}
+
+/** Read off `conn` until what arrived holds `want`. */
+async function readUntil(conn: Deno.Conn, want: string): Promise<string> {
+  const buf = new Uint8Array(4096);
+  let got = "";
+  while (!got.includes(want)) {
+    const n = await conn.read(buf);
+    if (n === null) break;
+    got += new TextDecoder().decode(buf.subarray(0, n));
+  }
+  return got;
+}
+
+Deno.test("startProxy: a plain-HTTP request to a fronted local service is swapped", async () => {
   const dir = await Deno.makeTempDir();
   const ca = await openCA(dir);
-  const origin = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const echoing = (async () => {
-    for await (const c of origin) c.readable.pipeTo(c.writable).catch(() => {});
-  })();
-  const originPort = (origin.addr as Deno.NetAddr).port;
   const seen: EgressAudit[] = [];
-  const path = `${dir}/ana.sock`;
-  const proxy = startProxy(
-    {
-      ca,
-      broker: fakeBroker(),
-      audit: (a) => seen.push(a),
-      terminates: () => false,
-      guard: anywhere,
-    },
-    { sockets: [{ path, agentId: "ana" }] },
-  );
+  const origin = plainOrigin("api");
+  const proxy = startProxy({
+    ca,
+    broker: fakeBroker(),
+    audit: (a) => seen.push(a),
+    plain: (authority) => authority === origin.authority,
+  });
+  const client = Deno.createHttpClient({ proxy: { url: `http://127.0.0.1:${proxy.port}` } });
   try {
-    const conn = await Deno.connect({ transport: "unix", path });
-    assert((await connect(conn, `127.0.0.1:${originPort}`)).startsWith("HTTP/1.1 200"));
-    conn.close();
-    assertEquals(seen.map((a) => [a.method, a.agentId]), [["CONNECT", "ana"]]);
+    const res = await fetch(`http://${origin.authority}/organization/1/deals`, {
+      client,
+      headers: { authorization: "Bearer mu-grant-x" },
+    });
+    assertEquals(await res.text(), "api /organization/1/deals Bearer ya29.REAL");
+    assertEquals(seen.map((a) => [a.method, a.host, a.path, a.status, a.swapped]), [
+      ["GET", origin.authority, "/organization/1/deals", 200, true],
+    ]);
   } finally {
+    client.close();
     await proxy.shutdown();
-    origin.close();
-    await echoing.catch(() => {});
+    await origin.server.shutdown();
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("proxyRequest: a handle naming another agent's grant is refused over a socket", async () => {
+Deno.test("proxyRequest: a credential never rides plain HTTP to a host named without its port", async () => {
   let dialed = 0;
+  const seen: EgressAudit[] = [];
   const deps = {
     ca: null as never,
     broker: fakeBroker(),
-    audit: () => {},
+    audit: (a: EgressAudit) => seen.push(a),
+    plain: (authority: string) => authority === "localhost:8080",
     originFetch: () => {
       dialed++;
       return Promise.resolve(new Response("ok"));
     },
   };
-  const req = () =>
-    new Request("https://www.googleapis.com/x", {
-      headers: { authorization: "Bearer mu-grant-x" },
-    });
-  const bob = await proxyRequest("www.googleapis.com", req(), deps, "bob");
-  assertEquals(bob.status, 403);
-  assertEquals(await bob.text(), "liquen proxy: this grant is ana's, not bob's\n");
+  const req = (url: string) =>
+    new Request(url, { headers: { authorization: "Bearer mu-grant-x" } });
+  const clear = await proxyRequest("www.googleapis.com", req("http://www.googleapis.com/x"), deps);
+  assertEquals(clear.status, 403);
   assertEquals(dialed, 0);
-  const ana = await proxyRequest("www.googleapis.com", req(), deps, "ana");
-  assertEquals([ana.status, await ana.text(), dialed], [200, "ok", 1]);
+  // the same request over TLS, and one to the host named with its port, are spent
+  const tls = await proxyRequest("www.googleapis.com", req("https://www.googleapis.com/x"), deps);
+  const local = await proxyRequest("localhost:8080", req("http://localhost:8080/x"), deps);
+  assertEquals([tls.status, local.status, dialed], [200, 200, 2]);
+  // a plain request carrying no credential goes anywhere
+  const none = await proxyRequest("example.com", new Request("http://example.com/"), deps);
+  assertEquals([none.status, dialed], [200, 3]);
+  assertEquals(seen.map((a) => [a.host, a.status, a.swapped]), [
+    ["www.googleapis.com", 403, false],
+    ["www.googleapis.com", 200, true],
+    ["localhost:8080", 200, true],
+    ["example.com", 200, false],
+  ]);
+});
+
+Deno.test("startProxy: one plain-HTTP connection carries requests to two origins", async () => {
+  const dir = await Deno.makeTempDir();
+  const ca = await openCA(dir);
+  const one = plainOrigin("one");
+  const two = plainOrigin("two");
+  const proxy = startProxy({ ca, broker: fakeBroker(), audit: () => {} });
+  try {
+    const conn = await Deno.connect({ hostname: "127.0.0.1", port: proxy.port });
+    const ask = (authority: string) =>
+      conn.write(
+        new TextEncoder().encode(
+          `GET http://${authority}/x HTTP/1.1\r\nhost: ${authority}\r\n` +
+            "proxy-connection: keep-alive\r\n\r\n",
+        ),
+      );
+    await ask(one.authority);
+    assert((await readUntil(conn, "one /x -")).includes("HTTP/1.1 200"));
+    await ask(two.authority);
+    assert((await readUntil(conn, "two /x -")).includes("HTTP/1.1 200"));
+    conn.close();
+  } finally {
+    await proxy.shutdown();
+    await one.server.shutdown();
+    await two.server.shutdown();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("startProxy: a plain-HTTP upgrade is bridged to its origin, in origin form", async () => {
+  const dir = await Deno.makeTempDir();
+  const ca = await openCA(dir);
+  // the origin: reads the upgrade's head, switches, then echoes
+  const origin = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const authority = `127.0.0.1:${(origin.addr as Deno.NetAddr).port}`;
+  let head = "";
+  const switching = (async () => {
+    const c = await origin.accept();
+    head = await readUntil(c, "\r\n\r\n");
+    await c.write(
+      new TextEncoder().encode(
+        "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\n\r\n",
+      ),
+    );
+    await c.readable.pipeTo(c.writable).catch(() => {});
+  })();
+  const seen: EgressAudit[] = [];
+  const proxy = startProxy({ ca, broker: fakeBroker(), audit: (a) => seen.push(a) });
+  try {
+    const conn = await Deno.connect({ hostname: "127.0.0.1", port: proxy.port });
+    await conn.write(
+      new TextEncoder().encode(
+        `GET http://${authority}/hmr?t=1 HTTP/1.1\r\nhost: ${authority}\r\n` +
+          "connection: Upgrade\r\nupgrade: websocket\r\nproxy-connection: keep-alive\r\n\r\n",
+      ),
+    );
+    assert((await readUntil(conn, "\r\n\r\n")).startsWith("HTTP/1.1 101"));
+    await conn.write(new TextEncoder().encode("ping"));
+    assertEquals(await readUntil(conn, "ping"), "ping");
+    assert(head.startsWith("GET /hmr?t=1 HTTP/1.1\r\n"), head);
+    assert(!/proxy-connection/i.test(head), head);
+    assertEquals(seen.map((a) => [a.method, a.host, a.path, a.status]), [
+      ["GET", authority, "/hmr", 101],
+    ]);
+    conn.close();
+  } finally {
+    await proxy.shutdown();
+    origin.close();
+    await switching.catch(() => {});
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("startProxy: a plain-HTTP request that names no origin is answered 400", async () => {
+  const dir = await Deno.makeTempDir();
+  const ca = await openCA(dir);
+  const proxy = startProxy({ ca, broker: fakeBroker(), audit: () => {} });
+  try {
+    const conn = await Deno.connect({ hostname: "127.0.0.1", port: proxy.port });
+    await conn.write(new TextEncoder().encode("GET /x HTTP/1.1\r\nhost: a\r\n\r\n"));
+    const answer = await readUntil(conn, "CONNECT host:port");
+    assert(answer.startsWith("HTTP/1.1 400"), answer);
+    conn.close();
+  } finally {
+    await proxy.shutdown();
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("startProxy: a decrypted tunnel carries a body up and every cookie down", async () => {
@@ -458,7 +577,6 @@ Deno.test("startProxy: a decrypted tunnel carries a body up and every cookie dow
     ca,
     broker: fakeBroker(),
     audit: () => {},
-    guard: anywhere,
     originFetch: async (input, init) => {
       const got = await new Request(String(input), init).text();
       const headers = new Headers();
@@ -495,7 +613,6 @@ Deno.test("startProxy: a decrypted tunnel stays open for the client's next reque
     ca,
     broker: fakeBroker(),
     audit: () => {},
-    guard: anywhere,
     originFetch: () => Promise.resolve(new Response("ok")),
   });
   try {

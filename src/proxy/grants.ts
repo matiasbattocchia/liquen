@@ -355,15 +355,27 @@ export function frontedFor<R extends { agentId?: string; extra?: Record<string, 
 }
 
 /** The grant's host binding: a row declaring `extra.hosts` spends only toward them.
- *  Entries are exact hostnames or `*.suffix` wildcards; the dialed authority may carry a
- *  port, which doesn't bind. A row declaring none (or a malformed sidecar) is unbound. */
+ *  Entries are exact hostnames or `*.suffix` wildcards, either perhaps with a port: an
+ *  entry with one binds that port alone (`localhost:8080`), one without binds every port
+ *  of its host. A port is written off the scheme's own, as the dialed authority carries
+ *  it. A row declaring none (or a malformed sidecar) is unbound. */
 export function hostAllowed(hosts: unknown, authority: string): boolean {
   if (!Array.isArray(hosts)) return true;
-  const host = authority.replace(/:\d+$/, "").toLowerCase();
-  return hosts.some((h) =>
-    typeof h === "string" &&
-    (h.startsWith("*.") ? host.endsWith(h.slice(1).toLowerCase()) : host === h.toLowerCase())
-  );
+  const got = splitAuthority(authority);
+  return hosts.some((h) => {
+    if (typeof h !== "string") return false;
+    const want = splitAuthority(h);
+    if (want.port !== undefined && want.port !== got.port) return false;
+    return want.host.startsWith("*.")
+      ? got.host.endsWith(want.host.slice(1))
+      : got.host === want.host;
+  });
+}
+
+/** An authority's host, lowercased, and its port when it names one. */
+function splitAuthority(authority: string): { host: string; port?: string } {
+  const m = authority.toLowerCase().match(/^(.*?)(?::(\d+))?$/)!;
+  return { host: m[1], ...(m[2] !== undefined ? { port: m[2] } : {}) };
 }
 
 /** The grant's path binding: a row declaring `extra.paths` spends only on a request whose

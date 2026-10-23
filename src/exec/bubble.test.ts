@@ -1,13 +1,6 @@
-import {
-  assert,
-  assertEquals,
-  assertMatch,
-  assertRejects,
-  assertStringIncludes,
-} from "@std/assert";
-import { DEFAULT_EGRESS_PORTS } from "../config.ts";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { type ExecGround, installExecGround } from "./bash.ts";
-import { type BubbleOptions, EGRESS_SOCKET, openBubble, partialToolHomes } from "./bubble.ts";
+import { type BubbleOptions, mountOf, openBubble, partialToolHomes } from "./bubble.ts";
 
 const live = () => new AbortController().signal;
 
@@ -23,58 +16,30 @@ const hasBwrap = (() => {
 interface Org {
   org: string;
   dir: string;
-  /** The authorities the bubble's connections asked the proxy for. */
-  asked: string[];
   ground: () => Promise<ExecGround>;
 }
 
-/** An org's folder, and the egress proxy's side of a1's socket: it refuses what names
- *  `refused.example`, and otherwise answers 200 and echoes the tunnel's bytes. */
+/** An org's folder, and a1's ground on it, in bubbles. */
 async function withOrg(
   fn: (o: Org) => Promise<void>,
-  opts: Partial<Pick<BubbleOptions, "ports" | "mounts">> = {},
+  opts: Partial<Pick<BubbleOptions, "mounts">> = {},
 ): Promise<void> {
   const org = await Deno.realPath(await Deno.makeTempDir());
   const dir = `${org}/data`;
   await Deno.writeTextFile(`${org}/config.jsonc`, "{}\n");
   await Deno.writeTextFile(`${org}/.env`, "ANTHROPIC_API_KEY=sk-secret");
-  const egress = `${dir}/log/egress/a1`;
-  await Deno.mkdir(egress, { recursive: true });
-  const proxy = Deno.listen({ transport: "unix", path: `${egress}/${EGRESS_SOCKET}` });
-  const asked: string[] = [];
-  const tunnel = async (conn: Deno.Conn) => {
-    const buf = new Uint8Array(1024);
-    let head = "";
-    while (!head.includes("\r\n\r\n")) {
-      const n = await conn.read(buf);
-      if (n === null) return conn.close();
-      head += new TextDecoder().decode(buf.subarray(0, n));
-    }
-    const authority = head.split(" ")[1];
-    asked.push(authority);
-    if (authority.startsWith("refused.example")) {
-      await conn.write(new TextEncoder().encode("HTTP/1.1 403 refused here\r\n\r\n"));
-      return conn.close();
-    }
-    await conn.write(new TextEncoder().encode("HTTP/1.1 200 Connection Established\r\n\r\n"));
-    await conn.readable.pipeTo(conn.writable).catch(() => {});
-  };
-  const serving = (async () => {
-    for await (const conn of proxy) tunnel(conn).catch(() => {});
-  })();
+  await Deno.mkdir(`${dir}/log`, { recursive: true });
   const ground = () =>
     installExecGround(
       dir,
       "a1",
       undefined,
       undefined,
-      () => openBubble({ dir, agentId: "a1", egress, ports: DEFAULT_EGRESS_PORTS, ...opts }),
+      () => openBubble({ dir, agentId: "a1", ...opts }),
     );
   try {
-    await fn({ org, dir, asked, ground });
+    await fn({ org, dir, ground });
   } finally {
-    proxy.close();
-    await serving.catch(() => {});
     await Deno.remove(org, { recursive: true });
   }
 }
@@ -91,7 +56,7 @@ const runOn = (shell: Shell) => async (command: string) => {
 /** One ground and a shell on it, ended with its bubbles. */
 async function withBubble(
   fn: (t: Org & { run: (command: string) => Promise<string>; shell: Shell }) => Promise<void>,
-  opts: Partial<Pick<BubbleOptions, "ports" | "mounts">> = {},
+  opts: Partial<Pick<BubbleOptions, "mounts">> = {},
 ): Promise<void> {
   await withOrg(async (o) => {
     const ground = await o.ground();
@@ -136,82 +101,43 @@ Deno.test({
 });
 
 Deno.test({
-  name: "bubble: every connection reaches the egress proxy by name, whatever it speaks",
+  name: "bubble: the network is the machine's — its loopback answers, and the bubble's own server",
   ignore: !hasBwrap,
   fn: () =>
-    withBubble(async ({ run, asked }) => {
-      // the bubble's resolver gives a name an address of its own, the same each time
-      const address = await run("getent ahostsv4 example.com | head -1 | cut -d' ' -f1");
-      assertMatch(address, /^127\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$/);
-      assertEquals(await run("getent ahostsv4 example.com | head -1 | cut -d' ' -f1"), address);
-      // a connection on any egress port is a CONNECT for the name and port, and carries
-      // what the client says
-      assertEquals(
-        await run("exec 3<>/dev/tcp/example.com/22; printf 'SSH-2.0-x' >&3; head -c 9 <&3"),
-        "SSH-2.0-x",
+    withBubble(async ({ run, dir }) => {
+      // a server on this machine's loopback, reached from inside
+      const outside = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+      const port = (outside.addr as Deno.NetAddr).port;
+      const answering = (async () => {
+        const c = await outside.accept();
+        await c.write(new TextEncoder().encode("hi"));
+        c.close();
+      })();
+      try {
+        assertEquals(await run(`exec 3<>/dev/tcp/127.0.0.1/${port}; head -c 2 <&3`), "hi");
+      } finally {
+        outside.close();
+        await answering.catch(() => {});
+      }
+      // a server the agent runs, reached from outside
+      await run(
+        `deno eval 'const l = Deno.listen({ hostname: "127.0.0.1", port: 0 }); ` +
+          `console.log((l.addr as Deno.NetAddr).port); ` +
+          `const c = await l.accept(); await c.write(new TextEncoder().encode("mine"))' ` +
+          "> port.txt &",
       );
-      assertEquals(
-        await run("exec 3<>/dev/tcp/example.com/443; printf hi >&3; head -c 2 <&3"),
-        "hi",
-      );
-      assertEquals(asked, ["example.com:22", "example.com:443"]);
-      // a refusal reaches the client as the proxy said it
-      assertEquals(
-        await run(
-          "exec 3<>/dev/tcp/refused.example/80; printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3; " +
-            "head -1 <&3 | tr -d '\\r'",
-        ),
-        "HTTP/1.1 403 refused here",
-      );
-      // no route anywhere else, no interface but loopback
-      await assertRejects(() => run("exec 3<>/dev/tcp/1.1.1.1/443"), Error);
-      assertEquals(
-        await run(
-          "ls /sys/class/net 2>/dev/null || cat /proc/net/dev | tail -n +3 | cut -d: -f1 | tr -d ' '",
-        ),
-        "lo",
-      );
+      let theirs = 0;
+      for (let i = 0; i < 100 && !theirs; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        theirs = Number(await Deno.readTextFile(`${dir}/agents/a1/port.txt`).catch(() => ""));
+      }
+      assert(theirs, "the agent's server never said its port");
+      const c = await Deno.connect({ hostname: "127.0.0.1", port: theirs });
+      const buf = new Uint8Array(4);
+      await c.read(buf);
+      c.close();
+      assertEquals(new TextDecoder().decode(buf), "mine");
     }),
-});
-
-Deno.test({
-  name: "bubble: an egress port on loopback is the agent's own to serve",
-  ignore: !hasBwrap,
-  fn: () =>
-    withBubble(async ({ run }) => {
-      await run("getent hosts example.com >/dev/null"); // a name held: its listeners up
-      assertEquals(
-        await run(
-          `deno eval 'const l = Deno.listen({ hostname: "127.0.0.1", port: 5432 }); ` +
-            `const c = await Deno.connect({ hostname: "127.0.0.1", port: 5432 }); ` +
-            `await (await l.accept()).write(new TextEncoder().encode("mine")); ` +
-            `const b = new Uint8Array(4); await c.read(b); console.log(new TextDecoder().decode(b))'`,
-        ),
-        "mine",
-      );
-    }),
-});
-
-Deno.test({
-  name: "bubble: a name answers on the org's ports, and a proxy client reaches any",
-  ignore: !hasBwrap,
-  fn: () =>
-    withBubble(async ({ run, asked }) => {
-      assertEquals(
-        await run("exec 3<>/dev/tcp/example.com/443; printf hi >&3; head -c 2 <&3"),
-        "hi",
-      );
-      await assertRejects(() => run("exec 3<>/dev/tcp/example.com/22"), Error);
-      // the holder hands a CONNECT to the proxy as it came
-      assertEquals(
-        await run(
-          "exec 3<>/dev/tcp/127.0.0.53/3128; printf 'CONNECT example.com:8443 HTTP/1.1\\r\\n\\r\\n' >&3; " +
-            "head -c 39 <&3 | head -1 | tr -d '\\r'; printf hi >&3; head -c 2 <&3",
-        ),
-        "HTTP/1.1 200 Connection Established\nhi",
-      );
-      assertEquals(asked, ["example.com:443", "example.com:8443"]);
-    }, { ports: [443] }),
 });
 
 Deno.test({
@@ -219,22 +145,36 @@ Deno.test({
   ignore: !hasBwrap,
   fn: async () => {
     const tools = await Deno.realPath(await Deno.makeTempDir());
+    const repo = await Deno.realPath(await Deno.makeTempDir());
     await Deno.writeTextFile(`${tools}/lib.txt`, "beside the bin");
     try {
       await withBubble(async ({ run }) => {
         assertEquals(await run(`cat ${tools}/lib.txt`), "beside the bin");
         assertEquals(await run(`touch ${tools}/x 2>/dev/null || echo refused`), "refused");
-      }, { mounts: [tools] });
+        assertEquals(await run(`echo ok > ${repo}/x && cat ${repo}/x`), "ok");
+      }, { mounts: [tools, `${repo}:rw`] });
       await withOrg(async ({ org, dir }) => {
-        const open = (mounts: string[]) =>
-          openBubble({ dir, agentId: "a1", egress: `${dir}/log/egress/a1`, ports: [], mounts });
+        const open = (mounts: string[]) => openBubble({ dir, agentId: "a1", mounts });
         await assertRejects(() => open([org]), Error, "holds the org's folder");
         await assertRejects(() => open([`${org}/connectors`]), Error, "lies in the org's folder");
+        await assertRejects(() => open([`${org}:rw`]), Error, "holds the org's folder");
       });
     } finally {
       await Deno.remove(tools, { recursive: true });
+      await Deno.remove(repo, { recursive: true });
     }
   },
+});
+
+Deno.test("mountOf: a path, read-only unless it ends in :rw", () => {
+  const was = Deno.env.get("HOME");
+  try {
+    Deno.env.set("HOME", "/home/u");
+    assertEquals(mountOf("~/.nvm"), { path: "/home/u/.nvm", mode: "ro" });
+    assertEquals(mountOf("/srv/repo:rw"), { path: "/srv/repo", mode: "rw" });
+  } finally {
+    was === undefined ? Deno.env.delete("HOME") : Deno.env.set("HOME", was);
+  }
 });
 
 Deno.test("partialToolHomes: a tool folder PATH reaches into, until a mount shows it whole", () => {
@@ -246,6 +186,7 @@ Deno.test("partialToolHomes: a tool folder PATH reaches into, until a mount show
     assertEquals(partialToolHomes(["~/.local/share/mise"]), []);
     assertEquals(partialToolHomes(["/home/u/.local/share"]), []);
     assertEquals(partialToolHomes(["~/.local/share/mise/installs"]), ["~/.local/share/mise"]);
+    assertEquals(partialToolHomes(["~/.local/share/mise:rw"]), []);
   } finally {
     for (const [k, v] of Object.entries(was)) {
       v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
