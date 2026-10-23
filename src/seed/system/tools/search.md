@@ -13,6 +13,10 @@ A `<conv address>` is what `in` and `send(to:)` both take back. `from` also asks
 accounts' address books: whoever is saved under that name stands first, as `<contact>` lines
 under the account's `<conn>`, with the `address` to write to — so someone you have saved and
 never heard from is findable too; a book that could not be asked is said in a line of its own.
+An `in` or `from` that is a number (or other address) with no messages here and nobody saved
+at it is asked of the accounts whose service can tell: a `<profile>` line under the account's
+`<conn>` says whether that address is an account there (`exists`) and the `name` it shows, if
+any. That is how to learn who a number reaches before writing to it.
 
 - in: one conversation: its address, or a name (a group's, or the person a direct chat is
   with; any part of it, case doesn't matter)

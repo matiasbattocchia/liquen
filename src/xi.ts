@@ -44,6 +44,7 @@ import type {
   PermissionResponseEvent,
   PermissionVerdict,
   PolicyAction,
+  Profiled,
   Rule,
   SearchArgs,
   Service,
@@ -97,6 +98,7 @@ import {
   ownSide,
   ownVoice,
   pinnedMedia,
+  profileEl,
   renderHits,
   roomNames,
   type Roster,
@@ -3563,7 +3565,9 @@ async function search(
   const senders = asked === undefined
     ? undefined
     : [...new Set([...(spoke ?? []), ...(contacts?.hits ?? []).map((c) => c.address)])];
-  if (senders !== undefined && senders.length === 0) {
+  const profiles = await profiled(log, [args.in, asked], contacts, account, self, ports);
+  // a number in neither place is still somebody's to the wire: who it reaches is the page
+  if (senders !== undefined && senders.length === 0 && profiles.length === 0) {
     throw new Error(
       contacts !== undefined
         ? `nobody named "${asked}" has spoken here, and no address book of yours has them`
@@ -3571,8 +3575,9 @@ async function search(
     );
   }
   // one row past the page: whether older matches exist is read off the rows, never
-  // inferred from a page that happens to be full
-  const rows = await log.read({
+  // inferred from a page that happens to be full. No sender at all is no line at all —
+  // an empty `senders` would be no filter
+  const rows = senders?.length === 0 ? [] : await log.read({
     ...(conversations ? { conversations } : {}),
     ...(senders ? { senders } : {}),
     ...(account ? { service: account.service, connection: account.address } : {}),
@@ -3605,14 +3610,15 @@ async function search(
   const { lines, opts } = around > 0
     ? await surround(log, page, around)
     : { lines: page, opts: {} };
-  const books = contacts === undefined ? [] : bookLines(await accounts(self, ports), contacts);
+  const mine = contacts === undefined && profiles.length === 0 ? [] : await accounts(self, ports);
+  const books = contacts === undefined ? [] : bookLines(mine, contacts);
   const lines_ = page.length === 0
     ? []
     : [renderHits(lines, view.session, view.roster, view.zone, view.connections, opts)];
   const older = more
     ? [`— older matches not shown — search again with before="${page[0].ts}" to read on —`]
     : [];
-  const out = [...books, ...lines_, ...older];
+  const out = [...books, ...profileLines(mine, profiles), ...lines_, ...older];
   return out.length === 0 ? "nothing matched" : out.join("\n");
 }
 
@@ -3636,6 +3642,68 @@ function bookLines(mine: ConnectionRow[], contacts: Contacts): string[] {
   for (const address of contacts.unreached ?? []) {
     const c = row(address);
     out.push(unreachedLine({ service: c?.service ?? "?", address, name: nameOf(c) }));
+  }
+  return out;
+}
+
+/**
+ * Who the addresses a search names reach, when nothing here knows them (§6): an `in` or a
+ * `from` shaped like an address, spelled as `send` spells it, with no line in it or from it
+ * and no book entry at it. The log and the books have nothing to say about such an address,
+ * but its wire may: every account whose wire takes an address of that shape (`reachersOf`)
+ * and whose port answers `profile` is asked, the `connection` filter narrowing them as it
+ * narrows the hits. Best effort, as a book is: an account that could not be asked comes
+ * back with no `exists`, and is named on the page rather than dropped.
+ */
+async function profiled(
+  log: Pick<Reader, "read">,
+  handles: (string | undefined)[],
+  contacts: Contacts | undefined,
+  account: ConnectionRow | undefined,
+  self: { id: string },
+  ports: XiPorts,
+): Promise<Profiled[]> {
+  const addresses = [
+    ...new Set(handles.filter((h) => h !== undefined && shapeOf(h)).map((h) => spelled(h!))),
+  ];
+  const answers = await Promise.all(addresses.map(async (address) => {
+    if (contacts?.hits.some((c) => c.address === address)) return [];
+    const [inside, by] = await Promise.all([
+      log.read({ conversation: address, types: ["message"], limit: 1 }),
+      log.read({ from: address, types: ["message"], limit: 1 }),
+    ]);
+    if (inside.length > 0 || by.length > 0) return [];
+    const asked = (await reachersOf(address, self, ports)).filter((c) =>
+      ports.contact?.[c.service]?.profile && (!account || c.address === account.address)
+    );
+    return await Promise.all(asked.map(async (c): Promise<Profiled> => {
+      try {
+        const found = await ports.contact![c.service]!.profile!({ connection: c.address, address });
+        return { connection: c.address, address, ...found };
+      } catch {
+        return { connection: c.address, address };
+      }
+    }));
+  }));
+  return answers.flat();
+}
+
+/** The wires' answers as page lines, in the accounts' own order as the books' are: one
+ *  `<conn>` of `<profile>` lines per account that answered, then one harness line per
+ *  address an account could not be asked about. */
+function profileLines(mine: ConnectionRow[], profiles: Profiled[]): string[] {
+  const label = (c: ConnectionRow) => ({ service: c.service, address: c.address, name: nameOf(c) });
+  const out: string[] = [];
+  for (const c of mine) {
+    const known = profiles.filter((p) => p.connection === c.address && p.exists !== undefined);
+    if (known.length > 0) {
+      out.push(profileEl(label(c), known.map((p) => ({ ...p, exists: p.exists! }))));
+    }
+  }
+  for (const c of mine) {
+    for (const p of profiles.filter((p) => p.connection === c.address && p.exists === undefined)) {
+      out.push(unreachedLine(label(c), `profile of ${p.address}`));
+    }
   }
   return out;
 }
@@ -3729,6 +3797,9 @@ async function rooms(log: Pick<Reader, "read">, handle?: string): Promise<string
 async function people(log: Pick<Reader, "read">, handle?: string): Promise<string[] | undefined> {
   if (handle === undefined) return undefined;
   if ((await log.read({ from: handle, limit: 1 })).length > 0) return [handle];
+  if (spelled(handle) !== handle && (await log.read({ from: spelled(handle), limit: 1 })).length) {
+    return [spelled(handle)];
+  }
   const named = await log.read({ senderName: handle, limit: NAME_REACH });
   return [...new Set(named.map((e) => e.envelope.sender?.address).filter((a) => !!a))] as string[];
 }

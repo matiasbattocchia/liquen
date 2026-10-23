@@ -1116,27 +1116,48 @@ export function bookEl(
   account: { service: string; address: string; name?: string },
   entries: { name: string; address: string }[],
 ): string {
+  const lines = entries.map((e) =>
+    `<contact name="${escAttr(e.name)}" address="${escAttr(e.address)}"/>`
+  );
+  return connWith(account, lines);
+}
+
+/** Who an address nobody here knows reaches, as an account's wire answers it (§6): the
+ *  account's own `<conn>` holding one `<profile>` per address — `exists` whether the
+ *  address is an account on that wire at all, and `name` the one it shows when it has
+ *  one. Untrusted strings attribute-escaped. */
+export function profileEl(
+  account: { service: string; address: string; name?: string },
+  entries: { address: string; exists: boolean; name?: string }[],
+): string {
+  const lines = entries.map((e) =>
+    `<profile address="${escAttr(e.address)}" exists="${e.exists}"${
+      e.name ? ` name="${escAttr(e.name)}"` : ""
+    }/>`
+  );
+  return connWith(account, lines);
+}
+
+function connWith(account: { service: string; address: string; name?: string }, lines: string[]) {
   const attrs = [
     `service="${escAttr(account.service)}"`,
     ...(account.name ? [`name="${escAttr(account.name)}"`] : []),
     `address="${escAttr(account.address)}"`,
   ];
-  const lines = entries.map((e) =>
-    `<contact name="${escAttr(e.name)}" address="${escAttr(e.address)}"/>`
-  );
   return `<conn ${attrs.join(" ")}>\n${lines.join("\n")}\n</conn>`;
 }
 
-/** A book that could not be asked, said in the harness's own voice — the account named
- *  the way the window's `connections:` line names it, so "not asked" never reads as
- *  "nobody by that name". */
+/** What an account could not be asked (its address book, by default), said in the
+ *  harness's own voice — the account named the way the window's `connections:` line names
+ *  it, so "not asked" never reads as "nobody by that name". */
 export function unreachedLine(
   account: { service: string; address: string; name?: string },
+  what = "address book",
 ): string {
   const name = account.name ? ` "${escText(account.name)}"` : "";
-  return `— ${escText(account.service)} ${
-    escText(account.address)
-  }${name}: address book not reached —`;
+  return `— ${escText(account.service)} ${escText(account.address)}${name}: ${
+    escText(what)
+  } not reached —`;
 }
 
 /**

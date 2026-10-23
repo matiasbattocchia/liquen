@@ -1289,6 +1289,89 @@ Deno.test("search: a book that cannot be reached is named, never mistaken for an
   }
 });
 
+Deno.test("search: a number nobody here knows is asked of its wire — who it reaches is the page", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+    { service: "google", address: "sole@clinica.ar", agentId: "a1" }, // takes no phone
+  ]);
+  const asked: string[] = [];
+  const contact = {
+    whatsapp: {
+      lookup: () => Promise.resolve([]),
+      profile: ({ address }: { connection: string; address: string }) => {
+        asked.push(address);
+        if (address === "5490000000000") return Promise.reject(new Error("HTTP 503"));
+        return Promise.resolve(
+          address === "5492617078202"
+            ? { exists: true, name: "biobaricamendoza" }
+            : { exists: false },
+        );
+      },
+    },
+  };
+  const { transport } = scripted([
+    ok([{ kind: "tool_use", name: "search", input: { in: "+54 9 261 707-8202" } }], "tool_use"),
+    ok([{ kind: "tool_use", name: "search", input: { from: "5492616921694" } }], "tool_use"),
+    ok([{ kind: "tool_use", name: "search", input: { in: "5492616104507" } }], "tool_use"),
+    ok([{ kind: "tool_use", name: "search", input: { in: "5490000000000" } }], "tool_use"),
+    ok([{ kind: "tool_use", name: "search", input: { from: "Nadie" } }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, contact };
+  try {
+    await log.publish({
+      ts: new Date(Date.now() - 40 * 3_600_000).toISOString(),
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "5491100000000",
+        external_id: "whatsapp:wmw.v2",
+        conversation: { address: "5492616104507", kind: "direct" },
+        sender: { address: "5492616104507" },
+      },
+      parts: [{ type: "text", kind: "text", text: "hola, quiero info" }],
+    });
+    await log.publish(principalMsg("quiénes son"));
+    for (let i = 0; i < 14; i++) await xi(CONFIG, ports);
+
+    // a conversation the log holds is its own answer: its number was never asked
+    assertEquals(asked, ["5492617078202", "5492616921694", "5490000000000"]);
+    const pages = (await log.read({ types: ["tool_result"] })).map((r) =>
+      JSON.stringify((r as ToolResultEvent).parts)
+    );
+    const output = (i: number) => JSON.parse(pages[i])[0].data.output as string;
+    // typed with + and separators, asked as the digits; under the account that asked
+    assertEquals(
+      output(0),
+      '<conn service="whatsapp" name="Sole" address="5491100000000">\n' +
+        '<profile address="5492617078202" exists="true" name="biobaricamendoza"/>\n' +
+        "</conn>",
+    );
+    // a `from` nobody spoke and no book holds is no longer an error: the wire says nobody
+    assertEquals(
+      output(1),
+      '<conn service="whatsapp" name="Sole" address="5491100000000">\n' +
+        '<profile address="5492616921694" exists="false"/>\n' +
+        "</conn>",
+    );
+    assertEquals(output(2).includes("<profile "), false);
+    assertEquals(output(2).match(/<msg /g)?.length, 1);
+    // a wire that could not be asked is said, never read as "no account"
+    assertEquals(
+      output(3),
+      '— whatsapp 5491100000000 "Sole": profile of 5490000000000 not reached —',
+    );
+    // a name is no address: nothing to ask a wire, and nobody by it is still an error
+    assertStringIncludes(pages[4], 'nobody named \\"Nadie\\"');
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("search: a port is per service, a book is per ACCOUNT — every one of them answers", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);

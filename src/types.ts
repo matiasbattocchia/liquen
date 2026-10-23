@@ -778,6 +778,14 @@ export type ContactHit = {
  *  entries stand under their account's `<conn>` as `<contact>` lines, and an unreached
  *  book is a harness line. */
 export type Contacts = { hits: ContactHit[]; unreached?: string[] };
+/** An address nobody here knows, as one account's wire answered who it is: `exists` and
+ *  the `name` its `profile` leg gave, or neither when the wire could not be asked. */
+export type Profiled = {
+  connection: string; // the account that asked
+  address: string;
+  exists?: boolean;
+  name?: string;
+};
 
 /** `bash(cmd)` — the sandbox's one primitive; everything exec-y is bash + a skill (§9). */
 export interface BashArgs {

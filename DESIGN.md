@@ -1907,7 +1907,13 @@ with a time bound.
   direction, the same rule as `re`: a **read widens** across namesakes (two Anas cost a
   longer result), a **write refuses** (irreversible, so the model re-reads). A name nobody
   wears is an error, never an empty result — "I don't know who that is" and "they never
-  said that" are different answers.
+  said that" are different answers. An ADDRESS is spelled as `send` spells it (a phone's
+  digits) and is a conversation whether or not anything was said there; one with no line in
+  or from it and no book entry at it is asked of its wire instead (`ContactPort.profile`,
+  every account whose wire takes that shape, narrowed by `connection`), and the page is the
+  answer: a `<profile address exists name?>` per account under its `<conn>`, or a harness
+  line for a wire that could not be asked. So an unknown number reads as who it reaches,
+  not as "nothing matched".
 - **The connections map** (landed 2026-08-05; sessions 2026-09-01): `policyFor(session)`
   derives the §6 Policy from the two tables — THE three-branch predicate, one law for
   readable and writable alike, written as the SQL boolean it is (`Law`: an expression over
