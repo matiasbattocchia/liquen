@@ -499,8 +499,10 @@ runs has its port already there.
 
 **The steering rooms.** On an org bot (`liquen connect slack bot` with no agent), a channel
 named exactly as a roster agent that owns no account is that agent's steering room. The
-ingest adopts it the first time the bot is met there — its own `member_joined_channel`, or
-any line in a public or private channel — writing `mirrors.rooms.<agent>` with the
+ingest adopts it the first time the bot is met there — any line in a public or private
+channel, Slack's own "joined" line the first of them (its `member_joined_channel` adopts
+nothing: Slack says the arrival twice at once, and one fact gets one trigger, as Teams
+adopts a chat from its lines) — writing `mirrors.rooms.<agent>` with the
 channel's id before that line lands, so the line is already the room's; a rename leaves
 the record where it is, and a second channel wearing the name is nobody's while the first
 holds it. The bot leaving (`member_left_channel` for its own user, `channel_left`,

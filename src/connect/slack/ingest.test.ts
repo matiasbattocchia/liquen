@@ -1166,15 +1166,19 @@ Deno.test("a channel named as an agent is its steering room on an org bot (§4):
   const line = (channel: string, ts: string) =>
     asBot({ type: "message", channel, channel_type: "channel", user: "U7", text: "x", ts });
 
-  // the bot joins #ventas: the room is recorded, and the mind is told before any line lands
+  // the bot joins #ventas: its arrival records nothing — the room's lines adopt it, and the
+  // first is Slack's own "joined" line; the mind is told before that line lands
   await handler(await asBot({ type: "member_joined_channel", user: "UBOT", channel: "C9" }));
+  assertEquals(written, []);
+  await handler(await line("C9", "1.0"));
   assertEquals(written, [{
     service: "slack",
     address: "T1:UBOT",
     extra: { mirrors: { rooms: { ventas: "C9" } } },
   }]);
-  assertEquals(published.length, 1);
+  assertEquals(published.length, 2);
   assertEquals(published[0].envelope.conversation.address, "mind@ventas");
+  assertEquals(published[1].envelope.conversation.address, "C9"); // the line itself
   assertEquals((published[0] as MessageEvent).parts, [
     { type: "data", kind: "room", data: { joined: [{ address: "C9", name: "#ventas" }] } },
   ]);
@@ -1279,7 +1283,7 @@ Deno.test("socket health: an app token Slack ended signs the rows out at once; i
   });
 });
 
-Deno.test("the bot met in a room twice at once (§4): Slack's event and the room's own line adopt it once", async () => {
+Deno.test("the bot's arrival, said twice at once by Slack (§4): only the room's line adopts, once", async () => {
   const { names } = fakeNames({ "T1:C9": "ventas", "T1:UBOT": "liquen", "T1:U7": "Sol" });
   const bot: ConnectionRow = {
     service: "slack",

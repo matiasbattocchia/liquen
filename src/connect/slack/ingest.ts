@@ -264,18 +264,6 @@ export type WebhookHandler = (req: Request) => Promise<Response>;
 /** Build the ingest handler. Pure over its deps — call once, serve (or carry) anywhere. */
 export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
   const now = deps.now ?? (() => new Date().toISOString());
-  // a room is met twice at once: Slack says the bot's arrival as an event
-  // (`member_joined_channel`) AND as the room's own line (a `channel_join` message), and
-  // deliveries are handled concurrently — so both would read the room as unadopted and both
-  // say so. A room's adoption and release take turns: the second reads what the first wrote.
-  let rooms: Promise<unknown> = Promise.resolve();
-  const inTurn = (work: () => Promise<void>): Promise<void> => {
-    const going = rooms.then(work);
-    rooms = going.catch(() => {});
-    return going;
-  };
-  const adopt = (...a: Parameters<typeof adoptRoom>) => inTurn(() => adoptRoom(...a));
-  const release = (...a: Parameters<typeof releaseRoom>) => inTurn(() => releaseRoom(...a));
 
   return async (req) => {
     if (req.method !== "POST") return text(405, "method not allowed");
@@ -355,14 +343,16 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       return;
     }
     // the membership mirror, active leg (§4): joins/leaves move rows, nothing published —
-    // but the bot's own move is a room it is now in, or out of (steering rooms)
+    // but the bot's own leave is a room it is out of (steering rooms). Its arrival adopts
+    // nothing: a room is adopted from its lines alone (the room's own "joined" line is the
+    // first), as Teams adopts a chat — one fact, one trigger, where Slack says the arrival
+    // twice at once and both would adopt
     if (e.type === "member_joined_channel" || e.type === "member_left_channel") {
       const anchor = anchorOf(team, payload.authorizations);
       if (e.user !== undefined && e.user === botOf(team, anchor)) {
-        const via = boundUsers(payload.authorizations);
-        if (e.type === "member_joined_channel") {
-          await adopt(deps, team, anchor, e.channel, via, now);
-        } else await release(deps, team, anchor, e.channel, via, now);
+        if (e.type === "member_left_channel") {
+          await releaseRoom(deps, team, anchor, e.channel, boundUsers(payload.authorizations), now);
+        }
         return;
       }
       await mirrorMember(e, team, deps.store);
@@ -376,7 +366,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       const channel = (e as { channel?: unknown }).channel;
       if (typeof channel !== "string") return;
       const anchor = anchorOf(team, payload.authorizations);
-      await release(deps, team, anchor, channel, boundUsers(payload.authorizations), now);
+      await releaseRoom(deps, team, anchor, channel, boundUsers(payload.authorizations), now);
       return;
     }
     // a reaction is an ACTION event (§3): add/remove + the reacted message's id in
@@ -435,8 +425,8 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     if (e.channel && (e.channel_type === "channel" || e.channel_type === "group")) {
       const via = boundUsers(payload.authorizations);
       const left = e.subtype === "channel_leave" && e.user === botOf(team, anchor);
-      if (left) await release(deps, team, anchor, e.channel, via, now);
-      else await adopt(deps, team, anchor, e.channel, via, now);
+      if (left) await releaseRoom(deps, team, anchor, e.channel, via, now);
+      else await adoptRoom(deps, team, anchor, e.channel, via, now);
     }
     const msgs = await mapMessage(
       e,
