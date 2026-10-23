@@ -421,7 +421,7 @@ Deno.test("mirror fan-out: a send's card is laid out in rows, in the surface's t
     assertEquals(
       textOf((await inConv("D1"))[0]),
       "`[agent asks]` approve **send**\n\n" +
-        "**Conversation**: Vivian <5492604586396>\n\n" +
+        "**Conversation**: Vivian (5492604586396)\n\n" +
         "**Last message** (23 Sep 16:42):\nllegás?\n\n" +
         "**Reply**:\nhola!\nnos vemos\n\n" +
         "**Attachments**: 1\n\n" +

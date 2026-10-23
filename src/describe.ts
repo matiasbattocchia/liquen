@@ -124,15 +124,11 @@ const BUILTIN: Record<string, Describe> = {
  *  it, so a card never reads as text alone when files or a pin ride along. Labels are
  *  the surface's tongue; the values are the call's. */
 export function describeSendCard(p: SendPreview, labels: SendCardLabels): string {
-  const { name, address, kind } = p.conversation;
-  const who = !name ? address : addressReads(kind) ? `${name} <${address}>` : name;
+  const { address, kind } = p.conversation;
+  // a first contact goes by the name its wire shows, like any conversation that has one
+  const name = p.conversation.name ?? p.profile?.name;
+  const who = !name ? address : addressReads(kind) ? `${name} (${address})` : name;
   const rows = [`**${labels.conversation}**: ${who}`];
-  if (p.profile) {
-    const { exists, name: shown } = p.profile;
-    rows.push(
-      `**${labels.account}**: ${!exists ? labels.noAccount : shown ? shown : labels.unnamed}`,
-    );
-  }
   if (p.last) {
     const things = (p.last.carries ?? []).map((c) => `[${labels.carried[carriedWord(c)]}]`);
     const line = [...things, p.last.text].filter((s) => s !== "").join(" ");
@@ -161,11 +157,6 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
 
 export interface SendCardLabels {
   conversation: string;
-  /** A first contact's account as its wire shows it: the name it goes by, else one of
-   *  the two words for an account with no name shown and for none at all. */
-  account: string;
-  unnamed: string;
-  noAccount: string;
   last: string;
   message: string;
   toEdit: string;

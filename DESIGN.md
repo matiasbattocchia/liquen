@@ -1451,8 +1451,9 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   (landed 2026-09-23). Where a send cannot land is refused before the gate, so no card is
   raised for it (`unreachable` in xi.ts): a broadcast the agent receives — nobody answers
   there; a stranger on no account — first contact names the account, since `x@y` may be
-  Gmail or Outlook and a number WhatsApp or Teams; and an account writing to its own
-  address. `send` resolves `to` among rooms, never a broadcast, so a primary calendar —
+  Gmail or Outlook and a number WhatsApp or Teams; an account writing to its own
+  address; and a stranger the wire's `profile` says has no account there — approving a send
+  nothing would receive is no judgment at all. `send` resolves `to` among rooms, never a broadcast, so a primary calendar —
   addressed at its account's own email — leaves that string to mail.
   **Open:** a directory that is not an address book — a colleague on a workspace nobody has
   DM'd, a channel the agent was never in. Memberships are not rendered and the model cannot

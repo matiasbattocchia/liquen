@@ -27,9 +27,6 @@ const TONGUES = {
     // the send card's rows (§9): the labels a person reads the call under
     card: {
       conversation: "Conversation",
-      account: "Account",
-      unnamed: "exists, no public name",
-      noAccount: "no account at this address",
       last: "Last message",
       message: "Message",
       toEdit: "Message to edit",
@@ -82,9 +79,6 @@ const TONGUES = {
       "responder /y para aprobar · /n <motivo> para rechazar · o reaccionar 👍 / 👎 · 🤖 aprueba toda la conversación",
     card: {
       conversation: "Conversación",
-      account: "Cuenta",
-      unnamed: "existe, sin nombre público",
-      noAccount: "no hay ninguna cuenta en esta dirección",
       last: "Último mensaje",
       message: "Mensaje",
       toEdit: "Mensaje a editar",

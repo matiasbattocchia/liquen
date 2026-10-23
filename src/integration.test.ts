@@ -690,6 +690,11 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
       kind: "tool_use",
       name: "send",
       input: { to: "+54 9 261 707-8202", text: "hola" },
+    }, {
+      // a number the wire says has no account: refused, never put to the principal
+      kind: "tool_use",
+      name: "send",
+      input: { to: "+54 9 261 692-1694", text: "hola" },
     }], "tool_use"),
     ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
   ]);
@@ -707,7 +712,11 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
       whatsapp: {
         profile: (req) => {
           asked.push(req);
-          return Promise.resolve({ exists: true, name: "Biobarica Mendoza" });
+          return Promise.resolve(
+            req.address === "5492616921694"
+              ? { exists: false }
+              : { exists: true, name: "Biobarica Mendoza" },
+          );
         },
       },
     },
@@ -731,8 +740,18 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
     await log.publish(patient("un momento", "2026-09-23T19:50:00Z", true));
     await log.publish(principalMsg("contestale a Carlos"));
     for (let i = 0; i < 6; i++) await xi(config, ports);
-    const [req, stranger] = await log.read({ types: ["permission_request"] });
+    const cards = await log.read({ types: ["permission_request"] });
+    assertEquals(cards.length, 2);
+    const [req, stranger] = cards;
     assert(req.type === "permission_request" && stranger.type === "permission_request");
+    const [, , nobody] = await log.read({ types: ["tool_use"] });
+    const refused = (await log.read({ types: ["tool_result"] }))
+      .find((r) => r.payload?.ref_id === nobody.id) as ToolResultEvent;
+    assertEquals(refused.parts[0].data.is_error, true);
+    assertStringIncludes(
+      String(refused.parts[0].data.output),
+      "5492616921694 has no whatsapp account",
+    );
     assertEquals(req.parts[0].data.send, {
       conversation: { name: "Carlos", address: "5492616560401", kind: "direct" },
       last: { text: "hola, tienen turno?", at: "23 Sep 16:42" },
@@ -746,8 +765,11 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
       files: 0,
       profile: { service: "whatsapp", exists: true, name: "Biobarica Mendoza" },
     });
-    // only the stranger was asked about, under the address the wire spells
-    assertEquals(asked, [{ connection: "5491100000000", address: "5492617078202" }]);
+    // only the strangers were asked about, under the address the wire spells
+    assertEquals([...new Set(asked.map((r) => `${r.connection} ${r.address}`))], [
+      "5491100000000 5492617078202",
+      "5491100000000 5492616921694",
+    ]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

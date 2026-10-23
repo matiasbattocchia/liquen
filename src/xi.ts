@@ -2586,7 +2586,9 @@ async function firstRideOf(
  *  - a STRANGER on no account, with no account named and none settled by the address's
  *    shape (`firstRideOf`): a mailbox may be Gmail or Outlook, so the model says which,
  *    and is offered only the accounts whose wire takes an address like it;
- *  - the account ITSELF: a send from an account to its own address reaches nobody else. */
+ *  - the account ITSELF: a send from an account to its own address reaches nobody else;
+ *  - a STRANGER the wire says has no account (its `profile`): nothing there receives it.
+ *    A wire that cannot be asked, or cannot answer now, is no verdict. */
 async function unreachable(
   to: string,
   via: { address: string } | undefined,
@@ -2611,6 +2613,15 @@ async function unreachable(
       (yours ? ` (yours: ${yours})` : "");
   }
   if (sameHandle(to, account)) return `${to} is your own account — a send there reaches only you`;
+  if (prior) return undefined;
+  const row = (await accounts(self, ports)).find((c) => c.address === account);
+  const ask = row && ports.contact?.[row.service]?.profile;
+  const found = ask
+    ? await ask({ connection: account, address: to }).catch(() => undefined)
+    : undefined;
+  if (found?.exists === false) {
+    return `${to} has no ${row!.service} account — nothing there would receive this`;
+  }
   return undefined;
 }
 
