@@ -1252,6 +1252,36 @@ Deno.test("mirror fan-in: a steering room line is signed by its own sender, and 
   });
 });
 
+Deno.test("mirror: who a line is crosses on the copies — the wire's email, or the address that is one, and the name the tag says", async () => {
+  await withRoom(async ({ publish, inConv, waitFor }) => {
+    // a portal line: its address is the email
+    await publish(
+      roomLine("why doma has two deals?", {
+        address: "matias@turtle.xyz",
+        name: "Matias Battocchia",
+      }),
+    );
+    // a line whose wire knows the email beside an opaque address (Slack, Teams)
+    await publish({
+      ...roomLine("when is my next call?", { address: "U7", name: "Cabra" }),
+      extra: { sender_email: "matias@turtle.xyz" },
+    });
+    await waitFor(async () => (await inConv("D1")).length === 2);
+    // read back from the log: the mind copy keeps what the wire said, the CC says who
+    const copies = await inConv("mind@sonar");
+    assertEquals(copies.map((c) => c.extra?.sender_email), [undefined, "matias@turtle.xyz"]);
+    const ccs = await inConv("D1");
+    assertEquals(ccs.map(textOf), [
+      "`[Matias Battocchia via sonar]` why doma has two deals?",
+      "`[Cabra via sonar]` when is my next call?",
+    ]);
+    assertEquals(ccs.map((c) => [c.extra?.sender_email, c.extra?.sender_name]), [
+      ["matias@turtle.xyz", "Matias Battocchia"],
+      ["matias@turtle.xyz", "Cabra"],
+    ]);
+  });
+});
+
 Deno.test("mirror fan-in: a steering room line that names no sender crosses as nothing", async () => {
   await withRoom(async ({ publish, inConv }) => {
     await publish(roomLine("anyone?"));

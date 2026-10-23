@@ -27,6 +27,7 @@ import type { Credentials } from "../../store/credentials.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../../types.ts";
 import { type Directory, encodeSlackText } from "../mentions.ts";
 import { toSlack } from "../flavor.ts";
+import { retag, taggedOf } from "../../sender.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { entry } from "../../entry.ts";
@@ -161,6 +162,10 @@ export interface SlackDispatchDeps {
    *  claim user ids for the wire encoding. Specials (`@here`) and bare ids encode
    *  regardless; unclaimed names stay literal text. */
   directory?: Directory;
+  /** The name the workspace knows a person by, by their email (`users.lookupByEmail`):
+   *  a principal's line crossing from another surface wears it in its tag, as their own
+   *  workspace would say it. Absent, or no such person ⇒ the tag the mirror wrote. */
+  nameByEmail?: (connection: string, email: string) => Promise<string | undefined>;
   /** The thread root of a referent (§5 `re`): the external id the referent's own row
    *  names in `payload.ref_external_id` when that row is itself a reply; undefined when
    *  the referent is a root or unknown to the log. Absent ⇒ the referent's ts is the
@@ -186,12 +191,12 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void
     store: deps.store,
     onError: deps.onError,
     onSent: deps.onSent,
-    post: async ({ target, text, files, re, ref, glyph }, event) => {
+    post: async ({ target, text: said, files, re, ref, glyph, raw }, event) => {
       const action = event.payload?.action;
       if (action === "edit" || action === "delete") {
         if (!re) throw new DispatchError(`a ${action} needs the message it acts on`, 400);
         if (!deps.amend) throw new DispatchError("this connection cannot edit", 400);
-        await deps.amend(target, { ts: re, action, text }, event.agent?.id);
+        await deps.amend(target, { ts: re, action, text: said }, event.agent?.id);
         // chat.update keeps the original `ts`: there is no new artifact to converge on
         return {};
       }
@@ -203,6 +208,15 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void
         // the log can ever learn about it
         return {};
       }
+      // a principal's line from another surface, said by the name this workspace knows
+      // them by when it knows their email (`sender.ts`)
+      const who = taggedOf(event);
+      const name = who && deps.nameByEmail
+        ? await deps.nameByEmail(target.connection, who.email)
+        : undefined;
+      const text = who && name && name !== who.tagged
+        ? toSlack(retag(raw, who.tagged, name))
+        : said;
       // the agent mentions as a human (`@Name`, `#chan`, `@here`) — encode to the
       // wire's forms here at the frontier; unclaimed names stay literal text
       const dir = /[@#]/.test(text) ? await deps.directory?.("slack", target.channel) : null;
@@ -235,6 +249,8 @@ interface Outbound {
   ref?: string;
   /** Present ⇒ this send is a reaction, not a message (empty on a remove). */
   glyph?: string;
+  /** The words before translation, common markdown — what a retag rewrites. */
+  raw: string;
 }
 
 /** Target = the envelope's coordinates: the workspace is the connection, channel the address. */
@@ -244,7 +260,8 @@ function outbound(event: MessageEvent): Outbound | null {
   if (!connection || !channel) return null;
   const e: Event = event;
   // common markdown → mrkdwn, here at the frontier (flavor.ts)
-  const text = toSlack(textOf(e));
+  const raw = textOf(e);
+  const text = toSlack(raw);
   const files = filesOf(e);
   const ref = event.payload?.ref_external_id;
   const re = tsOf(ref);
@@ -253,14 +270,14 @@ function outbound(event: MessageEvent): Outbound | null {
   } | undefined;
   if (reaction) {
     const glyph = reaction.data?.unicode ?? reaction.data?.name ?? "";
-    return { target: { connection, channel }, text: "", files: [], re, ref, glyph };
+    return { target: { connection, channel }, text: "", files: [], re, ref, glyph, raw: "" };
   }
   const action = event.payload?.action;
   if (action === "delete") {
-    return { target: { connection, channel }, text: "", files: [], re, ref };
+    return { target: { connection, channel }, text: "", files: [], re, ref, raw: "" };
   }
   if (!text && files.length === 0) return null;
-  return { target: { connection, channel }, text, files, re, ref };
+  return { target: { connection, channel }, text, files, re, ref, raw };
 }
 
 /** `slack:<team>:<channel>:<ts>` → the `ts` the API takes. A reference minted anywhere else
@@ -299,7 +316,12 @@ export interface SlackWireDeps {
  *  keeps its real status; a named `ok: false` gets its class assigned (`slackErrorCode`). */
 export function slackWire(
   deps: SlackWireDeps,
-): { post: SlackPost; react: SlackReact; amend: SlackAmend } {
+): {
+  post: SlackPost;
+  react: SlackReact;
+  amend: SlackAmend;
+  nameByEmail: (connection: string, email: string) => Promise<string | undefined>;
+} {
   const fetchApi = deps.fetch ?? timedFetch;
   const { tokenFor } = deps;
 
@@ -410,7 +432,30 @@ export function slackWire(
     });
   };
 
-  return { post, react, amend };
+  // the workspace's name for a person, by email (`users.lookupByEmail`, the bot's
+  // `users:read.email`): found once per process, remembered; a miss is asked again, since a
+  // person may join the workspace later
+  const names = new Map<string, string>();
+  const nameByEmail = async (connection: string, email: string) => {
+    const key = `${teamOf(connection)}:${email.toLowerCase()}`;
+    const hit = names.get(key);
+    if (hit !== undefined) return hit;
+    try {
+      const out = await api<{
+        ok: boolean;
+        error?: string;
+        user?: { name?: string; profile?: { display_name?: string; real_name?: string } };
+      }>("users.lookupByEmail", await tokenFor(connection), { email }, ["users_not_found"]);
+      const u = out.user;
+      const name = u?.profile?.display_name || u?.profile?.real_name || u?.name || undefined;
+      if (name) names.set(key, name);
+      return name;
+    } catch {
+      return undefined; // the mirror's tag stands
+    }
+  };
+
+  return { post, react, amend, nameByEmail };
 }
 
 /** The most a post carries. Slack takes more, and SPLITS it: a longer text lands as
@@ -458,7 +503,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   const log = await store.log();
   const creds = await store.vault();
 
-  const { post, react, amend } = slackWire({ tokenFor: slackTokenFor(creds) });
+  const { post, react, amend, nameByEmail } = slackWire({ tokenFor: slackTokenFor(creds) });
 
   const { logDirectory } = await import("../mentions.ts");
   // the referent's row, by its external id: a reply row's ref names the thread root
@@ -473,6 +518,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     react,
     amend,
     directory: logDirectory((q) => log.read(q)),
+    nameByEmail,
     rootOf,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     store: log,

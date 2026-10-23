@@ -68,6 +68,7 @@ import {
 import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
 import { roomWords } from "../room.ts";
 import { clipStart } from "../exec/truncate.ts";
+import { SENDER_EMAIL, SENDER_NAME, senderEmail, senderFacts } from "../sender.ts";
 import { type Words, words } from "../i18n.ts";
 import {
   answer,
@@ -192,11 +193,7 @@ async function fanIn(
       address: binding.principal,
       name: (await deps.nameOf?.(binding.principal)) ?? binding.principal,
     }
-    : wire && {
-      address: wire.address,
-      name: wire.name ?? wire.address,
-      ...(wire.email ? { email: wire.email } : {}),
-    };
+    : wire && { address: wire.address, name: wire.name ?? wire.address };
   if (!sender) return;
 
   // settle, then re-read: an early echo of our own CC is absorbed by the dispatcher's
@@ -252,6 +249,9 @@ async function fanIn(
         conversation: e.envelope.conversation.address,
         ...(e.envelope.external_id ? { external_id: e.envelope.external_id } : {}),
       },
+      // what the wire said of the sender beyond the envelope (`sender.ts`): the copy is the
+      // same person speaking, and the mind's readers find it where the line's would
+      ...senderFacts(e),
     },
   };
 
@@ -409,6 +409,10 @@ async function fanOut(
     : e.type === "tool_use"
     ? await withdrawnBy(deps, e as ToolUseEvent)
     : undefined;
+  const crossings = targets.map((a) => cc(a));
+  // the email they are known by: the wire's, or the address itself where it is one (the
+  // portal's) — on the CC either way, where a dispatcher looks
+  const email = senderEmail(e);
   const quotes = await Promise.all(
     targets.map((a) => pointed ? crossingOf(deps, a.conversation, pointed) : undefined),
   );
@@ -428,8 +432,14 @@ async function fanOut(
     // event is — its own parts, and on `via` the facts the tagged line would have spelled —
     // and the log holds exactly what that dispatcher sends. What crosses is decided above,
     // the same for every surface.
-    parts: a.raw ? (e.parts ?? []) as Part[] : cc(a),
+    parts: a.raw ? (e.parts ?? []) as Part[] : crossings[i].parts,
     extra: {
+      // who a principal's line is, for a dispatcher that knows people its own way: the
+      // email they are known by, and the name the tag says — which it may write in its
+      // place (`sender.ts`)
+      ...senderFacts(e),
+      ...(email ? { [SENDER_EMAIL]: email } : {}),
+      ...(crossings[i].tagged ? { [SENDER_NAME]: crossings[i].tagged } : {}),
       via: {
         event: e.id,
         service: "local",
@@ -514,9 +524,10 @@ async function crossingOf(
 }
 
 /** A crossing's parts for one surface: most read the same everywhere, but a principal's
- *  line names its author only where the surface is somebody else's. */
-type CC = (target: AliasRow) => Part[];
-const same = (parts: Part[]): CC => () => parts;
+ *  line names its author only where the surface is somebody else's — and says by `tagged`
+ *  which name its tag wears there. */
+type CC = (target: AliasRow) => { parts: Part[]; tagged?: string };
+const same = (parts: Part[]): CC => () => ({ parts });
 
 /** What a mind event looks like on a surface — exactly what the REPL shows (§4). Every
  *  line opens with WHO, because a self-conversation renders both speakers as the same
@@ -652,16 +663,20 @@ function principalLine(e: Event, words: string, files: Part[], w: Words, room: b
   const by = e.envelope.sender?.address;
   // a steering room's writer is no roster username: the wire's name for them says who
   const named = room ? e.envelope.sender?.name ?? by : by;
-  return (a) => [
-    {
-      type: "text",
-      kind: "text",
-      text: `\`[${w.via(where, by && by !== a.principal ? named : undefined)}]\`${
-        words ? ` ${words}` : ""
-      }`,
-    },
-    ...files,
-  ];
+  return (a) => {
+    const tagged = by && by !== a.principal ? named : undefined;
+    return {
+      parts: [
+        {
+          type: "text",
+          kind: "text",
+          text: `\`[${w.via(where, tagged)}]\`${words ? ` ${words}` : ""}`,
+        },
+        ...files,
+      ],
+      ...(tagged ? { tagged } : {}),
+    };
+  };
 }
 
 /** How much of a tool call or a failure crosses: one line's worth on any surface. The

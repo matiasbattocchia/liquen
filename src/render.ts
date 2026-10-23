@@ -14,6 +14,7 @@
  *       shape (§5 "Trailing vs closed"), never tracked by nu.
  */
 
+import { SENDER_EMAIL, senderEmail, senderSaved } from "./sender.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import { INLINE_CAP, inlineable, isExternal, type MediaBlock, pathOf } from "./store/media.ts"; // pure helpers — no I/O
 import { MIND, routedSession } from "./session.ts";
@@ -1270,7 +1271,7 @@ export function renderHits(
  *  the session address, `build@matias`, composed by hand so render never throws on an odd
  *  stored name); `self` and `org` carry none, the key is the whole fact. An outsider's
  *  line is the only one whose name is not the roster's — the principal's, when they saved
- *  it (`sender.saved`), else the sender's own to choose — so it is the only one that also
+ *  it (`sender_saved`), else the sender's own to choose — so it is the only one that also
  *  wears the address: the stable handle, and what `send` takes back. The key set is
  *  closed and every line wears exactly one, so an unclassified sender lands on `external`:
  *  unknown reads as untrusted, never as one of us. */
@@ -1282,7 +1283,9 @@ function authorOf(e: MessageEvent, session: SessionRef, roster: Roster): string 
     const sender = e.envelope.sender!; // not own side ⇒ the wire named someone
     const name = sender.name ? ` ${key}="${escAttr(sender.name)}"` : " external";
     const address = sender.address ? ` address="${escAttr(sender.address)}"` : "";
-    const email = sender.email ? ` email="${escAttr(sender.email)}"` : "";
+    // a wire that knows their email says it (Slack, Teams); a mailbox's address is one
+    const mail = e.extra?.[SENDER_EMAIL];
+    const email = typeof mail === "string" ? ` email="${escAttr(mail)}"` : "";
     return `${name}${address}${email}`;
   }
   if (key === "self") return " self";
@@ -1303,7 +1306,7 @@ export function authorKeyOf(e: MessageEvent, session: SessionRef, roster: Roster
   if (id === undefined) {
     if (ownSide(e)) return "org";
     const sender = e.envelope.sender!; // not own side ⇒ the wire named someone
-    return sender.saved && sender.name ? "contact" : "external";
+    return senderSaved(e) && sender.name ? "contact" : "external";
   }
   const voice = e.payload?.turn_id !== undefined || isSelf(e, session);
   if (voice && id === session.agentId) return "self";
@@ -1763,14 +1766,9 @@ function principalEl(e: MessageEvent, roster: Roster, zone?: string, target?: Ev
     : "";
   // a steering room's writer is on no roster, so their name alone may be a nickname: the
   // email is who they are — the wire's, or the address itself where it is one
-  const mail = who?.email ?? (who?.address && isEmail(who.address) ? who.address : undefined);
+  const mail = senderEmail(e);
   const email = mail ? ` email="${escAttr(mail)}"` : "";
   return `<principal${name}${email} at="${hhmm(e.ts, zone)}"${acts}>${body}</principal>`;
-}
-
-/** An address that is an email already — the portal's, a mailbox's — needs no `email`. */
-function isEmail(address: string): boolean {
-  return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(address);
 }
 
 /** How much of the line a principal's line acts on `on` quotes — enough to tell two

@@ -12,11 +12,13 @@ import {
   LIFETIME_MS,
   messagePath,
   parseResource,
+  placeNameByEmail,
   placeOf,
   RENEW_AHEAD_MS,
   shareId,
   subsOf,
   TEAMS_SUB,
+  teamsNames,
   teamsWire,
   toTeamsHtml,
 } from "./teams.ts";
@@ -472,6 +474,68 @@ Deno.test("teams webhook: a channel reply is a reply to its root, addressed team
     });
     assertEquals(rows[0].envelope.external_id, `teams:${TEAM}/${CHANNEL}:2`);
     assertEquals(rows[0].parts, [{ type: "text", kind: "text", text: "Test" }]);
+  });
+});
+
+Deno.test("teams webhook: a line carries the email its place lists for the sender — a chat's members and a channel's alike", async () => {
+  await withVault(async (creds) => {
+    const { publish, rows } = captor();
+    const message = (id: string, from: string) => ({
+      id,
+      messageType: "message",
+      createdDateTime: "2021-02-18T18:02:28.387Z",
+      from: { user: { id: from, displayName: "Robin Kline" } },
+      body: { contentType: "html", content: "<p>hola</p>" },
+    });
+    const fetchApi = graph({
+      [`/chats/${CHAT}/messages/1`]: message("1", "u-robin"),
+      [`/chats/${CHAT}`]: {
+        chatType: "group",
+        members: [{ userId: "u-robin", displayName: "Robin Kline", email: "robin@contoso.com" }],
+      },
+      [`/teams/${TEAM}/channels/${CHANNEL}/messages/2`]: {
+        ...message("2", "u-robin"),
+        channelIdentity: { teamId: TEAM, channelId: CHANNEL },
+      },
+      [`/teams/${TEAM}`]: { displayName: "Sales" },
+      [`/teams/${TEAM}/channels/${CHANNEL}`]: { displayName: "General" },
+      // a channel's people, as a chat's: who each is, and the email they are known by
+      [`/teams/${TEAM}/channels/${CHANNEL}/members`]: {
+        value: [{ userId: "u-robin", displayName: "Robin Kline", email: "robin@contoso.com" }],
+      },
+    });
+    const handler = createTeamsWebhook({
+      publish,
+      creds,
+      broker: createGrantBroker({ creds }),
+      save,
+      fetchApi,
+      now: () => NOW,
+    });
+    await creds.put({
+      key: KEY,
+      value: {},
+      extra: { [TEAMS_SUB]: { ...sub(CHAT_RES, "sub-a"), ...sub(CHAN_RES, "sub-c") } },
+    });
+    await handler(notice({
+      subscriptionId: "sub-a",
+      clientState: "s-sub-a",
+      changeType: "created",
+      resource: `chats('${CHAT}')/messages('1')`,
+    }));
+    await handler(notice({
+      subscriptionId: "sub-c",
+      clientState: "s-sub-c",
+      changeType: "created",
+      resource: `teams('${TEAM}')/channels('${CHANNEL}')/messages('2')`,
+    }));
+    assertEquals(rows.length, 2);
+    // the address stays the user id; the email rides `extra`, where the log keeps it
+    assertEquals(rows.map((r) => r.envelope.sender?.address), ["u-robin", "u-robin"]);
+    assertEquals(rows.map((r) => r.extra?.sender_email), [
+      "robin@contoso.com",
+      "robin@contoso.com",
+    ]);
   });
 });
 
@@ -1763,4 +1827,49 @@ Deno.test("teams catch-up: a grant with no Teams row was never heard — nothing
     assertEquals(calls, []);
     assertEquals(rows, []);
   });
+});
+
+Deno.test("teams dispatch: a principal's line from another surface wears the name its room knows them by; a miss asks the room again once", async () => {
+  const calls: Call[] = [];
+  const fetchApi = graph({
+    [`/chats/${CHAT}`]: {
+      chatType: "group",
+      members: [{ userId: "u-robin", displayName: "Robin Kline", email: "robin@contoso.com" }],
+    },
+  }, calls);
+  const nameByEmail = placeNameByEmail(
+    teamsNames(),
+    () => Promise.resolve((url: string, init?: RequestInit) => fetchApi(url, init)),
+  );
+  const log = fakeLog();
+  const posts: string[] = [];
+  createTeamsDispatch({
+    subscribe: log.subscribe,
+    read: log.read,
+    setDelivery: log.setDelivery,
+    nameByEmail,
+    wire: {
+      post: (_grant, _place, message) => {
+        posts.push(message.html);
+        return Promise.resolve({ id: String(posts.length) });
+      },
+      amend: () => Promise.resolve(),
+      react: () => Promise.resolve(),
+    },
+  });
+  const crossing = (id: string, email: string) =>
+    outbound({
+      id,
+      parts: [{ type: "text", kind: "text", text: "`[Matias via sonar]` hola" }],
+      extra: { sender_email: email, sender_name: "Matias" },
+    });
+  log.push(crossing("e1", "Robin@Contoso.com"));
+  await new Promise((r) => setTimeout(r, 20));
+  log.push(crossing("e2", "nobody@else.io"));
+  await new Promise((r) => setTimeout(r, 20));
+  assertEquals(posts.length, 2);
+  assert(posts[0].includes("[Robin Kline via sonar]"), posts[0]);
+  assert(posts[1].includes("[Matias via sonar]"), posts[1]);
+  // the room asked once for the first; the miss forgot it and asked once more
+  assertEquals(calls.filter((c) => c.path === `/v1.0/chats/${CHAT}`).length, 2);
 });

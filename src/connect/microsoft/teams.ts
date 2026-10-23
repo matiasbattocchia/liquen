@@ -58,6 +58,7 @@
  * organization-wide view link, and rides the message as a `reference` attachment.
  */
 
+import { retag, SENDER_EMAIL, taggedOf } from "../../sender.ts";
 import { encodeBase64Url } from "@std/encoding/base64url";
 import { APP_PREFIX } from "./connect.ts";
 import { htmlToText, mediaShelf, type SaveFile } from "../mail.ts";
@@ -310,13 +311,28 @@ interface ChatInfo {
 type Kind = "direct" | "group" | "channel";
 
 /** A place as the directory knows it. `name` is what a row shows; a chat also carries
- *  its `title`, the topic people gave it, and its `members`, each with the email the
- *  tenant lists for them. */
+ *  its `title`, the topic people gave it; chats and channels alike carry their `members`,
+ *  each with the email the tenant lists for them and their display name. */
 export interface PlaceInfo {
   kind: Kind;
   name?: string;
   title?: string;
-  members?: { id: string; email?: string }[];
+  members?: { id: string; email?: string; name?: string }[];
+}
+
+/** Graph's member listing, a chat's or a channel's, as the directory keeps it. */
+function membersOf(
+  list: { userId?: string; displayName?: string | null; email?: string | null }[] | undefined,
+): { id: string; email?: string; name?: string }[] {
+  return (list ?? []).flatMap((m) =>
+    m.userId
+      ? [{
+        id: m.userId,
+        ...(m.email ? { email: m.email } : {}),
+        ...(m.displayName ? { name: m.displayName } : {}),
+      }]
+      : []
+  );
 }
 
 /** What a place's kind is settled from: Teams' own word for the chat or the channel. */
@@ -350,9 +366,7 @@ export function teamsNames(stamp?: (address: string, kind: Kind) => Promise<void
           .filter((m) => m.userId !== self && m.displayName)
           .map((m) => m.displayName as string);
         const name = info.topic || (others.length ? others.join(", ") : undefined);
-        const members = (info.members ?? []).flatMap((m) =>
-          m.userId ? [{ id: m.userId, ...(m.email ? { email: m.email } : {}) }] : []
-        );
+        const members = membersOf(info.members);
         found = {
           kind: kindOf(info),
           ...(name ? { name } : {}),
@@ -361,18 +375,29 @@ export function teamsNames(stamp?: (address: string, kind: Kind) => Promise<void
         };
         if (!res.ok) return found; // unnamed for now; a later message asks again
       } else {
-        const [team, channel] = await Promise.all([
+        const channelPath = `${GRAPH}/teams/${enc(place.team)}/channels/${enc(place.channel)}`;
+        const [team, channel, people] = await Promise.all([
           graph(`${GRAPH}/teams/${enc(place.team)}?$select=displayName`),
-          graph(`${GRAPH}/teams/${enc(place.team)}/channels/${enc(place.channel)}`),
+          graph(channelPath),
+          // who is in it, with the email each is known by — what a line's sender is told
+          // apart by, as a chat's members are (ChannelMember.Read)
+          graph(`${channelPath}/members`),
         ]);
         const t = team.ok ? await team.json() as { displayName?: string } : {};
         const c = channel.ok
           ? await channel.json() as { displayName?: string; membershipType?: string }
           : {};
+        const listed = people.ok ? await people.json() as { value?: ChatInfo["members"] } : {};
         if (!team.ok) await team.body?.cancel();
         if (!channel.ok) await channel.body?.cancel();
+        if (!people.ok) await people.body?.cancel();
         const name = [t.displayName, c.displayName].filter(Boolean).join(" / ");
-        found = { kind: kindOf(c), ...(name ? { name } : {}) };
+        const members = membersOf(listed.value);
+        found = {
+          kind: kindOf(c),
+          ...(name ? { name } : {}),
+          ...(members.length ? { members } : {}),
+        };
         if (!team.ok || !channel.ok) return found;
       }
       cache.set(key, found);
@@ -612,6 +637,13 @@ export function teamsMapper(deps: MapperDeps): (
     const sender = from?.id
       ? { address: from.id, ...(from.displayName ? { name: from.displayName } : {}) }
       : undefined;
+    // the email the place lists for them (§3 sender_email): a Teams address is a user id,
+    // and the email is the handle that names the person anywhere else
+    const emailOf = (id: string) => info.members?.find((m) => m.id === id)?.email;
+    const facts = (id?: string) => {
+      const email = id ? emailOf(id) : undefined;
+      return email ? { extra: { [SENDER_EMAIL]: email } } : {};
+    };
     const stamp = who ? { agent: { id: who } } : {};
 
     // an update that edited nothing is a reaction: one `add` per reaction, keyed by who
@@ -637,6 +669,7 @@ export function teamsMapper(deps: MapperDeps): (
             sender: { address: u.id, ...(u.displayName ? { name: u.displayName } : {}) },
           },
           parts: [part],
+          ...facts(u.id),
         });
       }
       return rows;
@@ -710,6 +743,7 @@ export function teamsMapper(deps: MapperDeps): (
         ...(sender ? { sender } : {}),
       },
       parts,
+      ...facts(from?.id),
     }];
   };
 }
@@ -1402,6 +1436,14 @@ export interface TeamsDispatchDeps {
   /** The conversation's name directory (§3 mentions): the agent's `@Name` tokens claim
    *  user ids. Absent ⇒ names stay words. */
   directory?: Directory;
+  /** The name a place's members know a person by, by their email: a principal's line
+   *  crossing from another surface wears it in its tag. Absent, or nobody there by that
+   *  email ⇒ the tag the mirror wrote. */
+  nameByEmail?: (
+    grant: { connection: string; agentId?: string },
+    address: string,
+    email: string,
+  ) => Promise<string | undefined>;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
   store?: DispatcherDeps<unknown>["store"];
   onError?: (event: MessageEvent, err: unknown) => void;
@@ -1475,8 +1517,17 @@ export function createTeamsDispatch(deps: TeamsDispatchDeps): () => Promise<void
         });
         return {};
       }
-      const dir = /@/.test(work.text) ? await deps.directory?.(SERVICE, work.address) : null;
-      const message = { ...toTeamsHtml(work.text, dir ?? []), files: work.files };
+      // a principal's line from another surface, said by the name the room knows them by
+      // when it knows their email (`sender.ts`)
+      const who = taggedOf(event);
+      const name = who && deps.nameByEmail
+        ? await deps.nameByEmail(grant, work.address, who.email)
+        : undefined;
+      const text = who && name && name !== who.tagged
+        ? retag(work.text, who.tagged, name)
+        : work.text;
+      const dir = /@/.test(text) ? await deps.directory?.(SERVICE, work.address) : null;
+      const message = { ...toTeamsHtml(text, dir ?? []), files: work.files };
       // a channel reply threads under the referent's root — its own id when it is one
       const thread = place.kind === "channel" && work.re ? root ?? work.re.id : undefined;
       const { id, user } = await deps.wire.post(grant, place, message, thread);
@@ -1487,6 +1538,28 @@ export function createTeamsDispatch(deps: TeamsDispatchDeps): () => Promise<void
       };
     },
   });
+}
+
+/** A place's name for a person, by email, off its members as the directory keeps them. A
+ *  miss asks Graph again once: the person may have joined since the place was first met. */
+export function placeNameByEmail(
+  names: TeamsNames,
+  graphOf: (grant: { connection: string; agentId?: string }) => Promise<Graph>,
+): NonNullable<TeamsDispatchDeps["nameByEmail"]> {
+  return async (grant, address, email) => {
+    const place = placeOf(address);
+    const find = (info: PlaceInfo) =>
+      info.members?.find((m) => m.email?.toLowerCase() === email.toLowerCase())?.name;
+    try {
+      const graph = await graphOf(grant);
+      const known = find(await names.of(graph, place));
+      if (known) return known;
+      names.forget(place);
+      return find(await names.of(graph, place));
+    } catch {
+      return undefined; // the mirror's tag stands
+    }
+  };
 }
 
 /** Whether an address names a Teams place: a chat id (`19:…@thread.v2`,
@@ -1811,11 +1884,20 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   const log = await store.log();
   const creds = await store.vault();
   const broker = createGrantBroker({ creds });
+  const names = teamsNames();
   const stop = createTeamsDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     read: (q) => log.read(q),
     wire: teamsWire({ broker, fetchApi: timedFetch }),
     directory: logDirectory((q) => log.read(q) as Promise<Event[]>),
+    nameByEmail: placeNameByEmail(
+      names,
+      async (grant) =>
+        graphFor(
+          timedFetch,
+          await tokenOf(broker, `${GRANT_PREFIX}${grant.connection}`, grant.agentId),
+        ),
+    ),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     store: log,
     onSent: (e, id) =>

@@ -43,6 +43,7 @@
  * and the content stays auditable (§3).
  */
 
+import { SENDER_SAVED } from "../../sender.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections, ConnectionState } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
@@ -455,6 +456,9 @@ function mapMessage(
     ...(backfill ? { backfill: true } : {}),
     ...(m.muted ? { muted: true } : {}),
     ...(m.archived ? { archived: true } : {}),
+    // the name is the account's word for them, out of its address book (§3 sender_saved):
+    // `contact`, where a pushname is anyone's to choose
+    ...(who && m.sender_saved && who === m.sender_name ? { [SENDER_SAVED]: true } : {}),
   };
 
   return {
@@ -470,11 +474,7 @@ function mapMessage(
       },
       ...(sender
         ? {
-          sender: {
-            address: sender,
-            ...(who ? { name: who } : {}),
-            ...(who && m.sender_saved && who === m.sender_name ? { saved: true } : {}),
-          },
+          sender: { address: sender, ...(who ? { name: who } : {}) },
         }
         : {}),
       external_id: externalId(m.external_id),

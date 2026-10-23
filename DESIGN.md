@@ -658,7 +658,7 @@ one peripheral for both.
     mentions?         // wire mentions, canonical addresses
     control?          // the principal's hard stop, typed at the door (cancel)
   }
-  extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, exec, <service> provenance, raw
+  extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, exec, sender_* (sender facts), <service> provenance, raw
   status?: {        // delivery lifecycle — ONE mutable json_patch-merged column, never events
     state?          // the stage whose stamp landed last (envelope.status is its shorthand view):
                     // queued · dispatched · failed · delivered · read · deleted
@@ -747,7 +747,13 @@ Decisions:
   action, the reference, the turn keys — typed, and the machine branches on it. `extra` is
   the sidecar — how the wire said it plus harness bookkeeping (`backfill` · `muted` ·
   `archived` — the silencing marks, §2 — `consumed`, `silence`,
-  `via`, `exec` — a run's facts — `raw`, per-service provenance like `slack: {subtype, authorizations}`) —
+  `via`, `exec` — a run's facts — `raw`, per-service provenance like `slack: {subtype, authorizations}`,
+  and the sender facts a wire gives beyond `envelope.sender`'s address and name:
+  `sender_email` (the email a Slack or Teams user id is known by; absent where the address
+  is an email already), `sender_saved` (the name is the account's address-book word for
+  them, WhatsApp: `contact` against `external`), and on a mirror CC `sender_name` (the
+  name its tag wears, which a dispatcher knowing the person by the email writes in its
+  place) — `sender.ts`) —
   mergeable JSON the machine never branches on service keys of. Admission test: dropping
   an `extra` key must cost only auditability, never correctness — what queries or policy
   enforce on is a COLUMN (envelope coordinates, kind, external_id, status, payload), what

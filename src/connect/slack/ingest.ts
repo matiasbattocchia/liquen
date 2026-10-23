@@ -44,6 +44,7 @@
  * hand-rolled API types encode assumptions the API never promised).
  */
 
+import { SENDER_EMAIL } from "../../sender.ts";
 import type {
   ChannelJoinMessageEvent,
   ChannelLeaveMessageEvent,
@@ -402,18 +403,11 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
           service: "slack",
           connection_address: anchor,
           conversation: { address: item.channel },
-          ...(e.user
-            ? {
-              sender: {
-                address: e.user,
-                ...(who ? { name: who } : {}),
-                ...(email ? { email } : {}),
-              },
-            }
-            : {}),
+          ...(e.user ? { sender: { address: e.user, ...(who ? { name: who } : {}) } } : {}),
           external_id: `slack:${team}:${item.channel}:${e.event_ts}`,
         },
         parts: [{ type: "data", kind: "reaction", data: { name: e.reaction } }],
+        ...(email ? { extra: { [SENDER_EMAIL]: email } } : {}),
       });
       return;
     }
@@ -743,9 +737,7 @@ export async function mapMessage(
         ...(kind ? { kind } : {}),
         ...(room ? { name: room } : {}),
       },
-      sender: m.user
-        ? { address: m.user, ...(who ? { name: who } : {}), ...(email ? { email } : {}) }
-        : undefined,
+      sender: m.user ? { address: m.user, ...(who ? { name: who } : {}) } : undefined,
       // the upsert/merge key: Slack's ts is the per-channel message id (§3, §4) — for an
       // edit, the change delivery's own ts
       external_id: edit
@@ -757,13 +749,20 @@ export async function mapMessage(
     // event shape and the delivery's authorization entries verbatim (`is_bot` included:
     // the org-readability ingredient the acl refinement reads later; memberships hold
     // the membership consequence)
-    ...(e.subtype || authorizations
+    ...(e.subtype || authorizations || email
       ? {
         extra: {
-          slack: {
-            ...(e.subtype ? { subtype: e.subtype } : {}),
-            ...(authorizations ? { authorizations } : {}),
-          },
+          ...(e.subtype || authorizations
+            ? {
+              slack: {
+                ...(e.subtype ? { subtype: e.subtype } : {}),
+                ...(authorizations ? { authorizations } : {}),
+              },
+            }
+            : {}),
+          // the profile's email (§3 sender_email): a Slack address is a user id, and the
+          // email is the handle that names the person anywhere else
+          ...(email ? { [SENDER_EMAIL]: email } : {}),
         },
       }
       : {}),

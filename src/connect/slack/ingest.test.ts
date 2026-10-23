@@ -1070,9 +1070,9 @@ Deno.test("the classifier reads the roster by email (§4): a profile email that 
   await handler(await signedReq(messageEvent()));
   const m = published[0] as MessageEvent;
   assertEquals(m.agent, { id: "sol" }); // no grant row — the email named her
-  // the wire's word stays, and the profile's email rides along: the handle a person is
-  // known by elsewhere
-  assertEquals(m.envelope.sender, { address: "U7", name: "Sol R.", email: "Sol@Acme.co" });
+  assertEquals(m.envelope.sender, { address: "U7", name: "Sol R." }); // the wire's word stays
+  // and the profile's email rides `extra`: the handle a person is known by elsewhere
+  assertEquals(m.extra?.sender_email, "Sol@Acme.co");
 });
 
 Deno.test("a member's DM with an owned bot is recorded on the bot's row (§4): mirrors.dms, member → channel", async () => {

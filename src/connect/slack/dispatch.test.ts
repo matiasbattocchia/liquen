@@ -86,6 +86,7 @@ async function withDispatch(
     /** a deployment with no reaction leg — the send must stamp failed, not vanish */
     noReact?: boolean;
     rootOf?: SlackDispatchDeps["rootOf"];
+    nameByEmail?: SlackDispatchDeps["nameByEmail"];
   } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
@@ -124,6 +125,7 @@ async function withDispatch(
     },
     directory: opts.directory,
     rootOf: opts.rootOf,
+    nameByEmail: opts.nameByEmail,
   });
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {
     const t0 = Date.now();
@@ -481,4 +483,51 @@ Deno.test("slack dispatch: a post never passes the bound Slack would split it at
   assertEquals(bounded(link), "a".repeat(MAX_TEXT - 6) + "…");
   const entity = "a".repeat(MAX_TEXT - 3) + "&amp;b";
   assertEquals(bounded(entity), "a".repeat(MAX_TEXT - 3) + "…");
+});
+
+Deno.test("slack dispatch: a principal's line from another surface wears the name the workspace knows them by", async () => {
+  const asked: string[] = [];
+  const nameByEmail = (_c: string, email: string) => {
+    asked.push(email);
+    return Promise.resolve(email === "matias@turtle.xyz" ? "Cabra" : undefined);
+  };
+  await withDispatch(async ({ publish, posts, waitFor }) => {
+    const crossing = (id: string, tagged: string, email: string) => {
+      const e = agentMsg(id, `\`[${tagged} via sonar]\` why **doma** has two deals?`);
+      e.extra = { sender_email: email, sender_name: tagged };
+      return e;
+    };
+    await publish(crossing("01", "Matias Battocchia", "matias@turtle.xyz"));
+    await publish(crossing("02", "Bertie", "bertie@else.io")); // nobody here by that email
+    await publish(agentMsg("03", "`[Matias Battocchia via sonar]` untouched")); // no facts
+    await waitFor(() => posts.length === 3);
+    assertEquals(posts.map((p) => p.text), [
+      "`[Cabra via sonar]` why *doma* has two deals?",
+      "`[Bertie via sonar]` why *doma* has two deals?",
+      "`[Matias Battocchia via sonar]` untouched",
+    ]);
+    assertEquals(asked, ["matias@turtle.xyz", "bertie@else.io"]);
+  }, { nameByEmail });
+});
+
+Deno.test("slack wire: the workspace's name for an email, asked once; a miss asked again", async () => {
+  const calls: string[] = [];
+  const fetch = ((url: string, init?: RequestInit) => {
+    const email = new URLSearchParams(String(init?.body)).get("email");
+    calls.push(`${url.split("/api/")[1]} ${email}`);
+    const body = email === "matias@turtle.xyz"
+      ? { ok: true, user: { name: "matias", profile: { display_name: "Cabra", real_name: "M" } } }
+      : { ok: false, error: "users_not_found" };
+    return Promise.resolve(new Response(JSON.stringify(body)));
+  }) as typeof globalThis.fetch;
+  const { nameByEmail } = slackWire({ tokenFor: () => Promise.resolve("xoxb"), fetch });
+  assertEquals(await nameByEmail("T1:UBOT", "matias@turtle.xyz"), "Cabra");
+  assertEquals(await nameByEmail("T1:UBOT", "Matias@Turtle.xyz"), "Cabra"); // remembered
+  assertEquals(await nameByEmail("T1:UBOT", "x@else.io"), undefined);
+  assertEquals(await nameByEmail("T1:UBOT", "x@else.io"), undefined);
+  assertEquals(calls, [
+    "users.lookupByEmail matias@turtle.xyz",
+    "users.lookupByEmail x@else.io",
+    "users.lookupByEmail x@else.io",
+  ]);
 });

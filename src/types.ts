@@ -285,17 +285,12 @@ export interface Conversation {
   kind?: "direct" | "group" | "channel" | "broadcast";
 }
 
-/** External identity on the wire. `name` is the service's display fact; `saved` says whose
- *  word it is — the account's, from its address book — where absent it is the sender's own
- *  (a pushname, a storefront). The line's hint reads it: `contact` against `external`. */
+/** External identity on the wire: the address and the service's display name, what the log
+ *  keeps in columns. Whatever else a wire says of a sender (its email, whose word the name
+ *  is) rides `extra` under a `sender_*` key (`sender.ts`). */
 export interface Sender {
   address: string;
   name?: string;
-  saved?: boolean;
-  /** The email the service knows them by, where the address is not one already (a Slack
-   *  user id): the handle that names a person across services, and how a principal is
-   *  told from a namesake. */
-  email?: string;
 }
 
 export interface Envelope {

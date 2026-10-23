@@ -1,4 +1,5 @@
 import { roomPart } from "./room.ts";
+import { openLog } from "./store/log.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
@@ -16,6 +17,7 @@ import {
 import type { DocEntry, DocKind, DocLoad, DocScope } from "./store/docs.ts";
 import type {
   CalendarPart,
+  Draft,
   Event,
   Json,
   MessageEvent,
@@ -929,7 +931,7 @@ Deno.test("a saved sender wears `contact`: the account's word for them, not thei
     address: "549:sol",
     name: "Dra. Soledad",
   }, "buen día");
-  saved.envelope.sender!.saved = true;
+  saved.extra = { sender_saved: true };
   const events: Event[] = [
     saved,
     worldMsg(
@@ -2615,7 +2617,8 @@ Deno.test("renderHits with context: a match wears `match`, and a `…` line stan
 Deno.test("a principal wears their email: the wire's, or the address where it is one — never twice", () => {
   const t = "2026-08-07T10:00:00Z";
   const slack = mindMsg("e1", t, "when is my next call?", false);
-  slack.envelope.sender = { address: "U7", name: "Cabra", email: "matias@turtle.xyz" };
+  slack.envelope.sender = { address: "U7", name: "Cabra" };
+  slack.extra = { sender_email: "matias@turtle.xyz" };
   const portal = mindMsg("e2", t, "y la otra?", false);
   portal.envelope.sender = { address: "matias@turtle.xyz", name: "Matias" };
   const roster = mindMsg("e3", t, "hola", false); // a roster username: no email to say
@@ -2634,4 +2637,68 @@ Deno.test("a principal wears their email: the wire's, or the address where it is
     '<principal name="Matias" email="matias@turtle.xyz" at="7 Aug 10:00">',
   );
   assertStringIncludes(text, '<principal name="Ana" at="7 Aug 10:00">hola</principal>');
+});
+
+Deno.test("what a wire says of a sender survives the log: a saved name wears `contact`, an email is said", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  try {
+    await log.upsertConnections([
+      { service: "whatsapp", address: "org" },
+      { service: "slack", address: "T1" },
+    ]);
+    const t = "2026-08-07T14:01:00Z";
+    const at = (service: "whatsapp" | "slack", conversation: string) => ({
+      service,
+      connection_address: service === "whatsapp" ? "org" : "T1",
+      conversation: { address: conversation, kind: "direct" as const },
+    });
+    await log.publish([
+      {
+        ts: t,
+        type: "message",
+        envelope: {
+          ...at("whatsapp", "wa:sol"),
+          sender: { address: "549:sol", name: "Dra. Soledad" },
+          external_id: "wa:1",
+        },
+        parts: [{ type: "text", kind: "text", text: "buen día" }],
+        extra: { sender_saved: true },
+      },
+      {
+        ts: t,
+        type: "message",
+        envelope: {
+          ...at("slack", "D9"),
+          sender: { address: "U7", name: "Cabra" },
+          external_id: "slack:1",
+        },
+        parts: [{ type: "text", kind: "text", text: "hola" }],
+        extra: { sender_email: "matias@turtle.xyz" },
+      },
+      {
+        ts: t,
+        type: "message",
+        envelope: {
+          service: "local",
+          connection_address: "agent",
+          conversation: { address: "mind@a1" },
+          sender: { address: "U7", name: "Cabra" },
+        },
+        parts: [{ type: "text", kind: "text", text: "when is my next call?" }],
+        extra: { sender_email: "matias@turtle.xyz" },
+      },
+    ] as Draft<MessageEvent>[]);
+    // what the window is made of: rows, read back
+    const events = await log.read({});
+    const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t });
+    const text = messages.flatMap((m) => m.content as Anthropic.ContentBlockParam[])
+      .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text).join("\n");
+    assertStringIncludes(text, 'contact="Dra. Soledad" address="549:sol"');
+    assertStringIncludes(text, 'external="Cabra" address="U7" email="matias@turtle.xyz"');
+    assertStringIncludes(text, '<principal name="Cabra" email="matias@turtle.xyz"');
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
 });

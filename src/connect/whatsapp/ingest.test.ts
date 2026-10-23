@@ -194,12 +194,14 @@ Deno.test("sender.saved rides the row: the address book's word is marked as the 
   assertEquals((published[0] as MessageEvent).envelope.sender, {
     address: "5491199999999",
     name: "Gianvito",
-    saved: true,
   });
+  // the account's word for them rides `extra` (sender_saved), where the log keeps it
+  assertEquals((published[0] as MessageEvent).extra?.sender_saved, true);
   assertEquals((published[1] as MessageEvent).envelope.sender, {
     address: "5491199999999",
     name: "gv 🇮🇹",
   });
+  assertEquals((published[1] as MessageEvent).extra?.sender_saved, undefined);
 });
 
 Deno.test("the message's own names win: a row names its people without any cache", async () => {
