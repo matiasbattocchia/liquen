@@ -17,7 +17,7 @@
  *             WHO, because a self-conversation renders both speakers as the same account
  *             and the tag is the surface's only input/output distinction: the agent's
  *             voice as `[agent] …`, its tool calls as `[agent tool] **bash**(git status)`
- *             (redacted to one line), a gate waiting on the principal as `[agent asks] …`,
+ *             (redacted to one line of `LINE`), a gate waiting on the principal as `[agent asks] …`,
  *             the harness's own word as `[system] …`, and the principal's own words as
  *             `[via <surface>] …` — input replayed as output, a `/y` and a thumb on a
  *             card among them, quoting the card's own crossing. Every tag ships wrapped
@@ -67,6 +67,7 @@ import {
 } from "../render.ts";
 import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
 import { roomWords } from "../room.ts";
+import { clipStart } from "../exec/truncate.ts";
 import { type Words, words } from "../i18n.ts";
 import {
   answer,
@@ -191,7 +192,11 @@ async function fanIn(
       address: binding.principal,
       name: (await deps.nameOf?.(binding.principal)) ?? binding.principal,
     }
-    : wire && { address: wire.address, name: wire.name ?? wire.address };
+    : wire && {
+      address: wire.address,
+      name: wire.name ?? wire.address,
+      ...(wire.email ? { email: wire.email } : {}),
+    };
   if (!sender) return;
 
   // settle, then re-read: an early echo of our own CC is absorbed by the dispatcher's
@@ -542,7 +547,7 @@ async function ccParts(
     return same([{
       type: "text",
       kind: "text",
-      text: `\`[${w.tool}]\` ${boldName(describeCall(call, { resolve }))}`,
+      text: `\`[${w.tool}]\` ${boldName(describeCall(call, { resolve, width: LINE }))}`,
     }]);
   }
   if (e.type === "tool_result") {
@@ -553,7 +558,7 @@ async function ccParts(
     const { is_error, refused, cancelled } = e.parts[0].data;
     if (!is_error || refused || cancelled) return null;
     const said = isLate(e) ? failedCallOf(e) : failureOf(e);
-    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${said}` }]);
+    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${lastOf(said)}` }]);
   }
   if (e.type === "alarm") {
     // a wake the agent scheduled, its own note handed back: what the turn after it acts on
@@ -657,6 +662,20 @@ function principalLine(e: Event, words: string, files: Part[], w: Words, room: b
     },
     ...files,
   ];
+}
+
+/** How much of a tool call or a failure crosses: one line's worth on any surface. The
+ *  whole of either is the log's, and the terminal's (`liquen log export`). */
+const LINE = 256;
+
+/** A failure, bounded: its END, where a failure says itself — the exit, the refusal, the
+ *  last answer of a chain — from a line's start when one falls inside the bound. A whole
+ *  output that failed at its last command is the log's to keep, not a chat's to carry. */
+function lastOf(said: string): string {
+  if (said.length <= LINE) return said;
+  const tail = clipStart(said, said.length - (LINE - 1));
+  const line = tail.indexOf("\n");
+  return `…${line >= 0 && line < tail.length - 1 ? tail.slice(line + 1) : tail}`;
 }
 
 /** `send(to: …)` → `**send**(to: …)` — the tool name in bold. Common markdown, like every

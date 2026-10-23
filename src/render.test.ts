@@ -2611,3 +2611,27 @@ Deno.test("renderHits with context: a match wears `match`, and a `…` line stan
   // no `adjacent` ⇒ no claim about what lies between: plain hits draw no gap line
   assertEquals(renderHits(lines, ventas, roster, "UTC").includes(GAP), false);
 });
+
+Deno.test("a principal wears their email: the wire's, or the address where it is one — never twice", () => {
+  const t = "2026-08-07T10:00:00Z";
+  const slack = mindMsg("e1", t, "when is my next call?", false);
+  slack.envelope.sender = { address: "U7", name: "Cabra", email: "matias@turtle.xyz" };
+  const portal = mindMsg("e2", t, "y la otra?", false);
+  portal.envelope.sender = { address: "matias@turtle.xyz", name: "Matias" };
+  const roster = mindMsg("e3", t, "hola", false); // a roster username: no email to say
+  const { messages } = render({
+    events: [slack, portal, roster],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t,
+  });
+  const text = (messages[0].content as Anthropic.ContentBlockParam[])
+    .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text).join("\n");
+  assertStringIncludes(text, '<principal name="Cabra" email="matias@turtle.xyz" at="7 Aug 10:00">');
+  assertStringIncludes(
+    text,
+    '<principal name="Matias" email="matias@turtle.xyz" at="7 Aug 10:00">',
+  );
+  assertStringIncludes(text, '<principal name="Ana" at="7 Aug 10:00">hola</principal>');
+});

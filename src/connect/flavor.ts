@@ -10,7 +10,9 @@
  * Android + Web) parse CommonMark natively — `**bold**`, `*italic*`,
  * `~~strike~~`, `` `code` ``, headings, bullets, quotes all render; only the link syntax
  * `[text](url)` shows raw. Slack parses mrkdwn, its own documented dialect: `*bold*`,
- * `~strike~`, `<url|text>`, no headings.
+ * `~strike~`, `<url|text>`, no headings — and, measured off the blocks Slack parses a post
+ * into, a marker reads as one only at a word's edge: `*bash*(git status)` stays literal.
+ * A zero-width space gives a marker that touches a word the edge it needs.
  *
  * Slack's wire reserves `&`, `<` and `>` — the angle pair delimits its link, mention and
  * control forms, and the ampersand its entities — so every one of the three in prose
@@ -38,17 +40,41 @@ export function toWhatsApp(text: string): string {
   return outsideCode(text, (s) => s.replace(LINK, "$1 ($2)"));
 }
 
+/** A link to anything but the web — `[Acme](org:5f3a)`, an id the agent's own app reads —
+ *  points nowhere on a chat wire: its words stand alone. */
+const NON_WEB_LINK = /\[([^\]]+)\]\([^\s)]+\)/g;
+
+const ZWSP = "\u200b";
+
+/** `**b**` → `*b*` (and `~~s~~` → `~s~`), a zero-width space against whatever word the
+ *  marker would otherwise touch. */
+function mark(s: string, common: RegExp, wire: string): string {
+  return s.replace(common, (whole: string, inner: string, at: number, all: string) => {
+    const before = at > 0 && !/\s/.test(all[at - 1]) ? ZWSP : "";
+    const next = all[at + whole.length];
+    const after = next !== undefined && !/\s/.test(next) ? ZWSP : "";
+    return `${before}${wire}${inner}${wire}${after}`;
+  });
+}
+
 /** Common markdown → Slack mrkdwn: the three wire characters escape over the whole text,
- *  then `**b**` → `*b*`, `~~s~~` → `~s~`, `[t](u)` → `<u|t>`, a heading line → a bold line
- *  (mrkdwn has no headings). */
+ *  then `**b**` → `*b*`, `~~s~~` → `~s~`, `[t](u)` → `<u|t>` and a link off the web → its
+ *  words, a heading line → a bold line (mrkdwn has no headings). */
 export function toSlack(text: string): string {
   const escaped = text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   return outsideCode(escaped, (s) =>
-    s
-      .replace(LINK, "<$2|$1>")
-      .replace(/\*\*([^*\n]+)\*\*/g, "*$1*")
-      .replace(/~~([^~\n]+)~~/g, "~$1~")
-      .replace(/^#{1,6}\s+(.+)$/gm, "*$1*"));
+    mark(
+      mark(
+        s.replace(LINK, "<$2|$1>").replace(NON_WEB_LINK, "$1").replace(
+          /^#{1,6}\s+(.+)$/gm,
+          "**$1**",
+        ),
+        /\*\*([^*\n]+)\*\*/g,
+        "*",
+      ),
+      /~~([^~\n]+)~~/g,
+      "~",
+    ));
 }
 
 /** Slack mrkdwn → common markdown, the inbound leg: `<url|t>` → `[t](url)`, bare `<url>`
@@ -58,6 +84,7 @@ export function toSlack(text: string): string {
 export function fromSlack(text: string): string {
   return outsideCode(text, (s) =>
     s
+      .replace(/\u200b(?=[*~])|(?<=[*~])\u200b/g, "")
       .replace(/<(https?:\/\/[^|>\s]+)\|([^>]+)>/g, "[$2]($1)")
       .replace(/<(https?:\/\/[^>\s]+)>/g, "$1")
       .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1**$2**")

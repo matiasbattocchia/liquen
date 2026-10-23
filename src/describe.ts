@@ -68,6 +68,9 @@ export interface DescribeOpts {
   /** Judgment form: no truncation, no elision — the card's and the transcript's. Default:
    *  one line. */
   full?: boolean;
+  /** One line this wide, when not the default: the call's bound, and each argument's — a
+   *  surface reads one call per line and has room for more of it than a terminal row. */
+  width?: number;
   /** Renderings the tools themselves supplied (`ExecTool.describe`), by tool name. */
   tools?: Record<string, Describe>;
 }
@@ -83,7 +86,8 @@ const VALUE = 60; // one argument inside it
 export function describeCall(call: ToolCall, opts: DescribeOpts = {}): string {
   const own = opts.tools?.[call.name] ?? BUILTIN[call.name];
   const line = `${call.name}(${(own ?? generic)(call.input, opts)})`;
-  return opts.full || line.length <= LINE ? line : `${clipEnd(line, LINE - 1)}…`;
+  const width = opts.width ?? LINE;
+  return opts.full || line.length <= width ? line : `${clipEnd(line, width - 1)}…`;
 }
 
 /** The harness's own tools. `search`, like most, is served by the default. */
@@ -336,5 +340,6 @@ function carries(v: Json): boolean {
 function value(v: Json, opts: DescribeOpts): string {
   const raw = typeof v === "string" ? v : JSON.stringify(v) ?? "";
   const flat = raw.replace(/\s+/g, " ").trim();
-  return opts.full || flat.length <= VALUE ? flat : `${clipEnd(flat, VALUE - 1)}…`;
+  const width = opts.width ?? VALUE;
+  return opts.full || flat.length <= width ? flat : `${clipEnd(flat, width - 1)}…`;
 }

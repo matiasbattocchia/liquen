@@ -1282,7 +1282,8 @@ function authorOf(e: MessageEvent, session: SessionRef, roster: Roster): string 
     const sender = e.envelope.sender!; // not own side ⇒ the wire named someone
     const name = sender.name ? ` ${key}="${escAttr(sender.name)}"` : " external";
     const address = sender.address ? ` address="${escAttr(sender.address)}"` : "";
-    return `${name}${address}`;
+    const email = sender.email ? ` email="${escAttr(sender.email)}"` : "";
+    return `${name}${address}${email}`;
   }
   if (key === "self") return " self";
   let value = roster.names[id] ?? id;
@@ -1760,7 +1761,16 @@ function principalEl(e: MessageEvent, roster: Roster, zone?: string, target?: Ev
       escAttr((who.address && roster.names[who.address]) ?? who.name ?? who.address ?? "")
     }"`
     : "";
-  return `<principal${name} at="${hhmm(e.ts, zone)}"${acts}>${body}</principal>`;
+  // a steering room's writer is on no roster, so their name alone may be a nickname: the
+  // email is who they are — the wire's, or the address itself where it is one
+  const mail = who?.email ?? (who?.address && isEmail(who.address) ? who.address : undefined);
+  const email = mail ? ` email="${escAttr(mail)}"` : "";
+  return `<principal${name}${email} at="${hhmm(e.ts, zone)}"${acts}>${body}</principal>`;
+}
+
+/** An address that is an email already — the portal's, a mailbox's — needs no `email`. */
+function isEmail(address: string): boolean {
+  return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(address);
 }
 
 /** How much of the line a principal's line acts on `on` quotes — enough to tell two

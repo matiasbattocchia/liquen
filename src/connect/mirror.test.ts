@@ -332,6 +332,16 @@ Deno.test("mirror fan-out: a tool call crosses as one redacted line", async () =
     await publish(use);
     await waitFor(async () => (await inConv("D1")).length === 1);
     assertEquals(textOf((await inConv("D1"))[0]), "`[agent tool]` **bash**(git status # extra)");
+    // a long call crosses in one line's worth (256), not a terminal row's
+    const command = `sonar api GET '/events?conversationAddress=${"x".repeat(400)}'`;
+    await publish({
+      ...use,
+      parts: [{ ...use.parts[0], data: { name: "bash", input: { command } } }],
+    });
+    await waitFor(async () => (await inConv("D1")).length === 2);
+    const line = textOf((await inConv("D1"))[1]).replace("`[agent tool]` ", "").replaceAll("*", "");
+    assertEquals(line.length, 256);
+    assert(line.startsWith("bash(sonar api GET '/events?conversationAddress=xxx"));
   });
 });
 
@@ -915,11 +925,22 @@ Deno.test("mirror fan-out: a wake and a failure cross as `[system]`; a checkpoin
         text: "send(to: Vivian)",
         data: { output: "the bridge is down", is_error: true },
       }], { ref_id: "u4", turn_id: "t2", gated: true });
-      await waitFor(async () => (await inConv("549")).length === 3);
+      // a chain that failed at its last command: its end crosses, from a line's start
+      await harness("tool_result", [{
+        type: "data",
+        kind: "tool_result",
+        data: {
+          output: `{status: 200, body: ${"x".repeat(5000)}}\n{status: 404, body: "not found"}\n` +
+            "Command exited with code 1",
+          is_error: true,
+        },
+      }], { ref_id: "u5", turn_id: "t3" });
+      await waitFor(async () => (await inConv("549")).length === 4);
       assertEquals((await inConv("549")).map(textOf), [
         "`[sistema]` ⏰ recordarle a Mecha el mail",
         "`[sistema]` ✗ Command exited with code 1",
         "`[sistema]` ✗ send(to: Vivian) — the bridge is down",
+        '`[sistema]` ✗ …{status: 404, body: "not found"}\nCommand exited with code 1',
       ]);
     },
     30,

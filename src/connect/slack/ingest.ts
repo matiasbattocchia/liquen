@@ -264,6 +264,18 @@ export type WebhookHandler = (req: Request) => Promise<Response>;
 /** Build the ingest handler. Pure over its deps — call once, serve (or carry) anywhere. */
 export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
   const now = deps.now ?? (() => new Date().toISOString());
+  // a room is met twice at once: Slack says the bot's arrival as an event
+  // (`member_joined_channel`) AND as the room's own line (a `channel_join` message), and
+  // deliveries are handled concurrently — so both would read the room as unadopted and both
+  // say so. A room's adoption and release take turns: the second reads what the first wrote.
+  let rooms: Promise<unknown> = Promise.resolve();
+  const inTurn = (work: () => Promise<void>): Promise<void> => {
+    const going = rooms.then(work);
+    rooms = going.catch(() => {});
+    return going;
+  };
+  const adopt = (...a: Parameters<typeof adoptRoom>) => inTurn(() => adoptRoom(...a));
+  const release = (...a: Parameters<typeof releaseRoom>) => inTurn(() => releaseRoom(...a));
 
   return async (req) => {
     if (req.method !== "POST") return text(405, "method not allowed");
@@ -349,8 +361,8 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       if (e.user !== undefined && e.user === botOf(team, anchor)) {
         const via = boundUsers(payload.authorizations);
         if (e.type === "member_joined_channel") {
-          await adoptRoom(deps, team, anchor, e.channel, via, now);
-        } else await releaseRoom(deps, team, anchor, e.channel, via, now);
+          await adopt(deps, team, anchor, e.channel, via, now);
+        } else await release(deps, team, anchor, e.channel, via, now);
         return;
       }
       await mirrorMember(e, team, deps.store);
@@ -364,7 +376,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       const channel = (e as { channel?: unknown }).channel;
       if (typeof channel !== "string") return;
       const anchor = anchorOf(team, payload.authorizations);
-      await releaseRoom(deps, team, anchor, channel, boundUsers(payload.authorizations), now);
+      await release(deps, team, anchor, channel, boundUsers(payload.authorizations), now);
       return;
     }
     // a reaction is an ACTION event (§3): add/remove + the reacted message's id in
@@ -376,6 +388,9 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       const anchor = anchorOf(team, payload.authorizations);
       const who = e.user
         ? await deps.names?.nameOf(team, e.user, boundUsers(payload.authorizations))
+        : undefined;
+      const email = e.user
+        ? await deps.names?.emailOf(team, e.user, boundUsers(payload.authorizations))
         : undefined;
       // same classifier stamp as messages (§3): the reactor's grant row or email names them
       const owner = await memberOf(
@@ -397,7 +412,15 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
           service: "slack",
           connection_address: anchor,
           conversation: { address: item.channel },
-          ...(e.user ? { sender: { address: e.user, ...(who ? { name: who } : {}) } } : {}),
+          ...(e.user
+            ? {
+              sender: {
+                address: e.user,
+                ...(who ? { name: who } : {}),
+                ...(email ? { email } : {}),
+              },
+            }
+            : {}),
           external_id: `slack:${team}:${item.channel}:${e.event_ts}`,
         },
         parts: [{ type: "data", kind: "reaction", data: { name: e.reaction } }],
@@ -412,8 +435,8 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     if (e.channel && (e.channel_type === "channel" || e.channel_type === "group")) {
       const via = boundUsers(payload.authorizations);
       const left = e.subtype === "channel_leave" && e.user === botOf(team, anchor);
-      if (left) await releaseRoom(deps, team, anchor, e.channel, via, now);
-      else await adoptRoom(deps, team, anchor, e.channel, via, now);
+      if (left) await release(deps, team, anchor, e.channel, via, now);
+      else await adopt(deps, team, anchor, e.channel, via, now);
     }
     const msgs = await mapMessage(
       e,
@@ -707,6 +730,7 @@ export async function mapMessage(
   // conversations.info, the rename and profile events pushing updates); still nothing of
   // ours: identity resolution is the classifier's business (§3)
   const who = m.user ? await names?.nameOf(team, m.user, via) : undefined;
+  const email = m.user ? await names?.emailOf(team, m.user, via) : undefined;
   const room = await names?.roomOf(team, conversation, via);
   // the classifier's authorship stamp (§3): a sender whose grant row or declared email
   // names a member is that member — `agent.id` alone (a Slack client is not the harness,
@@ -729,7 +753,9 @@ export async function mapMessage(
         ...(kind ? { kind } : {}),
         ...(room ? { name: room } : {}),
       },
-      sender: m.user ? { address: m.user, ...(who ? { name: who } : {}) } : undefined,
+      sender: m.user
+        ? { address: m.user, ...(who ? { name: who } : {}), ...(email ? { email } : {}) }
+        : undefined,
       // the upsert/merge key: Slack's ts is the per-channel message id (§3, §4) — for an
       // edit, the change delivery's own ts
       external_id: edit
@@ -770,6 +796,9 @@ async function mapRoomLine(
   ctx: MapCtx,
 ): Promise<Draft<MessageEvent>[]> {
   if (!e.ts || !e.channel || !e.user) return [];
+  // the bot's own arrival is the adoption's to say (`adoptRoom`), once, in the mind: as a
+  // line of the room it would cross back in as somebody speaking, and wake the agent
+  if (e.subtype === "channel_join" && e.user === botOf(team, anchor)) return [];
   const via = boundUsers(authorizations);
   const person = async (id: string): Promise<RoomMember> => {
     const name = await names?.nameOf(team, id, via);

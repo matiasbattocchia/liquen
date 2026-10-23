@@ -1,6 +1,8 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
+  bounded,
   createSlackDispatch,
+  MAX_TEXT,
   type SlackDispatchDeps,
   slackEmojiName,
   slackErrorCode,
@@ -468,4 +470,15 @@ Deno.test("slack wire: a hung API call fails inside the fetch's bound — the dr
   );
   assert(err2 instanceof DOMException && err2.name === "TimeoutError", String(err2));
   assert(Date.now() - t0 < 2_000, "both calls ended inside the bound");
+});
+
+Deno.test("slack dispatch: a post never passes the bound Slack would split it at, nor cuts a wire form", () => {
+  assertEquals(bounded("short"), "short");
+  const long = "a".repeat(MAX_TEXT + 10);
+  assertEquals(bounded(long).length, MAX_TEXT);
+  assert(bounded(long).endsWith("…"));
+  const link = "a".repeat(MAX_TEXT - 6) + "<https://x.io|x>";
+  assertEquals(bounded(link), "a".repeat(MAX_TEXT - 6) + "…");
+  const entity = "a".repeat(MAX_TEXT - 3) + "&amp;b";
+  assertEquals(bounded(entity), "a".repeat(MAX_TEXT - 3) + "…");
 });

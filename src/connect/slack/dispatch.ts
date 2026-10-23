@@ -30,6 +30,7 @@ import { toSlack } from "../flavor.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { entry } from "../../entry.ts";
+import { clipEnd } from "../../exec/truncate.ts";
 
 export interface SlackTarget {
   connection: string; // the workspace the conversation anchors to (§4)
@@ -331,7 +332,7 @@ export function slackWire(
     // as lines instead — Slack's own idiom (the client unfurls them). Never fetched here.
     const local = files?.filter((f) => !isExternal(f.file.uri)) ?? [];
     const links = files?.filter((f) => isExternal(f.file.uri)).map((f) => f.file.uri) ?? [];
-    const body = [text, ...links].filter((s) => s.length > 0).join("\n");
+    const body = bounded([text, ...links].filter((s) => s.length > 0).join("\n"));
 
     if (local.length) {
       // the files.uploadV2 flow, broker-side reads (§5 media): an upload URL per file,
@@ -402,10 +403,30 @@ export function slackWire(
   const amend: SlackAmend = async ({ connection, channel }, { ts, action, text }, author) => {
     const token = await tokenFor(connection, author);
     const method = action === "edit" ? "chat.update" : "chat.delete";
-    await api(method, token, { channel, ts, ...(action === "edit" ? { text } : {}) });
+    await api(method, token, {
+      channel,
+      ts,
+      ...(action === "edit" ? { text: bounded(text) } : {}),
+    });
   };
 
   return { post, react, amend };
+}
+
+/** The most a post carries. Slack takes more, and SPLITS it: a longer text lands as
+ *  several messages under one call, which answers with one `ts` — the others come back as
+ *  echoes nothing claims, reading as somebody speaking (§4). So the dispatcher cuts first,
+ *  and the whole stays in the log. */
+export const MAX_TEXT = 4000;
+
+/** `text` within `MAX_TEXT`, marked where it was cut — never inside a wire form (`<…>`) or
+ *  an entity (`&amp;`), which would post half a link or a stray ampersand. */
+export function bounded(text: string): string {
+  if (text.length <= MAX_TEXT) return text;
+  const mark = "…";
+  let cut = clipEnd(text, MAX_TEXT - mark.length);
+  cut = cut.replace(/<[^>]*$/, "").replace(/&[a-z]*$/, "");
+  return `${cut}${mark}`;
 }
 
 /* ── local entry: the wire over the vault's tokens ──────────────────────────────────── */

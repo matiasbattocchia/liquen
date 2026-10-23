@@ -52,3 +52,16 @@ Deno.test("fromSlack: entities unescape after the link forms are consumed", () =
     "<https://a.io|docs> [docs](https://a.io)",
   );
 });
+
+Deno.test("toSlack: a marker touching a word gets the edge Slack needs; a link off the web keeps its words", () => {
+  // Slack parses `*bash*(` as text: a zero-width space gives the marker its edge
+  assertEquals(
+    toSlack("`[agent tool]` **bash**(sonar batch)"),
+    "`[agent tool]` *bash*\u200b(sonar batch)",
+  );
+  assertEquals(toSlack("x**b**y ~~s~~!"), "x\u200b*b*\u200by ~s~\u200b!");
+  assertEquals(toSlack("a **b** c"), "a *b* c");
+  assertEquals(toSlack("see [Doma](org:571c22bb)"), "see Doma");
+  // and the space never comes back in
+  assertEquals(fromSlack(toSlack("**bash**(sonar batch)")), "**bash**(sonar batch)");
+});

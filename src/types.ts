@@ -292,6 +292,10 @@ export interface Sender {
   address: string;
   name?: string;
   saved?: boolean;
+  /** The email the service knows them by, where the address is not one already (a Slack
+   *  user id): the handle that names a person across services, and how a principal is
+   *  told from a namesake. */
+  email?: string;
 }
 
 export interface Envelope {

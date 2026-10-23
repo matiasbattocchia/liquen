@@ -1070,7 +1070,9 @@ Deno.test("the classifier reads the roster by email (§4): a profile email that 
   await handler(await signedReq(messageEvent()));
   const m = published[0] as MessageEvent;
   assertEquals(m.agent, { id: "sol" }); // no grant row — the email named her
-  assertEquals(m.envelope.sender, { address: "U7", name: "Sol R." }); // the wire's word stays
+  // the wire's word stays, and the profile's email rides along: the handle a person is
+  // known by elsewhere
+  assertEquals(m.envelope.sender, { address: "U7", name: "Sol R.", email: "Sol@Acme.co" });
 });
 
 Deno.test("a member's DM with an owned bot is recorded on the bot's row (§4): mirrors.dms, member → channel", async () => {
@@ -1275,4 +1277,47 @@ Deno.test("socket health: an app token Slack ended signs the rows out at once; i
     await health.stop();
     assertEquals(await statesOf(log), ["connected", "signed_out"]);
   });
+});
+
+Deno.test("the bot met in a room twice at once (§4): Slack's event and the room's own line adopt it once, and the join wakes nobody", async () => {
+  const { names } = fakeNames({ "T1:C9": "ventas", "T1:UBOT": "liquen", "T1:U7": "Sol" });
+  const bot: ConnectionRow = {
+    service: "slack",
+    address: "T1:UBOT",
+    credentialKey: "slack:T1:org",
+  };
+  const store: NonNullable<SlackWebhookDeps["store"]> = {
+    connection: (service, address) =>
+      Promise.resolve(service === "slack" && address === bot.address ? bot : null),
+    upsertMemberships: () => Promise.resolve(),
+    upsertConnections: async (rows) => {
+      // the store is slow, as a disk is: the second delivery is in flight while it writes
+      await new Promise((r) => setTimeout(r, 5));
+      bot.extra = { ...bot.extra, ...rows[0].extra };
+    },
+    deleteMemberships: () => Promise.resolve(),
+    agents: () => Promise.resolve([{ agentId: "ventas", mind: "mind@ventas" }]),
+    connections: () => Promise.resolve([]),
+  };
+  const { handler, published } = harness(SECRET, store, undefined, names);
+  const asBot = (event: Record<string, unknown>) =>
+    signedReq(messageEvent({ authorizations: [{ user_id: "UBOT", is_bot: true }], event }));
+  // both deliveries signed first, so they land together, as Slack sends them
+  const both = [
+    await asBot({ type: "member_joined_channel", user: "UBOT", channel: "C9" }),
+    await asBot({
+      type: "message",
+      subtype: "channel_join",
+      channel: "C9",
+      channel_type: "channel",
+      user: "UBOT",
+      inviter: "U7",
+      text: "<@UBOT> has joined the channel",
+      ts: "1.1",
+    }),
+  ];
+  await Promise.all(both.map((req) => handler(req)));
+  // one adoption, said once in the mind — and no room line for the bot's own arrival
+  assertEquals(published.length, 1);
+  assertEquals(published[0].envelope.conversation.address, "mind@ventas");
 });
