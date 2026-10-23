@@ -18,7 +18,7 @@ import { connect } from "./pg/sql.ts";
 import { VERSION } from "./pg/schema.ts";
 import { openPgDocs, type PgDocs } from "./pg/docs.ts";
 import { applyEdits, parseEdits } from "../exec/edit.ts";
-import { seedAgent, seedOrg, seedSkill } from "./seed.ts";
+import { bringToolDocs, seedAgent, seedOrg, seedSkill } from "./seed.ts";
 import { storeAt } from "./mod.ts";
 
 import { agentsSuite } from "./suite/agents.ts";
@@ -507,6 +507,16 @@ if (url === undefined) {
         assertEquals(opened.on, "table");
         assertEquals(typeof opened.as, "function");
         assertEquals(await opened.bed.laid("system", "", "skills"), true);
+        // a release's tool docs reach the rows as they reach files: an older release's words
+        // are brought, an edit is kept
+        await sql.unsafe("UPDATE docs SET text = 'older' WHERE name = 'tools/bash'");
+        await sql.unsafe("UPDATE docs SET text = 'the org''s own' WHERE name = 'tools/send'");
+        assertEquals(
+          await bringToolDocs(opened.bed, () => Promise.resolve("older")),
+          { laid: [], updated: ["bash"], kept: ["send"] },
+        );
+        assertStringIncludes((await opened.bed.text("system", "", "tools/bash"))!, "kind: tool");
+        assertEquals(await opened.bed.text("system", "", "tools/send"), "the org's own");
       } finally {
         await opened.close();
       }

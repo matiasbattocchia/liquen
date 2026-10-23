@@ -51,6 +51,17 @@ export interface Seedbed {
   folders?(scope: DocScope, owner: string): Promise<void>;
 }
 
+/** A bed a release's words are brought into (`bringToolDocs`): one doc read as laid, and
+ *  replaced only while it still reads that way. */
+export interface Relaybed extends Seedbed {
+  /** One doc's whole text, frontmatter included, or null where none is. */
+  text(scope: DocScope, owner: string, name: string): Promise<string | null>;
+  /** Replace one doc's text with `to` while it is still `from`. Answers whether it wrote. */
+  swap(scope: DocScope, owner: string, name: string, from: string, to: string): Promise<boolean>;
+  /** Whether the folder is a link to words read live elsewhere. Absent where docs are rows. */
+  linked?(scope: DocScope, owner: string, folder: string): Promise<boolean>;
+}
+
 /** A doc's path under the data root. */
 const pathOf = (root: string, scope: DocScope, owner: string, name: string) =>
   `${root}/${scopeDir(scope, owner)}/${name}.md`;
@@ -62,10 +73,26 @@ const scopeDir = (scope: DocScope, owner: string) =>
     : scope;
 
 /** The files under a data root. */
-export function onFiles(root: string): Seedbed {
+export function onFiles(root: string): Relaybed {
+  const text = (scope: DocScope, owner: string, name: string) =>
+    Deno.readTextFile(pathOf(root, scope, owner, name)).catch((err) => {
+      if (err instanceof Deno.errors.NotFound) return null;
+      throw err;
+    });
   return {
     laid: (scope, owner, folder) =>
       Deno.lstat(`${root}/${scopeDir(scope, owner)}/${folder}`).then(() => true, () => false),
+    linked: (scope, owner, folder) =>
+      Deno.lstat(`${root}/${scopeDir(scope, owner)}/${folder}`).then(
+        (s) => s.isSymlink,
+        () => false,
+      ),
+    text,
+    async swap(scope, owner, name, from, to) {
+      if (await text(scope, owner, name) !== from) return false;
+      await Deno.writeTextFile(pathOf(root, scope, owner, name), to);
+      return true;
+    },
     async lay(scope, owner, name, text) {
       const path = pathOf(root, scope, owner, name);
       if (await Deno.lstat(path).then(() => true, () => false)) return false;
@@ -106,7 +133,8 @@ const TOOL_DOCS = [
  *  `shared/instructions/organization.md`, or emptied `system/skills/`, said it wants
  *  none, and the next boot must not argue. What that costs is a template added to a folder
  *  an org already has: it reaches new orgs and no existing one. Deleting the folder is how
- *  an org asks for the set again. */
+ *  an org asks for the set again. The tool docs are the exception, brought by `liquen
+ *  update` (`bringToolDocs`): a tool's words are its schema's, and no tool goes without. */
 async function install(bed: Seedbed, docs: Template[]): Promise<void> {
   // asked once per folder, before any of them is written: a folder two templates share is
   // absent for both or for neither, whichever this call found
@@ -149,6 +177,45 @@ export function seedSkill(bed: Seedbed, name: string): Promise<boolean> {
   return read(`system/skills/${name}.md`).then((text) =>
     bed.lay("system", "", `skills/${name}`, text)
   );
+}
+
+/** What bringing a release's tool docs did: the tools whose doc was laid where none was,
+ *  the ones that took the release's words, and the ones kept as the org wrote them. */
+export interface Brought {
+  laid: string[];
+  updated: string[];
+  kept: string[];
+}
+
+/** This release's tool docs into an org that has its own `system/tools/`, which seeding
+ *  never returns to. A tool doc is the schema's words, so one missing is laid; one still
+ *  word for word the release the org ran before (`was`, by template path, null where that
+ *  release had none) takes this release's; one the org edited is kept, and named, since a
+ *  parameter this release added has no item in it. A folder linked at a checkout reads the
+ *  checkout's words live and is left alone: null. */
+export async function bringToolDocs(
+  bed: Relaybed,
+  was: (template: string) => Promise<string | null>,
+): Promise<Brought | null> {
+  if (await bed.linked?.("system", "", "tools")) return null;
+  const out: Brought = { laid: [], updated: [], kept: [] };
+  for (const tool of TOOL_DOCS) {
+    const name = `tools/${tool}`;
+    const template = `system/tools/${tool}.md`;
+    const now = await read(template);
+    const held = await bed.text("system", "", name);
+    if (held === now) continue;
+    if (held === null) {
+      if (await bed.lay("system", "", name, now)) out.laid.push(tool);
+      continue;
+    }
+    const before = await was(template);
+    if (before === now) continue; // the release left these words alone: an edit is the org's
+    if (held === before && await bed.swap("system", "", name, held, now)) {
+      out.updated.push(tool);
+    } else out.kept.push(tool);
+  }
+  return out;
 }
 
 /** One agent's half: the home itself — its workspace, so it exists empty — the persona to

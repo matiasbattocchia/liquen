@@ -21,13 +21,13 @@ import { type DocContext, type Docs, openFileDocs } from "./docs.ts";
 import { openPgLog } from "./pg/log.ts";
 import { openPgCredentials } from "./pg/credentials.ts";
 import { type DocCalls, openPgDocs } from "./pg/docs.ts";
-import { onFiles, type Seedbed } from "./seed.ts";
+import { onFiles, type Relaybed } from "./seed.ts";
 import { readConfig } from "../config.ts";
 
 /** The docs as a process opens them: the read port, the bed the seeds go in, and — where
  *  the docs live in the table — the agent's own reach, the substrate tool (§9). */
 export interface DocStore extends Docs {
-  bed: Seedbed;
+  bed: Relaybed;
   as?: (ctx: DocContext) => DocCalls;
   close(): Promise<void>;
 }
@@ -80,7 +80,10 @@ export function storeAt(at: Database): Store {
     docs: async () => {
       if (at.docs === "files") return files();
       const docs = await openPgDocs(at.url, { schema: at.schema });
-      return { ...docs, bed: { laid: docs.laid, lay: docs.lay } };
+      return {
+        ...docs,
+        bed: { laid: docs.laid, lay: docs.lay, text: docs.text, swap: docs.swap },
+      };
     },
   };
 }

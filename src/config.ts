@@ -400,7 +400,8 @@ const AGENT: Entry[] = [
       "or a world to write to — a reply to its own principal is its plain answer, never a " +
       'call — "conversation" where it has peers and may open rooms with them, or an ' +
       'account on a wire whose rooms it may change, and "contact" where an account keeps ' +
-      "an address book the agent may write",
+      "an address book the agent may write. With docs: table, read · write · edit are " +
+      "offered whatever this says: they are the agent's one way to its docs",
   },
   {
     key: "rules",
