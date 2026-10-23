@@ -617,9 +617,9 @@ if (import.meta.main) {
       const pastes = flags.has("bot") || flags.has("user");
       const callback = edge.publicUrl === null ? undefined : callbackAddress(edge, "slack");
       const url = manifestUrl(withScopes(
-        JSON.parse(
-          await Deno.readTextFile(new URL("../../seed/slack-manifest.json", import.meta.url)),
-        ),
+        // fetched, not read: run from the registry the module's URL is https:, which
+        // readTextFile refuses; fetch takes a file: URL from a checkout as well
+        await (await fetch(new URL("../../seed/slack-manifest.json", import.meta.url))).json(),
         { bot: botScopes, user: userScopes },
         callback,
       ));
