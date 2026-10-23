@@ -46,7 +46,7 @@ export interface TokenArgs {
 
 const NAME = /^[a-z0-9][a-z0-9-]*$/;
 const VAR = /^[A-Z_][A-Z0-9_]*$/;
-const HOST = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+const HOST = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/i;
 
 /** The door's own flags, after `--dir` has been taken. Throws on anything that would write
  *  a row the proxy could not front: a name that is not a key, a var bash could not export,
@@ -87,8 +87,11 @@ export function parseTokenArgs(argv: string[]): TokenArgs {
     throw new Error("--hosts is required — the authorities the token is spent toward");
   }
   for (const h of hosts) {
-    if (!HOST.test(h)) {
-      throw new Error(`--hosts takes hostnames or *.suffix wildcards — got "${h}"`);
+    // a wildcard stands under a domain, never for a whole top-level one
+    if (!HOST.test(h) || (h.startsWith("*.") && !h.slice(2).replace(/:\d+$/, "").includes("."))) {
+      throw new Error(
+        `--hosts takes hostnames or *.suffix wildcards, each perhaps with a :port — got "${h}"`,
+      );
     }
   }
   if (paths !== undefined && !paths.length) throw new Error("--paths names at least one path");
@@ -219,7 +222,8 @@ const USAGE = `usage: liquen connect token <name> --env <VAR> --hosts <h1,h2,…
   <name>          what the token is for (\`crm\`, \`sonar\`): the vault key is token:<name>
   --env <VAR>     the environment variable the agent reads the handle from
   --hosts <list>  the only authorities the token is spent toward — exact hostnames or
-                  *.suffix wildcards, comma-separated
+                  *.suffix wildcards, comma-separated; a :port binds that port alone
+                  (\`localhost:8080\`, a local service reached over plain HTTP)
   --paths <list>  the only paths the token is spent on there, comma-separated: a path and
                   everything under it, by whole segments (\`/organization/42/\` holds
                   \`/organization/42/deals\`, never \`/organization/420\`); default: any

@@ -3000,10 +3000,9 @@ true for exec (kernel handles it), false for control (only harness/human authori
      org/principal tokens readable by conduit uids, never agent uids — the matrix as
      literal file ownership (same move as docs-scopes → groups).
   3. *Egress proxy with header injection (MITM CA)* — **the one rung, for everything,
-     live** (`src/proxy/`, mandatory at start): every shell is issued `HTTPS_PROXY`
-     (loopback left to itself, `NO_PROXY`), a bubble's pointing at its holder, whose
-     every connection reaches the proxy with no setting at all (below), and both are
-     issued a
+     live** (`src/proxy/`, mandatory at start): every shell, bare or in its bubble, is
+     issued `HTTPS_PROXY` and `HTTP_PROXY` (both cases of the latter, since curl reads
+     plain HTTP's only lowercase) with nothing left out of them, and a
      trust file — the system's roots followed by the liquen CA, which ships with the source
      (`src/proxy/ca.pem` + `ca.key`): nothing trusts it but the children we hand it to, so
      it is plumbing that makes a tool accept our proxy, not a credential. The file is
@@ -3016,7 +3015,12 @@ true for exec (kernel handles it), false for control (only harness/human authori
      the decrypted stream handed to an HTTP server that listens on nothing, swaps the placeholder for a
      live token — refreshed broker-side against the vault, the refresh_token never
      leaving it (`grants.ts`) — re-originates over real TLS, and audits every request
-     (method · host · path · status · agent, never the token). Every other tunnel is
+     (method · host · path · status · agent, never the token). Plain HTTP arrives as
+     requests in absolute form and takes the same swap toward `http://`, each request on
+     its own, since a client reuses one proxy connection across hosts; a placeholder rides
+     it only toward a host its grant names with its port, so a token declared for an
+     HTTPS API is never sent in the clear; one that upgrades
+     (a WebSocket, a dev server's reload channel) is bridged to its origin as it came. Every other tunnel is
      bridged blind to the origin and audited as the CONNECT it is: the world answers
      with its own certificates, so a tool verifying against its own roots (pip, python
      `requests`, npm) reaches it untouched, and one honoring the trust file reaches the
@@ -3035,12 +3039,13 @@ true for exec (kernel handles it), false for control (only harness/human authori
      agent's own, never a peer's (`frontedFor`), so the handle in a pocket names a grant
      its holder has and the audit's agent is the caller — and the swap refuses any dial outside
      the declaration (so a handle can't be aimed at an echo endpoint to read the token
-     back). Every dial is judged before it is made (`guard.ts`): the name resolved once,
-     every address in the refused set dropped (loopback, link-local, multicast, cloud
-     metadata, this machine's own, and `system.egressRefuses`), and the address that
-     survived is the one dialed, so a name pointed at this machine reaches nothing here.
-     A refusal says why, as its status line's phrase and its body, and is audited like a
-     request. The terminated plaintext is where further policy (method/path) would attach.
+     back). A host in the declaration may carry a port, which then binds that port alone,
+     so a grant can name a local service (`localhost:8080`). The proxy fronts credentials
+     and fences nothing: it dials what it is asked, this machine's loopback included, and
+     what an agent reaches is its sandbox's to say (bare: everything; a bubble: below; a
+     container: its network's policy). A dial that fails says why, as its status line's
+     phrase and its body, and is audited like a request. The terminated plaintext is where
+     further policy (method/path) would attach.
      Not the nicest (CA to manage, cert-pinning
      fights) but the most secure, with no per-service tiers and no interim mechanisms;
      rungs 1–2 above are recorded as the analysis of why they lost, not as options.
@@ -3125,7 +3130,7 @@ picks the knobs.
 
 `system.sandbox: "bwrap"` runs every agent's shells in a **bubble** of its own
 (`src/exec/bubble.ts`): namespaces bubblewrap opens, held by their first process, the
-holder (`src/exec/hold.ts`). A call enters the bubble (`setsid nsenter …`), so it is still
+holder, which only waits. A call enters the bubble (`setsid nsenter …`), so it is still
 a process group the harness spawned, probes and kills, and its job's group is written from
 outside, where the number is the one the harness knows. The bare shell stays the default;
 the boot says so on Linux, once per run.
@@ -3136,29 +3141,24 @@ the boot says so on Linux, once per run.
   the user's home). A session that stands elsewhere (`liquen cli` attached from a repo)
   gets a bubble whose view adds that directory, writable, with the classification laid
   over it again.
-- **The network is the bubble's own**, prepared before bubblewrap runs: loopback alone,
-  owned by a user namespace the shells never enter. The holder is its resolver: every name
-  gets an address of its own in 127.64.0.0/10 and a listener on each of the
-  `system.egressPorts` at that address (by default ssh, http, https, mysql, postgres,
-  git), and a connection to one is carried to the egress proxy as `CONNECT name:port`. So
-  a client needs no proxy setting, whatever it speaks reaches the world through the
-  proxy, and the proxy judges the name. A client that reads `HTTPS_PROXY` is pointed at
-  the holder, which hands its CONNECT to the proxy as it came, and reaches any port.
-  Loopback itself stays the agent's: a server it runs on `127.0.0.1:5432` is its own. UDP
-  has no way out, and an address dialed by number has no route.
-- **The proxy knows the agent before a byte is read.** Each bubble reaches it over a unix
-  socket of its agent's own, the one file of `log/` the bubble sees, so every audit line
-  names the agent, and a handle naming another agent's grant is refused there.
+- **The processes are the bubble's own**: its own pid, IPC and UTS namespaces, so the
+  harness and its peers are not in a shell's process table, and the environment is the
+  one bash issues.
+- **The network is the machine's.** A bubble fences files, processes and the environment;
+  its shells reach the world, this machine's loopback and the egress proxy as a bare shell
+  does, a server the agent runs on loopback answers on this machine, and a grant naming a
+  local service is spent there through the proxy. Its abstract unix sockets are the
+  machine's too, since they belong to the network namespace.
 - **A bubble outlives the harness**, as its jobs do: each is recorded under
-  `log/bubbles/<agent>/`, and the next harness adopts the one whose view (and holder code)
-  it would open itself. One opened by another version stays while a job runs in it and
-  ends once none does; `liquen stop` ends them all.
-- **What it asks of the machine**: Linux, bubblewrap, util-linux and iproute2, and a
-  harness that is not root (the per-agent users of a root harness are the other way to
-  enforce the same classification). A tool installed under the user's home is visible by
-  its PATH directory alone; `system.bubbleMounts` shows more of the machine, read-only,
-  never the org's folder, and the boot names a tool folder PATH reaches into that no
-  mount shows whole (mise, nvm, uv).
+  `log/bubbles/<agent>/`, and the next harness adopts the one whose view (and holder) it
+  would open itself. One opened by another version stays while a job runs in it and ends
+  once none does; `liquen stop` ends them all.
+- **What it asks of the machine**: Linux, bubblewrap and util-linux, and a harness that is
+  not root (the per-agent users of a root harness are the other way to enforce the same
+  classification). A tool installed under the user's home is visible by its PATH
+  directory alone; `system.mounts` shows more of the machine, read-only unless an entry
+  ends in `:rw`, never the org's folder, and the boot names a tool folder PATH reaches
+  into that no mount shows whole (mise, nvm, uv).
 
 ### How a process ends when it cannot go on
 

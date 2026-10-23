@@ -260,21 +260,19 @@ export async function start(
     : await openLocalSandbox(dir, {
       store,
       bubble,
-      egressRefuses: catalog?.system.egressRefuses,
-      egressPorts: catalog?.system.egressPorts,
-      bubbleMounts: catalog?.system.bubbleMounts,
+      mounts: catalog?.system.mounts,
       exports: Object.fromEntries(principals.map((p) => [p.agentId, p.settings?.export ?? []])),
       ...planeOptions,
     });
   if (!remote && !bubble && Deno.build.os === "linux" && principals.length) {
     console.error(
       '[exec] the agents\' shells run bare, as you: system.sandbox "bwrap" gives each a ' +
-        "bubble of its own, its folder and the egress proxy and nothing else",
+        "bubble of its own that sees its folder, the shared floor and the system",
     );
   }
-  for (const home of bubble ? partialToolHomes(catalog?.system.bubbleMounts ?? []) : []) {
+  for (const home of bubble ? partialToolHomes(catalog?.system.mounts ?? []) : []) {
     console.error(
-      `[exec] a bubble shows ${home} only by its PATH folders: system.bubbleMounts ` +
+      `[exec] a bubble shows ${home} only by its PATH folders: system.mounts ` +
         `["${home}"] shows it whole, so the tools there run`,
     );
   }

@@ -17,8 +17,7 @@ import { type Files, localFiles } from "./store/media.ts";
 import type { Store } from "./store/mod.ts";
 import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
-import { type AgentSocket, defaultAudit, startProxy } from "./proxy/proxy.ts";
-import { addressGuard } from "./proxy/guard.ts";
+import { defaultAudit, startProxy } from "./proxy/proxy.ts";
 import { sessionAddress } from "./session.ts";
 import {
   type Gateway,
@@ -28,8 +27,8 @@ import {
   remoteShell,
   sandboxIdOf,
 } from "./exec/gateway.ts";
-import { DEFAULT_EGRESS_PORTS, DEFAULT_SANDBOX_SLEEP_MINUTES } from "./config.ts";
-import { BUBBLE_PROXY, EGRESS_SOCKET, openBubble } from "./exec/bubble.ts";
+import { DEFAULT_SANDBOX_SLEEP_MINUTES } from "./config.ts";
+import { openBubble } from "./exec/bubble.ts";
 
 /** One session's place in the sandbox: its shell (where it stands, what it left running),
  *  the agent's folder on this ground, and the files port its references resolve through. */
@@ -88,12 +87,8 @@ export interface LocalSandboxOptions {
   tell?: (u: SessionUpdate) => void;
   /** Each agent's shells run in its bubble (exec/bubble.ts): `system.sandbox: "bwrap"`. */
   bubble?: boolean;
-  /** The `system.egressRefuses` knob: ranges the egress proxy refuses, over its own. */
-  egressRefuses?: string[];
-  /** The `system.egressPorts` knob: the ports a bubble reaches a name on by itself. */
-  egressPorts?: number[];
-  /** The `system.bubbleMounts` knob: more of the machine a bubble shows, read-only. */
-  bubbleMounts?: string[];
+  /** The `system.mounts` knob: more of the machine a bubble shows. */
+  mounts?: string[];
 }
 
 /** The local provider: subprocesses on this machine, ONE GROUND PER AGENT, ONE SHELL PER
@@ -115,23 +110,12 @@ export async function openLocalSandbox(
     exports = {},
     tell,
     bubble,
-    egressRefuses = [],
-    egressPorts = DEFAULT_EGRESS_PORTS,
-    bubbleMounts = [],
+    mounts = [],
   }: LocalSandboxOptions,
 ): Promise<Sandbox> {
   // the egress proxy (§9): front every credential row that declares an env var — user
-  // space gets the placeholder + proxy env, never a real credential. A bubble reaches it
-  // through a socket of its agent's own, which sits with the broker's state, where no
-  // shell sees it but the one its bubble binds
-  const egressOf = (agentId: string) => `${dir}/log/egress/${agentId}`;
-  const sockets = bubble
-    ? agents.map((agentId) => ({ agentId, path: `${egressOf(agentId)}/${EGRESS_SOCKET}` }))
-    : [];
-  for (const agentId of bubble ? agents : []) {
-    await Deno.mkdir(egressOf(agentId), { recursive: true });
-  }
-  const proxy = await installProxy(dir, store, { sockets, refuses: egressRefuses });
+  // space gets the placeholder + proxy env, never a real credential
+  const proxy = await installProxy(dir, store);
   const localeEnv = orgEnv(locale, timezone);
   const grounds = new Map<string, ExecGround>();
   for (const agentId of agents) {
@@ -147,16 +131,7 @@ export async function openLocalSandbox(
       ...(await proxy.env(agentId)),
       ...localeEnv,
     });
-    const bubbled = bubble
-      ? () =>
-        openBubble({
-          dir,
-          agentId,
-          egress: egressOf(agentId),
-          ports: egressPorts,
-          mounts: bubbleMounts,
-        })
-      : undefined;
+    const bubbled = bubble ? () => openBubble({ dir, agentId, mounts }) : undefined;
     grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashWaitMs, bubbled));
   }
   const shells = new Map<string, ExecPlane>();
@@ -304,13 +279,14 @@ export function openCloudflareSandbox(
 }
 
 /** The egress proxy — the org's single credential-bearing egress — as the env provider
- *  bash issues into every spawn (§9), PER AGENT. A shell is pointed at it by HTTPS_PROXY,
- *  with loopback left to the shell itself (NO_PROXY), since the proxy refuses to dial this
- *  machine: a bare shell at its port, a bubble's at its holder, which also carries the
- *  clients that read no proxy setting. The proxy terminates only the authorities a fronted
+ *  bash issues into every spawn (§9), PER AGENT. A shell, bare or in its bubble, is pointed
+ *  at it by HTTPS_PROXY and by HTTP_PROXY in both cases (curl reads plain HTTP's only
+ *  lowercase), with nothing left out: the proxy dials loopback as readily as the world, so
+ *  a grant naming a local service is spent there too, and a client that reads no proxy
+ *  setting goes straight out. The proxy terminates only the authorities a fronted
  *  grant binds (where a placeholder can ride and the swap has to see plaintext) and
  *  bridges every other tunnel blind, so the world answers with its own certificates.
- *  `refuses` are the `system.egressRefuses` ranges (guard.ts). The trust file user space is handed is the system
+ *  The trust file user space is handed is the system
  *  bundle plus the liquen CA, under every name the common clients read it by: a tool
  *  verifying against its own roots still reaches the world, and one honoring the file
  *  reaches the fronted hosts too. Which placeholders ride is the VAULT's say, not this
@@ -355,11 +331,7 @@ async function writeTrustBundle(dir: string, caPath: string): Promise<string> {
   return out;
 }
 
-async function installProxy(
-  dir: string,
-  store: Store,
-  { sockets, refuses }: { sockets: AgentSocket[]; refuses: string[] },
-): Promise<ProxyHandle> {
+async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
   const creds = await store.vault();
   const log = await store.log();
   const broker = createGrantBroker({ creds });
@@ -383,14 +355,20 @@ async function installProxy(
         .catch((err) => console.error("[proxy] its request could not be recorded:", err));
     },
     terminates: (authority) => fronted.some((r) => hostAllowed(r.extra?.hosts, authority)),
-    guard: addressGuard(refuses),
-  }, { sockets });
+    plain: (authority) =>
+      fronted.some((r) =>
+        Array.isArray(r.extra?.hosts) &&
+        r.extra.hosts.some((h: unknown) =>
+          typeof h === "string" && /:\d+$/.test(h) && hostAllowed([h], authority)
+        )
+      ),
+  });
   const bundle = await writeTrustBundle(dir, proxy.caPath);
-  const bubbled = new Set(sockets.map((s) => s.agentId));
-  const pointed = (to: string) => ({ HTTPS_PROXY: to, NO_PROXY: "localhost,127.0.0.1,::1" });
-  const bare = pointed(`http://127.0.0.1:${proxy.port}`);
-  const inBubble = pointed(BUBBLE_PROXY);
+  const at = `http://127.0.0.1:${proxy.port}`;
   const base: Record<string, string> = {
+    HTTPS_PROXY: at,
+    HTTP_PROXY: at,
+    http_proxy: at,
     SSL_CERT_FILE: bundle, // OpenSSL-based tools: curl, git, wget, Go
     REQUESTS_CA_BUNDLE: bundle, // python requests, and pip through it
     PIP_CERT: bundle,
@@ -403,10 +381,7 @@ async function installProxy(
   return {
     env: async (agentId) => {
       fronted = await read();
-      const env: Record<string, string> = {
-        ...(bubbled.has(agentId) ? inBubble : bare),
-        ...base,
-      };
+      const env: Record<string, string> = { ...base };
       const mine = frontedFor(fronted, agentId);
       for (const r of mine) env[r.extra!.env as string] = broker.issue(r.key, r.agentId);
       const keys = mine.map((r) => r.key).join(", ");

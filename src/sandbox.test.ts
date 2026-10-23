@@ -50,6 +50,8 @@ Deno.test("the shell speaks through the proxy's pocket, in the org's locale and 
     const out = await exec.bash.execute(
       {
         command: "echo $LANG; echo $HTTPS_PROXY; test -r $SSL_CERT_FILE && echo trusted; " +
+          'test "$HTTP_PROXY" = "$HTTPS_PROXY" && test "$http_proxy" = "$HTTPS_PROXY" && ' +
+          'test -z "${NO_PROXY+set}" && echo plain-too; ' +
           "echo $TZ; deno eval 'console.log(Intl.DateTimeFormat().resolvedOptions().timeZone)'",
       },
       new AbortController().signal,
@@ -57,6 +59,8 @@ Deno.test("the shell speaks through the proxy's pocket, in the org's locale and 
     const text = typeof out === "string" ? out : (out as { output: string }).output;
     assert(text.startsWith("es_AR.UTF-8\nhttp://127.0.0.1:"), text);
     assert(text.includes("\ntrusted"), text);
+    // plain HTTP goes through it as well, and nothing is left out of it
+    assert(text.includes("\nplain-too"), text);
     // a program the agent runs reads the zone by itself: no flag, no variable of its own
     assert(text.includes("\nAsia/Tokyo\nAsia/Tokyo"), text);
   } finally {

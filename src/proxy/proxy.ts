@@ -2,9 +2,10 @@
  * proxy/proxy.ts — the credential-injecting egress proxy (DESIGN §9).
  *
  * The wire half of the MITM the vault design is built on. A tool in user space is handed
- * three env vars (issued, never inherited — bash.ts clears the pocket first):
+ * its env vars (issued, never inherited — bash.ts clears the pocket first):
  *
  *   HTTPS_PROXY=http://127.0.0.1:<port>   send every HTTPS request here as a CONNECT tunnel
+ *   HTTP_PROXY, http_proxy=<the same>     send every plain-HTTP request here, absolute-form
  *   SSL_CERT_FILE=<ca.pem>                trust ONLY the liquen CA (so this proxy can terminate)
  *   <extra.env>=mu-grant-…                a PLACEHOLDER — the real token never enters user
  *                                         space; the var's NAME is the credential row's own
@@ -22,14 +23,17 @@
  * decrypted stream to an HTTP server that listens on nothing. The dialed authority is
  * `host`, or `host:port` off 443, and the port rides through to the origin.
  *
- * Every dial is judged first (guard.ts): the name is resolved once, an address in the
- * refused set (loopback, link-local, metadata, this machine's own) is dropped, and the
- * address that survived is the one dialed. A refusal is answered with its reason, as the
- * status line's phrase and the body, and audited like any other request.
+ * The proxy fronts credentials and fences nothing: it dials what it is asked, this machine's
+ * loopback included, so a token naming a local service (`localhost:8080`) is swapped like
+ * any other. A dial that fails is answered with its reason, as the status line's phrase
+ * and the body, and audited like any other request.
  *
- * A bubble reaches the proxy over a unix socket of its agent's own (`sockets`), so every
- * connection over it is known to be that agent's: the audit names it even for a tunnel
- * bridged blind, and a handle naming another agent's grant is refused there.
+ * Plain HTTP arrives as requests in absolute form (`GET http://host:port/path`), each
+ * served on its own — a client reuses one proxy connection across hosts — through the same
+ * swap, toward `http://`; a placeholder rides it only toward a host its grant names with
+ * its port (`plain`), so no token crosses a network in the clear by accident. A request that upgrades (a WebSocket, a dev server's reload
+ * channel) is bridged to its origin as it came, and the connection is the origin's from
+ * then on.
  *
  * The proxy speaks IDENTITY to its client. `fetch` negotiates compression with the origin
  * and hands back a DECODED body, but the headers it exposes still describe the encoded
@@ -47,13 +51,13 @@
  */
 
 import http from "node:http";
+import net from "node:net";
 import tls from "node:tls";
 import { Duplex, Readable } from "node:stream";
 // the runtime's web streams are node's; only their declarations differ
 import type { ReadableStream as WebStream, WritableStream as WebSink } from "node:stream/web";
 import type { GrantBroker } from "./grants.ts";
 import type { CA, Leaf } from "./ca.ts";
-import { addressGuard, type Guard, Refused } from "./guard.ts";
 import { findRoot, orgFlag } from "../config.ts";
 import { entry } from "../entry.ts";
 
@@ -68,6 +72,7 @@ const HOP_BY_HOP = new Set([
   "transfer-encoding",
   "upgrade",
   "host",
+  "proxy-connection",
 ]);
 // the handle itself is the marker, wherever it rides: `Bearer mu-grant-…`, gh's
 // `token mu-grant-…`, an `x-api-key: mu-grant-…` — the swap is a SUBSTITUTION over every
@@ -90,13 +95,15 @@ export interface ProxyDeps {
    *  verifying against its own bundle (pip, requests, npm) reaches the world untouched.
    *  Absent ⇒ every authority terminates. */
   terminates?: (authority: string) => boolean;
-  /** What a dial may reach (guard.ts); absent ⇒ the built-in refused set alone. */
-  guard?: Guard;
+  /** Which authorities a placeholder may ride PLAIN HTTP to: the ones a fronted grant names
+   *  with their port (`localhost:8080`), so a grant declared for `api.crm.io` never sends
+   *  its token in the clear. Absent ⇒ none. */
+  plain?: (authority: string) => boolean;
 }
 
 export interface EgressAudit {
   method: string;
-  host: string; // the dialed authority: `host`, or `host:port` off 443
+  host: string; // the dialed authority: `host`, or `host:port` off the scheme's port
   path: string;
   status: number;
   agentId?: string;
@@ -105,20 +112,19 @@ export interface EgressAudit {
 
 /**
  * Serve one decrypted request for the dialed authority: swap a placeholder bearer for the
- * real token, re-originate, and audit. Pure over its deps (no TLS) — the proxy's testable
- * core. `caller` is the agent whose socket the request came over, when it came over one:
- * a handle naming another agent's grant is refused.
+ * real token, re-originate, and audit. The request's own scheme is the origin's: `https:`
+ * off a decrypted tunnel, `http:` off a plain-HTTP request. Pure over its deps (no TLS) —
+ * the proxy's testable core.
  */
 export async function proxyRequest(
   host: string,
   req: Request,
   deps: ProxyDeps,
-  caller?: string,
 ): Promise<Response> {
   const originFetch = deps.originFetch ?? fetch;
   const audit = deps.audit ?? defaultAudit;
   const url = new URL(req.url);
-  const target = `https://${host}${url.pathname}${url.search}`;
+  const target = `${url.protocol}//${host}${url.pathname}${url.search}`;
 
   const headers = new Headers();
   for (const [k, v] of req.headers) {
@@ -130,21 +136,23 @@ export async function proxyRequest(
   }
 
   let swapped = false;
-  let agentId = caller;
+  let agentId: string | undefined;
   // every handle in the request, resolved once — a token per distinct handle, refused as
   // a whole if any can't be honored toward THIS host
   const real = new Map<string, string>();
+  const carried = [...headers].some(([, v]) => v.search(HANDLE_RE) !== -1);
+  if (carried && url.protocol === "http:" && !(deps.plain?.(host) ?? false)) {
+    audit({ method: req.method, host, path: url.pathname, status: 403, swapped: false });
+    return new Response(
+      `liquen proxy: a credential rides plain HTTP only toward a host its grant names with ` +
+        `its port (${host} is not one)\n`,
+      { status: 403 },
+    );
+  }
   for (const [, v] of headers) {
     for (const { 0: handle } of v.matchAll(HANDLE_RE)) {
       if (real.has(handle)) continue;
-      const owner = deps.broker.resolve(handle)?.agentId;
-      if (caller !== undefined && owner !== undefined && owner !== caller) {
-        audit({ method: req.method, host, path: url.pathname, status: 403, agentId, swapped });
-        return new Response(`liquen proxy: this grant is ${owner}'s, not ${caller}'s\n`, {
-          status: 403,
-        });
-      }
-      agentId ??= owner;
+      agentId ??= deps.broker.resolve(handle)?.agentId;
       // the path judged is the one re-originated: `target` is built from it
       const token = await deps.broker.accessTokenFor(handle, host, url.pathname);
       if (!token) {
@@ -194,42 +202,38 @@ export async function proxyRequest(
 }
 
 export interface Proxy {
-  /** The loopback port `HTTPS_PROXY` points at. */
+  /** The loopback port `HTTPS_PROXY` and `HTTP_PROXY` point at. */
   port: number;
   /** The CA cert path `SSL_CERT_FILE` points at. */
   caPath: string;
   shutdown(): Promise<void>;
 }
 
-/** A unix socket the proxy accepts on for one agent: every connection over it is that
- *  agent's, so the agent is known before a byte is read (exec/bubble.ts). */
-export interface AgentSocket {
-  path: string;
-  agentId: string;
-}
+/** What the HTTP server meets a connection as: a tunnel the proxy decrypted for one
+ *  authority, or a client's plain-HTTP requests in absolute form. */
+type Feed = { authority: string } | { plain: true };
 
-/** A tunnel the proxy decrypts, as the HTTP server meets its requests. */
-interface Tunnel {
-  authority: string;
-  caller?: string;
-}
-
-/** Start the proxy on loopback. `port: 0` picks an ephemeral one (read `.port` back).
- *  `sockets` are unix sockets it also accepts on, the same protocol, one per agent. */
+/** Start the proxy on loopback. `port: 0` picks an ephemeral one (read `.port` back). */
 export function startProxy(
   deps: ProxyDeps,
-  opts: { port?: number; hostname?: string; sockets?: AgentSocket[] } = {},
+  opts: { port?: number; hostname?: string } = {},
 ): Proxy {
   const hostname = opts.hostname ?? "127.0.0.1";
-  const guard = deps.guard ?? addressGuard();
   const audit = deps.audit ?? defaultAudit;
   const open = new Set<Deno.Conn>();
-  // the decrypted side: an HTTP server no socket listens for, handed each tunnel it serves
-  const tunnels = new WeakMap<object, Tunnel>();
+  // the parsing side: an HTTP server no socket listens for, handed each connection it serves
+  const feeds = new WeakMap<object, Feed>();
   const server = http.createServer((req, res) => {
-    const tunnel = tunnels.get(req.socket);
-    if (tunnel) void serveDecrypted(tunnel, req, res, deps);
-    else res.writeHead(421).end();
+    const feed = feeds.get(req.socket);
+    if (!feed) res.writeHead(421).end();
+    else if ("authority" in feed) {
+      void serve(feed.authority, "https:", req.url ?? "/", req, res, deps);
+    } else void servePlain(req, res, deps);
+  });
+  server.on("upgrade", (req: http.IncomingMessage, socket: Duplex, early: Uint8Array) => {
+    const feed = feeds.get(socket);
+    if (feed && "plain" in feed) bridgeUpgrade(req, socket, early, audit);
+    else socket.destroy();
   });
   // A server that is not listening is closing, to the runtime: it destroys a connection
   // the moment its answer is out instead of keeping it alive for the client's next
@@ -240,22 +244,14 @@ export function startProxy(
 
   const listener = Deno.listen({ hostname, port: opts.port ?? 0 });
   const port = (listener.addr as Deno.NetAddr).port;
-  const listeners: [Deno.Listener, string?][] = [[listener]];
-  for (const { path, agentId } of opts.sockets ?? []) {
-    try {
-      Deno.removeSync(path); // a socket a stopped harness left behind
-    } catch { /* none */ }
-    listeners.push([Deno.listen({ transport: "unix", path }), agentId]);
-  }
 
-  const serve = () =>
-    Promise.all(listeners.map(async ([l, caller]) => {
-      for await (const conn of l) {
-        open.add(conn);
-        handleConn(conn, caller).catch(() => {}).finally(() => open.delete(conn));
-      }
-    }));
-  // a conn we can't tunnel gets an ANSWER that says why, and a close — never a silent hang
+  const accept = async () => {
+    for await (const conn of listener) {
+      open.add(conn);
+      handleConn(conn).catch(() => {}).finally(() => open.delete(conn));
+    }
+  };
+  // a conn we can't serve gets an ANSWER that says why, and a close — never a silent hang
   const deny = async (conn: Deno.Conn, status: number, reason: string): Promise<void> => {
     const phrase = reason.replace(/[^\x20-\x7e]/g, "?").slice(0, 200);
     const body = `liquen proxy: ${phrase}\n`;
@@ -269,28 +265,15 @@ export function startProxy(
       conn.close();
     } catch { /* already closed */ }
   };
-  const handleConn = async (conn: Deno.Conn, caller?: string): Promise<void> => {
-    const head = await readConnect(conn);
-    if (!head) return deny(conn, 405, "this proxy only tunnels: send CONNECT host:port");
+  const handleConn = async (conn: Deno.Conn): Promise<void> => {
+    const head = await readHead(conn);
+    if (!head) return deny(conn, 400, "send CONNECT host:port, or a request in absolute form");
+    if (head.authority === undefined) return feed(conn, head.early, { plain: true });
+    const authority = head.authority;
     const said = (status: number) =>
-      audit({
-        method: "CONNECT",
-        host: head.authority,
-        path: "",
-        status,
-        swapped: false,
-        agentId: caller,
-      });
-    const origin = originOf(head.authority);
-    let address: string;
-    try {
-      address = await guard.pick(origin.hostname);
-    } catch (err) {
-      const refused = err instanceof Refused;
-      said(refused ? 403 : 502);
-      return deny(conn, refused ? 403 : 502, err instanceof Error ? err.message : String(err));
-    }
-    if (deps.terminates?.(head.authority) ?? true) {
+      audit({ method: "CONNECT", host: authority, path: "", status, swapped: false });
+    const origin = originOf(authority);
+    if (deps.terminates?.(authority) ?? true) {
       let leaf: Leaf;
       try {
         leaf = await deps.ca.leafFor(origin.hostname);
@@ -299,14 +282,14 @@ export function startProxy(
         return deny(conn, 502, `no certificate can stand for ${origin.hostname}`);
       }
       await answer(conn);
-      return terminate(conn, head.early, leaf, { authority: head.authority, caller });
+      return feed(conn, head.early, { authority }, leaf);
     }
     let up: Deno.Conn;
     try {
-      up = await Deno.connect({ hostname: address, port: origin.port });
+      up = await Deno.connect(origin);
     } catch {
       said(502);
-      return deny(conn, 502, `${head.authority} did not answer`);
+      return deny(conn, 502, `${authority} did not answer`);
     }
     said(200);
     await answer(conn);
@@ -319,35 +302,41 @@ export function startProxy(
       up.readable.pipeTo(conn.writable).catch(() => {}),
     ]);
   };
-  // TLS server-side on the tunnel's own socket, the decrypted stream handed to the server:
-  // no decrypted byte crosses a socket another process could open
-  const terminate = (conn: Deno.Conn, early: Uint8Array, leaf: Leaf, tunnel: Tunnel) => {
+  // the connection handed to the server as a node socket, TLS run server-side on it first
+  // when it is a tunnel to decrypt: no decrypted byte crosses a socket another process
+  // could open
+  const feed = (conn: Deno.Conn, early: Uint8Array, as: Feed, leaf?: Leaf) => {
     const readable = early.length ? prefixed(early, conn.readable) : conn.readable;
     const raw = Duplex.fromWeb({
       readable: readable as unknown as WebStream,
       writable: conn.writable as unknown as WebSink,
     });
-    const decrypted = new tls.TLSSocket(raw, { isServer: true, cert: leaf.cert, key: leaf.key });
-    tunnels.set(decrypted, tunnel);
+    // the server calls a net socket's knobs on what it serves; a stream has none to turn
+    const socket = leaf
+      ? new tls.TLSSocket(raw, { isServer: true, cert: leaf.cert, key: leaf.key })
+      : Object.assign(raw, {
+        setTimeout: () => raw,
+        setNoDelay: () => raw,
+        setKeepAlive: () => raw,
+      });
+    feeds.set(socket, as);
     return new Promise<void>((resolve) => {
-      decrypted.on("error", () => decrypted.destroy());
-      decrypted.on("close", () => resolve());
-      server.emit("connection", decrypted);
+      socket.on("error", () => socket.destroy());
+      socket.on("close", () => resolve());
+      server.emit("connection", socket);
     });
   };
 
-  const running = serve();
+  const running = accept();
 
   return {
     port,
     caPath: deps.ca.caPath,
     async shutdown(): Promise<void> {
       serving = false;
-      for (const [l] of listeners) {
-        try {
-          l.close();
-        } catch { /* already closed */ }
-      }
+      try {
+        listener.close();
+      } catch { /* already closed */ }
       await running.catch(() => {});
       for (const conn of open) {
         try {
@@ -381,9 +370,28 @@ function prefixed(first: Uint8Array, rest: ReadableStream<Uint8Array>): Readable
   });
 }
 
-/** One decrypted request, as the HTTP server parsed it, through `proxyRequest` and back. */
-async function serveDecrypted(
-  tunnel: Tunnel,
+/** One plain-HTTP request: its absolute-form URL names the origin. */
+function servePlain(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  deps: ProxyDeps,
+): Promise<void> {
+  const url = URL.parse(req.url ?? "");
+  if (url?.protocol !== "http:") {
+    res.writeHead(400, { "content-type": "text/plain" }).end(
+      "liquen proxy: a plain-HTTP request names its origin (GET http://host/path); " +
+        "HTTPS comes as CONNECT host:port\n",
+    );
+    return Promise.resolve();
+  }
+  return serve(url.host, "http:", `${url.pathname}${url.search}`, req, res, deps);
+}
+
+/** One request, as the HTTP server parsed it, through `proxyRequest` and back. */
+async function serve(
+  authority: string,
+  scheme: "https:" | "http:",
+  path: string,
   req: http.IncomingMessage,
   res: http.ServerResponse,
   deps: ProxyDeps,
@@ -394,18 +402,16 @@ async function serveDecrypted(
   }
   const framed = req.headers["transfer-encoding"] !== undefined ||
     Number(req.headers["content-length"] ?? 0) > 0;
-  const request = new Request(`https://${tunnel.authority}${req.url ?? "/"}`, {
+  const request = new Request(`${scheme}//${authority}${path}`, {
     method: req.method,
     headers,
     ...(framed ? { body: Readable.toWeb(req) as ReadableStream<Uint8Array>, duplex: "half" } : {}),
   });
   let response: Response;
   try {
-    response = await proxyRequest(tunnel.authority, request, deps, tunnel.caller);
+    response = await proxyRequest(authority, request, deps);
   } catch {
-    response = new Response(`liquen proxy: ${tunnel.authority} did not answer\n`, {
-      status: 502,
-    });
+    response = new Response(`liquen proxy: ${authority} did not answer\n`, { status: 502 });
   }
   const out: Record<string, string | string[]> = {};
   for (const [k, v] of response.headers) if (k !== "set-cookie") out[k] = v;
@@ -416,35 +422,83 @@ async function serveDecrypted(
   Readable.fromWeb(response.body as unknown as WebStream).pipe(res);
 }
 
-/** The origin a dialed authority names: `host`, or `host:port` off 443. */
-function originOf(authority: string): { hostname: string; port: number } {
-  const m = authority.match(/^(.*?)(?::(\d+))?$/)!;
-  return { hostname: m[1], port: m[2] ? Number(m[2]) : 443 };
+/** A plain-HTTP request that upgrades, bridged to its origin: the request as it came, in
+ *  origin form, then the bytes both ways. It is audited as the dial, like a blind tunnel. */
+function bridgeUpgrade(
+  req: http.IncomingMessage,
+  socket: Duplex,
+  early: Uint8Array,
+  audit: (line: EgressAudit) => void,
+): void {
+  const url = URL.parse(req.url ?? "");
+  if (url?.protocol !== "http:") return void socket.destroy();
+  const said = (status: number) =>
+    audit({
+      method: req.method ?? "GET",
+      host: url.host,
+      path: url.pathname,
+      status,
+      swapped: false,
+    });
+  const up = net.connect({
+    host: url.hostname.replace(/^\[(.*)\]$/, "$1"),
+    port: Number(url.port || 80),
+  });
+  up.once("error", () => {
+    said(502);
+    socket.end(`HTTP/1.1 502 ${url.host} did not answer\r\nconnection: close\r\n\r\n`);
+  });
+  up.once("connect", () => {
+    said(101);
+    let head = `${req.method} ${url.pathname}${url.search} HTTP/${req.httpVersion}\r\n`;
+    for (let i = 0; i + 1 < req.rawHeaders.length; i += 2) {
+      if (/^proxy-/i.test(req.rawHeaders[i])) continue;
+      head += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
+    }
+    up.write(`${head}\r\n`);
+    if (early.length) up.write(early);
+    up.removeAllListeners("error");
+    up.on("error", () => socket.destroy());
+    socket.on("error", () => up.destroy());
+    up.on("close", () => socket.destroy());
+    socket.on("close", () => up.destroy());
+    socket.pipe(up);
+    up.pipe(socket);
+  });
 }
 
-/** Read the whole CONNECT head off a fresh tunnel conn (it may arrive in pieces): the
- *  dialed authority (`host`, or `host:port` off 443) plus any bytes past the head — an
- *  optimistic client's first tunnel bytes. null if the bytes aren't a CONNECT. */
-async function readConnect(
+/** The origin a dialed authority names: `host`, or `host:port` off 443; an IPv6 literal
+ *  without its brackets. */
+function originOf(authority: string): { hostname: string; port: number } {
+  const m = authority.match(/^(.*?)(?::(\d+))?$/)!;
+  return { hostname: m[1].replace(/^\[(.*)\]$/, "$1"), port: m[2] ? Number(m[2]) : 443 };
+}
+
+/** Read what opens a fresh conn (it may arrive in pieces). A CONNECT is read whole: the
+ *  dialed authority (`host`, or `host:port` off 443) plus any bytes past the head, an
+ *  optimistic client's first tunnel bytes. Anything else is a plain-HTTP request, handed
+ *  back as the bytes read so far. null if the conn closed, or sent no head in 4 KiB. */
+async function readHead(
   conn: Deno.Conn,
-): Promise<{ authority: string; early: Uint8Array } | null> {
+): Promise<{ authority?: string; early: Uint8Array } | null> {
   const buf = new Uint8Array(4096);
   let n = 0;
-  let end = -1;
-  while (end < 0) {
-    if (n === buf.length) return null; // no head in 4 KiB: nothing this proxy honors
+  while (true) {
+    if (n === buf.length) return null;
     const read = await conn.read(buf.subarray(n));
     if (read === null) return null;
     n += read;
-    end = headEnd(buf, n);
-    // bail on non-CONNECT bytes now — never wait on a terminator that will never come
     const line = new TextDecoder().decode(buf.subarray(0, Math.min(n, 8)));
-    if (end < 0 && !"CONNECT ".startsWith(line) && !line.startsWith("CONNECT ")) return null;
+    if (!"CONNECT ".startsWith(line) && !line.startsWith("CONNECT ")) {
+      return { early: buf.slice(0, n) };
+    }
+    const end = headEnd(buf, n);
+    if (end < 0) continue;
+    const m = new TextDecoder().decode(buf.subarray(0, end)).match(/^CONNECT (\S+?)(?::(\d+))? /);
+    if (!m) return null;
+    const authority = !m[2] || m[2] === "443" ? m[1] : `${m[1]}:${m[2]}`;
+    return { authority, early: buf.slice(end, n) };
   }
-  const m = new TextDecoder().decode(buf.subarray(0, end)).match(/^CONNECT (\S+?)(?::(\d+))? /);
-  if (!m) return null;
-  const authority = !m[2] || m[2] === "443" ? m[1] : `${m[1]}:${m[2]}`;
-  return { authority, early: buf.slice(end, n) };
 }
 
 /** The byte offset just past the head's `\r\n\r\n` terminator, or -1. */
@@ -510,6 +564,7 @@ if (import.meta.main) {
     const handle = broker.issue(key, grant?.agentId);
     console.error(`[proxy] on :${proxy.port} — fronting ${key}\n`);
     console.error(`export HTTPS_PROXY=http://127.0.0.1:${proxy.port}`);
+    console.error(`export HTTP_PROXY=http://127.0.0.1:${proxy.port}`);
     console.error(`export SSL_CERT_FILE=${proxy.caPath}`);
     console.error(`export ${varName}=${handle}`);
   });
