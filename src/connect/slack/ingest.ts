@@ -796,9 +796,6 @@ async function mapRoomLine(
   ctx: MapCtx,
 ): Promise<Draft<MessageEvent>[]> {
   if (!e.ts || !e.channel || !e.user) return [];
-  // the bot's own arrival is the adoption's to say (`adoptRoom`), once, in the mind: as a
-  // line of the room it would cross back in as somebody speaking, and wake the agent
-  if (e.subtype === "channel_join" && e.user === botOf(team, anchor)) return [];
   const via = boundUsers(authorizations);
   const person = async (id: string): Promise<RoomMember> => {
     const name = await names?.nameOf(team, id, via);

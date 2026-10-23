@@ -1279,7 +1279,7 @@ Deno.test("socket health: an app token Slack ended signs the rows out at once; i
   });
 });
 
-Deno.test("the bot met in a room twice at once (§4): Slack's event and the room's own line adopt it once, and the join wakes nobody", async () => {
+Deno.test("the bot met in a room twice at once (§4): Slack's event and the room's own line adopt it once", async () => {
   const { names } = fakeNames({ "T1:C9": "ventas", "T1:UBOT": "liquen", "T1:U7": "Sol" });
   const bot: ConnectionRow = {
     service: "slack",
@@ -1317,7 +1317,9 @@ Deno.test("the bot met in a room twice at once (§4): Slack's event and the room
     }),
   ];
   await Promise.all(both.map((req) => handler(req)));
-  // one adoption, said once in the mind — and no room line for the bot's own arrival
-  assertEquals(published.length, 1);
-  assertEquals(published[0].envelope.conversation.address, "mind@ventas");
+  // one adoption, said once in the mind; the room's own line of the join is an event like
+  // any other
+  const told = published.filter((e) => e.envelope.conversation.address === "mind@ventas");
+  assertEquals(told.length, 1);
+  assertEquals(published.filter((e) => e.envelope.conversation.address === "C9").length, 1);
 });
