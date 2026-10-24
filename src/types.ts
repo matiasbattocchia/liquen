@@ -518,7 +518,7 @@ export interface PermissionVerdict {
   behavior: PermissionBehavior;
   scope: PermissionScope;
   reason?: string; // on deny
-  /** The harness's own settlement (§9): nobody answered within the agent's `gateHours`,
+  /** The harness's own settlement (§9): nobody answered within `GATE_HOURS`,
    *  so the ask lapsed — a deny that says so, and the outcome the model reads tells it the
    *  call did not run and may be asked again. */
   lapsed?: true;

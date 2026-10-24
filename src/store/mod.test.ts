@@ -1,5 +1,5 @@
 /**
- * The store's address: what the catalog's `system.database` resolves to, and that the
+ * The store's address: what the catalog's `deployment.database` resolves to, and that the
  * SQLite address opens the files where every local process expects them.
  */
 

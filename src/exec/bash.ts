@@ -1012,7 +1012,7 @@ export async function installExecGround(
   if (user && openBubble) {
     throw new Error(
       `agent ${agentId}: a bubble runs as the harness's own user, and this harness drops to ` +
-        `${user.name}'s — system.sandbox "bwrap" is for a harness that is not root`,
+        `${user.name}'s — deployment.sandbox "bwrap" is for a harness that is not root`,
     );
   }
   // the folders the bubble binds exist before it opens

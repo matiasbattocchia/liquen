@@ -696,9 +696,6 @@ export interface AgentConfig extends TurnConfig, Wake {
    *  when a pile of unanswered messages is history rather than a mandate; from then on the
    *  count cap is what bounds the prompt. Older rows stay readable through `search` (§6). */
   since?: string;
-  /** How long an ask stands unanswered before it lapses (§9): main's sweep settles an older
-   *  card with a `lapsed` deny. null ⇒ an ask stands until someone answers it. */
-  gateHours?: number | null;
 }
 
 /** A tool outcome carrying ATTACHMENTS (§5 media): `files` are local paths the result

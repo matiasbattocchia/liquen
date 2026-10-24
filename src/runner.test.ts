@@ -18,7 +18,7 @@ const row: AgentRow = {
   model: "claude-x",
   effort: "low",
   name: "Ana",
-  settings: { maxTokens: 512, tools: ["send"], gateHours: null },
+  settings: { maxTokens: 512, tools: ["send"], sleepHours: null },
 };
 
 Deno.test("runner: the row is the config, the seams ride beside it, and no sandbox means no exec plane", async () => {
@@ -47,7 +47,7 @@ Deno.test("runner: the row is the config, the seams ride beside it, and no sandb
       name: "Ana",
       maxTokens: 512,
       tools: ["send"],
-      gateHours: null,
+      sleepHours: null,
       gate,
     });
     assertEquals(r.ports.transport, transport);

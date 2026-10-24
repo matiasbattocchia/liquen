@@ -82,8 +82,7 @@ export function agentsSuite(s: Substrate): void {
         tools: ["send", "bash"],
         rules: [{ tool: "send", action: "ask" as const }],
         since: "2026-09-25T00:00:00.000Z",
-        gateHours: null, // an ask stands until answered — a value, not an absence
-        sleepHours: null, // never sleeps
+        sleepHours: null, // never sleeps — a value, not an absence
         processors: ["audio"],
       };
       await log.syncAgents([{ agentId: "ana", mind: "mind@ana", model: "claude-x", settings }]);

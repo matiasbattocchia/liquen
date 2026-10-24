@@ -37,7 +37,6 @@ export interface AgentSettings {
   windowLimit?: number;
   /** The backlog floor, an instant (§5): decided once when the org came up. */
   since?: string;
-  gateHours?: number | null;
   engagedMinutes?: number;
   digestAfterMessages?: number;
   digestMinutes?: number;

@@ -16,13 +16,12 @@ import type { Log } from "./store/log.ts";
 import type { AlarmEvent, Draft, PermissionResponseEvent } from "./types.ts";
 import { reportSends } from "./late.ts";
 import { LOCAL_CONNECTION } from "./session.ts";
+import { GATE_HOURS } from "./config.ts";
 
-/** The two per-agent settings the clock reads: the zone a cron advances in, and how long
- *  its asks stand. `undefined` for an agent the clock does not know (a paused one, a row
- *  that is gone): its crons advance in UTC and its cards stand. */
-export type ClockSettings = (
-  agentId: string,
-) => { timezone?: string; gateHours?: number | null } | undefined;
+/** The per-agent setting the clock reads: the zone a cron advances in. `undefined` for an
+ *  agent the clock does not know (a paused one, a row that is gone): its crons advance in
+ *  UTC. */
+export type ClockSettings = (agentId: string) => { timezone?: string } | undefined;
 
 /** What one beat did: how many each pass settled, and which passes failed. A pass that
  *  threw counts nothing and names itself here; the others still ran. */
@@ -64,7 +63,7 @@ export async function tick(
     }
   };
   beat.fired = await pass("fire", () => fireDue(log, (id) => settings(id)?.timezone, now));
-  beat.lapsed = await pass("lapse", () => lapseGates(log, (id) => settings(id)?.gateHours, now));
+  beat.lapsed = await pass("lapse", () => lapseGates(log, now));
   beat.swept = await pass("sweep", () => log.sweep(new Date(now).toISOString()));
   // after the sweep: a row it just re-offered is not failed, and one past the ceiling is
   beat.reported = await pass("report", () => reportSends(log, now));
@@ -118,21 +117,19 @@ export async function fireDue(
   return fired;
 }
 
-/** An ask nobody answered lapses (§9): past its agent's `gateHours` the harness settles the
- *  card with a deny that says `lapsed` — a row like any verdict, so the anchor drops the
- *  line, a late `/y` is told the card was answered, and the outcome reaches the model by
- *  the errand every ruling takes (`act`), telling it the call did not run. Read off the
- *  store, not a window: a card stands open however much traffic has passed it. `hoursOf`
- *  is the agent's knob — null or unknown (a paused agent) ⇒ its cards stand. */
+/** An ask nobody answered lapses (§9): past `GATE_HOURS` the harness settles the card with
+ *  a deny that says `lapsed` — a row like any verdict, so the anchor drops the line, a late
+ *  `/y` is told the card was answered, and the outcome reaches the model by the errand
+ *  every ruling takes (`act`), telling it the call did not run. Read off the store, not a
+ *  window: a card stands open however much traffic has passed it. */
 export async function lapseGates(
   log: Pick<Log, "gates" | "publish">,
-  hoursOf: (agentId: string) => number | null | undefined,
   now: number = Date.now(),
 ): Promise<number> {
+  const hours = GATE_HOURS;
   let settled = 0;
   for (const card of await log.gates()) {
-    const hours = card.agent ? hoursOf(card.agent.id) : undefined;
-    if (hours == null || Date.parse(card.ts) > now - hours * 3_600_000) continue;
+    if (Date.parse(card.ts) > now - hours * 3_600_000) continue;
     // a card answered since the scan read it keeps its answer: the store stores no second
     // ruling (§9)
     const lapsed = await log.publish(

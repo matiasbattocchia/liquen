@@ -143,8 +143,8 @@ export async function start(
   // brings no catalog and runs on the local engine under its data root
   const store = storeAt(databaseOf(
     dir,
-    config.catalog?.system.database ?? null,
-    config.catalog?.system.docs ?? "files",
+    config.catalog?.deployment.database ?? null,
+    config.catalog?.deployment.docs ?? "files",
   ));
   const log = await store.log();
   const docs = await store.docs(); // the doc cascade, files or the table (§8, §9)
@@ -232,8 +232,8 @@ export async function start(
   // the exec plane (§9): one provider owns the proxy, the grounds and the shells; main
   // holds only the provider, and every session's exec, ambient and files come from it —
   // this machine's, bare or in bubbles, or the sandbox gateway's the catalog names
-  const bubble = catalog?.system.sandbox === "bwrap";
-  const remote = bubble ? null : catalog?.system.sandbox ?? null;
+  const bubble = catalog?.deployment.sandbox === "bwrap";
+  const remote = bubble ? null : catalog?.deployment.sandbox ?? null;
   const updating = new Set<Promise<void>>();
   const planeOptions = {
     agents: principals.map((p) => p.agentId),
@@ -254,25 +254,25 @@ export async function start(
     ? openCloudflareSandbox(dir, {
       url: remote,
       token: sandboxToken(),
-      sleepMinutes: catalog?.system.sandboxSleepMinutes,
+      sleepMinutes: catalog?.deployment.sandboxSleepMinutes,
       ...planeOptions,
     })
     : await openLocalSandbox(dir, {
       store,
       bubble,
-      mounts: catalog?.system.mounts,
+      mounts: catalog?.deployment.mounts,
       exports: Object.fromEntries(principals.map((p) => [p.agentId, p.settings?.export ?? []])),
       ...planeOptions,
     });
   if (!remote && !bubble && Deno.build.os === "linux" && principals.length) {
     console.error(
-      '[exec] the agents\' shells run bare, as you: system.sandbox "bwrap" gives each a ' +
+      '[exec] the agents\' shells run bare, as you: deployment.sandbox "bwrap" gives each a ' +
         "bubble of its own that sees its folder, the shared floor and the system",
     );
   }
-  for (const home of bubble ? partialToolHomes(catalog?.system.mounts ?? []) : []) {
+  for (const home of bubble ? partialToolHomes(catalog?.deployment.mounts ?? []) : []) {
     console.error(
-      `[exec] a bubble shows ${home} only by its PATH folders: system.mounts ` +
+      `[exec] a bubble shows ${home} only by its PATH folders: deployment.mounts ` +
         `["${home}"] shows it whole, so the tools there run`,
     );
   }
@@ -728,7 +728,6 @@ function rowOf(p: AgentConfig & Policy): AgentRow {
       rules: p.rules,
       windowLimit: p.windowLimit,
       since: p.since,
-      gateHours: p.gateHours,
       engagedMinutes: p.engagedMinutes,
       digestAfterMessages: p.digestAfterMessages,
       digestMinutes: p.digestMinutes,
@@ -799,8 +798,6 @@ async function compileRoster(
         digestMinutes: cfg.digestMinutes ?? org.digestMinutes,
         // null survives the funnel: it means "never sleeps", not "unset" (Wake, §2)
         sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.sleepHours,
-        // null survives too: an ask that stands until answered
-        gateHours: cfg.gateHours !== undefined ? cfg.gateHours : org.gateHours,
         processors,
         // the system half funnels too — org-wide, no per-agent seat (harness machinery)
         windowLimit: catalog.system.windowLimit,
@@ -819,7 +816,7 @@ async function compileRoster(
 function sandboxToken(): string {
   const token = Deno.env.get("SANDBOX_API_KEY");
   if (!token) {
-    throw new Error("system.sandbox names a gateway: SANDBOX_API_KEY in .env holds its token");
+    throw new Error("deployment.sandbox names a gateway: SANDBOX_API_KEY in .env holds its token");
   }
   return token;
 }

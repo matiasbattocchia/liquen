@@ -877,7 +877,7 @@ and a principal's `/y` to a card is read where it enters the mind, below.
     draft is — and its writer says so: the door and the mirror refuse the answer as
     already given, the `cancel` tool reports the card answered, the lapse sweep counts it
     as not lapsed.
-  - **An ask nobody answers lapses** (`gateHours`, per agent; null ⇒ it stands). Past it,
+  - **An ask nobody answers lapses**, a day after it was asked (`GATE_HOURS`). Past it,
     main's tick settles the card with the harness's own deny, marked `lapsed` and carrying
     the hours — a row like any verdict, so the anchor drops the line, a late `/y` is told
     the card was answered, and the outcome reaches the model by the errand every ruling
@@ -2178,8 +2178,8 @@ A row is a doc as a file is: its `text` is the whole document, and `kind`
 substrates, and a row with no frontmatter is likewise not in the index. The handle is
 `scope/name`; the owner is whoever is asking, so an agent names its own doc and its
 session's conversation doc the way it names a system one. Where the docs live is the
-catalog's `system.docs`: files under the data root, or the table of the database
-`system.database` names.
+catalog's `deployment.docs`: files under the data root, or the table of the database
+`deployment.database` names.
 
 Who may write a row is the substrate's rule — RLS on the table, unix ownership on files
 (§9) — never a column of the row. On the table it is one policy, the container's rule
@@ -2271,8 +2271,8 @@ names the text it replaces, and text that is no longer there matches nothing.
   a SandboxProvider). Exec-plane security = OS (Unix perms + mounts + egress), not tool gating.
 - **Background processes are bash calls that outlive their wait** — one tool for the
   foreground, the background and the watch, and no registry the agent has to drive.
-  - **The turn waits; the command doesn't have to.** A call is waited on up to its `wait`
-    (`system.bashWaitMs`, 120s). A command that ends inside it answers SYNC, as any tool
+  - **The turn waits; the command doesn't have to.** A call holds the turn in the
+    foreground up to its `wait` (`system.bashWaitMs`, 120s), then goes to the background. A command that ends inside it answers SYNC, as any tool
     does. One still running is never killed for it: the call answers ASYNC (§3) with what
     it printed so far and the file the rest goes to, and the command runs on as a **job**.
     `wait` is the agent's knob for how much it wants to see before going on — 0 for a
@@ -2824,7 +2824,7 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   serialize on SQLite's WAL lock — no central writer, no funnel.
 - **One opener** (`src/store/mod.ts`): every process of an org — main, the scheduler, each
   connector, the doors — reaches the log, the vault and the docs through `openStore(root)`,
-  which reads the catalog's `system.database` and `system.docs` and answers the store they
+  which reads the catalog's `deployment.database` and `deployment.docs` and answers the store they
   name; a process never learns which engine it got, and `liquen status` prints the same
   lines from either. Null is SQLite under `data/log`; a Postgres URL (its password in
   `PGPASSWORD`, `?schema=` for one schema of the database) is the adapter below. The docs
@@ -2897,7 +2897,7 @@ named for its service, and the address grammar (§9, `/<service>/ingest`,
 `forAgent(id).session(sid)` is a session's shell and file scope, and the egress proxy
 travels inside it because it exists for bash — the local provider starts it, a remote
 sandbox brings its own, and a host with no exec plane has neither. The local provider runs
-a shell bare, as the harness's user, or inside the agent's bubble (`system.sandbox:
+a shell bare, as the harness's user, or inside the agent's bubble (`deployment.sandbox:
 "bwrap"`, below). The remote provider is
 Cloudflare's (`openCloudflareSandbox`): one sandbox per agent behind a gateway Worker
 (`sandbox/cloudflare/`, the Sandbox SDK's bridge), and a session's shell is the bash
@@ -2906,7 +2906,7 @@ started in the container and waited on there, its files read back by a probe, `e
 the issued names, the cwd a `cd` — so the container keeps nothing of ours but files and
 the jobs that write them. The harness keeps each sandbox's life (`lease`): the agent's
 first bash call starts it, and it stays on while a call runs or a job is followed, and for
-`system.sandboxSleepMinutes` after the last of them ended. Only bash moves that clock. The
+`deployment.sandboxSleepMinutes` after the last of them ended. Only bash moves that clock. The
 ambient probe runs at each step while the sandbox is on and never while it is off, since a
 request is what starts a container; the first step past the window stops the container.
 The gateway holds the same window counted from any request, carried on every call and set
@@ -3129,7 +3129,7 @@ picks the knobs.
 
 ### Bubbles: the local shell, isolated
 
-`system.sandbox: "bwrap"` runs every agent's shells in a **bubble** of its own
+`deployment.sandbox: "bwrap"` runs every agent's shells in a **bubble** of its own
 (`src/exec/bubble.ts`): namespaces bubblewrap opens, held by their first process, the
 holder, which only waits. A call enters the bubble (`setsid nsenter …`), so it is still
 a process group the harness spawned, probes and kills, and its job's group is written from
@@ -3157,7 +3157,7 @@ the boot says so on Linux, once per run.
 - **What it asks of the machine**: Linux, bubblewrap and util-linux, and a harness that is
   not root (the per-agent users of a root harness are the other way to enforce the same
   classification). A tool installed under the user's home is visible by its PATH
-  directory alone; `system.mounts` shows more of the machine, read-only unless an entry
+  directory alone; `deployment.mounts` shows more of the machine, read-only unless an entry
   ends in `:rw`, never the org's folder, and the boot names a tool folder PATH reaches
   into that no mount shows whole (mise, nvm, uv).
 
@@ -3252,11 +3252,14 @@ Git is its history, a human is watching for all three, and boot COMPILES it — 
 roster into registry rows and
 homes, everything else funneled to the deepest function that needs it (main → xi → nu →
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
-the store's tables, never in the file. Five sections, split by AUDIENCE — `system` (machinery
-tuning, every deployment works on the defaults: bashWaitMs ·
-compactAt · keepRecent · windowLimit · debounceMs · database — where the
-store lives: null is SQLite in `data/log`, a Postgres URL is a schema of that database,
-its password in `PGPASSWORD`), `organization`
+the store's tables, never in the file. Its sections are split by AUDIENCE — `system`
+(machinery tuning, every deployment works on the defaults: bashWaitMs · compactAt ·
+keepRecent · windowLimit · debounceMs · prices), `deployment` (where the org's parts live,
+a ladder in which each remote value needs the one before it: database — null is SQLite in
+`data/log`, a Postgres URL is a schema of that database, its password in `PGPASSWORD` ·
+docs — files, or the table of that database · sandbox — this machine bare or in bubbles,
+or a gateway, which needs the docs in the table · mounts · sandboxSleepMinutes),
+`organization`
 (this deployment's identity: timezone · locale ·
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
 `organization.agents`, the defaults every agent inherits: model · effort · maxTokens · provider ·

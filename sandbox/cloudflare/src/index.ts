@@ -7,7 +7,7 @@
  * destroy. The sandbox id is main's choice — the agent id, base32-lowercased — and the
  * container behind it starts on the first call.
  *
- * A call may carry `x-sleep-after` (`10m`, `1h`: the org's `system.sandboxSleepMinutes`),
+ * A call may carry `x-sleep-after` (`10m`, `1h`: the org's `deployment.sandboxSleepMinutes`),
  * how long the sandbox lives after its last request: main stops it sooner by its own clock,
  * and this is the limit that holds when main is quiet. Each container the pool starts for a
  * sandbox id is a Durable Object of its own that begins at the SDK's default, so the value

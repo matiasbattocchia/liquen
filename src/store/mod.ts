@@ -2,8 +2,8 @@
  * store/mod.ts — the org's store, opened where the catalog says it is (DESIGN §9).
  *
  * Every process of an org — main, the scheduler, each connector, the setup doors — reaches
- * the log, the vault and the docs through `openStore(root)`: the catalog's `system.database`
- * names the engine, `system.docs` where the docs live, and the rest of the process never
+ * the log, the vault and the docs through `openStore(root)`: the catalog's `deployment.database`
+ * names the engine, `deployment.docs` where the docs live, and the rest of the process never
  * learns which it got. Null is SQLite in `data/log`, the embedded engine every deployment
  * starts on; a Postgres URL is a schema of that database, the same ports over a server
  * (`src/store/pg/`). The docs are files under the data root unless the catalog puts them
@@ -40,7 +40,7 @@ export interface Store {
   docs(): Promise<DocStore>;
 }
 
-/** The catalog's `system.database` and `system.docs` as an address: an engine, where its
+/** The catalog's `deployment.database` and `deployment.docs` as an address: an engine, where its
  *  rows live, and where the docs are. `dir` is the org's data root: the SQLite files are
  *  under it, and so are the docs when they are files. */
 export type Database =
@@ -91,5 +91,5 @@ export function storeAt(at: Database): Store {
 /** The store of the org at `root`: its catalog read, the address resolved. */
 export async function openStore(root: string): Promise<Store> {
   const catalog = await readConfig(root);
-  return storeAt(databaseOf(`${root}/data`, catalog.system.database, catalog.system.docs));
+  return storeAt(databaseOf(`${root}/data`, catalog.deployment.database, catalog.deployment.docs));
 }

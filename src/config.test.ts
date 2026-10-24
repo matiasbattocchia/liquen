@@ -520,17 +520,17 @@ Deno.test("organization.agents.mind: the org's default, an entry's override, and
   }
 });
 
-Deno.test("system.database: null or a Postgres URL without its password — the secret rides PGPASSWORD", async () => {
+Deno.test("deployment.database: null or a Postgres URL without its password — the secret rides PGPASSWORD", async () => {
   await withDir(async (root) => {
     const write = (database: unknown) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system: { database } }));
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ deployment: { database } }));
     await write("postgres://liquen@db.internal:5432/liquen?schema=acme");
     assertEquals(
-      (await readConfig(root)).system.database,
+      (await readConfig(root)).deployment.database,
       "postgres://liquen@db.internal:5432/liquen?schema=acme",
     );
     await write(null);
-    assertEquals((await readConfig(root)).system.database, null);
+    assertEquals((await readConfig(root)).deployment.database, null);
     await write("postgres://liquen:hunter2@db.internal:5432/liquen");
     await assertRejects(() => readConfig(root), Error, "PGPASSWORD");
     await write("mysql://liquen@db.internal/liquen");
@@ -540,59 +540,59 @@ Deno.test("system.database: null or a Postgres URL without its password — the 
   });
 });
 
-Deno.test("system.docs: files, or table when system.database names the database whose table it is", async () => {
+Deno.test("deployment.docs: files, or table when deployment.database names the database whose table it is", async () => {
   await withDir(async (root) => {
-    const write = (system: unknown) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system }));
+    const write = (deployment: unknown) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ deployment }));
     await write({});
-    assertEquals((await readConfig(root)).system.docs, "files");
+    assertEquals((await readConfig(root)).deployment.docs, "files");
     await write({ docs: "table", database: "postgres://liquen@db.internal:5432/liquen" });
-    assertEquals((await readConfig(root)).system.docs, "table");
+    assertEquals((await readConfig(root)).deployment.docs, "table");
     await write({ docs: "table" });
-    await assertRejects(() => readConfig(root), Error, "needs system.database");
+    await assertRejects(() => readConfig(root), Error, "needs deployment.database");
     await write({ docs: "rows" });
     await assertRejects(() => readConfig(root), Error, '"files" or "table"');
   });
 });
 
-Deno.test("system.sandbox: null, or a gateway's https URL when the docs are in the table", async () => {
+Deno.test("deployment.sandbox: null, or a gateway's https URL when the docs are in the table", async () => {
   await withDir(async (root) => {
     const write = (sandbox: unknown, docs = "table") =>
       Deno.writeTextFile(
         `${root}/config.jsonc`,
         JSON.stringify({
-          system: { sandbox, docs, database: "postgres://liquen@db.internal:5432/liquen" },
+          deployment: { sandbox, docs, database: "postgres://liquen@db.internal:5432/liquen" },
         }),
       );
     await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
-    assertEquals((await readConfig(root)).system.sandbox, null);
+    assertEquals((await readConfig(root)).deployment.sandbox, null);
     await write("https://liquen-sandbox.acme.workers.dev");
     assertEquals(
-      (await readConfig(root)).system.sandbox,
+      (await readConfig(root)).deployment.sandbox,
       "https://liquen-sandbox.acme.workers.dev",
     );
     await write("http://localhost:8799");
-    assertEquals((await readConfig(root)).system.sandbox, "http://localhost:8799");
+    assertEquals((await readConfig(root)).deployment.sandbox, "http://localhost:8799");
     await write("http://liquen-sandbox.acme.workers.dev");
     await assertRejects(() => readConfig(root), Error, "https URL");
     await write("https://key@liquen-sandbox.acme.workers.dev");
     await assertRejects(() => readConfig(root), Error, "SANDBOX_API_KEY");
     await write("https://liquen-sandbox.acme.workers.dev", "files");
-    await assertRejects(() => readConfig(root), Error, 'needs system.docs: "table"');
+    await assertRejects(() => readConfig(root), Error, 'needs deployment.docs: "table"');
   });
 });
 
-Deno.test("system.sandboxSleepMinutes: whole minutes, 10 unless said", async () => {
+Deno.test("deployment.sandboxSleepMinutes: whole minutes, 10 unless said", async () => {
   await withDir(async (root) => {
     const write = (sandboxSleepMinutes: unknown) =>
       Deno.writeTextFile(
         `${root}/config.jsonc`,
-        JSON.stringify({ system: { sandboxSleepMinutes } }),
+        JSON.stringify({ deployment: { sandboxSleepMinutes } }),
       );
     await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
-    assertEquals((await readConfig(root)).system.sandboxSleepMinutes, 10);
+    assertEquals((await readConfig(root)).deployment.sandboxSleepMinutes, 10);
     await write(60);
-    assertEquals((await readConfig(root)).system.sandboxSleepMinutes, 60);
+    assertEquals((await readConfig(root)).deployment.sandboxSleepMinutes, 60);
     for (const bad of [0, 1.5, "10m", null]) {
       await write(bad);
       await assertRejects(() => readConfig(root), Error, "sandboxSleepMinutes must be");
@@ -600,24 +600,44 @@ Deno.test("system.sandboxSleepMinutes: whole minutes, 10 unless said", async () 
   });
 });
 
-Deno.test("system.mounts: the bubble's view of the machine, checked at boot", async () => {
+Deno.test("deployment.mounts: the bubble's view of the machine, checked at boot", async () => {
   await withDir(async (root) => {
-    const write = (system: unknown) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system }));
+    const write = (section: string, body: unknown) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ [section]: body }));
     await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
-    assertEquals((await readConfig(root)).system.mounts, []);
+    assertEquals((await readConfig(root)).deployment.mounts, []);
     const mounts = ["~/.local/share/mise", "/opt/x", "~/code/repo:rw"];
-    await write({ mounts });
-    assertEquals((await readConfig(root)).system.mounts, mounts);
+    await write("deployment", { mounts });
+    assertEquals((await readConfig(root)).deployment.mounts, mounts);
     for (const bad of [["relative"], ["~user/x"], ["/opt/../etc"], "/opt", ["/opt:ro"]]) {
-      await write({ mounts: bad });
-      await assertRejects(() => readConfig(root), Error, "system.mounts must be");
+      await write("deployment", { mounts: bad });
+      await assertRejects(() => readConfig(root), Error, "deployment.mounts must be");
     }
     // the reach the proxy no longer judges is no knob
     for (const gone of [{ egressRefuses: [] }, { egressPorts: [443] }, { bubbleMounts: [] }]) {
-      await write(gone);
+      await write("system", gone);
       await assertRejects(() => readConfig(root), Error);
     }
+  });
+});
+
+Deno.test("deployment: where the parts live is its own section, and the machinery's is not", async () => {
+  await withDir(async (root) => {
+    const write = (body: unknown) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify(body));
+    for (const key of ["database", "docs", "sandbox", "mounts", "sandboxSleepMinutes"]) {
+      await write({ system: { [key]: null } });
+      await assertRejects(() => readConfig(root), Error, `unknown key "system.${key}"`);
+    }
+    await write({ deployment: { bashWaitMs: 1000 } });
+    await assertRejects(() => readConfig(root), Error, 'unknown key "deployment.bashWaitMs"');
+    // an ask lapses a day on, for every agent alike
+    await write({ organization: { agents: { gateHours: 48 } } });
+    await assertRejects(
+      () => readConfig(root),
+      Error,
+      'unknown key "organization.agents.gateHours"',
+    );
   });
 });
 

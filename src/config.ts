@@ -21,7 +21,9 @@
  *     view. A key left out takes the default defined HERE (the file may be sparse); an
  *     unknown key or section is a boot error — a typo must not run silently.
  *   · Placement is by audience. `system`: machinery tuning — every deployment works on the
- *     defaults. `organization`: this deployment's identity — the clock, the backlog, and
+ *     defaults. `deployment`: where the org's parts live — the log and the vault, the docs,
+ *     the agents' shells — a ladder in which each remote value needs the one before it.
+ *     `organization`: this deployment's identity — the clock, the backlog, and
  *     under `organization.agents` the defaults every agent inherits. `agents.<name>`: the
  *     roster — each entry overrides `organization.agents` key by key and may declare the
  *     handles a human knows the
@@ -76,11 +78,6 @@ export const DEFAULT_DIGEST_MINUTES = 15;
 // the world waits until morning and arrives as one digest. What still wakes is what always
 // did — the mind alias, and a conversation the agent is holding the floor in.
 export const DEFAULT_SLEEP_HOURS = "23-8";
-// An ask nobody answers is not open forever: past this many hours the harness settles it
-// as lapsed (§9), so a stale approval never runs yesterday's call, and the model is told
-// to ask again if the moment is still right. A day: the span a principal's phone is
-// away from them, at most, before the question itself has gone cold.
-export const DEFAULT_GATE_HOURS = 24;
 
 // system — harness machinery
 // The shutdown grace: how long a stop that was ASKED FOR waits for work already running —
@@ -91,7 +88,12 @@ export const DEFAULT_GATE_HOURS = 24;
 // raising it past an orchestrator's own kill deadline would quietly turn every graceful
 // stop into a hard one.
 export const STOP_TIMEOUT_MS = 5_000;
-export const DEFAULT_BASH_WAIT_MS = 120_000; // how long a turn waits on a bash call before answering it async
+// An ask nobody answers is not open forever: past this many hours the harness settles it
+// as lapsed (§9), so a stale approval never runs yesterday's call, and the model is told
+// to ask again if the moment is still right. A day: the span a principal's phone is
+// away from them, at most, before the question itself has gone cold.
+export const GATE_HOURS = 24;
+export const DEFAULT_BASH_WAIT_MS = 120_000; // how long a bash call holds the turn before going to the background
 // est. tokens of RAW EVENT JSON (`estTokens`, chars/4) — roughly 1.8x the prompt those
 // events render to, since the estimate counts ids, envelopes and the tool traffic the
 // closed region drops. It has to sit BELOW what a full window weighs or the count cap
@@ -147,7 +149,6 @@ export interface AgentDefaults {
   tools: string[] | null; // the tools offered to the model, by name; null ⇒ all of them
   rules: Rule[]; // permission policy as data (§9)
   export: string[]; // the harness's environment variables its shell inherits, by name
-  gateHours: number | null; // an unanswered ask lapses after this; null ⇒ stands until answered
   engagedMinutes: number; // attention (§2): how long the agent's own last word keeps
   digestAfterMessages: number; //   a conversation hot · the ambient pile that forces a
   digestMinutes: number; //   wake · the ambient look interval
@@ -189,12 +190,14 @@ export interface OrgConfig {
     keepRecent: number;
     windowLimit: number;
     debounceMs: number;
+    prices: Price[]; // the org's own price rows, over the package's list (`prices.ts`)
+  };
+  deployment: {
     database: string | null; // null ⇒ SQLite in data/log; a Postgres URL ⇒ that database
     docs: "files" | "table"; // where the docs live: files under data/, or the store's docs table
-    sandbox: string | null; // null ⇒ agents' shells on this machine; a URL ⇒ that gateway's
-    sandboxSleepMinutes: number; // a gateway sandbox's life after its last bash call
+    sandbox: string | null; // null ⇒ shells on this machine; "bwrap" ⇒ in bubbles; a URL ⇒ that gateway's
     mounts: string[]; // more of this machine a bubble shows, read-only unless `:rw`
-    prices: Price[]; // the org's own price rows, over the package's list (`prices.ts`)
+    sandboxSleepMinutes: number; // a gateway sandbox's life after its last bash call
   };
   organization: {
     timezone: string; // the ORG's clock — every stamp, cron and sleep span reads it (§5); TZ in every agent shell
@@ -261,9 +264,9 @@ const SYSTEM: Entry[] = [
   {
     key: "bashWaitMs",
     value: DEFAULT_BASH_WAIT_MS,
-    doc: "how long a turn waits on a bash call unless the model asks for another; one still " +
-      "running then is answered with what it printed so far, and runs on: its end is told " +
-      "when it comes",
+    doc: "how long a bash call holds the turn in the foreground before it goes to the " +
+      "background: the turn is answered with what the command printed so far, the command " +
+      "runs on, and its end is told when it comes; the model may give a call its own wait",
   },
   {
     key: "compactAt",
@@ -286,6 +289,17 @@ const SYSTEM: Entry[] = [
     value: DEFAULT_DEBOUNCE_MS,
     doc: "how long a world message waits for the rest of its burst before a turn runs",
   },
+  {
+    key: "prices",
+    value: [],
+    doc: "the org's own model prices, over the package's list: rows of { model, valid_since " +
+      "(YYYY-MM-DD), input, output, cache_read?, cache_write?, tiers? }, in USD per million " +
+      "tokens; a row in effect wins over the package's, and `liquen log spend` prices each " +
+      "call at the rate of its day",
+  },
+];
+
+const DEPLOYMENT: Entry[] = [
   {
     key: "database",
     value: null,
@@ -329,14 +343,6 @@ const SYSTEM: Entry[] = [
       "past it stops the container, or the gateway does that long after its last request " +
       "when the harness is quiet; its background jobs and workspace files go with it (the " +
       "agent is told)",
-  },
-  {
-    key: "prices",
-    value: [],
-    doc: "the org's own model prices, over the package's list: rows of { model, valid_since " +
-      "(YYYY-MM-DD), input, output, cache_read?, cache_write?, tiers? }, in USD per million " +
-      "tokens; a row in effect wins over the package's, and `liquen log spend` prices each " +
-      "call at the rate of its day",
   },
 ];
 
@@ -398,12 +404,6 @@ const AGENT: Entry[] = [
       "each bash call — what a tool needs from the machine it runs on, like DISPLAY for a " +
       "browser the principal watches; shells on this machine only. A name a secret goes " +
       "by (…_KEY, …_TOKEN, …_SECRET, …PASSWORD) is refused",
-  },
-  {
-    key: "gateHours",
-    value: DEFAULT_GATE_HOURS,
-    doc: "an ask nobody answers lapses after this many hours — settled as a refusal that " +
-      "says so, and the agent may ask again; null ⇒ it stands until someone answers",
   },
   {
     key: "engagedMinutes",
@@ -469,6 +469,8 @@ const EDGE: Entry[] = [
 
 const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
+  deployment: "where the org's parts live — the log and the vault, the docs, the agents' " +
+    "shells; each remote value needs the one before it",
   organization: "this deployment's identity — the clock, the backlog, and every agent's defaults",
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
   edge: "the org's one door — the address the world dials, the one port the org binds, " +
@@ -491,6 +493,7 @@ function fromEntries(entries: Entry[]): Record<string, unknown> {
 function defaults(): OrgConfig {
   return {
     system: fromEntries(SYSTEM),
+    deployment: fromEntries(DEPLOYMENT),
     organization: { ...fromEntries(ORG), agents: fromEntries(AGENT) },
     processors: fromEntries(PROCESSORS),
     edge: fromEntries(EDGE),
@@ -598,6 +601,12 @@ export async function readConfig(root: string): Promise<OrgConfig> {
   const { agents: agentsGiven, ...orgPlain } = orgGiven;
   const cfg = {
     system: mergeSection(asObject(found.system, "system"), SYSTEM, path, "system"),
+    deployment: mergeSection(
+      asObject(found.deployment, "deployment"),
+      DEPLOYMENT,
+      path,
+      "deployment",
+    ),
     organization: {
       ...mergeSection(orgPlain, ORG, path, "organization"),
       agents: mergeSection(
@@ -725,6 +734,9 @@ export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string
   };
   lines.push(`  // ${SECTION_DOCS.system}`, `  "system": {`);
   emit("    ", SYSTEM, cfg.system as unknown as Record<string, unknown>);
+  lines.push("  },");
+  lines.push(`  // ${SECTION_DOCS.deployment}`, `  "deployment": {`);
+  emit("    ", DEPLOYMENT, cfg.deployment as unknown as Record<string, unknown>);
   lines.push("  },");
   lines.push(`  // ${SECTION_DOCS.organization}`, `  "organization": {`);
   emit("    ", ORG, cfg.organization as unknown as Record<string, unknown>, ",");
@@ -1070,31 +1082,32 @@ function validateOrg(cfg: OrgConfig, path: string): void {
         `${JSON.stringify(cfg.processors.audio)})`,
     );
   }
-  const database = checkDatabase(cfg.system.database);
+  const where = cfg.deployment;
+  const database = checkDatabase(where.database);
   if (database) {
     throw new Error(
-      `${path}: system.database ${database} (got ${JSON.stringify(cfg.system.database)})`,
+      `${path}: deployment.database ${database} (got ${JSON.stringify(where.database)})`,
     );
   }
-  const docs = checkDocs(cfg.system.docs, cfg.system.database);
+  const docs = checkDocs(where.docs, where.database);
   if (docs) {
-    throw new Error(`${path}: system.docs ${docs} (got ${JSON.stringify(cfg.system.docs)})`);
+    throw new Error(`${path}: deployment.docs ${docs} (got ${JSON.stringify(where.docs)})`);
   }
-  const sandbox = checkSandbox(cfg.system.sandbox, cfg.system.docs);
+  const sandbox = checkSandbox(where.sandbox, where.docs);
   if (sandbox) {
     throw new Error(
-      `${path}: system.sandbox ${sandbox} (got ${JSON.stringify(cfg.system.sandbox)})`,
+      `${path}: deployment.sandbox ${sandbox} (got ${JSON.stringify(where.sandbox)})`,
     );
   }
-  const sleep = cfg.system.sandboxSleepMinutes;
+  const sleep = where.sandboxSleepMinutes;
   if (!Number.isInteger(sleep) || sleep < 1) {
     throw new Error(
-      `${path}: system.sandboxSleepMinutes must be a whole number of minutes, 1 or more ` +
+      `${path}: deployment.sandboxSleepMinutes must be a whole number of minutes, 1 or more ` +
         `(got ${JSON.stringify(sleep)})`,
     );
   }
-  const mounts = checkMounts(cfg.system.mounts);
-  if (mounts) throw new Error(`${path}: system.mounts ${mounts}`);
+  const mounts = checkMounts(where.mounts);
+  if (mounts) throw new Error(`${path}: deployment.mounts ${mounts}`);
   const publicUrl = checkPublicUrl(cfg.edge.publicUrl);
   if (publicUrl) {
     throw new Error(
@@ -1141,15 +1154,15 @@ export function checkPublicUrl(v: unknown): string | null {
   return null;
 }
 
-/** What `system.docs` may hold: `files`, or `table` when `system.database` names the
+/** What `deployment.docs` may hold: `files`, or `table` when `deployment.database` names the
  *  Postgres database whose table it is. A complaint, or null when the value is fine. */
 export function checkDocs(v: unknown, database: unknown): string | null {
   if (v === "files") return null;
   if (v !== "table") return 'must be "files" or "table"';
-  return database === null ? "table needs system.database to name a Postgres database" : null;
+  return database === null ? "table needs deployment.database to name a Postgres database" : null;
 }
 
-/** What `system.sandbox` may hold: null, `"bwrap"`, or the https URL of a sandbox gateway —
+/** What `deployment.sandbox` may hold: null, `"bwrap"`, or the https URL of a sandbox gateway —
  *  plain http only toward this machine, where `wrangler dev` serves one — when the docs are
  *  in the table. A complaint, or null when the value is fine. */
 export function checkSandbox(v: unknown, docs: unknown): string | null {
@@ -1170,10 +1183,12 @@ export function checkSandbox(v: unknown, docs: unknown): string | null {
   if (url.username || url.password) {
     return "must not carry a credential — SANDBOX_API_KEY in .env holds it";
   }
-  return docs === "table" ? null : 'needs system.docs: "table" — a sandbox cannot reach files here';
+  return docs === "table"
+    ? null
+    : 'needs deployment.docs: "table" — a sandbox cannot reach files here';
 }
 
-/** What `system.mounts` may hold: absolute paths, or paths under `~/`, each perhaps ending
+/** What `deployment.mounts` may hold: absolute paths, or paths under `~/`, each perhaps ending
  *  in `:rw`. A complaint, or null when fine. Whether one touches the org's folder is the
  *  bubble's to say. */
 export function checkMounts(v: unknown): string | null {
@@ -1189,7 +1204,7 @@ export function checkMounts(v: unknown): string | null {
   return bad === undefined ? null : `${shape}: ${JSON.stringify(bad)} is not one`;
 }
 
-/** What `system.database` may hold: null, or a Postgres URL naming the user, host and
+/** What `deployment.database` may hold: null, or a Postgres URL naming the user, host and
  *  database — its password is a secret, so it rides `PGPASSWORD`, and the file stays a
  *  declaration git can hold. A complaint, or null when the value is fine. */
 export function checkDatabase(v: unknown): string | null {
@@ -1296,7 +1311,6 @@ function validateAgent(a: Partial<AgentDefaults>, path: string): void {
       ["engagedMinutes", a.engagedMinutes],
       ["digestAfterMessages", a.digestAfterMessages],
       ["digestMinutes", a.digestMinutes],
-      ["gateHours", a.gateHours],
     ] as const
   ) {
     if (v != null && !(v > 0)) {

@@ -5908,6 +5908,23 @@ Decided with the user: a room between agents is the org talking to itself.
   the prompt's connection clusters). One constant, `LOCAL_CONNECTION`. The live orgs'
   rows were rewritten by hand.
 
+### Where the parts live is a section, and an ask lapses a day on (2026-10-24) — LANDED
+
+Decided with the user, from the lines parked on 2026-09-28.
+
+- **`deployment` is its own section**: `database`, `docs`, `sandbox`, `mounts` and
+  `sandboxSleepMinutes`, out of `system`. They form a ladder, each remote value needing
+  the one before it (a docs table needs Postgres, a gateway needs the docs table), and they
+  say where the org runs rather than how its machinery is tuned. A section, not one mode
+  knob: the user wanted each rung named. Any of them under `system` is an unknown key.
+- **`gateHours` is `GATE_HOURS`**, a day, for every agent alike. An agent the clock does
+  not know (a paused one) now has its asks lapse too, where before they stood.
+- **`bashWaitMs` says what it is**: how long a call holds the turn in the foreground before
+  it goes to the background.
+- The orgs on this machine moved with it (`new`, `vibes`, `sole-bot`, and turtle's template
+  and its `sync.ts`). `sole-bot` still named `system.bashTimeoutMs`, which no release reads,
+  and was failing at boot on it; it says `bashWaitMs` now.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

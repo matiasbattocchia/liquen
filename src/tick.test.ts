@@ -57,7 +57,7 @@ Deno.test("a beat: the due wake is an alarm in the arming session's room, the ol
       conversation: "mind@a1",
     });
     await log.publish([card("old", at(30, now)), card("fresh", at(1, now))]);
-    const settings = (id: string) => id === "a1" ? { gateHours: 24 } : undefined;
+    const settings = () => undefined;
     assertEquals(await tick(log, settings, now), {
       fired: 1,
       lapsed: 1,
@@ -245,7 +245,7 @@ Deno.test("a failing pass is reported in the beat, and the passes after it still
     const now = Date.now();
     await log.publish([card("old", at(30, now))]);
     const broken = { ...log, due: () => Promise.reject(new Error("timers table gone")) };
-    const beat = await tick(broken, () => ({ gateHours: 24 }), now);
+    const beat = await tick(broken, () => undefined, now);
     assertEquals(beat.fired, 0);
     assertEquals(beat.lapsed, 1); // the lapse pass ran after the fire pass failed
     assertEquals(beat.failed.map((f) => f.pass), ["fire"]);
@@ -256,16 +256,15 @@ Deno.test("a failing pass is reported in the beat, and the passes after it still
   }
 });
 
-Deno.test("an ask nobody answers lapses (§9): past gateHours the harness settles it as lapsed", async () => {
+Deno.test("an ask nobody answers lapses (§9): a day on, the harness settles it as lapsed", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
   try {
-    await log.publish([card("old", at(30)), card("fresh", at(1)), card("stands", at(30), "a2")]);
-    const hours = (id: string) => id === "a1" ? 24 : null; // a2's asks stand until answered
-    assertEquals(await lapseGates(log, hours), 1);
-    assertEquals((await log.gates()).map((c) => c.payload.ref_id), ["fresh", "stands"]);
-    const settled = (await log.read({ types: ["permission_response"] })).at(-1)!;
-    assertEquals(settled.payload?.ref_id, "old");
+    await log.publish([card("old", at(30)), card("fresh", at(1)), card("peer's", at(30), "a2")]);
+    assertEquals(await lapseGates(log), 2);
+    assertEquals((await log.gates()).map((c) => c.payload.ref_id), ["fresh"]);
+    const settled = (await log.read({ types: ["permission_response"] }))
+      .find((e) => e.payload?.ref_id === "old")!;
     assertEquals(settled.agent, undefined); // the harness's own word (§3)
     assertEquals(settled.parts?.[0].type === "data" && settled.parts[0].data, {
       behavior: "deny",
@@ -273,7 +272,7 @@ Deno.test("an ask nobody answers lapses (§9): past gateHours the harness settle
       lapsed: true,
       reason: "unanswered for 24h",
     });
-    assertEquals(await lapseGates(log, hours), 0); // settled once
+    assertEquals(await lapseGates(log), 0); // settled once
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

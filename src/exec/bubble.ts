@@ -1,5 +1,5 @@
 /**
- * exec/bubble.ts — an agent's shells inside bubblewrap (DESIGN §9, `system.sandbox: "bwrap"`).
+ * exec/bubble.ts — an agent's shells inside bubblewrap (DESIGN §9, `deployment.sandbox: "bwrap"`).
  *
  * A bubble is a set of namespaces with one VIEW of the filesystem, held open by its first
  * process, the holder, which only waits. A call enters it — `setsid nsenter … bash -c` — so
@@ -17,7 +17,7 @@
  * over it again — the data root emptied and refilled, the org's .env unreadable — so standing
  * in the org's own folder shows its code and none of its state.
  *
- * The org may show more of the machine (`system.mounts`), read-only unless an entry says
+ * The org may show more of the machine (`deployment.mounts`), read-only unless an entry says
  * `:rw`: the folders a tool installed in the user's home runs on beside its PATH folder, a
  * repository a coding agent works in.
  *
@@ -46,7 +46,7 @@ export interface BubbleOptions {
   /** The org's data root. */
   dir: string;
   agentId: string;
-  /** The `system.mounts` knob: more of the machine the bubble shows, each read-only unless
+  /** The `deployment.mounts` knob: more of the machine the bubble shows, each read-only unless
    *  it ends in `:rw`. */
   mounts?: string[];
 }
@@ -85,7 +85,7 @@ const expand = (path: string) =>
     ? `${(Deno.env.get("HOME") ?? "").replace(/\/+$/, "")}${path.slice(1)}`
     : path;
 
-/** A `system.mounts` entry: its path, expanded, and whether the bubble may write there. */
+/** A `deployment.mounts` entry: its path, expanded, and whether the bubble may write there. */
 export function mountOf(entry: string): { path: string; mode: "rw" | "ro" } {
   const rw = entry.endsWith(":rw");
   return { path: expand(rw ? entry.slice(0, -3) : entry), mode: rw ? "rw" : "ro" };
@@ -194,7 +194,7 @@ export async function openBubble(
   for (const { path: m } of shown) {
     if (under(root, m) || under(m, root)) {
       throw new Error(
-        `system.mounts: ${m} ${under(root, m) ? "holds" : "lies in"} the org's ` +
+        `deployment.mounts: ${m} ${under(root, m) ? "holds" : "lies in"} the org's ` +
           "folder, which a bubble shows by the data classification alone",
       );
     }
@@ -356,7 +356,7 @@ async function startHolder(view: string[], log: string, what: string): Promise<O
     throw new Error(
       `bubble for ${what}: cannot run setsid (${
         err instanceof Error ? err.message : String(err)
-      }) — system.sandbox "bwrap" needs util-linux`,
+      }) — deployment.sandbox "bwrap" needs util-linux`,
     );
   }
   child.unref();
@@ -379,7 +379,7 @@ async function startHolder(view: string[], log: string, what: string): Promise<O
       .join("\n").trim().split("\n").slice(-5).join("\n");
     throw new Error(
       `bubble for ${what} did not open: ${said || "no word from it"} — ` +
-        `system.sandbox "bwrap" needs bubblewrap and util-linux`,
+        `deployment.sandbox "bwrap" needs bubblewrap and util-linux`,
     );
   }
   // bwrap → the bubble's init → the holder: the holder stands in every namespace the

@@ -85,9 +85,9 @@ export interface LocalSandboxOptions {
   /** Where every shell tells what its calls do after their answers (late.ts), with the
    *  session whose shell it is. */
   tell?: (u: SessionUpdate) => void;
-  /** Each agent's shells run in its bubble (exec/bubble.ts): `system.sandbox: "bwrap"`. */
+  /** Each agent's shells run in its bubble (exec/bubble.ts): `deployment.sandbox: "bwrap"`. */
   bubble?: boolean;
-  /** The `system.mounts` knob: more of the machine a bubble shows. */
+  /** The `deployment.mounts` knob: more of the machine a bubble shows. */
   mounts?: string[];
 }
 
@@ -170,7 +170,7 @@ export async function openLocalSandbox(
 }
 
 export interface CloudflareSandboxOptions {
-  /** The gateway's URL (`system.sandbox`). */
+  /** The gateway's URL (`deployment.sandbox`). */
   url: string;
   /** Its bearer token (`SANDBOX_API_KEY`). */
   token: string;
@@ -179,7 +179,7 @@ export interface CloudflareSandboxOptions {
   locale?: string | null;
   timezone?: string | null;
   bashWaitMs?: number;
-  /** The `system.sandboxSleepMinutes` knob: a sandbox's life after its last bash call. */
+  /** The `deployment.sandboxSleepMinutes` knob: a sandbox's life after its last bash call. */
   sleepMinutes?: number;
   /** Where every shell tells what its calls do after their answers (late.ts). */
   tell?: (u: SessionUpdate) => void;
