@@ -61,15 +61,15 @@ export function connectionsSuite(s: Substrate): void {
     const log = await store.open();
     const ops = {
       service: "local",
-      connection: "agent",
+      connection: "default",
       address: "0192abc",
       name: "ops",
       kind: "group" as const,
     };
     try {
       await log.createConversation(ops);
-      assertEquals(await log.conversation("local", "agent", "0192abc"), ops);
-      assertEquals(await log.conversation("local", "agent", "nope"), null);
+      assertEquals(await log.conversation("local", "default", "0192abc"), ops);
+      assertEquals(await log.conversation("local", "default", "nope"), null);
       // a local name is one room's: the same name at another address is refused
       await assertRejects(
         () => log.createConversation({ ...ops, address: "0192def" }),
@@ -82,21 +82,21 @@ export function connectionsSuite(s: Substrate): void {
       await log.upsertMemberships([
         {
           service: "local",
-          connection: "agent",
+          connection: "default",
           conversation: "0192abc",
           agentId: "bo",
           sessionId: "mind",
         },
         {
           service: "local",
-          connection: "agent",
+          connection: "default",
           conversation: "0192abc",
           agentId: "ana",
           sessionId: "build",
         },
         {
           service: "local",
-          connection: "agent",
+          connection: "default",
           conversation: "0192abc",
           agentId: "cy",
           sessionId: "mind",
@@ -105,30 +105,30 @@ export function connectionsSuite(s: Substrate): void {
       await log.deleteMemberships([
         {
           service: "local",
-          connection: "agent",
+          connection: "default",
           conversation: "0192abc",
           agentId: "cy",
           sessionId: "mind",
         },
       ]);
-      assertEquals(await log.membersOf("local", "agent", "0192abc"), [
+      assertEquals(await log.membersOf("local", "default", "0192abc"), [
         { agentId: "ana", sessionId: "build" },
         { agentId: "bo", sessionId: "mind" },
       ]);
-      assertEquals(await log.membersOf("local", "agent", "0192ghi"), []);
+      assertEquals(await log.membersOf("local", "default", "0192ghi"), []);
 
       // a rename keeps the kind, and a taken name is refused the same way
-      await log.renameConversation("local", "agent", "0192abc", "ops-q4");
-      assertEquals((await log.conversation("local", "agent", "0192abc"))?.name, "ops-q4");
+      await log.renameConversation("local", "default", "0192abc", "ops-q4");
+      assertEquals((await log.conversation("local", "default", "0192abc"))?.name, "ops-q4");
       await assertRejects(
-        () => log.renameConversation("local", "agent", "0192abc", "#all"),
+        () => log.renameConversation("local", "default", "0192abc", "#all"),
         Error,
         'a room named "#all" already exists',
       );
       // a closed room keeps its row and frees its name
-      await log.closeConversation("local", "agent", "0192ghi");
+      await log.closeConversation("local", "default", "0192ghi");
       assertEquals((await log.conversations()).map((r) => r.name), ["ops-q4"]);
-      assertEquals((await log.conversation("local", "agent", "0192ghi"))?.name, "#all");
+      assertEquals((await log.conversation("local", "default", "0192ghi"))?.name, "#all");
       await log.createConversation({ ...ops, address: "0192jkl", name: "#all", kind: "channel" });
     } finally {
       await log.close();

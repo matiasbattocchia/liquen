@@ -28,7 +28,7 @@ import type {
 import type { DocEntry } from "./store/docs.ts";
 import type { MediaBlock } from "./store/media.ts";
 import { newId } from "./store/id.ts";
-import { sessionAddress } from "./session.ts";
+import { LOCAL_CONNECTION, sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
 import {
   anchorText,
@@ -155,7 +155,7 @@ function turnOf(input: TurnInput, transport: ModelTransport) {
   // conversation the session speaks in (§4) — the internal ones are simply not delivered.
   const here = {
     service: "local" as const,
-    connection_address: "agent",
+    connection_address: LOCAL_CONNECTION,
     conversation: { address: session.conversation },
   };
 

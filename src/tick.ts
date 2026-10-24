@@ -15,6 +15,7 @@
 import type { Log } from "./store/log.ts";
 import type { AlarmEvent, Draft, PermissionResponseEvent } from "./types.ts";
 import { reportSends } from "./late.ts";
+import { LOCAL_CONNECTION } from "./session.ts";
 
 /** The two per-agent settings the clock reads: the zone a cron advances in, and how long
  *  its asks stand. `undefined` for an agent the clock does not know (a paused one, a row
@@ -96,7 +97,7 @@ export async function fireDue(
         payload: { ...(t.refId ? { ref_id: t.refId } : {}) },
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: LOCAL_CONNECTION,
           conversation: { address: t.conversation },
         },
         extra: {

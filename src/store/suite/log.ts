@@ -534,7 +534,7 @@ export function logSuite(s: Substrate): void {
         agent: { id: "a1", session_id },
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: "default",
           conversation: { address: "mind@a1" },
         },
         payload: { turn_id: "t1", ref_id: "u1" },

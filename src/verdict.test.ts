@@ -87,7 +87,11 @@ const card = (id: string, use: string): PermissionRequestEvent => ({
   ts: "2026-10-07T12:00:00Z",
   type: "permission_request",
   payload: { ref_id: use },
-  envelope: { service: "local", connection_address: "agent", conversation: { address: "mind@a" } },
+  envelope: {
+    service: "local",
+    connection_address: "default",
+    conversation: { address: "mind@a" },
+  },
   parts: [{
     type: "data",
     kind: "permission_request",
@@ -174,7 +178,7 @@ Deno.test("answerRows: one settlement per card, the line on the first and nowher
       agent: { id: "a", session_id: "mind" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@a" },
         sender: { address: "matias", name: "matias" },
       },
@@ -201,7 +205,7 @@ Deno.test("settle: the line rides the first card the store keeps — one lost to
     agent: { id: "a", session_id: "mind" },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@a" },
     },
   } as const;

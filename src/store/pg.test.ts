@@ -102,7 +102,10 @@ if (url === undefined) {
   Deno.test("routed is the routing function: the session a connection's traffic belongs to", async () => {
     await withSchema(async (sql) => {
       for (
-        const [service, connection] of [["whatsapp", "549"], ["slack", "T1:U7"], ["local", "agent"]]
+        const [service, connection] of [["whatsapp", "549"], ["slack", "T1:U7"], [
+          "local",
+          "default",
+        ]]
       ) {
         assertEquals(
           await one(sql, "SELECT routed($1::text, $2::text) AS v", [service, connection]),

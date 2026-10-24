@@ -30,7 +30,7 @@
  *   - **HOW OFTEN** — once per kind per turn.
  */
 
-import { MIND, sessionAddress } from "../session.ts";
+import { LOCAL_CONNECTION, MIND, sessionAddress } from "../session.ts";
 import type { AliasRow } from "../store/connections.ts";
 import type { About, Delta, DeltaEvent, DeltaKind, Draft } from "../types.ts";
 
@@ -126,7 +126,7 @@ function factOf(agentId: string, kind: DeltaKind, ts: string): Draft<DeltaEvent>
     agent: { id: agentId, session_id: MIND },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: LOCAL_CONNECTION,
       conversation: { address: sessionAddress(agentId, MIND) },
     },
     parts: [{ type: "data", kind: "delta", data: { kind } }],

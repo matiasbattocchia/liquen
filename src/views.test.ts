@@ -22,7 +22,7 @@ import type { Turn } from "./turns.ts";
 const self = { id: "ana", session_id: "mind" };
 const room = {
   service: "local" as const,
-  connection_address: "agent",
+  connection_address: "default",
   conversation: { address: "mind@ana" },
 };
 

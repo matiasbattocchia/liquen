@@ -28,6 +28,10 @@ import type { AgentId, SessionId } from "./types.ts";
  *  address position means the agent, which canonicalizes to this session. */
 export const MIND: SessionId = "mind";
 
+/** The local service's one account: every local envelope rides it, the sessions' rooms and
+ *  the rooms between agents alike. */
+export const LOCAL_CONNECTION = "default";
+
 /** A session or agent NAME: usable as an address segment and a path segment. The same
  *  shape config enforces on agent names — what `@` and `:` are reserved for is exactly
  *  what this keeps them out of. */

@@ -15,7 +15,7 @@
 import type { Draft, Event, EventId, ToolResultEvent, ToolUseEvent } from "./types.ts";
 import type { CallRef } from "./xi.ts";
 import type { Log } from "./store/log.ts";
-import { MIND, sessionAddress } from "./session.ts";
+import { LOCAL_CONNECTION, MIND, sessionAddress } from "./session.ts";
 import { describeCall, nameResolver } from "./describe.ts";
 import type { SessionUpdate } from "./sandbox.ts";
 import { RETRY_BACKOFF_MS } from "./store/sweep.ts";
@@ -48,7 +48,7 @@ export function updateDraft(u: Update, now: string): Draft<ToolResultEvent> {
     agent: { id: u.agentId, session_id: u.sessionId },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: LOCAL_CONNECTION,
       conversation: { address: sessionAddress(u.agentId, u.sessionId) },
     },
     parts: [{

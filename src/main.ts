@@ -34,7 +34,7 @@
 
 import { type AgentConfig, type Decision, OWN_TOOLS, relevant, xi, type XiPorts } from "./xi.ts";
 import { ownComplex } from "./render.ts";
-import { MIND, sessionAddress } from "./session.ts";
+import { LOCAL_CONNECTION, MIND, sessionAddress } from "./session.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
 import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runner.ts";
 import type { Log, UsageRow } from "./store/log.ts";
@@ -196,7 +196,7 @@ export async function start(
   await log.upsertMemberships(roster.map((p) => (
     {
       service: "local",
-      connection: "agent",
+      connection: LOCAL_CONNECTION,
       conversation: sessionAddress(p.agentId, MIND),
       agentId: p.agentId,
       sessionId: MIND,

@@ -151,7 +151,7 @@ const writes = (log: Log, p: Policy, e: Event) => log.admits(p.check ?? p.using!
 Deno.test("policyFor: three branches — membership · shared (ownerless) · owned (private)", async () => {
   await withLog(async (log) => {
     await log.upsertMemberships([
-      { service: "local", connection: "agent", conversation: "mind@ana", agentId: "ana" },
+      { service: "local", connection: "default", conversation: "mind@ana", agentId: "ana" },
     ]);
     await log.upsertConnections([
       // ownerless + org-credentialed ⇒ the org's shared inbox (§6)
@@ -163,8 +163,8 @@ Deno.test("policyFor: three branches — membership · shared (ownerless) · own
     const bo = policyFor({ agentId: "bo", id: "mind" });
 
     // branch 3: the mind is a one-member conversation — private by membership, no special case
-    assert(await sees(log, ana, at("local", "agent", "mind@ana")));
-    assert(!(await sees(log, bo, at("local", "agent", "mind@ana"))));
+    assert(await sees(log, ana, at("local", "default", "mind@ana")));
+    assert(!(await sees(log, bo, at("local", "default", "mind@ana"))));
     // branch 1: ownerless + org credential = the org's — every agent reads it
     assert(await sees(log, ana, at("whatsapp", "+549", "wa:cust1")));
     assert(await sees(log, bo, at("whatsapp", "+549", "wa:cust1")));
@@ -239,14 +239,14 @@ Deno.test("policyFor: the member is the (agent, session) pair — a sibling's ro
     await log.upsertMemberships([
       {
         service: "local",
-        connection: "agent",
+        connection: "default",
         conversation: "mind@ana",
         agentId: "ana",
         sessionId: "mind",
       },
       {
         service: "local",
-        connection: "agent",
+        connection: "default",
         conversation: "build@ana",
         agentId: "ana",
         sessionId: "build",
@@ -256,30 +256,30 @@ Deno.test("policyFor: the member is the (agent, session) pair — a sibling's ro
     const build = policyFor({ agentId: "ana", id: "build" });
 
     // each session reads and writes where it is enrolled — enrollment IS the enforcement
-    assert(await sees(log, mind, at("local", "agent", "mind@ana")));
-    assert(await sees(log, build, at("local", "agent", "build@ana")));
-    assert(!(await sees(log, mind, at("local", "agent", "build@ana"))));
-    assert(!(await sees(log, build, at("local", "agent", "mind@ana"))));
-    assert(!(await writes(log, build, at("local", "agent", "mind@ana"))));
+    assert(await sees(log, mind, at("local", "default", "mind@ana")));
+    assert(await sees(log, build, at("local", "default", "build@ana")));
+    assert(!(await sees(log, mind, at("local", "default", "build@ana"))));
+    assert(!(await sees(log, build, at("local", "default", "mind@ana"))));
+    assert(!(await writes(log, build, at("local", "default", "mind@ana"))));
     // …and a direct room both are in is how they reach each other, like two agents
     await log.upsertMemberships([
       {
         service: "local",
-        connection: "agent",
+        connection: "default",
         conversation: "build@ana,mind@ana",
         agentId: "ana",
         sessionId: "mind",
       },
       {
         service: "local",
-        connection: "agent",
+        connection: "default",
         conversation: "build@ana,mind@ana",
         agentId: "ana",
         sessionId: "build",
       },
     ]);
-    assert(await sees(log, mind, at("local", "agent", "build@ana,mind@ana")));
-    assert(await sees(log, build, at("local", "agent", "build@ana,mind@ana")));
+    assert(await sees(log, mind, at("local", "default", "build@ana,mind@ana")));
+    assert(await sees(log, build, at("local", "default", "build@ana,mind@ana")));
   });
 });
 
@@ -362,21 +362,21 @@ Deno.test("historyFor: every session of an agent reads the same past — the age
     await log.upsertMemberships([
       {
         service: "local",
-        connection: "agent",
+        connection: "default",
         conversation: "mind@ana",
         agentId: "ana",
         sessionId: "mind",
       },
       {
         service: "local",
-        connection: "agent",
+        connection: "default",
         conversation: "build@ana",
         agentId: "ana",
         sessionId: "build",
       },
       {
         service: "local",
-        connection: "agent",
+        connection: "default",
         conversation: "mind@bo",
         agentId: "bo",
         sessionId: "mind",
@@ -391,9 +391,9 @@ Deno.test("historyFor: every session of an agent reads the same past — the age
     const history = historyFor("ana");
 
     // a sibling's room is the agent's past too: the window is the session's, the log is not
-    assert(await sees(log, history, at("local", "agent", "mind@ana")));
-    assert(await sees(log, history, at("local", "agent", "build@ana")));
-    assert(!(await sees(log, history, at("local", "agent", "mind@bo"))));
+    assert(await sees(log, history, at("local", "default", "mind@ana")));
+    assert(await sees(log, history, at("local", "default", "build@ana")));
+    assert(!(await sees(log, history, at("local", "default", "mind@bo"))));
     // the agent's connections, whatever session their traffic routes to
     assert(await sees(log, history, at("whatsapp", "+549", "wa:cust1")));
     assert(await sees(log, history, at("email", "ana@org", "thread-7")));
@@ -402,19 +402,21 @@ Deno.test("historyFor: every session of an agent reads the same past — the age
     assert(!(await sees(log, history, at("slack", "T1:U1", "D1"))));
     assert(await sees(log, history, at("slack", "T1:U1", "C7")));
     // and the handle writes nothing, wherever it looks
-    assert(!(await writes(log, history, at("local", "agent", "build@ana"))));
+    assert(!(await writes(log, history, at("local", "default", "build@ana"))));
     assert(!(await writes(log, history, at("whatsapp", "+549", "wa:cust1"))));
     // a membership's lifetime rules here as it does for the session (§4)
     await log.deleteMemberships([
       {
         service: "local",
-        connection: "agent",
+        connection: "default",
         conversation: "build@ana",
         agentId: "ana",
         sessionId: "build",
       },
     ]);
-    assert(await sees(log, history, at("local", "agent", "build@ana", "2020-01-01T00:00:00Z")));
-    assert(!(await sees(log, history, at("local", "agent", "build@ana", "2999-01-01T00:00:00Z"))));
+    assert(await sees(log, history, at("local", "default", "build@ana", "2020-01-01T00:00:00Z")));
+    assert(
+      !(await sees(log, history, at("local", "default", "build@ana", "2999-01-01T00:00:00Z"))),
+    );
   });
 });

@@ -37,7 +37,7 @@ function watching(over: Partial<PresenceDeps> = {}) {
  *  typed it into a door or the mirror carried it in off a wire. */
 const spokeAt = (ms: number, over: Partial<About> = {}): About => ({
   service: "local",
-  connection: "agent",
+  connection: "default",
   conversation: `mind@${AGENT}`,
   since: new Date(NOW - ms).toISOString(),
   spoken: true,

@@ -11,7 +11,7 @@ const nextId = () => `01a1-${String(++seq).padStart(4, "0")}`;
 const at = (s = 1) => new Date(clock += s * 1000).toISOString();
 const here = (address = HOME) => ({
   service: "local",
-  connection_address: "agent",
+  connection_address: "default",
   conversation: { address },
 });
 

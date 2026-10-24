@@ -11,7 +11,7 @@ const at = (address: string, over: Partial<Event> = {}): Event => ({
   id: "01" as Event["id"],
   ts: "2026-09-25T10:00:00.000Z",
   type: "message",
-  envelope: { service: "local", connection_address: "agent", conversation: { address } },
+  envelope: { service: "local", connection_address: "default", conversation: { address } },
   ...over,
 } as Event);
 

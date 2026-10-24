@@ -629,7 +629,7 @@ Deno.test("a summary hides what it covers and renders as the leading checkpoint 
       agent: { id: "a1", session_id: "s1" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@a1" },
       },
       payload: { covers: ["e01", "e02"] },
@@ -2065,7 +2065,7 @@ Deno.test("a fired wake renders as the harness handing back the agent's own note
     type: "alarm", // harness-authored: no `agent`, so it speaks in nobody's voice
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@a1" },
     },
     parts: [{ type: "text", kind: "alarm", text: "llamar a la clínica" }],
@@ -2142,7 +2142,7 @@ Deno.test("a principal's answer draws no block, and the run flows across it — 
     agent: { id: SESSION.agentId, session_id: "mind" },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: SESSION.conversation },
       sender: { address: "matias", name: "matias" },
     },
@@ -2312,7 +2312,7 @@ function summaryE(id: string, ts: string, covers: [string, string], text: string
     agent: { id: "a1", session_id: "s1" },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@a1" },
     },
     payload: { covers },
@@ -2394,7 +2394,7 @@ Deno.test("the principal's cancel reads as the harness's <system> line under the
     agent: SELF,
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@a1" },
     },
     parts: [{ type: "text", kind: "text", text: "/cancel" }],
@@ -2432,7 +2432,7 @@ Deno.test("the roster names the marks (§4, §5): <principal name>, principal=, 
     agent: { id: "ventas", session_id: "mind" },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@ventas" },
       sender: { address: "sol", name: "sol" }, // a username, as the door and the mirror sign it
     },
@@ -2681,7 +2681,7 @@ Deno.test("what a wire says of a sender survives the log: a saved name wears `co
         type: "message",
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: "default",
           conversation: { address: "mind@a1" },
           sender: { address: "U7", name: "Cabra" },
         },

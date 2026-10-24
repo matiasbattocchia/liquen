@@ -96,7 +96,7 @@ const mindMsg = (
   type: "message",
   envelope: {
     service: "local",
-    connection_address: "agent",
+    connection_address: "default",
     conversation: { address: "mind@ana" },
     sender: { address: "ana", name: "ana" },
   },
@@ -201,7 +201,7 @@ const sendCard = (): Draft<Event> => ({
   payload: { ref_id: "01a0fd7f-cde6-7000-8000-412733bbc24a" },
   envelope: {
     service: "local",
-    connection_address: "agent",
+    connection_address: "default",
     conversation: { address: "mind@ana" },
   },
   parts: [{
@@ -224,7 +224,7 @@ const answered = (
   agent: { id: "ana", session_id: "mind" },
   envelope: {
     service: "local",
-    connection_address: "agent",
+    connection_address: "default",
     conversation: { address: "mind@ana" },
     sender: { address: "ana", name: "ana" },
   },
@@ -295,7 +295,7 @@ Deno.test("mirror fan-out: the agent's cancel of an ask crosses as a reply to it
       agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@ana" },
       },
       parts: [{ type: "data", kind: "tool_use", data: { name: "cancel", input: { id } } }],
@@ -320,7 +320,7 @@ Deno.test("mirror fan-out: a tool call crosses as one redacted line", async () =
       agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@ana" },
       },
       parts: [{
@@ -371,7 +371,7 @@ Deno.test("mirror fan-out: a tool line names the addresses it points at, off the
       agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@ana" },
       },
       parts: [{
@@ -398,7 +398,7 @@ Deno.test("mirror fan-out: a send's card is laid out in rows, in the surface's t
       agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@ana" },
       },
       parts: [{
@@ -441,7 +441,7 @@ Deno.test("mirror fan-out: the approval card crosses, arguments and reply syntax
       agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@ana" },
       },
       parts: [{
@@ -474,7 +474,7 @@ Deno.test("mirror fan-out: under a Spanish locale the harness speaks Spanish —
         agent: { id: "ana", session_id: "mind" },
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: "default",
           conversation: { address: "mind@ana" },
         },
         parts: [{
@@ -489,7 +489,7 @@ Deno.test("mirror fan-out: under a Spanish locale the harness speaks Spanish —
         agent: { id: "ana", session_id: "mind" },
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: "default",
           conversation: { address: "mind@ana" },
         },
         parts: [{ type: "data", kind: "delta", data: { kind: "thinking" } }],
@@ -500,7 +500,7 @@ Deno.test("mirror fan-out: under a Spanish locale the harness speaks Spanish —
         type: "error",
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: "default",
           conversation: { address: "mind@ana" },
         },
         parts: [{
@@ -549,7 +549,7 @@ const cardOn = (use: string, to: string): Draft<Event> => ({
   agent: { id: "ana", session_id: "mind" },
   envelope: {
     service: "local",
-    connection_address: "agent",
+    connection_address: "default",
     conversation: { address: "mind@ana" },
   },
   parts: [{
@@ -762,7 +762,7 @@ Deno.test("mirror fan-out: a harness error crosses — the one voice left when a
       type: "error",
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@ana" },
       },
       parts: [{
@@ -789,7 +789,7 @@ Deno.test("mirror fan-out: a settlement's row — a verdict, a lapse, a withdraw
       agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@ana" },
       },
       parts: [{
@@ -819,7 +819,7 @@ Deno.test("mirror fan-out: a settlement's row — a verdict, a lapse, a withdraw
       agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@ana" },
       },
       parts: [{
@@ -852,7 +852,7 @@ Deno.test("mirror fan-out: a /cancel crosses as the principal's line, and that i
   await withMirror(async ({ publish, inConv, waitFor }) => {
     const env = {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@ana" },
     };
     // the call it stopped mid-run: the `/cancel` says why, so its result does not
@@ -891,7 +891,7 @@ Deno.test("mirror fan-out: a wake and a failure cross as `[system]`; a checkpoin
           payload,
           envelope: {
             service: "local",
-            connection_address: "agent",
+            connection_address: "default",
             conversation: { address: "mind@ana" },
           },
           parts,
@@ -1093,7 +1093,7 @@ Deno.test("mirror: a Teams account's self-chat and a principal's DM with it both
       agent: { id: "ventas", session_id: "mind" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@ventas" },
         sender: { address: "ventas", name: "Ventas" },
       },
@@ -1144,7 +1144,7 @@ Deno.test("mirror fan-out: presence crosses as the tag alone, and the CC is mark
       agent: { id: "ana", session_id: "mind" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@ana" },
       },
       parts: [{ type: "data", kind: "delta", data: { kind: "thinking" } }],
@@ -1297,7 +1297,7 @@ Deno.test("mirror fan-out: a room joining the mind, said by the connector that m
       type: "message",
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@sonar" },
       },
       parts: [{
@@ -1315,7 +1315,7 @@ Deno.test("mirror fan-out: a raw surface gets what the event is — its parts, i
   await withRoom(async ({ publish, inConv, waitFor }) => {
     const mind = {
       service: "local" as const,
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@sonar" },
     };
     const use = await publish({

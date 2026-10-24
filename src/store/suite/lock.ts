@@ -112,7 +112,7 @@ export function lockSuite(s: Substrate): void {
         type: "message",
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: "default",
           conversation: { address: "mind@a1" },
         },
         parts: [{ type: "text", kind: "text", text: "the turn nobody is waiting for" }],
@@ -182,7 +182,7 @@ export function lockSuite(s: Substrate): void {
     type: "control",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: conversation },
     },
     payload: { control: "cancel" },

@@ -6,7 +6,7 @@ import type { Draft } from "../types.ts";
 
 const room = {
   service: "local" as const,
-  connection_address: "agent",
+  connection_address: "default",
   conversation: { address: "mind@ana" },
 };
 const self = { id: "ana", session_id: "mind" };

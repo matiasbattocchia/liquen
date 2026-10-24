@@ -236,7 +236,7 @@ Deno.test("slack dispatch: inbound (world) messages are never re-sent", async ()
 Deno.test("slack dispatch: agent messages on other services (local, github) are ignored", async () => {
   await withDispatch(async ({ publish, posts }) => {
     await publish(
-      agentMsg("01", "hi principal", { service: "local", connection: "agent", address: "home" }),
+      agentMsg("01", "hi principal", { service: "local", connection: "default", address: "home" }),
     );
     await publish(
       agentMsg("02", "a github reply", {

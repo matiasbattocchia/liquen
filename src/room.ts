@@ -5,7 +5,7 @@
  * `<room>`, wherever the room is.
  */
 
-import { MIND, sessionAddress } from "./session.ts";
+import { LOCAL_CONNECTION, MIND, sessionAddress } from "./session.ts";
 import type { Draft, MessageEvent, RoomMember, RoomPart } from "./types.ts";
 
 /** The part, with only what the change moved: an empty side is left out, so a rename
@@ -41,7 +41,7 @@ export function mindRoomLine(
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: LOCAL_CONNECTION,
       conversation: { address: sessionAddress(agent, MIND) },
     },
     parts: [roomPart(change)],

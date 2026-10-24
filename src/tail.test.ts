@@ -5,7 +5,7 @@ import type { Event } from "./types.ts";
 
 const room = {
   service: "local" as const,
-  connection_address: "agent",
+  connection_address: "default",
   conversation: { address: "mind@ana" },
 };
 const self = { id: "ana", session_id: "mind" };
@@ -181,7 +181,7 @@ Deno.test({
         type: "message",
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: "default",
           conversation: { address: "mind@ana" },
           sender: { address: "matias", name: "matias" },
         },
