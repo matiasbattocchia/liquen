@@ -22,7 +22,7 @@ export function gatesSuite(s: Substrate): void {
   const SESSION = { id: "mind", agentId: "ana", conversation: "mind@ana" };
   const here = {
     service: "local" as const,
-    connection_address: "agent",
+    connection_address: "default",
     conversation: { address: "mind@ana" },
   };
   let clock = 0;

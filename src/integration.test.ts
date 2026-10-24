@@ -11,7 +11,14 @@ import {
   assertNotEquals,
   assertStringIncludes,
 } from "@std/assert";
-import { type AgentConfig, type ExecFacts, type ExecRecord, xi, type XiPorts } from "./xi.ts";
+import {
+  type AgentConfig,
+  type ExecFacts,
+  type ExecRecord,
+  type Target,
+  xi,
+  type XiPorts,
+} from "./xi.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { LOCK_TTL_MS } from "./store/lock.ts";
 import type { AgentRow } from "./store/agents.ts";
@@ -81,7 +88,7 @@ function principalMsg(text: string): Draft<MessageEvent> {
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@a1" },
       sender: { address: "ana", name: "Ana" },
     },
@@ -332,7 +339,7 @@ const namedChat = (
   type: "message",
   envelope: {
     service: "local",
-    connection_address: "agent",
+    connection_address: "default",
     conversation: { address, kind: "direct", name },
     sender: { address, name },
   },
@@ -502,7 +509,7 @@ Deno.test("send `connection`: a named account places first contact on its wire",
     { service: "whatsapp", address: "5491100000001", agentId: "a1", extra: { name: "Caja" } },
     { service: "slack", address: "T1:U9", credentialKey: "slack:T1:org", extra: { name: "Acme" } },
   ]);
-  const gated: { name: string; target?: { connection?: string; conversation?: string } }[] = [];
+  const gated: { name: string; target?: Target }[] = [];
   const { transport } = scripted([
     // a number nobody here has written to, on one of two accounts that take numbers
     ok([{
@@ -542,7 +549,11 @@ Deno.test("send `connection`: a named account places first contact on its wire",
     assertEquals(placed?.envelope.connection_address, "5491100000000");
     assertEquals(sent.some((e) => e.envelope.conversation.address === "5491188888888"), false);
     // the gate saw the account the send would ride — a rule pinned to it matches
-    assertEquals(gated[0].target, { connection: "5491100000000", conversation: "5491199999999" });
+    assertEquals(gated[0].target, {
+      service: "whatsapp",
+      connection: "5491100000000",
+      conversation: "5491199999999",
+    });
     const results = await log.read({ types: ["tool_result"] });
     const output = (i: number) =>
       String((results[i].parts[0] as { data: { output: string } }).data.output);
@@ -571,7 +582,7 @@ Deno.test("send: a stranger's number rides the one account whose wire takes numb
     { service: "google", address: "sole@gmail.com", agentId: "a1" },
     { service: "microsoft", address: "sole@acme.onmicrosoft.com", agentId: "a1" },
   ]);
-  const gated: { name: string; target?: { connection?: string; conversation?: string } }[] = [];
+  const gated: { name: string; target?: Target }[] = [];
   const { transport } = scripted([
     ok(
       [{ kind: "tool_use", name: "send", input: { to: "5491199999999", text: "hola" } }],
@@ -601,7 +612,11 @@ Deno.test("send: a stranger's number rides the one account whose wire takes numb
     assertEquals(placed?.envelope.service, "whatsapp");
     assertEquals(placed?.envelope.connection_address, "5491100000000");
     // the gate saw the account the send rides
-    assertEquals(gated[0].target, { connection: "5491100000000", conversation: "5491199999999" });
+    assertEquals(gated[0].target, {
+      service: "whatsapp",
+      connection: "5491100000000",
+      conversation: "5491199999999",
+    });
     const results = await log.read({ types: ["tool_result"] });
     assertStringIncludes(
       String((results[1].parts[0] as { data: { output: string } }).data.output),
@@ -621,7 +636,7 @@ Deno.test("send: a number typed with + and separators is the digits the wire spe
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
-  const gated: { connection?: string; conversation?: string }[] = [];
+  const gated: Target[] = [];
   const { transport } = scripted([
     ok(
       [{ kind: "tool_use", name: "send", input: { to: "+54 9 11 9999-9999", text: "hola" } }],
@@ -659,8 +674,8 @@ Deno.test("send: a number typed with + and separators is the digits the wire spe
       .map((e) => [e.envelope.conversation.address, e.envelope.conversation.name]);
     assertEquals(placed, [["5491199999999", undefined], ["5491188888888", "Ana"]]);
     assertEquals(gated, [
-      { connection: "5491100000000", conversation: "5491199999999" },
-      { connection: "5491100000000", conversation: "5491188888888" },
+      { service: "whatsapp", connection: "5491100000000", conversation: "5491199999999" },
+      { service: "whatsapp", connection: "5491100000000", conversation: "5491188888888" },
     ]);
   } finally {
     await log.close();
@@ -1112,7 +1127,7 @@ Deno.test("contact: `who` resolves like a send, the write rides the person's own
       },
     },
   };
-  const gated: { name: string; target?: { connection?: string } }[] = [];
+  const gated: { name: string; target?: Target }[] = [];
   const { transport } = scripted([
     // by the name she goes by here — saved under the model's name
     ok(
@@ -1476,7 +1491,7 @@ Deno.test("contact: two accounts and a stranger — the model must say which boo
       },
     },
   };
-  const gated: ({ connection?: string } | undefined)[] = [];
+  const gated: (Target | undefined)[] = [];
   const { transport } = scripted([
     ok(
       [{ kind: "tool_use", name: "contact", input: { who: "5491177777777", name: "Ana" } }],
@@ -1513,7 +1528,7 @@ Deno.test("contact: two accounts and a stranger — the model must say which boo
     assertStringIncludes(results[1], '"connection":"5491100000001"');
     assertStringIncludes(results[2], "keeps no address book");
     assertEquals(wrote, [{ connection: "5491100000001", address: "5491177777777", name: "Ana" }]);
-    assertEquals(gated[1], { connection: "5491100000001" });
+    assertEquals(gated[1], { service: "whatsapp", connection: "5491100000001" });
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -1689,7 +1704,7 @@ Deno.test("conversation on a wire: every verb goes through the wire's port as th
       // no `join`: a leg the service has no API for
     },
   };
-  const gated: { target?: { connection?: string; conversation?: string } }[] = [];
+  const gated: { target?: Target }[] = [];
   const { transport } = scripted([
     ok([{ kind: "tool_use", name: "conversation", input: { which: "C1" } }], "tool_use"),
     // by the name they go by here, and by a bare handle nobody has spoken as
@@ -1785,7 +1800,7 @@ Deno.test("conversation on a wire: every verb goes through the wire's port as th
     // nothing is said here: the wire says it, and the log holds only what the ingest brought
     assertEquals((await log.read({ conversation: "C1", types: ["message"] })).length, 1);
     // the gate saw the account and the conversation, so a rule pinned to either matches
-    assertEquals(gated[0].target, { connection: "T1", conversation: "C1" });
+    assertEquals(gated[0].target, { service: "slack", connection: "T1", conversation: "C1" });
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -1816,7 +1831,7 @@ Deno.test("send: a list of people on a wire opens a room through the port — un
       },
     },
   };
-  const gated: { target?: { connection?: string; conversation?: string } }[] = [];
+  const gated: { target?: Target }[] = [];
   const { transport } = scripted([
     // two people the log knows on the same account: the account is theirs
     ok([{
@@ -1898,7 +1913,7 @@ Deno.test("send: a list of people on a wire opens a room through the port — un
       ["whatsapp", "5491100000000", { address: "5492616104507,5492616104508" }],
     ]);
     // judged before the room exists: the gate saw the account, the room had no address yet
-    assertEquals(gated[0].target, { connection: "T1" });
+    assertEquals(gated[0].target, { service: "slack", connection: "T1" });
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -2114,7 +2129,7 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
     payload: { ref_id: refId },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@a1" },
     },
     parts: [{
@@ -2358,7 +2373,11 @@ const orphanUse = (): Draft<Event> => ({
   type: "tool_use",
   payload: { turn_id: "T-crashed" },
   agent: { id: "a1", session_id: "mind" },
-  envelope: { service: "local", connection_address: "agent", conversation: { address: "mind@a1" } },
+  envelope: {
+    service: "local",
+    connection_address: "default",
+    conversation: { address: "mind@a1" },
+  },
   parts: [{ type: "data", kind: "tool_use", data: { name: "echo", input: { v: 1 } } }],
 });
 
@@ -2400,7 +2419,7 @@ Deno.test("the gate is free: a spectator event takes no lease and reads nothing"
       agent: { id: "a1", session_id: "mind" },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@a1" },
       },
       parts: [{ type: "data", kind: "thinking", data: { thinking: "…", signature: "s" } }],
@@ -2909,7 +2928,7 @@ Deno.test("the boot cutoff: an agent coming up after an absence owes only the re
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "room" },
       sender: { address: "vecino", name: "Vecino" },
     },
@@ -2943,7 +2962,7 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "15613518605", kind: "direct", name: "Gianvito" },
       ...(from ? { sender: { address: from.address, name: from.name } } : {}),
     },
@@ -3111,7 +3130,7 @@ Deno.test("search bounds read the org's clock: a bare stamp means the wall the m
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "15613518605", kind: "direct", name: "Gianvito" },
       sender: { address: "15613518605", name: "Gianvito" },
     },
@@ -3150,7 +3169,7 @@ Deno.test("search hands back the line the window shows, and pages on the oldest 
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "gira", kind: "group", name: "Gira Norte" },
       sender: { address: "german", name: "Germán" },
     },
@@ -3220,7 +3239,7 @@ Deno.test("search shows a sentence once: a mirror copy is not a hit, and a share
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: conv, kind: "group", name: "Gira Norte" },
       sender: { address: "german", name: "Germán" },
       external_id: id,
@@ -3277,7 +3296,7 @@ Deno.test("search around: a match among its neighbours, stretches merged, the ga
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "gira", kind: "group", name: "Gira Norte" },
       sender: { address: "german", name: "Germán" },
     },
@@ -3337,7 +3356,7 @@ Deno.test("a principal's answer settles the gate: /y runs the call, /n refuses i
     agent: { id: "a1", session_id: "mind" },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@a1" },
       sender: { address: "matias", name: "Matías" },
     },
@@ -3465,7 +3484,7 @@ Deno.test("two cards open: `/y all` settles the whole pile in one line (§9)", a
     agent: { id: "a1", session_id: "mind" },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@a1" },
       sender: { address: "matias", name: "Matías" },
     },
@@ -3535,7 +3554,7 @@ Deno.test("a standing verdict is REMEMBERED: /y conv settles that conversation's
         payload: { ref_id: req.payload.ref_id },
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: "default",
           conversation: { address: "mind@a1" },
         },
         parts: [{
@@ -3587,7 +3606,7 @@ Deno.test("a standing verdict is PINNED: the ruled conversation runs, its neighb
         payload: { ref_id: req.payload.ref_id },
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: "default",
           conversation: { address: "mind@a1" },
         },
         parts: [{
@@ -3724,7 +3743,7 @@ Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel u
           payload: { ref_id: t.refId! },
           envelope: {
             service: "local",
-            connection_address: "agent",
+            connection_address: "default",
             conversation: { address: t.conversation },
           },
           extra: { timer: { id: t.id, session_id: t.sessionId, armed_at: t.armedAt } },

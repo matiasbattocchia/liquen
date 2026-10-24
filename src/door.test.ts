@@ -50,7 +50,7 @@ function cardFor(use: string): Draft<PermissionRequestEvent> {
     agent: { id: "ana", session_id: "mind" },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@ana" },
     },
     parts: [{
@@ -96,7 +96,7 @@ function msg(address: string, text: string): Draft<MessageEvent> {
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address },
       sender: { address: "wa:+34600", name: "Juan" },
     },
@@ -723,7 +723,7 @@ Deno.test({
           type: "message",
           envelope: {
             service: "local",
-            connection_address: "agent",
+            connection_address: "default",
             conversation: { address: "mind@ana" },
             sender: { address: "matias" },
           },
@@ -756,7 +756,7 @@ Deno.test({
           agent: { id: "ana", session_id: "mind" },
           envelope: {
             service: "local",
-            connection_address: "agent",
+            connection_address: "default",
             conversation: { address: "mind@ana" },
           },
           parts: [{
@@ -783,7 +783,7 @@ Deno.test({
           payload: { ref_id: "u1" as Event["id"] },
           envelope: {
             service: "local",
-            connection_address: "agent",
+            connection_address: "default",
             conversation: { address: "mind@ana" },
           },
           parts: [{
@@ -820,7 +820,7 @@ Deno.test({
             agent: { id: "ana", session_id: "mind" },
             envelope: {
               service: "local",
-              connection_address: "agent",
+              connection_address: "default",
               conversation: { address: "mind@ana" },
             },
             parts: [{ type: "text", kind: "text", text }],
@@ -888,7 +888,7 @@ Deno.test({
             agent: { id: "ana", session_id: "mind" },
             envelope: {
               service: "local",
-              connection_address: "agent",
+              connection_address: "default",
               conversation: { address: "mind@ana" },
               sender: { address: "matias", name: "matias" },
             },
@@ -913,7 +913,7 @@ Deno.test({
         type: "alarm",
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: "default",
           conversation: { address: "mind@ana" },
         },
         parts: [{ type: "text", kind: "alarm", text: "recordarle a Mecha el mail" }],
@@ -924,7 +924,7 @@ Deno.test({
         type: "error",
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: "default",
           conversation: { address: "mind@ana" },
         },
         parts: [{ type: "data", kind: "error", data: { error: "model stopped: refusal" } }],
@@ -959,7 +959,7 @@ Deno.test({
     }]);
     const room = {
       service: "local" as const,
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@ana" },
     };
     const self = { id: "ana", session_id: "mind" };

@@ -8,7 +8,7 @@ import type { Draft, Event } from "./types.ts";
 const self = { id: "ana", session_id: "mind" };
 const room = {
   service: "local" as const,
-  connection_address: "agent",
+  connection_address: "default",
   conversation: { address: "mind@ana" },
 };
 let t = Date.parse("2026-10-13T15:00:00Z");

@@ -41,6 +41,7 @@ import {
 import type { StepCall, StepInput } from "./mu.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import { describeCall } from "./describe.ts";
+import { LOCAL_CONNECTION } from "./session.ts";
 
 import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT } from "./config.ts";
 
@@ -322,7 +323,7 @@ export async function buildSummary(
     type: "error",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: LOCAL_CONNECTION,
       conversation: { address: input.session.conversation },
     }, // harness-authored: no `agent` (§3)
     parts: [{ type: "data", kind: "error", data: { error: `checkpoint failed: ${why}` } }],
@@ -370,7 +371,7 @@ export async function buildSummary(
     agent: { id: input.session.agentId, session_id: input.session.id },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: LOCAL_CONNECTION,
       conversation: { address: input.session.conversation },
     },
     payload: { covers: span.covers, ...(input.turnId ? { turn_id: input.turnId } : {}) },

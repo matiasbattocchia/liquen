@@ -46,7 +46,7 @@ Deno.test("migrate v6: a pre-sessions log settles on the pair vocabulary (ยง4, ย
     agent: { id: "ana", session_id: "mind" },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@ana" },
     },
     parts: [{ type: "text", kind: "text", text: "dale" }],

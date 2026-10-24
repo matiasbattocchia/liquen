@@ -17,16 +17,17 @@ import {
 } from "./xi.ts";
 import type { Envelope, Event, Session, ToolUseEvent } from "./types.ts";
 import { localFiles } from "./store/media.ts";
+import { parseDirect } from "./session.ts";
 
 const MIND = "mind@a1"; // the session's own conversation (§4)
 const SESSION: Session = { id: "mind", agentId: "a1", conversation: MIND };
 const WAKE: Wake = {};
 
-const env = (conversation: string): Envelope => ({
-  service: "local",
-  connection_address: "agent",
-  conversation: { address: conversation },
-});
+// a session's room and a room between sessions are local; any other address is the world's
+const env = (conversation: string): Envelope =>
+  parseDirect(conversation)
+    ? { service: "local", connection_address: "default", conversation: { address: conversation } }
+    : { service: "slack", connection_address: "T1", conversation: { address: conversation } };
 const SELF = { agent: { id: "a1", session_id: "mind" } };
 
 let n = 0;
@@ -113,6 +114,13 @@ Deno.test("downOn: one shape for every reason, and a connector gone silent outra
 Deno.test("gateOf: the default asks for send and for nothing else — bash by rule, not by name", () => {
   const gate = gateOf();
   assertEquals(gate("send", {}), "ask");
+  // a word to a peer stays in the org; a word on a wire speaks in the principal's name
+  const peers = { service: "local", connection: "default", conversation: "mind@a1,mind@a2" };
+  assertEquals(gate("send", {}, peers), "allow");
+  assertEquals(
+    gate("send", {}, { service: "whatsapp", connection: "549", conversation: "54" }),
+    "ask",
+  );
   assertEquals(gate("bash", { command: "rm -rf /" }), "allow");
   assertEquals(gate("anything-an-mcp-server-brought", {}), "allow");
   // an org that wants the opposite writes the opposite — no code knows a tool's name
@@ -135,6 +143,21 @@ Deno.test("gateOf: scoped rules — where a send lands decides, most specific fi
   assertEquals(gate("send", {}, { conversation: "mind@a1" }), "ask"); // local: the bare rule
   assertEquals(gate("send", {}), "ask"); // no target ⇒ scoped rules never match
   assertEquals(gate("bash", {}), "allow"); // a placed rule never leaks onto placeless tools
+});
+
+Deno.test("gateOf: a service pin holds on every account of that service, and on no other", () => {
+  const gate = gateOf([
+    { tool: "send", action: "deny", service: "whatsapp", conversation: "5491100000000" },
+    { tool: "send", action: "allow", service: "whatsapp" },
+    { tool: "send", action: "ask" },
+  ]);
+  const wa = (connection: string, conversation: string) =>
+    gate("send", {}, { service: "whatsapp", connection, conversation });
+  assertEquals(wa("549111", "5491199999999"), "allow");
+  assertEquals(wa("549222", "5491199999999"), "allow"); // a second number, the same service
+  assertEquals(wa("549111", "5491100000000"), "deny");
+  assertEquals(gate("send", {}, { service: "slack", connection: "T1", conversation: "C1" }), "ask");
+  assertEquals(gate("send", {}, { connection: "549111", conversation: "54" }), "ask"); // unknown
 });
 
 /* ── owed: the one derivation every poke shares ───────────────────────── */
@@ -448,7 +471,7 @@ Deno.test("decide: a waiting gate never mutes the mind — the principal is stil
     agent: { id: "a1", session_id: "mind" },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: MIND },
       sender: { address: "matias" },
     },
@@ -598,8 +621,19 @@ Deno.test("attention: a note whose words are on the way is SEALED — not news u
   assertEquals(decide([looked(2), ...notes, ...words], SESSION, P, NOON), "think");
 });
 
-Deno.test("attention: the summons is the mind alias and NOTHING else", () => {
+Deno.test("attention: the summons is the mind alias and the local rooms, NOTHING else", () => {
   assertEquals(decide([looked(1), world(MIND, 0)], SESSION, WAKE, NOON), "think");
+  // a peer in a room of the org's own: no floor held, just looked, and asleep — still now
+  const peer = ev(
+    "message",
+    {
+      agent: { id: "a2", session_id: "mind" },
+      conv: "mind@a1,mind@a2",
+      ts: at(0),
+      parts: [{ type: "text", kind: "text", text: "done: the report is in shared/" }],
+    } as Partial<Event> & { conv?: string },
+  );
+  assertEquals(decide([looked(1), peer], SESSION, { sleepHours: "0-23" }, NOON), "think");
   // a DM is a hail to the PRINCIPAL's account, in a room the agent is a bystander in
   assertEquals(decide([looked(1), world("wa:5491133585694", 0)], SESSION, WAKE, NOON), "ignore");
   // its name said out loud, by someone who is not its principal, is still the world

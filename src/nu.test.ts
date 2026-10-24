@@ -76,7 +76,7 @@ Deno.test("nu renders the window it was handed (events reach liquen)", async () 
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@a1" },
       sender: { address: "ana", name: "Ana" },
     },
@@ -248,7 +248,7 @@ Deno.test("nu stamps a redacted thinking block as a thinking event — replayed 
 function exchange(i: number): Event[] {
   const here = {
     service: "local" as const,
-    connection_address: "agent",
+    connection_address: "default",
     conversation: { address: "mind@a1" },
   };
   return [
@@ -497,7 +497,7 @@ Deno.test("nu: a step that calls a tool records the anchor its request carried",
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: "mind@a1" },
       sender: { address: "ana", name: "Ana" },
     },

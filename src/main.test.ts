@@ -47,7 +47,7 @@ function principalMsg(mind: string, text: string): Draft<MessageEvent> {
     type: "message",
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: mind },
       sender: { address: "ana", name: "Ana" },
     },
@@ -388,30 +388,14 @@ Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls
   });
   try {
     await main.log.publish(principalMsg("mind@ana", "decile hola a bo"));
-    // `send` is gated by default: approve the card, as the principal would (§9)
-    await waitFor(async () => (await main.log.read({ types: ["permission_request"] })).length > 0);
-    const [req] = await main.log.read({ types: ["permission_request"] });
-    await main.log.publish({
-      ts: new Date().toISOString(),
-      type: "permission_response",
-      payload: { ref_id: (req as { payload: { ref_id: string } }).payload.ref_id },
-      envelope: {
-        service: "local",
-        connection_address: "agent",
-        conversation: { address: "mind@ana" },
-      },
-      parts: [{
-        type: "data",
-        kind: "permission_response",
-        data: { behavior: "allow", scope: "once" },
-      }],
-    } as Draft<Event>);
     await waitFor(async () =>
       (await main.log.read({ conversation: "mind@ana,mind@bo" })).length > 0
     );
+    // a word to a peer stays in the org: the default table lets it through unasked (§9)
+    assertEquals(await main.log.read({ types: ["permission_request"] }), []);
     // the executor canonicalized the name and enrolled the pair — visibility is membership
-    assert(await main.log.isMember("local", "agent", "mind@ana,mind@bo", "ana", "mind"));
-    assert(await main.log.isMember("local", "agent", "mind@ana,mind@bo", "bo", "mind"));
+    assert(await main.log.isMember("local", "default", "mind@ana,mind@bo", "ana", "mind"));
+    assert(await main.log.isMember("local", "default", "mind@ana,mind@bo", "bo", "mind"));
     const [dm] = await main.log.read({ conversation: "mind@ana,mind@bo" });
     assertEquals(dm.agent, { id: "ana", session_id: "mind" });
   } finally {
@@ -419,23 +403,6 @@ Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls
     await Deno.remove(root, { recursive: true });
   }
 });
-
-/** The one gated send of a scripted turn, approved as the principal would (§9). */
-async function approveOnce(main: Awaited<ReturnType<typeof start>>, room: string) {
-  await waitFor(async () => (await main.log.read({ types: ["permission_request"] })).length > 0);
-  const [req] = await main.log.read({ types: ["permission_request"] });
-  await main.log.publish({
-    ts: new Date().toISOString(),
-    type: "permission_response",
-    payload: { ref_id: (req as { payload: { ref_id: string } }).payload.ref_id },
-    envelope: { service: "local", connection_address: "agent", conversation: { address: room } },
-    parts: [{
-      type: "data",
-      kind: "permission_response",
-      data: { behavior: "allow", scope: "once" },
-    }],
-  } as Draft<Event>);
-}
 
 Deno.test("team chat: a list opens a direct room of its members, the sender among them, in any order (§6)", async () => {
   const { root, dir, catalog } = await orgDir({ ana: {}, bo: {}, cy: {} });
@@ -447,11 +414,10 @@ Deno.test("team chat: a list opens a direct room of its members, the sender amon
   });
   try {
     await main.log.publish(principalMsg("mind@ana", "armá un grupo con bo y cy"));
-    await approveOnce(main, "mind@ana");
     const room = "mind@ana,mind@bo,mind@cy";
     await waitFor(async () => (await main.log.read({ conversation: room })).length > 0);
     for (const who of ["ana", "bo", "cy"]) {
-      assert(await main.log.isMember("local", "agent", room, who, "mind"));
+      assert(await main.log.isMember("local", "default", room, who, "mind"));
     }
     const [line] = await main.log.read({ conversation: room });
     assertEquals(line.envelope.conversation.kind, "direct");
@@ -475,7 +441,6 @@ Deno.test("team chat: a list with a subject opens a room of its own — `#ops` a
   });
   try {
     await main.log.publish(principalMsg("mind@ana", "abrí #ops con bo y cy"));
-    await approveOnce(main, "mind@ana");
     await waitFor(async () => (await main.log.conversations()).length > 0);
     const [ops] = await main.log.conversations();
     assertEquals([ops.name, ops.kind, ops.service], ["ops", "channel", "local"]);
@@ -486,7 +451,7 @@ Deno.test("team chat: a list with a subject opens a room of its own — `#ops` a
       kind: "channel",
       name: "ops",
     });
-    assertEquals(await main.log.membersOf("local", "agent", ops.address), [
+    assertEquals(await main.log.membersOf("local", "default", ops.address), [
       { agentId: "ana", sessionId: "mind" },
       { agentId: "bo", sessionId: "mind" },
       { agentId: "cy", sessionId: "mind" },
@@ -561,7 +526,7 @@ Deno.test("team chat: `conversation` adds, renames, lists and leaves — each ch
     assertEquals(ops, undefined); // closed: the last one out
     const row = (await main.log.conversation(
       "local",
-      "agent",
+      "default",
       String((outputs[2] as { address: string }).address),
     ))!;
     assertEquals([row.name, row.kind], ["ops-q4", "group"]); // renamed, the kind kept, the `#` not a switch
@@ -581,7 +546,7 @@ Deno.test("team chat: `conversation` adds, renames, lists and leaves — each ch
       members: [],
       closed: true,
     });
-    assertEquals(await main.log.membersOf("local", "agent", row.address), []);
+    assertEquals(await main.log.membersOf("local", "default", row.address), []);
     // every change was said in the room as its own line, from ana, under the room's name at
     // the time
     const said = (await main.log.read({ conversation: row.address, types: ["message"] }))
@@ -649,7 +614,7 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
       payload: { ref_id: (req as { payload: { ref_id: string } }).payload.ref_id },
       envelope: {
         service: "local",
-        connection_address: "agent",
+        connection_address: "default",
         conversation: { address: "mind@ana" },
       },
       parts: [{
@@ -663,7 +628,7 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
     );
     const out = (await main.log.read({ conversation: "C1" }))
       .find((e) => e.agent !== undefined)!;
-    // NOT local/agent: the dispatcher's filter and the policy both key on this envelope
+    // NOT local/default: the dispatcher's filter and the policy both key on this envelope
     assertEquals(out.envelope.service, "slack");
     assertEquals(out.envelope.connection_address, "T1");
     assertEquals(out.envelope.conversation.kind, "channel");
@@ -715,10 +680,16 @@ Deno.test("a named session wakes on its dm and answers in its own room (§4)", a
     const dm = "build@a1,mind@a1";
     // what the mind's send would have written: the room, both ends enrolled (§4)
     await main.log.upsertMemberships([
-      { service: "local", connection: "agent", conversation: dm, agentId: "a1", sessionId: "mind" },
       {
         service: "local",
-        connection: "agent",
+        connection: "default",
+        conversation: dm,
+        agentId: "a1",
+        sessionId: "mind",
+      },
+      {
+        service: "local",
+        connection: "default",
         conversation: dm,
         agentId: "a1",
         sessionId: "build",
@@ -729,7 +700,7 @@ Deno.test("a named session wakes on its dm and answers in its own room (§4)", a
       type: "message",
       agent: { id: "a1", session_id: "mind" },
       payload: { turn_id: "T9" },
-      envelope: { service: "local", connection_address: "agent", conversation: { address: dm } },
+      envelope: { service: "local", connection_address: "default", conversation: { address: dm } },
       parts: [{ type: "text", kind: "text", text: "seguí con el refactor" }],
     } as Draft<Event>);
     // the dm's address names the session (§4): main built a runner on first contact, the
@@ -842,7 +813,7 @@ function cancel(mind: string): Draft<Event> {
     type: "control",
     payload: { control: "cancel" },
     agent: { id: mind.split("@")[1], session_id: mind.split("@")[0] },
-    envelope: { service: "local", connection_address: "agent", conversation: { address: mind } },
+    envelope: { service: "local", connection_address: "default", conversation: { address: mind } },
     parts: [{ type: "text", kind: "text", text: "/cancel" }],
   } as Draft<Event>;
 }
@@ -924,7 +895,7 @@ Deno.test("a command the last run answered async and never ended is told lost at
   const pre = await openLog(`${dir}/log`);
   const here = {
     service: "local" as const,
-    connection_address: "agent",
+    connection_address: "default",
     conversation: { address: "mind@a1" },
   };
   const self = { id: "a1", session_id: "mind" };

@@ -54,6 +54,7 @@ export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + t
 // A name added at runtime (an MCP server's tools) joins the offer by being listed here.
 export const DEFAULT_TOOLS = ["search", "schedule", "cancel", "bash"];
 export const DEFAULT_RULES: Rule[] = [
+  { tool: "send", service: "local", action: "allow" }, // a word to a peer stays in the org
   { tool: "send", action: "ask" }, // dispatch leaves the org, in the principal's name
   { tool: "contact", action: "ask" }, // writes the principal's own address book
   { tool: "*", action: "allow" },
@@ -387,8 +388,8 @@ const AGENT: Entry[] = [
     key: "rules",
     value: DEFAULT_RULES,
     doc: "permission policy: first match decides (allow|ask|deny); * matches any tool; " +
-      "connection/conversation pin a rule to where a send lands, connection to whose " +
-      "address book a contact is written in",
+      "service/connection/conversation pin a rule to where a send lands (service: local is " +
+      "the rooms between agents), connection to whose address book a contact is written in",
   },
   {
     key: "export",
@@ -1274,8 +1275,13 @@ function validateAgent(a: Partial<AgentDefaults>, path: string): void {
         );
       }
       for (const key of Object.keys(rule)) {
-        if (!["tool", "action", "connection", "conversation"].includes(key)) {
+        if (!["tool", "action", "service", "connection", "conversation"].includes(key)) {
           throw new Error(`${path}: rule "${rule.tool}": unknown field "${key}"`);
+        }
+      }
+      for (const key of ["service", "connection", "conversation"]) {
+        if (rule[key] !== undefined && typeof rule[key] !== "string") {
+          throw new Error(`${path}: rule "${rule.tool}": "${key}" must be a string`);
         }
       }
     }

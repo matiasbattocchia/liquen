@@ -55,7 +55,7 @@
  */
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
-import { MIND, parseSession, sessionAddress } from "../session.ts";
+import { LOCAL_CONNECTION, MIND, parseSession, sessionAddress } from "../session.ts";
 import {
   failedCallOf,
   failureOf,
@@ -237,7 +237,7 @@ async function fanIn(
     agent: { id: binding.agentId, session_id: MIND },
     envelope: {
       service: "local" as const,
-      connection_address: "agent",
+      connection_address: LOCAL_CONNECTION,
       conversation: { address: mind },
       sender,
     },
@@ -274,7 +274,7 @@ async function fanIn(
         type: "error",
         envelope: {
           service: "local",
-          connection_address: "agent",
+          connection_address: LOCAL_CONNECTION,
           conversation: { address: mind },
         },
         parts: [{

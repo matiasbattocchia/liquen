@@ -83,7 +83,14 @@ import type { Gates, Owed } from "./store/gates.ts";
 import type { Sweeper } from "./store/sweep.ts";
 import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./store/media.ts";
 import type { BinDir, Carried, FilePart, LocationPart, SendPreview } from "./types.ts";
-import { directAddress, MIND, parseDirect, parseSession, sessionAddress } from "./session.ts";
+import {
+  directAddress,
+  LOCAL_CONNECTION,
+  MIND,
+  parseDirect,
+  parseSession,
+  sessionAddress,
+} from "./session.ts";
 import {
   AUTHOR_KEYS,
   authorKeyOf,
@@ -127,8 +134,10 @@ export type Decision = "think" | "act" | "ignore" | "compact";
 export type Gate = (name: string, input: Json, target?: Target) => PolicyAction;
 
 /** Where a call lands (§9): send's resolved destination, the fields a scoped rule names —
- *  the conversation, and the connection (account/workspace) it rides. */
+ *  the conversation, the connection (account/workspace) it rides, and that connection's
+ *  service. */
 export interface Target {
+  service?: string;
   connection?: string;
   conversation?: string;
 }
@@ -159,7 +168,7 @@ function ruleOf(r: RememberedRule): Rule {
  *  call. A call with no target (bash) matches only scopeless rules — a rule that names a
  *  place never leaks onto tools that go nowhere. */
 function inScope(r: Rule, t?: Target): boolean {
-  const keys = (["connection", "conversation"] as const)
+  const keys = (["service", "connection", "conversation"] as const)
     .filter((k) => r[k] !== undefined);
   if (keys.length === 0) return true;
   return t !== undefined && keys.every((k) => r[k] === t[k]);
@@ -227,7 +236,7 @@ function needsCheckpoint(events: Event[], session: Session, wake: Wake): boolean
  * that down, and every rung is a fact about the news, never a timer deciding whether
  * something was worth reading:
  *
- *   1. a SUMMONS — the mind alias, and nothing else — wakes now
+ *   1. a SUMMONS — the mind alias, or any local room — wakes now
  *   2. during `sleepHours` the world gets nothing (3 and 4 still apply — see below)
  *   3. an ENGAGED conversation wakes now: you don't drop out of one you are in
  *   4. unless the principal took the floor there, which cancels 3 and only 3
@@ -253,17 +262,21 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // its enrollments — so every piece of news is addressed to it, and the ladder below
   // (digest cadence, the night) is the MIND's, built for a world that talks around you.
   if (session.id !== MIND) return "think";
-  // The summons is the MIND ALIAS and nothing else (§2). Not a DM, not a reply to the
-  // agent, not its name said out loud: none of those address the agent, they address the
-  // principal's account in a room the agent is a bystander in — and answering each at wake
-  // priority is a full turn per line of somebody else's conversation. What is genuinely
-  // said TO the agent arrives here, through the mirror's fan-in; the rest is the world,
-  // and the world waits. Nothing is lost that `engaged` doesn't already hold: a reply that
-  // lands while the agent has the floor wakes it as engaged, and one that lands after the
-  // floor decayed is the world talking, which is what the digest is for.
-  if (news.some((e) => e.envelope.conversation.address === session.conversation)) {
-    return "think";
-  }
+  // The summons is the MIND ALIAS and the LOCAL ROOMS (§2). Not a DM, not a reply to the
+  // agent on a wire, not its name said out loud: none of those address the agent, they
+  // address the principal's account in a room the agent is a bystander in — and answering
+  // each at wake priority is a full turn per line of somebody else's conversation. What is
+  // genuinely said TO the agent arrives here, through the mirror's fan-in, or in a room of
+  // the org's own, which a member opened with the agent in it: nothing local is the world
+  // talking around it. The rest is the world, and the world waits. Nothing is lost that
+  // `engaged` doesn't already hold: a reply that lands while the agent has the floor wakes
+  // it as engaged, and one that lands after the floor decayed is the world talking, which
+  // is what the digest is for.
+  if (
+    news.some((e) =>
+      e.envelope.conversation.address === session.conversation || e.envelope.service === "local"
+    )
+  ) return "think";
   // an ALARM wakes now, wherever it landed: it fired at a time the agent itself chose, and
   // deferring it to the digest (or sleeping through it) would answer a question nobody
   // asked — "was 07:00 really what you meant?". The one wake class the agent set itself.
@@ -1480,7 +1493,7 @@ async function act(
   // one session, one place (§4): the harness's own rows land where the session speaks
   const here = {
     service: "local" as const,
-    connection_address: "agent",
+    connection_address: LOCAL_CONNECTION,
     conversation: { address: session.conversation },
   };
   const ts = () => new Date().toISOString();
@@ -2047,7 +2060,7 @@ async function aimOf(
     }
     const made: ConversationRow = {
       service: "local",
-      connection: "agent",
+      connection: LOCAL_CONNECTION,
       address: newId(),
       name,
       kind,
@@ -2164,7 +2177,7 @@ async function wireList(
 /** A conversation the log holds, by address: a local room of its own carries its row. */
 async function knownRoom(address: string, ports: XiPorts): Promise<Aim> {
   const row = parseDirect(address) === null
-    ? await ports.log.conversation("local", "agent", address)
+    ? await ports.log.conversation("local", LOCAL_CONNECTION, address)
     : null;
   return { address, ...(row ? { local: { members: [], room: row } } : {}), candidates: [] };
 }
@@ -2649,13 +2662,21 @@ async function targetOf(
     })()
     : undefined;
   const named = account?.address;
-  if (name === "contact") return named === undefined ? undefined : { connection: named };
+  if (name === "contact") {
+    return account === undefined ? undefined : { service: account.service, connection: named };
+  }
   if (name === "conversation") {
     const which = (input as { which?: unknown } | null)?.which;
     if (typeof which !== "string" || which.trim() === "") return undefined;
     try {
       const room = await roomFor(which.trim(), ports);
-      return { connection: room.wire?.connection ?? "agent", conversation: room.address };
+      return room.wire
+        ? {
+          service: room.wire.service,
+          connection: room.wire.connection,
+          conversation: room.address,
+        }
+        : { service: "local", connection: LOCAL_CONNECTION, conversation: room.address };
     } catch {
       return undefined;
     }
@@ -2673,18 +2694,25 @@ async function targetOf(
     const aim = await aimOf(to, subject, self, ports, account);
     // a room on a wire is opened by the send itself, after the judgement: the account is
     // known here, the address is not yet
-    if (aim.wire) return { connection: aim.wire.connection };
+    if (aim.wire) return { service: aim.wire.service, connection: aim.wire.connection };
     to = aim.address;
     local = aim.local !== undefined;
   } catch {
     return undefined;
   }
   // an address on two accounts with none named is the call's own error to raise; here it
-  // is simply no connection
+  // is simply no connection. A local room rides the local channel from its first line on.
   const prior = await recordOf(to, account, ports).catch(() => undefined);
-  const connection = named ?? prior?.envelope.connection_address ??
-    (local ? undefined : (await firstRideOf(to, self, ports))?.address);
-  return connection !== undefined ? { connection, conversation: to } : { conversation: to };
+  const ride = account ??
+    (prior || local ? undefined : await firstRideOf(to, self, ports));
+  const where = ride
+    ? { service: ride.service, connection: ride.address }
+    : prior
+    ? { service: prior.envelope.service, connection: prior.envelope.connection_address }
+    : local
+    ? { service: "local", connection: LOCAL_CONNECTION }
+    : {};
+  return { ...where, conversation: to };
 }
 
 /**
@@ -2912,7 +2940,7 @@ async function execute(
       if (local.members.length > 0) {
         await ports.log.upsertMemberships(local.members.map((m) => ({
           service: "local",
-          connection: "agent",
+          connection: LOCAL_CONNECTION,
           conversation: to,
           agentId: m.agentId,
           sessionId: m.sessionId,
@@ -3014,7 +3042,7 @@ async function execute(
         connection_address: prior.envelope.connection_address,
         conversation,
       }
-      : { service: "local" as const, connection_address: "agent", conversation };
+      : { service: "local" as const, connection_address: LOCAL_CONNECTION, conversation };
     // attachments (§5 media): paths → FileParts, statted and classified broker-side; a
     // missing path throws here and the tool_result carries the error back to the model
     const files = Array.isArray(args.files)

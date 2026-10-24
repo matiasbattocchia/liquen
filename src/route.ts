@@ -11,7 +11,7 @@
  */
 
 import type { Log } from "./store/log.ts";
-import { MIND, parseDirect, sessionAddress } from "./session.ts";
+import { LOCAL_CONNECTION, MIND, parseDirect, sessionAddress } from "./session.ts";
 import type { Event } from "./types.ts";
 
 export interface Session {
@@ -42,7 +42,7 @@ export function enroll(
 ): Promise<void> {
   return log.upsertMemberships([{
     service: "local",
-    connection: "agent",
+    connection: LOCAL_CONNECTION,
     conversation: sessionAddress(agentId, sessionId),
     agentId,
     sessionId,

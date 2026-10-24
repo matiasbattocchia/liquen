@@ -27,7 +27,7 @@ const card = (ref: string, ts: string, agent = "a1"): Draft<PermissionRequestEve
   agent: { id: agent, session_id: "mind" },
   envelope: {
     service: "local",
-    connection_address: "agent",
+    connection_address: "default",
     conversation: { address: `mind@${agent}` },
   },
   parts: [{
@@ -94,7 +94,11 @@ const call = (text: string, turn: string): Draft<ToolUseEvent> => ({
   type: "tool_use",
   agent: { id: "a1", session_id: "mind" },
   payload: { turn_id: turn },
-  envelope: { service: "local", connection_address: "agent", conversation: { address: "mind@a1" } },
+  envelope: {
+    service: "local",
+    connection_address: "default",
+    conversation: { address: "mind@a1" },
+  },
   parts: [{
     type: "data",
     kind: "tool_use",

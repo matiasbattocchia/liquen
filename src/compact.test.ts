@@ -40,7 +40,7 @@ const msg = (text: string, self: boolean, conv = "mind@a1"): MessageEvent => ({
   ...(self ? { agent: { id: "a1", session_id: "s1" }, payload: { turn_id: `M${n}` } } : {}),
   envelope: {
     service: "local",
-    connection_address: "agent",
+    connection_address: "default",
     conversation: { address: conv },
     ...(self ? {} : { sender: { address: "ana", name: "Ana" } }),
   },
@@ -52,7 +52,11 @@ const summaryEv = (covers: [string, string], text: string): SummaryEvent => ({
   ts: "2026-07-20T10:00:00Z",
   type: "summary",
   agent: { id: "a1", session_id: "s1" },
-  envelope: { service: "local", connection_address: "agent", conversation: { address: "mind@a1" } },
+  envelope: {
+    service: "local",
+    connection_address: "default",
+    conversation: { address: "mind@a1" },
+  },
   payload: { covers },
   parts: [{ type: "text", kind: "text", text }],
 });
@@ -294,7 +298,7 @@ Deno.test("compactAt sits below what a full window weighs — else the checkpoin
 
 const HERE = {
   service: "local" as const,
-  connection_address: "agent",
+  connection_address: "default",
   conversation: { address: "mind@a1" },
 };
 const think = (turn: string): ThinkingEvent => ({

@@ -58,6 +58,7 @@ export type PolicyAction = "allow" | "ask" | "deny";
 export interface Rule {
   tool: string;
   action: PolicyAction;
+  service?: string;
   connection?: string;
   conversation?: string;
 }

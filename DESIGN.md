@@ -153,7 +153,7 @@ decide(window) →
   trailing harness `error` (the last event in the window)          → ignore (idle-after-error)
   unclosed chain (all uses resolved, no turn output after)         → think (the closing turn)
   unanswered news (non-self msgs beyond the last closing's CONSUMED horizon), down the LADDER:
-    a summons — the mind alias, and nothing else                   → think (never waits)
+    a summons — the mind alias, or a local room                    → think (never waits)
     an engaged conversation — it HOLDS THE FLOOR: our complex's    → think (you don't drop
       last word there is the agent's, and it is recent               out mid-conversation)
     asleep (`sleepHours`)                                          → ignore (the world waits)
@@ -167,13 +167,14 @@ decide(window) →
 **Attention**: the baseline is that every message deserves a reaction, and the ladder above
 is what cools that down — an agent sitting in busy group channels would otherwise spend a
 turn per line. Every rung is a fact about the news; no rung is a timer deciding whether
-something was worth reading. A **summons** is the **mind alias** and nothing else: the one conversation
-that addresses the agent. Not a DM, not a reply to something it said, not its name spoken
-as a word — those address the principal's account in a room the agent is a bystander in,
-and waking on each is a full turn per line of somebody else's conversation. What is
-genuinely said TO the agent arrives in its mind session, through the mirror's fan-in (§4);
-the rest is
-the world, and the world waits. An **engaged** conversation wakes immediately too, and
+something was worth reading. A **summons** is the **mind alias** or a **local room**, and
+nothing else: the conversations that address the agent. Not a DM, not a reply to something
+it said on a wire, not its name spoken as a word — those address the principal's account in
+a room the agent is a bystander in, and waking on each is a full turn per line of somebody
+else's conversation. What is genuinely said TO the agent arrives in its mind session,
+through the mirror's fan-in (§4), or in a room of the org's own, which a member opened with
+the agent in it: nothing local is the world talking around it, so a peer's word wakes it
+at once, the night included. The rest is the world, and the world waits. An **engaged** conversation wakes immediately too, and
 engagement is **holding the floor**: the last thing our complex said there was the agent's
 own voice (`ownVoice` — the `turn_id` discriminator, §3) and it is younger than
 `engagedMinutes`. Every reply refreshes the clock (ping-pong), silence lets it decay — and
@@ -642,7 +643,7 @@ one peripheral for both.
       | "thinking" | "alarm" | "error" | ...open set
   envelope: {       // WHICH CONVERSATION — every event names one (even internal ones)
     service: "whatsapp" | "slack" | "email" | "local" | ...   // local = harness's own channel
-    connection_address: string                // org account id / workspace
+    connection_address: string                // org account id / workspace; local's one: "default"
     conversation: { address, name?, kind? }  // kind: direct | group | channel (below)
     sender?: { address, name? }   // external identity on the wire
     external_id?: string          // backfilled by dispatcher on send
@@ -732,8 +733,8 @@ Decisions:
   route on `envelope.service` and target with `connection_address` +
   `conversation.address`. `external_id` is the one prefixed string
   (`slack:T:C:ts`) — a global merge key in one store-wide map, where cross-service
-  uniqueness is the point. Conversation addresses wear no prefix: the local service names
-  a session's room `mind@<agent>`, a direct room its sorted members joined by `,`
+  uniqueness is the point. Conversation addresses wear no prefix: the local service, whose
+  one connection is `default`, names a session's room `mind@<agent>`, a direct room its sorted members joined by `,`
   (`mind@ana,mind@bo`), and a group or channel by a minted id whose name and kind the
   `conversations` table holds; a calendar is addressed by its id and named by its display
   name. An address is
@@ -3269,12 +3270,15 @@ who steers as roster usernames when the derivation of §4 is not wanted, `[]` fo
 connector: its `config.ts` declares the defaults and validates its subsection through
 `connectorConfig`, so custom connectors configure identically). `rules` is the
 permission policy as data (§2): ordered rows
-`{tool, action: allow|ask|deny, connection?, conversation?}` — first match decides, `*`
-matches any tool, and the scope fields pin a rule to the org's three gating levels: a
+`{tool, action: allow|ask|deny, service?, connection?, conversation?}` — first match
+decides, `*` matches any tool, and the scope fields pin a rule to where a call lands: a
 conversation, a whole connection (the account/workspace — a WhatsApp number, a Slack
-team), or global (no scope). xi resolves where a `send` lands before ruling, so "the
+team), every connection of a service (`whatsapp`, or `local`: the rooms between agents),
+or global (no scope). xi resolves where a `send` lands before ruling, so "the
 WhatsApp number asks, the Slack workspace flows, #general is blocked" is three rows, most
-specific first. The config rows are the BASE half; the REMEMBERED half is the `rules`
+specific first. The default table opens with `{send, service: local, allow}`: a word to a
+peer stays in the org, so it goes unasked, while a send on a wire speaks in the
+principal's name and asks. The config rows are the BASE half; the REMEMBERED half is the `rules`
 table on the log (store/rules.ts), written by standing verdicts — the principal answers a
 card `/{y,n} [once|conv|conn|always|all] [reason]`, and a scope word pins an allow/deny row to where
 that call landed (upserted by scope: a later verdict replaces the action). The gate

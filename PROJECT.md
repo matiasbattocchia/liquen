@@ -5884,6 +5884,30 @@ Left: attribution of a blind tunnel. A bubble's connection came over its agent's
 socket; now a tunnel that swaps nothing is anonymous, as from a bare shell. A swapped
 request still names its agent through the handle.
 
+### Agents talk to each other unasked and at once (2026-10-24) — LANDED
+
+Seen live: the user's agent said hola to a new peer, `dubiku`. Its send asked, and the
+card reached the user's WhatsApp. Dubiku's answer asked too, but dubiku holds no account,
+so its mind has no surface, and the card sat in `mind@dubiku`, seen only from the REPL.
+Decided with the user: a room between agents is the org talking to itself.
+
+- **A rule can pin a service.** `{tool, action, service?, connection?, conversation?}`;
+  `service` holds on every connection of that service. The gate's target carries the
+  service, and a send into a brand-new local room now resolves to the local connection
+  instead of to none (a rule pinned to it used to miss the opening line). Weighed against
+  overloading `connection` with service names: `send`'s `connection: "whatsapp"` picks the
+  one account held there, so in a rule the same spelling would have meant something else.
+- **The default table opens with `{send, service: local, allow}`.** A send on a wire still
+  asks.
+- **A local room summons.** The mind's attention ladder wakes now for news in any local
+  room, as it does for the mind alias, sleep included. Under the digest a peer's report
+  after a long task waited up to `digestMinutes` once the floor had decayed, and a night
+  until morning. Left to watch: a local group of many agents, where every line wakes
+  every member; the digest's batching was the defence for that shape.
+- **The local connection is `default`** (it was `agent`, which read as a member's name in
+  the prompt's connection clusters). One constant, `LOCAL_CONNECTION`. The live orgs'
+  rows were rewritten by hand.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

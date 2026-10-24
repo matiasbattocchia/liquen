@@ -82,7 +82,7 @@ import type {
 } from "./types.ts";
 import type { Log, UsageRow } from "./store/log.ts";
 import { newId } from "./store/id.ts";
-import { sessionAddress } from "./session.ts";
+import { LOCAL_CONNECTION, sessionAddress } from "./session.ts";
 import { silent } from "./render.ts";
 import { answer, isRefusal, refusalText, settle } from "./verdict.ts";
 import { lineOf } from "./describe.ts";
@@ -415,7 +415,7 @@ async function handle(
   }
   const envelope = {
     service: "local" as const,
-    connection_address: "agent",
+    connection_address: LOCAL_CONNECTION,
     conversation: { address },
   };
   if (req.op === "call") {

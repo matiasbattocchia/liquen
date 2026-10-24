@@ -54,7 +54,7 @@ function asked(ts: string, text: string, name = "matias"): MessageEvent {
     agent: { id: AGENT, session_id: "mind" },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: HOME },
       sender: { address: "matias", name },
     },
@@ -72,7 +72,7 @@ function answered(ts: string, text: string, extra?: Record<string, Json>): Messa
     agent: { id: AGENT, session_id: "mind" },
     envelope: {
       service: "local",
-      connection_address: "agent",
+      connection_address: "default",
       conversation: { address: HOME },
     },
     parts: [{ type: "text", kind: "text", text }],
@@ -302,7 +302,7 @@ Deno.test("live: text after a tool line is a block of its own, marked again", ()
     type: "tool_use",
     payload: { turn_id: "t1" },
     agent: { id: AGENT, session_id: "mind" },
-    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    envelope: { service: "local", connection_address: "default", conversation: { address: HOME } },
     parts: [{ type: "data", kind: "tool_use", data: { name: "search", input: {} } }],
   } as unknown as Event);
   p.delta({ kind: "text", text: "tenés dos turnos" });
@@ -328,7 +328,7 @@ Deno.test("live: blocks stand one blank row apart, however the turn goes", () =>
     type: "permission_request",
     payload: { ref_id: "u1" },
     agent: { id: AGENT, session_id: "mind" },
-    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    envelope: { service: "local", connection_address: "default", conversation: { address: HOME } },
     parts: [{ type: "data", kind: "permission_request", data: { detail: "send(...)" } }],
   } as unknown as Event;
   const use = {
@@ -373,7 +373,7 @@ Deno.test("live: a call that failed says why, in the tool's own words", () => {
     type: "tool_use",
     payload: { turn_id: "t1" },
     agent: { id: AGENT, session_id: "mind" },
-    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    envelope: { service: "local", connection_address: "default", conversation: { address: HOME } },
     parts: [{
       type: "data",
       kind: "tool_use",
@@ -417,7 +417,7 @@ Deno.test("recap: the work shows, not just the words — and an open card is sti
     // a turn stamps what it writes; a principal's verdict is no turn's
     payload: type === "permission_response" ? payload : { turn_id: "t1", ...payload },
     agent: { id: AGENT, session_id: "mind" },
-    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    envelope: { service: "local", connection_address: "default", conversation: { address: HOME } },
     parts: [{ type: "data", kind: type, data }],
   } as unknown as Event);
 
@@ -464,7 +464,7 @@ Deno.test("a recap prints exactly what the live screen printed", () => {
     // a turn stamps what it writes; a principal's verdict is no turn's
     payload: type === "permission_response" ? payload : { turn_id: "t1", ...payload },
     agent: { id: AGENT, session_id: "mind" },
-    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    envelope: { service: "local", connection_address: "default", conversation: { address: HOME } },
     parts: [{ type: "data", kind: type, data }],
   } as unknown as Event);
   // the principal's own lines are the screen's to echo, not the painter's: they stand
@@ -535,7 +535,7 @@ Deno.test("a verdict reads under the line that gave it, live and reopened alike"
     // a turn stamps what it writes; a principal's verdict is no turn's
     payload: type === "permission_response" ? payload : { turn_id: "t1", ...payload },
     agent: { id: AGENT, session_id: "mind" },
-    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    envelope: { service: "local", connection_address: "default", conversation: { address: HOME } },
     parts: [{ type: "data", kind: type, data }],
   } as unknown as Event);
   const card = (id: string, use: string) =>
@@ -598,7 +598,7 @@ Deno.test("a fired wake paints its note, live and reopened alike", () => {
     ts: "2026-10-02T20:56:23Z",
     type: "alarm",
     payload: {},
-    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    envelope: { service: "local", connection_address: "default", conversation: { address: HOME } },
     parts: [{ type: "text", kind: "alarm", text: "recordarle a Mecha el mail" }],
   } as unknown as Event;
   const use = {
@@ -607,7 +607,7 @@ Deno.test("a fired wake paints its note, live and reopened alike", () => {
     type: "tool_use",
     payload: { turn_id: "t1" },
     agent: { id: AGENT, session_id: "mind" },
-    envelope: { service: "local", connection_address: "agent", conversation: { address: HOME } },
+    envelope: { service: "local", connection_address: "default", conversation: { address: HOME } },
     parts: [{ type: "data", kind: "tool_use", data: { name: "search", input: { in: "549" } } }],
   } as unknown as Event;
   const live = surface();
@@ -626,7 +626,7 @@ Deno.test("a fired wake paints its note, live and reopened alike", () => {
 // and the call it stopped mid-run draws no failure.
 Deno.test("a /n and a /cancel read as the principal's lines, live and reopened alike", () => {
   const TS = "2026-10-02T16:42:59Z";
-  const env = { service: "local", connection_address: "agent", conversation: { address: HOME } };
+  const env = { service: "local", connection_address: "default", conversation: { address: HOME } };
   const history = [
     {
       ...asked(TS, ""),
@@ -710,7 +710,7 @@ Deno.test("a /n and a /cancel read as the principal's lines, live and reopened a
 // row long scrolled by
 Deno.test("a lapse reads its reason; an approved call speaks only when it failed", () => {
   const TS = "2026-10-02T16:42:59Z";
-  const env = { service: "local", connection_address: "agent", conversation: { address: HOME } };
+  const env = { service: "local", connection_address: "default", conversation: { address: HOME } };
   const settled = (id: string, ref: string, data: Json) => ({
     id,
     ts: TS,
@@ -754,7 +754,7 @@ Deno.test("a lapse reads its reason; an approved call speaks only when it failed
 // screen draws it where the live one did; the agent taking its ask back is no verdict
 Deno.test("an error reads as its sentence and a withdrawal as itself, live and reopened alike", () => {
   const TS = "2026-10-02T16:42:59Z";
-  const env = { service: "local", connection_address: "agent", conversation: { address: HOME } };
+  const env = { service: "local", connection_address: "default", conversation: { address: HOME } };
   const history = [
     {
       id: "e1",
@@ -815,7 +815,7 @@ Deno.test("live: a verdict typed here paints its row, not its line again", () =>
 const watched = (): Event[] => {
   const room = {
     service: "local" as const,
-    connection_address: "agent",
+    connection_address: "default",
     conversation: { address: HOME },
   };
   const self = { id: AGENT, session_id: "mind" };
