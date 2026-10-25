@@ -5925,6 +5925,38 @@ Decided with the user, from the lines parked on 2026-09-28.
   and its `sync.ts`). `sole-bot` still named `system.bashTimeoutMs`, which no release reads,
   and was failing at boot on it; it says `bashWaitMs` now.
 
+### The checkpoint is the window's floor, and a flood is skipped (2026-10-24) — LANDED
+
+Decided with the user. The window was bounded by three numbers that only worked together: a
+count cap (`windowLimit`, 500 events), a half-hour grid the floor snapped to so the prompt
+prefix stood still between jumps, and 200 events of read slack for the snap. `compactAt`
+had to sit below what 500 events weigh or no checkpoint ever ran, and only the defaults
+were checked. A burst of more than 200 events inside one half hour put the floor back on a
+sliding tail, voiding the cache every turn with no sign.
+
+- **The floor is the latest checkpoint.** The read starts at what the session's newest
+  `summary` covers and takes every visible row after it, so the prefix stands still from
+  one checkpoint to the next by construction. Before the first checkpoint the floor is
+  `since`.
+- **The cap is `compactAt` × `FLOOD_FACTOR` (2), in est. tokens.** The read pages newest
+  first and stops at the first row past it. A window that reaches it is a flood: `decide`
+  asks for a checkpoint before answering anything, and that checkpoint takes no call. It
+  carries the previous record forward with one line naming, as a UTC stamp, how far the
+  unread stretch runs, for `search`. Its cut may fall past unanswered input; the
+  `keepRecent` tail is what the agent answers.
+- **Gone:** `windowLimit` (config, agent settings, the funnel), `WINDOW_ANCHOR_MS`,
+  `WINDOW_SLACK`, `anchored`, and the test that `compactAt` sits under 500 events.
+- **New boot check:** `keepRecent` below `compactAt`, both positive. A tail as large as
+  the budget leaves a checkpoint nothing to cover, so it never runs.
+- **Trade-off, chosen:** the cap applies to the agent's own work too. A turn heavier than
+  twice `compactAt` reads only its newest steps (render skips the ones whose start fell
+  out), and the gap after it is a flood, so it is skipped rather than summarized. Vibes
+  raised `compactAt` to 150000 for turns that read a whole game, which gives it a 300000 cap.
+- Tests that forced a checkpoint with `compactAt: 1` now set a budget just under the
+  window's weight, since 1 makes every window a flood.
+- The orgs on this machine dropped `windowLimit` (`new`, `vibes`, `sole-bot`, and turtle's
+  config and its org template).
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

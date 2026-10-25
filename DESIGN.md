@@ -270,17 +270,18 @@ arrives through the agent's scoped subscription, already readable (§6).
 The derivations are **position-aware**, so a late invocation that arrives after the work was
 already done resolves to nothing — quiescence is a poke that finds nothing owed.
 
-**The window has two bounds**, a count and a floor. `windowLimit` (500) bounds the prompt —
-it is the size guard, and under live traffic it is the one that binds. Its floor is
-**anchored**, snapped down to a half-hour grid: a plain tail drops one event off the front
-on every append, and since a prompt cache matches a PREFIX, that shift alone voids the whole
-rendered history and every breakpoint behind it — the transcript re-written each turn at
-1.25× instead of read back at 0.1×. Snapped, the floor stands still for a bucket of turns
-and jumps once; the window is `windowLimit` plus whatever else shares the floor's bucket.
-The floor is a POSITION — the first row stamped inside the bucket, and everything appended
-after it — so a late-stamped row (an offline sync, a lagged webhook) is inside the window by
-where it landed, whatever its clock says. `since` bounds the
-BACKLOG: a fixed instant, set once when the agent comes up to start − `backlogHours` (24,
+**The window has a floor and a cap.** The floor is the session's latest **checkpoint** (§5):
+the read starts at the record and takes every visible row after what it covers. A plain
+tail would drop one event off the front on every append, and since a prompt cache matches a
+PREFIX, that shift alone voids the whole rendered history and every breakpoint behind it —
+the transcript re-written each turn at 1.25× instead of read back at 0.1×. The checkpoint
+stands still until the next one, so the prefix does too, and each new checkpoint moves it
+once. The floor is a POSITION in the log's own order, so a late-stamped row (an offline
+sync, a lagged webhook) is inside the window by where it landed, whatever its clock says.
+The cap is a FLOOD's: the read runs newest first and stops past twice `compactAt`. A window
+that reaches it is the floor, the newest of the log, and a stretch between that no read
+holds, and `decide` checkpoints it before anything answers it (§5). Before the first
+checkpoint the floor is `since`, which bounds the BACKLOG: a fixed instant, set once when the agent comes up to start − `backlogHours` (24,
 org-configurable: `organization.backlogHours`), before which nothing is ever owed. An
 agent coming up after a week off answers the last day, not the week, and the rest is history
 it can still reach through `search` (§6).
@@ -289,7 +290,7 @@ The floor is an instant, not a distance from now, because what it answers is a o
 question — *what backlog did this process inherit?* A bound that followed the clock would
 keep re-deciding it: a conversation the agent already engaged with would age out from under
 it mid-thread, and the cards, horizons and own-messages the derivations read would go with
-it. Set once, it decides the inheritance and then holds still while the count cap does the
+it. Set once, it decides the inheritance and then holds still while the checkpoints do the
 ongoing bounding. It stays in hours for the same reason it must not be tight: the window is
 also where a turn finds its own last message and the `consumed` horizon that proves a peer
 was answered, so a floor cutting BETWEEN a message and its reply would answer it twice.
@@ -1524,7 +1525,7 @@ constraint, and render derives it **from the window's shape**:
   turn's delta written. That is what makes the tool loop affordable: every tool round-trip
   re-sends this same prefix, seconds apart. A `<conv>` element never spans the boundary —
   trailing messages joining it would rewrite the prefix's last block. It caches for an
-  **hour**: the window's floor is anchored (§2), so this prefix outlives the idle gaps
+  **hour**: the window's floor is the latest checkpoint (§2), so this prefix outlives the idle gaps
   between an agent's wakes, and it is the expensive block — a 2× write buys 0.1× reads
   across them. The within-turn breakpoint (the growing tool chain) keeps the default five
   minutes, which already outlives any chain. The previous closing's block wears its mark
@@ -1765,9 +1766,9 @@ compaction proper is only pi's **checkpoint layer**:
   `summary` is the one self-authored non-message that passes `relevant` (§2) — which finds
   the visible window light and idles, or thinks over the record when the input a dead
   turn was answering is still owed. This keeps the invariant *one invocation = at most one
-  model call* (edge wall-clocks). Measuring the VISIBLE window matters: the raw window
-  stays heavy after a checkpoint (the read is windowLimit-capped), so a raw estimate would
-  re-fire on the next invocation — a compact-forever livelock.
+  model call* (edge wall-clocks). The window is measured VISIBLE: the read starts at the
+  floor's covered end, so an older checkpoint the floor folded in can still be in it, and
+  only the latest one counts.
   **Never while a turn runs, and never in front of input.** A thinking block's signature
   binds everything its request held before it, and a summary lands at the head of the
   window: written while a turn runs — even over closed history only — it sits under every
@@ -1804,6 +1805,19 @@ compaction proper is only pi's **checkpoint layer**:
   on it, unstamped, and the next look retries: the window stays uncovered whichever it
   was, a turn taken over it would cost more and say less, and a checkpoint failing for a
   standing reason must not buy a second call on every wake in silence.
+- **A flood is the one checkpoint in front of input, and it takes no call.** The window
+  read stops past `floodAt` (`compactAt` × `FLOOD_FACTOR`, 2: a running turn grows the
+  window past `compactAt`, and the cap leaves it that room). A window that reaches it holds
+  the floor and the newest of the log, with a stretch between that no read holds and that
+  moves on every arrival, so `decide` asks for its checkpoint before any think, once the
+  turn is over. That checkpoint is written with no call: the previous record carried as
+  it stands, and a line saying how far the unread stretch runs, as a UTC stamp `search`
+  takes for `before`. A flood is input, so its cut falls past unanswered messages and
+  between world lines, wherever no step straddles, and the `keepRecent` tail it leaves is
+  what the next look answers from. The rows a dead turn wrote go whole or not at all: its
+  thinking replays on the next request. The read caps the agent's own work the same way: a
+  turn heavier than the cap reads its newest steps, and render skips the steps whose start
+  fell outside.
 - **One call, attempted one way.** nu owns the retry ladder and the stream, and hands
   compaction a *step-caller* rather than the transport: the checkpoint is retried over
   weather exactly as a think is (`RETRY_DELAYS_MS`, stopping the moment a cancel lands),
@@ -1852,9 +1866,8 @@ compaction proper is only pi's **checkpoint layer**:
   summary (each is folded into the next); the summary body renders as the leading
   `<checkpoint>` block, escaped like any world body — its text is a transcript's worth of
   peers' words, and a mark typed by one of them stays text.
-- **Later**: xi's window read starts at the latest summary instead of `windowLimit` (the
-  cap becomes a fallback); the API's server-side compaction block (beta) could ride
-  inside a summary event if we ever want it — noted, not planned.
+- **Later**: the API's server-side compaction block (beta) could ride inside a summary
+  event if we ever want it — noted, not planned.
 
 ### render is pure
 
@@ -3254,7 +3267,7 @@ homes, everything else funneled to the deepest function that needs it (main → 
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
 the store's tables, never in the file. Its sections are split by AUDIENCE — `system`
 (machinery tuning, every deployment works on the defaults: bashWaitMs · compactAt ·
-keepRecent · windowLimit · debounceMs · prices), `deployment` (where the org's parts live,
+keepRecent · debounceMs · prices), `deployment` (where the org's parts live,
 a ladder in which each remote value needs the one before it: database — null is SQLite in
 `data/log`, a Postgres URL is a schema of that database, its password in `PGPASSWORD` ·
 docs — files, or the table of that database · sandbox — this machine bare or in bubbles,

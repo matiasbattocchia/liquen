@@ -600,6 +600,19 @@ Deno.test("deployment.sandboxSleepMinutes: whole minutes, 10 unless said", async
   });
 });
 
+Deno.test("system.keepRecent: below compactAt, or a checkpoint has nothing to cover", async () => {
+  await withDir(async (root) => {
+    const write = (system: Record<string, unknown>) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system }));
+    await write({ compactAt: 150_000 });
+    assertEquals((await readConfig(root)).system.keepRecent, 20_000);
+    for (const bad of [{ keepRecent: 50_000 }, { keepRecent: 60_000 }, { keepRecent: 0 }]) {
+      await write(bad);
+      await assertRejects(() => readConfig(root), Error, "keepRecent must be");
+    }
+  });
+});
+
 Deno.test("deployment.mounts: the bubble's view of the machine, checked at boot", async () => {
   await withDir(async (root) => {
     const write = (section: string, body: unknown) =>

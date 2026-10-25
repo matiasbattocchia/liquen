@@ -96,24 +96,26 @@ export const GATE_HOURS = 24;
 export const DEFAULT_BASH_WAIT_MS = 120_000; // how long a bash call holds the turn before going to the background
 // est. tokens of RAW EVENT JSON (`estTokens`, chars/4) — roughly 1.8x the prompt those
 // events render to, since the estimate counts ids, envelopes and the tool traffic the
-// closed region drops. It has to sit BELOW what a full window weighs or the count cap
-// binds first and the checkpoint is unreachable code (`compact.test.ts` guards this) — a
-// live 500-event window measures ~52K, so the headroom here is thin by construction and
-// this number cannot be raised without raising `windowLimit` with it.
+// closed region drops.
 //
-// Which is also why it is not the knob for how OFTEN a checkpoint runs. A checkpoint is
-// priced against the CACHE, not the window: it rewrites the prompt prefix, so it costs an
-// uncached call plus the full writes that follow until the cache re-settles. Both halves
-// scale with the window, while the interval between checkpoints scales the same way — a
-// wider window buys proportionally rarer, proportionally dearer checkpoints, and the spend
-// comes out flat. What moves it is less world traffic reaching the window at all.
+// It is not the knob for how OFTEN a checkpoint runs. A checkpoint is priced against the
+// CACHE, not the window: it rewrites the prompt prefix, so it costs an uncached call plus
+// the full writes that follow until the cache re-settles. Both halves scale with the
+// window, while the interval between checkpoints scales the same way — a wider window buys
+// proportionally rarer, proportionally dearer checkpoints, and the spend comes out flat.
+// What moves it is less world traffic reaching the window at all.
 export const DEFAULT_COMPACT_AT = 50_000;
 export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves uncovered
 // A checkpoint runs only between turns, in an idle gap, so `compactAt` is a soft budget: a
 // window over it waits for the turn to end, and input never waits for a checkpoint. The
 // one hard ceiling is the API's own: a request it refuses as too long is compacted before
 // the next think, whatever the estimate says (compact.ts `overflowed`).
-export const DEFAULT_WINDOW_LIMIT = 500; // history query cap — the size guard (§5)
+//
+// The window's other bound is a FLOOD: what the window read stops at, `compactAt` times
+// this. A turn grows the window past `compactAt` while it runs, so the read leaves it that
+// much room; past it, more arrived than the window holds, and the checkpoint written over
+// it skips what it could not read (compact.ts) instead of summarizing it.
+export const FLOOD_FACTOR = 2;
 export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for its burst (§2)
 export const DEFAULT_SANDBOX_SLEEP_MINUTES = 10; // the Sandbox SDK's own sleepAfter
 // The tick is not a knob. It is the RESOLUTION of the attention rules, not one of them:
@@ -188,7 +190,6 @@ export interface OrgConfig {
     bashWaitMs: number;
     compactAt: number;
     keepRecent: number;
-    windowLimit: number;
     debounceMs: number;
     prices: Price[]; // the org's own price rows, over the package's list (`prices.ts`)
   };
@@ -272,17 +273,14 @@ const SYSTEM: Entry[] = [
     key: "compactAt",
     value: DEFAULT_COMPACT_AT,
     doc: "est. tokens of raw event JSON (~1.8x the prompt) before a checkpoint runs, " +
-      "between turns; input never waits for one",
+      "between turns; input never waits for one. The window reads at most twice this: " +
+      "past that it is a flood, and its checkpoint skips what the window could not hold, " +
+      "left for search",
   },
   {
     key: "keepRecent",
     value: DEFAULT_KEEP_RECENT,
-    doc: "est. tokens a checkpoint leaves uncovered",
-  },
-  {
-    key: "windowLimit",
-    value: DEFAULT_WINDOW_LIMIT,
-    doc: "history query cap — the prompt's size guard",
+    doc: "est. tokens a checkpoint leaves uncovered; below compactAt",
   },
   {
     key: "debounceMs",
@@ -1064,6 +1062,15 @@ function parseStrict(raw: string, path: string): unknown {
 function validateOrg(cfg: OrgConfig, path: string): void {
   const prices = checkPrices(cfg.system.prices);
   if (prices) throw new Error(`${path}: system.prices ${prices}`);
+  const { compactAt, keepRecent } = cfg.system;
+  if (!(compactAt > 0 && keepRecent > 0 && keepRecent < compactAt)) {
+    throw new Error(
+      `${path}: system.keepRecent must be a positive number below system.compactAt — a ` +
+        `checkpoint that leaves the whole budget uncovered has nothing to cover, and never ` +
+        `runs (got compactAt ${JSON.stringify(compactAt)}, keepRecent ` +
+        `${JSON.stringify(keepRecent)})`,
+    );
+  }
   if (!(cfg.organization.backlogHours > 0)) {
     throw new Error(
       `${path}: backlogHours must be a positive number (got ${cfg.organization.backlogHours})`,

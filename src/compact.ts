@@ -12,6 +12,15 @@
  * Iterative: a later compaction folds the previous summary in (pi's update rule), and
  * `covers` chains from the previous summary's start so survivors get re-covered.
  *
+ * The latest checkpoint is the window's floor (xi `windowOf`): the read starts there, so
+ * the prompt's prefix stands still from one checkpoint to the next. The read also stops
+ * at `floodAt` — when more arrived than one window holds, the window is the floor and the
+ * newest of it, and what lies between was never read. Its checkpoint is a FLOOD one,
+ * written with no call: the previous record carried forward, and a line saying how far
+ * the skipped stretch runs, for `search` to read. A flood is input — that is what floods —
+ * so its cut may fall past unanswered messages and between world lines, and the
+ * `keepRecent` tail is what the agent answers from.
+ *
  * A checkpoint runs only BETWEEN turns (§5): a thinking block's signature binds everything
  * its request held before it, and a summary lands at the head of the window, so one written
  * while a turn runs changes the prefix under every thinking block the turn replays. The
@@ -43,7 +52,10 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { describeCall } from "./describe.ts";
 import { LOCAL_CONNECTION } from "./session.ts";
 
-import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT } from "./config.ts";
+import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT, FLOOD_FACTOR } from "./config.ts";
+
+/** What the window read stops at, in est. tokens: past it the window is a flood. */
+export const floodAt = (compactAt = DEFAULT_COMPACT_AT): number => compactAt * FLOOD_FACTOR;
 
 /** chars/4 over what renders — crude but monotone; both thresholds are order-of-magnitude
  *  knobs. The wire sidecar (`extra`, where a connector keeps the raw delivery) never reaches
@@ -179,28 +191,40 @@ function turnEnds(events: Event[], session: Session): (i: number) => boolean {
   };
 }
 
+/** The span a checkpoint covers, the range it stands for, and whether it is a flood's —
+ *  written with no call, over a stretch the window never read whole. */
+export interface Span {
+  covered: Event[];
+  covers: [string, string];
+  flood: boolean;
+}
+
+/** The window is past what one window holds (`floodAt`): measured visible, like the budget. */
+export function flooded(events: Event[], compactAt = DEFAULT_COMPACT_AT): boolean {
+  return estTokens(applySummary(events)) > floodAt(compactAt);
+}
+
 /** Decide the covered span: everything up to the last turn end before the keep-recent
- *  tail. Null ⇒ nothing to do: under the threshold, a turn still running, or nothing
- *  coverable yet. */
+ *  tail — or, in a flood, everything before the tail that no step straddles. Null ⇒
+ *  nothing to do: under the threshold, a turn still running, or nothing coverable yet. */
 export function compactionSpan(
   events: Event[],
   session: Session,
   compactAt = DEFAULT_COMPACT_AT,
   keepRecent = DEFAULT_KEEP_RECENT,
-): { covered: Event[]; covers: [string, string] } | null {
-  // measure and span the VISIBLE window (latest summary applied): the raw window stays heavy
-  // after a checkpoint (the read is windowLimit-capped, not from-the-summary), so a raw
-  // estimate would fire again on the very next invocation — a compact-forever livelock now
-  // that the checkpoint is its own turn (§5). Chaining survives: the summary sits first in
-  // the visible window, so a new span covers it and `covers[0]` chains from it.
+): Span | null {
+  // measure and span the VISIBLE window (latest summary applied): the read starts at the
+  // floor's covered end, so an older checkpoint the floor folded in can still be in it.
+  // Chaining survives: the summary sits first in the visible window, so a new span covers
+  // it and `covers[0]` chains from it.
   events = applySummary(events);
+  const weight = estTokens(events);
   // the ceiling that counts is the API's: a window it refused shrinks whatever it estimates
-  if (estTokens(events) <= compactAt && !overflowed(events)) return null;
+  if (weight <= compactAt && !overflowed(events)) return null;
   // never under a running turn (see the header): its replayed thinking is bound to the
   // prefix as it stands
   if (!turnOver(events, session)) return null;
   const boundary = closingBoundary(events, session);
-  const deferred = deferredInput(events, session, boundary);
   // walk back from the end keeping ~keepRecent est. tokens uncovered: `kept` = the first
   // kept index
   let keep = 0;
@@ -210,6 +234,45 @@ export function compactionSpan(
     if (keep > keepRecent) break;
     kept = i;
   }
+  const flood = weight > floodAt(compactAt);
+  const cut = flood
+    ? floodCut(events, session, boundary, kept)
+    : recordCut(events, session, boundary, kept);
+  if (cut < 0) return null; // everything is recent, or nothing has ended — nothing coverable yet
+  const covered = events.slice(0, cut + 1);
+  const chain = covered.find((e): e is SummaryEvent => e.type === "summary");
+  const content = covered.filter((e) => e.type !== "summary");
+  if (content.length === 0) return null; // the previous checkpoint alone — nothing new
+  // the range the checkpoint stands for: from the previous checkpoint's own start (its
+  // survivors are re-covered here, so the chain never breaks) to the newest event folded in
+  const from = chain ? chain.payload.covers[0] : content[0].id;
+  const to = content.reduce((m, e) => e.id > m ? e.id : m, content[0].id);
+  return { covered, covers: [from, to], flood };
+}
+
+/** A flood's cut: the last row before the `keepRecent` tail that no step straddles — between
+ *  world lines and past unanswered ones, since the flood IS input and the tail is what gets
+ *  answered. The rows a dead turn wrote go whole or not at all: its thinking replays on the
+ *  next request, and a summary under part of it edits the prefix it was bound to. */
+function floodCut(events: Event[], session: Session, boundary: number, kept: number): number {
+  const safe = cutPoints(events);
+  const turn = events.flatMap((e, i) =>
+    i > boundary && e.type !== "summary" &&
+      (ownVoice(e, session) || e.type === "error" || e.type === "control")
+      ? [i]
+      : []
+  );
+  const first = turn[0] ?? Infinity;
+  const last = turn.at(-1) ?? -1;
+  const cuttable = (c: number) => safe.has(c) && (c < first || c >= last);
+  for (let c = kept - 1; c >= 0; c--) if (cuttable(c)) return c;
+  for (let c = kept; c < events.length; c++) if (cuttable(c)) return c;
+  return -1;
+}
+
+/** A record's cut: the last turn end before the `keepRecent` tail. */
+function recordCut(events: Event[], session: Session, boundary: number, kept: number): number {
+  const deferred = deferredInput(events, session, boundary);
   // where the cut may fall: in the closed region, at a turn's end (`turnEnds`), after any
   // event no step straddles. Never after unanswered input: a world message is INPUT, and a
   // checkpoint is a record, not an answer. Input the closing never consumed sits BEFORE the
@@ -239,16 +302,7 @@ export function compactionSpan(
   if (cut < 0 && over) {
     for (let c = ceiling; c < limit && cut < 0; c++) if (cuttable(c)) cut = c;
   }
-  if (cut < 0) return null; // everything is recent, or nothing has ended — nothing coverable yet
-  const covered = events.slice(0, cut + 1);
-  const chain = covered.find((e): e is SummaryEvent => e.type === "summary");
-  const content = covered.filter((e) => e.type !== "summary");
-  if (content.length === 0) return null; // the previous checkpoint alone — nothing new
-  // the range the checkpoint stands for: from the previous checkpoint's own start (its
-  // survivors are re-covered here, so the chain never breaks) to the newest event folded in
-  const from = chain ? chain.payload.covers[0] : content[0].id;
-  const to = content.reduce((m, e) => e.id > m ? e.id : m, content[0].id);
-  return { covered, covers: [from, to] };
+  return cut;
 }
 
 /** The covered span as a plain transcript + the previous checkpoint (if one is inside).
@@ -317,6 +371,19 @@ export async function buildSummary(
 ): Promise<Draft<SummaryEvent> | Draft<ErrorEvent> | null> {
   const span = compactionSpan(input.events, input.session, input.compactAt, input.keepRecent);
   if (!span) return null;
+  const minted = (text: string): Draft<SummaryEvent> => ({
+    ts: new Date().toISOString(),
+    type: "summary",
+    agent: { id: input.session.agentId, session_id: input.session.id },
+    envelope: {
+      service: "local",
+      connection_address: LOCAL_CONNECTION,
+      conversation: { address: input.session.conversation },
+    },
+    payload: { covers: span.covers, ...(input.turnId ? { turn_id: input.turnId } : {}) },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  if (span.flood) return minted(skipped(span.covered));
 
   const failed = (why: string): Draft<ErrorEvent> => ({
     ts: new Date().toISOString(),
@@ -364,17 +431,20 @@ export async function buildSummary(
   const summary = res.emissions.filter((e) => e.kind === "assistant")
     .map((e) => e.text).join("\n").trim();
   if (summary.length === 0) return failed("the model wrote nothing");
+  return minted(summary);
+}
 
-  return {
-    ts: new Date().toISOString(),
-    type: "summary",
-    agent: { id: input.session.agentId, session_id: input.session.id },
-    envelope: {
-      service: "local",
-      connection_address: LOCAL_CONNECTION,
-      conversation: { address: input.session.conversation },
-    },
-    payload: { covers: span.covers, ...(input.turnId ? { turn_id: input.turnId } : {}) },
-    parts: [{ type: "text", kind: "text", text: summary }],
-  };
+/** A flood checkpoint's words: the record it folds in, carried as it stands, and the line
+ *  that says where the skipped stretch ends — a stamp `search` takes as `before`. */
+export function skipped(covered: Event[]): string {
+  const previous = covered.find((e): e is SummaryEvent => e.type === "summary");
+  const newest = covered.reduce((m, e) => e.ts > m ? e.ts : m, covered[0].ts);
+  // to the minute, rounded UP: a `before` at the stamp still reaches the newest skipped row
+  const through = `${new Date(Date.parse(newest) + 59_999).toISOString().slice(0, 16)}Z`;
+  const line = previous
+    ? `Not read: everything after what the record above tells, up to ${through}. More ` +
+      `arrived than one window holds; search reads it.`
+    : `Not read: everything up to ${through}. More arrived than one window holds; search ` +
+      `reads it.`;
+  return previous ? `${textOf(previous)}\n\n${line}` : line;
 }

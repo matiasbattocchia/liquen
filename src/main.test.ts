@@ -173,6 +173,9 @@ Deno.test("the settle: a burst that arrives BETWEEN turns is one turn, not three
   const main = await start({ dir, debounceMs: 300, principals: [agent("1")] }, { transport });
   const pause = () => new Promise((r) => setTimeout(r, 60));
   try {
+    // the boot poke looks at the log at once, undebounced: the burst starts after its look,
+    // or the boot reads the first line as the whole of what was owed
+    await new Promise((r) => setTimeout(r, 200));
     await main.log.publish(principalMsg("mind@a1", "una"));
     await pause();
     await main.log.publish(principalMsg("mind@a1", "cosa"));

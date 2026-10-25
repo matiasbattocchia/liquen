@@ -2,7 +2,6 @@ import { assert, assertEquals } from "@std/assert";
 import {
   aboutOf,
   type AgentConfig,
-  anchored,
   attachmentsOf,
   decide,
   downOn,
@@ -13,9 +12,13 @@ import {
   unansweredOn,
   unknownTool,
   type Wake,
+  windowOf,
   type XiPorts,
 } from "./xi.ts";
-import type { Envelope, Event, Session, ToolUseEvent } from "./types.ts";
+import type { Draft, Envelope, Event, Session, ToolUseEvent } from "./types.ts";
+import { estTokens, flooded } from "./compact.ts";
+import { applySummary } from "./render.ts";
+import { type Log, openLog } from "./store/log.ts";
 import { localFiles } from "./store/media.ts";
 import { parseDirect } from "./session.ts";
 
@@ -391,13 +394,27 @@ Deno.test("decide: the max_tokens continuation is bounded — 3 overflows and it
 
 /* ── the checkpoint is the idle gap's (§5) ────────────────────────────── */
 
-const OVER: Wake = { compactAt: 1, keepRecent: 0 }; // every window is over budget
+/** Decide with a budget the window is just over, and far from a flood. */
+const decideOver = (events: Event[]) =>
+  decide(events, SESSION, { compactAt: estTokens(applySummary(events)) - 1, keepRecent: 0 });
 const err = (error: string) =>
   ev("error", { parts: [{ type: "data", kind: "error", data: { error } }] } as Partial<Event>);
 
+Deno.test("decide: a flood is checkpointed before its input is answered — the checkpoint takes no call", () => {
+  const events = [peerMsg(), selfMsg(), ...Array.from({ length: 30 }, () => peerMsg())];
+  const weight = estTokens(events);
+  // over budget and short of a flood: the input is answered first
+  assertEquals(decide(events, SESSION, { compactAt: weight - 1, keepRecent: 0 }), "think");
+  // past the flood: the stretch is skipped first, under the tail the next look answers
+  const flood: Wake = { compactAt: Math.floor(weight / 3), keepRecent: 0 };
+  assertEquals(decide(events, SESSION, flood), "compact");
+  // a running turn still waits: its thinking replays over the prefix as it stands
+  assertEquals(decide([...events, use("u1")], SESSION, flood), "act");
+});
+
 Deno.test("decide: nothing owed and the window over budget → compact; under budget → ignore", () => {
   const closed = [peerMsg(), selfMsg(), peerMsg(), selfMsg()];
-  assertEquals(decide(closed, SESSION, OVER), "compact");
+  assertEquals(decideOver(closed), "compact");
   assertEquals(decide(closed, SESSION, WAKE), "ignore");
   // the summary's insert is the next look: it finds the visible window light, and idles
   const summary = ev("summary", {
@@ -405,15 +422,15 @@ Deno.test("decide: nothing owed and the window over budget → compact; under bu
     payload: { covers: [closed[0].id, closed[3].id] },
     parts: [{ type: "text", kind: "text", text: "## Open" }],
   } as Partial<Event>);
-  assertEquals(decide([...closed, summary], SESSION, OVER), "ignore");
+  assertEquals(decideOver([...closed, summary]), "ignore");
 });
 
 Deno.test("decide: input never waits for a checkpoint — and a running turn is never cut", () => {
-  assertEquals(decide([peerMsg(), selfMsg(), peerMsg()], SESSION, OVER), "think"); // input first
-  assertEquals(decide([peerMsg(), use("u1")], SESSION, OVER), "act"); // its call first
-  assertEquals(decide([peerMsg(), use("u1"), result("u1")], SESSION, OVER), "think"); // its closing first
+  assertEquals(decideOver([peerMsg(), selfMsg(), peerMsg()]), "think"); // input first
+  assertEquals(decideOver([peerMsg(), use("u1")]), "act"); // its call first
+  assertEquals(decideOver([peerMsg(), use("u1"), result("u1")]), "think"); // its closing first
   assertEquals(
-    decide([peerMsg(), selfMsg(), peerMsg(), use("u1"), result("u1"), selfMsg()], SESSION, OVER),
+    decideOver([peerMsg(), selfMsg(), peerMsg(), use("u1"), result("u1"), selfMsg()]),
     "compact",
   );
 });
@@ -421,7 +438,7 @@ Deno.test("decide: input never waits for a checkpoint — and a running turn is 
 Deno.test("decide: a turn that died over budget compacts in the gap it left — the refused one whatever the budget", () => {
   // idle-after-error still holds: the failed think is not retried, the window is tidied
   assertEquals(
-    decide([peerMsg(), selfMsg(), peerMsg(), err("overloaded")], SESSION, OVER),
+    decideOver([peerMsg(), selfMsg(), peerMsg(), err("overloaded")]),
     "compact",
   );
   assertEquals(
@@ -821,42 +838,98 @@ Deno.test("alarm: once a turn has read past it, it stops asking — the horizon 
   assertEquals(decide([a, closed], SESSION, WAKE, NOON), "ignore");
 });
 
-/* ── anchored (§5): the window's floor stands still, so the prompt prefix caches ── */
+/* ── windowOf (§5): the checkpoint is the floor, so the prompt prefix caches ── */
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
-/** `count` events five minutes apart from midnight — a steady trickle across two buckets. */
-const trickle = (count: number): Event[] =>
-  Array.from({ length: count }, (_, i) => ({
-    id: `w${String(i).padStart(3, "0")}`,
-    ts: new Date(T0 + i * 5 * 60_000).toISOString(),
+/** A world line `i` minutes past midnight. */
+const lineAt = (i: number, ts = new Date(T0 + i * 60_000).toISOString()): Draft<Event> =>
+  ({
+    ts,
     type: "message",
     envelope: env(MIND),
-    parts: [],
-  } as Event));
+    parts: [{ type: "text", kind: "text", text: `línea ${i}` }],
+  }) as Draft<Event>;
+/** The session's checkpoint over `covers`. */
+const checkpointOver = (covers: [string, string]): Draft<Event> =>
+  ({
+    ts: new Date(T0).toISOString(),
+    type: "summary",
+    ...SELF,
+    envelope: env(MIND),
+    payload: { covers },
+    parts: [{ type: "text", kind: "text", text: "## Open" }],
+  }) as Draft<Event>;
+const ROOMY = 1_000_000; // a cap no test window reaches
 
-Deno.test("anchored: a shorter-than-limit window is already its own floor", () => {
-  const rows = trickle(3);
-  assertEquals(anchored(rows, 4), rows);
+async function withLog(f: (log: Log) => Promise<void>): Promise<void> {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  try {
+    await f(log);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+Deno.test("windowOf: before any checkpoint the window is everything past the boot floor, page after page", async () => {
+  await withLog(async (log) => {
+    const rows = await log.publish(Array.from({ length: 1203 }, (_, i) => lineAt(i)));
+    const since = rows[2].ts; // the boot floor: strict, so the first three are backlog
+    const window = await windowOf(log, ROOMY, since);
+    assertEquals(window.map((e) => e.id), rows.slice(3).map((e) => e.id));
+  });
 });
 
-Deno.test("anchored: the floor holds through a whole bucket of appends, then jumps once", () => {
-  // limit 4, events at :00 :05 … — a plain tail would start one event later every time
-  const floorOf = (n: number) => anchored(trickle(n), 4)[0].id;
-  // 12 events ⇒ the tail's floor is :40, which snaps back to the 00:30 bucket
-  assertEquals(floorOf(12), "w006"); // :30
-  // and it STAYS there while the tail's floor walks :45 → :55 inside that same bucket
-  assertEquals(floorOf(13), "w006");
-  assertEquals(floorOf(14), "w006");
-  assertEquals(floorOf(15), "w006");
-  // …until the tail's floor reaches 1:00 — one re-anchor, one cache write, then still again
-  assertEquals(floorOf(16), "w012"); // 1:00
-  assertEquals(floorOf(17), "w012");
+Deno.test("windowOf: the latest checkpoint is the floor — the prefix stands still while rows arrive", async () => {
+  await withLog(async (log) => {
+    const rows = await log.publish(Array.from({ length: 10 }, (_, i) => lineAt(i)));
+    const floor = (await log.publish(checkpointOver([rows[0].id, rows[5].id])))!;
+    const head = (await windowOf(log, ROOMY)).map((e) => e.id);
+    // what it covers is gone; what it left uncovered, and the record, are the window
+    assertEquals(head, [...rows.slice(6).map((e) => e.id), floor.id]);
+    // arrivals append: every byte before them is what the last turn sent
+    const more = await log.publish([lineAt(10), lineAt(11)]);
+    assertEquals(
+      (await windowOf(log, ROOMY)).map((e) => e.id),
+      [...head, ...more.map((e) => e.id)],
+    );
+    // the next checkpoint moves the floor, once
+    const next = (await log.publish(checkpointOver([rows[0].id, rows[9].id])))!;
+    assertEquals(
+      (await windowOf(log, ROOMY)).map((e) => e.id),
+      [floor.id, ...more.map((e) => e.id), next.id],
+    );
+  });
 });
 
-Deno.test("anchored: the window is the limit PLUS whatever shares the floor's bucket", () => {
-  const kept = anchored(trickle(12), 4);
-  assertEquals(kept.length, 6); // :30 … :55 — never fewer than the limit
-  assertEquals(kept.at(-1)!.id, "w011"); // and the newest is always kept
+Deno.test("windowOf: a flood stops the read at the cap — the floor still leads, and the newest follow", async () => {
+  await withLog(async (log) => {
+    const rows = await log.publish(Array.from({ length: 4 }, (_, i) => lineAt(i)));
+    const floor = (await log.publish(checkpointOver([rows[0].id, rows[3].id])))!;
+    const flood = await log.publish(Array.from({ length: 60 }, (_, i) => lineAt(i + 4)));
+    const cap = estTokens(flood.slice(-10)); // ten of the newest weigh it
+    const window = await windowOf(log, cap);
+    assertEquals(window[0].id, floor.id);
+    assertEquals(window.at(-1)!.id, flood.at(-1)!.id);
+    const read = window.slice(1);
+    assert(read.length > 0 && read.length < flood.length); // a stretch between is unread
+    // the read stops at the row that takes it past the cap, and not one row later
+    const weigh = (es: Event[]) => es.reduce((sum, e) => sum + estTokens([e]), 0);
+    assert(weigh(read) > cap);
+    assert(weigh(read.slice(1)) <= cap);
+    assert(flooded(window, cap / 2));
+  });
+});
+
+Deno.test("windowOf: a late-stamped row is inside by where it landed — position sets the floor", async () => {
+  await withLog(async (log) => {
+    const rows = await log.publish([lineAt(0), lineAt(1)]);
+    await log.publish(checkpointOver([rows[0].id, rows[1].id]));
+    // appended last, stamped before everything: an offline-synced message
+    const late = (await log.publish(lineAt(2, new Date(T0 - 60_000).toISOString())))!;
+    assertEquals((await windowOf(log, ROOMY)).at(-1)!.id, late.id);
+  });
 });
 
 /* ── attachmentsOf: a tool's picture is pinned the moment it is attached (§5) ── */
@@ -965,15 +1038,6 @@ Deno.test("unknownTool: a program on PATH called as a tool is pointed through ba
     await unknownTool("aread", CONFIG, { bins } as unknown as XiPorts),
     "unknown tool: aread",
   );
-});
-
-Deno.test("anchored: a late-stamped row inside the window is kept — position sets the floor", () => {
-  const rows = trickle(12);
-  // appended last, stamped before the floor's bucket: an offline-synced message
-  const late = { ...rows[0], id: "w999", ts: new Date(T0 - 60_000).toISOString() } as Event;
-  const kept = anchored([...rows, late], 4);
-  assert(kept.includes(late));
-  assertEquals(kept[0].id, "w006"); // the floor still snaps to the bucket
 });
 
 /* ── what a turn is about, in the wire's terms ────────────────────────────── */

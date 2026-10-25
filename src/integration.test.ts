@@ -2654,8 +2654,8 @@ Deno.test("compaction: an over-budget window is checkpointed in the gap after th
       await waitFor(async () =>
         (await read("message")).some((e) => JSON.stringify(e.parts).includes("respuesta dos"))
       );
-      // the second exchange closes over budget too (every window is, at 1), so its gap
-      // compacts again: reply, checkpoint, reply, checkpoint — each checkpoint between turns
+      // the second exchange closes over budget too, so its gap compacts again: reply,
+      // checkpoint, reply, checkpoint — each checkpoint between turns
       await waitFor(async () => (await read("summary")).length === 2);
       await new Promise((r) => setTimeout(r, 300));
       assertEquals(calls(), 4);
@@ -2664,7 +2664,9 @@ Deno.test("compaction: an over-budget window is checkpointed in the gap after th
       assertEquals(next.payload.covers[0], msgs[0].id); // chained from the first's start
       assertEquals(next.payload.covers[1], (await read("message")).at(-1)!.id);
     },
-    { compactAt: 1, keepRecent: 0 },
+    // an exchange weighs ~195, a checkpoint ~110: every closed exchange is over budget, a
+    // checkpoint alone is under it, and no window here is a flood (2x)
+    { compactAt: 175, keepRecent: 0 },
   );
 });
 

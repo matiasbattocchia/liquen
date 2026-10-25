@@ -1,6 +1,15 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { buildSummary, compactionSpan, estTokens, overflowed, turnOver } from "./compact.ts";
-import { DEFAULT_COMPACT_AT, DEFAULT_WINDOW_LIMIT } from "./config.ts";
+import {
+  buildSummary,
+  compactionSpan,
+  estTokens,
+  floodAt,
+  flooded,
+  overflowed,
+  skipped,
+  turnOver,
+} from "./compact.ts";
+import { DEFAULT_COMPACT_AT } from "./config.ts";
 import { applySummary, render, SILENCE } from "./render.ts";
 import type {
   Event,
@@ -61,6 +70,10 @@ const summaryEv = (covers: [string, string], text: string): SummaryEvent => ({
   parts: [{ type: "text", kind: "text", text }],
 });
 
+/** A budget the window is just over, and far from a flood: the threshold a test sets to make
+ *  a checkpoint due. */
+const over = (events: Event[]): number => estTokens(applySummary(events)) - 1;
+
 Deno.test("span: under the threshold → null", () => {
   const events = [msg("hola", false), msg("¡hola!", true)];
   assertEquals(compactionSpan(events, SESSION, 1_000_000), null);
@@ -68,7 +81,7 @@ Deno.test("span: under the threshold → null", () => {
 
 Deno.test("span: no closed region → null even over threshold", () => {
   const events = [msg("hola", false)]; // no closing self message
-  assertEquals(compactionSpan(events, SESSION, 1, 0), null);
+  assertEquals(compactionSpan(events, SESSION, over(events), 0), null);
 });
 
 Deno.test("span: covers the older closed events, keeps the recent budget", () => {
@@ -79,7 +92,7 @@ Deno.test("span: covers the older closed events, keeps the recent budget", () =>
     msg("respuesta dos", true), // boundary
     msg("tres — trailing", false),
   ];
-  const span = compactionSpan(events, SESSION, 1, 200)!;
+  const span = compactionSpan(events, SESSION, over(events), 200)!;
   assert(span !== null);
   // ~200 est. tokens keeps the recent tail (the trailing message included); the oldest
   // exchange gets covered
@@ -109,7 +122,7 @@ Deno.test("buildSummary: mints a summary event; the request is the window as the
     window: windowOf(events),
     session: SESSION,
     model: "claude-x",
-    compactAt: 1,
+    compactAt: over(events),
     keepRecent: 0,
     prompt: PROMPT,
   }, stepping(transport));
@@ -144,7 +157,7 @@ Deno.test("buildSummary: the archive ends where the kept tail begins — the quo
       window: windowOf(events),
       session: SESSION,
       model: "claude-x",
-      compactAt: 1,
+      compactAt: over(events),
       keepRecent: 200, // keeps the last exchange and the trailing message
       prompt: PROMPT,
     },
@@ -178,7 +191,7 @@ Deno.test("buildSummary: a span that draws no block goes as a transcript — the
       window: windowOf(events),
       session: SESSION,
       model: "claude-x",
-      compactAt: 1,
+      compactAt: over(events),
       keepRecent: estTokens(events.slice(-2)) + 1, // keeps the last exchange, nothing more
       prompt: PROMPT,
     },
@@ -211,7 +224,7 @@ Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", asyn
     window: windowOf(events),
     session: SESSION,
     model: "claude-x",
-    compactAt: 1,
+    compactAt: over(events),
     keepRecent: 0,
     prompt: PROMPT,
   }, stepping(transport));
@@ -231,7 +244,7 @@ Deno.test("buildSummary: a call that never completes is an error, not a silent r
     window: windowOf(events),
     session: SESSION,
     model: "claude-x",
-    compactAt: 1,
+    compactAt: over(events),
     keepRecent: 0,
     prompt: PROMPT,
   }, stepping(() => Promise.reject(new Error("overloaded"))));
@@ -240,11 +253,11 @@ Deno.test("buildSummary: a call that never completes is an error, not a silent r
   assert(out.agent === undefined); // harness-authored (§3)
 });
 
-/* ── the threshold has to be REACHABLE (§5) ─────────────────────────────── */
+/* ── the budget and the flood, at live weights (§5) ─────────────────────── */
 
 /** A message shaped like the ones a live store actually holds — uuidv7 ids, a platform
  *  external_id, phone-number addresses, denormalized names, delivery status. Measured at
- *  ~177 est. tokens each against a real WhatsApp+Slack log; the stripped `msg` above is
+ *  ~125 est. tokens each against a real WhatsApp+Slack log; the stripped `msg` above is
  *  ~76, which is why the fixture matters: a threshold tuned on toy events is a threshold
  *  tuned on nothing. */
 const liveMsg = (i: number, self: boolean): MessageEvent => ({
@@ -269,29 +282,77 @@ const liveMsg = (i: number, self: boolean): MessageEvent => ({
   parts: [{ type: "text", kind: "text", text: `una línea de conversación cualquiera, la ${i}` }],
 } as MessageEvent);
 
-Deno.test("compactAt sits below what a full window weighs — else the checkpoint never runs", () => {
-  // The count cap fills first under live traffic (§2), so a threshold above what
-  // `windowLimit` events can weigh is a checkpoint that never fires: this store held zero
-  // summaries from the day it was written, and compaction — the mechanism the whole memory
-  // story rests on — was unreachable code. This is that regression, in a test.
-  const window = Array.from(
-    { length: DEFAULT_WINDOW_LIMIT },
-    (_, i) => liveMsg(i, i % 3 === 0),
-  );
+const LIVE = { id: "matias", agentId: "matias", conversation: "5492614694650" };
+
+Deno.test("span: a window past compactAt and short of a flood is a record — cut where a turn ends", () => {
+  const window = Array.from({ length: 600 }, (_, i) => liveMsg(i, i % 3 === 0));
   const weight = estTokens(window);
-  assert(
-    weight > DEFAULT_COMPACT_AT,
-    `a full window estimates ${weight} tokens, under the ${DEFAULT_COMPACT_AT} threshold — ` +
-      "raise windowLimit or lower compactAt",
-  );
-  // and the span is real: older closed events get covered, the recent tail stays faithful
-  const span = compactionSpan(window, {
-    id: "matias",
-    agentId: "matias",
-    conversation: "5492614694650",
-  });
-  assert(span !== null, "a full window must produce a checkpoint span");
+  assert(weight > DEFAULT_COMPACT_AT && weight <= floodAt(), `${weight}`);
+  assert(!flooded(window));
+  const span = compactionSpan(window, LIVE);
+  assert(span !== null && !span.flood);
   assert(span.covered.length > 0 && span.covered.length < window.length);
+  assert(span.covered.at(-1)!.agent !== undefined); // the turn's own closing
+});
+
+Deno.test("span: past floodAt the window is a flood — the cut falls past unanswered lines, and the tail is what stays", () => {
+  const floor = summaryEv(["0", "0"], "## Open\n- the report");
+  const closing = [liveMsg(0, false), liveMsg(1, true)];
+  const flood = Array.from({ length: 1200 }, (_, i) => liveMsg(i + 2, false)); // none answered
+  const events: Event[] = [floor, ...closing, ...flood];
+  assert(flooded(events));
+  const span = compactionSpan(events, LIVE);
+  assert(span !== null && span.flood);
+  assert(span.covered.some((e) => flood.includes(e as MessageEvent))); // input, skipped
+  const tail = events.slice(span.covered.length);
+  assert(tail.length > 0 && tail.every((e) => flood.includes(e as MessageEvent)));
+  // the tail is keepRecent's: everything that fits, and not one row more — weighed row by
+  // row, as the walk weighs it
+  const weigh = (es: Event[]) => es.reduce((sum, e) => sum + estTokens([e]), 0);
+  assert(weigh(tail) <= 20_000);
+  assert(weigh([span.covered.at(-1)!, ...tail]) > 20_000);
+  assertEquals(span.covers, ["0", span.covered.at(-1)!.id]); // chained from the floor
+});
+
+Deno.test("span: a flood never splits the rows a dead turn wrote — its thinking replays", () => {
+  const closing = [msg("uno", false), msg("respuesta uno", true)];
+  const flood = Array.from({ length: 30 }, (_, i) => msg(`línea ${i}`, false));
+  const turn = [...step(1), ...step(2), errorEv("overloaded")];
+  const events: Event[] = [...closing, ...flood, ...turn];
+  const compactAt = Math.floor(estTokens(events) / 3);
+  // keepRecent ends inside the turn's rows: the cut steps back below the whole turn
+  const span = compactionSpan(events, SESSION, compactAt, estTokens(turn.slice(-3)))!;
+  assert(span !== null && span.flood);
+  assert(!span.covered.some((e) => turn.includes(e)));
+  assertEquals(span.covered.at(-1), flood.at(-1));
+});
+
+Deno.test("buildSummary: a flood's checkpoint takes no call — the previous record, and the stretch it skipped", async () => {
+  const floor = summaryEv(["0", "0"], "## Open\n- the report");
+  const flood = Array.from({ length: 1200 }, (_, i) => liveMsg(i + 1, false));
+  const events: Event[] = [floor, liveMsg(0, true), ...flood];
+  const span = compactionSpan(events, LIVE)!;
+  const out = await buildSummary({
+    events,
+    window: windowOf(events),
+    session: LIVE,
+    model: "claude-x",
+    prompt: () => Promise.resolve(null), // never read: a flood writes no request
+  }, stepping(() => Promise.reject(new Error("a flood makes no call"))));
+  assert(out !== null && out.type === "summary", JSON.stringify(out));
+  assertEquals(out.payload.covers, span.covers);
+  assertEquals(out.parts[0].text, skipped(span.covered));
+  assert(out.parts[0].text.startsWith("## Open\n- the report\n\nNot read: everything after"));
+});
+
+Deno.test("skipped: the stamp is the minute after the newest skipped row, in UTC, so `before` still reaches it", () => {
+  const at = (ts: string) => ({ ...liveMsg(1, false), ts }) as Event;
+  assertEquals(
+    skipped([at("2026-08-19T19:19:24.000Z"), at("2026-08-19T18:00:00.000Z")]),
+    "Not read: everything up to 2026-08-19T19:20Z. More arrived than one window holds; " +
+      "search reads it.",
+  );
+  assertStringIncludes(skipped([at("2026-08-19T19:19:00.000Z")]), "up to 2026-08-19T19:19Z.");
 });
 
 /* ── ranges, chains, open loops, cuts ───────────────────────────────────── */
@@ -345,7 +406,7 @@ Deno.test("span: a second checkpoint chains from the first's start, and its rang
   const m6 = msg("respuesta tres", true);
   const m7 = msg("cuatro — trailing", false);
   const events = [m1, m2, m3, m4, old, m5, m6, m7];
-  const span = compactionSpan(events, SESSION, 1, 150);
+  const span = compactionSpan(events, SESSION, over(events), 150);
   assert(span !== null);
   assert(span.covered.includes(old) && span.covered.includes(m3));
   assert(!span.covered.includes(m7));
@@ -379,12 +440,12 @@ Deno.test("span: a running turn is never cut, whatever it weighs — not even it
     msg("hacé el informe", false),
   ];
   for (let k = 1; k <= 8; k++) events.push(...step(k));
-  assertEquals(compactionSpan(events, SESSION, 1, 0), null);
+  assertEquals(compactionSpan(events, SESSION, over(events), 0), null);
   assertEquals(turnOver(events, SESSION), false);
   // the moment it closes, the same window compacts — and the whole turn is closed history
   const closed = [...events, msg("listo", true)];
   assertEquals(turnOver(closed, SESSION), true);
-  const span = compactionSpan(closed, SESSION, 1, 0);
+  const span = compactionSpan(closed, SESSION, over(closed), 0);
   assert(span !== null);
   assertEquals(span.covered.at(-1), closed.at(-1)); // through the closing
 });
@@ -400,7 +461,7 @@ Deno.test("span: the covered span ends where a turn ends — a keepRecent cut in
   for (let k = 1; k <= 24; k++) events.push(...step(k));
   const closing = msg("listo, informe enviado", true);
   events.push(closing);
-  const span = compactionSpan(events, SESSION, 1, 1_000); // the last few steps
+  const span = compactionSpan(events, SESSION, over(events), 1_000); // the last few steps
   assert(span !== null);
   assertEquals(span.covered, events.slice(0, 2)); // through the previous turn's closing
   assertEquals(span.covers[1], events[1].id);
@@ -410,18 +471,18 @@ Deno.test("span: when the turn the keepRecent cut falls in is the window's first
   const events: Event[] = [msg("hacé el informe", false)];
   for (let k = 1; k <= 24; k++) events.push(...step(k));
   events.push(msg("listo, informe enviado", true));
-  const span = compactionSpan(events, SESSION, 1, 1_000);
+  const span = compactionSpan(events, SESSION, over(events), 1_000);
   assert(span !== null);
   assertEquals(span.covered, events); // closed, so covered whole rather than half
   // a previous checkpoint at the head of the window is no turn of this window's: the turn
   // after it still goes whole, and the range chains from the checkpoint's start
   const old = summaryEv(["e000", "e000"], "## Open\n- informe");
-  const chained = compactionSpan([old, ...events], SESSION, 1, 1_000);
+  const chained = compactionSpan([old, ...events], SESSION, over([old, ...events]), 1_000);
   assert(chained !== null);
   assertEquals(chained.covered, [old, ...events]);
   assertEquals(chained.covers, ["e000", events.at(-1)!.id]);
   // and a window that fits keepRecent whole leaves its one turn alone
-  assertEquals(compactionSpan(events, SESSION, 1, 1_000_000), null);
+  assertEquals(compactionSpan(events, SESSION, over(events), 1_000_000), null);
 });
 
 Deno.test("span: a closing step's words stay together — the turn ends on its last row", () => {
@@ -433,7 +494,7 @@ Deno.test("span: a closing step's words stay together — the turn ends on its l
   const at = events.indexOf(first);
   // keepRecent sized so the budget cut falls between the two halves of the first closing
   const keep = estTokens(events.slice(at + 1)) + 1;
-  const span = compactionSpan(events, SESSION, 1, keep);
+  const span = compactionSpan(events, SESSION, over(events), keep);
   assert(span !== null);
   assertEquals(span.covered, [ask, first, second]);
 });
@@ -447,13 +508,13 @@ Deno.test("span: a dead turn is covered whole, down to the row that killed it", 
   for (let k = 1; k <= 8; k++) events.push(...step(k));
   const dead = [...events, errorEv("overloaded")];
   assertEquals(turnOver(dead, SESSION), true);
-  const span = compactionSpan(dead, SESSION, 1, 400); // keepRecent would keep half the chain…
+  const span = compactionSpan(dead, SESSION, over(dead), 400); // keepRecent would keep half the chain…
   assert(span !== null);
   assertEquals(span.covered, dead); // …but nothing continues a dead turn: it goes whole
   assertEquals(span.covers[1], dead.at(-1)!.id);
   // a step still waiting for its result holds the turn open past the error, and stays out
   const waiting = [...events, use("T9", "step 9"), errorEv("overloaded")];
-  const partial = compactionSpan(waiting, SESSION, 1, 0);
+  const partial = compactionSpan(waiting, SESSION, over(waiting), 0);
   assert(partial !== null);
   assert(!partial.covered.some((e) => e.payload?.turn_id === "T9"));
 });
@@ -481,7 +542,7 @@ Deno.test("buildSummary: a window the API refused goes as a transcript — the t
       window: windowOf(events),
       session: SESSION,
       model: "claude-x",
-      compactAt: 1,
+      compactAt: over(events),
       keepRecent: 400,
       prompt: PROMPT,
     },
@@ -513,7 +574,7 @@ Deno.test("buildSummary: a dead turn's chain reaches the checkpoint whole — tr
       window: windowOf(events),
       session: SESSION,
       model: "claude-x",
-      compactAt: 1,
+      compactAt: over(events),
       keepRecent: 400,
       prompt: PROMPT,
     },
@@ -538,7 +599,7 @@ Deno.test("buildSummary: a cut checkpoint is an error, not a record", async () =
       window: windowOf(events),
       session: SESSION,
       model: "claude-x",
-      compactAt: 1,
+      compactAt: over(events),
       keepRecent: 0,
       prompt: PROMPT,
     },
@@ -559,7 +620,7 @@ Deno.test("buildSummary: an empty checkpoint is an error — not a silent retry 
     window: windowOf(events),
     session: SESSION,
     model: "claude-x",
-    compactAt: 1,
+    compactAt: over(events),
     keepRecent: 0,
     prompt: PROMPT,
   }, stepping(() => Promise.resolve(canned([{ kind: "assistant", text: " \n" }]))));
@@ -576,7 +637,7 @@ Deno.test("buildSummary: a missing instruction doc is an error — the checkpoin
       window: windowOf(events),
       session: SESSION,
       model: "claude-x",
-      compactAt: 1,
+      compactAt: over(events),
       keepRecent: 0,
       prompt: () => Promise.resolve(null),
     },
@@ -605,7 +666,7 @@ Deno.test("span: a message the closing never consumed is never checkpointed away
   closing.extra = { consumed: m3.id };
   const m6 = msg("cuatro — trailing", false);
   const events = [m1, m2, m3, late, closing, m6];
-  const span = compactionSpan(events, SESSION, 1, 1);
+  const span = compactionSpan(events, SESSION, over(events), 1);
   assert(span !== null);
   assert(!span.covered.includes(late));
   // the range the checkpoint stands for must not swallow it either: applying the

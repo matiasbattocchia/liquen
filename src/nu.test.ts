@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
 import { checkpoint, nu, type TurnConfig } from "./nu.ts";
+import { estTokens } from "./compact.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission } from "./mu.ts";
 import { canned } from "./testing.ts";
@@ -281,7 +282,7 @@ Deno.test("nu: a think is a think — an over-budget window never makes it wait 
       docs: [],
       tools: [],
       compactPrompt: PROMPT,
-      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+      config: { ...CONFIG, compactAt: estTokens(events) - 1, keepRecent: 0 },
     },
     (_p, _emit, meta) => {
       kinds.push(meta?.kind);
@@ -313,7 +314,7 @@ Deno.test("checkpoint: its request opens on the think's prefix — the same tool
     docs: [],
     tools,
     compactPrompt: PROMPT,
-    config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+    config: { ...CONFIG, compactAt: estTokens(events) - 1, keepRecent: 0 },
   };
   const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
   const transport = (p: Anthropic.MessageCreateParamsNonStreaming) => {
@@ -344,7 +345,7 @@ Deno.test("nu: a checkpoint cut at max_tokens is an error, not a record — and 
       docs: [],
       tools: [],
       compactPrompt: PROMPT,
-      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+      config: { ...CONFIG, compactAt: estTokens(events) - 1, keepRecent: 0 },
     },
     () => {
       calls++;
@@ -369,7 +370,7 @@ Deno.test("nu: a checkpoint streams as its own kind, and its spend says what it 
       docs: [],
       tools: [],
       compactPrompt: PROMPT,
-      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+      config: { ...CONFIG, compactAt: estTokens(events) - 1, keepRecent: 0 },
     },
     (_p, emit, meta) => {
       kinds.push(meta?.kind);
@@ -402,7 +403,7 @@ Deno.test("nu: a checkpoint is written under the agent's own prefix — what it 
       }],
       tools: [],
       compactPrompt: PROMPT,
-      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+      config: { ...CONFIG, compactAt: estTokens(events) - 1, keepRecent: 0 },
     },
     (p) => {
       seen.push(p);
@@ -440,7 +441,7 @@ Deno.test("nu: a checkpoint call rides the ladder, and what outlasts it is an er
       docs: [],
       tools: [],
       compactPrompt: PROMPT,
-      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+      config: { ...CONFIG, compactAt: estTokens(events) - 1, keepRecent: 0 },
     },
     () => {
       calls++;
@@ -462,7 +463,7 @@ Deno.test("nu: an empty checkpoint is an error too — not a full re-run on ever
       docs: [],
       tools: [],
       compactPrompt: PROMPT,
-      config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+      config: { ...CONFIG, compactAt: estTokens(events) - 1, keepRecent: 0 },
     },
     () => {
       calls++;

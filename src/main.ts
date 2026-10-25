@@ -726,7 +726,6 @@ function rowOf(p: AgentConfig & Policy): AgentRow {
       locale: p.locale,
       tools: p.tools,
       rules: p.rules,
-      windowLimit: p.windowLimit,
       since: p.since,
       engagedMinutes: p.engagedMinutes,
       digestAfterMessages: p.digestAfterMessages,
@@ -800,7 +799,6 @@ async function compileRoster(
         sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.sleepHours,
         processors,
         // the system half funnels too — org-wide, no per-agent seat (harness machinery)
-        windowLimit: catalog.system.windowLimit,
         compactAt: catalog.system.compactAt,
         keepRecent: catalog.system.keepRecent,
       },

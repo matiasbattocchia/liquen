@@ -60,7 +60,6 @@ import {
   DEFAULT_RULES,
   DEFAULT_SLEEP_HOURS,
   DEFAULT_TIMEZONE,
-  DEFAULT_WINDOW_LIMIT,
 } from "./config.ts";
 import { type Describe, describeCall, landings, nameResolver, type Resolve } from "./describe.ts";
 import { PROCESSOR_TIMEOUT_MS } from "./processors.ts";
@@ -120,7 +119,7 @@ import {
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { checkpoint, type ModelTransport, nu, type TurnConfig } from "./nu.ts";
-import { compactionSpan } from "./compact.ts";
+import { compactionSpan, estTokens, floodAt, flooded } from "./compact.ts";
 
 /* ── the poke, the class filter, and the owed-derivation ──────────────── */
 
@@ -210,6 +209,13 @@ export function decide(
   // …and a verdict that has since landed is work of its own: run the call, report back.
   if (owed.length > 0) return "act";
   if (cutOff(events)) return "think"; // a paced/truncated turn CONTINUES
+  // A flood is checkpointed before anything answers it: the window past `floodAt` is the
+  // floor and the newest of the log, with a gap between that moves on every arrival, and
+  // its checkpoint costs no call — it skips the stretch and sets the floor under the tail
+  // the next look answers from.
+  if (flooded(events, wake.compactAt) && needsCheckpoint(events, session, wake)) {
+    return "compact";
+  }
   // Nothing owed is the one moment a checkpoint may run (§5): the turn is over, so no
   // thinking is in flight for a summary to land under, and no input is waiting behind it.
   // The turn that just ended ends the same way whether it closed, failed or was cut — and
@@ -688,13 +694,13 @@ export interface AgentConfig extends TurnConfig, Wake {
   /** The compiled policy, for callers that would rather write the predicate than the table
    *  (tests, task mode). Overrides `rules`. */
   gate?: Gate;
-  windowLimit?: number; // history query cap — a fallback; compaction is the mechanism (§5)
   /** The floor in EVENT TIME: nothing older than this is ever owed. A FIXED instant, decided
    *  once when the agent comes up (main: start − `backlogHours`), not a distance from now —
    *  a moving bound would keep re-deciding what "old" means under the agent's feet, and the
    *  thing being bounded is a one-time question: what backlog did it inherit? Coming up is
    *  when a pile of unanswered messages is history rather than a mandate; from then on the
-   *  count cap is what bounds the prompt. Older rows stay readable through `search` (§6). */
+   *  checkpoints are the window's floor (`windowOf`). Older rows stay readable through
+   *  `search` (§6). */
   since?: string;
 }
 
@@ -918,33 +924,51 @@ export interface XiPorts {
   bins?: () => Promise<BinDir[]>; // the org folder's programs on PATH, for the prefix (§5)
 }
 
-/** How coarse the window's floor is: the grid the oldest kept event snaps DOWN to. */
-const WINDOW_ANCHOR_MS = 30 * 60_000;
-/** How much history the read carries beyond the window, for the snap to keep. */
-const WINDOW_SLACK = 200;
+/** How many rows one page of the window read asks for. */
+const WINDOW_PAGE = 500;
 
 /**
- * Anchor the window's floor (§5). `read({limit})` is a sliding TAIL: every append drops one
- * event off the front, so the oldest rendered event — the first bytes of the prompt — is
- * different on every turn. A prompt cache matches a PREFIX, so that one shift voids the whole
- * rendered history and every breakpoint behind it: the transcript is re-WRITTEN each turn
- * (1.25x input) instead of read back (0.1x), and render's boundary mark never once hits.
+ * The window (§5): the session's latest checkpoint and every visible row after what it
+ * covers. The floor is the record itself, a POSITION in the log's own order: it stands
+ * still from one checkpoint to the next, so the prompt's prefix — the first bytes a cache
+ * matches — is byte-identical across every turn between, and a late-stamped row (an
+ * offline sync, a lagged webhook) is inside by where it landed, whatever its clock says.
  *
- * So the floor snaps DOWN to a coarse grid and stands still between jumps: for a whole
- * bucket of turns the prefix is byte-identical, and one re-anchor pays a single write. The
- * window is then `limit` plus whatever else shares the floor's bucket — which is what the
- * read's slack carries. Time, not position, because position is exactly what slides.
+ * The rows are read newest first, a page at a time, and the read stops at the first row
+ * that takes them past `cap` (`floodAt`): the window is then a flood — the floor, the
+ * newest of the log, and a stretch between that no read holds — which `decide`
+ * checkpoints before anything answers it (compact.ts). Before the first checkpoint the
+ * floor is `since`.
  */
-export function anchored(rows: Event[], limit: number): Event[] {
-  if (rows.length <= limit) return rows;
-  const oldest = Date.parse(rows[rows.length - limit].ts); // the floor a plain tail would use
-  if (!Number.isFinite(oldest)) return rows.slice(-limit);
-  const grid = Math.floor(oldest / WINDOW_ANCHOR_MS) * WINDOW_ANCHOR_MS;
-  // the floor is a POSITION: the first row stamped in the bucket, and everything appended
-  // after it — a late-stamped row (an offline sync, a lagged webhook) is news by position,
-  // whatever its clock says
-  const floor = rows.findIndex((e) => Date.parse(e.ts) >= grid);
-  return floor === -1 ? rows.slice(-limit) : rows.slice(floor);
+export async function windowOf(
+  log: Pick<Reader, "read">,
+  cap: number,
+  since?: string,
+): Promise<Event[]> {
+  const [floor] = await log.read({ types: ["summary"], limit: 1 });
+  const rows: Event[] = [];
+  let weight = 0;
+  let below: EventId | undefined;
+  read: for (;;) {
+    const page = await log.read({
+      ...(floor?.type === "summary" ? { afterId: floor.payload.covers[1] } : {}),
+      ...(below ? { beforeId: below } : {}),
+      ...(since ? { after: since } : {}), // the boot floor, fixed (§5)
+      silenced: false, // imported history and muted/archived-chat traffic are not news: they
+      //   wake nothing and render nowhere — `search` is the door (§5)
+      limit: WINDOW_PAGE,
+    });
+    for (let i = page.length - 1; i >= 0; i--) {
+      rows.push(page[i]);
+      weight += estTokens([page[i]]);
+      if (weight > cap) break read;
+    }
+    if (page.length < WINDOW_PAGE) break;
+    below = page[0].id;
+  }
+  rows.reverse();
+  // a flood's read stops short of the floor: the record still leads what the window shows
+  return floor && !rows.some((e) => e.id === floor.id) ? [floor, ...rows] : rows;
 }
 
 /** One xi invocation: poke → owed → (think/act: acquire-or-exit → work) → return what it
@@ -987,19 +1011,11 @@ export async function xi(
     ]);
   // 3. decide, under the lease and from a fresh window — so it can't act on a stale verdict
   //    (another holder may have finished this very work while we were being invoked).
-  //    The port is scoped (§6): visibility applies inside the read, BEFORE the limit, so the
-  //    window holds N visible events — xi never sees, nor re-checks, what policy hides.
-  const limit = config.windowLimit ?? DEFAULT_WINDOW_LIMIT;
-  const events = anchored(
-    await ports.log.read({
-      limit: limit + WINDOW_SLACK, // the slack the anchor keeps — see `anchored`
-      ...(config.since ? { after: config.since } : {}), // the boot floor, fixed (§5)
-      silenced: false, // imported history and muted/archived-chat traffic are not news: they
-      //   wake nothing and render nowhere — `search` is the door (§5)
-    }),
-    limit,
-  ); // the
-  //    ONE read: the work's input as well as the decision's (§2)
+  //    The port is scoped (§6): visibility applies inside the read, so the floor is this
+  //    session's own checkpoint and the window holds visible rows only — xi never sees, nor
+  //    re-checks, what policy hides. The ONE read: the work's input as well as the
+  //    decision's (§2).
+  const events = await windowOf(ports.log, floodAt(config.compactAt), config.since);
   // the rulings still owed are STANDING state, read off the store (§9): a card asked before
   // the window's floor is as open as one asked a minute ago
   const v = decide(
@@ -1200,7 +1216,6 @@ function settingsOf(config: AgentConfig): Record<string, unknown> {
     effort: config.effort ?? null,
     compactAt: config.compactAt ?? null,
     keepRecent: config.keepRecent ?? null,
-    windowLimit: config.windowLimit ?? null,
     timezone: config.timezone ?? null,
     locale: config.locale ?? null,
     tools: config.tools ?? null,
