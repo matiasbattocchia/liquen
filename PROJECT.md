@@ -5955,7 +5955,28 @@ sliding tail, voiding the cache every turn with no sign.
 - Tests that forced a checkpoint with `compactAt: 1` now set a budget just under the
   window's weight, since 1 makes every window a flood.
 - The orgs on this machine dropped `windowLimit` (`new`, `vibes`, `sole-bot`, and turtle's
-  config and its org template).
+  config; its generated org file follows on the next sync).
+
+### A flood is the world's, and the WUM cap is `compactAt`, shared equally (2026-10-25) — LANDED
+
+The flood half of the entry above misread the user. The proposal was to bound the WORLD by
+`compactAt`, one WUM at a time, not the window. Capping the whole read cut the agent's own
+history like a flood: a long turn lost the ask that opened it and slid its cache again.
+
+- **The read caps nothing past the floor.** Checkpoints bound the agent's own history,
+  and the API's "prompt is too long" stays the hard ceiling. The read's cost in rows does
+  not matter here: the measure is for the agent, not the store.
+- **One WUM weighs at most `compactAt` est. tokens** (render.ts `capRun`). Past it the
+  budget is shared equally among the run's rooms, lightest first: a quiet room goes whole
+  and its unused share is split among the louder ones, each room keeps its newest lines,
+  and a room whose share buys not even one is left out and counted in the rest line. The
+  session's own room is never capped. The cap is a pure function of the run, so an
+  answered WUM renders the same bytes forever and needs no checkpoint of its own.
+- **Gone:** the flood checkpoint, `FLOOD_FACTOR`, the flood check in `decide`, and the
+  count caps `WUM_PER_CONVERSATION` (8) and `WUM_TOTAL` (50).
+- The checkpoint's transcript (the path a refused window takes) caps the world's runs
+  the same way, so a covered flood cannot make the transcript itself too long.
+- `estTokens` lives in render.ts now: the cap and the checkpoint share the unit.
 
 ### What is open (2026-10-20)
 

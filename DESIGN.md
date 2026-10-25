@@ -270,18 +270,18 @@ arrives through the agent's scoped subscription, already readable (§6).
 The derivations are **position-aware**, so a late invocation that arrives after the work was
 already done resolves to nothing — quiescence is a poke that finds nothing owed.
 
-**The window has a floor and a cap.** The floor is the session's latest **checkpoint** (§5):
-the read starts at the record and takes every visible row after what it covers. A plain
+**The window's floor is the session's latest checkpoint** (§5): the read starts at the
+record and takes every visible row after what it covers. A plain
 tail would drop one event off the front on every append, and since a prompt cache matches a
 PREFIX, that shift alone voids the whole rendered history and every breakpoint behind it —
 the transcript re-written each turn at 1.25× instead of read back at 0.1×. The checkpoint
 stands still until the next one, so the prefix does too, and each new checkpoint moves it
 once. The floor is a POSITION in the log's own order, so a late-stamped row (an offline
 sync, a lagged webhook) is inside the window by where it landed, whatever its clock says.
-The cap is a FLOOD's: the read runs newest first and stops past twice `compactAt`. A window
-that reaches it is the floor, the newest of the log, and a stretch between that no read
-holds, and `decide` checkpoints it before anything answers it (§5). Before the first
-checkpoint the floor is `since`, which bounds the BACKLOG: a fixed instant, set once when the agent comes up to start − `backlogHours` (24,
+Nothing past the floor goes unread: the agent's own history is the checkpoints' to bound,
+and a flood of the world's is render's, which caps each run of world lines (§5, the WUM
+cap). Before the first checkpoint the floor is `since`, which bounds the BACKLOG: a fixed
+instant, set once when the agent comes up to start − `backlogHours` (24,
 org-configurable: `organization.backlogHours`), before which nothing is ever owed. An
 agent coming up after a week off answers the last day, not the week, and the rest is history
 it can still reach through `search` (§6).
@@ -1434,7 +1434,15 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   are ts-sorted, then partitioned per conversation, groups ordered by their last
   message's ts (the room that just spoke renders nearest the answer point) —
   cross-conversation interleaving is arrival noise, not meaning; within a conversation,
-  event time stands. A message that IS one part — a lone data part or a bare attachment —
+  event time stands. **The WUM cap**: a run of world lines between two turns is one WUM,
+  and it weighs at most `compactAt` est. tokens, the checkpoint's own unit. Past that the
+  budget is shared equally among the run's rooms, lightest first, so a quiet room goes
+  whole and what it leaves unused is split among the louder ones; each room keeps its
+  newest lines, and a room whose share buys not even one is left out. What the cap cuts is
+  said where it was cut — `… N earlier, not shown` in a room, `— N more messages in M other
+  conversations not shown — search to read them —` for the rooms left out — and the
+  session's own room is never capped. The cap is a pure function of the run, so an
+  answered WUM renders the same bytes forever. A message that IS one part — a lone data part or a bare attachment —
   hoists the envelope onto that part's own element and spends no `<msg>` wrapper. A
   room's change is such a line on every service: `<room>` from whoever made it, carrying
   who joined, who left, or the name the room now wears.
@@ -1805,19 +1813,6 @@ compaction proper is only pi's **checkpoint layer**:
   on it, unstamped, and the next look retries: the window stays uncovered whichever it
   was, a turn taken over it would cost more and say less, and a checkpoint failing for a
   standing reason must not buy a second call on every wake in silence.
-- **A flood is the one checkpoint in front of input, and it takes no call.** The window
-  read stops past `floodAt` (`compactAt` × `FLOOD_FACTOR`, 2: a running turn grows the
-  window past `compactAt`, and the cap leaves it that room). A window that reaches it holds
-  the floor and the newest of the log, with a stretch between that no read holds and that
-  moves on every arrival, so `decide` asks for its checkpoint before any think, once the
-  turn is over. That checkpoint is written with no call: the previous record carried as
-  it stands, and a line saying how far the unread stretch runs, as a UTC stamp `search`
-  takes for `before`. A flood is input, so its cut falls past unanswered messages and
-  between world lines, wherever no step straddles, and the `keepRecent` tail it leaves is
-  what the next look answers from. The rows a dead turn wrote go whole or not at all: its
-  thinking replays on the next request. The read caps the agent's own work the same way: a
-  turn heavier than the cap reads its newest steps, and render skips the steps whose start
-  fell outside.
 - **One call, attempted one way.** nu owns the retry ladder and the stream, and hands
   compaction a *step-caller* rather than the transport: the checkpoint is retried over
   weather exactly as a think is (`RETRY_DELAYS_MS`, stopping the moment a cancel lands),

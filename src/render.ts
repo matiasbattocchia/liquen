@@ -21,6 +21,7 @@ import { MIND, routedSession } from "./session.ts";
 import { clipEnd } from "./exec/truncate.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import { MONTHS } from "./store/timers.ts";
+import { DEFAULT_COMPACT_AT } from "./config.ts";
 import type {
   AlarmEvent,
   BinDir,
@@ -274,6 +275,9 @@ export interface RenderInput {
    *  title). Rides `<conn name>`, so the string the wire stamps on the account's own lines
    *  reads as the account and never as a person in the room. Absent ⇒ the address alone. */
   connections?: Record<string, string>;
+  /** The checkpoint budget (§5), and the cap on what one WUM of world lines may weigh.
+   *  Absent ⇒ the catalog's. */
+  compactAt?: number;
 }
 
 export interface Roster {
@@ -362,6 +366,7 @@ function byEventTime(
   events: Event[],
   session: SessionRef,
   here: string,
+  budget: number,
 ): { events: Event[]; elisions: Elisions } {
   const out = [...events];
   const elisions: Elisions = { earlier: new Map(), rest: new Map() };
@@ -377,10 +382,10 @@ function byEventTime(
     const pass = seg.filter((e) => !member(e));
     // stable sort ⇒ same-`ts` messages keep append order
     // the run IS one WUM (§5): sorted, grouped, then CAPPED — the burst does not get to
-    // decide the prompt's size, and what the caps leave out is stated where it was cut.
+    // decide the prompt's size, and what the cap leaves out is stated where it was cut.
     // The session's own room is exempt: the principal's line is the one input that must
     // never be redacted, whatever the world was doing around it.
-    const run = capRun(byConversation(seg.filter(member).sort(byTs)), undefined, undefined, here);
+    const run = capRun(byConversation(seg.filter(member).sort(byTs)), budget, here);
     for (const [e, n] of run.elisions.earlier) elisions.earlier.set(e, n);
     for (const [e, r] of run.elisions.rest) elisions.rest.set(e, r);
     out.splice(i, seg.length, ...pass, ...run.kept);
@@ -389,7 +394,13 @@ function byEventTime(
   return { events: out, elisions };
 }
 
-/* ── WUM caps (§5) ──────────────────────────────────────────────────────────────────
+/** The events with every world run in event time and capped to `compactAt`, as the window
+ *  lays them out — for a reader that walks the rows itself (the checkpoint's transcript). */
+export function worldCapped(events: Event[], session: Session, compactAt: number): Event[] {
+  return byEventTime(events, session, session.conversation, compactAt).events;
+}
+
+/* ── WUM cap (§5) ───────────────────────────────────────────────────────────────────
  *
  * A run of world messages between two agent turns is ONE world-user-message, and its size
  * is decided by the world, not by us: a busy hour, a group that wakes up, a history import
@@ -400,19 +411,20 @@ function byEventTime(
  * out is stated in place, with its count, because the log still holds it and `search`
  * reaches it: the prompt carries the news, the log stays the record.
  *
- * Two caps, in this order, because they fail differently:
- *   per conversation — one loud room cannot crowd out the other nine
- *   per WUM          — and ten rooms cannot crowd out the turn
- *
- * Both keep the MOST RECENT, which is what a burst means: the tail is the state. And both
- * are pure functions of the run, so a WUM the agent has already answered renders
- * byte-identically forever — the property the cached prefix is built on.
+ * The cap is the checkpoint's own unit, `compactAt` est. tokens of world lines, and it is
+ * EQUITABLE: past it every conversation in the run gets an equal share, and the share a
+ * quiet room leaves unused goes to the louder ones — one loud room cannot crowd out the
+ * other nine, and ten rooms cannot crowd out the turn. Each room keeps its MOST RECENT
+ * lines, which is what a burst means: the tail is the state. The cap is a pure function of
+ * the run, so a WUM the agent has already answered renders byte-identically forever — the
+ * property the cached prefix is built on.
  */
 
-/** Most recent messages kept per conversation inside one WUM. */
-export const WUM_PER_CONVERSATION = 8;
-/** Most recent messages kept per WUM, across all conversations. */
-export const WUM_TOTAL = 50;
+/** chars/4 over the event as stored, minus the wire sidecar (`extra`, where a connector
+ *  keeps the raw delivery, which never reaches the prompt) — crude but monotone: the unit
+ *  of `compactAt`, `keepRecent` and the WUM cap alike, all order-of-magnitude knobs. */
+export const estTokens = (events: Event[]): number =>
+  Math.ceil(JSON.stringify(events, (k, v) => k === "extra" ? undefined : v).length / 4);
 
 /** What a cap left out, addressed to the events that survived it. `earlier` hangs on the
  *  first kept message of a conversation ("what came before this one"); `rest` on the first
@@ -422,77 +434,68 @@ export interface Elisions {
   rest: Map<Event, { conversations: number; messages: number }>;
 }
 
-/** Bound one run to the caps. `run` arrives ts-sorted and conversation-partitioned, so
- *  "most recent" is its tail — per group for the first cap, per group-recency for the
- *  second (whole conversations, never half a cluster: a room cut in the middle reads as if
- *  that IS the conversation). `exempt` names one conversation both caps pass over — the
- *  session's own room, whose lines are the principal's and are never redacted. */
+/** Bound one run to `budget` est. tokens of world lines. `run` arrives ts-sorted and
+ *  conversation-partitioned, so a room's "most recent" is its tail. Under the budget it is
+ *  the identity. Over it, the rooms are served lightest first, each to an equal share of
+ *  what is left: a room that fits its share goes whole, and its unused share is split among
+ *  the rooms after it; a room that does not keeps the newest lines its share buys, and one
+ *  whose share buys not even its newest line is left out whole. `exempt` names one
+ *  conversation the cap passes over and does not count — the session's own room, whose
+ *  lines are the principal's and are never redacted. */
 export function capRun(
   run: Event[],
-  perConversation = WUM_PER_CONVERSATION,
-  total = WUM_TOTAL,
+  budget: number,
   exempt?: string,
 ): { kept: Event[]; elisions: Elisions } {
   const elisions: Elisions = { earlier: new Map(), rest: new Map() };
-  if (run.length <= perConversation && run.length <= total) return { kept: run, elisions };
-
-  const groups = new Map<string, Event[]>();
+  const rooms = new Map<string, { lines: Event[]; weights: number[]; from: number }>();
   for (const e of run) {
     const key = (e as MessageEvent).envelope.conversation.address;
-    let g = groups.get(key);
-    if (!g) groups.set(key, g = []);
-    g.push(e);
+    let room = rooms.get(key);
+    if (!room) rooms.set(key, room = { lines: [], weights: [], from: 0 });
+    room.lines.push(e);
+    room.weights.push(estTokens([e]));
   }
+  const sum = (ws: number[]) => ws.reduce((n, w) => n + w, 0);
+  const world = [...rooms].filter(([key]) => key !== exempt).map(([, room]) => room);
+  if (sum(world.flatMap((r) => r.weights)) <= budget) return { kept: run, elisions };
 
-  // cap 1: the tail of each conversation
-  const trimmed = [...groups.entries()].map(([key, g]) => ({
-    exempt: key === exempt,
-    kept: key === exempt ? g : g.slice(-perConversation),
-    dropped: key === exempt ? 0 : Math.max(0, g.length - perConversation),
-  }));
-
-  // cap 2: whole conversations, most recently active first — the budget buys the rooms
-  // that just spoke. Ties keep arrival order (`groups` is insertion-ordered), so the
-  // choice is total and stable.
-  const byRecency = [...trimmed].sort((a, b) => {
-    const at = a.kept.at(-1)!.ts, bt = b.kept.at(-1)!.ts;
-    return at < bt ? 1 : at > bt ? -1 : 0;
-  });
-  const chosen = new Set<typeof trimmed[number]>();
-  let budget = total;
-  for (const g of byRecency) {
-    if (g.exempt) {
-      chosen.add(g); // outside the budget entirely — never dropped, never counted
-      continue;
+  // lightest first, ties in arrival order (a stable sort): what a light room leaves unused
+  // is split among the heavier ones still to come — the choice is total and stable
+  const order = [...world].sort((a, b) => sum(a.weights) - sum(b.weights));
+  let left = budget;
+  order.forEach((room, i) => {
+    const share = left / (order.length - i);
+    let used = 0;
+    room.from = room.lines.length;
+    while (room.from > 0 && used + room.weights[room.from - 1] <= share) {
+      used += room.weights[--room.from];
     }
-    if (g.kept.length > budget) continue; // a room that doesn't fit is left whole, not split
-    chosen.add(g);
-    budget -= g.kept.length;
-  }
-  // never render an EMPTY WUM: if the caps are set so that not even one conversation fits,
-  // the newest one still gets through (trimmed to the total) — silence would read as "the
-  // world said nothing", which is the one thing that is certainly false here
-  if (chosen.size === 0 && byRecency.length > 0) {
-    const first = byRecency[0];
-    first.dropped += Math.max(0, first.kept.length - total);
-    first.kept = first.kept.slice(-total);
-    chosen.add(first);
+    left -= used;
+  });
+  // never render an EMPTY WUM: a budget too small for any room's newest line still lets the
+  // newest room's newest line through — silence would read as "the world said nothing",
+  // which is the one thing that is certainly false here
+  if (world.every((r) => r.from === r.lines.length)) {
+    const newest = world.reduce((a, b) => b.lines.at(-1)!.ts > a.lines.at(-1)!.ts ? b : a);
+    newest.from = newest.lines.length - 1;
   }
 
-  const dropped = trimmed.filter((g) => !chosen.has(g));
-  // re-emit in the run's own order, so the caps never reorder what survives them
-  const kept = trimmed.filter((g) => chosen.has(g)).flatMap((g) => {
-    if (g.dropped > 0) elisions.earlier.set(g.kept[0], g.dropped);
-    return g.kept;
+  // re-emit in the run's own order, so the cap never reorders what survives it
+  const kept = [...rooms.values()].flatMap((room) => {
+    const lines = room.lines.slice(room.from);
+    if (lines.length > 0 && room.from > 0) elisions.earlier.set(lines[0], room.from);
+    return lines;
   });
 
   // the rest-marker anchors on the first surviving WORLD line — world() is what prints it,
   // and the exempt room's lines render outside any cluster
+  const out = world.filter((r) => r.from === r.lines.length);
   const anchor = kept.find((e) => (e as MessageEvent).envelope.conversation.address !== exempt);
-  if (dropped.length > 0 && anchor) {
+  if (out.length > 0 && anchor) {
     elisions.rest.set(anchor, {
-      conversations: dropped.length,
-      messages: dropped.reduce((n, g) => n + g.kept.length + g.dropped, 0),
+      conversations: out.length,
+      messages: out.reduce((n, r) => n + r.lines.length, 0),
     });
   }
   return { kept, elisions };
@@ -576,7 +579,7 @@ const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
  *  horizon-deferred messages the step never saw — the TRAILING chain. `events` is the
  *  visible window in event-time order with its elisions; `boundary` indexes the closing
  *  step in it; `deferred` travels by identity. */
-function regions(window: Event[], session: Session) {
+function regions(window: Event[], session: Session, compactAt: number) {
   const me = session;
   const here = session.conversation; // the session's own room — everything else is world
   const visible = applySummary(window.filter((e) => !silenced(e)));
@@ -584,7 +587,7 @@ function regions(window: Event[], session: Session) {
   // returned, in append order — so the unconsumed set is taken here, before event time
   // reorders the runs, and travels by identity
   const deferred = deferredInput(visible, me, closingBoundary(visible, session));
-  const { events, elisions } = byEventTime(visible, me, here);
+  const { events, elisions } = byEventTime(visible, me, here, compactAt);
   const boundary = closingBoundary(events, session);
   const trailing = [...deferred, ...events.slice(boundary + 1)];
   return { deferred, events, elisions, boundary, trailing };
@@ -594,11 +597,16 @@ function regions(window: Event[], session: Session) {
  *  burst of images can't stack base64 past the API's request cap; older ones keep their
  *  markers (the path is re-viewable). Sized on the KNOWN raw size: no bytes are read here.
  *  Pure — what xi asks the media port for, and what `render` inlines from the table it
- *  gets back. */
-export function wantedMedia(window: Event[], session: Session): string[] {
+ *  gets back. `compactAt` is the WUM cap the render will apply: a line it caps out asks
+ *  for nothing. */
+export function wantedMedia(
+  window: Event[],
+  session: Session,
+  compactAt = DEFAULT_COMPACT_AT,
+): string[] {
   const wanted: string[] = [];
   let budget = MEDIA_BUDGET;
-  for (const e of [...regions(window, session).trailing].reverse()) {
+  for (const e of [...regions(window, session, compactAt).trailing].reverse()) {
     // world and own-room attachments, and tool-result attachments (the model asked to see those)
     if (e.type !== "message" && e.type !== "tool_result") continue;
     if (e.type === "message" && isSelf(e, session)) continue;
@@ -634,13 +642,24 @@ export function pinnedMedia(e: Event): Record<string, MediaBlock> {
 }
 
 function renderMessages(
-  { events: window, session, now, zone, ambient, tail, media, roster, connections }: RenderInput,
+  {
+    events: window,
+    session,
+    now,
+    zone,
+    ambient,
+    tail,
+    media,
+    roster,
+    connections,
+    compactAt = DEFAULT_COMPACT_AT,
+  }: RenderInput,
 ): MessageParam[] {
   const me = session; // whose voice — the (agent, session) pair
   const who: Roster = roster ?? { names: {}, principals: [session.agentId] };
   const accounts = connections ?? {};
   const here = session.conversation; // the session's own room — everything else is world
-  const { deferred, events, elisions, boundary, trailing } = regions(window, session);
+  const { deferred, events, elisions, boundary, trailing } = regions(window, session, compactAt);
   // room names from the WHOLE window, silenced rows included — a name is a fact about the
   // room, and the row that carried it need not be one the model reads
   const names = roomNames(window);
@@ -812,7 +831,7 @@ function renderMessages(
 
   // the request-level media budget (`wantedMedia`): the table may hold more, the budget
   // decides what inlines
-  const inlineBudget = new Set(wantedMedia(window, session));
+  const inlineBudget = new Set(wantedMedia(window, session, compactAt));
 
   // CLOSED — collapse: messages survive; errors stay visible as system blocks (§2);
   // thinking and ALL tool traffic drop (§5) — pairs, and the late results told after them:

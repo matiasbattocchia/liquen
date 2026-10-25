@@ -119,7 +119,7 @@ import {
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { checkpoint, type ModelTransport, nu, type TurnConfig } from "./nu.ts";
-import { compactionSpan, estTokens, floodAt, flooded } from "./compact.ts";
+import { compactionSpan } from "./compact.ts";
 
 /* ── the poke, the class filter, and the owed-derivation ──────────────── */
 
@@ -209,13 +209,6 @@ export function decide(
   // …and a verdict that has since landed is work of its own: run the call, report back.
   if (owed.length > 0) return "act";
   if (cutOff(events)) return "think"; // a paced/truncated turn CONTINUES
-  // A flood is checkpointed before anything answers it: the window past `floodAt` is the
-  // floor and the newest of the log, with a gap between that moves on every arrival, and
-  // its checkpoint costs no call — it skips the stretch and sets the floor under the tail
-  // the next look answers from.
-  if (flooded(events, wake.compactAt) && needsCheckpoint(events, session, wake)) {
-    return "compact";
-  }
   // Nothing owed is the one moment a checkpoint may run (§5): the turn is over, so no
   // thinking is in flight for a summary to land under, and no input is waiting behind it.
   // The turn that just ended ends the same way whether it closed, failed or was cut — and
@@ -924,50 +917,25 @@ export interface XiPorts {
   bins?: () => Promise<BinDir[]>; // the org folder's programs on PATH, for the prefix (§5)
 }
 
-/** How many rows one page of the window read asks for. */
-const WINDOW_PAGE = 500;
-
 /**
  * The window (§5): the session's latest checkpoint and every visible row after what it
  * covers. The floor is the record itself, a POSITION in the log's own order: it stands
  * still from one checkpoint to the next, so the prompt's prefix — the first bytes a cache
  * matches — is byte-identical across every turn between, and a late-stamped row (an
  * offline sync, a lagged webhook) is inside by where it landed, whatever its clock says.
- *
- * The rows are read newest first, a page at a time, and the read stops at the first row
- * that takes them past `cap` (`floodAt`): the window is then a flood — the floor, the
- * newest of the log, and a stretch between that no read holds — which `decide`
- * checkpoints before anything answers it (compact.ts). Before the first checkpoint the
- * floor is `since`.
+ * Before the first checkpoint the floor is `since`. Nothing past the floor is left
+ * unread: the agent's own history is what checkpoints bound, and a flood of the world's
+ * is what render caps (the WUM cap) — the read loads, the prompt is shaped elsewhere.
  */
-export async function windowOf(
-  log: Pick<Reader, "read">,
-  cap: number,
-  since?: string,
-): Promise<Event[]> {
+export async function windowOf(log: Pick<Reader, "read">, since?: string): Promise<Event[]> {
   const [floor] = await log.read({ types: ["summary"], limit: 1 });
-  const rows: Event[] = [];
-  let weight = 0;
-  let below: EventId | undefined;
-  read: for (;;) {
-    const page = await log.read({
-      ...(floor?.type === "summary" ? { afterId: floor.payload.covers[1] } : {}),
-      ...(below ? { beforeId: below } : {}),
-      ...(since ? { after: since } : {}), // the boot floor, fixed (§5)
-      silenced: false, // imported history and muted/archived-chat traffic are not news: they
-      //   wake nothing and render nowhere — `search` is the door (§5)
-      limit: WINDOW_PAGE,
-    });
-    for (let i = page.length - 1; i >= 0; i--) {
-      rows.push(page[i]);
-      weight += estTokens([page[i]]);
-      if (weight > cap) break read;
-    }
-    if (page.length < WINDOW_PAGE) break;
-    below = page[0].id;
-  }
-  rows.reverse();
-  // a flood's read stops short of the floor: the record still leads what the window shows
+  const rows = await log.read({
+    ...(floor?.type === "summary" ? { afterId: floor.payload.covers[1] } : {}),
+    ...(since ? { after: since } : {}), // the boot floor, fixed (§5)
+    silenced: false, // imported history and muted/archived-chat traffic are not news: they
+    //   wake nothing and render nowhere — `search` is the door (§5)
+  });
+  // a checkpoint stamped before the boot floor is still the record the window opens on
   return floor && !rows.some((e) => e.id === floor.id) ? [floor, ...rows] : rows;
 }
 
@@ -1015,7 +983,7 @@ export async function xi(
   //    session's own checkpoint and the window holds visible rows only — xi never sees, nor
   //    re-checks, what policy hides. The ONE read: the work's input as well as the
   //    decision's (§2).
-  const events = await windowOf(ports.log, floodAt(config.compactAt), config.since);
+  const events = await windowOf(ports.log, config.since);
   // the rulings still owed are STANDING state, read off the store (§9): a card asked before
   // the window's floor is as open as one asked a minute ago
   const v = decide(
@@ -1175,6 +1143,7 @@ async function think(
         events,
         { id: config.sessionId, agentId: config.agentId, conversation: home },
         ports.media,
+        config.compactAt,
       ),
       // who is one of us (§4, §5): the roster's names, and who steers this agent — live
       roster: {
@@ -1230,13 +1199,14 @@ async function mediaFor(
   events: Event[],
   session: Session,
   load: MediaLoader | undefined,
+  compactAt: number | undefined,
 ): Promise<Map<string, MediaBlock>> {
   const table = new Map<string, MediaBlock>();
   if (!load) return table;
   // a tool's attachment carries its own bytes (`pinnedMedia`, §5): render reads them off
   // the event, so the port is not asked — and could not answer for what the path held then
   const pinned = new Set(events.flatMap((e) => Object.keys(pinnedMedia(e))));
-  for (const uri of wantedMedia(events, session)) {
+  for (const uri of wantedMedia(events, session, compactAt)) {
     if (pinned.has(uri)) continue;
     const b = await load(uri);
     if (b) table.set(uri, b);

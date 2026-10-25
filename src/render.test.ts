@@ -6,13 +6,13 @@ import {
   anchorText,
   CANCELLED,
   capRun,
+  estTokens,
   GAP,
   render,
   renderHits,
   renderSystem,
   SILENCE,
   wantedMedia,
-  WUM_PER_CONVERSATION,
 } from "./render.ts";
 import type { DocEntry, DocKind, DocLoad, DocScope } from "./store/docs.ts";
 import type {
@@ -1452,59 +1452,76 @@ function burst(conv: string, m: number): MessageEvent {
   };
 }
 
-Deno.test("capRun: per-conversation cap keeps the MOST RECENT, and says how many it cut", () => {
-  const run = Array.from({ length: 20 }, (_, i) => burst("wa", i));
-  const { kept, elisions } = capRun(run);
+/** What lines weigh to the cap, each on its own — the unit the shares are counted in. */
+const weigh = (es: Event[]) => es.reduce((n, e) => n + estTokens([e]), 0);
 
-  assertEquals(kept.length, WUM_PER_CONVERSATION);
-  // the tail is the state: the last 8, in order
-  assertEquals((kept[0] as MessageEvent).parts[0].type === "text" ? kept[0].id : "", "b-wa-12");
-  assertEquals(kept.at(-1)!.id, "b-wa-19");
-  assertEquals(elisions.earlier.get(kept[0]), 12); // stated where it was cut
-});
-
-Deno.test("capRun: the total cap drops WHOLE conversations, most recently active kept", () => {
-  // 10 rooms × 8 kept each = 80 > WUM_TOTAL (50) ⇒ only 6 rooms fit
-  const run = [...Array(10).keys()].flatMap((c) =>
-    Array.from({ length: 8 }, (_, i) => burst(`c${c}`, c * 8 + i))
-  );
-  const { kept, elisions } = capRun(run);
-
-  assertEquals(kept.length, 48); // 6 whole rooms — never half a cluster
-  const rooms = new Set(kept.map((e) => (e as MessageEvent).envelope.conversation.address));
-  assertEquals(rooms.size, 6);
-  assertEquals(rooms.has("c9"), true); // the room that just spoke
-  assertEquals(rooms.has("c0"), false); // the quietest one goes
-  assertEquals(elisions.rest.get(kept[0]), { conversations: 4, messages: 32 });
-});
-
-Deno.test("capRun: under the caps it is the identity — no copying, no notes", () => {
+Deno.test("capRun: under the budget it is the identity — no copying, no notes", () => {
   const run = [burst("wa", 1), burst("wa", 2)];
-  const { kept, elisions } = capRun(run);
+  const { kept, elisions } = capRun(run, weigh(run));
   assertEquals(kept, run);
   assertEquals(elisions.earlier.size, 0);
   assertEquals(elisions.rest.size, 0);
 });
 
+Deno.test("capRun: a room over the budget keeps its MOST RECENT lines, and says how many it cut", () => {
+  const run = Array.from({ length: 20 }, (_, i) => burst("wa", i + 10));
+  const { kept, elisions } = capRun(run, weigh(run.slice(-8)));
+  // the tail is the state: the last 8, in order
+  assertEquals(kept.map((e) => e.id), run.slice(-8).map((e) => e.id));
+  assertEquals(elisions.earlier.get(kept[0]), 12); // stated where it was cut
+});
+
+Deno.test("capRun: the budget is shared EQUALLY — a quiet room goes whole, the loud ones split what it leaves", () => {
+  const loudA = Array.from({ length: 30 }, (_, i) => burst("la", i + 10));
+  const loudB = Array.from({ length: 30 }, (_, i) => burst("lb", i + 10));
+  const quiet = [burst("qq", 50), burst("qq", 51)];
+  const run = [...loudA, ...loudB, ...quiet];
+  // the quiet room's two lines, and ten of each loud room's
+  const { kept, elisions } = capRun(run, weigh(quiet) + weigh(loudA.slice(-10)) * 2);
+  const of = (conv: string) =>
+    kept.filter((e) => (e as MessageEvent).envelope.conversation.address === conv);
+  assertEquals(of("qq"), quiet);
+  assertEquals(of("la"), loudA.slice(-10)); // neither loud room crowds out the other
+  assertEquals(of("lb"), loudB.slice(-10));
+  assertEquals(elisions.earlier.get(loudA[20]), 20);
+  assertEquals(elisions.earlier.get(loudB[20]), 20);
+  assertEquals(elisions.rest.size, 0); // every room is in view
+});
+
+Deno.test("capRun: a room whose share buys not even its newest line is left out — the rest line counts it", () => {
+  // ten one-line rooms, a budget for three: equal shares, ties to the rooms that spoke last
+  const run = [...Array(10).keys()].map((c) => burst(`c${c}`, 10 + c));
+  const { kept, elisions } = capRun(run, weigh(run.slice(-3)));
+  assertEquals(kept.map((e) => e.id), run.slice(-3).map((e) => e.id));
+  assertEquals(elisions.rest.get(kept[0]), { conversations: 7, messages: 7 });
+});
+
 Deno.test("capRun is DETERMINISTIC — the same run renders identically, forever", () => {
   const run = [...Array(10).keys()].flatMap((c) =>
-    Array.from({ length: 8 }, (_, i) => burst(`c${c}`, c * 8 + i))
+    Array.from({ length: 5 }, (_, i) => burst(`c${c}`, c * 5 + i))
   );
-  const a = capRun(run), b = capRun([...run]);
+  const budget = weigh(run) / 3;
+  const a = capRun(run, budget), b = capRun([...run], budget);
   assertEquals(a.kept.map((e) => e.id), b.kept.map((e) => e.id));
 });
 
+Deno.test("capRun: the session's own room is never capped, and never counted", () => {
+  const own = Array.from({ length: 10 }, (_, i) => burst("mine", i + 10));
+  const world = Array.from({ length: 10 }, (_, i) => burst("wa", i + 10));
+  const { kept } = capRun([...own, ...world], weigh(world.slice(-4)), "mine");
+  assertEquals(kept, [...own, ...world.slice(-4)]);
+});
+
 Deno.test("a capped burst renders with its redaction lines, and the counts are readable", () => {
-  const run = [
-    ...Array.from({ length: 12 }, (_, i) => burst("loud", i)),
-    burst("quiet", 30),
-  ];
+  const loud = Array.from({ length: 12 }, (_, i) => burst("loud", i));
+  const quiet = burst("quiet", 30);
   const { messages } = render({
-    events: run,
+    events: [...loud, quiet],
     docs: [],
     session: SESSION,
     zone: "UTC",
     now: "2026-08-11T10:40:00Z",
+    compactAt: weigh([quiet, ...loud.slice(-8)]),
   });
   const text = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []))
     .filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("\n");
@@ -1515,11 +1532,11 @@ Deno.test("a capped burst renders with its redaction lines, and the counts are r
   assertEquals(text.includes("not shown — search"), false); // no room was dropped whole
 });
 
-Deno.test("capRun: caps that fit nothing still let the newest conversation through", () => {
-  const run = Array.from({ length: 6 }, (_, i) => burst("wa", i));
-  const { kept, elisions } = capRun(run, 6, 2); // perConversation > total: a misconfiguration
-  assertEquals(kept.map((e) => e.id), ["b-wa-04", "b-wa-05"]);
-  assertEquals(elisions.earlier.get(kept[0]), 4); // and it says what it swallowed
+Deno.test("capRun: a budget that fits nothing still lets the newest room's newest line through", () => {
+  const run = [burst("wa", 10), burst("wa", 11), burst("zz", 12)];
+  const { kept, elisions } = capRun(run, 1);
+  assertEquals(kept.map((e) => e.id), ["b-zz-12"]);
+  assertEquals(elisions.rest.get(kept[0]), { conversations: 1, messages: 2 }); // and says what it swallowed
 });
 
 Deno.test("backfilled events reach NO prompt — a sync is invisible, search is the door", () => {
@@ -1796,7 +1813,7 @@ Deno.test("a transcript wears its audio's author even when the marker is capped 
     kind: "audio",
     file: { mime_type: "audio/ogg", uri: "file:///tmp/n.ogg" },
   }];
-  // nine of Sol's replies land before the transcript does: the per-room cap drops the marker
+  // nine of Sol's replies land before the transcript does: the room's budget drops the marker
   const chatter = Array.from(
     { length: 9 },
     (_, i) => worldMsg(`c${i}`, `2026-08-16T12:0${Math.min(i, 9)}:00Z`, conv, sol, `línea ${i}`),
@@ -1813,6 +1830,7 @@ Deno.test("a transcript wears its audio's author even when the marker is capped 
     zone: "UTC",
     now: t,
     roster: { names: { a1: "Matías" }, principals: ["a1"] },
+    compactAt: weigh([...chatter.slice(2), transcript]), // the room's newest eight
   });
   const dump = JSON.stringify(messages);
   assert(!dump.includes('<audio id=\\"e1\\"')); // the marker fell to the cap…
@@ -2209,6 +2227,7 @@ Deno.test("the session's own room is exempt from the WUM caps — the principal 
       ),
     );
   }
+  const world = [...events];
   events.push(mindMsg("p1", "2026-08-20T12:00:00Z", "avisame cuando llegue", false));
   const { messages } = render({
     events,
@@ -2216,13 +2235,14 @@ Deno.test("the session's own room is exempt from the WUM caps — the principal 
     session: SESSION,
     zone: "UTC",
     now: "2026-08-20T13:00:00Z",
+    compactAt: weigh(world.slice(-8)), // the world's newest eight, whatever the principal says
   });
   const texts = blocksOf(messages).map(txt);
   const principal = texts.find((s) => s.includes("<principal"));
   assert(principal, "the principal's line survives any burst");
   assertStringIncludes(principal!, "avisame cuando llegue");
   const conv = texts.find((s) => s.startsWith("<conn"))!;
-  assertStringIncludes(conv, "… 52 earlier, not shown"); // the world still caps at 8
+  assertStringIncludes(conv, "… 52 earlier, not shown"); // the world still caps
 });
 
 Deno.test("a contact whose display name claims an authorship mark forges nothing: marks are attributes", () => {

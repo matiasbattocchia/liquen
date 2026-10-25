@@ -111,11 +111,9 @@ export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves un
 // one hard ceiling is the API's own: a request it refuses as too long is compacted before
 // the next think, whatever the estimate says (compact.ts `overflowed`).
 //
-// The window's other bound is a FLOOD: what the window read stops at, `compactAt` times
-// this. A turn grows the window past `compactAt` while it runs, so the read leaves it that
-// much room; past it, more arrived than the window holds, and the checkpoint written over
-// it skips what it could not read (compact.ts) instead of summarizing it.
-export const FLOOD_FACTOR = 2;
+// It is also the most one WUM — a run of world lines between two turns — may weigh in the
+// prompt (render.ts `capRun`): a flood of the world is shared equally among its rooms and
+// the rest left to `search`, while the agent's own history is the checkpoints' to bound.
 export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for its burst (§2)
 export const DEFAULT_SANDBOX_SLEEP_MINUTES = 10; // the Sandbox SDK's own sleepAfter
 // The tick is not a knob. It is the RESOLUTION of the attention rules, not one of them:
@@ -273,9 +271,9 @@ const SYSTEM: Entry[] = [
     key: "compactAt",
     value: DEFAULT_COMPACT_AT,
     doc: "est. tokens of raw event JSON (~1.8x the prompt) before a checkpoint runs, " +
-      "between turns; input never waits for one. The window reads at most twice this: " +
-      "past that it is a flood, and its checkpoint skips what the window could not hold, " +
-      "left for search",
+      "between turns; input never waits for one. Also the most a run of world lines between " +
+      "two turns may weigh in the prompt: past it, its rooms share it equally, newest lines " +
+      "first, and the rest is left for search",
   },
   {
     key: "keepRecent",

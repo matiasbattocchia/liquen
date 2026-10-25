@@ -214,6 +214,7 @@ function renderInput(input: TurnInput, session: Session, env: Env, now: string):
     media: input.media,
     roster: input.roster,
     connections: input.connections,
+    compactAt: input.config.compactAt,
   };
 }
 

@@ -16,8 +16,6 @@ import {
   type XiPorts,
 } from "./xi.ts";
 import type { Draft, Envelope, Event, Session, ToolUseEvent } from "./types.ts";
-import { estTokens, flooded } from "./compact.ts";
-import { applySummary } from "./render.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { localFiles } from "./store/media.ts";
 import { parseDirect } from "./session.ts";
@@ -394,23 +392,10 @@ Deno.test("decide: the max_tokens continuation is bounded — 3 overflows and it
 
 /* ── the checkpoint is the idle gap's (§5) ────────────────────────────── */
 
-/** Decide with a budget the window is just over, and far from a flood. */
-const decideOver = (events: Event[]) =>
-  decide(events, SESSION, { compactAt: estTokens(applySummary(events)) - 1, keepRecent: 0 });
+const OVER: Wake = { compactAt: 1, keepRecent: 0 }; // every window is over budget
+const decideOver = (events: Event[]) => decide(events, SESSION, OVER);
 const err = (error: string) =>
   ev("error", { parts: [{ type: "data", kind: "error", data: { error } }] } as Partial<Event>);
-
-Deno.test("decide: a flood is checkpointed before its input is answered — the checkpoint takes no call", () => {
-  const events = [peerMsg(), selfMsg(), ...Array.from({ length: 30 }, () => peerMsg())];
-  const weight = estTokens(events);
-  // over budget and short of a flood: the input is answered first
-  assertEquals(decide(events, SESSION, { compactAt: weight - 1, keepRecent: 0 }), "think");
-  // past the flood: the stretch is skipped first, under the tail the next look answers
-  const flood: Wake = { compactAt: Math.floor(weight / 3), keepRecent: 0 };
-  assertEquals(decide(events, SESSION, flood), "compact");
-  // a running turn still waits: its thinking replays over the prefix as it stands
-  assertEquals(decide([...events, use("u1")], SESSION, flood), "act");
-});
 
 Deno.test("decide: nothing owed and the window over budget → compact; under budget → ignore", () => {
   const closed = [peerMsg(), selfMsg(), peerMsg(), selfMsg()];
@@ -859,7 +844,6 @@ const checkpointOver = (covers: [string, string]): Draft<Event> =>
     payload: { covers },
     parts: [{ type: "text", kind: "text", text: "## Open" }],
   }) as Draft<Event>;
-const ROOMY = 1_000_000; // a cap no test window reaches
 
 async function withLog(f: (log: Log) => Promise<void>): Promise<void> {
   const dir = await Deno.makeTempDir();
@@ -872,11 +856,11 @@ async function withLog(f: (log: Log) => Promise<void>): Promise<void> {
   }
 }
 
-Deno.test("windowOf: before any checkpoint the window is everything past the boot floor, page after page", async () => {
+Deno.test("windowOf: before any checkpoint the window is everything past the boot floor", async () => {
   await withLog(async (log) => {
     const rows = await log.publish(Array.from({ length: 1203 }, (_, i) => lineAt(i)));
     const since = rows[2].ts; // the boot floor: strict, so the first three are backlog
-    const window = await windowOf(log, ROOMY, since);
+    const window = await windowOf(log, since);
     assertEquals(window.map((e) => e.id), rows.slice(3).map((e) => e.id));
   });
 });
@@ -885,40 +869,33 @@ Deno.test("windowOf: the latest checkpoint is the floor — the prefix stands st
   await withLog(async (log) => {
     const rows = await log.publish(Array.from({ length: 10 }, (_, i) => lineAt(i)));
     const floor = (await log.publish(checkpointOver([rows[0].id, rows[5].id])))!;
-    const head = (await windowOf(log, ROOMY)).map((e) => e.id);
+    const head = (await windowOf(log)).map((e) => e.id);
     // what it covers is gone; what it left uncovered, and the record, are the window
     assertEquals(head, [...rows.slice(6).map((e) => e.id), floor.id]);
     // arrivals append: every byte before them is what the last turn sent
     const more = await log.publish([lineAt(10), lineAt(11)]);
     assertEquals(
-      (await windowOf(log, ROOMY)).map((e) => e.id),
+      (await windowOf(log)).map((e) => e.id),
       [...head, ...more.map((e) => e.id)],
     );
     // the next checkpoint moves the floor, once
     const next = (await log.publish(checkpointOver([rows[0].id, rows[9].id])))!;
     assertEquals(
-      (await windowOf(log, ROOMY)).map((e) => e.id),
+      (await windowOf(log)).map((e) => e.id),
       [floor.id, ...more.map((e) => e.id), next.id],
     );
   });
 });
 
-Deno.test("windowOf: a flood stops the read at the cap — the floor still leads, and the newest follow", async () => {
+Deno.test("windowOf: a checkpoint stamped before the boot floor still leads the window", async () => {
   await withLog(async (log) => {
     const rows = await log.publish(Array.from({ length: 4 }, (_, i) => lineAt(i)));
-    const floor = (await log.publish(checkpointOver([rows[0].id, rows[3].id])))!;
-    const flood = await log.publish(Array.from({ length: 60 }, (_, i) => lineAt(i + 4)));
-    const cap = estTokens(flood.slice(-10)); // ten of the newest weigh it
-    const window = await windowOf(log, cap);
-    assertEquals(window[0].id, floor.id);
-    assertEquals(window.at(-1)!.id, flood.at(-1)!.id);
-    const read = window.slice(1);
-    assert(read.length > 0 && read.length < flood.length); // a stretch between is unread
-    // the read stops at the row that takes it past the cap, and not one row later
-    const weigh = (es: Event[]) => es.reduce((sum, e) => sum + estTokens([e]), 0);
-    assert(weigh(read) > cap);
-    assert(weigh(read.slice(1)) <= cap);
-    assert(flooded(window, cap / 2));
+    const floor = (await log.publish(checkpointOver([rows[0].id, rows[1].id])))!;
+    const since = rows[2].ts; // the record's own stamp is midnight, before this
+    assertEquals(
+      (await windowOf(log, since)).map((e) => e.id),
+      [floor.id, rows[3].id],
+    );
   });
 });
 
@@ -928,7 +905,7 @@ Deno.test("windowOf: a late-stamped row is inside by where it landed — positio
     await log.publish(checkpointOver([rows[0].id, rows[1].id]));
     // appended last, stamped before everything: an offline-synced message
     const late = (await log.publish(lineAt(2, new Date(T0 - 60_000).toISOString())))!;
-    assertEquals((await windowOf(log, ROOMY)).at(-1)!.id, late.id);
+    assertEquals((await windowOf(log)).at(-1)!.id, late.id);
   });
 });
 
