@@ -159,6 +159,8 @@ export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
   let erred: Event | undefined; // the open turn's last row was an error
   let news: Opener | undefined; // the freshest news since the last turn ended
   let lastNewsBefore = new Map<EventId, Opener>(); // news by id, for the consumed horizon
+  let steering = new Map<EventId, Opener>(); // news that landed while the open turn ran
+  let read: EventId | undefined; // the furthest the open turn's steps read
   let stamp: Inputs | undefined; // the last input set a step stamped, in the rows so far
   const noteInputs = (t: Turn, e: Event) => {
     const inputs = e.extra?.inputs as Inputs | undefined;
@@ -170,11 +172,25 @@ export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
     stamp = inputs;
   };
 
+  const noteRead = (e: Event) => {
+    const consumed = e.extra?.consumed;
+    if (typeof consumed === "string" && (read === undefined || consumed > read)) read = consumed;
+  };
   const close = (t: Turn, end: TurnEnd, at: Event) => {
     t.end = end;
     touch(t, at);
     open = undefined;
     erred = undefined;
+    // news past the turn's horizon reached none of its steps: a wake that fired while the
+    // last call was in flight is the next turn's to open, not this one's steering (a turn
+    // with no horizon in its rows says nothing either way, and keeps none)
+    for (const [id, o] of steering) {
+      if (read === undefined || id <= read) continue;
+      news = o;
+      lastNewsBefore.set(id, o);
+    }
+    steering = new Map();
+    read = undefined;
   };
   const touch = (t: Turn, e: Event) => {
     t.ended = e.ts;
@@ -202,6 +218,7 @@ export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
         }
         if (e.type === "tool_use") owner.calls++;
         noteInputs(owner, e);
+        if (owner === open) noteRead(e);
         if (owner === open) erred = undefined;
         touch(owner, e);
         if (owner === open) closeOnStop(owner, e);
@@ -236,6 +253,7 @@ export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
       if (!t.steps.includes(step)) t.steps.push(step);
       byStep.set(step, t);
       noteInputs(t, e);
+      noteRead(e);
       if (e.type === "tool_use") t.calls++;
       erred = undefined;
       touch(t, e);
@@ -279,7 +297,10 @@ export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
       continue;
     }
     if (open && erred) close(open, "error", erred);
-    if (open) continue; // news mid-turn: steering, read by a later step
+    if (open) {
+      steering.set(e.id, o); // news mid-turn: steering, if a later step reads it
+      continue;
+    }
     news = o;
     lastNewsBefore.set(e.id, o);
   }

@@ -175,6 +175,33 @@ Deno.test("turnsOf: a wake opens by its handle; a cut ends the turn; a failed fi
   assertEquals(turns[1].steps, []);
 });
 
+Deno.test("turnsOf: news no step of the open turn read opens the next; news a step read does not", () => {
+  const ask = said("top 5 deals?");
+  const s1 = step("c1", ask.id, { calls: ["sonar api GET /engagements"], stop: "tool_use" });
+  const nudge = said("solo los abiertos");
+  const r1 = result(s1[1]);
+  // the second step read past the nudge (steering); the closing's call was in flight when
+  // the wake fired, so its horizon stops short of it
+  const s2 = step("c2", r1.id, { calls: ["sonar api GET /pipelines"], stop: "tool_use" });
+  const r2 = result(s2[1]);
+  const wake: Event = {
+    id: nextId(),
+    ts: at(),
+    type: "alarm",
+    envelope: here(),
+    extra: { timer: { id: "w", session_id: "mind", name: "poll" } },
+    parts: [{ type: "text", kind: "alarm", text: "Time to poll" }],
+  } as Event;
+  const reply = step("c3", r2.id, { text: "here are the top 5" });
+  // the next turn's horizon is the agent's own reply: the wake sits before it, unread till now
+  const next = step("w1", reply.at(-1)!.id, { calls: ["sonar batch"], stop: "tool_use" });
+  const turns = turnsOf([ask, ...s1, nudge, r1, ...s2, r2, wake, ...reply, ...next], REF);
+  assertEquals(turns.length, 2);
+  assertEquals(openedBy(turns[0].opener), 'message from matias "top 5 deals?"');
+  assertEquals(openedBy(turns[1].opener), "wake poll");
+  assertEquals(turns[1].started, wake.ts);
+});
+
 Deno.test("turnsOf: a principal's line the mirror copied in from a surface opens a turn, named by it", () => {
   const copy: Event = {
     ...said("abrí la ficha", "Matías"),
