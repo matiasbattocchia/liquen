@@ -459,12 +459,16 @@ BEGIN
 END
 $f$;
 
--- afs write: the whole text, a blind overwrite by contract
+-- afs write: the whole text, a blind overwrite by contract; a scope the agent may not write
+-- is refused in words before the policy refuses it in its own
 CREATE OR REPLACE FUNCTION docs_write(handle text, content text) RETURNS text
 LANGUAGE plpgsql VOLATILE AS $f$
 DECLARE r record;
 BEGIN
   SELECT * INTO r FROM docs_ref(handle);
+  IF r.scope NOT IN ('agent', 'conversation') OR r.owner IS NULL THEN
+    RAISE EXCEPTION '%: not yours to write', handle;
+  END IF;
   INSERT INTO docs (scope, owner, name, text, updated_at)
     VALUES (r.scope, r.owner, r.name, content, docs_stamp())
     ON CONFLICT (scope, owner, name) DO UPDATE

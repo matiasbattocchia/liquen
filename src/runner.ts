@@ -12,8 +12,7 @@
 import type { AgentConfig, Decision, XiPorts } from "./xi.ts";
 import type { Log } from "./store/log.ts";
 import { type Policy, scoped } from "./policy.ts";
-import type { DocContext, Docs } from "./store/docs.ts";
-import type { DocCalls } from "./store/pg/docs.ts";
+import type { DocCalls, DocContext, Docs } from "./store/docs.ts";
 import { docTools } from "./exec/docs.ts";
 import { sessionAddress } from "./session.ts";
 import type { MediaLoader } from "./store/media.ts";

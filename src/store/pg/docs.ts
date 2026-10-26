@@ -15,43 +15,22 @@
 
 import {
   columnsOf,
+  type DocCalls,
   type DocContext,
   type DocEntry,
   type DocRef,
-  type Docs,
   type DocScope,
+  type DocTable,
   frontmatterOf,
   stripFrontmatter,
 } from "../docs.ts";
 import { connect, count, rows, scrub, type Sql } from "./sql.ts";
 import { AGENT_ROLE, prepare } from "./schema.ts";
 
-/** The binaries' contracts (`bin/afs.ts`), as the agent calls them on the table. Each
- *  answers the line the binary prints, or throws what it would report. */
-export interface DocCalls {
-  read(handle: string, offset?: number, limit?: number, maxBytes?: number): Promise<string>;
-  write(handle: string, content: string): Promise<string>;
-  edit(handle: string, spec: string): Promise<string>;
-}
-
-export interface PgDocs extends Docs {
-  /** The agent's reach: its calls, bounded to what `ctx` may see and write. */
-  as(ctx: DocContext): DocCalls;
-  /** Whether a row of the scope lies under `folder/` — the seed's unit of if-absent. */
-  laid(scope: DocScope, owner: string, folder: string): Promise<boolean>;
-  /** Lay a row where none is. Answers whether it wrote. */
-  lay(scope: DocScope, owner: string, name: string, text: string): Promise<boolean>;
-  /** One row's whole text, or null where none is. */
-  text(scope: DocScope, owner: string, name: string): Promise<string | null>;
-  /** Replace one row's text with `to` while it is still `from`. Answers whether it wrote. */
-  swap(scope: DocScope, owner: string, name: string, from: string, to: string): Promise<boolean>;
-  close(): Promise<void>;
-}
-
 const SCOPE_ORDER: DocScope[] = ["system", "shared", "agent", "conversation"];
 
 /** Open the docs table in `schema` of the database at `url`. */
-export async function openPgDocs(url: string, opts: { schema?: string } = {}): Promise<PgDocs> {
+export async function openPgDocs(url: string, opts: { schema?: string } = {}): Promise<DocTable> {
   const schema = opts.schema ?? "public";
   const sql: Sql = connect(url, schema);
   try {

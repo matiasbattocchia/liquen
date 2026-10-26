@@ -319,6 +319,55 @@ Deno.test("the framework way: the catalog's roster declares the org; the table m
   }
 });
 
+Deno.test("docs in SQLite's table: boot seeds them there, and the agent writes and reads its own by handle", async () => {
+  const root = await Deno.makeTempDir();
+  await Deno.writeTextFile(
+    `${root}/config.jsonc`,
+    JSON.stringify({ deployment: { docs: "table" }, agents: { ana: {} } }),
+  );
+  const dir = `${root}/data`;
+  const note = "---\nkind: memory\ndescription: the note\n---\nremember";
+  const { transport: script } = scripted([
+    canned(
+      [{ kind: "tool_use", name: "write", input: { handle: "agent/memories/x", content: note } }],
+      "tool_use",
+    ),
+    canned([{ kind: "tool_use", name: "read", input: { handle: "agent/memories/x" } }], "tool_use"),
+    reply("listo"),
+  ]);
+  const sent: Parameters<ModelTransport>[0][] = [];
+  const transport: ModelTransport = (params, ...rest) => {
+    sent.push(params);
+    return script(params, ...rest);
+  };
+  const main = await start({
+    dir,
+    catalog: await readConfig(root),
+    debounceMs: 0,
+    model: "claude-x",
+    maxTokens: 1024,
+  }, { transport });
+  try {
+    await main.log.publish(principalMsg("mind@ana", "anotá algo"));
+    await waitFor(async () => (await main.log.read({ types: ["tool_result"] })).length === 2);
+    const results = (await main.log.read({ types: ["tool_result"] })) as ToolResultEvent[];
+    assertEquals(results.map((r) => r.parts[0].data.output), [
+      `wrote ${new TextEncoder().encode(note).length} bytes to agent/memories/x`,
+      note,
+    ]);
+    // the doc tools are offered, and the system's words are rows, not files
+    assert(["read", "write", "edit"].every((t) => sent[0].tools!.some((s) => s.name === t)));
+    assertEquals(await Deno.stat(`${dir}/system/tools`).then(() => true, () => false), false);
+    assertEquals(
+      await Deno.stat(`${dir}/agents/ana/memories`).then(() => true, () => false),
+      false,
+    );
+  } finally {
+    await main.stop();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("config.jsonc declares the agent: settings override defaults, handles mirror in (§9)", async () => {
   const { root, dir, catalog } = await orgDir({
     // organization.agents' keys, overridden per agent — plus the handles a human knows it by

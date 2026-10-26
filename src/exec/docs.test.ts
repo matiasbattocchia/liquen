@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { docTools } from "./docs.ts";
-import type { DocCalls } from "../store/pg/docs.ts";
+import type { DocCalls } from "../store/docs.ts";
 
 Deno.test("the docs tools are the three calls: each forwards its arguments and answers the call's line", async () => {
   const made: string[] = [];

@@ -22,7 +22,7 @@
  *     unknown key or section is a boot error — a typo must not run silently.
  *   · Placement is by audience. `system`: machinery tuning — every deployment works on the
  *     defaults. `deployment`: where the org's parts live — the log and the vault, the docs,
- *     the agents' shells — a ladder in which each remote value needs the one before it.
+ *     the agents' shells — where shells off this machine need the docs in the table.
  *     `organization`: this deployment's identity — the clock, the backlog, and
  *     under `organization.agents` the defaults every agent inherits. `agents.<name>`: the
  *     roster — each entry overrides `organization.agents` key by key and may declare the
@@ -307,8 +307,8 @@ const DEPLOYMENT: Entry[] = [
     key: "docs",
     value: "files",
     doc: "where the docs live: files under data/ (an agent reads and writes them from its " +
-      "shell), or table — the docs table of the Postgres database above, which an agent " +
-      "reaches through its read · write · edit tools",
+      "shell), or table — the docs table of the database above, SQLite or Postgres, which " +
+      "an agent reaches through its read · write · edit tools",
   },
   {
     key: "sandbox",
@@ -466,7 +466,7 @@ const EDGE: Entry[] = [
 const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
   deployment: "where the org's parts live — the log and the vault, the docs, the agents' " +
-    "shells; each remote value needs the one before it",
+    "shells; shells off this machine need the docs in the table",
   organization: "this deployment's identity — the clock, the backlog, and every agent's defaults",
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
   edge: "the org's one door — the address the world dials, the one port the org binds, " +
@@ -1094,7 +1094,7 @@ function validateOrg(cfg: OrgConfig, path: string): void {
       `${path}: deployment.database ${database} (got ${JSON.stringify(where.database)})`,
     );
   }
-  const docs = checkDocs(where.docs, where.database);
+  const docs = checkDocs(where.docs);
   if (docs) {
     throw new Error(`${path}: deployment.docs ${docs} (got ${JSON.stringify(where.docs)})`);
   }
@@ -1159,12 +1159,10 @@ export function checkPublicUrl(v: unknown): string | null {
   return null;
 }
 
-/** What `deployment.docs` may hold: `files`, or `table` when `deployment.database` names the
- *  Postgres database whose table it is. A complaint, or null when the value is fine. */
-export function checkDocs(v: unknown, database: unknown): string | null {
-  if (v === "files") return null;
-  if (v !== "table") return 'must be "files" or "table"';
-  return database === null ? "table needs deployment.database to name a Postgres database" : null;
+/** What `deployment.docs` may hold: `files`, or `table`, the docs table of the store
+ *  `deployment.database` names. A complaint, or null when the value is fine. */
+export function checkDocs(v: unknown): string | null {
+  return v === "files" || v === "table" ? null : 'must be "files" or "table"';
 }
 
 /** What `deployment.sandbox` may hold: null, `"bwrap"`, or the https URL of a sandbox gateway —

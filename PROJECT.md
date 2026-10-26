@@ -5978,6 +5978,34 @@ history like a flood: a long turn lost the ask that opened it and slid its cache
   the same way, so a covered flood cannot make the transcript itself too long.
 - `estTokens` lives in render.ts now: the cap and the checkpoint share the unit.
 
+### The docs table runs on SQLite too (2026-10-26) — LANDED
+
+`deployment.docs: "table"` no longer needs Postgres. On SQLite the table lives in
+`log.db`, beside the log and the vault, so an org keeps one database file on either
+engine. A laptop org on SQLite can now set `docs: "table"`, then a gateway `sandbox`.
+
+- **The rule is the handle's resolution** (`store/doctable.ts`). SQLite has no roles, so
+  the owner a handle names is always the asker, and only the agent's scope and its
+  conversation's take a write. No sandbox mode needed refusing: a bare shell already reads
+  all of `data/`, a bubble shows nothing of `data/log`, and a gateway's sandbox nothing of
+  this machine.
+- **The contracts are the TypeScript ones** the PL/pgSQL restates: `parseEdits` and
+  `applyEdits` for `edit`, `truncateHead` for `read`, with `read`'s footer as the Postgres
+  function words it.
+- **One suite holds both engines** (`store/suite/docs.ts`), moved out of `pg.test.ts`.
+  Postgres keeps a test of its own for the policy under the functions.
+- **`docs_write` refuses in words** ("not yours to write") before the policy refuses it
+  in its own, so both engines answer an agent the same.
+- `DocCalls` and `DocTable` live in `store/docs.ts`; a SQLite address carries `docs`.
+- A boot test (`main.test.ts`) runs an agent's `write` and `read` against SQLite's table.
+- The section comment drops "each remote value needs the one before it": only shells off
+  this machine still need the docs in the table. The orgs on this machine carry the new
+  words.
+
+Open: switching an org from files to the table copies nothing across, on either engine.
+The system docs are laid again, but what the agents wrote under `agents/<name>/` stays
+behind as files they no longer see. A one-time carry-over on the switch is parked.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

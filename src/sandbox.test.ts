@@ -10,7 +10,7 @@ import { storeAt } from "./store/mod.ts";
 Deno.test("a session's shell is its own and kept: where one stands, its sibling does not", async () => {
   const dir = await Deno.makeTempDir();
   const sandbox = await openLocalSandbox(dir, {
-    store: storeAt({ engine: "sqlite", dir }),
+    store: storeAt({ engine: "sqlite", dir, docs: "files" }),
     agents: ["a1"],
   });
   try {
@@ -40,7 +40,7 @@ Deno.test("a session's shell is its own and kept: where one stands, its sibling 
 Deno.test("the shell speaks through the proxy's pocket, in the org's locale and on its clock", async () => {
   const dir = await Deno.makeTempDir();
   const sandbox = await openLocalSandbox(dir, {
-    store: storeAt({ engine: "sqlite", dir }),
+    store: storeAt({ engine: "sqlite", dir, docs: "files" }),
     agents: ["a1"],
     locale: "es_AR.UTF-8",
     timezone: "Asia/Tokyo",
@@ -72,7 +72,7 @@ Deno.test("the shell speaks through the proxy's pocket, in the org's locale and 
 Deno.test("an agent's shell inherits the variables it exports, as the harness holds them at the call", async () => {
   const dir = await Deno.makeTempDir();
   const sandbox = await openLocalSandbox(dir, {
-    store: storeAt({ engine: "sqlite", dir }),
+    store: storeAt({ engine: "sqlite", dir, docs: "files" }),
     agents: ["a1", "a2"],
     exports: { a1: ["LIQUEN_TEST_DISPLAY", "LIQUEN_TEST_UNSET"] },
   });

@@ -540,7 +540,7 @@ Deno.test("deployment.database: null or a Postgres URL without its password — 
   });
 });
 
-Deno.test("deployment.docs: files, or table when deployment.database names the database whose table it is", async () => {
+Deno.test("deployment.docs: files, or table — the docs table of the store, either engine", async () => {
   await withDir(async (root) => {
     const write = (deployment: unknown) =>
       Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ deployment }));
@@ -549,7 +549,7 @@ Deno.test("deployment.docs: files, or table when deployment.database names the d
     await write({ docs: "table", database: "postgres://liquen@db.internal:5432/liquen" });
     assertEquals((await readConfig(root)).deployment.docs, "table");
     await write({ docs: "table" });
-    await assertRejects(() => readConfig(root), Error, "needs deployment.database");
+    assertEquals((await readConfig(root)).deployment.docs, "table");
     await write({ docs: "rows" });
     await assertRejects(() => readConfig(root), Error, '"files" or "table"');
   });

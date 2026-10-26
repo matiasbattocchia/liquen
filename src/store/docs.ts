@@ -35,9 +35,9 @@
  * takes wherever the shell stands — an attach puts it in the caller's directory, and a path
  * counted from anywhere else sends the model looking. The columns are the file's YAML
  * frontmatter, projected. Reads are fresh from disk (multi-process, like the log). On the
- * table (`pg/docs.ts`) this same port is SELECTs over `docs`, the columns projected from
- * the row's text by the same parser — a row with no frontmatter is likewise not listed —
- * and the handle is the row's key, `scope/name`.
+ * table (`doctable.ts` on SQLite, `pg/docs.ts` on Postgres) this same port is SELECTs over
+ * `docs`, the columns projected from the row's text by the same parser — a row with no
+ * frontmatter is likewise not listed — and the handle is the row's key, `scope/name`.
  */
 
 import { resolve } from "node:path";
@@ -90,6 +90,31 @@ export interface Docs {
   /** What the handles are: absolute paths the shell's `aread` opens, or
    *  the table's keys its `read` call opens. Absent (a test's stub): files. */
   on?: "files" | "table";
+}
+
+/** The binaries' contracts (`bin/afs.ts`), as the agent calls them on the table. Each
+ *  answers the line the binary prints, or throws what it would report. */
+export interface DocCalls {
+  read(handle: string, offset?: number, limit?: number, maxBytes?: number): Promise<string>;
+  write(handle: string, content: string): Promise<string>;
+  edit(handle: string, spec: string): Promise<string>;
+}
+
+/** The docs on a table, either engine's: the read port, the agent's reach and the seeds'
+ *  bed. A row's key is `(scope, owner, name)`; the owner is the agent's id or the
+ *  conversation's address, and empty for the two scopes the org shares. */
+export interface DocTable extends Docs {
+  /** The agent's reach: its calls, bounded to what `ctx` may see and write. */
+  as(ctx: DocContext): DocCalls;
+  /** Whether a row of the scope lies under `folder/` — the seed's unit of if-absent. */
+  laid(scope: DocScope, owner: string, folder: string): Promise<boolean>;
+  /** Lay a row where none is. Answers whether it wrote. */
+  lay(scope: DocScope, owner: string, name: string, text: string): Promise<boolean>;
+  /** One row's whole text, or null where none is. */
+  text(scope: DocScope, owner: string, name: string): Promise<string | null>;
+  /** Replace one row's text with `to` while it is still `from`. Answers whether it wrote. */
+  swap(scope: DocScope, owner: string, name: string, from: string, to: string): Promise<boolean>;
+  close(): Promise<void>;
 }
 
 /** Open a filesystem-backed Docs read port rooted at the org data root. */

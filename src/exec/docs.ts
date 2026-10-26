@@ -4,12 +4,13 @@
  *
  * The database substrate's primitive, by handle: the binaries' contracts (`bin/afs.ts`)
  * as three tool calls, each answering the line the binary prints. The model writes no
- * SQL; every call is a function of the store the harness invokes under the agent role,
- * and what the agent may reach is the table's policy (`store/pg/schema.ts`). Their words
- * are `system/tools/{read,write,edit}.md` (tooldoc.ts).
+ * SQL; every call is the store's own, bounded to what the agent may reach — on Postgres
+ * the table's policy under the agent role (`store/pg/schema.ts`), on SQLite the handle's
+ * owner, always the asker (`store/doctable.ts`). Their words are
+ * `system/tools/{read,write,edit}.md` (tooldoc.ts).
  */
 
-import type { DocCalls } from "../store/pg/docs.ts";
+import type { DocCalls } from "../store/docs.ts";
 import type { ExecTool } from "../xi.ts";
 import type { Json } from "../types.ts";
 import type { ToolShape } from "../tooldoc.ts";

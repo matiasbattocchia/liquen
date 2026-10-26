@@ -7,11 +7,15 @@
  * against them.
  */
 
+import { DatabaseSync } from "node:sqlite";
 import type { Log } from "../log.ts";
 import type { Credentials } from "../credentials.ts";
-import { storeAt } from "../mod.ts";
+import type { DocScope, DocTable } from "../docs.ts";
+import { openSqliteDocs } from "../doctable.ts";
+import { type DocStore, storeAt } from "../mod.ts";
 import { connect } from "../pg/sql.ts";
 import { ident } from "../pg/schema.ts";
+import { openPgDocs } from "../pg/docs.ts";
 
 /** What a suite gets a store from: a store nothing has written to, per test. */
 export interface Substrate {
@@ -47,7 +51,7 @@ export async function withStore(
 export const sqlite: Substrate = {
   async fresh(): Promise<Store> {
     const dir = await Deno.makeTempDir();
-    const store = storeAt({ engine: "sqlite", dir });
+    const store = storeAt({ engine: "sqlite", dir, docs: "files" });
     return {
       open: store.log,
       vault: store.vault,
@@ -77,6 +81,102 @@ export function postgres(url: string): { fresh(): Promise<Store & { schema: stri
           }
         },
       });
+    },
+  };
+}
+
+/** A docs table, opened, and the org's own hand on its rows: what the docs suite
+ *  (`suite/docs.ts`) gets from an engine. */
+export interface DocsBench {
+  docs: DocTable;
+  /** Write a row past every agent's rule, as the org does: laid, replaced, or gone (null). */
+  set(scope: DocScope, owner: string, name: string, text: string | null): Promise<void>;
+  /** Every row, `scope/owner/name` and its text, in key order. */
+  rows(): Promise<{ key: string; text: string }[]>;
+  /** The same table's docs as the store opens them where the catalog puts them there. */
+  store(): Promise<DocStore>;
+  close(): Promise<void>;
+}
+
+export interface DocsSubstrate {
+  fresh(): Promise<DocsBench>;
+}
+
+/** SQLite's docs table: the one in `log.db` under a data root of its own. */
+export const sqliteDocs: DocsSubstrate = {
+  async fresh(): Promise<DocsBench> {
+    const dir = await Deno.makeTempDir();
+    const docs = await openSqliteDocs(dir);
+    const db = new DatabaseSync(`${dir}/log/log.db`);
+    return {
+      docs,
+      set(scope, owner, name, text) {
+        if (text === null) {
+          db.prepare("DELETE FROM docs WHERE scope = ? AND owner = ? AND name = ?")
+            .run(scope, owner, name);
+        } else {
+          db.prepare(
+            `INSERT INTO docs (scope, owner, name, text, updated_at) VALUES (?, ?, ?, ?, 't')
+             ON CONFLICT (scope, owner, name) DO UPDATE SET text = excluded.text`,
+          ).run(scope, owner, name, text);
+        }
+        return Promise.resolve();
+      },
+      rows: () =>
+        Promise.resolve(
+          db.prepare(
+            `SELECT scope || '/' || owner || '/' || name AS key, text FROM docs
+             ORDER BY scope, owner, name`,
+          ).all() as { key: string; text: string }[],
+        ),
+      store: () => storeAt({ engine: "sqlite", dir, docs: "table" }).docs(),
+      async close() {
+        db.close();
+        await docs.close();
+        await Deno.remove(dir, { recursive: true });
+      },
+    };
+  },
+};
+
+/** Postgres's docs table: the one in a schema of its own, dropped at the end. */
+export function postgresDocs(url: string): DocsSubstrate {
+  return {
+    async fresh(): Promise<DocsBench> {
+      const store = await postgres(url).fresh();
+      const docs = await openPgDocs(url, { schema: store.schema });
+      const sql = connect(url, store.schema);
+      return {
+        docs,
+        async set(scope, owner, name, text) {
+          if (text === null) {
+            await sql.unsafe(
+              "DELETE FROM docs WHERE scope = $1::text AND owner = $2::text AND name = $3::text",
+              [scope, owner, name],
+            );
+          } else {
+            await sql.unsafe(
+              `INSERT INTO docs (scope, owner, name, text, updated_at)
+               VALUES ($1::text, $2::text, $3::text, $4::text, 't')
+               ON CONFLICT (scope, owner, name) DO UPDATE SET text = excluded.text`,
+              [scope, owner, name, text],
+            );
+          }
+        },
+        rows: async () =>
+          (await sql.unsafe(
+            `SELECT scope || '/' || owner || '/' || name AS key, text FROM docs
+             ORDER BY scope, owner, name`,
+          )) as unknown as { key: string; text: string }[],
+        store: () =>
+          storeAt({ engine: "postgres", url, schema: store.schema, dir: "", docs: "table" })
+            .docs(),
+        async close() {
+          await sql.end();
+          await docs.close();
+          await store.drop();
+        },
+      };
     },
   };
 }

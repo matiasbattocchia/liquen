@@ -2187,19 +2187,26 @@ substrates, and a row with no frontmatter is likewise not in the index. The hand
 `scope/name`; the owner is whoever is asking, so an agent names its own doc and its
 session's conversation doc the way it names a system one. Where the docs live is the
 catalog's `deployment.docs`: files under the data root, or the table of the database
-`deployment.database` names.
+`deployment.database` names — SQLite's in `log.db`, beside the log and the vault, or the
+Postgres schema's.
 
-Who may write a row is the substrate's rule — RLS on the table, unix ownership on files
-(§9) — never a column of the row. On the table it is one policy, the container's rule
-restated: the agent role reads the two org scopes, its own and its conversation's, and
-writes the last two. An edit is safe against a concurrent one the way `aedit` is: it
-names the text it replaces, and text that is no longer there matches nothing.
+Who may write a row is the substrate's rule — RLS on Postgres's table, the calls' own
+resolution on SQLite's, unix ownership on files (§9) — never a column of the row. On the
+table it is one rule, the container's restated: an agent reads the two org scopes, its own
+and its conversation's, and writes the last two. On SQLite, which has no roles, the rule
+is the handle's resolution: the owner a handle names is always the asker, so no handle
+reaches another agent's row, and the file is the harness's alone (a bubble shows nothing
+of `data/log`, a gateway's sandbox nothing of this machine). An edit is safe against a
+concurrent one the way `aedit` is: it names the text it replaces, and text that is no
+longer there matches nothing.
 
 - **No "memory subsystem"**: docs (all kinds) *and* cron are just rows/files managed via
-  the generic substrate tool (the doc calls under RLS on DB, bash/Unix on files), bounded
-  by the engine — full model in §9. The table's functions (`docs_read · docs_write ·
+  the generic substrate tool (the doc calls on DB, bash/Unix on files), bounded by the
+  engine — full model in §9. On Postgres the table's functions (`docs_read · docs_write ·
   docs_edit`) are the binaries' contracts restated, `SECURITY INVOKER`: ergonomic (literal
-  params → no escaping bugs), and never the security boundary — the policy is.
+  params → no escaping bugs), and never the security boundary — the policy is. On SQLite
+  the same contracts are the edit engine and the truncation in TypeScript
+  (`store/doctable.ts`), and one suite holds both engines to the same answers.
 
 ### Domain tools (MCP) & credentials
 
@@ -2422,7 +2429,7 @@ its SQL side (5 tools: `executeSql`/`getDbSchema`/`sampleTableRows`/`selectAsCsv
 | `search` | control (dedicated) | `search({in?, from?, connection?, before?, after?, text?, limit?, around?})` → the page as a string in the window's grammar (`<conn>`/`<conv>`/`<msg>`, dated), RLS-scoped, closed by the next page's `before` when cut. Clean sugar over the control-plane log read (SELECT / ripgrep). |
 | `conversation` | control (dedicated) | `conversation(action?, which?, who?, name?)` → the room (`name`, `kind`, `address`, `members`), or `{rooms}` for a bare `show`. A room's members and name (§6): `join` · `leave` · `add` · `remove` · `rename` · `show`. Locally the tool says each change in the room; on a wire each verb goes through the service's rooms port (`XiPorts.rooms`, one per service whose API has it), as the agent on the account, and the wire says the change. Either way the room holds one `room` data part from whoever made it — `joined`, `left` or the new `name` — rendered `<room>`; a local room `send` makes opens with one, its founding members joined. |
 | `bash` | exec + durable-on-files | `bash(command, wait?, wake?)` → the output, or — still running when its wait ran out — the output so far, with updates to follow (the exec plane, below). The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
-| `read` · `write` · `edit` | durable-on-db | The **database** substrate's primitive, by handle: `read(handle, offset?, limit?)` → the text head-truncated with `aread`'s footer · `write(handle, content)` · `edit(handle, spec)` with `aedit`'s conflict-marker spec. Present only where the docs live in the table (the sandbox can't touch the DB, §9 invariant). The model writes no SQL: each call is a function of the store (`docs_read · docs_write · docs_edit`, the binaries' contracts in PL/pgSQL) that the harness calls with bound parameters under the agent role, so one `NOLOGIN` role serves every agent and the row-level policy is the whole rule. |
+| `read` · `write` · `edit` | durable-on-db | The **database** substrate's primitive, by handle: `read(handle, offset?, limit?)` → the text head-truncated with `aread`'s footer · `write(handle, content)` · `edit(handle, spec)` with `aedit`'s conflict-marker spec. Present only where the docs live in the table (the sandbox can't touch the DB, §9 invariant). The model writes no SQL. On Postgres each call is a function of the store (`docs_read · docs_write · docs_edit`, the binaries' contracts in PL/pgSQL) that the harness calls with bound parameters under the agent role, so one `NOLOGIN` role serves every agent and the row-level policy is the whole rule; on SQLite each is the store's own call, the owner its handle resolves to always the asker. |
 
 **A tool owns how it READS.** The same call is shown in four places — the approval card, the
 anchor's pending list, the harness's narration of a late result, the mirror's `[agent
@@ -2451,7 +2458,8 @@ own, apart from where the store lives: an org whose log is on Postgres may keep 
 as files. On the table, `read · write · edit` stand outside `agent.tools`: they are the
 agent's one way to its docs, its instructions included, so no list can leave it without
 them, and each call is still the gate's. `aread`/`awrite`/`aedit` ≈ `docs_read`/`docs_write`/`docs_edit` ≈ the same
-read/write/edit triad, mediated by Unix perms (the agent's uid) or RLS (the agent role).
+read/write/edit triad, mediated by Unix perms (the agent's uid), RLS (the agent role on
+Postgres) or the handle's resolution (SQLite).
 
 ### The exec plane, concretely (v0.0 — from the pi / Agent-SDK study)
 
@@ -3262,10 +3270,10 @@ homes, everything else funneled to the deepest function that needs it (main → 
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
 the store's tables, never in the file. Its sections are split by AUDIENCE — `system`
 (machinery tuning, every deployment works on the defaults: bashWaitMs · compactAt ·
-keepRecent · debounceMs · prices), `deployment` (where the org's parts live,
-a ladder in which each remote value needs the one before it: database — null is SQLite in
-`data/log`, a Postgres URL is a schema of that database, its password in `PGPASSWORD` ·
-docs — files, or the table of that database · sandbox — this machine bare or in bubbles,
+keepRecent · debounceMs · prices), `deployment` (where the org's parts live: database —
+null is SQLite in `data/log`, a Postgres URL is a schema of that database, its password in
+`PGPASSWORD` · docs — files, or the table of that database, either engine · sandbox — this
+machine bare or in bubbles,
 or a gateway, which needs the docs in the table · mounts · sandboxSleepMinutes),
 `organization`
 (this deployment's identity: timezone · locale ·
