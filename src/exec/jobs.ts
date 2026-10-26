@@ -258,7 +258,9 @@ export class Spool {
 }
 
 /** Output told after the answer: its tail in the call's window, the footer naming the log
- *  when the window (or the kept text) does not hold all of it. */
+ *  when the window (or the kept text) does not hold all of it. A tail, not the call's
+ *  middle cut: this is news since the last thing told, its start already followed from
+ *  there, and a slice of the log has no line numbers a gap could name. */
 function tailOf(
   taken: { text: string; cut: boolean },
   window: Job["window"],

@@ -33,7 +33,7 @@ when). Status as of 2026-08-12 (Slack live, both directions, model in the loop).
   `/y` / `/n`. Run: `deno task cli [agent]` (org in `./data`; knobs in
   `org/config.jsonc`; `ANTHROPIC_API_KEY` via `.env`).
 - `exec/` — the exec plane (DESIGN §9, from the pi / Agent-SDK study): `bash`
-  tool (workspace cwd, 120s default timeout, merged output, tail-truncation
+  tool (workspace cwd, 120s default timeout, merged output, middle-cut
   2000 lines/50KB with full output persisted to `.out/`, non-zero exit →
   is_error, unasked by the default rule table) + `aread`/`awrite`/`aedit` binaries
   (one `afs.ts` source, PATH shims in `{dir}/bin`; head-truncated paging read, stdin write,

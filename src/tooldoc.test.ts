@@ -101,7 +101,7 @@ Deno.test("the seeded docs word every builtin tool, the numbers filled from code
     const tools = await wordedAll(shapes, read);
     const bash = tools.find((t) => t.name === "bash")!;
     assertStringIncludes(bash.description!, "up to wait seconds (default 120)");
-    assertStringIncludes(bash.description!, "last 2000 lines / 50KB");
+    assertStringIncludes(bash.description!, "past 2000 lines / 50KB");
     assertStringIncludes(bash.description!, "\n- aedit, over sed -i/perl -pi:");
     const search = tools.find((t) => t.name === "search")!;
     assertStringIncludes(search.description!, "(50 unless you set `limit`)");

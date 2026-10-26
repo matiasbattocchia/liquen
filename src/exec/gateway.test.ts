@@ -284,7 +284,8 @@ cases(
     const listed = await place.gateway.exec(`ls -A ${quote(`${place.workspace}/.out`)}`);
     assertEquals(listed.stdout, "");
     const text = String(await run(shell, { command: "seq 1 50", max_lines: 5 }));
-    assertStringIncludes(text, "46\n47\n48\n49\n50");
+    assert(text.startsWith("1\n2\n"), text);
+    assertStringIncludes(text, "\n48\n49\n50\n");
     const path = /full output: (\S+)\]/.exec(text)![1];
     assertEquals(
       new TextDecoder().decode((await place.gateway.read(path))!),

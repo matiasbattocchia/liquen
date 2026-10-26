@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
-import { truncateHead, truncateTail } from "./truncate.ts";
+import { truncateHead, truncateMiddle, truncateTail } from "./truncate.ts";
 
 const numbered = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n");
 
@@ -61,6 +61,58 @@ Deno.test("tail: an oversized line of astral characters is cut between them, nev
       assert(t.truncated);
       assert(t.text.length > 0);
       assert(t.text.isWellFormed(), `${n} emoji under ${m} bytes: ${JSON.stringify(t.text)}`);
+    }
+  }
+});
+
+Deno.test("middle: keeps the first and the last lines, the gap between them named", () => {
+  const t = truncateMiddle(numbered(100), { maxLines: 10, maxBytes: 10_000 });
+  assertEquals(t.head, "line 1\nline 2\nline 3\nline 4"); // 40% of the lines
+  assertEquals(t.tail, numbered(100).split("\n").slice(94).join("\n"));
+  assertEquals(t.gap, {
+    from: 5,
+    to: 94,
+    bytes: t.gap!.lineBytes,
+    lineBytes: t.gap!.lineBytes,
+    edges: false,
+  });
+  assertEquals(t.totalLines, 100);
+});
+
+Deno.test("middle: under both limits the text is whole, all head", () => {
+  const t = truncateMiddle("a\nb", { maxLines: 10, maxBytes: 100 });
+  assertEquals([t.head, t.tail, t.truncated, t.gap], ["a\nb", "", false, undefined]);
+});
+
+Deno.test("middle: a response on one line keeps how it opens and how it closes", () => {
+  const line = `{status: 200, body: {events: [${"x".repeat(5000)}]}}`;
+  const t = truncateMiddle(line, { maxLines: 10, maxBytes: 1000 });
+  assert(t.head.startsWith("{status: 200, body: {events: ["));
+  assert(t.tail.endsWith("]}}"));
+  assert(new TextEncoder().encode(t.head + t.tail).length <= 1000);
+  assertEquals([t.gap!.from, t.gap!.to, t.gap!.edges, t.gap!.lineBytes], [1, 1, true, line.length]);
+  assertEquals(t.gap!.bytes, line.length - t.head.length - t.tail.length);
+});
+
+Deno.test("middle: a short first line stays whole beside a long second one's edges", () => {
+  // two calls joined, the second's answer far past the window: both are seen
+  const t = truncateMiddle(`{contacts: []}\n{events: [${"y".repeat(9000)}]}`, {
+    maxLines: 10,
+    maxBytes: 2000,
+  });
+  assert(t.head.startsWith("{contacts: []}\n{events: [y"));
+  assert(t.tail.endsWith("y]}"));
+  assertEquals([t.gap!.from, t.gap!.to, t.gap!.edges], [2, 2, true]);
+});
+
+Deno.test("middle: an oversized line's edges are cut between characters, never inside one", () => {
+  for (let n = 10; n <= 120; n += 7) {
+    for (let m = 17; m <= 90; m += 9) {
+      if (n * 4 <= m) continue;
+      const t = truncateMiddle("😀".repeat(n), { maxLines: 10, maxBytes: m });
+      assert(!(t.head + t.tail).includes("�"));
+      assert([...t.head, ...t.tail].every((c) => c === "😀"));
+      assert(new TextEncoder().encode(t.head + t.tail).length <= m);
     }
   }
 });

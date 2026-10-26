@@ -240,15 +240,19 @@ Deno.test("bash: abort kills and reports", async () => {
   }
 });
 
-Deno.test("bash: tail-truncation persists the full output and points at it", async () => {
+Deno.test("bash: the middle cut persists the full output and points at it", async () => {
   await withPlane(async ({ run, dir }) => {
     const out = await run("seq 1 3000");
-    assertStringIncludes(out, "3000"); // the tail survives
-    assert(!out.includes("\n500\n")); // the head is gone
+    assert(out.startsWith("1\n2\n")); // the head survives
+    assertStringIncludes(out, "\n3000\n"); // and the tail
+    assert(!out.includes("\n1000\n")); // the middle is gone
     const m = out.match(/full output: (\S+)]/);
     assert(m, "footer names the persisted file");
+    // the gap says which lines went and the read that brings them back
+    assertStringIncludes(out, `\n800\n\n[… lines 801-1800 left out (`);
+    assertStringIncludes(out, `— read them: aread ${m![1]} 801 1000]\n\n1801\n`);
     const full = await Deno.readTextFile(m![1]);
-    assertStringIncludes(full, "\n500\n"); // nothing silently lost
+    assertStringIncludes(full, "\n1000\n"); // nothing silently lost
     assert(m![1].startsWith(`${wsOf(dir)}/.out/`));
   });
 });
@@ -366,20 +370,22 @@ Deno.test("bash: the model can override the truncation limits", async () => {
   try {
     await Deno.mkdir(`${dir}/workspace`, { recursive: true });
     const bash = bashTool({ workspace: `${dir}/workspace` });
-    // narrower than the default: keep only the last 5 lines
+    // narrower than the default: 5 lines, the first 2 and the last 3
     const narrow = String(await bash.execute({ command: "seq 1 100", max_lines: 5 }, live()));
-    assertStringIncludes(narrow, "100");
-    assert(!narrow.includes("\n90\n"));
-    assertStringIncludes(narrow, "showing lines 96-100 of 100");
-    // one line past the byte cap: the footer says only its end is shown
+    assert(narrow.startsWith("1\n2\n\n[… lines 3-97 left out ("), narrow);
+    assertStringIncludes(narrow, "]\n\n98\n99\n100\n\n[100 lines, ");
+    // one line past the byte cap: the line before it whole, its own start and end around the gap
     const long = String(
       await bash.execute(
         { command: "echo head; printf 'x%.0s' $(seq 1 3000)", max_bytes: 1000 },
         live(),
       ),
     );
-    assertMatch(long, /\[showing only the end of line 2 of 2: its last \d+ B of 2\.9 kB — full/);
-    assert(!long.includes("head"));
+    assert(long.startsWith("head\nxxx"), long);
+    assertMatch(
+      long,
+      /x\n\n\[… 2\.0 kB of line 2 left out — the whole line: aread \S+ 2 1\]\n\nxxx/,
+    );
     // wider than the default: 3000 lines fit when asked for
     const wide = String(
       await bash.execute({ command: "seq 1 3000", max_lines: 5000, max_bytes: 500_000 }, live()),

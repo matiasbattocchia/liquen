@@ -13,8 +13,8 @@
  *     its log, and tells its end — exit status and last lines — as an update on the call
  *     (late.ts)
  *   • stdout+stderr merged in arrival order
- *   • tail-truncation (2000 lines / 50KB); the FULL output stays in the log and the footer
- *     names it — `aread` pages the rest
+ *   • the middle cut (2000 lines / 50KB: its start and its end kept); the FULL output stays
+ *     in the log and the footer names it — the gap says the `aread` that reads what went
  *   • non-zero exit ⇒ error result carrying the output + exit code (the agent's
  *     self-correction path)
  *   • `wake`, a regular expression: the lines a call's output prints after its answer
@@ -28,7 +28,7 @@ import type { Bubble } from "./bubble.ts";
 import type { BinDir, Json } from "../types.ts";
 import { newId } from "../store/id.ts";
 import { MEDIA_MARK } from "../store/media.ts";
-import { MAX_BYTES, MAX_LINES, truncateTail } from "./truncate.ts";
+import { MAX_BYTES, MAX_LINES, type MiddleCut, truncateMiddle, truncateTail } from "./truncate.ts";
 import { DEFAULT_BASH_WAIT_MS } from "../config.ts";
 import { USAGE } from "../bin/usage.ts";
 import type { ToolShape } from "../tooldoc.ts";
@@ -191,29 +191,47 @@ export interface Printed {
   log: string;
 }
 
-/** Output in the call's window: tail-truncated, the footer naming the log when the window
- *  cut it — `spill` is told so, since the log is then the answer's to keep. Empty when
- *  nothing was printed. */
+/** Output in the call's window: its start and its end, the middle left out where it does
+ *  not fit and the gap saying what is gone and how to read it; the footer names the log
+ *  when the window cut it — `spill` is told so, since the log is then the answer's to keep.
+ *  A text that is the log's end only has no start to keep: its tail is what it shows. Empty
+ *  when nothing was printed. */
 export function windowed(printed: Printed, input: BashInput, spill?: () => void): string {
   // the model may widen/narrow the window
-  const t = truncateTail(printed.output.trimEnd(), {
-    maxLines: input.max_lines,
-    maxBytes: input.max_bytes,
-  });
-  if (!t.truncated && !printed.partial) return t.text;
-  if (!t.text) return "";
+  const limits = { maxLines: input.max_lines, maxBytes: input.max_bytes };
+  const output = printed.output.trimEnd();
+  if (printed.partial) {
+    const t = truncateTail(output, limits);
+    if (!t.text) return "";
+    spill?.();
+    return `${t.text}\n\n[showing its last lines of ${
+      kb(printed.bytes)
+    } — full output: ${printed.log}]`;
+  }
+  const t = truncateMiddle(output, limits);
+  if (!t.truncated || !t.gap) return t.head;
   spill?.();
-  const shown = printed.partial
-    ? `showing its last lines of ${kb(printed.bytes)}`
-    : t.clippedLineBytes === undefined
-    ? `showing lines ${t.startLine}-${t.totalLines} of ${t.totalLines}`
-    : `showing only the end of line ${t.startLine} of ${t.totalLines}: its last ${
-      kb(new TextEncoder().encode(t.text).length)
-    } of ${kb(t.clippedLineBytes)}`;
-  return `${t.text}\n\n[${shown} — full output: ${printed.log}]`;
+  const footer = `[${t.totalLines} lines, ${kb(printed.bytes)} — full output: ${printed.log}]`;
+  return [t.head, `[${gapNote(t.gap, printed.log)}]`, t.tail, footer].filter(Boolean).join("\n\n");
 }
 
-/** A call's output and exit status → its result: the text tail-truncated (`spill` told when
+/** What a cut left out, and the read that brings it back: whole lines page through `aread`
+ *  as any file does; a line read alone needs a window as wide as it is. */
+function gapNote(gap: NonNullable<MiddleCut["gap"]>, log: string): string {
+  const count = gap.to - gap.from + 1;
+  const read = count === 1
+    ? `aread ${log} ${gap.from} 1${gap.lineBytes > MAX_BYTES ? ` ${gap.lineBytes}` : ""}`
+    : `aread ${log} ${gap.from} ${count}`;
+  if (gap.edges && count === 1) {
+    return `… ${kb(gap.bytes)} of line ${gap.from} left out — the whole line: ${read}`;
+  }
+  const lines = count === 1 ? `line ${gap.from}` : `lines ${gap.from}-${gap.to}`;
+  return gap.edges
+    ? `… ${kb(gap.bytes)} left out, within ${lines} — read them: ${read}`
+    : `… ${lines} left out (${kb(gap.bytes)}) — read ${count === 1 ? "it" : "them"}: ${read}`;
+}
+
+/** A call's output and exit status → its result: the text in its window (`spill` told when
  *  the log must stay, the answer naming it), `note` after it, and a non-zero exit or an
  *  abort thrown as the error result carrying the output. Media marks (`aread` on a bytes
  *  file, §5) come off the text as the result's attachments. */

@@ -4,9 +4,10 @@ kind: tool
 
 Run a bash command. Each call is a fresh shell in the folder the cwd: line under now: names:
 a cd lasts its call, and so does shell/env state (exported vars, activated venvs), so chain
-those. stdout+stderr merged; output truncated to the last {{max_lines}} lines / {{max_kb}}KB
-(override with max_lines/max_bytes when you deliberately need more or less); when truncated,
-the full output is saved to a file the footer names (page it with aread).
+those. stdout+stderr merged; output past {{max_lines}} lines / {{max_kb}}KB keeps its start and
+its end, and the middle is left out (override with max_lines/max_bytes when you deliberately
+need more or less); the gap says which lines went and the aread that reads them, and the full
+output is saved to a file the footer names.
 
 The turn waits for a command up to wait seconds (default {{wait}}). One still running then is
 not killed: the call answers with what it printed so far, the command runs on, and you are
@@ -40,8 +41,8 @@ that must not go on after a failure.
 Four helpers on PATH, their usage listed under # Programs, do the everyday jobs better than
 their habitual counterparts; reach for them first.
 - aread, over cat/head/sed -n: it shows a file from its TOP with a footer naming the offset to
-  continue from, where a cat through this tool keeps only the last lines and a long file
-  loses its beginning; on an image or PDF it attaches the file itself, so you see it, and a
+  continue from, where a cat through this tool keeps only its start and end and a long file
+  loses its middle; on an image or PDF it attaches the file itself, so you see it, and a
   binary answers with its size, not mojibake.
 - awrite, over cat >/echo >: it creates parent dirs and replaces the file atomically, keeping
   its mode.
@@ -66,5 +67,5 @@ with command -v rg first, or search with grep -rn and find, which are always the
 - command: bash command to execute
 - wait: seconds the turn waits before answering with what it printed so far; the command runs on, and its end is told (optional; default {{wait}})
 - wake: a regular expression; the lines printed after the answer that match it are told as they come (optional)
-- max_lines: output truncation: keep the last N lines (optional; default {{max_lines}})
+- max_lines: output truncation: the lines kept, from its start and its end (optional; default {{max_lines}})
 - max_bytes: output truncation: byte cap (optional; default {{max_bytes}})

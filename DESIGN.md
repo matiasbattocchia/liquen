@@ -2494,8 +2494,12 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   first — **2000 lines / 50KB** — and never partial lines. These are *defaults, not
   caps*: the model may override per call (`bash(max_lines, max_bytes)`;
   `aread path [offset] [limit] [maxBytes]`) when it deliberately needs a wider or
-  narrower window. `bash` truncates from the
-  **tail** (errors live at the end); `aread` from the **head**. When bash truncates, the
+  narrower window. `bash` cuts the **middle** — what an output is shows at
+  its start, how it went at its end; the head keeps 40% of the window, the tail the rest,
+  and a line too long for what is left keeps its edges, so a response printed on one line
+  shows how it opens and closes; the gap names the lines gone and the `aread` that reads
+  them. Output whose head was never read (a job's look past `LOOK_BYTES`, a job update)
+  keeps its **tail**; `aread` truncates from the **head**. When bash truncates, the
   **full output is persisted** to `{workspace}/.out/<id>.log` and the footer says so —
   the model pages the rest with `aread`. Nothing is silently lost.
 - **`aread path [offset] [limit]`** — head-truncate + continuation footer; 1-indexed;
