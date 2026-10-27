@@ -62,6 +62,9 @@ export interface SlackCatchUpDeps
   /** The Slack Web API; default `timedFetch`. */
   api?: typeof fetch;
   onCaughtUp?: (team: string, published: number) => void;
+  /** Rooms no token could read back (a channel shared from another workspace, one a token
+   *  lost): each as `<channel>: <why>`. The rest of the sweep is published. */
+  onSkipped?: (team: string, rooms: string[]) => void;
   onError?: (team: string, err: unknown) => void;
 }
 
@@ -115,6 +118,10 @@ export function createSlackCatchUp(
         );
         await new Promise((r) => setTimeout(r, wait));
         continue;
+      }
+      if (res.status === 429) {
+        await res.body?.cancel();
+        throw new Error(`${method}: ratelimited`);
       }
       const body = await res.json() as T & { ok: boolean; error?: string };
       if (!body.ok) throw new Error(`${method}: ${body.error ?? `HTTP ${res.status}`}`);
@@ -188,7 +195,7 @@ export function createSlackCatchUp(
     if (since === undefined) return 0; // nothing was ever heard here: no gap to fill
 
     // every room a token is in, with the tokens that are — the delivery's `authorizations`
-    const rooms = new Map<string, { type: string; auths: Authorization[]; token: string }>();
+    const rooms = new Map<string, { type: string; auths: Authorization[]; tokens: string[] }>();
     for (const leg of [...legs].sort((a, b) => Number(b.bot) - Number(a.bot))) {
       const listed = await pages<Listed>(leg.token, "users.conversations", {
         types: "public_channel,private_channel,mpim,im",
@@ -199,8 +206,9 @@ export function createSlackCatchUp(
       for (const c of listed) {
         if (!c.id) continue;
         ids.add(c.id);
-        const room = rooms.get(c.id) ?? { type: typeOf(c), auths: [], token: leg.token };
+        const room = rooms.get(c.id) ?? { type: typeOf(c), auths: [], tokens: [] };
         room.auths.push(leg.bot ? { user_id: leg.user, is_bot: true } : { user_id: leg.user });
+        room.tokens.push(leg.token);
         rooms.set(c.id, room);
       }
       await reconcile(team, leg, ids);
@@ -210,7 +218,11 @@ export function createSlackCatchUp(
     const keep = (rows: Draft<MessageEvent>[]) => {
       for (const d of rows) drafts.set(d.envelope.external_id ?? crypto.randomUUID(), d);
     };
-    for (const [channel, room] of rooms) {
+    // one room's refusal is that room's: the others are still read and the gap published.
+    // A rate limit past its one wait stops the reading, and what was read is published
+    const skipped: string[] = [];
+    let stopped: unknown;
+    reading: for (const [channel, room] of rooms) {
       const anchor = anchorOf(team, room.auths);
       const from = (await newest({ conversation: channel })) ?? since;
       const oldest = (Date.parse(from) / 1000).toFixed(3);
@@ -228,26 +240,55 @@ export function createSlackCatchUp(
           deps.names,
           { now },
         );
-      const history = await pages<Historic>(room.token, "conversations.history", {
-        channel,
-        oldest,
-        limit: "200",
-      }, "messages");
+      // the room's tokens in listing order, bot first: one may read what another cannot
+      let token: string | undefined;
+      let history: Historic[] = [];
+      let refusal: unknown;
+      for (const t of room.tokens) {
+        try {
+          history = await pages<Historic>(t, "conversations.history", {
+            channel,
+            oldest,
+            limit: "200",
+          }, "messages");
+          token = t;
+          break;
+        } catch (err) {
+          if (rateLimited(err)) {
+            stopped = err;
+            break reading;
+          }
+          refusal = err;
+        }
+      }
+      if (token === undefined) {
+        skipped.push(`${channel}: ${refusal instanceof Error ? refusal.message : refusal}`);
+        continue;
+      }
       for (const m of history) {
         keep(await one(m));
         // history lists roots only; a thread with replies newer than the gap is read back
         if (!m.ts || !m.reply_count || Number(m.latest_reply ?? 0) <= Number(oldest)) continue;
-        const replies = await pages<Historic>(room.token, "conversations.replies", {
-          channel,
-          ts: m.ts,
-          oldest,
-          limit: "200",
-        }, "messages");
-        for (const r of replies) if (r.ts !== m.ts) keep(await one(r));
+        try {
+          const replies = await pages<Historic>(token, "conversations.replies", {
+            channel,
+            ts: m.ts,
+            oldest,
+            limit: "200",
+          }, "messages");
+          for (const r of replies) if (r.ts !== m.ts) keep(await one(r));
+        } catch (err) {
+          if (rateLimited(err)) {
+            stopped = err;
+            break reading;
+          }
+          skipped.push(`${channel} thread ${m.ts}: ${err instanceof Error ? err.message : err}`);
+        }
       }
     }
-    if (drafts.size === 0) return 0;
-    const stored = await deps.publish([...drafts.values()]);
+    if (skipped.length) deps.onSkipped?.(team, skipped);
+    const stored = drafts.size ? await deps.publish([...drafts.values()]) : [];
+    if (stopped !== undefined) throw stopped;
     return stored.length;
   };
 
@@ -269,6 +310,11 @@ export function createSlackCatchUp(
     },
     settle: () => inflight ?? Promise.resolve(),
   };
+}
+
+/** A call the wire still refused for its rate after the one wait. */
+function rateLimited(err: unknown): boolean {
+  return err instanceof Error && err.message.endsWith(": ratelimited");
 }
 
 /** The `channel_type` an event would carry, from the listing's flags. */

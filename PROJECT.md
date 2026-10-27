@@ -4487,6 +4487,13 @@ Every Slack row is now stamped with the message's own time (`slackTime`), live t
 the read-back and the live delivery of one message are one row and the batch reads in the
 room's order. Internal apps keep the standard rate limits; a 429 is waited out once.
 
+2026-10-27: one room's refusal used to be the workspace's — the sweep threw on the first
+room `conversations.history` refused (`channel_not_found`, every boot on one live
+workspace) and dropped what it had read, so no restart ever caught anything up. Now each
+room tries its tokens in listing order, a room none reads is skipped and named
+(`onSkipped`: `catch-up skipped N room(s): …`), and the rest is published; a second 429
+still stops the sweep, after publishing what was read.
+
 Teams (`createTeamsCatchUp`): at boot, with or without a public door — the one poll the
 terms allow, once per process — so an org with no `edge.publicUrl` now hears Teams at
 every restart instead of never. Per grant, from its newest Teams row (mail and calendar

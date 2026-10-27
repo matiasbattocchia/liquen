@@ -243,6 +243,73 @@ Deno.test("slack catch-up: a refused call is the workspace's failure, said and n
   assertEquals(errors, ["T1: users.conversations: missing_scope"]);
 });
 
+Deno.test("slack catch-up: a room one token cannot read is read with another; a room none can read is skipped, said, and the rest published", async () => {
+  const log = fakeLog([row("T1", "connect", "2026-09-28T11:00:00.000Z")]);
+  const calls: Call[] = [];
+  const api = webApi({
+    // C1 is the bot's and ana's, but only ana's token reads it (a channel shared from
+    // another workspace); C2 no token reads; C3 the bot reads as usual
+    "users.conversations@xoxb-1": { channels: [{ id: "C1" }, { id: "C2" }, { id: "C3" }] },
+    "users.conversations@xoxp-1": { channels: [{ id: "C1" }] },
+    "conversations.history": (c: Call) =>
+      c.params.channel === "C1" && c.token === "xoxp-1"
+        ? { messages: [{ ts: "1790598600.000100", user: "U7", text: "shared" }] }
+        : c.params.channel === "C3"
+        ? { messages: [{ ts: "1790598610.000000", user: "U7", text: "plain" }] }
+        : Response.json({ ok: false, error: "channel_not_found" }),
+  }, calls);
+  const done: [string, number][] = [];
+  const skipped: string[] = [];
+  const catchUp = createSlackCatchUp({
+    publish: log.publish,
+    read: log.read,
+    names,
+    legs,
+    api,
+    onCaughtUp: (team, n) => done.push([team, n]),
+    onSkipped: (_t, rooms) => skipped.push(...rooms),
+    onError: (_t, err) => {
+      throw err;
+    },
+  });
+  await catchUp.run();
+
+  assertEquals(skipped, ["C2: conversations.history: channel_not_found"]);
+  assertEquals(done, [["T1", 2]]);
+  assertEquals(log.batches[0].map((d) => d.envelope.conversation.address).sort(), ["C1", "C3"]);
+  const c1 = calls.filter((c) => c.method === "conversations.history" && c.params.channel === "C1");
+  assertEquals(c1.map((c) => c.token), ["xoxb-1", "xoxp-1"]); // the bot first, then ana
+});
+
+Deno.test("slack catch-up: a rate limit past its one wait stops the reading, publishes what was read, and fails the sweep", async () => {
+  const log = fakeLog([row("T1", "connect", "2026-09-28T11:00:00.000Z")]);
+  const errors: string[] = [];
+  const done: number[] = [];
+  const catchUp = createSlackCatchUp({
+    publish: log.publish,
+    read: log.read,
+    names,
+    legs,
+    api: webApi({
+      "users.conversations@xoxb-1": { channels: [{ id: "C1" }, { id: "C2" }, { id: "C3" }] },
+      "users.conversations@xoxp-1": { channels: [] },
+      "conversations.history": (c: Call) =>
+        c.params.channel === "C1"
+          ? { messages: [{ ts: "1790598600.000100", user: "U7", text: "first" }] }
+          : new Response("", { status: 429, headers: { "retry-after": "0" } }),
+    }),
+    onCaughtUp: (_t, n) => done.push(n),
+    onError: (team, err) => {
+      errors.push(`${team}: ${(err as Error).message}`);
+    },
+  });
+  await catchUp.run();
+  assertEquals(errors, ["T1: conversations.history: ratelimited"]);
+  assertEquals(log.batches.length, 1);
+  assertEquals(log.batches[0].map((d) => d.envelope.conversation.address), ["C1"]);
+  assertEquals(done, []);
+});
+
 Deno.test("slackLegs: the bot's row and each user grant, by workspace; app and carrier rows are not legs", () => {
   const got = slackLegs([
     { key: "slack:app:A1", value: { client_id: "A1", client_secret: "s" } },

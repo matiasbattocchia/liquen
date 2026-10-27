@@ -1248,6 +1248,10 @@ export async function runIngest(): Promise<() => Promise<void>> {
     read: (q) => log.read(q),
     legs: async () => slackLegs(await creds.list("slack:"), await log.connections()),
     onCaughtUp: (team, n) => n && console.error(`[ingest] ${team}: caught up, +${n} row(s)`),
+    onSkipped: (team, rooms) =>
+      console.error(
+        `[ingest] ${team}: catch-up skipped ${rooms.length} room(s): ${rooms.join("; ")}`,
+      ),
     onError: (team, err) =>
       console.error(`[ingest] ${team}: catch-up FAILED:`, err instanceof Error ? err.message : err),
   });

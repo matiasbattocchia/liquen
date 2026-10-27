@@ -462,9 +462,12 @@ reply is newer) is the gap. The rooms come from `users.conversations` on every t
 workspace has — the bot's, then each bound user's — which are also the delivery's
 `authorizations`, so a room the bot is in anchors to the bot as its events do; a user
 token's room list is that member's membership as the wire holds it now, and the joins and
-leaves the gap swallowed are mirrored from it. One live batch per workspace, each row at
-its message's own time (every Slack row is, live too): a message already in the log
-merges and wakes nobody, the rest is owed under the attention rules and the boot floor.
+leaves the gap swallowed are mirrored from it. A room is read with the first of its tokens
+that can (a channel shared from another workspace may refuse the bot and not a member); a
+room none can read is skipped and said, and the rest of the gap is still published. One
+live batch per workspace, each row at its message's own time (every Slack row is, live
+too): a message already in the log merges and wakes nobody, the rest is owed under the
+attention rules and the boot floor.
 A workspace with no row was never heard and is left alone. Not read back: an edit or a
 delete of a message the log already had, reactions, and replies to a thread whose root is
 older than the gap. Internal (customer-built) apps keep the standard rate limits; a
