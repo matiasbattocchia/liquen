@@ -11,10 +11,11 @@
  * timers table — by the session, off the store, independent of the turn's window.
  *
  * Two anti-joins, one index. `gates` is the request rows with no response for the same use;
- * `owed` is the responses given by someone other than the model (no `turn_id`) whose use
- * holds its immediate `pending_approval` result and no gated outcome yet. Both are the
- * SQL of the derivations `xi` states over an event list, and the store test holds the two
- * to the same answer.
+ * `owed` is the allowing responses given by someone other than the model (no `turn_id`)
+ * whose use holds its immediate `pending_approval` result and no gated outcome yet. A deny
+ * owes nothing: the call never runs, and the response is the whole of its word. Both are
+ * the SQL of the derivations `xi` states over an event list, and the store test holds the
+ * two to the same answer.
  *
  * An unended call is the third anti-join on the same index: a call answered `async` whose
  * `final` update never came. While the harness runs, the process holding the work owes
@@ -42,8 +43,8 @@ export interface Gates {
    *  session's own when given the pair (§4): what its anchor lists, what its `cancel` and
    *  its principal's verdict land on. */
   gates(scope?: { agentId: string; sessionId: string }): Promise<PermissionRequestEvent[]>;
-  /** A session's rulings whose outcome is still owed (§9): the errand `act` runs on the
-   *  model's behalf. One per use, the earliest ruling when several landed. */
+  /** A session's allowed calls whose outcome is still owed (§9): the errand `act` runs on
+   *  the model's behalf. One per use, the earliest ruling when several landed. */
   owed(agentId: string, sessionId: string): Promise<Owed[]>;
   /** The calls of tool `name` answered `async` with no `final` update since, oldest first,
    *  org-wide: what a harness that went down mid-call left owed. */
@@ -93,6 +94,7 @@ export function createGates(db: DatabaseSync, eventOf: (row: unknown) => Event):
      JOIN events u ON u.id = json_extract(a.payload, '$.ref_id')
      WHERE a.type = 'permission_response'
        AND json_extract(a.payload, '$.turn_id') IS NULL
+       AND json_extract(a.parts, '$[0].data.behavior') = 'allow'
        AND u.type = 'tool_use' AND u.agent_id = ? AND u.session_id = ?
        AND EXISTS (
          SELECT 1 FROM events t WHERE t.type = 'tool_result' AND ${

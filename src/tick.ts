@@ -119,9 +119,9 @@ export async function fireDue(
 
 /** An ask nobody answered lapses (§9): past `GATE_HOURS` the harness settles the card with
  *  a deny that says `lapsed` — a row like any verdict, so the anchor drops the line, a late
- *  `/y` is told the card was answered, and the outcome reaches the model by the errand
- *  every ruling takes (`act`), telling it the call did not run. Read off the store, not a
- *  window: a card stands open however much traffic has passed it. */
+ *  `/y` is told the card was answered, and the response reaches the model as news in its
+ *  room, like any deny: the call did not run. Read off the store, not a window: a card
+ *  stands open however much traffic has passed it. */
 export async function lapseGates(
   log: Pick<Log, "gates" | "publish">,
   now: number = Date.now(),

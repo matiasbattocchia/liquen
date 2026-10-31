@@ -248,20 +248,29 @@ Deno.test("decide: the agent's own settlement (a cancel — turn_id) is never th
   const u = use("u1");
   const req = ev("permission_request", { ...SELF, payload: { ref_id: "u1" } } as Partial<Event>);
   const pending = result("u1");
-  const settle = (payload: Record<string, string>) =>
+  const settle = (payload: Record<string, string>, behavior: "allow" | "deny" = "deny") =>
     ev("permission_response", {
       payload,
       parts: [{
         type: "data",
         kind: "permission_response",
-        data: { behavior: "deny", scope: "once", reason: "withdrawn by the agent" },
+        data: { behavior, scope: "once", reason: "withdrawn by the agent" },
       }],
     } as Partial<Event>);
-  // someone else's ruling → the errand; the model's own withdrawal (turn-marked, §3) → its
-  // cancel tool_result is already the record, so nothing is owed
+  // someone else's allow → the errand; their deny runs nothing, and is news to think on; the
+  // model's own withdrawal (turn-marked, §3) → its cancel tool_result is already the record,
+  // so nothing is owed and nothing is news
   assertEquals(
-    decide([peerMsg(), u, req, pending, settle({ ref_id: "u1" }), selfMsg()], SESSION, WAKE),
+    decide(
+      [peerMsg(), u, req, pending, settle({ ref_id: "u1" }, "allow"), selfMsg()],
+      SESSION,
+      WAKE,
+    ),
     "act",
+  );
+  assertEquals(
+    decide([peerMsg(), u, req, pending, selfMsg(), settle({ ref_id: "u1" })], SESSION, WAKE),
+    "think",
   );
   assertEquals(
     decide(

@@ -26,19 +26,23 @@ The model sees the ask and the verdict as events in its own room, the same on ev
 - **The errand's deny result goes away** (`xi.ts:1697`): the tool never ran, and the verdict
   is the event. The inline denies stay (`xi.ts:1680`, and `xi.ts:1633` for policy): there the
   `tool_use` has no answer yet, and "refused" is its result.
-  - `owedOf` (`xi.ts:565`) skips deny verdicts, lapses included. Only `allow` makes an errand.
-  - A deny response wakes a turn, so the agent can redraft.
+  - `owedOf` (`xi.ts:565`) and the store's `owed` skip deny verdicts, lapses included. Only
+    `allow` makes an errand.
+  - A deny response is news (`newsOf`) and wakes a turn, so the agent can redraft.
+  - A standing deny (`/n conv|conn|always`) is remembered when that turn opens
+    (`standingDenies`), since no errand runs to remember it.
 - A lapse is a deny with `lapsed: true`, settled by the harness, so it wears no author key.
   Like any deny it leaves no errand: a call that never ran owes no outcome. The mirror does
   not relay it.
 
   ```xml
-  <permission_response re="5b0d1b" verdict="lapsed" at="30 Oct 17:40">nobody answered</permission_response>
+  <permission_response re="5b0d1b" verdict="lapsed" at="30 Oct 17:40">unanswered for 24h</permission_response>
   ```
-- **These leave the window** (they stay in the log, where the mirror needs them):
-  - the mirror's outward copies, `via.service === "local"`: the card, and the agent's own
-    lines copied into the principal's self-chat;
-  - the `/y` and `/n` lines a verdict consumed (the response names them in `extra.via`).
+- **The window already holds no copies.** The mirror's outward copies (the card, the agent's
+  lines in the principal's self-chat) live in the alias conversation, which policy hides from
+  every agent (`policy.ts` `NOT_AN_ALIAS`), and a `/y` or `/n` enters the mind as its
+  settlement, never as a line (`verdict.ts`). The copies seen during the discussion came from
+  rendering the log unscoped.
 - Events are immutable: render ignores their mutable `status`.
 
 ## 2. `<before>`

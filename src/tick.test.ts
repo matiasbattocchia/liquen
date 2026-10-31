@@ -264,7 +264,7 @@ Deno.test("a withdrawn send is told to the session that sent it, final, naming w
     await log.withdraw(rows[3].id, stamp, { id: "bo", session_id: "mind" });
     await log.setDelivery(rows[3].id, {
       external_id: "whatsapp:wamid.4",
-      status: { state: "dispatched", dispatched_at: stamp },
+      status: { state: "dispatched", dispatched_at: new Date(now + 2.5 * 60_000).toISOString() },
     });
     assertEquals((await tick(log, () => undefined, now)).reported, 4);
     const told = (await log.read({ types: ["tool_result"] })) as ToolResultEvent[];
@@ -279,7 +279,7 @@ Deno.test("a withdrawn send is told to the session that sent it, final, naming w
       "it back before it went out",
       "send(to: Banco Hipotecario SA, text: chau) → withdrawn: bo took it back before it " +
       "went out",
-      "send(to: Banco Hipotecario SA, text: ya voy) → delivered after all, 0s after it was " +
+      "send(to: Banco Hipotecario SA, text: ya voy) → delivered after all, 2m after it was " +
       "sent: it was already on its way when bo took it back",
     ]);
     assertEquals((await tick(log, () => undefined, now + 60_000)).reported, 0); // once

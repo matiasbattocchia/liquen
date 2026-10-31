@@ -476,6 +476,7 @@ export function pgGates(db: Db, eventOf: (row: unknown) => Event): Gates {
            JOIN events u ON u.id = a.payload ->> 'ref_id'
            WHERE a.type = 'permission_response'
              AND a.payload ->> 'turn_id' IS NULL
+             AND a.parts -> 0 -> 'data' ->> 'behavior' = 'allow'
              AND u.type = 'tool_use' AND u.agent_id = $1::text AND u.session_id = $2::text
              AND EXISTS (
                SELECT 1 FROM events t WHERE t.type = 'tool_result'

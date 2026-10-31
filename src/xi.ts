@@ -558,10 +558,12 @@ function verdictOf(events: Event[], use: EventId): PermissionVerdict | undefined
 }
 
 /** An answered ask whose OUTCOME is still owed: the model already holds its
- *  `pending_approval` result, the principal has since ruled, and nothing has run or
+ *  `pending_approval` result, the principal has since allowed it, and nothing has run or
  *  reported back. This is the second half of a non-blocking gate — the call the harness
- *  makes on the model's behalf, long after the turn that asked for it ended. Like
- *  `openCards`, the derivation over a list; the turn reads it off the store (`ports.log.owed`). */
+ *  makes on the model's behalf, long after the turn that asked for it ended. A deny, a
+ *  lapse among them, owes nothing: the call never runs, and the response is its whole word,
+ *  news of its own (`newsOf`). Like `openCards`, the derivation over a list; the turn reads
+ *  it off the store (`ports.log.owed`). */
 export function owedOf(events: Event[], session: Session): Owed[] {
   const reported = new Set<EventId | undefined>();
   const answered = new Set<EventId | undefined>();
@@ -574,8 +576,8 @@ export function owedOf(events: Event[], session: Session): Owed[] {
   for (const e of events) {
     if (e.type !== "permission_response") continue;
     // turn_id marks a settlement a model turn produced — a `cancel` withdrawing its own
-    // ask (§3 authorship). Only someone ELSE's ruling ever creates the harness's errand.
-    if (e.payload.turn_id !== undefined) continue;
+    // ask (§3 authorship). Only someone ELSE's allowing ruling creates the harness's errand.
+    if (e.payload.turn_id !== undefined || e.parts[0].data.behavior !== "allow") continue;
     const ref = e.payload.ref_id;
     // not answered yet ⇒ the fresh batch settles it inline, with a real tool_result;
     // already reported ⇒ done. Only the middle case is the harness's late errand.
@@ -600,13 +602,79 @@ function harness(error: string, hereEnv: Envelope): Draft<ErrorEvent> {
   };
 }
 
+/** A scoped verdict is STANDING (§9): it writes the remembered half of the table, pinned
+ *  to where the call landed — `conv` the conversation, `conn` the whole connection, `all`
+ *  the tool everywhere. Upserted, so the same verdict read again writes the same row. A
+ *  conv/conn word on a call that lands nowhere cannot pin: the harness's word on it comes
+ *  back, rather than a rule silently widened. */
+async function remembered(
+  use: ToolUseEvent,
+  v: PermissionVerdict,
+  self: { id: string; session_id: string },
+  ports: XiPorts,
+): Promise<string | undefined> {
+  if (v.scope === "once") return undefined;
+  const tool = use.parts[0].data.name;
+  if (v.scope === "always") {
+    await ports.log.remember({ agentId: self.id, tool, action: v.behavior });
+    return undefined;
+  }
+  const target = await targetOf(use, self, ports);
+  const pin = v.scope === "connection" ? target?.connection : target?.conversation;
+  if (!pin) {
+    return `cannot pin a ${v.scope} rule for ${tool} — the call lands nowhere; ` +
+      "`all` makes it tool-wide";
+  }
+  await ports.log.remember({
+    agentId: self.id,
+    tool,
+    action: v.behavior,
+    ...(target?.connection ? { connection: target.connection } : {}),
+    ...(v.scope === "conversation" ? { conversation: target!.conversation } : {}),
+  });
+  return undefined;
+}
+
+/** The standing denies among the turn's news (§9): a deny runs no errand, so the turn it
+ *  wakes is where its scope is remembered. A use the fresh batch already refused had its
+ *  verdict read there. The harness's word on a rule that cannot pin, for the turn to land. */
+async function standingDenies(
+  events: Event[],
+  session: Session,
+  ports: XiPorts,
+): Promise<Draft<ErrorEvent>[]> {
+  const self = { id: session.agentId, session_id: session.id };
+  const here = {
+    service: "local" as const,
+    connection_address: LOCAL_CONNECTION,
+    conversation: { address: session.conversation },
+  };
+  const refusedInline = new Set(
+    events.filter((e): e is ToolResultEvent =>
+      e.type === "tool_result" && !!e.parts[0].data.refused
+    )
+      .map((e) => e.payload.ref_id),
+  );
+  const out: Draft<ErrorEvent>[] = [];
+  for (const e of newsOf(events, session)) {
+    if (!denied(e, session) || e.parts[0].data.scope === "once") continue;
+    const ref = e.payload.ref_id;
+    if (refusedInline.has(ref)) continue;
+    const [use] = await ports.log.read({ beforeId: `${ref}0`, limit: 1 });
+    if (use?.id !== ref || use.type !== "tool_use") continue;
+    const said = await remembered(use, e.parts[0].data, self, ports);
+    if (said) out.push(harness(said, here));
+  }
+  return out;
+}
+
 /** Non-self messages our last home message's step did NOT consume — the answer owed.
  *  Measured against the closing's `meta.consumed` horizon (what its window actually held),
  *  not log position — a message landing between the window-read and the closing's publish
  *  sits BEFORE the closing in the log yet was never seen (the live-bench coalescing race).
  *  Position is the fallback for messages without a horizon (pre-horizon logs). Returns the
  *  news itself: attention classes it (§2) rather than waking on its mere existence. */
-type News = MessageEvent | AlarmEvent | ToolResultEvent;
+type News = MessageEvent | AlarmEvent | ToolResultEvent | PermissionResponseEvent;
 function newsOf(events: Event[], session: Session): News[] {
   // news = a message our side didn't produce (§3 ownVoice) — which now includes the
   // principal's rows: they carry agent.id (and, typed into the session, session_id),
@@ -614,9 +682,12 @@ function newsOf(events: Event[], session: Session): News[] {
   // the agent's own past self arriving with something to say (§10): harness-authored, so
   // never our voice, and unanswered until a turn reads past it like any other news — OR
   // an update on one of our calls (§9): the harness telling what the call set in motion
-  // did after its answer
+  // did after its answer — OR a deny on one of our asks (§9), the principal's or the
+  // lapse's: the call never runs, so the ruling is the whole of its word, and the turn it
+  // wakes is where the agent redrafts. An allow is news through the outcome its errand
+  // reports; the agent's own withdrawal (turn_id) is no news to it
   const news = (e: Event): e is News =>
-    e.type === "alarm" || isUpdate(e, session) ||
+    e.type === "alarm" || isUpdate(e, session) || denied(e, session) ||
     (e.type === "message" && !ownVoice(e, session) && !silenced(e));
   const last = lastClosing(events, session);
   if (last === -1) return events.filter(news);
@@ -625,6 +696,14 @@ function newsOf(events: Event[], session: Session): News[] {
   const h = typeof horizon === "string" ? events.findIndex((e) => e.id === horizon) : -1;
   const from = h !== -1 ? h : last; // no/stale horizon → fall back to the closing's position
   return events.slice(from + 1).filter(news);
+}
+
+/** A deny someone else gave one of this session's asks: the principal's, or the lapse's.
+ *  The response lands in the card's room, the session's own. */
+function denied(e: Event, session: Session): e is PermissionResponseEvent {
+  return e.type === "permission_response" && e.payload.turn_id === undefined &&
+    e.parts[0].data.behavior === "deny" &&
+    e.envelope.conversation.address === session.conversation;
 }
 
 /** The conversations behind a turn's news, one entry each, carrying when that conversation
@@ -1010,6 +1089,11 @@ export async function xi(
       ? await act(events, got === "stolen", session, config, gate, ports, signal)
       : signal.aborted
       ? []
+      : v === "think"
+      ? [
+        ...await standingDenies(events, session, ports),
+        ...await think(events, config, ports, signal),
+      ]
       : await think(events, config, ports, signal, v);
   } catch (err) {
     await lock.release(); // nothing to pair the release with
@@ -1569,35 +1653,9 @@ async function act(
   const describe = (use: ToolUseEvent, full = false) =>
     describeCall(use.parts[0].data, { resolve, full, tools: describers });
 
-  // a scoped verdict is STANDING (§9): it writes the remembered half of the table, pinned
-  // to where THIS call landed — `conv` the conversation, `conn` the whole connection,
-  // `all` the tool everywhere. Upserted, so the same window re-read writes the same row.
-  // A conv/conn word on a call that lands nowhere cannot pin: the harness says so rather
-  // than silently widening the rule.
   const standing = async (use: ToolUseEvent, v: PermissionVerdict): Promise<void> => {
-    if (v.scope === "once") return;
-    const tool = use.parts[0].data.name;
-    if (v.scope === "always") {
-      await ports.log.remember({ agentId: session.agentId, tool, action: v.behavior });
-      return;
-    }
-    const target = await targetOf(use, self, ports);
-    const pin = v.scope === "connection" ? target?.connection : target?.conversation;
-    if (!pin) {
-      out.push(harness(
-        `cannot pin a ${v.scope} rule for ${tool} — the call lands nowhere; ` +
-          "`all` makes it tool-wide",
-        here,
-      ));
-      return;
-    }
-    await ports.log.remember({
-      agentId: session.agentId,
-      tool,
-      action: v.behavior,
-      ...(target?.connection ? { connection: target.connection } : {}),
-      ...(v.scope === "conversation" ? { conversation: target!.conversation } : {}),
-    });
+    const said = await remembered(use, v, self, ports);
+    if (said) out.push(harness(said, here));
   };
 
   // (a) the fresh batch: EVERY use is answered in the turn that made it — including a gated
@@ -1687,15 +1745,13 @@ async function act(
     runnable.push({ use });
   }
 
-  // (b) the errand: asks the principal has ruled on since. The tool_use is spent, so the
+  // (b) the errand: asks the principal has allowed since. The tool_use is spent, so the
   //     outcome cannot be a `tool_result` block — it comes back as the harness's own line
   //     (§5), which is also what reaches the principal's surfaces.
   for (const { use, verdict } of owed) {
     await standing(use, verdict);
     const call = describe(use);
-    if (verdict.behavior === "deny") {
-      out.push(await resultOf(use, refused(verdict), { is_error: true, refused: true }, call));
-    } else if (stolen) {
+    if (stolen) {
       out.push(await orphaned(use, call));
     } else {
       runnable.push({ use, call });

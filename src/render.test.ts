@@ -2107,6 +2107,94 @@ Deno.test("a fired wake renders as the harness handing back the agent's own note
   );
 });
 
+Deno.test("an ask and its ruling stand in the session's room, closed or trailing, whoever ruled", () => {
+  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
+  const room = (conversation = "mind@a1") => ({
+    service: "local",
+    connection_address: "default",
+    conversation: { address: conversation },
+  });
+  const ask = (id: string, ts: string, ref: string, tool: string, conversation?: string) =>
+    ({
+      id,
+      ts,
+      type: "permission_request",
+      agent: SELF,
+      payload: { ref_id: ref },
+      envelope: room(conversation),
+      parts: [{
+        type: "data",
+        kind: "permission_request",
+        data: { tool, call: `${tool}(clipped…)`, detail: `${tool}(the whole call)` },
+      }],
+    }) as Event;
+  const ruling = (id: string, ts: string, ref: string, data: object, extra: object = {}) =>
+    ({
+      id,
+      ts,
+      type: "permission_response",
+      payload: { ref_id: ref },
+      envelope: room(),
+      parts: [{ type: "data", kind: "permission_response", data }],
+      ...extra,
+    }) as Event;
+  const ana = { agent: { id: "a1", session_id: "s1" } };
+  const events = [
+    mindMsg("e01", t(0), "mandale", false),
+    ask("e02", t(1), "u00001", "send"),
+    ruling("e03", t(2), "u00001", { behavior: "deny", scope: "once", reason: "muy formal" }, {
+      ...ana,
+      envelope: { ...room(), sender: { address: "ana", name: "Ana" } },
+    }),
+    mindMsg("e04", t(3), "ok, lo reescribo", true), // the closing: all of the above is history
+    ask("e05", t(4), "u00002", "bash"),
+    ruling("e06", t(5), "u00002", {
+      behavior: "deny",
+      scope: "once",
+      lapsed: true,
+      reason: "unanswered for 24h",
+    }),
+    ask("e07", t(6), "u00003", "send"),
+    ruling("e08", t(7), "u00003", {
+      behavior: "deny",
+      scope: "once",
+      reason: "withdrawn by the agent",
+    }, { agent: SELF, payload: { ref_id: "u00003", turn_id: "T9" } }),
+    // another session's ask is that session's
+    ask("e09", t(8), "u00004", "send", "s2@a1"),
+  ];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t(9) });
+  const texts = blocksOf(messages).map(txt);
+  const prefix = prefixOf(messages).map((b) => txt(b as Anthropic.ContentBlockParam)).join("\n");
+  // closed: the send whole, the principal by name, the reason as the body
+  assertStringIncludes(
+    prefix,
+    '<permission_request id="u00001" tool="send" at="20 Jul 10:01">send(the whole call)' +
+      "</permission_request>",
+  );
+  assertStringIncludes(
+    prefix,
+    '<permission_response re="u00001" principal="Ana" verdict="deny" scope="once" ' +
+      'at="20 Jul 10:02">' +
+      "muy formal</permission_response>",
+  );
+  // trailing: another tool keeps the card's clipped call; a lapse is nobody's; a withdrawal
+  // is the agent's own, its cancel already the record
+  assert(texts.includes(
+    '<permission_request id="u00002" tool="bash" at="20 Jul 10:04">bash(clipped…)' +
+      "</permission_request>",
+  ));
+  assert(texts.includes(
+    '<permission_response re="u00002" verdict="lapsed" at="20 Jul 10:05">unanswered for 24h' +
+      "</permission_response>",
+  ));
+  assert(texts.includes(
+    '<permission_response re="u00003" self verdict="withdrawn" at="20 Jul 10:07">' +
+      "</permission_response>",
+  ));
+  assert(!texts.some((s) => s.includes("u00004")));
+});
+
 Deno.test("an update narrates the call it tells about, flags and all, and drops once read", () => {
   const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
   const use = toolUseE("e01", t(0), "T1", "bash", { command: "deno test" });

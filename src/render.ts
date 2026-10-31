@@ -33,6 +33,8 @@ import type {
   FilePart,
   Json,
   MessageEvent,
+  PermissionRequestEvent,
+  PermissionResponseEvent,
   ReactionPart,
   Session,
   SessionRef,
@@ -846,6 +848,12 @@ function renderMessages(
       return place("user", { type: "text", text: systemEl("control", CANCELLED) });
     }
     if (e.type === "alarm") return place("user", { type: "text", text: alarmLine(e) });
+    if (e.type === "permission_request" || e.type === "permission_response") {
+      if (e.envelope.conversation.address === here) {
+        place("user", { type: "text", text: permissionEl(e, who, zone) });
+      }
+      return;
+    }
     if (e.type !== "message") return;
     if (silent(e)) return; // said nothing — it closed the turn, it draws no block
     if (e.envelope.conversation.address === here) {
@@ -923,6 +931,10 @@ function renderMessages(
       place("user", { type: "text", text: systemEl("control", CANCELLED) });
     } else if (e.type === "alarm") {
       place("user", { type: "text", text: alarmLine(e) });
+    } else if (e.type === "permission_request" || e.type === "permission_response") {
+      if (e.envelope.conversation.address === here) {
+        place("user", { type: "text", text: permissionEl(e, who, zone) });
+      }
     } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
       place("assistant", thinkingBlock(e));
     } else if (e.type === "tool_use" && welded.has(e.id)) place("assistant", toolUseBlock(e));
@@ -1662,6 +1674,43 @@ export function errorTextOf(e: HarnessErrorEvent): string {
  *  armed it, which is the session reading it. */
 function alarmLine(e: AlarmEvent): string {
   return systemEl("alarm", e.parts[0]?.text ?? "");
+}
+
+/** An ask and its ruling (§9), in the session's room where they happened, kept like any line
+ *  until the checkpoint: the same record whichever surface the principal answered from. The
+ *  request carries the handle the pending list and `cancel` name the ask by, and the call
+ *  as the card shows it: a `send` whole, since its draft is half of every correction. The
+ *  response names who ruled — the principal by the roster's word, `self` for the agent's
+ *  own withdrawal, nobody for a lapse — the verdict, how long it stands, and the reason
+ *  when one was given. Both are events and never change: no lifecycle reaches them. */
+function permissionEl(
+  e: PermissionRequestEvent | PermissionResponseEvent,
+  roster: Roster,
+  zone?: string,
+): string {
+  const handle = shortId(e.payload.ref_id);
+  const at = ` at="${hhmm(e.ts, zone)}"`;
+  if (e.type === "permission_request") {
+    const { tool, call, detail } = e.parts[0].data;
+    const said = tool === "send" ? detail : call;
+    return `<permission_request id="${handle}" tool="${escAttr(tool)}"${at}>` +
+      `${escText(said)}</permission_request>`;
+  }
+  const v = e.parts[0].data;
+  const own = e.payload.turn_id !== undefined;
+  const verdict = own ? "withdrawn" : v.lapsed ? "lapsed" : v.behavior;
+  const sender = e.envelope.sender;
+  const who = own
+    ? " self"
+    : !v.lapsed && sender
+    ? ` principal="${
+      escAttr((sender.address && roster.names[sender.address]) ?? sender.name ?? sender.address)
+    }"`
+    : "";
+  const scope = verdict === "allow" || verdict === "deny" ? ` scope="${v.scope}"` : "";
+  const body = own ? "" : escText(v.reason ?? "");
+  return `<permission_response re="${handle}"${who} verdict="${verdict}"${scope}${at}>` +
+    `${body}</permission_response>`;
 }
 
 /** OUR SIDE produced this row (§3 authorship — presence, not equality): the model's turn

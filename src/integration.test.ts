@@ -2191,7 +2191,8 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
     { gate: (name) => name === "send" ? "ask" : "allow" },
   );
 
-  // deny
+  // deny: the call never runs, so it has no outcome to report — the ruling is the whole of
+  // its word, and the turn it wakes is where the agent redrafts
   await scenario(
     [
       ok(
@@ -2199,19 +2200,21 @@ Deno.test("gating: the ask is part of executing — the call is answered, then r
         "tool_use",
       ),
       ok([], "end_turn"),
+      ok([{ kind: "assistant", text: "entendido, no lo mando" }], "end_turn"),
     ],
-    async ({ publish, read }) => {
+    async ({ publish, read, calls }) => {
       await publish(principalMsg("mandale"));
       await waitFor(async () => (await read("permission_request")).length === 1);
       const [req] = await read("permission_request");
       assert(req.type === "permission_request");
+      await waitFor(() => Promise.resolve(calls() === 2));
 
       await publish(respond(req.payload.ref_id, "deny"));
-      await waitFor(async () => (await read("tool_result")).some((e) => e.payload?.gated));
-      const res = (await read("tool_result")).find((e) => e.payload?.gated);
-      assert(res?.type === "tool_result");
-      assertEquals(res.parts[0].data.is_error, true);
-      assertEquals(String(res.parts[0].data.output).includes("not now"), true);
+      await waitFor(() => Promise.resolve(calls() === 3));
+      await waitFor(async () =>
+        (await read("message")).some((e) => textOf(e) === "entendido, no lo mando")
+      );
+      assertEquals((await read("tool_result")).filter((e) => e.payload?.gated), []);
       assertEquals(
         (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
         0,
@@ -2922,6 +2925,52 @@ Deno.test("cancel: a message of ours not yet out is withdrawn, never offered aga
   }
 });
 
+Deno.test("a standing /n is remembered by the turn its deny wakes: no errand runs, and the rule stands", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.upsertConnections([{ service: "whatsapp", address: "org" }]);
+  try {
+    const send = { to: "wa:g1", text: "llego en 5", connection: "whatsapp" };
+    const { transport, calls } = scripted([
+      ok([{ kind: "tool_use", name: "send", input: send }], "tool_use"),
+      ok([], "end_turn"),
+      ok([{ kind: "assistant", text: "entendido, no le escribo más" }], "end_turn"),
+    ]);
+    // the table, not a stub: what is remembered rides over the configured rules
+    const config: AgentConfig = {
+      ...CONFIG,
+      gate: undefined,
+      rules: [{ tool: "send", action: "ask" }],
+    };
+    const ports = { log, docs: await docsAt(`${dir}/docs`), transport };
+    await log.publish(principalMsg("avisale al grupo"));
+    for (let i = 0; i < 4; i++) await xi(config, ports);
+    const [req] = await log.read({ types: ["permission_request"] });
+    assertEquals(calls(), 2);
+    await log.publish({
+      ts: new Date().toISOString(),
+      type: "permission_response",
+      payload: { ref_id: req.payload!.ref_id as Event["id"] },
+      envelope: { ...principalMsg("").envelope },
+      parts: [{
+        type: "data",
+        kind: "permission_response",
+        data: { behavior: "deny", scope: "always", reason: "a ese grupo nunca" },
+      }],
+    });
+    for (let i = 0; i < 4; i++) await xi(config, ports);
+    assertEquals(calls(), 3); // the deny woke a turn of its own
+    assertEquals(
+      (await log.remembered("a1")).map((r) => [r.tool, r.action]),
+      [["send", "deny"]],
+    );
+    assertEquals((await log.read({ types: ["tool_result"] })).filter((e) => e.payload?.gated), []);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("cancel: an unsent message is anyone's to take back who may send there, whoever sent it — a denied room keeps it", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -3457,30 +3506,50 @@ Deno.test("a principal's answer settles the gate: /y runs the call, /n refuses i
     { gate: (name) => name === "send" ? "ask" : "allow" },
   );
 
-  // /n <reason> — the refusal reaches the model with the principal's words in it
+  // /n <reason> — the refusal reaches the model with the principal's words in it: the ask
+  // and its ruling stand in the room, and the turn the deny wakes reads both
+  const seen: string[] = [];
+  const script = scripted([
+    ok(
+      [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi", connection: "wa" } }],
+      "tool_use",
+    ),
+    ok([], "end_turn"),
+    ok([{ kind: "assistant", text: "lo reescribo" }], "end_turn"),
+  ]);
+  const watching: ModelTransport = (params, emit) => {
+    seen.push(JSON.stringify(params));
+    return script.transport(params, emit);
+  };
   await scenario(
-    [
-      ok(
-        [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "hi", connection: "wa" } }],
-        "tool_use",
-      ),
-      ok([], "end_turn"),
-    ],
+    [],
     async ({ publish, publishAll, read }) => {
       await publish(says("mandale"));
       await waitFor(async () => (await read("permission_request")).length === 1);
+      const [req] = await read("permission_request");
+      await waitFor(() => Promise.resolve(script.calls() === 2));
       await answering({ read, publishAll }, { line: "/n muy formal, reescribilo" });
-      await waitFor(async () => (await read("tool_result")).some((e) => e.payload?.gated));
-      const res = (await read("tool_result")).find((e) => e.payload?.gated);
-      assert(res?.type === "tool_result");
-      assertEquals(res.parts[0].data.is_error, true);
-      assertStringIncludes(String(res.parts[0].data.output), "muy formal, reescribilo");
+      await waitFor(() => Promise.resolve(script.calls() === 3));
+      assertEquals((await read("tool_result")).filter((e) => e.payload?.gated), []);
+      const handle = shortId(req.payload!.ref_id as string);
+      assertStringIncludes(
+        seen[2],
+        `<permission_request id=\\"${handle}\\" tool=\\"send\\"`,
+      );
+      assertStringIncludes(
+        seen[2],
+        `<permission_response re=\\"${handle}\\" principal=\\"Ana\\" verdict=\\"deny\\" ` +
+          `scope=\\"once\\"`,
+      );
+      assertStringIncludes(seen[2], "muy formal, reescribilo</permission_response>");
       assertEquals(
         (await read("message")).filter((e) => e.envelope.conversation.address === "wa:x").length,
         0,
       );
     },
     { gate: (name) => name === "send" ? "ask" : "allow" },
+    [],
+    { transport: watching },
   );
 
   // a line is conversation, whatever it says: a `/y` that reaches the mind as a message

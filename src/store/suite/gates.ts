@@ -60,7 +60,11 @@ export function gatesSuite(s: Substrate): void {
     envelope: here,
     parts: [{ type: "data", kind: "tool_result", data: { output: "pending" } }],
   });
-  const rule = (ref: string, turn_id?: string): Draft<PermissionResponseEvent> => ({
+  const rule = (
+    ref: string,
+    turn_id?: string,
+    behavior: "allow" | "deny" = "allow",
+  ): Draft<PermissionResponseEvent> => ({
     ts: ts(),
     type: "permission_response",
     payload: { ref_id: ref as Event["id"], ...(turn_id ? { turn_id } : {}) },
@@ -68,7 +72,7 @@ export function gatesSuite(s: Substrate): void {
     parts: [{
       type: "data",
       kind: "permission_response",
-      data: { behavior: "allow", scope: "once" },
+      data: { behavior, scope: "once" },
     }],
   });
   const noise = (n: number): Draft<MessageEvent> => ({
@@ -152,6 +156,11 @@ export function gatesSuite(s: Substrate): void {
       await log.publish([ask(u2!.id), result(u2!.id), rule(u2!.id, "t1")]);
       assertEquals(await owed(), []);
       assertEquals(await log.gates({ agentId: "ana", sessionId: "mind" }), []); // and it closed the card
+      // nor is someone else's deny: the call never runs, so nothing is left to report
+      const u3 = await log.publish(use());
+      await log.publish([ask(u3!.id), result(u3!.id), rule(u3!.id, undefined, "deny")]);
+      assertEquals(await owed(), []);
+      assertEquals(owedOf(await log.read(), SESSION), []);
     } finally {
       await log.close();
       await store.drop();
