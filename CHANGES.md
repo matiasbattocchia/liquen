@@ -51,9 +51,18 @@ After a checkpoint, each room in view gets its recent past back.
   - lines the contact never saw are excluded: mirror copies, permission events, internal lines;
   - cap of 12 messages: whole turns, newest first, while they fit; if the newest turn alone
     passes 12, its newest 12. Both are named constants.
-- X is skipped when the WUM cap already cut the room.
-- **References are always pulled:** any `re` target not rendered, however far back, deduped
-  across the period. This also settles the `re="?"` of a reply to a line below the floor.
+- **One budget, new lines first.** A WUM weighs at most `compactAt`, `<before>` included:
+  - pass 1 is `capRun` as it stands, over the run's new lines: shares, cuts and elision
+    marks unchanged, so a tight budget renders the same bytes;
+  - pass 2 gives what pass 1 left unused to `<before>`: the rooms it did not cut, lightest
+    first, each taking whole turns, newest first, while they fit.
+
+  A cut room gets no `<before>`, since a room is cut only when the budget ran out. In a flood
+  the past gives way first. The session's own room gets none: its past is the checkpoint's
+  and the `keepRecent` turns'. The read cap (`compactAt` × `FLOOD_FACTOR`) is untouched:
+  `<before>` reads below the floor on its own bound.
+- **References are always pulled,** outside the budget: any `re` target not rendered, however
+  far back, deduped across the period. This also settles the `re="?"` of a reply to a line below the floor.
 - Gap mark: `… N not shown`.
 - `<before>` is recomputed every step, so it must be a pure function of (floor, log):
   - rows are chosen by id below the floor, in append order;
