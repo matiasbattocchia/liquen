@@ -588,8 +588,8 @@ export async function start(
       }
     }).catch((err) => console.error("[main] route:", err));
   }));
-  // a send that fails for good, or goes out after it was told stalled, is told to its call
-  // at once (late.ts): the update stream says a row of the model's own moved, and the
+  // a send that fails for good, is withdrawn, or goes out after it was told stalled, is told
+  // to its call at once (late.ts): the update stream says a row of the model's own moved, and the
   // clock's report pass runs now instead of at the next beat, which stays the guarantee for
   // a move stamped while nobody listened. A move landing mid-pass runs the pass once more.
   let telling: Promise<void> | undefined;
@@ -614,7 +614,8 @@ export async function start(
     filter: (e) =>
       e.type === "message" && e.agent !== undefined && e.payload?.turn_id !== undefined &&
       e.status !== undefined && (
-        e.status.state === "failed" && e.status.reported_at === undefined ||
+        (e.status.state === "failed" || e.status.withdrawn_at !== undefined) &&
+          e.status.reported_at === undefined ||
         (e.status.stalled_at ?? e.status.reported_at ?? e.status.withdrawn_at) !== undefined &&
           e.status.corrected_at === undefined &&
           ["dispatched", "delivered", "read"].includes(e.status.state ?? "")

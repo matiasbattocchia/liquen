@@ -261,15 +261,17 @@ export interface Lifecycle {
   attempts?: number;
   error?: string;
   error_code?: number;
-  /** When the session that sent it was told it failed for good (late.ts). */
+  /** When the session that sent it was told it will not go out: failed for good, or
+   *  withdrawn (late.ts). */
   reported_at?: string;
   /** When the session was told it is still not out, and still tried (late.ts). */
   stalled_at?: string;
   /** When the session was told it went out after all (late.ts). */
   corrected_at?: string;
-  /** When the agent took it back before it went out (`send` action delete): never offered
-   *  again. */
+  /** When it was taken back before it went out (`cancel`): never offered again. */
   withdrawn_at?: string;
+  /** The session that took it back: any that can write to the room, the sender's or not. */
+  withdrawn_by?: { id: string; session_id: string };
 }
 
 // Naming rule (§3): `address` = a WIRE address (what the platform calls the thing);

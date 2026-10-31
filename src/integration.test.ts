@@ -15,6 +15,7 @@ import {
   type AgentConfig,
   type ExecFacts,
   type ExecRecord,
+  gateOf,
   type Target,
   xi,
   type XiPorts,
@@ -2895,6 +2896,7 @@ Deno.test("cancel: a message of ours not yet out is withdrawn, never offered aga
     const row = (await log.read({ types: ["message"] })).find((e) => e.id === waiting.id)!;
     assertEquals(row.envelope.status, "withdrawn");
     assertEquals(typeof row.status?.withdrawn_at, "string");
+    assertEquals(row.status?.withdrawn_by, { id: "a1", session_id: "mind" });
     // nothing went to the wire: no delete row, and the offer is gone from the queue
     const ours = (await log.read({ types: ["message"] })).filter((e) => e.agent !== undefined);
     assertEquals(ours.map((e) => e.id), [waiting.id]);
@@ -2910,7 +2912,76 @@ Deno.test("cancel: a message of ours not yet out is withdrawn, never offered aga
     );
     assertStringIncludes(results[1], '"withdrawn":true');
     assertStringIncludes(results[2], "was taken back — it never went out");
-    assertStringIncludes(results[3], "not an open ask, a scheduled wake or an unsent message");
+    assertStringIncludes(
+      results[3],
+      "not an open ask, a scheduled wake of yours or an unsent message",
+    );
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("cancel: an unsent message is anyone's to take back who may send there, whoever sent it — a denied room keeps it", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.upsertConnections([{ service: "whatsapp", address: "org" }]);
+  try {
+    const waiting = (address: string, text: string) =>
+      log.publish({
+        ts: new Date().toISOString(),
+        type: "message",
+        agent: { id: "a1", session_id: "mind" },
+        payload: { turn_id: "t0" },
+        envelope: {
+          service: "whatsapp",
+          connection_address: "org",
+          conversation: { address, kind: "group" },
+        },
+        parts: [{ type: "text", kind: "text", text }],
+      }) as Promise<Event>;
+    const open = await waiting("wa:g1", "llego en 5");
+    const shut = await waiting("wa:g2", "llego en 10");
+    const { transport } = scripted([
+      ok([{ kind: "tool_use", name: "cancel", input: { id: shortId(shut.id) } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "cancel", input: { id: shortId(open.id) } }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ]);
+    // another agent, its turn opened by its principal; g2 is a room its table denies
+    const bo: AgentConfig = {
+      ...CONFIG,
+      agentId: "bo",
+      gate: gateOf([
+        { tool: "send", conversation: "wa:g2", action: "deny" },
+        { tool: "send", action: "ask" },
+      ]),
+    };
+    await log.publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      envelope: {
+        service: "local",
+        connection_address: "default",
+        conversation: { address: "mind@bo" },
+        sender: { address: "bo", name: "Bo" },
+      },
+      parts: [{ type: "text", kind: "text", text: "sacá los mensajes de a1" }],
+    });
+    const ports = { log, docs: await docsAt(`${dir}/docs`), transport };
+    for (let i = 0; i < 6; i++) await xi(bo, ports);
+
+    const rows = await log.read({ types: ["message"] });
+    const status = (id: string) => rows.find((e) => e.id === id)!.status;
+    // asked, not denied: a withdrawal puts nothing on the wire, so it waits on no one
+    assertEquals(status(open.id)?.state, "withdrawn");
+    assertEquals(status(open.id)?.withdrawn_by, { id: "bo", session_id: "mind" });
+    assertEquals(status(shut.id)?.state, "queued"); // still the offer it was born
+    const results = (await log.read({ types: ["tool_result"] })).map((e) =>
+      JSON.stringify(e.parts)
+    );
+    assertStringIncludes(results[0], "waits in a room your policy denies you to send to");
+    assertStringIncludes(results[1], '"withdrawn":true');
+    assertEquals(await log.read({ types: ["permission_request"] }), []);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

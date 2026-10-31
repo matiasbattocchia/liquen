@@ -1718,7 +1718,7 @@ async function act(
       const began = performance.now();
       const run = () => (ran ? { facts, ms: performance.now() - began } : undefined);
       try {
-        const outcome = await execute(use, signal, self, config, ports, report);
+        const outcome = await execute(use, signal, self, config, gate, ports, report);
         return await resultOf(use, outcome, undefined, call, run());
       } catch (err) {
         const measured = run();
@@ -2759,6 +2759,7 @@ async function execute(
   signal: AbortSignal,
   self: { id: string; session_id: string },
   config: AgentConfig,
+  gate: Gate,
   ports: XiPorts,
   report?: (facts: ExecFacts) => void,
 ): Promise<Json | ExecOutcome> {
@@ -2810,18 +2811,33 @@ async function execute(
         await ports.log.disarm(timer.id, self.id, self.session_id);
         return { disarmed: shortId(timer.id), note: timer.note };
       }
-      // and a message of this agent's still waiting to go: withdrawn, never offered again
-      // (store/sweep.ts), and the dispatcher reads the row once more before it posts
-      const mine = (e: Event) => byId(e.id) && e.agent?.id === self.id;
+      // and a message still waiting to go, in a room this session can write to, whoever sent
+      // it: withdrawn, never offered again (store/sweep.ts), and the dispatcher reads the row
+      // once more before it posts. The session that sent it is told (late.ts)
+      const sent = (e: Event) => byId(e.id) && e.agent !== undefined;
       const waiting = [
-        ...await ports.log.read({ types: ["message"], state: "queued", filter: mine }),
-        ...await ports.log.read({ types: ["message"], state: "failed", filter: mine }),
+        ...await ports.log.read({ types: ["message"], state: "queued", filter: sent }),
+        ...await ports.log.read({ types: ["message"], state: "failed", filter: sent }),
       ];
       if (waiting.length > 1) {
         throw new Error(`"${id}" names ${waiting.length} messages — ambiguous`);
       }
       if (waiting.length === 1) {
-        if (await ports.log.withdraw(waiting[0].id, new Date().toISOString())) {
+        // can write is what a send there would meet: the table denies, or lets it through,
+        // asking or not. A withdrawal puts nothing on the wire, so an ask waits on no one
+        const { envelope } = waiting[0];
+        const target = {
+          service: envelope.service,
+          connection: envelope.connection_address,
+          conversation: envelope.conversation.address,
+        };
+        if (gate("send", {}, target) === "deny") {
+          throw new Error(
+            `message "${id}" waits in a room your policy denies you to send to — it is not ` +
+              "yours to take back",
+          );
+        }
+        if (await ports.log.withdraw(waiting[0].id, new Date().toISOString(), self)) {
           return { withdrawn: true, event_id: waiting[0].id };
         }
         throw new Error(
@@ -2830,7 +2846,7 @@ async function execute(
         );
       }
       throw new Error(
-        `"${id}" is not an open ask, a scheduled wake or an unsent message of yours — it was ` +
+        `"${id}" is not an open ask, a scheduled wake of yours or an unsent message — it was ` +
           "answered, lapsed, fired or went out, or the id is not one your window and lists name",
       );
     }

@@ -130,8 +130,9 @@ or withdrawn.
   `final`: "taken back before it went out, by <who>". Without it, the stalled update's promise
   ("you are told when it goes out or is given up") is broken.
   - The withdrawal stamps `withdrawn_by` (agent and session) beside `withdrawn_at`.
-  - The claim widens the undelivered one (`sweep.ts` `claim`) to `state = 'withdrawn'` rows,
-    with the same `reported_at` stamp; the update's text follows the state.
+  - The claim widens the undelivered one (`sweep.ts` `claim`) to withdrawn rows that are not
+    out, whatever a post in flight stamped after, with the same `reported_at` stamp; the
+    update's text follows `withdrawn_at`.
   - The race needs nothing new: `correct` already fires when a withdrawn send went out, and
     says "it was already on its way when you took it back" (`late.ts:145`).
   - The same session gets it too: the `cancel` result is the canceller's news, the update

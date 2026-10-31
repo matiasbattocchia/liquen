@@ -238,6 +238,57 @@ Deno.test("a send not out past the stall is told so, still tried, and told again
   }
 });
 
+Deno.test("a withdrawn send is told to the session that sent it, final, naming who took it back", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(`${dir}/log`);
+  try {
+    const now = Date.now();
+    const stamp = new Date(now).toISOString();
+    await log.upsertConnections([{ service: "whatsapp", address: "5491100000000", agentId: "a1" }]);
+    const uses = await log.publish([
+      call("hola", "t1"),
+      call("¿seguís?", "t2"),
+      call("chau", "t3"),
+      call("ya voy", "t4"),
+    ]);
+    const rows = await log.publish([
+      sent("hola", "t1", uses[0].id),
+      sent("¿seguís?", "t2", uses[1].id),
+      sent("chau", "t3", uses[2].id),
+      sent("ya voy", "t4", uses[3].id),
+    ]);
+    await log.withdraw(rows[0].id, stamp, { id: "a1", session_id: "mind" });
+    await log.withdraw(rows[1].id, stamp, { id: "a1", session_id: "s2" });
+    await log.withdraw(rows[2].id, stamp, { id: "bo", session_id: "mind" });
+    // taken back while its post was on the wire: the post lands, and that is its word
+    await log.withdraw(rows[3].id, stamp, { id: "bo", session_id: "mind" });
+    await log.setDelivery(rows[3].id, {
+      external_id: "whatsapp:wamid.4",
+      status: { state: "dispatched", dispatched_at: stamp },
+    });
+    assertEquals((await tick(log, () => undefined, now)).reported, 4);
+    const told = (await log.read({ types: ["tool_result"] })) as ToolResultEvent[];
+    assertEquals(told.map((r) => r.payload.ref_id), uses.map((u) => u.id));
+    assertEquals(told.every((r) => r.payload.final === true), true);
+    assertEquals(told.every((r) => r.agent?.id === "a1" && r.agent.session_id === "mind"), true);
+    assertEquals(told[0].parts[0].data.is_error, undefined); // nothing failed
+    assertEquals(told.map((r) => outcomeLine(r)), [
+      "send(to: Banco Hipotecario SA, text: hola) → withdrawn: you took it back before it " +
+      "went out",
+      'send(to: Banco Hipotecario SA, text: ¿seguís?) → withdrawn: your session "s2" took ' +
+      "it back before it went out",
+      "send(to: Banco Hipotecario SA, text: chau) → withdrawn: bo took it back before it " +
+      "went out",
+      "send(to: Banco Hipotecario SA, text: ya voy) → delivered after all, 0s after it was " +
+      "sent: it was already on its way when bo took it back",
+    ]);
+    assertEquals((await tick(log, () => undefined, now + 60_000)).reported, 0); // once
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a failing pass is reported in the beat, and the passes after it still run", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);

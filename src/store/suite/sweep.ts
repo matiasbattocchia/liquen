@@ -44,6 +44,9 @@ export function sweepSuite(s: Substrate): void {
     return e.id;
   }
 
+  /** The session that sent every outbound row here, taking its own back. */
+  const ANA = { id: "ana", session_id: "mind" };
+
   const row = async (log: Log, id: string): Promise<Event> =>
     (await log.read()).find((e) => e.id === id)!;
 
@@ -214,7 +217,7 @@ export function sweepSuite(s: Substrate): void {
       await log.stalled(iso(now + STALLED_AFTER_MS + MIN));
       const plain = await sent(log, "p");
       // `taken` was stalled too; its withdrawal lands while its post is on the wire
-      assertEquals(await log.withdraw(taken, iso(now)), true);
+      assertEquals(await log.withdraw(taken, iso(now), ANA), true);
       assertEquals(await log.corrected(iso(now)), []); // nothing is out yet
       for (const id of [stalled, plain, taken]) {
         await log.setDelivery(id, {
@@ -228,28 +231,49 @@ export function sweepSuite(s: Substrate): void {
     });
   });
 
-  Deno.test("a withdrawn send is never offered again, nor told stalled or undelivered, whatever a post in flight stamps", async () => {
+  Deno.test("a withdrawn send is never offered again nor told stalled, whatever a post in flight stamps: its word is the withdrawal, claimed once", async () => {
     await withLog(async (log) => {
       const now = Date.now();
       const id = await sent(log, "w");
-      assertEquals(await log.withdraw(id, iso(now)), true);
+      // any session that can write to the room takes it back: the row names which
+      const bo = { id: "bo", session_id: "mind" };
+      assertEquals(await log.withdraw(id, iso(now), bo), true);
       const e = await row(log, id);
-      assertEquals([e.envelope.status, e.status?.withdrawn_at], ["withdrawn", iso(now)]);
-      assertEquals(await log.withdraw(id, iso(now)), false); // once
+      assertEquals(
+        [e.envelope.status, e.status?.withdrawn_at, e.status?.withdrawn_by],
+        ["withdrawn", iso(now), bo],
+      );
+      assertEquals(await log.withdraw(id, iso(now), ANA), false); // once
       // the post that was already on its way fails after: the row stays taken back
       await log.setDelivery(id, {
         status: { state: "failed", failed_at: iso(T0 - 60 * MIN), error_code: 503 },
       });
       assertEquals(await log.sweep(iso(T0)), 0);
-      assertEquals(await log.undelivered(iso(T0)), []);
       assertEquals(await log.stalled(iso(now + 60 * MIN)), []);
+      assertEquals(await log.undelivered(iso(T0)), [id]);
+      assertEquals((await row(log, id)).status?.reported_at, iso(T0));
+      assertEquals(await log.undelivered(iso(T0 + MIN)), []); // told once
       // one that went out is not withdrawn: it is the wire's to delete
       const out = await sent(log, "o");
       await log.setDelivery(out, {
         external_id: "slack:T1:C1:o",
         status: { state: "dispatched", dispatched_at: iso(now) },
       });
-      assertEquals(await log.withdraw(out, iso(now)), false);
+      assertEquals(await log.withdraw(out, iso(now), ANA), false);
+    });
+  });
+
+  Deno.test("a withdrawal whose post was already out is no withdrawal to tell: the correction says it went", async () => {
+    await withLog(async (log) => {
+      const now = Date.now();
+      const id = await sent(log, "r");
+      assertEquals(await log.withdraw(id, iso(now), ANA), true);
+      await log.setDelivery(id, {
+        external_id: "slack:T1:C1:r",
+        status: { state: "dispatched", dispatched_at: iso(now) },
+      });
+      assertEquals(await log.undelivered(iso(now)), []);
+      assertEquals(await log.corrected(iso(now)), [id]);
     });
   });
 }

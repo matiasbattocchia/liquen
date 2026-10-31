@@ -72,10 +72,31 @@ function whyUndelivered(e: Event): string {
   return error || "the service refused it";
 }
 
-/** The update of a send that failed for good: the call that sent it, and why. Final: a
- *  message that will not be delivered has nothing left to tell. */
+/** Who took a send back, as the session that sent it reads it: itself, a sibling session,
+ *  or another agent that can write to the room. */
+function takerOf(e: Event): string {
+  const by = e.status?.withdrawn_by;
+  if (!by || !e.agent || by.id === e.agent.id && by.session_id === (e.agent.session_id ?? MIND)) {
+    return "you";
+  }
+  return by.id === e.agent.id ? `your session "${by.session_id}"` : by.id;
+}
+
+/** The update of a send that will not go out: failed for good, the call that sent it and
+ *  why, or withdrawn, and by whom. Final: a message that will not be delivered has nothing
+ *  left to tell. */
 export function undeliveredUpdate(e: Event, use: CallRef, call: string): Update | undefined {
   if (!e.agent) return undefined;
+  if (e.status?.withdrawn_at) {
+    return {
+      agentId: e.agent.id,
+      sessionId: e.agent.session_id ?? MIND,
+      use,
+      call,
+      output: `withdrawn: ${takerOf(e)} took it back before it went out`,
+      final: true,
+    };
+  }
   return {
     agentId: e.agent.id,
     sessionId: e.agent.session_id ?? MIND,
@@ -142,7 +163,7 @@ export function correctedUpdate(e: Event, use: CallRef, call: string): Update | 
     use,
     call,
     output: `delivered after all${late}` +
-      (status.withdrawn_at ? ": it was already on its way when you took it back" : ""),
+      (status.withdrawn_at ? `: it was already on its way when ${takerOf(e)} took it back` : ""),
     final: true,
   };
 }
@@ -215,7 +236,7 @@ async function rowOf(log: Pick<Log, "read">, id: EventId): Promise<Event | undef
 }
 
 /** The clock's report passes over the agent's sends (§10), in the order a send's tale
- *  runs: failed for good, still not out past `STALLED_AFTER_MS`, out after all. Each row is
+ *  runs: failed for good or withdrawn, still not out past `STALLED_AFTER_MS`, out after all. Each row is
  *  claimed once by the store and told to the call that sent it. Safe from more than one
  *  clock: the claim is the store's, so a row is told once. Returns how many were told. */
 export async function reportSends(

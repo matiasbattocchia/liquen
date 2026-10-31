@@ -548,15 +548,17 @@ export function pgSweeper(
            WHERE type = 'message' AND agent_id IS NOT NULL
              AND payload ->> 'turn_id' IS NOT NULL
              AND NOT flag(extra, 'delta')
-             AND status ->> 'state' = 'failed'
              AND status ->> 'reported_at' IS NULL
-             AND status ->> 'withdrawn_at' IS NULL
-             AND (external_id IS NOT NULL
-                  OR NOT CASE jsonb_typeof(status -> 'error_code')
-                           WHEN 'number' THEN (status ->> 'error_code')::numeric = 429
-                                           OR (status ->> 'error_code')::numeric >= 500
-                           ELSE coalesce(jsonb_typeof(status -> 'error_code'), 'null') = 'null' END
-                  OR coalesce((status ->> 'attempts')::integer, 0) >= ${RETRY_BACKOFF_MS.length})
+             AND (status ->> 'withdrawn_at' IS NOT NULL
+                    AND status ->> 'state' NOT IN ('dispatched', 'delivered', 'read')
+                  OR status ->> 'state' = 'failed'
+                    AND status ->> 'withdrawn_at' IS NULL
+                    AND (external_id IS NOT NULL
+                         OR NOT CASE jsonb_typeof(status -> 'error_code')
+                                  WHEN 'number' THEN (status ->> 'error_code')::numeric = 429
+                                                  OR (status ->> 'error_code')::numeric >= 500
+                                  ELSE coalesce(jsonb_typeof(status -> 'error_code'), 'null') = 'null' END
+                         OR coalesce((status ->> 'attempts')::integer, 0) >= ${RETRY_BACKOFF_MS.length}))
            RETURNING id`,
           [now],
         )).map((r) => r.id).sort()
@@ -599,20 +601,21 @@ export function pgSweeper(
         )).map((r) => r.id).sort()
       );
     },
-    withdraw(id, now) {
+    withdraw(id, now, by) {
       // a lifecycle move: `updated_at` rides along, so the window and the dispatcher see it
       return serial(async (tx) =>
         (await count(
           tx,
           `UPDATE events SET
              status = json_patch(status, jsonb_build_object(
-               'state', 'withdrawn', 'withdrawn_at', $2::text)),
+               'state', 'withdrawn', 'withdrawn_at', $2::text,
+               'withdrawn_by', jsonb_build_object('id', $3::text, 'session_id', $4::text))),
              updated_at = $2::text
            WHERE id = $1::text
              AND type = 'message' AND agent_id IS NOT NULL AND external_id IS NULL
              AND NOT flag(extra, 'delta')
              AND status ->> 'state' IN ('queued', 'failed')`,
-          [id, now],
+          [id, now, by.id, by.session_id],
         )) > 0
       );
     },

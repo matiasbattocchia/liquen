@@ -24,9 +24,9 @@
  * time a laptop that was shut overnight has been opened.
  *
  * What the agent is told of its sends is claimed here too, each tale once: a send not out
- * `STALLED_AFTER_MS` after it was made (`stalled`), one that failed for good
- * (`undelivered`), and one told either way, or withdrawn, that went out after all
- * (`corrected`). A withdrawn send (`withdraw`) is never offered again.
+ * `STALLED_AFTER_MS` after it was made (`stalled`), one that will not go out, failed for
+ * good or withdrawn (`undelivered`), and one told either way, or withdrawn, that went out
+ * after all (`corrected`). A withdrawn send (`withdraw`) is never offered again.
  */
 
 import type { DatabaseSync } from "node:sqlite";
@@ -49,10 +49,11 @@ export const STALLED_AFTER_MS = 15 * 60_000;
 export interface Sweeper {
   /** One pass at `now` (UTC ISO): re-offer what has waited its rung out. Returns how many. */
   sweep(now: string): Promise<number>;
-  /** Claim the agent's own sends that failed for good and nobody has told it of: stamp
-   *  `reported_at` = `now` on each and answer their ids, oldest first. For good is a
-   *  failure the ladder will not offer again: a permanent class, a transient one past the
-   *  ceiling, or one the wire reported after naming the artifact. A send is the model's
+  /** Claim the agent's own sends that will not go out and nobody has told it of: stamp
+   *  `reported_at` = `now` on each and answer their ids, oldest first. Will not is a
+   *  failure the ladder will not offer again (a permanent class, a transient one past the
+   *  ceiling, or one the wire reported after naming the artifact), or a withdrawal whose
+   *  row is not out, whatever a post in flight stamped after it. A send is the model's
    *  (`payload.turn_id`): a mirror's copy or a presence line fails without a turn to tell.
    *  A claim is one conditional UPDATE, so two clocks never claim one row. */
   undelivered(now: string): Promise<EventId[]>;
@@ -63,10 +64,11 @@ export interface Sweeper {
   /** Claim the agent's own sends it was told were stalled or undelivered, or that it
    *  withdrew, which went out after all: stamp `corrected_at` and answer their ids. */
   corrected(now: string): Promise<EventId[]>;
-  /** Withdraw a send of the agent's that has not gone out: `state: withdrawn`, stamped
-   *  `withdrawn_at`. Only a row still queued or failed is withdrawn; true when it was. A
-   *  withdrawn row is never offered again, whatever a post already in flight stamps. */
-  withdraw(id: EventId, now: string): Promise<boolean>;
+  /** Withdraw an agent's send that has not gone out: `state: withdrawn`, stamped
+   *  `withdrawn_at` and `withdrawn_by`, the session that took it back. Only a row still
+   *  queued or failed is withdrawn; true when it was. A withdrawn row is never offered
+   *  again, whatever a post already in flight stamps. */
+  withdraw(id: EventId, now: string, by: { id: string; session_id: string }): Promise<boolean>;
 }
 
 /** The dispatcher's own rows (`isOutbound`, minus the state it reads off the lifecycle).
@@ -107,11 +109,13 @@ export function createSweeper(db: DatabaseSync): Sweeper {
      WHERE type = 'message' AND agent_id IS NOT NULL
        AND json_extract(payload, '$.turn_id') IS NOT NULL
        AND json_extract(extra, '$.delta') IS NOT 1
-       AND json_extract(status, '$.state') = 'failed'
        AND json_extract(status, '$.reported_at') IS NULL
-       AND json_extract(status, '$.withdrawn_at') IS NULL
-       AND (external_id IS NOT NULL OR NOT ${TRANSIENT}
-            OR coalesce(json_extract(status, '$.attempts'), 0) >= ${RETRY_BACKOFF_MS.length})
+       AND (json_extract(status, '$.withdrawn_at') IS NOT NULL
+              AND json_extract(status, '$.state') NOT IN ('dispatched', 'delivered', 'read')
+            OR json_extract(status, '$.state') = 'failed'
+              AND json_extract(status, '$.withdrawn_at') IS NULL
+              AND (external_id IS NOT NULL OR NOT ${TRANSIENT}
+                   OR coalesce(json_extract(status, '$.attempts'), 0) >= ${RETRY_BACKOFF_MS.length}))
      RETURNING id`,
   );
   const stall = db.prepare(
@@ -140,7 +144,10 @@ export function createSweeper(db: DatabaseSync): Sweeper {
   // a lifecycle move: `updated_at` rides along, so the window and the dispatcher see it
   const unoffer = db.prepare(
     `UPDATE events SET
-       status = json_patch(status, json_object('state', 'withdrawn', 'withdrawn_at', ?2)),
+       status = json_patch(status, json_object(
+         'state', 'withdrawn',
+         'withdrawn_at', ?2,
+         'withdrawn_by', json_object('id', ?3, 'session_id', ?4))),
        updated_at = ?2
      WHERE id = ?1 AND ${OURS}
        AND json_extract(status, '$.state') IN ('queued', 'failed')
@@ -160,6 +167,7 @@ export function createSweeper(db: DatabaseSync): Sweeper {
       return ids(stall.all(now, before));
     },
     corrected: (now) => ids(correct.all(now)),
-    withdraw: (id, now) => Promise.resolve(unoffer.all(id, now).length > 0),
+    withdraw: (id, now, by) =>
+      Promise.resolve(unoffer.all(id, now, by.id, by.session_id).length > 0),
   };
 }
