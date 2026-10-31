@@ -78,25 +78,11 @@ export const DEFAULT_DIGEST_MINUTES = 15;
 // the world waits until morning and arrives as one digest. What still wakes is what always
 // did — the mind alias, and a conversation the agent is holding the floor in.
 export const DEFAULT_SLEEP_HOURS = "23-8";
-
-// system — harness machinery
-// The shutdown grace: how long a stop that was ASKED FOR waits for work already running —
-// main draining its in-flight turns, the supervisor draining its children. Not a knob, for
-// the same reason the tick isn't: it only ever binds when something is wedged, and a wedged
-// turn does not finish because it was given longer. A healthy stop completes in milliseconds
-// and never reads this number at all, so there is nothing to buy by moving it — while
-// raising it past an orchestrator's own kill deadline would quietly turn every graceful
-// stop into a hard one.
-export const STOP_TIMEOUT_MS = 5_000;
-// An ask nobody answers is not open forever: past this many hours the harness settles it
-// as lapsed (§9), so a stale approval never runs yesterday's call, and the model is told
-// to ask again if the moment is still right. A day: the span a principal's phone is
-// away from them, at most, before the question itself has gone cold.
-export const GATE_HOURS = 24;
-export const DEFAULT_BASH_WAIT_MS = 120_000; // how long a bash call holds the turn before going to the background
-// est. tokens of RAW EVENT JSON (`estTokens`, chars/4) — roughly 1.8x the prompt those
-// events render to, since the estimate counts ids, envelopes and the tool traffic the
-// closed region drops.
+// the window (§5): est. tokens of RAW EVENT JSON (`estTokens`, chars/4) — roughly 1.8x the
+// prompt those events render to, since the estimate counts ids, envelopes and the tool
+// traffic the closed region drops. An agent's own, since what it holds in view is its work's
+// shape: a social agent's window is many rooms of short lines, a coding agent's a few long
+// tool results.
 //
 // It is not the knob for how OFTEN a checkpoint runs. A checkpoint is priced against the
 // CACHE, not the window: it rewrites the prompt prefix, so it costs an uncached call plus
@@ -114,6 +100,22 @@ export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves un
 // It is also the most one WUM — a run of world lines between two turns — may weigh in the
 // prompt (render.ts `capRun`): a flood of the world is shared equally among its rooms and
 // the rest left to `search`, while the agent's own history is the checkpoints' to bound.
+
+// system — harness machinery
+// The shutdown grace: how long a stop that was ASKED FOR waits for work already running —
+// main draining its in-flight turns, the supervisor draining its children. Not a knob, for
+// the same reason the tick isn't: it only ever binds when something is wedged, and a wedged
+// turn does not finish because it was given longer. A healthy stop completes in milliseconds
+// and never reads this number at all, so there is nothing to buy by moving it — while
+// raising it past an orchestrator's own kill deadline would quietly turn every graceful
+// stop into a hard one.
+export const STOP_TIMEOUT_MS = 5_000;
+// An ask nobody answers is not open forever: past this many hours the harness settles it
+// as lapsed (§9), so a stale approval never runs yesterday's call, and the model is told
+// to ask again if the moment is still right. A day: the span a principal's phone is
+// away from them, at most, before the question itself has gone cold.
+export const GATE_HOURS = 24;
+export const DEFAULT_BASH_WAIT_MS = 120_000; // how long a bash call holds the turn before going to the background
 export const DEFAULT_DEBOUNCE_MS = 5_000; // a world trigger waits this long for its burst (§2)
 export const DEFAULT_SANDBOX_SLEEP_MINUTES = 10; // the Sandbox SDK's own sleepAfter
 // The tick is not a knob. It is the RESOLUTION of the attention rules, not one of them:
@@ -145,6 +147,8 @@ export interface AgentDefaults {
   model: string;
   effort: Effort | null; // null ⇒ the model decides
   maxTokens: number;
+  compactAt: number; // the window (§5): est. tokens before a checkpoint, and a WUM's cap
+  keepRecent: number; //   est. tokens a checkpoint leaves uncovered; below compactAt
   provider: ProviderName | null; // the transport seam; null ⇒ anthropic
   tools: string[] | null; // the tools offered to the model, by name; null ⇒ all of them
   rules: Rule[]; // permission policy as data (§9)
@@ -186,8 +190,6 @@ const IDENTITY_DOC =
 export interface OrgConfig {
   system: {
     bashWaitMs: number;
-    compactAt: number;
-    keepRecent: number;
     debounceMs: number;
     prices: Price[]; // the org's own price rows, over the package's list (`prices.ts`)
   };
@@ -266,19 +268,6 @@ const SYSTEM: Entry[] = [
     doc: "how long a bash call holds the turn in the foreground before it goes to the " +
       "background: the turn is answered with what the command printed so far, the command " +
       "runs on, and its end is told when it comes; the model may give a call its own wait",
-  },
-  {
-    key: "compactAt",
-    value: DEFAULT_COMPACT_AT,
-    doc: "est. tokens of raw event JSON (~1.8x the prompt) before a checkpoint runs, " +
-      "between turns; input never waits for one. Also the most a run of world lines between " +
-      "two turns may weigh in the prompt: past it, its rooms share it equally, newest lines " +
-      "first, and the rest is left for search",
-  },
-  {
-    key: "keepRecent",
-    value: DEFAULT_KEEP_RECENT,
-    doc: "est. tokens a checkpoint leaves uncovered; below compactAt",
   },
   {
     key: "debounceMs",
@@ -370,6 +359,19 @@ const AGENT: Entry[] = [
     doc: `reasoning effort (${EFFORTS.join("|")}); null ⇒ the model decides`,
   },
   { key: "maxTokens", value: DEFAULT_MAX_TOKENS, doc: "output cap per model call" },
+  {
+    key: "compactAt",
+    value: DEFAULT_COMPACT_AT,
+    doc: "est. tokens of raw event JSON (~1.8x the prompt) before a checkpoint runs, " +
+      "between turns; input never waits for one. Also the most a run of world lines between " +
+      "two turns may weigh in the prompt: past it, its rooms share it equally, newest lines " +
+      "first, and the rest is left for search",
+  },
+  {
+    key: "keepRecent",
+    value: DEFAULT_KEEP_RECENT,
+    doc: "est. tokens a checkpoint leaves uncovered; below compactAt",
+  },
   {
     key: "provider",
     value: null,
@@ -1060,14 +1062,24 @@ function parseStrict(raw: string, path: string): unknown {
 function validateOrg(cfg: OrgConfig, path: string): void {
   const prices = checkPrices(cfg.system.prices);
   if (prices) throw new Error(`${path}: system.prices ${prices}`);
-  const { compactAt, keepRecent } = cfg.system;
-  if (!(compactAt > 0 && keepRecent > 0 && keepRecent < compactAt)) {
-    throw new Error(
-      `${path}: system.keepRecent must be a positive number below system.compactAt — a ` +
-        `checkpoint that leaves the whole budget uncovered has nothing to cover, and never ` +
-        `runs (got compactAt ${JSON.stringify(compactAt)}, keepRecent ` +
-        `${JSON.stringify(keepRecent)})`,
-    );
+  // the pair is checked as each agent resolves it: an entry that re-declares one of the two
+  // is held to the org's other
+  const org = cfg.organization.agents;
+  const windows: [string, Partial<AgentDefaults>][] = [
+    ["organization.agents", {}],
+    ...Object.entries(cfg.agents).map(([name, a]): [string, AgentEntry] => [`agents.${name}`, a]),
+  ];
+  for (const [label, a] of windows) {
+    const compactAt = a.compactAt ?? org.compactAt;
+    const keepRecent = a.keepRecent ?? org.keepRecent;
+    if (!(compactAt > 0 && keepRecent > 0 && keepRecent < compactAt)) {
+      throw new Error(
+        `${path}: ${label}: keepRecent must be a positive number below compactAt — a ` +
+          `checkpoint that leaves the whole budget uncovered has nothing to cover, and never ` +
+          `runs (got compactAt ${JSON.stringify(compactAt)}, keepRecent ` +
+          `${JSON.stringify(keepRecent)})`,
+      );
+    }
   }
   if (!(cfg.organization.backlogHours > 0)) {
     throw new Error(

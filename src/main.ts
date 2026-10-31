@@ -798,9 +798,9 @@ async function compileRoster(
         // null survives the funnel: it means "never sleeps", not "unset" (Wake, §2)
         sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.sleepHours,
         processors,
-        // the system half funnels too — org-wide, no per-agent seat (harness machinery)
-        compactAt: catalog.system.compactAt,
-        keepRecent: catalog.system.keepRecent,
+        // the window (§5): what the agent holds in view is its work's shape
+        compactAt: cfg.compactAt ?? org.compactAt,
+        keepRecent: cfg.keepRecent ?? org.keepRecent,
       },
     });
   }

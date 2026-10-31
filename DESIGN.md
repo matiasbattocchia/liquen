@@ -3273,8 +3273,8 @@ roster into registry rows and
 homes, everything else funneled to the deepest function that needs it (main → xi → nu →
 mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
 the store's tables, never in the file. Its sections are split by AUDIENCE — `system`
-(machinery tuning, every deployment works on the defaults: bashWaitMs · compactAt ·
-keepRecent · debounceMs · prices), `deployment` (where the org's parts live: database —
+(machinery tuning, every deployment works on the defaults: bashWaitMs · debounceMs ·
+prices), `deployment` (where the org's parts live: database —
 null is SQLite in `data/log`, a Postgres URL is a schema of that database, its password in
 `PGPASSWORD` · docs — files, or the table of that database, either engine · sandbox — this
 machine bare or in bubbles,
@@ -3282,8 +3282,8 @@ or a gateway, which needs the docs in the table · mounts · sandboxSleepMinutes
 `organization`
 (this deployment's identity: timezone · locale ·
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
-`organization.agents`, the defaults every agent inherits: model · effort · maxTokens · provider ·
-tools · rules · the attention knobs), `processors` (media→text commands, §5), `agents`
+`organization.agents`, the defaults every agent inherits: model · effort · maxTokens · the
+window, compactAt · keepRecent · provider · tools · rules · the attention knobs), `processors` (media→text commands, §5), `agents`
 (the roster: each entry re-declares `organization.agents` keys sparsely, plus `identity` —
 `name`/`email`/`phone`, the agent's own: the name it goes by and the handles of the
 account it acts as, mirrored into the registry's columns; whether that account is a

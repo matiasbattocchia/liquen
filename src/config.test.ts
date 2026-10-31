@@ -600,16 +600,27 @@ Deno.test("deployment.sandboxSleepMinutes: whole minutes, 10 unless said", async
   });
 });
 
-Deno.test("system.keepRecent: below compactAt, or a checkpoint has nothing to cover", async () => {
+Deno.test("keepRecent: below compactAt, or a checkpoint has nothing to cover", async () => {
   await withDir(async (root) => {
-    const write = (system: Record<string, unknown>) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system }));
-    await write({ compactAt: 150_000 });
-    assertEquals((await readConfig(root)).system.keepRecent, 20_000);
+    const write = (body: Record<string, unknown>) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify(body));
+    const org = (agents: Record<string, unknown>) => ({ organization: { agents } });
+    await write(org({ compactAt: 150_000 }));
+    assertEquals((await readConfig(root)).organization.agents.keepRecent, 20_000);
     for (const bad of [{ keepRecent: 50_000 }, { keepRecent: 60_000 }, { keepRecent: 0 }]) {
-      await write(bad);
+      await write(org(bad));
       await assertRejects(() => readConfig(root), Error, "keepRecent must be");
     }
+    // an entry is held to the pair as it resolves: its own value against the org's other
+    await write({ agents: { dev: { compactAt: 150_000, keepRecent: 60_000 } } });
+    assertEquals((await readConfig(root)).agents.dev.keepRecent, 60_000);
+    await write({ agents: { dev: { keepRecent: 60_000 } } });
+    await assertRejects(() => readConfig(root), Error, "agents.dev: keepRecent must be");
+    await write({ ...org({ compactAt: 150_000 }), agents: { dev: { compactAt: 10_000 } } });
+    await assertRejects(() => readConfig(root), Error, "agents.dev: keepRecent must be");
+    // the window is an agent's: the machinery section has no seat for it
+    await write({ system: { compactAt: 150_000 } });
+    await assertRejects(() => readConfig(root), Error, 'unknown key "system.compactAt"');
   });
 });
 
