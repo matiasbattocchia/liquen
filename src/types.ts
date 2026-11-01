@@ -746,14 +746,13 @@ export interface SendArgs {
    *  body and a glyph already mean; the other three act on `re`. */
   action?: "create" | "edit" | "delete" | "add" | "remove";
 }
-export interface SendResult {
-  /** The call ran and the message is on the log — the wire is the dispatcher's problem, and
-   *  a failure there comes back as its own `<system>` line (§5). The word matters: anything
-   *  suggesting a queue reads to the model as the APPROVAL queue, and it reports a sent
-   *  message as pending. The gated vocabulary (`pending_approval`) shares no word with this. */
-  sent: boolean;
-  event_id: EventId;
-}
+/** What a `send` answers, in words: `sent · id <handle> — <what comes next>`. The call ran
+ *  and the message is on the log — the wire is the dispatcher's problem, and a failure there
+ *  comes back as its own `<system>` line (§5). The words matter: anything suggesting a queue
+ *  reads to the model as the APPROVAL queue, and it reports a sent message as pending. The
+ *  gated vocabulary (`pending_approval`) shares no word with this, and the handle is the one
+ *  the line wears and `cancel` takes. */
+export type SendResult = string;
 
 /** `contact({...})` — the address book's write side (§9): one person, on one account. */
 export interface ContactArgs {

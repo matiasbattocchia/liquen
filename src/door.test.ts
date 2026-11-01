@@ -525,7 +525,10 @@ Deno.test({
       await act(dir, log);
       const [res] = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
       assertEquals(res.payload.ref_id, q.id);
-      assertEquals((res.parts[0].data.output as { sent: boolean }).sent, true);
+      assertMatch(
+        String(res.parts[0].data.output),
+        /^sent · id [0-9a-f]{6} — the service delivers it/,
+      );
       const sent = (await log.read({ conversation: "wa:+34600" })) as MessageEvent[];
       // the dispatched message carries the job turn — the model's voice rules apply (§3)
       assertMatch(String(sent[0].payload?.turn_id), /^job:/);

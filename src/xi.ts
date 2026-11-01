@@ -3298,14 +3298,20 @@ async function execute(
           ...(location ? [location] : []),
         ],
     };
-    const sent = await ports.log.publish(msg);
-    const output = { sent: true, event_id: sent!.id }; // a full draft (parts present) always stores
-    // a wire row is born an offer (store/events.ts `offerOf`): its dispatcher delivers it
-    // after this answer, and an update says so when it never will (update.ts). Whatever a
-    // send tells late is the world's tale like any reply: quiet
+    const sent = await ports.log.publish(msg); // a full draft (parts present) always stores
+    // The answer in words (`SendResult`): the word the instructions use, the line's handle,
+    // and what comes next. A wire row is born an offer (store/events.ts `offerOf`): its
+    // dispatcher delivers it after this answer, and an update says so when it never will.
+    // Whatever a send tells late is the world's tale like any reply: quiet
+    const said = `sent · id ${shortId(sent!.id)}`;
     return envelope.service === "local"
-      ? { output, files: [], quiet: true }
-      : { output, files: [], async: true, quiet: true };
+      ? { output: `${said} — delivered`, files: [], quiet: true }
+      : {
+        output: `${said} — the service delivers it; you are told only if it doesn't arrive`,
+        files: [],
+        async: true,
+        quiet: true,
+      };
   }
   if (name === "contact") {
     // the address book (§9): `who` points at a person the way `send(to:)` points at a
