@@ -280,6 +280,16 @@ Deno.test("decide: the agent's own settlement (a cancel — turn_id) is never th
     ),
     "ignore",
   );
+  // a lapse is a deny nobody gave: news for the next turn, never a reason to open one
+  const lapse = ev("permission_response", {
+    payload: { ref_id: "u1" },
+    parts: [{
+      type: "data",
+      kind: "permission_response",
+      data: { behavior: "deny", scope: "once", reason: "unanswered for 24h", lapsed: true },
+    }],
+  } as Partial<Event>);
+  assertEquals(decide([peerMsg(), u, req, pending, selfMsg(), lapse], SESSION, WAKE), "ignore");
 });
 
 Deno.test("decide: a use with no result is always act — asking IS executing", () => {
@@ -817,6 +827,13 @@ Deno.test("update: a call's later word is answered NOW, until a turn reads past 
     extra: { consumed: u.id },
   } as Partial<Event>);
   assertEquals(decide([call, answered, looked, u, read], SESSION, WAKE, NOON), "ignore");
+  // a send's update is quiet: the world's tale, read by whatever turn comes next
+  const told = ev("tool_result", {
+    ...SELF,
+    ts: at(3),
+    payload: { turn_id: "T1", ref_id: call.id, update: true, final: true, quiet: true },
+  } as Partial<Event>);
+  assertEquals(decide([call, answered, looked, told], SESSION, WAKE, NOON), "ignore");
 });
 
 Deno.test("alarm: once a turn has read past it, it stops asking — the horizon rules", () => {

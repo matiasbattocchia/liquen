@@ -255,7 +255,7 @@ function needsCheckpoint(events: Event[], session: Session, wake: Wake): boolean
  * poke (main's tick) re-asks this same question until it is due.
  */
 function attention(events: Event[], session: Session, wake: Wake, now: number): Decision {
-  const news = newsOf(events, session).filter((e) => !sealed(e, events, wake, now));
+  const news = newsOf(events, session).filter((e) => !sealed(e, events, wake, now) && !quiet(e));
   if (news.length === 0) return "ignore";
   // a NAMED session is REACTIVE (§4): only its own rooms reach it at all — its window is
   // its enrollments — so every piece of news is addressed to it, and the ladder below
@@ -280,8 +280,8 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // deferring it to the digest (or sleeping through it) would answer a question nobody
   // asked — "was 07:00 really what you meant?". The one wake class the agent set itself.
   if (news.some((e) => e.type === "alarm")) return "think";
-  // …and so does an update: work the agent started, telling how it went on — a send that
-  // will not arrive, a command it ran ending — which the next turn may have to act on
+  // …and so does an update: work the agent started, telling how it went on — the lines a
+  // command was asked to wake on, its end — which the next turn may have to act on
   if (news.some((e) => e.type === "tool_result")) return "think";
   // holding the floor is the one question that is per-conversation — so the news is grouped
   // for it, and for nothing else: the two rules below weigh the world as one thing
@@ -683,9 +683,10 @@ function newsOf(events: Event[], session: Session): News[] {
   // never our voice, and unanswered until a turn reads past it like any other news — OR
   // an update on one of our calls (§9): the harness telling what the call set in motion
   // did after its answer — OR a deny on one of our asks (§9), the principal's or the
-  // lapse's: the call never runs, so the ruling is the whole of its word, and the turn it
-  // wakes is where the agent redrafts. An allow is news through the outcome its errand
-  // reports; the agent's own withdrawal (turn_id) is no news to it
+  // lapse's: the call never runs, so the ruling is the whole of its word, and the turn that
+  // reads it is where the agent redrafts. An allow is news through the outcome its errand
+  // reports; the agent's own withdrawal (turn_id) is no news to it. Whether news wakes is
+  // `attention`'s: a quiet one waits for a turn something else opens
   const news = (e: Event): e is News =>
     e.type === "alarm" || isUpdate(e, session) || denied(e, session) ||
     (e.type === "message" && !ownVoice(e, session) && !silenced(e));
@@ -696,6 +697,14 @@ function newsOf(events: Event[], session: Session): News[] {
   const h = typeof horizon === "string" ? events.findIndex((e) => e.id === horizon) : -1;
   const from = h !== -1 ? h : last; // no/stale horizon → fall back to the closing's position
   return events.slice(from + 1).filter(news);
+}
+
+/** News that is no reason to wake: a send's update (`Payload.quiet`) and a lapse, which no
+ *  one gave. A running turn reads it at its next step, or else the next turn, whatever opens
+ *  it. */
+function quiet(e: News): boolean {
+  return (e.type === "tool_result" && e.payload.quiet === true) ||
+    (e.type === "permission_response" && e.parts[0].data.lapsed === true);
 }
 
 /** A deny someone else gave one of this session's asks: the principal's, or the lapse's.
@@ -730,7 +739,8 @@ export function aboutOf(events: Event[], session: Session): About[] {
 }
 
 /** All our uses have results but no turn output followed ⇒ the closing think is owed.
- *  Turn output = our thinking / tool_use / home message; a directed peer send is not. */
+ *  Turn output = our thinking / tool_use / home message; a directed peer send is not. An
+ *  update is no answer the chain waits on: it is news, and `attention` weighs it. */
 function unclosedChain(events: Event[], session: Session): boolean {
   const uses = new Set(
     events
@@ -741,7 +751,9 @@ function unclosedChain(events: Event[], session: Session): boolean {
   let lastResult = -1;
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
-    if (e.type === "tool_result" && uses.has(e.payload.ref_id)) lastResult = i;
+    if (e.type === "tool_result" && !e.payload.update && uses.has(e.payload.ref_id)) {
+      lastResult = i;
+    }
   }
   if (lastResult < 0) return false;
   return !events.slice(lastResult + 1).some((e) =>
@@ -1731,7 +1743,7 @@ async function act(
           } satisfies Draft<PermissionRequestEvent>,
         );
       }
-      out.push(await resultOf(use, PENDING_APPROVAL));
+      out.push(await resultOf(use, pendingApproval(use)));
       continue;
     }
     if (verdict?.behavior === "deny") {
@@ -1799,14 +1811,16 @@ async function act(
  *  arrives later in the harness's voice. Re-issuing is the one failure mode worth naming:
  *  it is what a model does with a tool_use it never got an answer to. Nothing here may
  *  share a word with what a RUN call returns (`sent`): the model reports the two apart on
- *  the strength of the vocabulary alone, and it reports them to the principal. */
-const PENDING_APPROVAL = {
+ *  the strength of the vocabulary alone, and it reports them to the principal. The `id` is
+ *  the ask's handle: the pending list, the ruling's `re` and `cancel` all name it so. */
+const pendingApproval = (use: ToolUseEvent) => ({
   status: "pending_approval",
+  id: shortId(use.id),
   note: "your principal was asked and has not answered yet — the call has NOT run. " +
     "They are reading its card, so it needs no retelling. " +
     "Do NOT issue it again; you will be told the outcome when they decide. If it stops " +
-    "being worth asking, withdraw it with cancel(id) — your pending list names the id.",
-};
+    "being worth asking, withdraw it with cancel(id).",
+});
 
 /** What a call the principal's cut reached before it started returns: it never ran. */
 const NOT_RUN = "cancelled by your principal before it ran — the call did NOT run";

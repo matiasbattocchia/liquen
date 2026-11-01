@@ -3532,10 +3532,7 @@ Deno.test("a principal's answer settles the gate: /y runs the call, /n refuses i
       await waitFor(() => Promise.resolve(script.calls() === 3));
       assertEquals((await read("tool_result")).filter((e) => e.payload?.gated), []);
       const handle = shortId(req.payload!.ref_id as string);
-      assertStringIncludes(
-        seen[2],
-        `<permission_request id=\\"${handle}\\" tool=\\"send\\"`,
-      );
+      assert(!seen[2].includes("<permission_request"));
       assertStringIncludes(
         seen[2],
         `<permission_response re=\\"${handle}\\" principal=\\"Ana\\" verdict=\\"deny\\" ` +

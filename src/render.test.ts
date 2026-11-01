@@ -2107,7 +2107,7 @@ Deno.test("a fired wake renders as the harness handing back the agent's own note
   );
 });
 
-Deno.test("an ask and its ruling stand in the session's room, closed or trailing, whoever ruled", () => {
+Deno.test("a ruling stands in the session's room, closed or trailing, whoever ruled; the ask draws nothing", () => {
   const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
   const room = (conversation = "mind@a1") => ({
     service: "local",
@@ -2166,24 +2166,17 @@ Deno.test("an ask and its ruling stand in the session's room, closed or trailing
   const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t(9) });
   const texts = blocksOf(messages).map(txt);
   const prefix = prefixOf(messages).map((b) => txt(b as Anthropic.ContentBlockParam)).join("\n");
-  // closed: the send whole, the principal by name, the reason as the body
-  assertStringIncludes(
-    prefix,
-    '<permission_request id="u00001" tool="send" at="20 Jul 10:01">send(the whole call)' +
-      "</permission_request>",
-  );
+  // the ask is its tool_use and its pending result: no line of its own, closed or trailing
+  assert(![prefix, ...texts].some((s) => s.includes("<permission_request")));
+  // closed: the principal by name, the reason as the body
   assertStringIncludes(
     prefix,
     '<permission_response re="u00001" principal="Ana" verdict="deny" scope="once" ' +
       'at="20 Jul 10:02">' +
       "muy formal</permission_response>",
   );
-  // trailing: another tool keeps the card's clipped call; a lapse is nobody's; a withdrawal
-  // is the agent's own, its cancel already the record
-  assert(texts.includes(
-    '<permission_request id="u00002" tool="bash" at="20 Jul 10:04">bash(clipped…)' +
-      "</permission_request>",
-  ));
+  // trailing: a lapse is nobody's; a withdrawal is the agent's own, its cancel already the
+  // record
   assert(texts.includes(
     '<permission_response re="u00002" verdict="lapsed" at="20 Jul 10:05">unanswered for 24h' +
       "</permission_response>",

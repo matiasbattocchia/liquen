@@ -587,8 +587,10 @@ update is a `tool_result` the harness writes **against the call** (§3: `payload
 `ref_id` its `tool_use`, `turn_id` its step, `final` once nothing it set in motion still
 runs), so it lands in the session that made the call; render narrates it as
 `<system kind="tool_result" update final>bash(npm test) → exit 0 after 4m …</system>`,
-and it is news that wakes now, as an alarm does (§2), so the agent takes a turn to act on
-it: try again, try another way, or tell its principal. The clock tells a send's tale, each
+and it is news the agent acts on: try again, try another way, or tell its principal. A
+shell's update wakes now, as an alarm does (§2): the command is work in progress. A send's
+is `quiet`, the world's tale like any reply: it wakes nobody, and a running turn reads it
+at its next step, or else the next turn, whatever opens it. The clock tells a send's tale, each
 part claimed once by one conditional UPDATE on its own stamp, so two clocks tell a row once;
 a send is one of the model's own (a row with `payload.turn_id`: a mirror's copy and a
 presence line have no turn to tell):
@@ -783,7 +785,7 @@ Decisions:
   `failed` — a pending mark buys nothing. Transient failures are retried by the sweeper
   (§5) without a word to the agent; a **final failure surfaces twice**: the `failed` mark
   on the message, with the dispatcher's reason beside it, and a final **update** on the
-  send call (§2, the clock) that wakes the session that made it.
+  send call (§2, the clock), told to the session that made it, quiet: read by its next turn.
 
 ### Event-type table
 
@@ -797,7 +799,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `tool_result` | nu · xi (a gated outcome) · the harness (an update: the clock, the shell) | **user** *(live only)*; late (`gated`/`update`) ⇒ `<system kind="tool_result" …flags>` | think (barrier done; an update is news) / await (open) | parts(data:{output,is_error?,cancelled?}, text?) · payload{turn_id, ref_id→tool_use, gated?, async?, update?, final?} |
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
-| `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; *n/a to model* | act | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
+| `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; `<permission_response re verdict>` in the session room — the ask itself draws nothing, its `pending_approval` result carries the handle | act on an allow; think on the principal's deny; a lapse wakes nobody | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
 | `summary` | nu, in the idle gap after a turn (§5) | leading text block (§5) | look again (idle, or the think a dead turn left owed) | parts(text) · payload{covers} |
 | `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `<system kind="alarm">` carrying the note | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
 | `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
@@ -880,11 +882,12 @@ and a principal's `/y` to a card is read where it enters the mind, below.
     as not lapsed.
   - **An ask nobody answers lapses**, a day after it was asked (`GATE_HOURS`). Past it,
     main's tick settles the card with the harness's own deny, marked `lapsed` and carrying
-    the hours — a row like any verdict, so the anchor drops the line, a late `/y` is told
-    the card was answered, and the outcome reaches the model by the errand every ruling
-    takes, worded so it knows the call did not run and may be made again if the moment is
-    still right. A stale approval never runs yesterday's call, for the reason a wake stores
-    words and not a call (§10).
+    the hours — a row like any verdict, so the anchor drops the line, and a late `/y` is
+    told the card was answered. It reaches the model as its `<permission_response
+    verdict="lapsed">`, and like any deny it owes no errand: the call never ran, and may be
+    made again if the moment is still right. It wakes nobody: the next turn reads it. A
+    stale approval never runs yesterday's call, for the reason a wake stores words and not a
+    call (§10).
 - **Policy is a table, not a branch** (§9): `Rule[] = [{tool, ask}]`, first match wins, `*`
   the catch-all. There are no special tools — `bash` runs unasked because the default table
   says so, not because bash is bash. The ask being *inside* execution is what lets a rule be

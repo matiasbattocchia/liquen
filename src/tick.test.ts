@@ -158,6 +158,7 @@ Deno.test("a send that failed for good is told against the call that sent it, on
     assertEquals(updates.map((r) => r.payload.turn_id), ["t1", "t3"]);
     assertEquals(updates[0].payload.update, true);
     assertEquals(updates[0].payload.final, true); // nothing more will happen to it
+    assertEquals(updates[0].payload.quiet, true); // the world's tale: it wakes nobody
     assertEquals(updates[0].envelope.conversation.address, "mind@a1");
     assertEquals(updates[0].agent, { id: "a1", session_id: "mind" });
     // the call as the card shows it, the address named, and why it did not land

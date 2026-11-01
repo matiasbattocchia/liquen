@@ -373,10 +373,14 @@ export interface Payload {
   /** UPDATE: a later word on a call already answered, written by the harness against the
    *  call (`ref_id` its `tool_use`, `turn_id` its step): a send that will not be delivered,
    *  lines a running command printed that the call asked to be woken for, the command's
-   *  end. News, so it wakes its session (§2). */
+   *  end. News, so it wakes its session (§2), unless it is QUIET. */
   update?: true;
   /** FINAL: the last update a call will have; nothing it set in motion is still running. */
   final?: true;
+  /** QUIET: an update that is news but no reason to wake: a send's, whose tale is the
+   *  world's like any reply. A running turn reads it at its next step, or else the next
+   *  turn, whatever opens it. */
+  quiet?: true;
   /** Wire mentions: canonical address + the display name the stored text uses for it
    *  (absent when the text fell back to the bare address). `type` is the sigil the text
    *  wears: `@` a person (the default when absent), `#` a conversation. Unordered —

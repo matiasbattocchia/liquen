@@ -33,7 +33,6 @@ import type {
   FilePart,
   Json,
   MessageEvent,
-  PermissionRequestEvent,
   PermissionResponseEvent,
   ReactionPart,
   Session,
@@ -848,7 +847,7 @@ function renderMessages(
       return place("user", { type: "text", text: systemEl("control", CANCELLED) });
     }
     if (e.type === "alarm") return place("user", { type: "text", text: alarmLine(e) });
-    if (e.type === "permission_request" || e.type === "permission_response") {
+    if (e.type === "permission_response") {
       if (e.envelope.conversation.address === here) {
         place("user", { type: "text", text: permissionEl(e, who, zone) });
       }
@@ -931,7 +930,7 @@ function renderMessages(
       place("user", { type: "text", text: systemEl("control", CANCELLED) });
     } else if (e.type === "alarm") {
       place("user", { type: "text", text: alarmLine(e) });
-    } else if (e.type === "permission_request" || e.type === "permission_response") {
+    } else if (e.type === "permission_response") {
       if (e.envelope.conversation.address === here) {
         place("user", { type: "text", text: permissionEl(e, who, zone) });
       }
@@ -1676,26 +1675,16 @@ function alarmLine(e: AlarmEvent): string {
   return systemEl("alarm", e.parts[0]?.text ?? "");
 }
 
-/** An ask and its ruling (§9), in the session's room where they happened, kept like any line
- *  until the checkpoint: the same record whichever surface the principal answered from. The
- *  request carries the handle the pending list and `cancel` name the ask by, and the call
- *  as the card shows it: a `send` whole, since its draft is half of every correction. The
- *  response names who ruled — the principal by the roster's word, `self` for the agent's
- *  own withdrawal, nobody for a lapse — the verdict, how long it stands, and the reason
- *  when one was given. Both are events and never change: no lifecycle reaches them. */
-function permissionEl(
-  e: PermissionRequestEvent | PermissionResponseEvent,
-  roster: Roster,
-  zone?: string,
-): string {
+/** A ruling on an ask (§9), in the session's room where it happened, kept like any line
+ *  until the checkpoint: the same record whichever surface the principal answered from.
+ *  The ask itself draws nothing: its `tool_use` shows the draft, and its `pending_approval`
+ *  result carries the handle the ruling's `re`, the pending list and `cancel` name it by.
+ *  The ruling names who gave it — the principal by the roster's word, `self` for the
+ *  agent's own withdrawal, nobody for a lapse — the verdict, how long it stands, and the
+ *  reason when one was given. An event, never changed: no lifecycle reaches it. */
+function permissionEl(e: PermissionResponseEvent, roster: Roster, zone?: string): string {
   const handle = shortId(e.payload.ref_id);
   const at = ` at="${hhmm(e.ts, zone)}"`;
-  if (e.type === "permission_request") {
-    const { tool, call, detail } = e.parts[0].data;
-    const said = tool === "send" ? detail : call;
-    return `<permission_request id="${handle}" tool="${escAttr(tool)}"${at}>` +
-      `${escText(said)}</permission_request>`;
-  }
   const v = e.parts[0].data;
   const own = e.payload.turn_id !== undefined;
   const verdict = own ? "withdrawn" : v.lapsed ? "lapsed" : v.behavior;

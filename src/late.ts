@@ -8,8 +8,9 @@
  * arrives: a `tool_result` the harness writes against the call (`payload.update`, `ref_id`
  * its `tool_use`, `turn_id` its step), its output the news, its text the call as a person
  * reads it, `final` once nothing the call set in motion still runs. Render narrates it in
- * the harness's voice (§5), and it is news that wakes its session (§2): the agent takes a
- * turn to act on it — try again, try another way, or tell its principal.
+ * the harness's voice (§5), and it is news for its session (§2): the agent acts on it — try
+ * again, try another way, or tell its principal. A shell's update wakes the session, since
+ * the command is work in progress; a send's is `quiet`, read by whatever turn comes next.
  */
 
 import type { Draft, Event, EventId, ToolResultEvent, ToolUseEvent } from "./types.ts";
@@ -32,6 +33,8 @@ export interface Update {
   output: string;
   is_error?: boolean;
   final?: boolean;
+  /** News that wakes nobody (`Payload.quiet`). */
+  quiet?: boolean;
 }
 
 /** The update as the `tool_result` it travels as. */
@@ -44,6 +47,7 @@ export function updateDraft(u: Update, now: string): Draft<ToolResultEvent> {
       ref_id: u.use.id,
       update: true,
       ...(u.final ? { final: true } : {}),
+      ...(u.quiet ? { quiet: true } : {}),
     },
     agent: { id: u.agentId, session_id: u.sessionId },
     envelope: {
@@ -249,7 +253,8 @@ export async function reportSends(
     await tellOf(log, await log.corrected(nowIso), correctedUpdate, nowIso);
 }
 
-/** Each claimed send told to its call, the call named the way its card reads. */
+/** Each claimed send told to its call, the call named the way its card reads, quiet: a
+ *  send's tale wakes nobody. */
 async function tellOf(
   log: Pick<Log, "read" | "publish">,
   ids: EventId[],
@@ -271,7 +276,7 @@ async function tellOf(
       describeCall(call, { resolve }),
     );
     if (!update) continue;
-    await log.publish(updateDraft(update, nowIso));
+    await log.publish(updateDraft({ ...update, quiet: true }, nowIso));
     told++;
   }
   return told;
