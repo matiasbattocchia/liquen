@@ -758,8 +758,10 @@ export interface SearchArgs {
   in?: string; // one conversation: its address, or a name (group's, or a DM's person)
   from?: string; // one sender: their address, or any part of their name
   connection?: string; // one of the agent's accounts: its name or address, as `send` takes it
-  before?: Timestamp; // a bare stamp reads on the org's clock; an offset makes it absolute
-  after?: Timestamp;
+  /** A line's id (its handle), bounding by the log's own order, or a moment: a bare stamp
+   *  reads on the org's clock, an offset makes it absolute. Strict either way. */
+  before?: string;
+  after?: string;
   text?: string; // one contiguous phrase, case-insensitive substring — no fuzz, no wildcards
   limit?: number; // the most recent N matches; xi's `SEARCH_LIMIT` when unset
   /** N lines of its conversation either side of every match, the matches marked `match`,

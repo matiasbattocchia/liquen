@@ -141,6 +141,11 @@ export function build(
   eq("connection_address", q.connection);
   eq("conversation_address", q.conversation);
   eq("external_id", q.externalId);
+  if (q.handle !== undefined) {
+    // the id's last group is bare hex, so the handle is its tail
+    if (/^[0-9a-f]+$/.test(q.handle)) (where.push("id LIKE ?"), params.push(`%${q.handle}`));
+    else where.push("FALSE");
+  }
   if (q.conversations && q.conversations.length > 0) {
     // the readable scope pushed into WHERE — private rows never leave the store (§6)
     where.push(`conversation_address IN (${q.conversations.map(() => "?").join(",")})`);

@@ -50,6 +50,7 @@ import type {
   Service,
   Session,
   SessionRef,
+  SummaryEvent,
   ToolResultEvent,
   ToolUseEvent,
 } from "./types.ts";
@@ -93,9 +94,13 @@ import {
 import {
   AUTHOR_KEYS,
   authorKeyOf,
+  BEFORE_READ,
+  type BeforePool,
   bookEl,
   closingBoundary,
   cutStands,
+  GAP_READ,
+  HANDLE,
   hhmm,
   type HitsOpts,
   isUpdate,
@@ -107,6 +112,7 @@ import {
   pinnedMedia,
   profileEl,
   renderHits,
+  roomKey,
   roomNames,
   type Roster,
   shortId,
@@ -1030,6 +1036,75 @@ export async function windowOf(log: Pick<Reader, "read">, since?: string): Promi
   return floor && !rows.some((e) => e.id === floor.id) ? [floor, ...rows] : rows;
 }
 
+/**
+ * What `<before>` draws from (§5), read below the checkpoint's floor: each room the window
+ * shows past the floor, its newest rows there; the rows a line points at that the window
+ * lacks, however far back; and for each of those older than its room's newest rows, how
+ * many lie between. All of it is chosen by id below a floor that stands still, so the
+ * same window reads the same pool. None before the first checkpoint.
+ */
+export async function beforePool(
+  log: Pick<Reader, "read">,
+  window: Event[],
+  session: Session,
+  since?: string,
+): Promise<BeforePool | undefined> {
+  const floor = window.findLast((e): e is SummaryEvent => e.type === "summary");
+  if (!floor) return undefined;
+  const end = floor.payload.covers[1];
+  // `id ≤ end`: ids are fixed-width, so nothing sorts between `end` and `end` + "0"
+  const below = { beforeId: `${end}0`, ...(since ? { after: since } : {}) };
+  const room = (e: Event) => ({
+    service: e.envelope.service,
+    connection: e.envelope.connection_address,
+    conversation: e.envelope.conversation.address,
+  });
+  const shown = window.filter((e): e is MessageEvent =>
+    e.type === "message" && e.id > end && !silenced(e) &&
+    e.envelope.conversation.address !== session.conversation
+  );
+  const rooms = new Map(shown.map((e) => [roomKey(e), e]));
+  const newest = new Map<string, MessageEvent[]>();
+  await Promise.all([...rooms].map(async ([k, e]) => {
+    const rows = await log.read({
+      ...room(e),
+      ...below,
+      types: ["message"],
+      copies: false, // the room never saw a mirror's copy
+      limit: BEFORE_READ,
+    });
+    newest.set(k, rows as MessageEvent[]);
+  }));
+  // the referents nothing read yet: of the window's lines, and of the rooms' newest rows
+  const had = new Set(
+    [...window, ...[...newest.values()].flat()].map((e) => e.envelope.external_id),
+  );
+  const wanted = new Set<string>();
+  for (const e of [...shown, ...[...newest.values()].flat()]) {
+    const ref = e.payload?.ref_external_id;
+    if (typeof ref === "string" && !had.has(ref)) wanted.add(ref);
+  }
+  const far: MessageEvent[] = [];
+  const between: Record<EventId, number> = {};
+  await Promise.all([...wanted].map(async (externalId) => {
+    const [r] = await log.read({ externalId, ...below, types: ["message"], limit: 1 });
+    if (r?.type !== "message") return;
+    far.push(r);
+    const oldest = newest.get(roomKey(r))?.[0];
+    const gap = await log.read({
+      ...room(r),
+      afterId: r.id,
+      beforeId: oldest?.id ?? below.beforeId,
+      ...(since ? { after: since } : {}),
+      types: ["message"],
+      copies: false,
+      first: GAP_READ,
+    });
+    between[r.id] = gap.length;
+  }));
+  return { rows: [...[...newest.values()].flat(), ...far], between };
+}
+
 /** One xi invocation: poke → owed → (think/act: acquire-or-exit → work) → return what it
  *  decided — `"held"` when the lease was taken (someone is on it: busy by definition),
  *  `"lost"` when this turn was declared dead mid-work and its writes refused,
@@ -1240,6 +1315,13 @@ async function think(
         { id: config.sessionId, agentId: config.agentId, conversation: home },
         ports.media,
         config.compactAt,
+      ),
+      // each room's past below the checkpoint's floor, for its `<before>` (§5)
+      before: await beforePool(
+        ports.log,
+        events,
+        { id: config.sessionId, agentId: config.agentId, conversation: home },
+        config.since,
       ),
       // who is one of us (§4, §5): the roster's names, and who steers this agent — live
       roster: {
@@ -3383,9 +3465,13 @@ async function execute(
   }
   if (name === "search") {
     // the bounds are read the way `schedule.at` is (§10): a bare stamp means the org's wall
-    // clock, the one every rendered line showed the model
+    // clock, the one every rendered line showed the model. A line's id passes as it is
     const zone = config.timezone ?? DEFAULT_TIMEZONE;
-    const bound = (v: Json | undefined) => v === undefined ? undefined : momentOf(String(v), zone);
+    const bound = (v: Json | undefined) => {
+      if (v === undefined) return undefined;
+      const s = String(v).trim();
+      return HANDLE.test(s) ? s : momentOf(s, zone);
+    };
     return await search(
       ports,
       self,
@@ -3682,6 +3768,10 @@ async function search(
         : `nobody named "${asked}" has spoken here`,
     );
   }
+  const [before, after] = await Promise.all([
+    edgeOf(log, args.before, conversations),
+    edgeOf(log, args.after, conversations),
+  ]);
   // one row past the page: whether older matches exist is read off the rows, never
   // inferred from a page that happens to be full. No sender at all is no line at all —
   // an empty `senders` would be no filter
@@ -3689,8 +3779,10 @@ async function search(
     ...(conversations ? { conversations } : {}),
     ...(senders ? { senders } : {}),
     ...(account ? { service: account.service, connection: account.address } : {}),
-    before: args.before,
-    after: args.after,
+    before: before.at,
+    beforeId: before.id,
+    after: after.at,
+    afterId: after.id,
     text: args.text,
     types: ["message"],
     limit: limit + 1,
@@ -3728,6 +3820,27 @@ async function search(
     : [];
   const out = [...books, ...profileLines(mine, profiles), ...lines_, ...older];
   return out.length === 0 ? "nothing matched" : out.join("\n");
+}
+
+/** A search bound (§6): a moment, or a line's id, which bounds by the log's own order and
+ *  is strict like a moment, so `before` at the line a checkpoint names reads back exactly
+ *  what it summarizes. The id is found anywhere in the log — a checkpoint's line may be
+ *  in another room than the search's — and only a handle two rows share is narrowed to
+ *  the search's own rooms. */
+async function edgeOf(
+  log: Pick<Reader, "read">,
+  v: string | undefined,
+  conversations: string[] | undefined,
+): Promise<{ at?: string; id?: EventId }> {
+  if (v === undefined) return {};
+  if (!HANDLE.test(v)) return { at: v };
+  let rows = await log.read({ handle: v, limit: 2 });
+  if (rows.length > 1 && conversations) {
+    rows = await log.read({ handle: v, conversations, limit: 2 });
+  }
+  if (rows.length === 0) throw new Error(`no line "${v}" in your log`);
+  if (rows.length > 1) throw new Error(`"${v}" names more than one line — narrow it with \`in\``);
+  return { id: rows[0].id };
 }
 
 /** The address books' answer as page lines: one `<conn>` per account that holds an entry,

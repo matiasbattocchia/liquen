@@ -131,6 +131,9 @@ export interface ReadQuery {
   /** Exact match on the wire's artifact id (`envelope.external_id`) — how a dispatcher
    *  finds the row a `re` points at. */
   externalId?: string;
+  /** Rows whose handle (render's `shortId`: the id's hex tail) is this — how a line the
+   *  model was shown is found again, anywhere in the log. Hex only, so it is no pattern. */
+  handle?: string;
   limit?: number; // keep only the most recent N (still returned in append order)
   /** Keep only the EARLIEST N — the lines right after a bound, where `limit` would hand back
    *  the conversation's tail instead (`search around`, §6). Exclusive with `limit`. */

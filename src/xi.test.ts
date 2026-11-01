@@ -3,6 +3,7 @@ import {
   aboutOf,
   type AgentConfig,
   attachmentsOf,
+  beforePool,
   decide,
   downOn,
   gateOf,
@@ -910,6 +911,33 @@ Deno.test("windowOf: the latest checkpoint is the floor — the prefix stands st
       (await windowOf(log)).map((e) => e.id),
       [floor.id, ...more.map((e) => e.id), next.id],
     );
+  });
+});
+
+Deno.test("beforePool: each room's newest rows below the floor, and a far referent with what lies between", async () => {
+  await withLog(async (log) => {
+    const said = (i: number, extra: Partial<Envelope> = {}): Draft<Event> =>
+      ({ ...lineAt(i), envelope: { ...env("C1"), ...extra } }) as Draft<Event>;
+    await log.upsertConnections([{ service: "slack", address: "T1" }]);
+    const rows = await log.publish([
+      ...Array.from({ length: 50 }, (_, i) => said(i, i === 2 ? { external_id: "slack:far" } : {})),
+      lineAt(50), // the session's own room: never a `<before>`
+    ]);
+    const window = () => windowOf(log);
+    // no checkpoint, no floor: nothing below it
+    assertEquals(await beforePool(log, await window(), SESSION), undefined);
+    await log.publish(checkpointOver([rows[0].id, rows[50].id]));
+    await log.publish([
+      { ...said(51), payload: { ref_external_id: "slack:far" } } as Draft<Event>,
+      lineAt(52),
+    ]);
+    const pool = (await beforePool(log, await window(), SESSION))!;
+    const ids = pool.rows.map((e) => e.id);
+    // the room's newest forty below the floor, then the referent they do not reach
+    assertEquals(ids.slice(0, 40), rows.slice(10, 50).map((e) => e.id));
+    assertEquals(ids.slice(40), [rows[2].id]);
+    // rows 3 to 9 lie between the referent and the newest forty
+    assertEquals(pool.between, { [rows[2].id]: 7 });
   });
 });
 

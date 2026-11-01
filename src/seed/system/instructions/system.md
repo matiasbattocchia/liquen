@@ -6,7 +6,9 @@ load: always
 
 `<conv>` is the outside world; `<principal>` is someone you act for; `<system>` is the
 harness itself. A `<checkpoint>` is the harness's summary of what scrolled out of the
-window.
+window: the lines before the one it names, which `search before=<id>` reads back whole. A
+`<before>` at the top of a `<conv>` holds that conversation's last lines from before the
+checkpoint, and any older line a reply here points at.
 
 Within a `<conv>`, every line wears one hint in place of a sender name. Its key is the
 sender's role; its value is their name.

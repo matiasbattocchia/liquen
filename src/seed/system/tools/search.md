@@ -25,10 +25,10 @@ any. That is how to learn who a number reaches before writing to it.
   your principal typed on any device, `self` for your own words, `org` for the account
   speaking with nobody behind it
 - connection: one of your accounts — a <conn> `name` or `address`: only what rode it
-- before: only messages sent before this moment: ISO-8601, e.g. `2026-09-01` or
-  `2026-09-01T17:00` (your org's clock unless it carries an offset), or a stamp as your
-  lines show it, `1 Sep 17:00`
-- after: only messages sent after this moment, same form as `before`
+- before: only messages before this one: a line's `id`, or a moment: ISO-8601, e.g.
+  `2026-09-01` or `2026-09-01T17:00` (your org's clock unless it carries an offset), or a
+  stamp as your lines show it, `1 Sep 17:00`
+- after: only messages after this one, same form as `before`
 - text: a phrase the message contains (in its words, an attachment's caption or its
   filename), matched literally as one contiguous string, case-insensitive: no word splitting,
   no fuzziness, no wildcards. Keep it short and distinctive: one word or a fragment you are

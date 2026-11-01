@@ -732,6 +732,17 @@ export function logSuite(s: Substrate): void {
     }
   });
 
+  Deno.test("read({handle}) finds a row by its id's tail, and a handle is no pattern", async () => {
+    await withLog(async (log) => {
+      const a = (await log.publish(msg("01", "C1", "uno")))!;
+      await log.publish(msg("02", "C1", "dos"));
+      const handle = a.id.replaceAll("-", "").slice(-6);
+      assertEquals((await log.read({ handle })).map((r) => r.id), [a.id]);
+      assertEquals(await log.read({ handle: "%" }), []);
+      assertEquals(await log.read({ handle: "_" }), []);
+    });
+  });
+
   /* ── the update stream ──────────────────────────────────────────────── */
 
   Deno.test("subscribe({updates}) delivers a row as its lifecycle moves; the plain stream never sees a move", async () => {

@@ -32,6 +32,7 @@ import { LOCAL_CONNECTION, sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
 import {
   anchorText,
+  type BeforePool,
   type Env,
   type Member,
   render,
@@ -126,6 +127,8 @@ export interface TurnInput {
   /** The trailing-region attachments' bytes, by uri (§5) — what xi fetched through the
    *  media port for the uris render asked for (`wantedMedia`). */
   media?: ReadonlyMap<string, MediaBlock>;
+  /** Each room's past below the checkpoint's floor, for its `<before>` (§5): xi reads it. */
+  before?: BeforePool;
   /** Who is one of us (§4, §5): names and principals, read off the registry by xi. */
   roster?: Roster;
   /** The account behind each surface, by address — the name the service shows for it,
@@ -212,6 +215,7 @@ function renderInput(input: TurnInput, session: Session, env: Env, now: string):
     env,
     ambient: input.ambient,
     media: input.media,
+    before: input.before,
     roster: input.roster,
     connections: input.connections,
     compactAt: input.config.compactAt,

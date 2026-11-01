@@ -217,7 +217,10 @@ Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", asyn
   assert(out !== null && out.type === "summary");
   // the previous checkpoint opens the window, as the think reads it
   const first = (seen[0].messages[0].content as { text: string }[])[0].text;
-  assert(first.startsWith("<checkpoint>\n## Ongoing threads\n- viejo hilo\n</checkpoint>"), first);
+  assert(
+    /^<checkpoint before="\w+">\n## Ongoing threads\n- viejo hilo\n<\/checkpoint>/.test(first),
+    first,
+  );
   assertStringIncludes(lastText(seen[0]), "If the conversation opens on a <checkpoint> block");
   assert(!JSON.stringify(seen[0].messages).includes("<previous-summary>\n"));
   assertEquals(out.payload.covers[0], old.payload.covers[0]); // chains from the previous summary's start

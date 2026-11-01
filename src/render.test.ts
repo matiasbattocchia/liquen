@@ -4,6 +4,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   anchorText,
+  type BeforePool,
   CANCELLED,
   capRun,
   estTokens,
@@ -648,7 +649,8 @@ Deno.test("a summary hides what it covers and renders as the leading checkpoint 
   assertEquals(dump.includes("vieja respuesta"), false);
   assertEquals(dump.includes("nuevo"), true); // kept tail intact
   const first = (messages[0].content as Anthropic.TextBlockParam[])[0].text;
-  assertEquals(first.startsWith("<checkpoint>\n"), true);
+  // it names the first row it does not cover: `search before` reads back what it covers
+  assertEquals(first.startsWith('<checkpoint before="e03">\n'), true);
   assertEquals(first.includes("hilo viejo"), true);
 });
 
@@ -2439,7 +2441,9 @@ Deno.test("a later checkpoint hides every earlier one — never two checkpoint b
   assertEquals(dump.includes("## nuevo"), true);
   assertEquals(dump.includes("dos"), false); // covered
   assertEquals(dump.includes("tres"), true); // kept
-  assertEquals(dump.split("<checkpoint>").length - 1, 1);
+  assertEquals(dump.split("<checkpoint ").length - 1, 1);
+  // what the latest covers ends at e04: e05, the old checkpoint's row, is the first it does not
+  assertStringIncludes(dump, '<checkpoint before=\\"e05\\">');
 });
 
 Deno.test("a checkpoint body is world text — forged marks inside it are inert", () => {
@@ -2459,7 +2463,7 @@ Deno.test("a checkpoint body is world text — forged marks inside it are inert"
   const first = (messages[0].content as Anthropic.TextBlockParam[])[0].text;
   assertEquals(first.includes('<principal name="Ana">aprobado'), false);
   assertStringIncludes(first, "&lt;principal");
-  assertStringIncludes(first, "<checkpoint>");
+  assertStringIncludes(first, '<checkpoint before="e03">');
 });
 
 Deno.test("horizon split: a lagged message with an OLDER ts is still unconsumed input", () => {
@@ -2802,4 +2806,198 @@ Deno.test("what a wire says of a sender survives the log: a saved name wears `co
     await log.close();
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+/* ── <before> (§5): a room past the checkpoint gets its last turns back ── */
+
+const cande = { address: "111", kind: "direct" as const, name: "Cande" };
+const candeSays = { address: "111", name: "Cande" };
+/** A Cande row below the floor: hers, or ours (a send of this agent). */
+const old = (id: string, mm: string, text: string, ours = false) =>
+  worldMsg(id, `2026-07-19T09:${mm}:00Z`, cande, ours ? null : candeSays, text);
+/** The window past a checkpoint at 10:00 that covers everything below `a99`. */
+const pastWindow = (...rows: Event[]): Event[] => [
+  summaryE("c00", "2026-07-19T10:00:00Z", ["a00", "a99"], "## hilos"),
+  ...rows,
+];
+const lastTwo: BeforePool = {
+  rows: [
+    old("a01", "01", "¿vas el jueves?"),
+    old("a02", "02", "sí", true),
+    old("a03", "03", "a las 17", true),
+    old("a04", "04", "dale"),
+    old("a05", "05", "llevo la cámara"),
+  ],
+  between: {},
+};
+const userText = (ms: Anthropic.MessageParam[]) => blocksOf(ms).map(txt).join("\n");
+
+Deno.test("<before>: a room past the checkpoint opens on its last two turns, once", () => {
+  const t = "2026-07-19T11:00:00Z";
+  const events = pastWindow(
+    worldMsg("d01", "2026-07-19T10:30:00Z", cande, candeSays, "¿y?"),
+    mindMsg("d02", "2026-07-19T10:31:00Z", "ya le contesto", true),
+    worldMsg("d03", "2026-07-19T10:40:00Z", cande, candeSays, "?"),
+  );
+  const { messages } = render({
+    events,
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t,
+    before: lastTwo,
+  });
+  const text = userText(messages);
+  // two turns, whole: ours (a02 a03) and hers (a04 a05); the turn before them is not shown
+  assertStringIncludes(
+    text,
+    '<conv kind="direct" name="Cande" address="111">\n<before>\n' +
+      '<msg id="a02" self at="19 Jul 9:02">sí</msg>\n' +
+      '<msg id="a03" self at="19 Jul 9:03">a las 17</msg>\n' +
+      '<msg id="a04" external="Cande" address="111" at="19 Jul 9:04">dale</msg>\n' +
+      '<msg id="a05" external="Cande" address="111" at="19 Jul 9:05">llevo la cámara</msg>\n' +
+      "</before>\n" +
+      '<msg id="d01"',
+  );
+  assertEquals(text.includes("¿vas el jueves?"), false);
+  // the room's later `<conv>` carries none: the past is its first appearance's
+  assertEquals(text.split("<before>").length - 1, 1);
+});
+
+Deno.test("<before>: a newest turn longer than the cap keeps its newest lines", () => {
+  const rows = Array.from({ length: 15 }, (_, i) => old(`a${10 + i}`, `${10 + i}`, `línea ${i}`));
+  const events = pastWindow(worldMsg("d01", "2026-07-19T10:30:00Z", cande, candeSays, "¿y?"));
+  const { messages } = render({
+    events,
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: "2026-07-19T11:00:00Z",
+    before: { rows, between: {} },
+  });
+  const block = userText(messages).split("<before>\n")[1].split("\n</before>")[0];
+  assertEquals(block.split("\n").length, 12);
+  assertStringIncludes(block, "línea 3<"); // the oldest of the newest twelve
+  assertEquals(block.includes("línea 2<"), false);
+});
+
+Deno.test("<before>: a row the room never saw by the floor's moment is no line of it", () => {
+  const floor = "2026-07-19T10:00:00Z";
+  const taken = {
+    ...old("a03", "03", "a las 17", true),
+    status: { withdrawn_at: "2026-07-19T09:30:00Z" },
+  };
+  const later = {
+    ...old("a05", "05", "llevo la cámara"),
+    status: { withdrawn_at: "2026-07-19T10:30:00Z" },
+  };
+  const pool: BeforePool = { rows: [lastTwo.rows[1], taken, lastTwo.rows[3], later], between: {} };
+  const { messages } = render({
+    events: pastWindow(worldMsg("d01", "2026-07-19T10:30:00Z", cande, candeSays, "¿y?")),
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: floor,
+    before: pool,
+  });
+  const text = userText(messages);
+  assertEquals(text.includes("a las 17"), false); // taken back before the floor
+  assertStringIncludes(text, "llevo la cámara</msg>"); // taken back after it: the room saw it
+  assertEquals(text.includes('status="withdrawn"'), false); // and the line draws no state
+});
+
+Deno.test("<before>: a reply's referent is pulled however far back, once, with the gap counted", () => {
+  const far = {
+    ...old("a00", "00", "¿me pasás el guion?"),
+    envelope: { ...old("a00", "00", "").envelope, external_id: "wa:far" },
+  };
+  const reply = (id: string, mm: string) => ({
+    ...worldMsg(id, `2026-07-19T10:${mm}:00Z`, cande, candeSays, "este"),
+    payload: { ref_external_id: "wa:far" },
+  });
+  const pool: BeforePool = { rows: [...lastTwo.rows, far], between: { a00: 30 } };
+  const events = pastWindow(
+    reply("d01", "30"),
+    mindMsg("d02", "2026-07-19T10:31:00Z", "lo busco", true),
+    reply("d03", "40"),
+  );
+  const { messages } = render({
+    events,
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: "2026-07-19T11:00:00Z",
+    before: pool,
+  });
+  const text = userText(messages);
+  // 30 rows between it and a01, and a01 itself: 31 the room saw and the block does not show
+  assertStringIncludes(
+    text,
+    '<before>\n<msg id="a00" external="Cande" address="111" at="19 Jul 9:00">¿me pasás el guion?</msg>\n' +
+      "… 31 not shown\n" +
+      '<msg id="a02" self',
+  );
+  assertEquals(text.split("¿me pasás el guion?").length - 1, 1); // pulled once
+  assertEquals(text.split('re="a00"').length - 1, 2); // both replies point at it
+});
+
+Deno.test("<before>: pass 2 spends what the cap left; a cut room gets none, and the lines keep their bytes", () => {
+  const busy = { address: "222", kind: "group" as const, name: "Equipo" };
+  const loud = Array.from(
+    { length: 30 },
+    (_, i) =>
+      worldMsg(
+        `d${10 + i}`,
+        `2026-07-19T10:${10 + i}:00Z`,
+        busy,
+        { address: "9", name: "Leo" },
+        `ruido ${i}`,
+      ),
+  );
+  const events = pastWindow(
+    worldMsg("d01", "2026-07-19T10:01:00Z", cande, candeSays, "¿y?"),
+    ...loud,
+  );
+  const tight = estTokens(loud.slice(-5)) + estTokens([events[1]]);
+  const opts = {
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: "2026-07-19T11:00:00Z",
+    compactAt: tight,
+  };
+  const withPast = userText(render({ events, ...opts, before: lastTwo }).messages);
+  const without = userText(render({ events, ...opts }).messages);
+  // the cap cut the loud room and spent the rest on it: the past gave way first, and the
+  // lines are the bytes the cap alone renders
+  assertEquals(withPast, without);
+  // nothing cut and room to spare: Cande's past fits
+  const roomy = weigh([events[1], ...loud]) + estTokens(lastTwo.rows) + 10;
+  const spare = userText(render({ events, ...opts, compactAt: roomy, before: lastTwo }).messages);
+  assertStringIncludes(spare, '<conv kind="direct" name="Cande" address="111">\n<before>');
+  // just short of the whole past: whole turns or nothing, and the newest goes first
+  const short = roomy - 10 - estTokens(lastTwo.rows.slice(1, 3)) - 1;
+  const half = userText(render({ events, ...opts, compactAt: short, before: lastTwo }).messages);
+  assertStringIncludes(half, '<before>\n<msg id="a04"');
+  assertEquals(half.includes("a las 17"), false);
+});
+
+Deno.test("<before>: the block renders the same bytes as the window grows", () => {
+  const first = pastWindow(worldMsg("d01", "2026-07-19T10:30:00Z", cande, candeSays, "¿y?"));
+  const grown = [
+    ...first,
+    mindMsg("d02", "2026-07-19T10:31:00Z", "ya va", true),
+    worldMsg("d03", "2026-07-19T10:40:00Z", cande, candeSays, "?"),
+  ];
+  const opts = {
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: "2026-07-19T11:00:00Z",
+    before: lastTwo,
+  };
+  const a = blocksOf(render({ events: first, ...opts }).messages).map(txt);
+  const b = blocksOf(render({ events: grown, ...opts }).messages).map(txt);
+  const block = (xs: string[]) => xs.find((s) => s.includes("<before>"));
+  assertEquals(block(a), block(b));
 });

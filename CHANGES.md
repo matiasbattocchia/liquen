@@ -66,10 +66,13 @@ After a checkpoint, each room in view gets its recent past back.
 
   A cut room gets no `<before>`, since a room is cut only when the budget ran out. In a flood
   the past gives way first. The session's own room gets none: its past is the checkpoint's
-  and the `keepRecent` turns'. The read cap (`compactAt` × `FLOOD_FACTOR`) is untouched:
-  `<before>` reads below the floor on its own bound.
-- **References are always pulled,** outside the budget: any `re` target not rendered, however
-  far back, deduped across the period. This also settles the `re="?"` of a reply to a line below the floor.
+  and the `keepRecent` turns'. The window's read is untouched: `<before>` reads below the
+  floor on its own bound (`BEFORE_READ` rows per room).
+- **References are always pulled,** outside the budget: any `re` target below the floor not
+  rendered, however far back, deduped across the period. It lands in the `<before>` of the
+  `<conv>` the referring line stands in, so no earlier block ever changes. This also settles
+  the `re="?"` of a reply to a line below the floor; a target inside the window that the cap
+  cut keeps `re="?"`.
 - Gap mark: `… N not shown`.
 - `<before>` is recomputed every step, so it must be a pure function of (floor, log):
   - rows are chosen by id below the floor, in append order;

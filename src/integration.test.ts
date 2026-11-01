@@ -3278,6 +3278,48 @@ Deno.test("search bounds read the org's clock: a bare stamp means the wall the m
   );
 });
 
+Deno.test("search bounds take a line's id: strict, by the log's own order", async () => {
+  const line = (n: number, text: string): Draft<MessageEvent> => ({
+    id: `019a0000-0000-7000-8000-000000000${n}0${n}`,
+    ts: "2026-09-01T20:00:00Z", // one instant: only the log's order tells them apart
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "default",
+      conversation: { address: "15613518605", kind: "direct", name: "Gianvito" },
+      sender: { address: "15613518605", name: "Gianvito" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  await scenario(
+    [
+      ok(
+        [{ kind: "tool_use", name: "search", input: { in: "gianvito", before: "000303" } }],
+        "tool_use",
+      ),
+      ok([{ kind: "tool_use", name: "search", input: { after: "000101" } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { before: "abcdef" } }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("qué dijo"));
+      await waitFor(async () => (await read("tool_result")).length === 3);
+      const [before, after, none] = (await read("tool_result")).map((r) =>
+        String((r as ToolResultEvent).parts[0].data.output)
+      );
+      assertStringIncludes(before, ">uno</msg>");
+      assertStringIncludes(before, ">dos</msg>");
+      assertEquals(before.includes("tres"), false);
+      assertEquals(after.includes("uno"), false);
+      assertStringIncludes(after, ">dos</msg>");
+      assertStringIncludes(after, ">tres</msg>");
+      assertStringIncludes(none, 'no line "abcdef"');
+    },
+    {},
+    [line(1, "uno"), line(2, "dos"), line(3, "tres")],
+  );
+});
+
 Deno.test("search hands back the line the window shows, and pages on the oldest hit", async () => {
   // a receipt lands as a bare photo, another under a caption: the hit is the window's own
   // line — the bare photo hoisted onto its `<image>` element, the captioned one a `<msg>`

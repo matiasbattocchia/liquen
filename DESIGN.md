@@ -1445,7 +1445,17 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   said where it was cut — `… N earlier, not shown` in a room, `— N more messages in M other
   conversations not shown — search to read them —` for the rooms left out — and the
   session's own room is never capped. The cap is a pure function of the run, so an
-  answered WUM renders the same bytes forever. A message that IS one part — a lone data part or a bare attachment —
+  answered WUM renders the same bytes forever. **`<before>`**: past a checkpoint, a room's
+  first `<conv>` opens on its last turns from below the floor — runs of one side, the
+  account or them, at most `BEFORE_TURNS` whole while they fit `BEFORE_LINES` — so a reply
+  reads against what it answers. It spends what the cap left unused, one budget with the new
+  lines first: rooms the cap did not cut, lightest first, whole turns newest first, so in a
+  flood the past gives way first and the run's lines keep the cap's bytes. A line's `re`
+  below the floor is pulled into the `<before>` of the `<conv>` it stands in, outside the
+  budget, once across the window, and `… N not shown` counts the rows between two lines
+  that are not neighbours. xi reads the rows (`beforePool`) by id below a floor that stands
+  still, and render keeps a row by its write-once stamps against the checkpoint's moment,
+  so a `<before>` renders the same bytes on every step. A message that IS one part — a lone data part or a bare attachment —
   hoists the envelope onto that part's own element and spends no `<msg>` wrapper. A
   room's change is such a line on every service: `<room>` from whoever made it, carrying
   who joined, who left, or the name the room now wears.
@@ -1862,8 +1872,11 @@ compaction proper is only pi's **checkpoint layer**:
   rule); `covers[1]` is the newest event folded in, so the range is always ordered.
 - **Render**: drop everything with `id ≤ covers[1]` of the latest summary and every earlier
   summary (each is folded into the next); the summary body renders as the leading
-  `<checkpoint>` block, escaped like any world body — its text is a transcript's worth of
-  peers' words, and a mark typed by one of them stays text.
+  `<checkpoint before="<id>">` block, escaped like any world body — its text is a
+  transcript's worth of peers' words, and a mark typed by one of them stays text. `before`
+  names the first row past `covers[1]` (the checkpoint's own row at the latest), and
+  `search` takes a line's id as a bound, strict, so `search before=<id>` reads back exactly
+  what the checkpoint covers.
 - **Later**: the API's server-side compaction block (beta) could ride inside a summary
   event if we ever want it — noted, not planned.
 

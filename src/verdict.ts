@@ -16,7 +16,7 @@
  */
 
 import { type Words, words } from "./i18n.ts";
-import { shortId } from "./render.ts";
+import { HANDLE, shortId } from "./render.ts";
 import type {
   Draft,
   Event,
@@ -100,9 +100,6 @@ export interface Answered {
   refs: EventId[];
   verdict: PermissionVerdict;
 }
-
-/** A card's handle as a line names it: `shortId`'s six hex digits. */
-const HANDLE = /^[0-9a-f]{6}$/;
 
 const ANSWERED: Refusal = { refusal: "answered", waiting: 0 };
 
