@@ -396,7 +396,8 @@ function byEventTime(
     if (!member(out[i])) continue;
     let j = i;
     while (j + 1 < out.length && (member(out[j + 1]) || transparent(out[j + 1]))) j++;
-    while (!member(out[j])) j--; // a run ends on content, not on a card
+    // narration after the run's last line stands before it too: an errand writes the send's
+    // row, then its outcome, and the outcome explains the line
     const seg = out.slice(i, j + 1);
     const pass = seg.filter((e) => !member(e));
     // stable sort ⇒ same-`ts` messages keep append order

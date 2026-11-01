@@ -3049,6 +3049,17 @@ Deno.test("a gated send's row is a world line of the next turn: its quiet outcom
   assertStringIncludes(opener[1], '<msg id="e06" self');
   assertStringIncludes(opener[1], '<msg id="e09"');
   assertEquals(opener[1].split("<conv ").length - 1, 1);
+  // with nothing after it, the outcome still stands first: it trails the row in the log
+  const alone = render({
+    events: events.filter((e) => e.id !== "e09"),
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t(5),
+  }).messages;
+  const last = blocksOf([alone.at(-1)!]).map(txt);
+  assertStringIncludes(last[0], "→ sent");
+  assertStringIncludes(last[1], '<msg id="e06" self');
 });
 
 Deno.test("a turn an error ended holds nothing: the next turn reads what landed after it", () => {
