@@ -301,8 +301,8 @@ measures against the horizon's POSITION, not the closing's: a message landing be
 window-read and the closing's publish sits before the closing in the log yet was never
 seen. The position is a LOG position: render takes the unconsumed set in append order,
 before event time reorders the world's runs, so a lagged message with an older `ts` is still
-input. render renders them as trailing INPUT, not history (which also keeps the final user
-turn non-empty), and compaction keeps its cut below the first of them — `covers` is an id
+input. render renders them after the closing, as the next turn's input (which also keeps
+the final user turn non-empty), and compaction keeps its cut below the first of them — `covers` is an id
 range, and a range reaching past unconsumed input would hide it. Real model latency opens
 this race seconds wide; scripted steps never could.
 
@@ -454,7 +454,8 @@ think: re-triggered; model continues (multi-send: "working on it" → work → r
   never means blocked: the call returns `pending_approval` at once and the verdict runs it
   later (§3, the non-blocking gate).
 - Failed send = errored tool (exchange kept in render as teaching material).
-- Successful send: render **collapses the tool pair** into the decorated message line.
+- Successful send: the tool pair stays, and the message line follows in the next turn's
+  WUM, after the turn that reads its result.
 - **The agent addresses; the executor envelopes.** `send` takes `{to, text}`: an address
   and a body, nothing else. The outbound message's envelope is written by the
   send-executor, and it completes `service · connection · kind` **from the conversation's
@@ -804,6 +805,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `<system kind="alarm">` carrying the note | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
 | `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
 | `delta` | main (presence, §9): the mind is at work and somebody is waiting | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
+| `anchor` | nu, with a step's first row, when the state moved since the last (§5) | `mid_conv_system` where its step read it: the sections that moved; crosses to no surface | ignore | parts(text, kind anchor: `now:` and the ambient lines) · payload{turn_id} |
 
 - **mu emits 3**: `message` (say) + `tool_use` + `thinking`. Everything else is world + runtime.
 - **Only inbound types: `message`, `control`.** Open-set holds: unknown → ignore, safe to add.
@@ -857,8 +859,8 @@ and a principal's `/y` to a card is read where it enters the mind, below.
     voice (`<system kind="tool_result" gated async>send(to: Vivian) → sent</system>`) —
     a late result, as an update is (§3). The principal's surfaces draw a late result only
     when it failed (`✗ send(to: Vivian) — <the tool's words>`): the card asked for the
-    call and their `/y` gave it. It collapses with the rest of the tool traffic at the
-    boundary (§5).
+    call and their `/y` gave it. It stays in the window with the rest of the tool traffic
+    until the checkpoint (§5).
   - **What is still waiting lives in the ANCHOR, not the transcript** (§5): a pending gate
     is state, not history — the transcript already closed those calls. The anchor is
     rewritten every turn, so an ask that gets answered simply stops being listed, and the
@@ -1422,8 +1424,9 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   session: which hands of an agent are talking is the conversation's business (a direct
   room's address names its members), and on the local service `from` is the session's address,
   the one word that wire has. A customer's line carries no mark.
-  The reply sits with what it answers. A dead delivery carries
-  `status="failed"`; wire mentions ride a `mentions=` attribute. **Two elements, the
+  The reply sits with what it answers. A dead delivery carries `status="failed"` on a search
+  page, never in the window, where a line is drawn once; wire mentions ride a `mentions=`
+  attribute. **Two elements, the
   deviation marked** (§3): `<msg>` carries text — `action="edit"` renders the new
   content, `action="delete"` the removed content; `<reaction>` carries the glyph —
   `action="remove"` = un-react. Bare defaults: create and add wear no attribute.
@@ -1483,11 +1486,12 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   mint platform addresses, so what that surface is — a rendered index, a tool over the map
   tables, another leg on the connector — is undecided.
 
-### Trailing vs closed (no turns anywhere — derived, not tracked)
+### The window only grows (turns derived, not tracked)
 
-There are **no turns**: nu processes whatever is available and holds no turn state; every step
-is a fresh `xi → nu → mu` over one flat log window. "Turn" survives only as an API formatting
-constraint, and render derives it **from the window's shape**:
+There are **no turns** in nu: it processes whatever is available and holds no turn state; every
+step is a fresh `xi → nu → mu` over one flat log window. Render derives turns **from the
+window's shape**, and lays every step out as its request held it, so each request is the one
+before plus new rows, until a checkpoint moves the floor:
 
 - **Event time wins for the world** — inbound messages render in **`ts`** order, not append
   order: `ts` is real-world event time, `id` is only where the store put it (§3), and a lagged
@@ -1498,31 +1502,39 @@ constraint, and render derives it **from the window's shape**:
   rendered block of the machine's chain, so it never reorders the machine (tool cycles,
   thinking, the weld) and never rewrites history — a straggler arriving after the agent
   already answered stays put, because the answer breaks the run.
-- **Boundary** — the last self-authored message *in the session's own conversation* whose
-  step (`payload.turn_id`, stamped
-  by nu) emitted no `tool_use`: a closing assistant text. Everything before it is **closed**.
-- **Trailing chain** (after the boundary) is **welded API-faithfully** — `thinking` (replayed
-  verbatim, with signature) + text + `tool_use`/`tool_result` pairs (per-use `ref_id` linkage).
-  A thinking block's signature binds everything its request held before it, so a running
-  turn's requests only ever append: a step that calls a tool records what its request
-  carried, on the step's first event — the anchor it read (`extra.anchor`), which render
-  places again where it stood, ahead of the step it produced; and the horizon it read
-  (`extra.consumed`, the closing's field on the step), so an event that landed while the
-  step's call was in flight — older than the step's own events by id, absent from the
-  request that produced them — renders after the step's group, the first request that
-  could carry it, rather than under its thinking. A checkpoint waits for the turn to end
-  for the same reason (Compaction, below). The Anthropic transport sets the binding
-  explicitly (`prefix_mismatch_behavior: drop_block`, under the controls beta) and logs every
-  block the API reports dropped — each one is an edit to a prefix that should not have moved.
-  A directed send dispatched by a welded `tool_use` is **skipped** (its content is in the block);
-  once its group falls behind the boundary, the pair drops and the *message* renders — same
-  event, two ages, zero bookkeeping.
-- **Closed events collapse** — a `send` → its `self`-marked world line; tool pairs
-  **dropped** uniformly (a failed tool renders as any failed tool — errored result while
-  trailing, gone when closed); `thinking` **dropped**. The trace that *persists* is the
-  message's own **delivery status**: a dispatch failure stamps `envelope.status = failed`
-  via `setDelivery`, and the line renders `status="failed"` in both regions — the agent's
-  only way to know a queued send never arrived. A transient one (the post never reached the
+- **A turn** is its opener (the WUM, the principal's lines, the session's news, the anchor),
+  its steps, and its closing: the self-authored message *in the session's own conversation*
+  whose step (`payload.turn_id`, stamped by nu) emitted no `tool_use`. A principal's cut or
+  an error that is no continuation ends one too. A silent closing renders as it was said,
+  `<|SILENCE|>`, so every turn ends on an assistant message.
+- **The world waits for the closing** (`afterTurns`). A WUM renders once per turn, at its
+  opening; between steps a turn reads everything but world lines — the principal's lines
+  and verdicts, updates, lapses, alarms. A world line that lands past the turn's first
+  step's horizon and before its end renders after that end, in the next turn's WUM, and
+  nowhere while the turn is open. A send's own row (`ref_id`, its call) renders after the
+  end of the turn that reads its result: the call already shows its words.
+- **Every step is welded API-faithfully** — `thinking` (replayed verbatim, with signature) +
+  text + `tool_use`/`tool_result` pairs (per-use `ref_id` linkage), closing steps' thinking
+  included. A thinking block's signature binds everything its request held before it, so
+  nothing in the window may re-render: every step records the horizon it read
+  (`extra.consumed`, on its first event), so an event that landed while the step's call was
+  in flight — older than the step's own events by id, absent from the request that produced
+  them — renders after the step, the first request that could carry it, rather than under
+  its thinking. A checkpoint replaces the prefix the turns it keeps were signed over, so
+  their thinking goes and their tool pairs, which carry no signature, stay; and a
+  checkpoint waits for the turn to end for the same reason (Compaction, below). The
+  Anthropic transport sets the binding explicitly (`prefix_mismatch_behavior: drop_block`,
+  under the controls beta) and logs every block the API reports dropped — each one is an
+  edit to a prefix that should not have moved.
+- **The anchor is an event** (`anchor`), written by nu with a step's first row when its text
+  differs from the last the window holds, `now` to the minute: the state the step's request
+  ended on. It renders where it was written, as a `mid_conv_system` block, showing the
+  sections that moved since the anchor before it (`— none` for one that emptied); the first
+  in the window shows whole.
+- **A line draws no delivery state.** A failure or a withdrawal lands late, and a line is
+  drawn once: the session that sent it hears of both by update, and a search page — written
+  once, a snapshot of its moment — keeps `status="failed"` and `status="withdrawn"`. A room's
+  name on a line is the one it had at or before that row. A transient failure (the post never reached the
   wire, a 5xx, a 429) is the **sweeper's** to retry: on the clock's tick it moves the row
   back to `queued` — one UPDATE, a backoff ladder as the WHERE clause, its length the
   ceiling — and the log's update stream hands the row to the dispatcher as one more offer,
@@ -1532,31 +1544,20 @@ constraint, and render derives it **from the window's shape**:
   re-offer during an outage — waits in the row, not on a stream. Nothing posts but the
   dispatcher, and it never learns a row is a retry. The rungs wait 1m, 5m, 15m, 1h, 4h and
   12h, each from the last failure, so the ladder gives up about seventeen hours after the
-  first. A row that has spent every rung stays `failed`, which is when the mark means what
-  the agent reads; one the agent took back renders `status="withdrawn"`. The log stays lossless for the rest
-  (`search` re-fetches denied/errored exchanges).
-- The log stays **lossless**; `search` re-fetches what render drops. Crashproof for free:
+  first. A row that has spent every rung stays `failed`, and its sending session is told.
+- The log stays **lossless**; `search` re-fetches what scrolled out. Crashproof for free:
   recovery re-renders the same window and gets the same request.
-- Three regions: **trailing** (faithful) · **recent** (collapsed) · **distant** (`summary`
-  events + top-level `system`).
-- **The boundary is also the cache breakpoint** — a closed event collapses once and then
-  renders identically forever, and the boundary only moves forward, so everything up to it is
-  a stable prefix (all volatility — `now`, ambient env, inlined media — sits after it by
-  construction). Marking it makes the history a cache **read** (0.1× input) with only the
-  turn's delta written. That is what makes the tool loop affordable: every tool round-trip
-  re-sends this same prefix, seconds apart. A `<conv>` element never spans the boundary —
-  trailing messages joining it would rewrite the prefix's last block. It caches for an
-  **hour**: the window's floor is the latest checkpoint (§2), so this prefix outlives the idle gaps
-  between an agent's wakes, and it is the expensive block — a 2× write buys 0.1× reads
-  across them. The within-turn breakpoint (the growing tool chain) keeps the default five
-  minutes, which already outlives any chain. The previous closing's block wears its mark
-  too: it is the prefix the turn that just closed wrote its entry under, and the mark names
-  that entry outright however many blocks the turn collapses into, so the first request
-  over the new boundary — and the checkpoint over the same window — reads it back and
-  writes only the collapsed delta. Four marks in all: the system prefix, the previous
-  boundary, the boundary, the chain.
+- Two parts: the **window** (faithful, from the floor) · the **checkpoint** (`summary`) and
+  the top-level `system`.
+- **Cache breakpoints, every one an hour.** The request only ever grows, so the last
+  request's tail — the block before the latest step — is this one's first mark, and this
+  one's tail is the next one's: a tool round-trip, and the next turn after a wake, read back
+  everything already paid for (0.1× input) and write only the new rows. The hour, because
+  the next request is often more than five minutes away; a 2× write on each step's new rows
+  buys 0.1× reads across the gaps between wakes. Three marks in all: the system prefix, the
+  previous request's tail, this one's.
 
-### Media (the same collapse pattern, applied to bytes)
+### Media (kept like the rest, until the checkpoint)
 
 `FilePart.uri` is a real URI, and the SCHEME is the whole distinction: `file://` = local
 bytes (the canonical form; bare paths tolerated on input), `http(s)://` = an external
@@ -1573,15 +1574,16 @@ inside the agent's own ground — its folder (relative paths are from there), `o
 has, kept by the broker, since the broker reads as itself (`FileScope`, xi's `files`
 port; tool-result attachments pass the same check).
 
-A `FilePart` renders as its kind's element — `<image name path/>`, `<audio/>`, `<document/>` — in EVERY region — the durable
-handle (local: the plain path, re-viewable via `aread`/bash; external: the url). In the
-TRAILING region only, inlineable files (images, PDFs) additionally render as REAL API
-blocks after their element — local bytes as base64, external links as url-source blocks
-(the API fetches those itself) — the model sees the picture while it's current, the
-marker once it's history. Two caps keep the base64 sane: per-file (3MB raw) and a
-per-request budget (12MB raw, NEWEST first; url blocks are budget-free) — a long session
-full of images carries only its trailing burst as bytes, and each closing collapses them
-back to markers (requests get LIGHTER after an answer, like tool pairs).
+A `FilePart` renders as its kind's element — `<image name path/>`, `<audio/>`, `<document/>` — the durable
+handle (local: the plain path, re-viewable via `aread`/bash; external: the url).
+Inlineable files (images, PDFs) additionally render as REAL API blocks after their element
+— local bytes as base64, external links as url-source blocks (the API fetches those
+itself) — and stay until the checkpoint, like the rest of the window: turning one into a
+marker at a close would rewrite a block mid-history. Two caps keep the base64 sane:
+per-file (3MB raw) and a window budget (12MB raw, NEWEST first; url blocks are
+budget-free); past it the oldest falls back to its marker, a rewrite accepted as rare.
+The checkpoint weighs the pictures with the rows (`mediaTokens`), so a window heavy with
+them reaches `compactAt` sooner.
 
 A tool's attachment is not a received file: its uri is a workspace path the agent keeps
 rewriting (`aread shot.png` after every fix), so the path cannot stand for the bytes the
@@ -1589,9 +1591,9 @@ model saw. The result PINS them — `Files.snapshot` reads the file the moment i
 attached, and the block rides on the event (`extra.media`, keyed by uri). Render takes a
 result's picture off the result itself, never from a loader; two reads of one path in
 one cycle each keep their own picture, and a step re-sends exactly what the earlier step
-sent (the prefix holds, the cache holds, the evidence holds). The closing that makes
-them history sheds the bytes in the same transaction (`PublishOptions.shed`): the rows
-keep their markers, and a window read never carries a closed cycle's pictures. Received
+sent (the prefix holds, the cache holds, the evidence holds). The checkpoint that covers
+them sheds the bytes in the same transaction (`PublishOptions.shed`, up to `covers[1]`):
+the rows keep their markers, and nothing renders them again. Received
 media stays content-named on the shelf, where a uri IS its bytes and a loader may be
 memoized.
 
@@ -1661,7 +1663,7 @@ of the listed kinds is made readable on its own, so the model waits for the `<tr
 instead of opening the file. A listing with nothing in it is absent, the way the anchor's
 sections are. Harness-authored, so no doc edit can lose any of it, and stable between
 grants, so the prefix stays cached. One cache breakpoint at the end — the
-first of the two the request carries; the second closes the collapsed history (above) — so
+first of the three the request carries; the other two are the window's (above) — so
 the whole prefix is a single region and the section order is the model's reading order,
 words before the facts they are spent on. An hour's TTL, not the default five minutes: docs
 change when a human edits one, so an agent that wakes every twenty minutes was paying to
@@ -1689,15 +1691,18 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
 - **summaries** — `summary` events aging out distant messages; rendered as the window's
   LEADING plain-text block (the trailing-only rule bars a leading system block). See
   "Compaction" below.
-- **`now:` anchor + ambient env + open state** — the trailing system block before the model
-  answers. Carries `now: <ts>`, **live environment lines** the exec plane composes (`cwd: …` ·
+- **`now:` anchor + ambient env + open state** — the system block that closes a step's
+  request, written with the step as an `anchor` event when its text moved since the last
+  (above), and drawn where it was read as the sections that moved. Carries `now: <ts>` to
+  the minute, **live environment lines** the exec plane composes (`cwd: …` ·
   `git: <branch> · N uncommitted` when the cwd is a repo), and the **standing lists** — what
   is still in the air: surfaces that are down, background jobs, scheduled wakes, open
   approvals (§9 — pending state, not history: the transcript already closed those calls,
-  so the only honest place for them is the block that is rewritten every turn), and the
+  so the only honest place for them is the block that restates the state), and the
   **unanswered conversations**. Every list speaks one grammar, `<section> — N <things>:`
   and one `· <what> — <when> · <handle>` line per item — the item in the agent's own
-  words, a verb with a stamp on the org's clock (or a duration, for a job), and the handle
+  words, a verb with a stamp on the org's clock (or whole minutes, for a job, so its age
+  moves with `now`), and the handle
   that acts on it (`id` for `cancel`, `pid` for `kill`; a down surface has none — the
   principal re-pairs or re-grants). A list is present only while it has items.
   **Unanswered** is the phone's list without the previews: every room in the window whose
@@ -1767,9 +1772,9 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
 
 ### Compaction (v0 — the checkpoint layer; from the pi / Agent-SDK study)
 
-Two layers, one of which we already had: **pruning** is render's closed-region collapse
-(tool pairs + thinking drop continuously — Claude Code's `clear_tool_uses` for free), so
-compaction proper is only pi's **checkpoint layer**:
+The window keeps every turn as its requests held it — tool pairs and thinking included, as in
+pi and Claude Code — so it only grows, and the one layer that bounds it is pi's **checkpoint
+layer**:
 
 - **The `summary` event** = pi's `CompactionEntry` in log clothes: agent-authored,
   `payload.covers: [fromId, toId]`, appended like everything else. The log stays append-only;
@@ -1777,9 +1782,9 @@ compaction proper is only pi's **checkpoint layer**:
 - **Trigger — the idle gap after a turn, and the checkpoint IS a turn.** `decide` has a
   fourth verdict, `compact`: nothing is owed — the turn just closed, or the error or cancel
   that ended it is the last row — and the **visible** (summary-applied) window exceeds
-  `compactAt` (default 50K est. tokens, chars/4 over the RAW events — roughly 1.8x the
-  prompt they render to, since the estimate counts ids, envelopes and the tool traffic the
-  closed region drops; our checkpoint is non-destructive, the log keeps everything and
+  `compactAt` (default 50K est. tokens, chars/4 over the RAW events plus the pictures the
+  window inlines — above the prompt they render to, since the estimate counts ids and
+  envelopes; our checkpoint is non-destructive, the log keeps everything and
   `search` reads it back). The closing's own insert is that look (the self-poke, §2), so
   the checkpoint runs the moment the turn ends, in the gap: **one model call over the
   window, no tool called**, keeping the most recent `keepRecent` (~20K) uncovered, its
@@ -1850,15 +1855,14 @@ compaction proper is only pi's **checkpoint layer**:
   on the instruction where the anchor goes. The model sees what already stands in the
   agent's prompt and leaves it out of the record, and it reads the conversation in the form
   it works from. And the request reads the cache the turn just wrote: the cached prefix is
-  the tools, the system, then the closed region through the previous closing's mark, all
-  byte-identical to the think's, so only the just-closed turn, collapsed, is written. The
+  the tools, the system, then the window through the last request's tail, all
+  byte-identical to the think's, so only the instruction is written. The
   instruction says where the archive ends — `<archived-through>` quotes the last archived
   line, who said it and how it begins — and what follows stays in view. Two windows go as a
   **transcript** instead, a `<conversation>` block of the covered span with the previous
   checkpoint beside it as `<previous-summary>`: one the API refused as too long (sending it
   again would be refused again; the transcript cuts each tool outcome short and inlines no
-  media), and one whose span draws no block (tool traffic and thinking collapse to nothing
-  in the closed region, so there would be nothing to quote).
+  media), and one whose span holds no line to quote (only thinking and tool traffic).
 - **Prompt shape** = open ends, not a record: what is still open (each by the name and
   address the window shows, whose move it is, with the figures that move needs) · what a
   principal said here that the prefix does not already say. Closed threads, standing facts

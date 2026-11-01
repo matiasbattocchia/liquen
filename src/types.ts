@@ -71,8 +71,9 @@ export interface TextPart {
   type: "text";
   /** `transcript` = machine-derived words for a message that carried none (a voice note's
    *  ASR text) — ridden by an `action: "add"` event pointing at the audio message (§3).
-   *  `alarm` = the note a scheduled wake carries (§10) — words, not a payload. */
-  kind: "text" | "reaction" | "transcript" | "alarm";
+   *  `alarm` = the note a scheduled wake carries (§10) — words, not a payload.
+   *  `anchor` = the state a step's request ended on (§5). */
+  kind: "text" | "reaction" | "transcript" | "alarm" | "anchor";
   text: string;
 }
 
@@ -422,7 +423,8 @@ export type EventType =
   | "summary"
   | "alarm"
   | "error"
-  | "delta";
+  | "delta"
+  | "anchor";
 
 export interface EventBase {
   id: EventId;
@@ -667,6 +669,16 @@ export interface DeltaEvent extends EventBase {
   parts: [DataPart<"delta", { kind: DeltaKind }>];
 }
 
+/** The state of the moment a step's request ended on (§5): `now` and the live
+ *  environment, one section per line group. nu writes it with the step's first row when it
+ *  differs from the session's last, so a failed call leaves none; render draws it where it
+ *  was read, as the sections that moved since the anchor before it. It is the session's own
+ *  record: not news, not a message, and it crosses to no surface. */
+export interface AnchorEvent extends EventBase {
+  type: "anchor";
+  parts: [TextPart & { kind: "anchor" }];
+}
+
 export type Event =
   | MessageEvent
   | ControlEvent
@@ -678,7 +690,8 @@ export type Event =
   | SummaryEvent
   | AlarmEvent
   | ErrorEvent
-  | DeltaEvent;
+  | DeltaEvent
+  | AnchorEvent;
 
 /**
  * An event as PRODUCERS build it: everything but the id. The id belongs to the STORE —

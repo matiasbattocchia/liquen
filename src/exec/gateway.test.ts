@@ -239,7 +239,7 @@ cases(
     const lines = (await shell.ambient()).join("\n");
     assertStringIncludes(lines, "background — 1 job:");
     // by its live process, wearing the last line its log holds
-    assert(/^· sleep 30 — running \d+s, last line "started" · pid \d+$/m.test(lines), lines);
+    assert(/^· sleep 30 — running 0m, last line "started" · pid \d+$/m.test(lines), lines);
     await shell.reap();
     assertEquals(updates.length, 1);
     assert(/^killed after \d+s when the org was stopped/.test(updates[0].output));

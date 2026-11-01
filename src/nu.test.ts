@@ -4,7 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission } from "./mu.ts";
 import { canned } from "./testing.ts";
 import { SILENCE } from "./render.ts";
-import type { Delta, Event, MessageEvent, ThinkingEvent, ToolUseEvent } from "./types.ts";
+import type { Delta, Draft, Event, MessageEvent, ThinkingEvent, ToolUseEvent } from "./types.ts";
 
 // the checkpoint instruction every turn here reads: what a compacting window sends
 const PROMPT = () => Promise.resolve("Write a checkpoint.");
@@ -20,15 +20,18 @@ const CONFIG: TurnConfig = {
 const once = (emissions: Emission[], stop: Anthropic.StopReason = "end_turn") => () =>
   Promise.resolve(canned(emissions, stop));
 
+/** A step's own rows, without the anchor its request ended on (written first when due). */
+const rows = async (out: Promise<Draft<Event>[]>) => (await out).filter((e) => e.type !== "anchor");
+
 Deno.test("nu stamps emissions: one session, one place — all of them carry the turn", async () => {
-  const out = await nu(
+  const out = await rows(nu(
     { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([
       { kind: "thinking", thinking: "hm", signature: "sig" },
       { kind: "assistant", text: "hola" },
       { kind: "tool_use", name: "echo", input: { v: 1 } },
     ], "tool_use"),
-  );
+  ));
 
   assertEquals(out.at(-1)?.payload?.stop_reason, "tool_use"); // the outcome rides the last event
   const [th, msg, use] = out as [ThinkingEvent, MessageEvent, ToolUseEvent];
@@ -60,10 +63,10 @@ Deno.test("nu: persistent step failure → a single harness-authored error event
 });
 
 Deno.test("nu: refusal surfaces as an error event alongside the emissions", async () => {
-  const out = await nu(
+  const out = await rows(nu(
     { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "assistant", text: "no puedo" }], "refusal"),
-  );
+  ));
   assertEquals(out.length, 2);
   assertEquals(out[1].type, "error");
 });
@@ -100,25 +103,25 @@ Deno.test("nu: the sentinel is SILENCE wherever it lands — the word governs th
     envelope: { service: "local", connection_address: "c", conversation: { address: "g" } },
     parts: [{ type: "text", kind: "text", text: "algo" }],
   };
-  const [quiet] = await nu(
+  const [quiet] = await rows(nu(
     { events: [world], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "assistant", text: `\n${SILENCE}\n` }]), // alone, whitespace and all
-  ) as [MessageEvent];
+  )) as [MessageEvent];
   assertEquals(quiet.extra?.silence, true);
   assertEquals(quiet.extra?.consumed, world.id); // it still carries the horizon: it IS the close
 
   // the word GOVERNS: a model that explains itself before saying it still said it, and the
   // explanation was addressed to nobody — it goes nowhere with the rest
-  const [hedged] = await nu(
+  const [hedged] = await rows(nu(
     { events: [world], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "assistant", text: `Nada de esto necesita respuesta.\n\n${SILENCE}` }]),
-  ) as [MessageEvent];
+  )) as [MessageEvent];
   assertEquals(hedged.extra?.silence, true);
 
-  const [spoken] = await nu(
+  const [spoken] = await rows(nu(
     { events: [world], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "assistant", text: "listo, ya le contesté" }]),
-  ) as [MessageEvent];
+  )) as [MessageEvent];
   assertEquals(spoken.extra?.silence, undefined);
 });
 
@@ -186,23 +189,23 @@ Deno.test("nu: a quota counted per day is not weather — one call, and its word
 });
 
 Deno.test("nu: a whitespace-only reply says nothing — silence, and it still closes", async () => {
-  const [quiet] = await nu(
+  const [quiet] = await rows(nu(
     { events: [WORLD], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "assistant", text: "  \n\n\t" }]),
-  ) as [MessageEvent];
+  )) as [MessageEvent];
   assertEquals(quiet.type, "message");
   assertEquals(quiet.extra?.silence, true);
   assertEquals(quiet.extra?.consumed, WORLD.id);
 });
 
 Deno.test("nu: a step with no content still closes the turn — a silent message carries the horizon", async () => {
-  const out = await nu({
+  const out = await rows(nu({
     events: [WORLD],
     docs: [],
     tools: [],
     compactPrompt: PROMPT,
     config: CONFIG,
-  }, once([]));
+  }, once([])));
   assertEquals(out.length, 1);
   const [quiet] = out as [MessageEvent];
   assertEquals(quiet.type, "message");
@@ -235,10 +238,10 @@ Deno.test("nu: a max_tokens cut inside a tool_use drops the half-written call �
 });
 
 Deno.test("nu stamps a redacted thinking block as a thinking event — replayed as it came", async () => {
-  const out = await nu(
+  const out = await rows(nu(
     { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
     once([{ kind: "redacted_thinking", data: "EmUCAQ" }, { kind: "assistant", text: "ok" }]),
-  );
+  ));
   const [th] = out as [ThinkingEvent];
   assertEquals(th.type, "thinking");
   assertEquals(th.parts[0].data, { data: "EmUCAQ" });
@@ -275,7 +278,7 @@ Deno.test("nu: a think is a think — an over-budget window never makes it wait 
   // the checkpoint is `decide`'s to ask for, in an idle gap (§5); input never waits for it
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   const kinds: (string | undefined)[] = [];
-  const out = await nu(
+  const out = await rows(nu(
     {
       events,
       docs: [],
@@ -287,7 +290,7 @@ Deno.test("nu: a think is a think — an over-budget window never makes it wait 
       kinds.push(meta?.kind);
       return Promise.resolve(canned([{ kind: "assistant", text: "hola" }]));
     },
-  );
+  ));
   assertEquals(kinds, ["think"]);
   assertEquals(out[0].type, "message");
 });
@@ -489,7 +492,7 @@ Deno.test("an aborted step is the principal's cancel: nothing written, no retry"
   assertEquals(out, []); // nothing failed, it was stopped: the principal's row closes it
 });
 
-Deno.test("nu: a step that calls a tool records the anchor its request carried", async () => {
+Deno.test("nu: a step writes the anchor its request ended on, when the state moved", async () => {
   let sent: Anthropic.MessageCreateParamsNonStreaming | undefined;
   const principal: Event = {
     id: "e1",
@@ -520,11 +523,21 @@ Deno.test("nu: a step that calls a tool records the anchor its request carried",
   });
   const last = (sent!.messages.at(-1)!.content as Anthropic.ContentBlockParam[]).at(-1)!;
   assert(last.type === "mid_conv_system");
-  assertEquals(out[0].extra?.anchor, (last.content[0] as Anthropic.TextBlockParam).text);
-  assertEquals(out[0].extra?.consumed, "e1"); // and the horizon: the last event it read
-  assertEquals(out[1].extra, undefined); // once per step, on its first event
+  // the anchor is a row of its own, first, the text the request ended on
+  const [anchor, thinking, use] = out;
+  assert(anchor.type === "anchor");
+  assertEquals(anchor.parts[0].text, (last.content[0] as Anthropic.TextBlockParam).text);
+  assertEquals(anchor.payload?.turn_id, thinking.payload?.turn_id);
+  assertEquals(thinking.extra?.consumed, "e1"); // the horizon: the last event it read
+  assertEquals(use.extra, undefined); // once per step, on its first event
 
-  // a step that only speaks closes the turn: nothing replays it, so it records nothing
-  const spoken = await nu(input, once([{ kind: "assistant", text: "nada" }]));
-  assertEquals(spoken[0].extra?.anchor, undefined);
+  // a closing step records its horizon too, and writes no anchor while the state stands
+  const standing = { ...anchor, id: "e2" } as Event;
+  const stood = await nu(
+    { ...input, events: [principal, standing] },
+    once([{ kind: "assistant", text: "nada" }]),
+  );
+  if (stood.some((e) => e.type === "anchor")) return; // the minute turned between the two
+  assertEquals(stood[0].type, "message");
+  assertEquals(stood[0].extra?.consumed, "e2");
 });

@@ -231,9 +231,9 @@ export interface PublishOptions {
    *  INSERT. The refusal names the draft's type. */
   check?: Law;
   /** SHED (§5 media): in the same transaction, drop the attachment bytes this session's
-   *  tool results pinned (`extra.media`) — the closing being published makes them
-   *  history, and history renders markers only. The rows keep everything else. */
-  shed?: { agentId: string; sessionId: string };
+   *  tool results pinned (`extra.media`) up to `through` — the checkpoint being published
+   *  covers them, and nothing renders them again. The rows keep everything else. */
+  shed?: { agentId: string; sessionId: string; through: EventId };
 }
 export interface Reader {
   /** QUERY. A point-in-time slice in append order. The escape hatch beyond a pushed event. */
@@ -635,7 +635,7 @@ export async function openLog(
   // the key alone goes, the row stays what it was
   const shed = db.prepare(
     `UPDATE events SET extra = json_remove(extra, '$.media'), updated_at = ?1
-     WHERE agent_id = ?2 AND session_id = ?3 AND type = 'tool_result'
+     WHERE agent_id = ?2 AND session_id = ?3 AND type = 'tool_result' AND id <= ?4
        AND json_type(extra, '$.media') IS NOT NULL`,
   );
   // a law over ONE event that is not (yet) a row: the columns it reads, bound as a row
@@ -785,8 +785,10 @@ export async function openLog(
           }
         }
       }
-      // shed before the batch lands, so the closing's own rows are never touched
-      if (opts.shed !== undefined) shed.run(now, opts.shed.agentId, opts.shed.sessionId);
+      // shed before the batch lands, so the checkpoint's own rows are never touched
+      if (opts.shed !== undefined) {
+        shed.run(now, opts.shed.agentId, opts.shed.sessionId, opts.shed.through);
+      }
       const cuts: string[] = [];
       const stored = drafts.map((e) => write(e, now, cuts)).filter((e): e is Event => e !== null);
       if (lease !== undefined) unlock.run(lease.name, lease.born);

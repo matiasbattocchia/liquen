@@ -78,9 +78,9 @@ export const DEFAULT_DIGEST_MINUTES = 15;
 // the world waits until morning and arrives as one digest. What still wakes is what always
 // did — the mind alias, and a conversation the agent is holding the floor in.
 export const DEFAULT_SLEEP_HOURS = "23-8";
-// the window (§5): est. tokens of RAW EVENT JSON (`estTokens`, chars/4) — roughly 1.8x the
-// prompt those events render to, since the estimate counts ids, envelopes and the tool
-// traffic the closed region drops. An agent's own, since what it holds in view is its work's
+// the window (§5): est. tokens of RAW EVENT JSON (`estTokens`, chars/4) and the pictures it
+// inlines (`mediaTokens`) — the estimate counts ids and envelopes the prompt never shows, so
+// it runs above the prompt it renders to. An agent's own, since what it holds in view is its work's
 // shape: a social agent's window is many rooms of short lines, a coding agent's a few long
 // tool results.
 //

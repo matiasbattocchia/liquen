@@ -8,10 +8,10 @@
  * Two halves:
  *   (a) `renderSystem`   — the cacheable prefix: always-doc bodies inlined + a pull-index
  *       of the lazy ones.
- *   (b) `renderMessages` — the volatile tail: the session's own room bare, the world
- *       grouped; no turns anywhere —
- *       the closed/trailing boundary and the API-faithful weld are DERIVED from the window's
- *       shape (§5 "Trailing vs closed"), never tracked by nu.
+ *   (b) `renderMessages` — the conversation: the session's own room bare, the world
+ *       grouped, every step welded API-faithfully as its request held it, so each request
+ *       is the one before plus new rows. Turns and the weld are DERIVED from the window's
+ *       shape (§5), never tracked by nu.
  */
 
 import { SENDER_EMAIL, senderEmail, senderSaved } from "./sender.ts";
@@ -244,7 +244,7 @@ function renderIndex(pointers: DocEntry[], on: Env["docs"] = "files"): string {
 const MEDIA_BUDGET = 12 * 1024 * 1024;
 
 export interface RenderInput {
-  events: Event[]; // the log window — render derives what's closed vs trailing itself
+  events: Event[]; // the log window — render derives its turns and steps itself
   docs: DocEntry[];
   session: Session; // whose output is whose, and which conversation is the session's own
   env?: Env; // the prefix's closing section — who the agent is, and the company it keeps
@@ -253,19 +253,18 @@ export interface RenderInput {
    *  Unset ⇒ the deployment's own zone. Stored `ts` is UTC either way (§3). */
   zone?: string;
   /** Volatile environment lines (cwd · git · background jobs) composed by xi from the exec
-   *  plane — joined into the trailing anchor block (§5). Deployment-specific: empty on edge
-   *  (no persistent exec env). */
+   *  plane — joined into the request's anchor (§5). Deployment-specific: empty on edge (no
+   *  persistent exec env). */
   ambient?: string[];
   /** Text that closes the request where the anchor goes — the checkpoint's instruction
    *  (§5): the checkpoint reads the window exactly as the next think would, so its
    *  request is the think's up to the last block before this one. */
   tail?: string;
   /** The bytes behind the attachments this render inlines, by uri — the blocks for the
-   *  uris `wantedMedia` names, fetched by xi through the media port (§5). Only
-   *  TRAILING-region messages inline: the model sees the picture while it's current, the
-   *  kind marker (`<image/>`) once it's history (the tool-pair collapse pattern; the path
-   *  is the durable re-viewable handle). A uri the table lacks keeps its marker. Absent ⇒
-   *  markers only. */
+   *  uris `wantedMedia` names, fetched by xi through the media port (§5). A picture stays
+   *  inlined until the checkpoint, beside its kind marker (`<image/>`), whose path is the
+   *  durable re-viewable handle. A uri the table lacks keeps its marker. Absent ⇒ markers
+   *  only. */
   media?: ReadonlyMap<string, MediaBlock>;
   /** What xi read below the checkpoint's floor for `<before>` (§5). Absent ⇒ none. */
   before?: BeforePool;
@@ -321,7 +320,7 @@ export function closingBoundary(events: Event[], session: Session): number {
 /** Non-self messages positioned at or before `boundary` that the boundary step never
  *  CONSUMED (per its `extra.consumed` horizon) — the race window: a message landing between
  *  the window-read and the closing's publish sits before the closing in the log yet is
- *  unprocessed INPUT, not history. Shared with compaction (never checkpoint these away). */
+ *  unprocessed INPUT, not history. Compaction reads it: never checkpoint these away. */
 export function deferredInput(
   events: Event[],
   session: SessionRef,
@@ -376,7 +375,10 @@ function byEventTime(
   const elisions: Elisions = { earlier: new Map(), rest: new Map(), before: new Map() };
   // the rooms a run already showed: a room's `<before>` is its first appearance's alone
   const seen = new Set<string>();
-  const member = (e: Event) => e.type === "message" && !ownVoice(e, session);
+  // a world line is any message in a world room — the agent's own send rows too — and
+  // the principal's in the session's: everything but the agent's own words there
+  const member = (e: Event) =>
+    e.type === "message" && !(ownVoice(e, session) && e.envelope.conversation.address === here);
   const transparent = (e: Event) =>
     e.type === "permission_request" || e.type === "permission_response";
   for (let i = 0; i < out.length; i++) {
@@ -436,6 +438,29 @@ export function worldCapped(events: Event[], session: Session, compactAt: number
  *  of `compactAt`, `keepRecent` and the WUM cap alike, all order-of-magnitude knobs. */
 export const estTokens = (events: Event[]): number =>
   Math.ceil(JSON.stringify(events, (k, v) => k === "extra" ? undefined : v).length / 4);
+
+/** What an inlined image weighs to the model, est. tokens: the API resizes it to about a
+ *  megapixel, ~1,600 tokens at most… */
+export const IMAGE_TOKENS = 1600;
+/** …and a PDF, read as its text and its pages' images, guessed from its size. */
+export const PDF_TOKENS_PER_KB = 30;
+
+/** What the attachments render inlines weigh, est. tokens (§5): they stay until the
+ *  checkpoint like the rows, so the checkpoint counts them beside the rows, and a window
+ *  heavy with pictures reaches `compactAt` sooner. The agent's own are never re-shown. */
+export function mediaTokens(events: Event[], session: SessionRef): number {
+  let n = 0;
+  for (const e of events) {
+    if (e.type !== "tool_result" && (e.type !== "message" || ownVoice(e, session))) continue;
+    for (const p of filesOf(e)) {
+      if (!inlineable(p.file.mime_type)) continue;
+      n += p.file.mime_type === "application/pdf"
+        ? Math.ceil(((p.file.size ?? 0) / 1024) * PDF_TOKENS_PER_KB)
+        : IMAGE_TOKENS;
+    }
+  }
+  return n;
+}
 
 /** What a cap left out, addressed to the events that survived it. `earlier` hangs on the
  *  first kept message of a conversation ("what came before this one"); `rest` on the first
@@ -680,15 +705,15 @@ export function silenced(event: Event): boolean {
  *
  * `SILENCE` is the answer that closes the turn without speaking. The event is logged
  * verbatim (the log stays honest about what the model said, and the horizon hangs off it
- * exactly as before), and everything downstream treats it as bodiless: the mirror carries
- * nothing to any surface, and render draws nothing — so tomorrow's window holds no record
- * of the times we had nothing to say.
+ * exactly as before), and nothing crosses: the mirror carries nothing to any surface. The
+ * window draws it as it was said — a response like any other, which the next request
+ * replays — so every turn ends on an assistant message.
  */
 export const SILENCE = "<|SILENCE|>";
 
 /** The model said nothing (`SILENCE`). NOT `silenced`: a silence note stays in the window
- *  READ — it is ours, it closes the turn, and the horizon is stamped on it. It is only the
- *  BODY that goes nowhere. */
+ *  READ — it is ours, it closes the turn, and the horizon is stamped on it. Its body crosses
+ *  to no surface. */
 export function silent(event: Event): boolean {
   return event.extra?.silence === true;
 }
@@ -719,31 +744,99 @@ export function reactionOf(e: MessageEvent): string | undefined {
 }
 const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 
-/** The window's regions (§2 unrolled): render derives everything from the window's shape.
- *  Everything the boundary step CONSUMED is CLOSED (collapsed); after it — including
- *  horizon-deferred messages the step never saw — the TRAILING chain. `events` is the
- *  visible window in event-time order with its elisions; `boundary` indexes the closing
- *  step in it; `deferred` travels by identity. */
+/** The window laid out (§5): the visible rows, each world line where its turn reads it
+ *  (`afterTurns`), then every run in event time and capped, with its elisions. */
 function regions(window: Event[], session: Session, compactAt: number, pool?: BeforePool) {
-  const me = session;
   const here = session.conversation; // the session's own room — everything else is world
   const visible = applySummary(window.filter((e) => !silenced(e)));
-  // the horizon is a LOG position (§5): what the boundary step consumed is what its read
-  // returned, in append order — so the unconsumed set is taken here, before event time
-  // reorders the runs, and travels by identity
-  const deferred = deferredInput(visible, me, closingBoundary(visible, session));
   // a room's past below the floor, as of the floor's moment: the checkpoint's own
   const floor = visible[0]?.type === "summary" ? visible[0] : undefined;
-  const past = pool && floor ? pastOf(pool, floor.ts, me) : undefined;
-  const { events, elisions } = byEventTime(visible, me, here, compactAt, past);
-  const boundary = closingBoundary(events, session);
-  const trailing = [...deferred, ...events.slice(boundary + 1)];
-  return { deferred, events, elisions, boundary, trailing };
+  const past = pool && floor ? pastOf(pool, floor.ts, session) : undefined;
+  return byEventTime(afterTurns(visible, session), session, here, compactAt, past);
 }
 
-/** The request-level media budget (§5): which trailing attachments inline, NEWEST first — a
- *  burst of images can't stack base64 past the API's request cap; older ones keep their
- *  markers (the path is re-viewable). Sized on the KNOWN raw size: no bytes are read here.
+/**
+ * A turn reads the world once (§5): its opener holds what its first step read, and only
+ * the principal steers it between steps. So a world line that lands while a turn is open —
+ * past what its first step read, before the turn ends — renders after that end, in the next
+ * turn's WUM, and nowhere while the turn is still open. A send's own row (`ref_id`, its
+ * call) renders after the end of the turn that reads its result, since the call already
+ * shows its words: an ungated send's turn is its call's, a gated one's is the turn its
+ * outcome opens. Both are decided on the log's own order, so a line never moves once drawn.
+ */
+function afterTurns(events: Event[], session: Session): Event[] {
+  const here = session.conversation;
+  const steps = new Set<string>();
+  const tools = new Set<string>();
+  const horizon = new Map<string, string>(); // step → the last row its request read
+  for (const e of events) {
+    const step = stepOf(e, session);
+    if (step === undefined) continue;
+    steps.add(step);
+    if (e.type === "tool_use") tools.add(step);
+    const seen = e.extra?.consumed;
+    if (typeof seen === "string" && !horizon.has(step)) horizon.set(step, seen);
+  }
+  // A turn ends at its closing, at the principal's cut, or at an error that is no
+  // continuation (a cut at the output ceiling, the server's pacing, go on).
+  const ends = (e: Event) =>
+    (e.type === "message" && isSelf(e, session) && e.envelope.conversation.address === here &&
+      !tools.has(e.payload!.turn_id as string)) ||
+    e.type === "control" ||
+    (e.type === "error" && !["max_tokens", "pause_turn"].includes(e.payload?.stop_reason ?? ""));
+  const turns: { from: string; to?: Event }[] = [];
+  let open: { from: string } | undefined;
+  for (const e of events) {
+    const step = stepOf(e, session);
+    if (step !== undefined && !open) open = { from: horizon.get(step) ?? e.id };
+    if (open && ends(e)) {
+      turns.push({ ...open, to: e });
+      open = undefined;
+    }
+  }
+  if (open) turns.push(open);
+  // the end each held row waits for (undefined: its turn is open — it renders nowhere yet)
+  const held = new Map<Event, Event | undefined>();
+  const results = new Map<string, Event>();
+  for (const e of events) {
+    if (e.type === "tool_result" && !e.payload.update) results.set(e.payload.ref_id, e);
+  }
+  for (const e of events) {
+    if (e.type !== "message" || e.envelope.conversation.address === here) continue;
+    const call = e.payload?.ref_id;
+    if (call !== undefined && isSelf(e, session)) {
+      const result = results.get(call);
+      const read = result && result.id > e.id ? result.id : e.id;
+      held.set(e, result && turns.find((t) => t.to && t.to.id > read)?.to);
+      continue;
+    }
+    const turn = turns.find((t) => e.id > t.from && (!t.to || e.id < t.to.id));
+    if (turn) held.set(e, turn.to);
+  }
+  if (held.size === 0) return events;
+  const out: Event[] = [];
+  for (const e of events) {
+    if (!held.has(e)) out.push(e);
+    for (const [line, end] of held) if (end === e) out.push(line);
+  }
+  return out;
+}
+
+/** The step a row of this session's own chain belongs to (`turnOf`), or undefined. A chain
+ *  is written in the session's own room; a line of ours elsewhere is a world line. */
+function stepOf(e: Event, session: Session): string | undefined {
+  const step = turnOf(e);
+  return step !== undefined && ownComplex(e, session) &&
+      e.envelope.conversation.address === session.conversation
+    ? step
+    : undefined;
+}
+
+/** The window's media budget (§5): which attachments inline, NEWEST first — a burst of
+ *  images can't stack base64 past the API's request cap; past it the oldest keep their
+ *  markers (the path is re-viewable). An inlined picture stays until the checkpoint like
+ *  the rest of the window; the one that falls back to its marker when the budget is spent
+ *  is a rewrite, accepted as rare. Sized on the KNOWN raw size: no bytes are read here.
  *  Pure — what xi asks the media port for, and what `render` inlines from the table it
  *  gets back. `compactAt` is the WUM cap the render will apply: a line it caps out asks
  *  for nothing. */
@@ -754,7 +847,7 @@ export function wantedMedia(
 ): string[] {
   const wanted: string[] = [];
   let budget = MEDIA_BUDGET;
-  for (const e of [...regions(window, session, compactAt).trailing].reverse()) {
+  for (const e of [...regions(window, session, compactAt).events].reverse()) {
     // world and own-room attachments, and tool-result attachments (the model asked to see those)
     if (e.type !== "message" && e.type !== "tool_result") continue;
     if (e.type === "message" && isSelf(e, session)) continue;
@@ -808,15 +901,11 @@ function renderMessages(
   const who: Roster = roster ?? { names: {}, principals: [session.agentId] };
   const accounts = connections ?? {};
   const here = session.conversation; // the session's own room — everything else is world
-  const { deferred, events, elisions, boundary, trailing } = regions(
-    window,
-    session,
-    compactAt,
-    pool,
-  );
+  const { events, elisions } = regions(window, session, compactAt, pool);
   // room names from the WHOLE window, silenced rows included — a name is a fact about the
-  // room, and the row that carried it need not be one the model reads
-  const names = roomNames(window);
+  // room, and the row that carried it need not be one the model reads. A line wears the
+  // name its room had at or before it, so a rename later never redraws it
+  const names = roomNamesAt(window);
   const out: MessageParam[] = [];
 
   // ref resolution (§5): the WHOLE window, silenced rows included — a delete or a reply often
@@ -866,8 +955,8 @@ function renderMessages(
     principalEl(e, who, zone, e.payload?.ref_id ? byId.get(e.payload.ref_id) : undefined);
   let cur: { role: Role; content: ContentBlockParam[] } | null = null;
 
-  // a trailing message's inlineable attachments → real API blocks. Local bytes become
-  // base64 (budget-gated below); external links become url-source blocks — the API
+  // a message's inlineable attachments → real API blocks. Local bytes become base64
+  // (budget-gated below); external links become url-source blocks — the API
   // fetches them itself, no broker download, no budget spent.
   const mediaBlocks = (e: Event): ContentBlockParam[] => {
     const blocks: ContentBlockParam[] = [];
@@ -911,6 +1000,12 @@ function renderMessages(
   const emit = (role: Role, ...blocks: ContentBlockParam[]) => {
     if (cur && cur.role !== role) flush();
     if (!cur) cur = { role, content: [] };
+    // the API takes `mid_conv_system` only last in its message: an anchor that more user
+    // content follows (its step drew nothing of its own, an error alone) reads as text
+    const last = cur.content.at(-1);
+    if (last?.type === "mid_conv_system") {
+      cur.content[cur.content.length - 1] = { type: "text", text: last.content[0].text };
+    }
     cur.content.push(...blocks);
   };
 
@@ -935,16 +1030,12 @@ function renderMessages(
     if (body.trim().length > 0) place("assistant", { type: "text", text: body });
   };
 
-  /** Set a cache breakpoint on a block. It is metadata, not content: the cached prefix is
-   *  the blocks themselves, so moving the mark forward never invalidates what it covered. */
-  const mark = (b: ContentBlockParam | undefined, ttl?: "1h") => {
-    if (!b || b.type === "mid_conv_system") return;
-    const at = b as { cache_control?: { type: "ephemeral"; ttl?: "1h" } };
-    // a block already marked for the hour keeps it: the shorter mark names the same prefix
-    if (at.cache_control?.ttl === "1h" && !ttl) return;
-    at.cache_control = { type: "ephemeral", ...(ttl ? { ttl } : {}) };
+  /** Set an hour's cache breakpoint on a block. It is metadata, not content: the cached
+   *  prefix is the blocks themselves, so moving the mark forward never invalidates what it
+   *  covered. */
+  const mark = (b: ContentBlockParam | undefined) => {
+    if (b) (b as { cache_control?: object }).cache_control = { type: "ephemeral", ttl: "1h" };
   };
-  const lastBlock = () => (cur as { content: ContentBlockParam[] } | null)?.content.at(-1);
   const world = (e: MessageEvent) => {
     // what the WUM caps left out, said where it was cut — the count is the useful part:
     // it tells the agent whether `search` is worth a call before it answers
@@ -972,7 +1063,9 @@ function renderMessages(
     let run = cluster.convs.at(-1);
     // a run is one conversation: a thread's replies are its lines, tied to their root by `re`
     if (!run || run.conv.address !== e.envelope.conversation.address) {
-      const opened: ConvRun = { conv: namedRoom(e, names), lines: [] };
+      const name = e.envelope.conversation.name ?? names.get(e.id);
+      const conv = name ? { ...e.envelope.conversation, name } : e.envelope.conversation;
+      const opened: ConvRun = { conv, lines: [] };
       run = opened;
       cluster.convs.push(run);
       const past = elisions.before.get(e) ?? [];
@@ -981,7 +1074,9 @@ function renderMessages(
       const earlier = elisions.earlier.get(e);
       if (earlier) run.lines.push(`… ${earlier} earlier, not shown`);
     }
-    run.lines.push(msgLine(e, me, who, zone, { ref: refOf(e) }));
+    // no delivery state: a failure or a withdrawal lands late, and the line is drawn once
+    // (the sending session hears of both by update; a search page keeps the marks)
+    run.lines.push(msgLine(e, me, who, zone, { ref: refOf(e), marks: false }));
     pullFor(run, e);
   };
 
@@ -993,99 +1088,37 @@ function renderMessages(
   // backwards printed nothing. Each `<msg>` now carries its own absolute stamp instead:
   // one fact per line, no cross-message state to get wrong, clusters intact.
 
-  // Trailing weld sets — pairing is per *use* (a result's `ref_id` = its tool_use id), so
-  // parallel tools weld order-independently and a half-filled barrier never leaves an
-  // unpaired block for the API to reject. The trailing chain is welded API-faithfully.
+  // Weld sets — pairing is per *use* (a result's `ref_id` = its tool_use id), so parallel
+  // tools weld order-independently and a half-filled barrier never leaves an unpaired block
+  // for the API to reject. The whole window is welded API-faithfully, as each step's
+  // request held it: every request is the one before plus new rows (§5).
   const useById = new Map(
-    trailing.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => [u.id, u]),
+    events.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => [u.id, u]),
   );
-  const usePresent = new Set(useById.keys());
   // a LATE result never welds (§9): its `tool_use` was answered already, so the pair is
   // spent — a second `tool_result` block against the same id is not a thing the API has.
   // It renders as harness narration instead.
   const resultRefs = new Set(
-    trailing.filter((e): e is ToolResultEvent => e.type === "tool_result" && !isLate(e))
+    events.filter((e): e is ToolResultEvent => e.type === "tool_result" && !isLate(e))
       .map((r) => r.payload.ref_id),
   );
-  const welded = new Set([...usePresent].filter((id) => resultRefs.has(id)));
-  const weldedTurns = new Set(
-    trailing.filter((e): e is ToolUseEvent => e.type === "tool_use" && welded.has(e.id))
-      .map((u) => u.payload.turn_id),
+  const welded = new Set([...useById.keys()].filter((id) => resultRefs.has(id)));
+  // a step still waiting on a result draws nothing yet: its call is being made
+  const unanswered = new Set(
+    [...useById.values()].filter((u) => !welded.has(u.id)).map((u) => u.payload.turn_id),
   );
+  // A thinking block's signature binds everything before it. The checkpoint replaced what
+  // came before the turns it kept, so their thinking is bound to a prefix that is gone: it
+  // goes, and their tool pairs, which carry no signature, stay.
+  const checkpoint = events[0]?.type === "summary" ? events[0] : undefined;
+  const signed = (e: Event) => !checkpoint || e.id > checkpoint.id;
 
   // the request-level media budget (`wantedMedia`): the table may hold more, the budget
   // decides what inlines
   const inlineBudget = new Set(wantedMedia(window, session, compactAt));
 
-  // CLOSED — collapse: messages survive; errors stay visible as system blocks (§2);
-  // thinking and ALL tool traffic drop (§5) — pairs, and the late results told after them:
-  // once the turn that read them has closed, they are noise like the rest.
-  const collapse = (e: Event) => {
-    if (deferred.has(e)) return; // unconsumed input — renders in the trailing region
-    if (e.type === "summary") {
-      return place("user", { type: "text", text: checkpointEl(e, window) });
-    }
-    if (e.type === "error") {
-      return place("user", { type: "text", text: systemEl("error", errorTextOf(e)) });
-    }
-    if (e.type === "control") {
-      return place("user", { type: "text", text: systemEl("control", CANCELLED) });
-    }
-    if (e.type === "alarm") return place("user", { type: "text", text: alarmLine(e) });
-    if (e.type === "permission_response") {
-      if (e.envelope.conversation.address === here) {
-        place("user", { type: "text", text: permissionEl(e, who, zone) });
-      }
-      return;
-    }
-    if (e.type !== "message") return;
-    if (silent(e)) return; // said nothing — it closed the turn, it draws no block
-    if (e.envelope.conversation.address === here) {
-      if (isSelf(e, me)) {
-        placeOwn(bodyOf(e, zone)); // bare: the agent's own voice
-      } else {
-        place("user", { type: "text", text: principalLine(e) });
-      }
-    } else {
-      world(e);
-    }
-  };
-  // The cache breakpoints (§5): the closed region is the stable prefix — collapsed once and
-  // then byte-identical on every later turn, since the boundary only ever moves FORWARD and
-  // all volatility (now, cwd, jobs, inlined media) lives after it. Marking it makes the whole
-  // history a cache READ (0.1x input) with only the turn's delta written, which is what the
-  // tool loop needs: every tool round-trip re-sends this same prefix seconds apart.
-  // The previous closing's block wears its mark too: it is the prefix the turn that just
-  // closed wrote its entry under, and the mark names that entry outright, however many
-  // blocks the turn collapses into — the first request over the new boundary, and the
-  // checkpoint over the same window, read it back and write only the delta.
-  // The cluster must close at each — a `<conv>` element spanning a boundary would absorb
-  // trailing messages and rewrite the prefix's last block on every turn.
-  // The hour TTL: this prefix survives as long as the window's anchor does (xi), which is
-  // far longer than a five-minute idle gap — and it is the expensive block, so a hit that
-  // spans the gaps between an agent's wakes is worth the 2x write.
-  const prior = closingBoundary(events.slice(0, boundary), session);
-  events.slice(0, boundary + 1).forEach((e, i) => {
-    collapse(e);
-    if (i === prior) {
-      closeCluster();
-      mark(lastBlock(), "1h");
-    }
-  });
-  closeCluster();
-  mark(lastBlock(), "1h");
-
-  // A step's anchor, where its request carried it (nu records it on the step): a thinking
-  // block's signature binds everything the request held before it, so while a turn's
-  // chain replays its thinking, every earlier step's anchor stands where that step read it.
-  const anchors = new Map<string, string>();
-  for (const e of trailing) {
-    const turn = turnOf(e);
-    const read = e.extra?.anchor;
-    if (turn !== undefined && weldedTurns.has(turn) && typeof read === "string") {
-      anchors.set(turn, read);
-    }
-  }
+  // the anchor as the model read it: what moved since the anchor before it (§5)
+  let anchored: string | undefined;
   const placeAnchor = (text: string) => {
     closeCluster();
     // the API takes `mid_conv_system` only after other content in a user turn; a turn that
@@ -1096,17 +1129,14 @@ function renderMessages(
     } else emit("user", { type: "text", text });
   };
 
-  // TRAILING — weld faithfully. `weldOrder` makes each group contiguous (uses, then results)
-  // and floats intervening events after it, so a tool_result is always FIRST in its user
+  // Weld faithfully. `weldOrder` makes each step contiguous (its uses, then its results)
+  // and floats what landed in flight after it, so a tool_result is always FIRST in its user
   // message (openbsp's sortToolMessages rule); the emit builder handles role alternation.
-  for (const e of weldOrder(trailing, weldedTurns)) {
-    const turn = turnOf(e);
-    const read = turn === undefined ? undefined : anchors.get(turn);
-    if (read !== undefined) {
-      placeAnchor(read);
-      anchors.delete(turn!);
-    }
-    if (e.type === "summary") { // boundary may be -1 — the leading summary lands here
+  for (const e of weldOrder(events)) {
+    if (e.type === "anchor") {
+      placeAnchor(anchorDelta(anchored, e.parts[0].text));
+      anchored = e.parts[0].text;
+    } else if (e.type === "summary") {
       place("user", { type: "text", text: checkpointEl(e, window) });
     } else if (e.type === "error") {
       place("user", { type: "text", text: systemEl("error", errorTextOf(e)) });
@@ -1119,8 +1149,8 @@ function renderMessages(
       if (e.envelope.conversation.address === here) {
         place("user", { type: "text", text: permissionEl(e, who, zone) });
       }
-    } else if (e.type === "thinking" && weldedTurns.has(e.payload.turn_id)) {
-      place("assistant", thinkingBlock(e));
+    } else if (e.type === "thinking") {
+      if (signed(e) && !unanswered.has(e.payload.turn_id)) place("assistant", thinkingBlock(e));
     } else if (e.type === "tool_use" && welded.has(e.id)) place("assistant", toolUseBlock(e));
     else if (e.type === "tool_result" && isLate(e)) {
       // a call's outcome after its answer (§9): the principal ruled and the harness ran
@@ -1130,80 +1160,126 @@ function renderMessages(
     } else if (e.type === "tool_result" && welded.has(e.payload.ref_id)) {
       place("user", toolResultBlock(e, useById.get(e.payload.ref_id)!, mediaBlocks(e)));
     } else if (e.type === "message") {
-      // a directed send dispatched by a welded tool_use is already in the block — skip it
-      if (e.payload?.ref_id && welded.has(e.payload.ref_id)) continue;
-      if (silent(e)) continue; // said nothing — here too, so the last block stays the world's
       if (isSelf(e, me) && e.envelope.conversation.address === here) {
-        placeOwn(bodyOf(e, zone)); // mid-chain assistant text
+        // the agent's own words, a silent closing's included: it was a response like any
+        // other, and the next request replays it (an empty one said the word)
+        placeOwn(silent(e) && !bodyOf(e, zone).trim() ? SILENCE : bodyOf(e, zone));
       } else if (e.envelope.conversation.address === here) {
         place("user", { type: "text", text: principalLine(e) });
       } else {
         world(e);
       }
-      // TRAILING media (§5): after the marker, the picture itself — a real base64
-      // image/document block in a user turn (which also closes any open cluster). The
-      // agent's own attachments aren't re-shown; the closed region keeps markers only.
+      // media (§5): after the marker, the picture itself — a real base64 image/document
+      // block in a user turn (which also closes any open cluster), kept until the
+      // checkpoint like the rest. The agent's own attachments aren't re-shown.
       if (!isSelf(e, me)) {
         const blocks = mediaBlocks(e);
         if (blocks.length) place("user", ...blocks);
       }
     }
-    // thinking/uses of incomplete groups, orphan results, other types: skipped defensively
+    // uses of a step still waiting on a result, orphan results, other types: skipped
   }
-
-  // The within-turn breakpoint: while a turn runs there is no closing yet, so its whole tool
-  // chain is TRAILING — and it only ever grows (each request appends the last use/result
-  // pair). Marking here lets the next round-trip read back everything it already paid for;
-  // without it a 19-call turn re-sends its own accumulated tool output 19 times. Across
-  // turns the chain collapses and this entry dies — the boundary mark above is the durable
-  // one, and this one keeps the default five minutes, which outlives any tool chain. A miss
-  // (a message landing mid-turn reorders the tail) costs only a normal write.
   closeCluster();
-  mark(lastBlock());
 
-  // the trailing anchor: `now:` + the volatile environment lines (cwd · git · bg jobs),
-  // ONE block after everything the prefix holds (§5) — or the caller's tail in its place
+  // The cache breakpoints (§5), every one an hour: the request only ever grows, so the
+  // last request's tail is what this one reads back, and this one's is what the next
+  // reads — often more than five minutes on, after a wake. The previous request ended
+  // where the latest step began: the block before the last assistant message.
+  const all = cur ? [...out, cur as MessageParam] : out;
+  const previous = all.findLastIndex((m) => m.role === "assistant");
+  if (previous > 0) mark(markable(all[previous - 1].content as ContentBlockParam[]));
+  if (cur) mark(markable((cur as { content: ContentBlockParam[] }).content));
+
+  // the request's own anchor, when the state moved since the last one the window holds —
+  // nu writes it with the step, where it renders from then on — or the caller's tail
   if (tail !== undefined) place("user", { type: "text", text: tail });
-  else placeAnchor(anchorText(now, zone, ambient));
+  else {
+    const text = anchorText(now, zone, ambient);
+    if (text !== anchored) placeAnchor(anchorDelta(anchored, text));
+  }
   flush();
   return out;
 }
 
-/** The anchor's text: `now:` and the live environment lines. nu records it on the step
- *  that read it, and render places it again from that record while the step is trailing. */
+/** The last block a cache mark can name: `mid_conv_system` and thinking take none. */
+function markable(blocks: ContentBlockParam[]): ContentBlockParam | undefined {
+  return blocks.findLast((b) =>
+    b.type !== "mid_conv_system" && b.type !== "thinking" && b.type !== "redacted_thinking"
+  );
+}
+
+/** The anchor's text: `now:` to the minute and the live environment lines (§5). */
 export function anchorText(now: string, zone?: string, ambient?: string[]): string {
   return [`now: ${nowStamp(now, zone)}`, ...(ambient ?? [])].join("\n");
 }
 
+/** An anchor's sections, by key: a header line (`now: …`, `background — 1 job:`) and the
+ *  `·` and `—` lines under it. */
+function sectionsOf(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  let key: string | undefined;
+  for (const line of text.split("\n")) {
+    if (key !== undefined && (line.startsWith("· ") || line.startsWith("— "))) {
+      out.set(key, `${out.get(key)}\n${line}`);
+    } else {
+      key = line.split(/:| — /)[0];
+      out.set(key, line);
+    }
+  }
+  return out;
+}
+
+/** What an anchor says after the one before it (§5): the sections that moved, and each
+ *  that emptied as `<key> — none`, or the last listing would stand. The first says all. */
+export function anchorDelta(prev: string | undefined, next: string): string {
+  if (prev === undefined) return next;
+  const was = sectionsOf(prev);
+  const is = sectionsOf(next);
+  return [
+    ...[...is].filter(([k, s]) => was.get(k) !== s).map(([, s]) => s),
+    ...[...was.keys()].filter((k) => !is.has(k)).map((k) => `${k} — none`),
+  ].join("\n");
+}
+
+/** Whether a step's request ends on an anchor of its own: the state's text differs from
+ *  the last anchor the window holds. nu writes one exactly when render draws it. */
+export function anchorDue(window: Event[], text: string): boolean {
+  const last = applySummary(window).findLast((e) => e.type === "anchor");
+  return last?.type !== "anchor" || last.parts[0].text !== text;
+}
+
 /**
- * Reorder the trailing chain so each welded group is contiguous at the position of its first
- * event — non-results in log order, then its results — and anything that interleaved (a world
- * message landing between a use and its result) floats to after the group.
+ * Order the window so each step is contiguous at the position of its first event — its
+ * non-results in log order, then its results — and anything that interleaved (a message
+ * landing between a use and its result) floats to after it.
  *
  * And anything that landed while the step's call was in flight floats after it too: such an
  * event has a log id older than the step's own (those are appended when the call returns)
  * yet was not in the request that produced the step, and the step's thinking is signed over
  * what that request held. nu records the request's horizon on the step (`extra.consumed`,
- * its first event, beside the anchor); an event newer than the horizon and older than the
- * step is placed after the step's group — the first request that could carry it, and where
- * every later request of the turn keeps it (§5).
+ * its first event); an event newer than the horizon and older than the step is placed after
+ * the step — the first request that could carry it, and where every later request keeps it
+ * (§5). The step's own anchor is no such event: nu writes it with the step, as the last
+ * thing its request held.
  */
-function weldOrder(trailing: Event[], weldedTurns: Set<string>): Event[] {
+function weldOrder(events: Event[]): Event[] {
   const groups = new Map<string, Event[]>();
   const sequence: (Event | { group: string })[] = [];
-  // per welded step: the horizon its request read, and its own first id
+  // per step: the horizon its request read, and its own first id
   const horizons = new Map<string, { seen: string; first: string }>();
-  for (const e of trailing) {
+  for (const e of events) {
     const turn = turnOf(e);
-    if (turn !== undefined && weldedTurns.has(turn)) {
+    if (turn !== undefined) {
       let g = groups.get(turn);
       if (!g) {
         g = [];
         groups.set(turn, g);
         sequence.push({ group: turn }); // the group renders where it first appeared
-        const seen = e.extra?.consumed;
-        if (typeof seen === "string") horizons.set(turn, { seen, first: e.id });
+        horizons.set(turn, { seen: "", first: e.id });
       }
+      const seen = e.extra?.consumed;
+      const h = horizons.get(turn)!;
+      if (typeof seen === "string" && !h.seen) h.seen = seen;
       g.push(e);
     } else {
       sequence.push(e);
@@ -1212,8 +1288,9 @@ function weldOrder(trailing: Event[], weldedTurns: Set<string>): Event[] {
   // what landed in flight, by the step it must follow
   const late = new Map<string, Event[]>();
   const inFlight = (e: Event): string | undefined => {
+    if (e.type === "anchor") return undefined;
     for (const [turn, h] of horizons) {
-      if (e.id > h.seen && e.id < h.first) return turn;
+      if (h.seen && e.id > h.seen && e.id < h.first) return turn;
     }
     return undefined;
   };
@@ -1237,11 +1314,11 @@ function weldOrder(trailing: Event[], weldedTurns: Set<string>): Event[] {
   return out;
 }
 
-/** The step a trailing event belongs to: `payload.turn_id`, on every emission that carries
- *  one. Directed sends (ref_id→tool_use) stay outside — they're skipped anyway — and so
- *  does a late result: it names the step of the call it tells about, but it was written
- *  after that step's request, which its thinking is signed over, so it stands where it
- *  landed. */
+/** The step an event belongs to: `payload.turn_id`, on every emission that carries one.
+ *  A send's row (ref_id→tool_use) stays outside — it is a world line, drawn after its turn
+ *  (`afterTurns`) — and so does a late result: it names the step of the call it tells
+ *  about, but it was written after that step's request, which its thinking is signed over,
+ *  so it stands where it landed. */
 function turnOf(e: Event): string | undefined {
   if (e.type === "tool_result" && isLate(e)) return undefined;
   if (e.type === "thinking" || e.type === "tool_use" || e.type === "tool_result") {
@@ -1352,6 +1429,23 @@ export function roomNames(events: Event[]): Map<string, string> {
     if (conv.name) names.set(`${e.envelope.service}\u0000${conv.address}`, conv.name);
   }
   return names;
+}
+
+/** Each message's room name as of that row (§5): the latest the room was named at or
+ *  before it, in the log's order. What `roomNames` reads off the whole window, held to the
+ *  row's moment, so a line once drawn never takes a later name. */
+export function roomNamesAt(events: Event[]): Map<EventId, string> {
+  const latest = new Map<string, string>();
+  const out = new Map<EventId, string>();
+  for (const e of events) {
+    if (e.type !== "message") continue;
+    const conv = e.envelope.conversation;
+    const key = `${e.envelope.service}\u0000${conv.address}`;
+    if (conv.name) latest.set(key, conv.name);
+    const name = latest.get(key);
+    if (name !== undefined) out.set(e.id, name);
+  }
+  return out;
 }
 
 /** A conversation as the window names it: the row's own name, else the best one seen. */
@@ -1799,8 +1893,8 @@ function escAttr(s: string): string {
   return escText(s).replaceAll('"', "&quot;");
 }
 
-/** The API accepts `mid_conv_system` only as the TRAILING block(s) of a turn — so this is
- *  reserved for the `now:` anchor (always the last block before the model answers). */
+/** The API accepts `mid_conv_system` only as the TRAILING block(s) of a user message — so
+ *  this is reserved for the anchor, the last block of the request that read it. */
 function sys(text: string): Anthropic.MidConversationSystemBlockParam {
   return { type: "mid_conv_system", content: [{ type: "text", text }] };
 }
@@ -1890,7 +1984,7 @@ function toolResultBlock(
 /** A LATE tool outcome as one sentence (§9): `send(to: Vivian) → sent`. The call was
  *  rendered when the outcome was written — where the tool registry and the address book
  *  are — so this reads it off the event rather than re-deriving it from a `tool_use`
- *  that may already have collapsed. `→` carries what happened, `—` what didn't. Shared with
+ *  a checkpoint may have covered. `→` carries what happened, `—` what didn't. Shared with
  *  the mirror, so the model and the principal are told the same thing. */
 export function outcomeLine(e: ToolResultEvent, max = 0): string {
   const { output, is_error } = e.parts[0].data;

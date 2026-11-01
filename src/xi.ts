@@ -97,7 +97,6 @@ import {
   BEFORE_READ,
   type BeforePool,
   bookEl,
-  closingBoundary,
   cutStands,
   GAP_READ,
   HANDLE,
@@ -527,7 +526,7 @@ export function relevant(config: AgentConfig, event: Event): boolean {
     // starts one; standing, it closes the turn it cut, and `decide` idles on it from the
     // window side (`cutStands`).
     default:
-      return false; // thinking · error · permission_request · control · delta · unknown
+      return false; // thinking · error · permission_request · control · delta · anchor · unknown
   }
 }
 
@@ -1187,13 +1186,21 @@ export async function xi(
     throw err;
   }
   try {
-    // a closing makes every tool result before it history — markers from here on (§5) —
-    // so the bytes their results pinned are shed in the same transaction
-    const closes = closingBoundary([...events, ...last as Event[]], session) >= events.length;
+    // a checkpoint takes what it covers out of every later request (§5), so the bytes the
+    // results it covers pinned are shed in the same transaction
+    const summary = (last as Event[]).find((e) => e.type === "summary");
     const landed = await ports.log.publishAndRelease(
       last,
       lock.lease(),
-      closes ? { shed: { agentId: session.agentId, sessionId: session.id } } : undefined,
+      summary?.type === "summary"
+        ? {
+          shed: {
+            agentId: session.agentId,
+            sessionId: session.id,
+            through: summary.payload.covers[1],
+          },
+        }
+        : undefined,
     );
     // the verdict the turn's own end implies, disclosed here: a closing message pokes the
     // next invocation, which discloses again, but a terminal error or a cancel wakes
@@ -1663,7 +1670,7 @@ async function act(
     outcome: Json | ExecOutcome,
     flags?: Partial<{ is_error: boolean; cancelled: boolean; refused: boolean }>,
     /** The call, rendered — set only on a DEFERRED outcome, which has to name what it is
-     *  reporting on: its `tool_use` has already collapsed out of the transcript (§5). */
+     *  reporting on: its `tool_use` was answered turns ago, and narration stands alone (§5). */
     call?: string,
     /** An exec tool's run (§9): its facts and its wall time, for `extra.exec`. */
     run?: { facts: ExecFacts; ms: number },

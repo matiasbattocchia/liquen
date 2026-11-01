@@ -3,6 +3,8 @@ import { openLog } from "./store/log.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
+  anchorDelta,
+  anchorDue,
   anchorText,
   type BeforePool,
   CANCELLED,
@@ -240,6 +242,8 @@ Deno.test("programs: the PATH directories under the org's folder, after the docs
 const SELF = { id: "a1", session_id: "s1" };
 /** The mind session (§4): whose voice, and which conversation is its own. */
 const SESSION = { id: "s1", agentId: "a1", conversation: "mind@a1" };
+/** The roster render falls back to: every name its username, the agent its own principal. */
+const ROSTER = { names: {}, principals: ["a1"] };
 
 function mindMsg(
   id: string,
@@ -349,21 +353,21 @@ const txt = (b: Anthropic.ContentBlockParam): string => b.type === "text" ? b.te
 Deno.test("renderMessages reproduces the clinic scenario (§5) from ONE flat window", () => {
   const t2 = "2026-07-16T14:02:00Z";
   const t11 = "2026-07-16T14:11:00Z";
-  // No history/live split — render derives the boundary (e08: a closing assistant message
-  // whose step T2 emitted no tool_use) and welds the trailing chain (T3) itself.
+  // Every step stays as its request held it: thinking, words, tool pairs. A send's own row
+  // waits for the end of the turn that read its result, and opens the next turn's WUM.
   const events: Event[] = [
     mindMsg("e01", t2, "¿Mariana confirmó el turno de mañana 10:00?", false),
-    thinkingE("e02", t2, "T1", "sin confirmación registrada", "s2"), // dropped (closed)
+    thinkingE("e02", t2, "T1", "sin confirmación registrada", "s2"),
     mindMsg("e03", t2, "Dale, le pregunto a Mariana y te confirmo.", true, "T1"), // mid-chain
-    toolUseE("e04", t2, "T1", "send", { text: "Hola" }), // dropped (closed)
+    toolUseE("e04", t2, "T1", "send", { text: "Hola" }),
     waMsg("e05", t2, "Hola Mariana! ¿Confirmás tu turno de mañana a las 10:00?", true, "e04"),
-    toolResultE("e06", t2, "T1", "sent", "e04"), // dropped (closed)
-    thinkingE("e07", t2, "T2", "enviado, nada más", "s7"), // dropped (closed)
-    mindMsg("e08", t2, "Listo, le escribí. Te aviso cuando conteste.", true, "T2"), // boundary
+    toolResultE("e06", t2, "T1", "sent", "e04"),
+    thinkingE("e07", t2, "T2", "enviado, nada más", "s7"),
+    mindMsg("e08", t2, "Listo, le escribí. Te aviso cuando conteste.", true, "T2"), // closing
     waMsg("e09", t11, "¡Sí! Ahí estaré 🙌", false),
     thinkingE("e10", t11, "T3", "Confirmó. Le agradezco y aviso a Ana.", "sig10"),
     toolUseE("e11", t11, "T3", "send", { text: "¡Perfecto, te espero! 🙌" }),
-    waMsg("e12", t11, "¡Perfecto, te espero! 🙌", true, "e11"), // skipped: in the welded block
+    waMsg("e12", t11, "¡Perfecto, te espero! 🙌", true, "e11"), // its turn is open: not yet
     toolResultE("e13", t11, "T3", "sent", "e11"),
   ];
 
@@ -393,39 +397,35 @@ Deno.test("renderMessages reproduces the clinic scenario (§5) from ONE flat win
     txt(c(0)[0]),
     '<principal name="Ana" at="16 Jul 14:02">¿Mariana confirmó el turno de mañana 10:00?</principal>',
   );
-  // (2) bare assistant say
-  assertEquals(txt(c(1)[0]), "Dale, le pregunto a Mariana y te confirmo.");
-  // (3) closed send → its world element: `self` and no name (the key is the whole fact),
-  // no →peer. The stamp is ABSOLUTE: with no separators, the line itself has to say when (§5)
-  assertEquals(
-    txt(c(2)[0]),
-    '<conn service="whatsapp" address="org">\n' +
-      '<conv name="Mariana" address="wa">\n' +
-      '<msg id="e05" self at="16 Jul 14:02">Hola Mariana! ¿Confirmás tu turno de mañana a las ' +
-      "10:00?</msg>\n</conv>\n</conn>",
-  );
-  // (4) bare assistant say
-  assertEquals(txt(c(3)[0]), "Listo, le escribí. Te aviso cuando conteste.");
-  // (5) the peer's reply in its element
+  // (2) the first step whole: its thinking, its words, its call
+  assertEquals((c(1)[0] as Anthropic.ThinkingBlockParam).signature, "s2");
+  assertEquals(txt(c(1)[1]), "Dale, le pregunto a Mariana y te confirmo.");
+  assertEquals((c(1)[2] as Anthropic.ToolUseBlockParam).id, "e04");
+  // (3) its result, linked to its use
+  assertEquals((c(2)[0] as Anthropic.ToolResultBlockParam).tool_use_id, "e04");
+  // (4) the closing, with its thinking
+  assertEquals((c(3)[0] as Anthropic.ThinkingBlockParam).signature, "s7");
+  assertEquals(txt(c(3)[1]), "Listo, le escribí. Te aviso cuando conteste.");
+  // (5) the next turn's WUM: the send as it went out, `self` and no name (the key is the
+  // whole fact), then the peer's reply. Each stamp is ABSOLUTE: the line says when (§5)
   assertEquals(
     txt(c(4)[0]),
     '<conn service="whatsapp" address="org">\n' +
       '<conv name="Mariana" address="wa">\n' +
+      '<msg id="e05" self at="16 Jul 14:02">Hola Mariana! ¿Confirmás tu turno de mañana a las ' +
+      "10:00?</msg>\n" +
       '<msg id="e09" external="Mariana" address="549" at="16 Jul 14:11">¡Sí! Ahí estaré 🙌</msg>\n' +
       "</conv>\n</conn>",
   );
-  // (6) live turn faithful: thinking + tool_use
+  // (6) the running turn: thinking + tool_use
   assertEquals(c(5)[0].type, "thinking");
   assertEquals((c(5)[0] as Anthropic.ThinkingBlockParam).signature, "sig10");
   assertEquals((c(5)[1] as Anthropic.ToolUseBlockParam).id, "e11");
   // (7) tool_result linked to its use + now-anchor last
   assertEquals((c(6)[0] as Anthropic.ToolResultBlockParam).tool_use_id, "e11");
   assertEquals(sysText(c(6)[1]), "now: Thursday 16 July, 2026 - 14:11");
-
-  // closed thinking + tool pairs are gone from the render
-  const dump = JSON.stringify(messages);
-  assert(!dump.includes("sin confirmación"), "closed thinking should drop");
-  assert(!dump.includes("enviado, nada más"), "closed thinking should drop");
+  // the running turn's send row waits for its turn to end
+  assert(!JSON.stringify(messages).includes('id=\\"e12\\"'));
 });
 
 Deno.test("parallel tools weld by cause — each result links to its own use, order-independent", () => {
@@ -463,7 +463,7 @@ Deno.test("parallel tools weld by cause — each result links to its own use, or
   assertEquals([...u.map((b) => b.tool_use_id)].sort(), ["u1", "u2"]); // both present & distinct
 });
 
-Deno.test("a world message landing between use and result floats AFTER the weld (openbsp rule)", () => {
+Deno.test("a world line landing mid-turn waits for the turn's end; the result leads its message", () => {
   const t = "2026-07-19T10:00:00Z";
   const events: Event[] = [
     mindMsg("h", t, "buscá turnos libres", false),
@@ -472,23 +472,22 @@ Deno.test("a world message landing between use and result floats AFTER the weld 
     waMsg("w", t, "hola! tienen turno?", false), // interleaves mid-execution
     toolResultE("r", t, "T", "3 hits", "u"),
   ];
-
-  const { messages } = render({
-    events,
-    docs: [],
-    session: SESSION,
-    zone: "UTC",
-    now: t,
-  });
+  const opts = { docs: [], session: SESSION, zone: "UTC", now: t };
+  const { messages } = render({ events, ...opts });
   const c = (i: number) => messages[i].content as Anthropic.ContentBlockParam[];
 
   assertEquals(messages.map((m) => m.role), ["user", "assistant", "user"]);
   assertEquals(c(1).map((b) => b.type), ["thinking", "tool_use"]);
-  // the user message MUST lead with the tool_result; the world message floats after it
+  // the user message MUST lead with the tool_result; the world line is not the turn's yet
   assertEquals(c(2)[0].type, "tool_result");
-  const texts = c(2).filter((b) => b.type === "text") as Anthropic.TextBlockParam[];
-  assertEquals(texts.length, 1);
-  assertEquals(texts[0].text.includes("tienen turno?"), true);
+  assert(!JSON.stringify(messages).includes("tienen turno?"));
+
+  // the turn closes: the line opens what comes after it
+  const closed = render({ events: [...events, mindMsg("z", t, "hay tres", true, "T2")], ...opts });
+  const roles = closed.messages.map((m) => m.role);
+  assertEquals(roles, ["user", "assistant", "user", "assistant", "user"]);
+  const after = closed.messages[4].content as Anthropic.ContentBlockParam[];
+  assertStringIncludes(txt(after[0]), "tienen turno?");
 });
 
 Deno.test("out-of-order inbound messages render in `ts` order, not append order (§3)", () => {
@@ -705,65 +704,51 @@ const prefixOf = (ms: Anthropic.MessageParam[], nth = 0) => {
   return bs.slice(0, at[nth] + 1).map(bare);
 };
 
-Deno.test("one cache breakpoint closes the collapsed region — the volatile anchor stays out", () => {
+Deno.test("every request is the last one plus new rows: its first mark is the last one's tail, each for the hour", () => {
   const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
-  const events: Event[] = [
+  const base = { docs: [] as DocEntry[], session: SESSION, zone: "UTC" };
+  const opening: Event[] = [
     mindMsg("e01", t(0), "uno", false),
-    mindMsg("e02", t(1), "dos", false),
-    mindMsg("e03", t(2), "listo", true, "T1"), // the closing — end of the closed region
+    mindMsg("e02", t(1), "listo", true, "T1"),
+    mindMsg("e03", t(2), "dos", false),
   ];
-  const { messages } = render({
-    events,
-    docs: [],
-    session: SESSION,
-    zone: "UTC",
-    now: t(3),
-  });
-  const marks = marked(messages);
-  assertEquals(marks.length, 1);
-  assertEquals(txt(marks[0]), "listo");
-  // the anchor (now/cwd/jobs) is volatile by design — it must fall AFTER the breakpoint
-  assertEquals(marked([messages.at(-1)!]).length, 0);
-});
+  const a = render({ ...base, events: opening, now: t(3) }).messages;
+  // the last request's tail (before the step it made) and this one's; the anchor out
+  assertEquals(marked(a).map(txt), [
+    '<principal name="Ana" at="20 Jul 10:00">uno</principal>',
+    '<principal name="Ana" at="20 Jul 10:02">dos</principal>',
+  ]);
+  for (const m of marked(a)) {
+    assertEquals((m as { cache_control?: unknown }).cache_control, {
+      type: "ephemeral",
+      ttl: "1h",
+    });
+  }
+  assertEquals(marked([a.at(-1)!]).length, 1); // "dos": the anchor beside it wears none
 
-Deno.test("the cached prefix survives the tool loop, and the boundary only moves forward", () => {
-  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
-  const closed: Event[] = [
-    mindMsg("e01", t(0), "uno", false),
-    mindMsg("e02", t(1), "dos", false),
-    mindMsg("e03", t(2), "listo", true, "T1"),
+  // a tool round-trip appends a step and its result: what `a` ended on is `b`'s first mark,
+  // so everything `a` paid for reads back
+  const step = [
+    toolUseE("u1", t(3), "T2", "bash", { command: "ls" }),
+    toolResultE("r1", t(3), "T2", "a.txt", "u1"),
   ];
-  const base = { docs: [] as DocEntry[], session: SESSION };
-  const one = render({ ...base, events: closed, zone: "UTC", now: t(3) }).messages;
+  const b = render({ ...base, events: [...opening, ...step], now: t(4) }).messages;
+  assertEquals(prefixOf(b, 0), prefixOf(a, 1));
+  assertEquals(marked(b)[1].type, "tool_result");
 
-  // a tool round-trip: trailing grows, `now` advances — the cached prefix must not move,
-  // or every call in a 19-tool turn re-pays the whole history
-  const two = render({
-    ...base,
-    events: [...closed, mindMsg("e04", t(4), "tres", false)],
-    zone: "UTC",
-    now: t(5),
-  })
-    .messages;
-  assertEquals(prefixOf(two), prefixOf(one));
-
-  // next turn closes: `tres` collapses into history and the breakpoint advances — but
-  // everything before the OLD mark is untouched, so the previous entry is still a hit
-  const three = render({
+  // the turn closes and the next opens: nothing before collapses, the history only grows
+  const c = render({
     ...base,
     events: [
-      ...closed,
-      mindMsg("e04", t(4), "tres", false),
-      mindMsg("e05", t(6), "vale", true, "T2"),
+      ...opening,
+      ...step,
+      mindMsg("e05", t(5), "vale", true, "T3"),
+      mindMsg("e06", t(6), "tres", false),
     ],
-    zone: "UTC",
     now: t(7),
   }).messages;
-  // the new boundary is marked, and the previous closing keeps its mark: the entry the
-  // last turn wrote is named outright, whatever the collapsed turn spans
-  assertEquals(marked(three).map(txt), ["listo", "vale"]);
-  assertEquals(blocksOf(three).map(bare).slice(0, prefixOf(one).length), prefixOf(one));
-  assertEquals(prefixOf(three), prefixOf(one));
+  assertEquals(prefixOf(c, 0), prefixOf(b, 1));
+  assertEquals(blocksOf(c).map(bare).slice(0, prefixOf(b, 1).length), prefixOf(b, 1));
 });
 
 Deno.test("the checkpoint's window is the next think's, closing on its instruction — the anchor out, the marks in place", () => {
@@ -785,57 +770,6 @@ Deno.test("the checkpoint's window is the next think's, closing on its instructi
   assertEquals(last, { type: "text", text: "WRITE THE CHECKPOINT" });
   assertEquals(JSON.stringify(check).includes("now: "), false);
   assertEquals(JSON.stringify(check).includes("cwd: /work"), false);
-});
-
-Deno.test("a mark for the hour is never shortened — the boundary block keeps it when nothing trails", () => {
-  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
-  const events: Event[] = [
-    mindMsg("e01", t(0), "uno", false),
-    mindMsg("e02", t(1), "listo", true, "T1"),
-  ];
-  const { messages } = render({ docs: [], session: SESSION, zone: "UTC", events, now: t(2) });
-  const [mark] = marked(messages);
-  assertEquals(txt(mark), "listo");
-  assertEquals((mark as { cache_control?: unknown }).cache_control, {
-    type: "ephemeral",
-    ttl: "1h",
-  });
-});
-
-Deno.test("mid-turn the tool chain gets its own breakpoint — the loop stops re-paying it", () => {
-  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
-  const base = { docs: [] as DocEntry[], session: SESSION };
-  // an open turn: a closing, then a tool chain with no closing after it
-  const history: Event[] = [
-    mindMsg("e01", t(0), "uno", false),
-    mindMsg("e02", t(1), "listo", true, "T1"), // the boundary
-    mindMsg("e03", t(2), "ahora esto", false),
-  ];
-  const chain: Event[] = [
-    toolUseE("u1", t(3), "T2", "bash", { command: "ls" }),
-    toolResultE("r1", t(3), "T2", "a.txt", "u1"),
-  ];
-  const one = render({ ...base, events: [...history, ...chain], zone: "UTC", now: t(4) }).messages;
-  const marks = marked(one);
-  assertEquals(marks.length, 2); // the collapsed boundary, and the live chain
-  assertEquals(txt(marks[0]), "listo");
-  assertEquals(marks[1].type, "tool_result"); // the last block before the anchor
-
-  // the next round-trip appends a pair — everything the previous request paid for is a
-  // prefix of this one, so it reads back rather than re-sending
-  const two = render({
-    ...base,
-    events: [
-      ...history,
-      ...chain,
-      toolUseE("u2", t(5), "T3", "bash", { command: "cat a.txt" }), // a NEW step: the loop
-      toolResultE("r2", t(5), "T3", "hola", "u2"), // re-enters, so the chain appends
-    ],
-    zone: "UTC",
-    now: t(6),
-  }).messages;
-  const paid = prefixOf(one, 1); // through the chain mark — the whole request bar the anchor
-  assertEquals(blocksOf(two).map(bare).slice(0, paid.length), paid);
 });
 
 /* ── the world as XML: clustering, escaping, delivery status (§5) ── */
@@ -1045,7 +979,7 @@ Deno.test("a principal's edit, deletion and reply in the room wear action and qu
   ]);
 });
 
-Deno.test("envelope.status failed renders on the line — the agent sees the delivery die", () => {
+Deno.test("a failed delivery: the window draws the line once and plain, a search page marks it", () => {
   const t = "2026-08-07T11:00:00Z";
   const events: Event[] = [
     worldMsg(
@@ -1065,17 +999,20 @@ Deno.test("envelope.status failed renders on the line — the agent sees the del
     now: t,
   });
   const dump = JSON.stringify(messages);
-  assertStringIncludes(
-    dump,
-    '<msg id=\\"e1\\" self at=\\"7 Aug 11:00\\" status=\\"failed\\">te paso el archivo</msg>',
-  );
+  // a failure lands late, and the line is drawn once: the sending session hears by update
+  assertStringIncludes(dump, '<msg id=\\"e1\\" self at=\\"7 Aug 11:00\\">te paso el archivo</msg>');
   // every non-null Conversation field is an attribute; the account's own facts sit once on
   // the `<conn>` around it
   assertStringIncludes(dump, '<conn service=\\"whatsapp\\" address=\\"org\\">\\n<conv ');
   assertStringIncludes(dump, '<conv kind=\\"direct\\" name=\\"Ana\\" address=\\"wa:ana\\">');
+  // a search page is written once, a snapshot of its moment: it keeps the mark
+  assertStringIncludes(
+    renderHits(events as MessageEvent[], SESSION, ROSTER, "UTC"),
+    'self at="7 Aug 2026 11:00" status="failed">te paso el archivo</msg>',
+  );
 });
 
-Deno.test("a failed delivery says why, in the dispatcher's words", () => {
+Deno.test("a failed delivery says why on a search page, in the dispatcher's words", () => {
   const t = "2026-08-07T11:00:00Z";
   const press = worldMsg("e2", t, { address: "wa:bot", kind: "direct" }, null, "Acepto", "failed");
   press.status = {
@@ -1084,14 +1021,13 @@ Deno.test("a failed delivery says why, in the dispatcher's words", () => {
       'DispatchError: "Acepto" is none of that message\'s options — answer with one of "Sí", "No"',
     error_code: 422,
   };
-  const { messages } = render({ events: [press], docs: [], session: SESSION, zone: "UTC", now: t });
   assertStringIncludes(
-    JSON.stringify(messages),
-    'status=\\"failed\\" error=\\"&quot;Acepto&quot; is none of that message',
+    renderHits([press], SESSION, ROSTER, "UTC"),
+    'status="failed" error="&quot;Acepto&quot; is none of that message',
   );
 });
 
-Deno.test("a send taken back renders withdrawn, even when a post already in flight failed after", () => {
+Deno.test("a send taken back reads withdrawn on a search page, even when a post in flight failed after", () => {
   const t = "2026-08-07T11:00:00Z";
   const taken = worldMsg(
     "e3",
@@ -1102,9 +1038,12 @@ Deno.test("a send taken back renders withdrawn, even when a post already in flig
     "failed",
   );
   taken.status = { state: "failed", withdrawn_at: t, error: "Error: connection refused" };
+  assertStringIncludes(
+    renderHits([taken], SESSION, ROSTER, "UTC"),
+    'self at="7 Aug 2026 11:00" status="withdrawn">llego en 5</msg>',
+  );
   const { messages } = render({ events: [taken], docs: [], session: SESSION, zone: "UTC", now: t });
-  const dump = JSON.stringify(messages);
-  assertStringIncludes(dump, 'self at=\\"7 Aug 11:00\\" status=\\"withdrawn\\">llego en 5</msg>');
+  assert(!JSON.stringify(messages).includes("withdrawn"));
 });
 
 Deno.test("ambient env lines join the trailing anchor block after now:", () => {
@@ -1131,92 +1070,111 @@ Deno.test("ambient env lines join the trailing anchor block after now:", () => {
   assertStringIncludes(text, "background — 1 job:\n· server — running 2m · pid 41");
 });
 
-Deno.test("a running turn's requests only append: each step's anchor stays where it was read", () => {
+/** An anchor row, as nu writes it with a step (§5). */
+const anchorE = (id: string, ts: string, text: string): Event => ({
+  id,
+  ts,
+  type: "anchor",
+  agent: SELF,
+  envelope: inbox,
+  parts: [{ type: "text", kind: "anchor", text }],
+});
+
+/** What nu does with a step: render its request, and write the anchor it ended on — as
+ *  `id` — when the state moved since the last the window holds. */
+const request = (events: Event[], now: string, id: string, ambient?: string[]) => {
+  const text = anchorText(now, "UTC", ambient);
+  return {
+    messages: render({ docs: [], session: SESSION, zone: "UTC", events, now, ambient }).messages,
+    wrote: anchorDue(events, text) ? [anchorE(id, now, text)] : [],
+  };
+};
+const strip = (ms: Anthropic.MessageParam[]) =>
+  ms.map((m) => ({ role: m.role, content: blocksOf([m]).map(bare) }));
+
+Deno.test("every request appends: an anchor stands where its step read it, and says what moved", () => {
   const t = (m: number) => `2026-07-21T10:0${m}:00Z`; // the anchor reads to the minute
-  const base = { docs: [] as DocEntry[], session: SESSION, zone: "UTC" };
-  // what nu does: render the step, then record the anchor that request carried on the
-  // step's first event
-  const step = (events: Event[], now: string, cwd: string) => ({
-    messages: render({ ...base, events, now, ambient: [`cwd: ${cwd}`] }).messages,
-    anchor: anchorText(now, "UTC", [`cwd: ${cwd}`]),
-  });
-  const strip = (ms: Anthropic.MessageParam[]) =>
-    ms.map((m) => ({ role: m.role, content: blocksOf([m]).map(bare) }));
-  const read = (e: ThinkingEvent, anchor: string): ThinkingEvent => ({ ...e, extra: { anchor } });
-
   const opened: Event[] = [mindMsg("e1", t(0), "¿qué archivos hay?", false)];
-  const one = step(opened, t(1), "/a");
-
+  const one = request(opened, t(1), "e1a", ["cwd: /a"]);
   const first: Event[] = [
     ...opened,
-    read(thinkingE("e2", t(2), "T1", "miro", "s1"), one.anchor),
+    ...one.wrote,
+    thinkingE("e2", t(2), "T1", "miro", "s1"),
     toolUseE("e3", t(2), "T1", "bash", { command: "cd /b" }),
     toolResultE("e4", t(3), "T1", "(no output)", "e3"),
   ];
-  const two = step(first, t(4), "/b");
-
+  const two = request(first, t(4), "e4a", ["cwd: /b"]);
   const second: Event[] = [
     ...first,
-    read(thinkingE("e5", t(5), "T2", "ahora listo", "s2"), two.anchor),
+    ...two.wrote,
+    thinkingE("e5", t(5), "T2", "ahora listo", "s2"),
     toolUseE("e6", t(5), "T2", "bash", { command: "ls" }),
-    toolResultE("e7", t(6), "T2", "a.txt", "e6"),
+    toolResultE("e7", t(5), "T2", "a.txt", "e6"),
   ];
-  const three = step(second, t(7), "/b");
+  // the same minute and the same place: nothing moved, so no anchor
+  const three = request(second, t(4), "e7a", ["cwd: /b"]);
+  assertEquals(three.wrote, []);
 
   // each request is the one before it, whole, with the step it produced appended — the
   // prefix a replayed thinking block's signature binds
   for (const [before, after] of [[one, two], [two, three]]) {
     assertEquals(strip(after.messages).slice(0, before.messages.length), strip(before.messages));
   }
-  const tail = blocksOf(three.messages).filter((b) => b.type === "mid_conv_system").map(sysText);
-  assertEquals(tail, [one.anchor, two.anchor, three.anchor]);
-  assertStringIncludes(tail[0], "cwd: /a"); // where the first step stood when it read it
+  // the first anchor says all of it; the next only what moved
+  const anchors = blocksOf(three.messages).filter((b) => b.type === "mid_conv_system").map(sysText);
+  assertEquals(anchors, [
+    "now: Tuesday 21 July, 2026 - 10:01\ncwd: /a",
+    "now: Tuesday 21 July, 2026 - 10:04\ncwd: /b",
+  ]);
 
-  // once the turn closes, its chain collapses and the anchors it read go with it
+  // the turn closes and nothing collapses: the anchors stay where they were read
   const closed = render({
-    ...base,
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
     events: [...second, mindMsg("e8", t(8), "a.txt", true, "T3")],
     now: t(9),
   }).messages;
-  const said = JSON.stringify(closed);
-  assert(!said.includes("cwd: /a") && !said.includes(JSON.stringify(two.anchor).slice(1, -1)));
+  assertStringIncludes(JSON.stringify(closed), "cwd: /a");
+});
+
+Deno.test("an anchor names a section that emptied, so the last listing does not stand", () => {
+  const job = ["background — 1 job:", "· vite — running 3m · pid 7"];
+  const was = anchorText("2026-07-21T10:03:00Z", "UTC", ["cwd: /a", ...job]);
+  const is = anchorText("2026-07-21T10:03:00Z", "UTC", ["cwd: /a"]);
+  assertEquals(anchorDelta(was, is), "background — none");
+  assertEquals(anchorDelta(undefined, is), is); // the first says all of it
 });
 
 Deno.test("a message that lands while a step's call is in flight renders after that step, not under its thinking", () => {
   const t = (m: number) => `2026-07-21T10:0${m}:00Z`;
-  const base = { docs: [] as DocEntry[], session: SESSION, zone: "UTC" };
-  const step = (events: Event[], now: string) => ({
-    messages: render({ ...base, events, now }).messages,
-    anchor: anchorText(now, "UTC"),
-    consumed: events.at(-1)!.id, // what nu records beside the anchor: the horizon it read
-  });
-  const strip = (ms: Anthropic.MessageParam[]) =>
-    ms.map((m) => ({ role: m.role, content: blocksOf([m]).map(bare) }));
-  const read = (e: ThinkingEvent, s: { anchor: string; consumed: string }): ThinkingEvent => ({
+  const read = (e: ThinkingEvent, consumed: string): ThinkingEvent => ({
     ...e,
-    extra: { anchor: s.anchor, consumed: s.consumed },
+    extra: { consumed },
   });
 
   const opened: Event[] = [mindMsg("e1", t(0), "¿qué archivos hay?", false)];
-  const one = step(opened, t(1));
+  const one = request(opened, t(1), "e1a");
   const first: Event[] = [
     ...opened,
-    read(thinkingE("e2", t(2), "T1", "miro", "s1"), one),
+    ...one.wrote,
+    read(thinkingE("e2", t(2), "T1", "miro", "s1"), "e1"),
     toolUseE("e3", t(2), "T1", "bash", { command: "ls" }),
     toolResultE("e4", t(3), "T1", "a.txt", "e3"),
   ];
-  const two = step(first, t(4)); // step 2's request: through e4
+  const two = request(first, t(4), "e4n"); // step 2's request: through e4
   // Ana speaks while step 2's call is in flight: her line is appended before the step's
-  // own events are (those land when the call returns), so its id is older than theirs
+  // own rows are (those land when the call returns), so its id is older than theirs
   const late = mindMsg("e4m", t(5), "y b.txt?", false);
   const second: Event[] = [
     ...first,
     late,
-    read(thinkingE("e5", t(5), "T2", "sigo", "s2"), two),
+    ...two.wrote,
+    read(thinkingE("e5", t(5), "T2", "sigo", "s2"), "e4"),
     toolUseE("e6", t(5), "T2", "bash", { command: "ls -a" }),
     toolResultE("e7", t(6), "T2", "a.txt b.txt", "e6"),
   ];
-  const three = step(second, t(7));
+  const three = request(second, t(7), "e7a");
 
   // request 3 still starts with request 2 whole — the line is not under T2's thinking…
   assertEquals(strip(three.messages).slice(0, two.messages.length), strip(two.messages));
@@ -1227,10 +1185,10 @@ Deno.test("a message that lands while a step's call is in flight renders after t
   const at = (s: string) => texts.findIndex((x) => x.includes(s));
   assert(at("y b.txt?") > texts.lastIndexOf("tool_result"), texts.join(" | ")); // after step 2
   // and a step that recorded no horizon (an older log) keeps the old order: log position
-  const unrecorded = second.map((e) =>
-    e.id === "e5" ? { ...e, extra: { anchor: two.anchor } } as Event : e
-  );
-  const old = blocksOf(render({ ...base, events: unrecorded, now: t(7) }).messages)
+  const unrecorded = second.map((e) => e.id === "e5" ? { ...e, extra: {} } as Event : e);
+  const old = blocksOf(
+    render({ docs: [], session: SESSION, zone: "UTC", events: unrecorded, now: t(7) }).messages,
+  )
     .map((b) => b.type === "text" ? b.text : b.type);
   const oldAt = (s: string) => old.findIndex((x) => x.includes(s));
   assert(oldAt("y b.txt?") < old.lastIndexOf("tool_use"), old.join(" | ")); // before step 2
@@ -1266,7 +1224,7 @@ function fileMsg(
   } as MessageEvent;
 }
 
-Deno.test("media: trailing attachments inline as base64 blocks; closed keep markers only (§5)", () => {
+Deno.test("media: attachments inline as base64 blocks, and stay past their turn's close (§5)", () => {
   const media = new Map([
     ["/m/old.png", { media_type: "image/png", data: "AQID" }],
     ["/m/new.png", { media_type: "image/png", data: "AQID" }],
@@ -1274,7 +1232,7 @@ Deno.test("media: trailing attachments inline as base64 blocks; closed keep mark
   ]);
   const events: Event[] = [
     fileMsg("e1", "2026-07-21T10:00:00Z", "/m/old.png", { text: "vieja" }),
-    mindMsg("e2", "2026-07-21T10:01:00Z", "listo", true), // the closing — e1 is CLOSED
+    mindMsg("e2", "2026-07-21T10:01:00Z", "listo", true), // the closing — e1 stays inlined
     fileMsg("e3", "2026-07-21T10:02:00Z", "/m/new.png", { text: "mira" }),
     fileMsg("e4", "2026-07-21T10:03:00Z", "/m/doc.pdf", { mime: "application/pdf", name: "r.pdf" }),
   ];
@@ -1286,10 +1244,10 @@ Deno.test("media: trailing attachments inline as base64 blocks; closed keep mark
     now: "2026-07-21T10:04:00Z",
     media,
   });
-  // what render asked for is exactly what it inlines — the trailing two, newest first
-  assertEquals(wantedMedia(events, SESSION), ["/m/doc.pdf", "/m/new.png"]);
+  // what render asked for is exactly what it inlines — the whole window's, newest first
+  assertEquals(wantedMedia(events, SESSION), ["/m/doc.pdf", "/m/new.png", "/m/old.png"]);
   const dump = JSON.stringify(messages);
-  // the marker is every attachment's durable face — closed and trailing alike
+  // the marker is every attachment's durable face
   assertStringIncludes(dump, '<image name=\\"shot.png\\" path=\\"/m/old.png\\"/>');
   assertStringIncludes(dump, 'path=\\"/m/new.png\\"');
   // a lone attachment hoists the envelope onto its own marker — no `<msg>` wrapper
@@ -1297,11 +1255,12 @@ Deno.test("media: trailing attachments inline as base64 blocks; closed keep mark
     dump,
     '<document id=\\"e4\\" external=\\"ana\\" address=\\"U7\\" at=\\"21 Jul 10:03\\" name=\\"r.pdf\\" path=\\"/m/doc.pdf\\"/>',
   );
-  // real blocks: only the TRAILING files — one image, one PDF document; the closed one never
+  // real blocks for every file: the closed turn's picture stays, or its close would rewrite
+  // a block mid-history
   const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
   const images = blocks.filter((b) => b.type === "image");
   const documents = blocks.filter((b) => b.type === "document");
-  assertEquals(images.length, 1);
+  assertEquals(images.length, 2);
   assertEquals(documents.length, 1);
   assertEquals(
     (images[0] as { source: { data: string } }).source.data,
@@ -2051,30 +2010,27 @@ Deno.test('a reference outside the window says so (§5): re="?", and a delete sp
   );
 });
 
-Deno.test("a SILENCE note draws nothing — it still closes the region it ends", () => {
+Deno.test("a silent closing renders verbatim: the turn ends in an assistant message, the next opens apart", () => {
   const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
   const quiet = mindMsg("e02", t(1), SILENCE, true, "T1");
   quiet.extra = { silence: true, consumed: "e01" };
+  const blank = mindMsg("e04", t(3), "  ", true, "T2");
+  blank.extra = { silence: true, consumed: "e03" };
   const events: Event[] = [
     worldMsg("e01", t(0), { address: "wa" }, { address: "549" }, "algo en el grupo"),
-    quiet, // the model looked and said nothing — the close is real, the body is not
+    quiet, // the model looked and said nothing: a response like any other
     worldMsg("e03", t(2), { address: "wa" }, { address: "549" }, "y otra cosa"),
+    blank, // a reply of only whitespace said the word the same way
   ];
-  const { messages } = render({
-    events,
-    docs: [],
-    session: SESSION,
-    zone: "UTC",
-    now: t(3),
-  });
-
-  const texts = blocksOf(messages).map(txt);
-  assert(!texts.some((s) => s.includes(SILENCE)), "the sentinel never reaches the prompt");
-  assert(!messages.some((m) => m.role === "assistant"), "silence speaks in no role");
-  // the close still landed: e01 is CLOSED (behind the breakpoint), e03 is trailing
-  const prefix = prefixOf(messages).map((b) => txt(b as Anthropic.ContentBlockParam)).join(" ");
-  assertStringIncludes(prefix, "algo en el grupo");
-  assert(!prefix.includes("y otra cosa"));
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t(5) });
+  assertEquals(messages.map((m) => m.role), ["user", "assistant", "user", "assistant", "user"]);
+  assertEquals(txt((messages[1].content as Anthropic.ContentBlockParam[])[0]), SILENCE);
+  assertEquals(txt((messages[3].content as Anthropic.ContentBlockParam[])[0]), SILENCE);
+  // each turn's world stays its own: the second line opens the second turn
+  assertStringIncludes(
+    txt((messages[2].content as Anthropic.ContentBlockParam[])[0]),
+    "y otra cosa",
+  );
 });
 
 Deno.test("a fired wake renders as the harness handing back the agent's own note (§10)", () => {
@@ -2190,7 +2146,7 @@ Deno.test("a ruling stands in the session's room, closed or trailing, whoever ru
   assert(!texts.some((s) => s.includes("u00004")));
 });
 
-Deno.test("an update narrates the call it tells about, flags and all, and drops once read", () => {
+Deno.test("an update narrates the call it tells about, flags and all, and stays once read", () => {
   const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
   const use = toolUseE("e01", t(0), "T1", "bash", { command: "deno test" });
   const answer: ToolResultEvent = {
@@ -2221,11 +2177,11 @@ Deno.test("an update narrates the call it tells about, flags and all, and drops 
     blocks.map(txt).find((s) => s.includes("deno test")),
     '<system kind="tool_result" update final>bash(deno test) → exit 0 after 2m\nok | 12 passed</system>',
   );
-  // its call collapsed with the turn that made it: the update is narration, never a block
-  assertEquals(blocks.filter((b) => b.type === "tool_result").length, 0);
-  // and once a turn has read it, it collapses like the rest of the tool traffic
+  // the pair is spent: the update is narration, never a second result block
+  assertEquals(blocks.filter((b) => b.type === "tool_result").length, 1);
+  // and once a turn has read it, it stays like the rest of the window
   const read = blocksOf(view([...told, mindMsg("e05", t(3), "pasaron todos", true, "T2")]));
-  assertEquals(read.map(txt).some((s) => s.includes("12 passed")), false);
+  assertEquals(read.map(txt).some((s) => s.includes("12 passed")), true);
 });
 
 /* ── the principal's channel: wrapped, steering hidden, never capped ───── */
@@ -3000,4 +2956,104 @@ Deno.test("<before>: the block renders the same bytes as the window grows", () =
   const b = blocksOf(render({ events: grown, ...opts }).messages).map(txt);
   const block = (xs: string[]) => xs.find((s) => s.includes("<before>"));
   assertEquals(block(a), block(b));
+});
+
+/* ── change 4: the window only grows (§5) ── */
+
+Deno.test("past a checkpoint, the turns it kept lose their thinking and keep their tool pairs", () => {
+  const t = (m: number) => `2026-07-22T10:0${m}:00Z`;
+  const events: Event[] = [
+    mindMsg("e01", t(0), "corré esto", false),
+    thinkingE("e02", t(0), "T1", "lo corro", "s2"),
+    toolUseE("e03", t(0), "T1", "bash", { command: "ls" }),
+    toolResultE("e04", t(0), "T1", "a.txt", "e03"),
+    mindMsg("e05", t(1), "hay a.txt", true, "T2"),
+    summaryE("e06", t(2), ["e00", "e00"], "## hilos"), // written after the turn it keeps
+    mindMsg("e07", t(3), "¿y ahora?", false),
+    thinkingE("e08", t(3), "T3", "miro de nuevo", "s8"),
+    mindMsg("e09", t(3), "igual", true, "T3"),
+  ];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t(4) });
+  const blocks = blocksOf(messages);
+  const thinking = blocks.filter((b) => b.type === "thinking") as Anthropic.ThinkingBlockParam[];
+  // its signature binds a prefix the checkpoint replaced: only the later turn's stays
+  assertEquals(thinking.map((b) => b.signature), ["s8"]);
+  assertEquals(blocks.filter((b) => b.type === "tool_use").length, 1);
+  assertEquals(blocks.filter((b) => b.type === "tool_result").length, 1);
+});
+
+Deno.test("a line wears the name its room had then: a rename later never redraws it", () => {
+  const t = (m: number) => `2026-07-22T10:0${m}:00Z`;
+  const room = (name?: string) => ({
+    address: "g1",
+    kind: "group" as const,
+    ...(name ? { name } : {}),
+  });
+  const first = [
+    worldMsg("e01", t(0), room("Equipo"), { address: "9", name: "Leo" }, "hola"),
+    mindMsg("e02", t(1), "hola", true, "T1"),
+    worldMsg("e03", t(2), room(), { address: "9", name: "Leo" }, "¿seguimos?"),
+  ];
+  const opts = { docs: [], session: SESSION, zone: "UTC", now: t(5) };
+  const before = blocksOf(render({ events: first, ...opts }).messages).map(txt);
+  const renamed = [
+    ...first,
+    mindMsg("e04", t(3), "dale", true, "T2"),
+    worldMsg("e05", t(4), room("Proyecto"), { address: "9", name: "Leo" }, "nuevo nombre"),
+  ];
+  const after = blocksOf(render({ events: renamed, ...opts }).messages).map(txt);
+  // the unnamed line took the name the room had at it, then and now
+  assertEquals(after.slice(0, 3), before.slice(0, 3));
+  assertStringIncludes(after[2], 'name="Equipo"');
+  assertStringIncludes(after.join("\n"), 'name="Proyecto"');
+});
+
+Deno.test("a gated send's row waits for the turn its outcome opens, then joins the next WUM", () => {
+  const t = (m: number) => `2026-07-22T10:0${m}:00Z`;
+  const mariana = { address: "wa", name: "Mariana" };
+  const gated: ToolResultEvent = {
+    ...toolResultE("e07", t(2), "T1", "sent", "e03"),
+    payload: { turn_id: "T1", ref_id: "e03", gated: true },
+  };
+  const events: Event[] = [
+    mindMsg("e01", t(0), "avisale a Mariana", false),
+    thinkingE("e02", t(0), "T1", "le escribo", "s2"),
+    toolUseE("e03", t(0), "T1", "send", { to: "Mariana", text: "hola" }),
+    toolResultE("e04", t(0), "T1", { status: "pending_approval" }, "e03"),
+    mindMsg("e05", t(1), SILENCE, true, "T1b"), // the turn closes while the ask waits
+    waMsg("e06", t(2), "hola", true, "e03"), // the errand sends it…
+    gated, // …and tells the outcome: it opens a turn of its own
+    mindMsg("e08", t(3), SILENCE, true, "T2"),
+    worldMsg("e09", t(4), mariana, { address: "549", name: "Mariana" }, "¡hola!"),
+  ];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t(5) });
+  const roles = messages.map((m) => m.role);
+  assertEquals(roles, ["user", "assistant", "user", "assistant", "user", "assistant", "user"]);
+  // the row is not under the outcome's turn…
+  assert(!blocksOf([messages[4]]).map(txt).some((s) => s.includes('id="e06"')));
+  // …it opens the next WUM, one room with the reply
+  const wum = txt((messages[6].content as Anthropic.ContentBlockParam[])[0]);
+  assertStringIncludes(wum, '<msg id="e06" self');
+  assertStringIncludes(wum, '<msg id="e09"');
+  assertEquals(wum.split("<conv ").length - 1, 1);
+});
+
+Deno.test("a turn an error ended holds nothing: the next turn reads what landed after it", () => {
+  const t = (m: number) => `2026-07-22T10:0${m}:00Z`;
+  const failed: Event = {
+    id: "e03",
+    ts: t(1),
+    type: "error",
+    envelope: inbox,
+    payload: { stop_reason: "refusal" },
+    parts: [{ type: "data", kind: "error", data: { error: "model stopped: refusal" } }],
+  } as Event;
+  const events: Event[] = [
+    mindMsg("e01", t(0), "hacé algo", false),
+    thinkingE("e02", t(0), "T1", "no", "s2"),
+    failed,
+    worldMsg("e04", t(2), { address: "wa", name: "Sol" }, { address: "5", name: "Sol" }, "¿estás?"),
+  ];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t(3) });
+  assertStringIncludes(JSON.stringify(messages), "¿estás?");
 });

@@ -31,6 +31,7 @@ import { newId } from "./store/id.ts";
 import { LOCAL_CONNECTION, sessionAddress } from "./session.ts";
 import { buildSummary } from "./compact.ts";
 import {
+  anchorDue,
   anchorText,
   type BeforePool,
   type Env,
@@ -369,20 +370,12 @@ export async function nu(
     }
   }
 
-  // A step that calls a tool records, on its first event, what its request held: the anchor
-  // it read, and the last event it read (`consumed`, the closing's horizon, here on the
-  // step). The turn's later requests replay this step's thinking, whose signature binds
-  // everything the request held before it — so render places the anchor there again, and
-  // an event that landed after the horizon, while this step's call was in flight, renders
-  // after the step rather than under its thinking (§5).
-  if (events.some((e) => e.type === "tool_use")) {
-    const read = input.events.at(-1);
-    events[0].extra = {
-      ...events[0].extra,
-      anchor: anchorText(now, config.timezone, input.ambient),
-      ...(read ? { consumed: read.id } : {}),
-    };
-  }
+  // Every step records, on its first event, the last event its request read (`consumed`).
+  // Later requests replay this step's thinking, whose signature binds everything the
+  // request held before it — so an event that landed after the horizon, while this step's
+  // call was in flight, renders after the step rather than under its thinking (§5).
+  const read = input.events.at(-1);
+  if (read && events.length > 0) events[0].extra = { ...events[0].extra, consumed: read.id };
 
   // the step's inputs, on the row that opens it — the whole set, a reader compares it with
   // the session's previous stamp
@@ -417,5 +410,19 @@ export async function nu(
   // transport-failure path above returns before this: an unstamped error is a real stop.
   const last = events.at(-1);
   if (last) last.payload = { ...last.payload, stop_reason: res.stop };
+  // The request's own anchor, when the state moved since the last the window holds (§5):
+  // written with the step and stamped when its request was made, so it stands where the
+  // step read it, and a call that failed leaves none.
+  const anchor = anchorText(now, config.timezone, input.ambient);
+  if (events.length > 0 && anchorDue(input.events, anchor)) {
+    events.unshift({
+      ts: now,
+      type: "anchor",
+      payload: { turn_id: turnId },
+      agent: self,
+      envelope: here,
+      parts: [{ type: "text", kind: "anchor", text: anchor }],
+    });
+  }
   return events;
 }

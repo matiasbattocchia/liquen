@@ -496,7 +496,12 @@ export class Jobs {
   }
 }
 
-const ageOf = (since: number): string => took(Date.now() - since);
+/** A job's age as its ambient line says it: whole minutes (`0m` in its first), then hours,
+ *  so it moves with the anchor's `now` and never on its own (§5). */
+const ageOf = (since: number): string => {
+  const m = Math.floor((Date.now() - since) / 60_000);
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h`;
+};
 
 /** A process alive in a job's group: its pid, the kill handle, and its command line. */
 export interface Member {

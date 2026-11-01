@@ -810,7 +810,8 @@ Deno.test("exec plane: a job's line wears the last line it printed", async () =>
     }, live());
     await new Promise((r) => setTimeout(r, 200));
     const line = (await ambient()).find((l) => l.startsWith("· "));
-    assertMatch(line!, /— running \d+s, last line "90%" · pid \d+/);
+    // whole minutes: the age moves with the anchor's clock, never on its own
+    assertMatch(line!, /— running 0m, last line "90%" · pid \d+/);
   } finally {
     await reap();
     await Deno.remove(dir, { recursive: true });
@@ -868,7 +869,7 @@ Deno.test("exec plane: a job whose leader is gone is named by the member alive, 
     await new Promise((r) => setTimeout(r, 200));
     const jobLine = (await ambient()).find((l) => l.startsWith("· "));
     assert(jobLine, "the job shows");
-    const m = /^· (\S+) 300 — running \d+s · pid (\d+)$/.exec(jobLine!);
+    const m = /^· (\S+) 300 — running 0m · pid (\d+)$/.exec(jobLine!);
     assert(m, `named by its live process, with its pid: ${jobLine}`);
     assertEquals(m![1], marker);
     const ps = new TextDecoder().decode(

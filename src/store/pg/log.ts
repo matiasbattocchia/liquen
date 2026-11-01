@@ -284,7 +284,7 @@ export async function openPgLog(
   // the key alone goes, the row stays what it was
   const SHED = `UPDATE events SET extra = extra - 'media', updated_at = $1::text
                 WHERE agent_id = $2::text AND session_id = $3::text AND type = 'tool_result'
-                  AND extra ? 'media'`;
+                  AND id <= $4::text AND extra ? 'media'`;
 
   const commit = async (
     one: Draft | Draft[],
@@ -326,9 +326,9 @@ export async function openPgLog(
           }
         }
       }
-      // shed before the batch lands, so the closing's own rows are never touched
+      // shed before the batch lands, so the checkpoint's own rows are never touched
       if (opts.shed !== undefined) {
-        await count(tx, SHED, [now, opts.shed.agentId, opts.shed.sessionId]);
+        await count(tx, SHED, [now, opts.shed.agentId, opts.shed.sessionId, opts.shed.through]);
       }
       const out: Event[] = [];
       for (const d of drafts) {

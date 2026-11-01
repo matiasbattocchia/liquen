@@ -1,7 +1,8 @@
 /**
  * compact.ts — the checkpoint layer (DESIGN §5 "Compaction", from pi).
  *
- * Pruning is already render's closed-region collapse; this is the other layer: when the
+ * The window only grows between checkpoints (render keeps every turn as its requests held
+ * it); this is the layer that bounds it: when the
  * window outgrows `compactAt`, one mu call writes a structured checkpoint over the older
  * CLOSED turns — whole ones: a span ends where a turn ends, never inside one — published as
  * a `summary` event with `covers: [from, to]`. The call is the think's own request — its
@@ -33,6 +34,7 @@ import {
   deferredInput,
   errorTextOf,
   estTokens,
+  mediaTokens,
   outcomeLine,
   ownVoice,
   silenced,
@@ -68,7 +70,7 @@ export interface CompactInput {
   tools?: Anthropic.Tool[];
   /** The window as the next think reads it, closing on `tail` where the anchor goes
    *  (render.ts): byte for byte the think's messages up to the turn that just closed, so
-   *  the request reads the entry that turn wrote and writes only the collapsed delta. */
+   *  the request reads the entry that turn wrote and writes only its own instruction. */
   window: (tail: string) => Anthropic.MessageParam[];
   events: Event[]; // the window, log order
   session: Session; // whose window it is, and where it speaks (§4)
@@ -189,8 +191,10 @@ export function compactionSpan(
   // Chaining survives: the summary sits first in the visible window, so a new span covers
   // it and `covers[0]` chains from it.
   events = applySummary(events);
-  // the ceiling that counts is the API's: a window it refused shrinks whatever it estimates
-  if (estTokens(events) <= compactAt && !overflowed(events)) return null;
+  // the ceiling that counts is the API's: a window it refused shrinks whatever it estimates.
+  // The pictures the window inlines weigh with the rows
+  const weight = (es: Event[]) => estTokens(es) + mediaTokens(es, session);
+  if (weight(events) <= compactAt && !overflowed(events)) return null;
   // never under a running turn (see the header): its replayed thinking is bound to the
   // prefix as it stands
   if (!turnOver(events, session)) return null;
@@ -201,7 +205,7 @@ export function compactionSpan(
   let keep = 0;
   let kept = events.length;
   for (let i = events.length - 1; i >= 0; i--) {
-    keep += estTokens([events[i]]);
+    keep += weight([events[i]]);
     if (keep > keepRecent) break;
     kept = i;
   }
@@ -285,9 +289,8 @@ function transcript(
 }
 
 /** The last archived line as the model finds it in the window: who said it, and how it
- *  begins. Undefined when nothing in the span draws a block — tool traffic and thinking
- *  collapse to nothing in the closed region — so a span the model could not see goes as a
- *  transcript instead. */
+ *  begins. Undefined when nothing in the span is a line — a message, an error, a cut, an
+ *  alarm — but only thinking and tool traffic, so that span goes as a transcript instead. */
 function archivedThrough(covered: Event[], session: Session): string | undefined {
   for (const e of [...covered].reverse()) {
     if (silenced(e)) continue;
