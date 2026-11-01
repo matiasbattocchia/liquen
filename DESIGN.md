@@ -454,8 +454,8 @@ think: re-triggered; model continues (multi-send: "working on it" → work → r
   never means blocked: the call returns `pending_approval` at once and the verdict runs it
   later (§3, the non-blocking gate).
 - Failed send = errored tool (exchange kept in render as teaching material).
-- Successful send: the tool pair stays, and the message line follows in the next turn's
-  WUM, after the turn that reads its result.
+- Successful send: the tool pair stays, and the message line, a world line, opens the next
+  turn's WUM.
 - **The agent addresses; the executor envelopes.** `send` takes `{to, text}`: an address
   and a body, nothing else. The outbound message's envelope is written by the
   send-executor, and it completes `service · connection · kind` **from the conversation's
@@ -588,10 +588,12 @@ update is a `tool_result` the harness writes **against the call** (§3: `payload
 `ref_id` its `tool_use`, `turn_id` its step, `final` once nothing it set in motion still
 runs), so it lands in the session that made the call; render narrates it as
 `<system kind="tool_result" update final>bash(npm test) → exit 0 after 4m …</system>`,
-and it is news the agent acts on: try again, try another way, or tell its principal. A
-shell's update wakes now, as an alarm does (§2): the command is work in progress. A send's
-is `quiet`, the world's tale like any reply: it wakes nobody, and a running turn reads it
-at its next step, or else the next turn, whatever opens it. The clock tells a send's tale, each
+and it is news the agent acts on: try again, try another way, or tell its principal. A late
+result is a result like any other: it leaves the chain unclosed and opens a turn, a shell's
+updates among them — unless its tool marks it `quiet` (`ExecOutcome.quiet`, carried onto
+the late result). A send does, for its gated outcome and its updates alike: the world's
+tale like any reply. A quiet one wakes nobody; a running turn reads it at its next step,
+or else the next turn, whatever opens it. The clock tells a send's tale, each
 part claimed once by one conditional UPDATE on its own stamp, so two clocks tell a row once;
 a send is one of the model's own (a row with `payload.turn_id`: a mirror's copy and a
 presence line have no turn to tell):
@@ -1448,17 +1450,21 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   said where it was cut — `… N earlier, not shown` in a room, `— N more messages in M other
   conversations not shown — search to read them —` for the rooms left out — and the
   session's own room is never capped. The cap is a pure function of the run, so an
-  answered WUM renders the same bytes forever. **`<before>`**: past a checkpoint, a room's
-  first `<conv>` opens on its last turns from below the floor — runs of one side, the
-  account or them, at most `BEFORE_TURNS` whole while they fit `BEFORE_LINES` — so a reply
-  reads against what it answers. It spends what the cap left unused, one budget with the new
-  lines first: rooms the cap did not cut, lightest first, whole turns newest first, so in a
-  flood the past gives way first and the run's lines keep the cap's bytes. A line's `re`
-  below the floor is pulled into the `<before>` of the `<conv>` it stands in, outside the
-  budget, once across the window, and `… N not shown` counts the rows between two lines
-  that are not neighbours. xi reads the rows (`beforePool`) by id below a floor that stands
-  still, and render keeps a row by its write-once stamps against the checkpoint's moment,
-  so a `<before>` renders the same bytes on every step. A message that IS one part — a lone data part or a bare attachment —
+  answered WUM renders the same bytes forever. **`<before>`**: a room's first drawn
+  `<conv>` since the checkpoint opens on its last turns the model has not seen drawn — from
+  below the floor, and what an earlier cap left out whole — runs of one side, the account
+  or them, at most `BEFORE_TURNS` whole while they fit `BEFORE_LINES`, so a reply reads
+  against what it answers. A room drawn in an earlier WUM has its past in view. It spends
+  what the cap left unused, one budget with the new lines first: rooms the cap did not cut,
+  lightest first, whole turns newest first, so in a flood the past gives way first and the
+  run's lines keep the cap's bytes. A line's `re` at anything not drawn — hidden by the
+  cap, below the floor, anywhere the log holds it — is pulled into the `<before>` of the
+  `<conv>` it stands in, outside the budget, once across the window; one drawn already is
+  pointed at, and `re="?"` means only an event that cannot be found. `… N not shown` counts
+  the rows between two lines that are not neighbours. xi reads what lies beyond the window
+  (`beforePool`) by id below a floor that stands still, and render keeps a row by its
+  write-once stamps against a fixed moment, so a `<before>` renders the same bytes on every
+  step. A message that IS one part — a lone data part or a bare attachment —
   hoists the envelope onto that part's own element and spends no `<msg>` wrapper. A
   room's change is such a line on every service: `<room>` from whoever made it, carrying
   who joined, who left, or the name the room now wears.
@@ -1497,8 +1503,10 @@ before plus new rows, until a checkpoint moves the floor:
   order: `ts` is real-world event time, `id` is only where the store put it (§3), and a lagged
   webhook or a backfill appends 14:02 after 14:05. Then the run partitions per conversation
   (groups by last-message ts) so each room renders as one element. A run is every voice but
-  the model's own — the principal's phone-sent lines are lines of their rooms — and rows
-  that render nowhere (gate cards, verdicts) are transparent to it; what ends a run is a
+  the model's own in the session's room — the principal's phone-sent lines are lines of
+  their rooms, the agent's own sends too — and the harness's narration between them
+  (verdicts, late results) is transparent to it: it stands before the WUM, one per turn,
+  explaining what the WUM then shows; what ends a run is a
   rendered block of the machine's chain, so it never reorders the machine (tool cycles,
   thinking, the weld) and never rewrites history — a straggler arriving after the agent
   already answered stays put, because the answer breaks the run.
@@ -1511,8 +1519,9 @@ before plus new rows, until a checkpoint moves the floor:
   opening; between steps a turn reads everything but world lines — the principal's lines
   and verdicts, updates, lapses, alarms. A world line that lands past the turn's first
   step's horizon and before its end renders after that end, in the next turn's WUM, and
-  nowhere while the turn is open. A send's own row (`ref_id`, its call) renders after the
-  end of the turn that reads its result: the call already shows its words.
+  nowhere while the turn is open. A send's own row is such a line: written during its call
+  it waits; written by an errand between turns, it opens the next turn's WUM, since a
+  send's outcome is quiet and opens no turn of its own.
 - **Every step is welded API-faithfully** — `thinking` (replayed verbatim, with signature) +
   text + `tool_use`/`tool_result` pairs (per-use `ref_id` linkage), closing steps' thinking
   included. A thinking block's signature binds everything its request held before it, so
@@ -1583,7 +1592,10 @@ marker at a close would rewrite a block mid-history. Two caps keep the base64 sa
 per-file (3MB raw) and a window budget (12MB raw, NEWEST first; url blocks are
 budget-free); past it the oldest falls back to its marker, a rewrite accepted as rare.
 The checkpoint weighs the pictures with the rows (`mediaTokens`), so a window heavy with
-them reaches `compactAt` sooner.
+them reaches `compactAt` sooner, at the API's own rates: an image a token per 28×28 patch,
+capped at 4,784 on the high-resolution tier, a PDF page its text and an image of the page.
+A part carries neither dimensions nor page count, so an image weighs the cap and a PDF's
+pages are guessed from its size.
 
 A tool's attachment is not a received file: its uri is a workspace path the agent keeps
 rewriting (`aread shot.png` after every fix), so the path cannot stand for the bytes the

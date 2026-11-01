@@ -357,10 +357,12 @@ export function applySummary(events: Event[]): Event[] {
  *  render adjacent — one element below — because cross-conversation interleaving is arrival
  *  noise, not meaning; within a conversation, `ts` order stands. A run is WORLD CONTENT:
  *  every voice but the model's own, in every conversation but the session's — the
- *  principal's phone-sent lines are lines of their rooms, part of the run like any peer's.
- *  Rows that render nowhere no matter the region (gate cards, their settlements, a
- *  `/cancel`) are TRANSPARENT: the run flows across them. What ends a run is a rendered
- *  block of the machine's own chain — the agent's voice, a tool cycle, a turn boundary —
+ *  principal's phone-sent lines are lines of their rooms, part of the run like any peer's,
+ *  and so are the agent's own sends. The harness's narration between them — rulings on
+ *  asks, late results — is TRANSPARENT: the run flows across it and it stands before the
+ *  WUM, one per turn, explaining what the WUM then shows (`→ sent`, then the line as it went
+ *  out). What ends a run is a rendered block of the machine's own chain — the agent's
+ *  voice, a tool cycle, a turn boundary —
  *  so the order the API constrains and the weld depends on is never touched. Nor is
  *  history rewritten: a straggler that arrives after the agent already answered stays
  *  where it landed, because the answer breaks the run. */
@@ -369,18 +371,27 @@ function byEventTime(
   session: SessionRef,
   here: string,
   budget: number,
-  past?: Map<string, MessageEvent[][]>,
+  below: Map<string, MessageEvent[]> = new Map(),
 ): { events: Event[]; elisions: Elisions } {
   const out = [...events];
   const elisions: Elisions = { earlier: new Map(), rest: new Map(), before: new Map() };
-  // the rooms a run already showed: a room's `<before>` is its first appearance's alone
+  // the rooms a run already drew: a room's `<before>` is its first drawn appearance's alone.
+  // What the cap hid of a room no run drew yet is its past too, beside its rows below the
+  // floor; a line hidden in the window counts as the room saw it when the room speaks again
   const seen = new Set<string>();
+  const hidden = new Map<string, MessageEvent[]>();
+  const pastFor = (k: string, moment: string) =>
+    lastTurns(
+      [...below.get(k) ?? [], ...(hidden.get(k) ?? []).filter((e) => sawAt(e, moment))],
+      session,
+    );
   // a world line is any message in a world room — the agent's own send rows too — and
   // the principal's in the session's: everything but the agent's own words there
   const member = (e: Event) =>
     e.type === "message" && !(ownVoice(e, session) && e.envelope.conversation.address === here);
   const transparent = (e: Event) =>
-    e.type === "permission_request" || e.type === "permission_response";
+    e.type === "permission_request" || e.type === "permission_response" ||
+    (e.type === "tool_result" && isLate(e));
   for (let i = 0; i < out.length; i++) {
     if (!member(out[i])) continue;
     let j = i;
@@ -396,10 +407,9 @@ function byEventTime(
     const run = capRun(byConversation(seg.filter(member).sort(byTs)), budget, here);
     for (const [e, n] of run.elisions.earlier) elisions.earlier.set(e, n);
     for (const [e, r] of run.elisions.rest) elisions.rest.set(e, r);
-    if (past) {
-      for (const [e, lines] of beforeOf(seg.filter(member), run.kept, budget, here, past, seen)) {
-        elisions.before.set(e, lines);
-      }
+    const lines = seg.filter(member);
+    for (const [e, past] of beforeOf(lines, run.kept, budget, here, pastFor, seen, hidden)) {
+      elisions.before.set(e, past);
     }
     out.splice(i, seg.length, ...pass, ...run.kept);
     i = i + pass.length + run.kept.length - 1;
@@ -439,11 +449,14 @@ export function worldCapped(events: Event[], session: Session, compactAt: number
 export const estTokens = (events: Event[]): number =>
   Math.ceil(JSON.stringify(events, (k, v) => k === "extra" ? undefined : v).length / 4);
 
-/** What an inlined image weighs to the model, est. tokens: the API resizes it to about a
- *  megapixel, ~1,600 tokens at most… */
-export const IMAGE_TOKENS = 1600;
-/** …and a PDF, read as its text and its pages' images, guessed from its size. */
-export const PDF_TOKENS_PER_KB = 30;
+/** What an inlined image weighs to the model, est. tokens: one per 28×28 patch, which the
+ *  API caps at 4,784 on the high-resolution tier the current models read at (1,568 on the
+ *  standard one). The part carries no dimensions, so the cap stands for every image. */
+export const IMAGE_TOKENS = 4784;
+/** A PDF page reads as its text, 1,500 to 3,000 tokens, and as an image of the page… */
+export const PDF_PAGE_TOKENS = 3000 + IMAGE_TOKENS;
+/** …and the page count, which the part does not carry either, is guessed from its size. */
+export const PDF_PAGE_BYTES = 100 * 1024;
 
 /** What the attachments render inlines weigh, est. tokens (§5): they stay until the
  *  checkpoint like the rows, so the checkpoint counts them beside the rows, and a window
@@ -455,7 +468,7 @@ export function mediaTokens(events: Event[], session: SessionRef): number {
     for (const p of filesOf(e)) {
       if (!inlineable(p.file.mime_type)) continue;
       n += p.file.mime_type === "application/pdf"
-        ? Math.ceil(((p.file.size ?? 0) / 1024) * PDF_TOKENS_PER_KB)
+        ? Math.max(1, Math.ceil((p.file.size ?? 0) / PDF_PAGE_BYTES)) * PDF_PAGE_TOKENS
         : IMAGE_TOKENS;
     }
   }
@@ -542,11 +555,12 @@ export function capRun(
 
 /* ── <before> (§5) ──────────────────────────────────────────────────────────────────
  *
- * A checkpoint folds a room's past into prose; a room that speaks again after it gets its
- * last turns back, word for word, at the top of its first `<conv>` past the floor: what the
- * reply is a reply to. They are chosen by id below the floor and filtered on write-once
- * stamps against the floor's moment, so a room's `<before>` is a pure function of the floor
- * and the log, and renders the same bytes on every step.
+ * A room's first drawn `<conv>` since the checkpoint opens on its last turns the model has
+ * not seen drawn, word for word: what the reply is a reply to. They come from below the
+ * floor (a checkpoint folded them into prose) and from what an earlier WUM's cap left out
+ * whole. A room drawn in an earlier WUM has its past in view already. Rows are chosen by id
+ * and filtered on write-once stamps against a fixed moment, so a room's `<before>` is a pure
+ * function of the floor and the log, and renders the same bytes on every step.
  */
 
 /** A room's `<before>`: its last turns, at most this many, whole… */
@@ -557,11 +571,14 @@ export const BEFORE_LINES = 12;
  *  that would fit is read whole, and the one before it shows where it starts. */
 export const BEFORE_READ = 40;
 
-/** What xi read below the floor for `<before>` (§5): each room in view's newest rows
- *  there, and every older row a line points at, however far back. */
+/** What xi read beyond the window for `<before>` and `re` (§5). */
 export interface BeforePool {
+  /** Each room in view's newest rows below the checkpoint's floor; none before one. */
   rows: MessageEvent[];
-  /** For a row older than its room's newest rows: how many rows lie between them. */
+  /** The rows a line points at that the window lacks, wherever the log holds them. */
+  refs: MessageEvent[];
+  /** For a referent older than every row of its room the window and `rows` hold: how many
+   *  rows lie between them (`GAP_READ` at most). */
   between: Record<EventId, number>;
 }
 
@@ -584,68 +601,64 @@ function accountSide(e: MessageEvent, session: SessionRef): boolean {
   return e.agent === undefined ? ownSide(e) : e.agent.id === session.agentId;
 }
 
-/** Each room's last turns below the floor, newest first: runs of one side, as the room
- *  saw them. At most `BEFORE_TURNS`, whole, while they fit `BEFORE_LINES`; a newest turn
- *  longer than that alone keeps its newest lines. */
-export function pastOf(
-  pool: BeforePool,
-  floor: string,
-  session: SessionRef,
-): Map<string, MessageEvent[][]> {
+/** A room's last turns, newest first, from its rows in log order: runs of one side, as the
+ *  room saw them. At most `BEFORE_TURNS`, whole, while they fit `BEFORE_LINES`; a newest
+ *  turn longer than that alone keeps its newest lines. */
+function lastTurns(rows: MessageEvent[], session: SessionRef): MessageEvent[][] {
+  if (rows.length === 0) return [];
+  // one turn past the last kept, so the last kept is known whole
+  const turns: MessageEvent[][] = [];
+  for (let i = rows.length - 1; i >= 0 && turns.length <= BEFORE_TURNS; i--) {
+    const t = turns.at(-1);
+    if (t && accountSide(t[0], session) === accountSide(rows[i], session)) t.unshift(rows[i]);
+    else turns.push([rows[i]]);
+  }
+  const [newest, ...older] = turns.slice(0, BEFORE_TURNS);
+  if (newest.length > BEFORE_LINES) return [newest.slice(-BEFORE_LINES)];
+  const kept = [newest];
+  let n = newest.length;
+  for (const t of older) {
+    if (n + t.length > BEFORE_LINES) break;
+    kept.push(t);
+    n += t.length;
+  }
+  return kept;
+}
+
+/** Each room's newest rows below the floor, as of the floor's moment, in log order — the
+ *  pool's, without the far referents it carries beside them. */
+function belowByRoom(pool: BeforePool | undefined, floor: string): Map<string, MessageEvent[]> {
   const rooms = new Map<string, MessageEvent[]>();
-  for (const e of [...pool.rows].sort((a, b) => a.id < b.id ? -1 : 1)) {
-    if (!(e.id in pool.between) && sawAt(e, floor)) {
-      const k = roomKey(e);
-      rooms.set(k, [...rooms.get(k) ?? [], e]);
-    }
+  for (const e of [...pool?.rows ?? []].sort((a, b) => a.id < b.id ? -1 : 1)) {
+    if (sawAt(e, floor)) rooms.set(roomKey(e), [...rooms.get(roomKey(e)) ?? [], e]);
   }
-  const out = new Map<string, MessageEvent[][]>();
-  for (const [k, rows] of rooms) {
-    // one turn past the last kept, so the last kept is known whole
-    const turns: MessageEvent[][] = [];
-    for (let i = rows.length - 1; i >= 0 && turns.length <= BEFORE_TURNS; i--) {
-      const t = turns.at(-1);
-      if (t && accountSide(t[0], session) === accountSide(rows[i], session)) t.unshift(rows[i]);
-      else turns.push([rows[i]]);
-    }
-    const [newest, ...older] = turns.slice(0, BEFORE_TURNS);
-    if (newest.length > BEFORE_LINES) {
-      out.set(k, [newest.slice(-BEFORE_LINES)]);
-      continue;
-    }
-    const kept = [newest];
-    let n = newest.length;
-    for (const t of older) {
-      if (n + t.length > BEFORE_LINES) break;
-      kept.push(t);
-      n += t.length;
-    }
-    out.set(k, kept);
-  }
-  return out;
+  return rooms;
 }
 
 /** Pass 2 of a WUM's budget (§5): what pass 1, the cap, left unused buys each room it did
- *  not cut its last turns from below the floor, at the room's first appearance after it —
- *  lightest room first, whole turns, newest first, while they fit. In a flood the past gives
- *  way first, and the run's own lines render the bytes the cap alone would. */
+ *  not cut its last turns — below the floor, or hidden by an earlier cap — at the room's
+ *  first drawn appearance: lightest room first, whole turns, newest first, while they fit.
+ *  In a flood the past gives way first, and the run's own lines render the bytes the cap
+ *  alone would. A room the cap leaves out whole stays undrawn: its lines join what it hid. */
 function beforeOf(
   run: Event[],
   kept: Event[],
   budget: number,
   exempt: string,
-  past: Map<string, MessageEvent[][]>,
+  pastFor: (room: string, moment: string) => MessageEvent[][],
   seen: Set<string>,
+  hidden: Map<string, MessageEvent[]>,
 ): Map<Event, MessageEvent[]> {
   const shown = new Set(kept);
-  const rooms = new Map<string, { first?: Event; weight: number; cut: boolean }>();
+  const rooms = new Map<string, { first?: Event; lines: Event[]; weight: number; cut: boolean }>();
   let left = budget;
   for (const e of run) {
     if ((e as MessageEvent).envelope.conversation.address === exempt) continue;
     const k = roomKey(e);
     let room = rooms.get(k);
-    if (!room) rooms.set(k, room = { weight: 0, cut: false });
+    if (!room) rooms.set(k, room = { lines: [], weight: 0, cut: false });
     const w = estTokens([e]);
+    room.lines.push(e);
     room.weight += w;
     if (shown.has(e)) left -= w;
     else room.cut = true;
@@ -655,19 +668,22 @@ function beforeOf(
     if (room && !room.first) room.first = e;
   }
   const out = new Map<Event, MessageEvent[]>();
-  const fresh = [...rooms].filter(([k, r]) => !seen.has(k) && !r.cut && past.has(k))
+  const fresh = [...rooms].filter(([k, r]) => !seen.has(k) && !r.cut)
     .sort(([, a], [, b]) => a.weight - b.weight);
   for (const [k, room] of fresh) {
     const taken: MessageEvent[][] = [];
-    for (const turn of past.get(k)!) {
+    for (const turn of pastFor(k, room.first!.ts)) {
       const w = estTokens(turn);
       if (w > left) break;
       taken.unshift(turn);
       left -= w;
     }
-    if (taken.length > 0 && room.first) out.set(room.first, taken.flat());
+    if (taken.length > 0) out.set(room.first!, taken.flat());
   }
-  for (const k of rooms.keys()) seen.add(k);
+  for (const [k, room] of rooms) {
+    if (room.first) seen.add(k);
+    else if (!seen.has(k)) hidden.set(k, [...hidden.get(k) ?? [], ...room.lines as MessageEvent[]]);
+  }
   return out;
 }
 
@@ -749,20 +765,23 @@ const byTs = (a: Event, b: Event) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0;
 function regions(window: Event[], session: Session, compactAt: number, pool?: BeforePool) {
   const here = session.conversation; // the session's own room — everything else is world
   const visible = applySummary(window.filter((e) => !silenced(e)));
-  // a room's past below the floor, as of the floor's moment: the checkpoint's own
-  const floor = visible[0]?.type === "summary" ? visible[0] : undefined;
-  const past = pool && floor ? pastOf(pool, floor.ts, session) : undefined;
-  return byEventTime(afterTurns(visible, session), session, here, compactAt, past);
+  // a room's rows below the floor, as of the floor's moment: the checkpoint's own
+  const floor = visible[0]?.type === "summary" ? visible[0].ts : "";
+  const rows = afterTurns(visible, session);
+  return {
+    rows,
+    ...byEventTime(rows, session, here, compactAt, belowByRoom(floor ? pool : undefined, floor)),
+  };
 }
 
 /**
  * A turn reads the world once (§5): its opener holds what its first step read, and only
  * the principal steers it between steps. So a world line that lands while a turn is open —
  * past what its first step read, before the turn ends — renders after that end, in the next
- * turn's WUM, and nowhere while the turn is still open. A send's own row (`ref_id`, its
- * call) renders after the end of the turn that reads its result, since the call already
- * shows its words: an ungated send's turn is its call's, a gated one's is the turn its
- * outcome opens. Both are decided on the log's own order, so a line never moves once drawn.
+ * turn's WUM, and nowhere while the turn is still open. A send's own row is a world line
+ * like any other: written during its call, it waits; written by an errand between turns
+ * (whose outcome is quiet, so it opens none), it opens the next turn's WUM. Decided on the
+ * log's own order, so a line never moves once drawn.
  */
 function afterTurns(events: Event[], session: Session): Event[] {
   const here = session.conversation;
@@ -797,19 +816,8 @@ function afterTurns(events: Event[], session: Session): Event[] {
   if (open) turns.push(open);
   // the end each held row waits for (undefined: its turn is open — it renders nowhere yet)
   const held = new Map<Event, Event | undefined>();
-  const results = new Map<string, Event>();
-  for (const e of events) {
-    if (e.type === "tool_result" && !e.payload.update) results.set(e.payload.ref_id, e);
-  }
   for (const e of events) {
     if (e.type !== "message" || e.envelope.conversation.address === here) continue;
-    const call = e.payload?.ref_id;
-    if (call !== undefined && isSelf(e, session)) {
-      const result = results.get(call);
-      const read = result && result.id > e.id ? result.id : e.id;
-      held.set(e, result && turns.find((t) => t.to && t.to.id > read)?.to);
-      continue;
-    }
     const turn = turns.find((t) => e.id > t.from && (!t.to || e.id < t.to.id));
     if (turn) held.set(e, turn.to);
   }
@@ -901,7 +909,7 @@ function renderMessages(
   const who: Roster = roster ?? { names: {}, principals: [session.agentId] };
   const accounts = connections ?? {};
   const here = session.conversation; // the session's own room — everything else is world
-  const { events, elisions } = regions(window, session, compactAt, pool);
+  const { rows, events, elisions } = regions(window, session, compactAt, pool);
   // room names from the WHOLE window, silenced rows included — a name is a fact about the
   // room, and the row that carried it need not be one the model reads. A line wears the
   // name its room had at or before it, so a rename later never redraws it
@@ -912,18 +920,21 @@ function renderMessages(
   // lands long after its referent, and the referent being history doesn't unsay it. Only
   // the RENDERED events wear an `id` though, so `re` can point at a line the model can
   // actually read; a resolvable-but-unrendered referent is a reference to elsewhere (`?`).
-  // A referent below the floor is pulled into the `<before>` of the room the referring line
-  // stands in, once across the window: so `re` points at a line here, however far back.
+  // A referent the window has not drawn — one the cap hid, one below the floor, one
+  // anywhere the log holds it — is pulled into the `<before>` of the room the referring
+  // line stands in, once across the window: so `re` points at a line here, and `re="?"`
+  // means only an event that cannot be found. A referent drawn already is pointed at.
   const byExternal = new Map<string, Event>();
-  const below = new Set<EventId>();
-  for (const e of pool?.rows ?? []) {
-    below.add(e.id);
-    if (e.envelope.external_id) byExternal.set(e.envelope.external_id, e);
-  }
-  for (const e of window) {
+  for (const e of [...pool?.rows ?? [], ...pool?.refs ?? [], ...window]) {
     if (e.envelope.external_id) byExternal.set(e.envelope.external_id, e);
   }
   const rendered = new Set(events.map((e) => e.id));
+  // a world line its turn still holds (`afterTurns`) is drawn where it lands, not pulled
+  const coming = new Set(rows.map((e) => e.id));
+  const inWindow = new Set(window.map((e) => e.id));
+  const pullable = (target: Event) =>
+    target.type === "message" && !rendered.has(target.id) &&
+    (coming.has(target.id) || !inWindow.has(target.id));
   const pulled = new Set([...elisions.before.values()].flat().map((e) => e.id));
   // `pull`: the referent is pulled when it is not drawn yet; a pulled line's own `re` pulls
   // nothing, one step is the reach
@@ -932,20 +943,19 @@ function renderMessages(
     if (!id) return { attr: "" };
     const target = byExternal.get(id);
     const shown = target !== undefined &&
-      (rendered.has(target.id) || pulled.has(target.id) || (pull && below.has(target.id)));
+      (rendered.has(target.id) || pulled.has(target.id) || (pull && pullable(target)));
     return { attr: ` re="${shown ? shortId(target.id) : "?"}"`, target, shown };
   };
-  const floor = events[0]?.type === "summary" ? events[0].ts : "";
-  const rank = pool ? ranksOf(pool, floor) : new Map<EventId, Omit<PastLine, "line">>();
+  const rank = ranksOf(pool, rows);
   const pastLine = (e: MessageEvent, pull: boolean): PastLine => ({
     line: msgLine(e, me, who, zone, { ref: refOf(e, pull), marks: false }),
-    ...(rank.get(e.id) ?? { rank: 0 }),
+    ...rank.get(e.id),
   });
   /** A run's `<before>`: the lines given, then what a line there or in the run points at
-   *  below the floor that nothing drew yet. */
+   *  that nothing drew yet. */
   const pullFor = (run: ConvRun, e: Event) => {
     const target = refOf(e).target;
-    if (!target || !below.has(target.id) || pulled.has(target.id)) return;
+    if (!target || !pullable(target) || pulled.has(target.id)) return;
     pulled.add(target.id);
     (run.past ??= []).push(pastLine(target as MessageEvent, false));
   };
@@ -1356,7 +1366,7 @@ interface ConvRun {
  *  what orders the block and counts its gaps. `capped`: that count stopped at `GAP_READ`. */
 interface PastLine {
   line: string;
-  rank: number;
+  rank?: number;
   capped?: boolean;
 }
 
@@ -1364,26 +1374,30 @@ interface PastLine {
  *  gap says "+". */
 export const GAP_READ = 1000;
 
-/** Each pool row's rank: how many rows of its room the floor's moment saw between it and
- *  the floor. A room's newest rows count themselves; an older referent adds the rows xi
- *  counted between it and them. */
-function ranksOf(pool: BeforePool, floor: string): Map<EventId, Omit<PastLine, "line">> {
-  const newest = new Map<string, MessageEvent[]>();
-  for (const e of pool.rows) {
-    if (e.id in pool.between || !sawAt(e, floor)) continue;
-    newest.set(roomKey(e), [...newest.get(roomKey(e)) ?? [], e]);
+/** Each row's rank in its room: how many of the room's rows the window and the pool know
+ *  are newer. The gap between two lines is the difference of their ranks, so it holds as
+ *  rows arrive. A referent older than every known row adds the rows xi counted between;
+ *  one xi could not place has no rank, and no gap is counted beside it. */
+function ranksOf(
+  pool: BeforePool | undefined,
+  rows: Event[],
+): Map<EventId, Omit<PastLine, "line">> {
+  const known = new Map<string, MessageEvent[]>();
+  for (const e of [...rows.filter((r) => r.type === "message"), ...pool?.rows ?? []]) {
+    known.set(roomKey(e), [...known.get(roomKey(e)) ?? [], e as MessageEvent]);
   }
   const out = new Map<EventId, Omit<PastLine, "line">>();
-  for (const rows of newest.values()) {
-    rows.sort((a, b) => a.id < b.id ? 1 : -1).forEach((e, i) => out.set(e.id, { rank: i }));
+  for (const list of known.values()) {
+    list.sort((a, b) => a.id < b.id ? 1 : -1).forEach((e, i) => out.set(e.id, { rank: i }));
   }
-  for (const e of pool.rows) {
-    const n = pool.between[e.id];
-    if (n === undefined) continue;
-    out.set(e.id, {
-      rank: (newest.get(roomKey(e))?.length ?? 0) + n,
-      ...(n >= GAP_READ ? { capped: true } : {}),
-    });
+  for (const e of pool?.refs ?? []) {
+    const list = known.get(roomKey(e)) ?? [];
+    const newer = list.filter((r) => r.id > e.id).length;
+    const n = pool!.between[e.id];
+    if (newer < list.length) out.set(e.id, { rank: newer });
+    else if (n !== undefined) {
+      out.set(e.id, { rank: list.length + n, ...(n >= GAP_READ ? { capped: true } : {}) });
+    }
   }
   return out;
 }
@@ -1391,9 +1405,12 @@ function ranksOf(pool: BeforePool, floor: string): Map<EventId, Omit<PastLine, "
 /** A `<before>` block: oldest first, and between two lines that are not neighbours, how
  *  many rows lie between them. */
 function beforeEl(past: PastLine[]): string {
-  const sorted = [...past].sort((a, b) => b.rank - a.rank);
+  // a line with no rank is a referent xi could not place: older than all the rest
+  const rank = (p: PastLine) => p.rank ?? Infinity;
+  const sorted = [...past].sort((a, b) => rank(b) - rank(a));
   const lines = sorted.flatMap((p, i) => {
-    const gap = i + 1 < sorted.length ? p.rank - sorted[i + 1].rank - 1 : 0;
+    const next = sorted[i + 1]?.rank;
+    const gap = p.rank !== undefined && next !== undefined ? p.rank - next - 1 : 0;
     return gap > 0 ? [p.line, `… ${gap}${p.capped ? "+" : ""} not shown`] : [p.line];
   });
   return `<before>\n${lines.join("\n")}\n</before>`;

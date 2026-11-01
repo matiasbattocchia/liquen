@@ -29,14 +29,14 @@ The model sees the verdict as an event in its own room, the same on every surfac
     `allow` makes an errand.
   - The principal's deny is news (`newsOf`) and wakes a turn, so the agent can redraft.
   - An allow wakes through its outcome: the errand's gated result leaves the chain without
-    a closing (`unclosedChain`).
+    a closing (`unclosedChain`), unless its tool marks it quiet, as `send` does (change 5).
   - A standing deny (`/n conv|conn|always`) is remembered when that turn opens
     (`standingDenies`), since no errand runs to remember it.
 - A lapse is a deny with `lapsed: true`, settled by the harness, so it wears no author key.
   Like any deny it leaves no errand: a call that never ran owes no outcome. The mirror does
   not relay it. **It wakes nothing:** it is news, never a reason to wake. A running turn
-  reads it at its next step, or else the next turn, whatever opens it. `attention` wakes on anything in the session room, so this
-  is a rule of its own.
+  reads it at its next step, or else the next turn, whatever opens it. A permission rule,
+  ours and bounded, apart from a tool's quiet late results (change 5).
 
   ```xml
   <permission_response re="5b0d1b" verdict="lapsed" at="30 Oct 17:40">unanswered for 24h</permission_response>
@@ -50,9 +50,13 @@ The model sees the verdict as an event in its own room, the same on every surfac
 
 ## 2. `<before>`
 
-After a checkpoint, each room in view gets its recent past back.
+Each room in view gets the recent past the model has not seen drawn.
 
-- `<before>` sits inside the WUM, at the top of the room's first `<conv>` after the floor.
+- `<before>` sits inside the WUM, at the top of a room's first drawn `<conv>` since the
+  last checkpoint, when the room has earlier lines. A room drawn in an earlier WUM since
+  then has its past in view already; one an earlier cap left out whole was never drawn,
+  and gets its `<before>` when it next is. Its lines come from below the floor and from
+  what that cap hid; no checkpoint is needed for the second.
 - **X** is the last two full turns, as the contact saw them:
   - the sides are the account (principal, self, org merge) and them;
   - lines the contact never saw are excluded: mirror copies, permission events, internal lines;
@@ -68,11 +72,11 @@ After a checkpoint, each room in view gets its recent past back.
   the past gives way first. The session's own room gets none: its past is the checkpoint's
   and the `keepRecent` turns'. The window's read is untouched: `<before>` reads below the
   floor on its own bound (`BEFORE_READ` rows per room).
-- **References are always pulled,** outside the budget: any `re` target below the floor not
-  rendered, however far back, deduped across the period. It lands in the `<before>` of the
-  `<conv>` the referring line stands in, so no earlier block ever changes. This also settles
-  the `re="?"` of a reply to a line below the floor; a target inside the window that the cap
-  cut keeps `re="?"`.
+- **References are always pulled,** outside the budget: any `re` target not drawn in a WUM
+  since the checkpoint — one the cap hid, one below the floor, one anywhere the log holds it
+  — deduped across the period. A target drawn already is pointed at. It lands in the
+  `<before>` of the `<conv>` the referring line stands in, so no earlier block ever changes.
+  `re="?"` means only an event that cannot be found.
 - Gap mark: `… N not shown`.
 - `<before>` is recomputed every step, so it must be a pure function of (floor, log):
   - rows are chosen by id below the floor, in append order;
@@ -163,7 +167,10 @@ cached, and reasoning carries across turns.
     window's media would pass it, the oldest falls back to its marker: one rewrite,
     accepted as rare. Holding back the newest picture would be worse.
   - The window's size estimate counts media, so a window heavy with it reaches `compactAt`
-    sooner.
+    sooner. The weights are the API's: an image costs a token per 28×28 patch, capped at
+    4,784 on the high-resolution tier the current models read at; a PDF page costs its text
+    (1,500 to 3,000) and an image of the page. A part carries neither dimensions nor page
+    count, so an image weighs the cap and a PDF's pages are guessed from its size.
 - **Every cache mark is 1h.** The tail's five minutes (`render.ts:966`) suited an entry that
   died at close; now the tail is what the next turn reads back, often more than five minutes
   later. The marks: tools and the system prefix, the previous request's tail, the new tail.
@@ -186,7 +193,11 @@ cached, and reasoning carries across turns.
   next step reads it. `deferredInput` already moves what lands while the closing's call is
   in flight; this widens it to the whole turn, and does it before `byEventTime`, so the line
   never joins the run the turn read: a run forms only between turns, and each WUM is capped
-  once.
+  once. A gated send's row needs no rule of its own: the errand writes it between turns,
+  its outcome is quiet and opens none, so it opens the next turn's WUM like any world line.
+- **One WUM per turn, its narration first.** Late results, like rulings, are transparent to
+  runs: they stand before the WUM and explain what it then shows (`→ sent`, then the line
+  as it went out), instead of cutting it in two.
 - **A silent closing renders verbatim:** the assistant's `<|SILENCE|>`, with its thinking.
   Today render draws nothing for it (`render.ts:536`, the `silent` skip in the weld), and
   keeps thinking only for steps that called a tool, so the opener before it and the one after
@@ -201,10 +212,12 @@ cached, and reasoning carries across turns.
 Every send ends with a `final` word: out in its result, or delivered after all, undelivered,
 or withdrawn.
 
-- **A send's updates wake nothing,** like world news: stalled, undelivered, withdrawn,
-  delivered after all. Each is news, never a reason to wake: a running turn reads it at its
-  next step, or else the next turn, whatever opens it. A shell's updates keep waking: they
-  are work in progress.
+- **A send's late results wake nothing,** like world news: its gated outcome, and its
+  updates (stalled, undelivered, withdrawn, delivered after all). Quiet is the tool's own
+  word on what it tells late (`ExecOutcome.quiet`, carried onto the late result as
+  `Payload.quiet`): any other tool's late result is a result like any other, and opens a
+  turn, a shell's updates among them. Each quiet one is news: a running turn reads it at its
+  next step, or else the next turn, whatever opens it.
 - **A withdrawal writes a late update** against the send, to the session that sent it,
   `final`: "taken back before it went out, by <who>". Without it, the stalled update's promise
   ("you are told when it goes out or is given up") is broken.

@@ -378,9 +378,9 @@ export interface Payload {
   update?: true;
   /** FINAL: the last update a call will have; nothing it set in motion is still running. */
   final?: true;
-  /** QUIET: an update that is news but no reason to wake: a send's, whose tale is the
-   *  world's like any reply. A running turn reads it at its next step, or else the next
-   *  turn, whatever opens it. */
+  /** QUIET: a late result that wakes nobody — the tool's own word on what it tells after
+   *  its answer (a send's, whose tale is the world's like any reply). A running turn reads
+   *  it at its next step, or else the next turn, whatever opens it. */
   quiet?: true;
   /** Wire mentions: canonical address + the display name the stored text uses for it
    *  (absent when the text fell back to the bare address). `type` is the sigil the text

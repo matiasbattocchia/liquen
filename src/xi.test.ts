@@ -837,6 +837,31 @@ Deno.test("update: a call's later word is answered NOW, until a turn reads past 
   assertEquals(decide([call, answered, looked, told], SESSION, WAKE, NOON), "ignore");
 });
 
+Deno.test("an errand's outcome is a result like any other, unless its tool marked it quiet", () => {
+  const call = ev("tool_use", { ...SELF, ts: at(9), payload: { turn_id: "T1" } } as Partial<Event>);
+  const pending = ev("tool_result", {
+    ...SELF,
+    ts: at(9),
+    payload: { turn_id: "T1", ref_id: call.id },
+  } as Partial<Event>);
+  const closed = ev("message", {
+    ...SELF,
+    ts: at(8),
+    payload: { turn_id: "T1b" },
+    extra: { consumed: pending.id },
+  } as Partial<Event>);
+  const outcome = (quiet: boolean) =>
+    ev("tool_result", {
+      ...SELF,
+      ts: at(7),
+      payload: { turn_id: "T1", ref_id: call.id, gated: true, ...(quiet ? { quiet: true } : {}) },
+    } as Partial<Event>);
+  // a bash the principal approved ran: the chain owes the turn that reads how it went
+  assertEquals(decide([call, pending, closed, outcome(false)], SESSION, WAKE, NOON), "think");
+  // a send's outcome is the world's tale: the next turn, whatever opens it, reads it
+  assertEquals(decide([call, pending, closed, outcome(true)], SESSION, WAKE, NOON), "ignore");
+});
+
 Deno.test("alarm: once a turn has read past it, it stops asking — the horizon rules", () => {
   const a = alarm(5);
   // the closing message carries the horizon it consumed (§2): the alarm is behind it
@@ -924,20 +949,44 @@ Deno.test("beforePool: each room's newest rows below the floor, and a far refere
       lineAt(50), // the session's own room: never a `<before>`
     ]);
     const window = () => windowOf(log);
-    // no checkpoint, no floor: nothing below it
-    assertEquals(await beforePool(log, await window(), SESSION), undefined);
+    // no checkpoint, no floor: nothing below it, and the window lacks no referent
+    assertEquals(await beforePool(log, await window(), SESSION), {
+      rows: [],
+      refs: [],
+      between: {},
+    });
     await log.publish(checkpointOver([rows[0].id, rows[50].id]));
     await log.publish([
       { ...said(51), payload: { ref_external_id: "slack:far" } } as Draft<Event>,
       lineAt(52),
     ]);
-    const pool = (await beforePool(log, await window(), SESSION))!;
-    const ids = pool.rows.map((e) => e.id);
-    // the room's newest forty below the floor, then the referent they do not reach
-    assertEquals(ids.slice(0, 40), rows.slice(10, 50).map((e) => e.id));
-    assertEquals(ids.slice(40), [rows[2].id]);
+    const pool = await beforePool(log, await window(), SESSION);
+    // the room's newest forty below the floor, and the referent they do not reach
+    assertEquals(pool.rows.map((e) => e.id), rows.slice(10, 50).map((e) => e.id));
+    assertEquals(pool.refs.map((e) => e.id), [rows[2].id]);
     // rows 3 to 9 lie between the referent and the newest forty
     assertEquals(pool.between, { [rows[2].id]: 7 });
+  });
+});
+
+Deno.test("beforePool: a referent is found wherever the log holds it, a checkpoint or none", async () => {
+  await withLog(async (log) => {
+    await log.upsertConnections([{ service: "slack", address: "T1" }]);
+    const said = (i: number, extra: Partial<Envelope> = {}): Draft<Event> =>
+      ({ ...lineAt(i), envelope: { ...env("C1"), ...extra } }) as Draft<Event>;
+    // before the boot floor: no window reads it, a reply still points at it
+    const [old] = await log.publish([said(0, { external_id: "slack:old" })]);
+    const since = new Date(T0 + 30 * 60_000).toISOString();
+    await log.publish([{ ...said(60), payload: { ref_external_id: "slack:old" } } as Draft<Event>]);
+    const pool = await beforePool(log, await windowOf(log, since), SESSION, since);
+    assertEquals(pool.refs.map((e) => e.id), [old.id]);
+    assertEquals(pool.between, { [old.id]: 0 }); // nothing lies between it and the reply
+    // and a reply to nothing the log holds finds nothing: that is `re="?"`
+    await log.publish([
+      { ...said(61), payload: { ref_external_id: "slack:gone" } } as Draft<Event>,
+    ]);
+    const again = await beforePool(log, await windowOf(log, since), SESSION, since);
+    assertEquals(again.refs.map((e) => e.id), [old.id]);
   });
 });
 

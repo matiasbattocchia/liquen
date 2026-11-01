@@ -3714,7 +3714,7 @@ Deno.test("a standing verdict is REMEMBERED: /y conv settles that conversation's
         "tool_use",
       ),
       ok([{ kind: "assistant", text: "pedido" }], "end_turn"),
-      ok([{ kind: "assistant", text: "enviado" }], "end_turn"),
+      // the send's outcome is quiet: it opens no turn of its own
       ok(
         [{ kind: "tool_use", name: "send", input: { to: "wa:x", text: "dos", connection: "wa" } }],
         "tool_use",
@@ -3767,7 +3767,7 @@ Deno.test("a standing verdict is PINNED: the ruled conversation runs, its neighb
         "tool_use",
       ),
       ok([{ kind: "assistant", text: "pedido" }], "end_turn"),
-      ok([{ kind: "assistant", text: "enviado" }], "end_turn"),
+      // the send's outcome is quiet: it opens no turn of its own
       ok(
         [{ kind: "tool_use", name: "send", input: { to: "wa:y", text: "dos", connection: "wa" } }],
         "tool_use",

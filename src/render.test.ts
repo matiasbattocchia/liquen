@@ -11,6 +11,9 @@ import {
   capRun,
   estTokens,
   GAP,
+  IMAGE_TOKENS,
+  mediaTokens,
+  PDF_PAGE_TOKENS,
   render,
   renderHits,
   renderSystem,
@@ -1794,11 +1797,12 @@ Deno.test("a transcript wears its audio's author even when the marker is capped 
     compactAt: weigh([...chatter.slice(2), transcript]), // the room's newest eight
   });
   const dump = JSON.stringify(messages);
-  assert(!dump.includes('<audio id=\\"e1\\"')); // the marker fell to the cap…
-  // …and the words still say who spoke: the referent resolves against the whole window
+  // the marker fell to the cap, so the words pull it into the room's `<before>`…
+  assertStringIncludes(dump, '<before>\\n<audio id=\\"e1\\"');
+  // …and say who spoke, pointing at it
   assertStringIncludes(
     dump,
-    '<transcript principal=\\"Matías\\" re=\\"?\\">hoy duerme conmigo</transcript>',
+    '<transcript principal=\\"Matías\\" re=\\"e1\\">hoy duerme conmigo</transcript>',
   );
 });
 
@@ -2784,6 +2788,7 @@ const lastTwo: BeforePool = {
     old("a04", "04", "dale"),
     old("a05", "05", "llevo la cámara"),
   ],
+  refs: [],
   between: {},
 };
 const userText = (ms: Anthropic.MessageParam[]) => blocksOf(ms).map(txt).join("\n");
@@ -2829,7 +2834,7 @@ Deno.test("<before>: a newest turn longer than the cap keeps its newest lines", 
     session: SESSION,
     zone: "UTC",
     now: "2026-07-19T11:00:00Z",
-    before: { rows, between: {} },
+    before: { rows, refs: [], between: {} },
   });
   const block = userText(messages).split("<before>\n")[1].split("\n</before>")[0];
   assertEquals(block.split("\n").length, 12);
@@ -2847,7 +2852,11 @@ Deno.test("<before>: a row the room never saw by the floor's moment is no line o
     ...old("a05", "05", "llevo la cámara"),
     status: { withdrawn_at: "2026-07-19T10:30:00Z" },
   };
-  const pool: BeforePool = { rows: [lastTwo.rows[1], taken, lastTwo.rows[3], later], between: {} };
+  const pool: BeforePool = {
+    rows: [lastTwo.rows[1], taken, lastTwo.rows[3], later],
+    refs: [],
+    between: {},
+  };
   const { messages } = render({
     events: pastWindow(worldMsg("d01", "2026-07-19T10:30:00Z", cande, candeSays, "¿y?")),
     docs: [],
@@ -2871,7 +2880,7 @@ Deno.test("<before>: a reply's referent is pulled however far back, once, with t
     ...worldMsg(id, `2026-07-19T10:${mm}:00Z`, cande, candeSays, "este"),
     payload: { ref_external_id: "wa:far" },
   });
-  const pool: BeforePool = { rows: [...lastTwo.rows, far], between: { a00: 30 } };
+  const pool: BeforePool = { rows: lastTwo.rows, refs: [far], between: { a00: 30 } };
   const events = pastWindow(
     reply("d01", "30"),
     mindMsg("d02", "2026-07-19T10:31:00Z", "lo busco", true),
@@ -3008,12 +3017,18 @@ Deno.test("a line wears the name its room had then: a rename later never redraws
   assertStringIncludes(after.join("\n"), 'name="Proyecto"');
 });
 
-Deno.test("a gated send's row waits for the turn its outcome opens, then joins the next WUM", () => {
+Deno.test("a gated send's row is a world line of the next turn: its quiet outcome stands before the WUM", () => {
   const t = (m: number) => `2026-07-22T10:0${m}:00Z`;
   const mariana = { address: "wa", name: "Mariana" };
   const gated: ToolResultEvent = {
     ...toolResultE("e07", t(2), "T1", "sent", "e03"),
-    payload: { turn_id: "T1", ref_id: "e03", gated: true },
+    payload: { turn_id: "T1", ref_id: "e03", gated: true, quiet: true },
+    parts: [{
+      type: "data",
+      kind: "tool_result",
+      data: { output: "sent" },
+      text: "send(to: Mariana)",
+    }],
   };
   const events: Event[] = [
     mindMsg("e01", t(0), "avisale a Mariana", false),
@@ -3022,20 +3037,18 @@ Deno.test("a gated send's row waits for the turn its outcome opens, then joins t
     toolResultE("e04", t(0), "T1", { status: "pending_approval" }, "e03"),
     mindMsg("e05", t(1), SILENCE, true, "T1b"), // the turn closes while the ask waits
     waMsg("e06", t(2), "hola", true, "e03"), // the errand sends it…
-    gated, // …and tells the outcome: it opens a turn of its own
-    mindMsg("e08", t(3), SILENCE, true, "T2"),
+    gated, // …and tells the outcome, quiet: no turn of its own
     worldMsg("e09", t(4), mariana, { address: "549", name: "Mariana" }, "¡hola!"),
   ];
   const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t(5) });
   const roles = messages.map((m) => m.role);
-  assertEquals(roles, ["user", "assistant", "user", "assistant", "user", "assistant", "user"]);
-  // the row is not under the outcome's turn…
-  assert(!blocksOf([messages[4]]).map(txt).some((s) => s.includes('id="e06"')));
-  // …it opens the next WUM, one room with the reply
-  const wum = txt((messages[6].content as Anthropic.ContentBlockParam[])[0]);
-  assertStringIncludes(wum, '<msg id="e06" self');
-  assertStringIncludes(wum, '<msg id="e09"');
-  assertEquals(wum.split("<conv ").length - 1, 1);
+  assertEquals(roles, ["user", "assistant", "user", "assistant", "user"]);
+  // the next turn's opener: the outcome first, then one WUM, one room, the send and the reply
+  const opener = blocksOf([messages[4]]).map(txt);
+  assertStringIncludes(opener[0], '<system kind="tool_result" gated>send(to: Mariana) → sent');
+  assertStringIncludes(opener[1], '<msg id="e06" self');
+  assertStringIncludes(opener[1], '<msg id="e09"');
+  assertEquals(opener[1].split("<conv ").length - 1, 1);
 });
 
 Deno.test("a turn an error ended holds nothing: the next turn reads what landed after it", () => {
@@ -3056,4 +3069,55 @@ Deno.test("a turn an error ended holds nothing: the next turn reads what landed 
   ];
   const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t(3) });
   assertStringIncludes(JSON.stringify(messages), "¿estás?");
+});
+
+Deno.test("<before> needs no checkpoint: a room the cap left out of one WUM gets its lines back when it is next drawn", () => {
+  const busy = { address: "222", kind: "group" as const, name: "Equipo" };
+  const leo = { address: "9", name: "Leo" };
+  const loud = Array.from(
+    { length: 30 },
+    (_, i) => worldMsg(`d${10 + i}`, `2026-07-19T10:${10 + i}:00Z`, busy, leo, `ruido ${i}`),
+  );
+  // one long line from Cande: the lighter room, but its newest line passes its share
+  const long = worldMsg("d01", "2026-07-19T10:01:00Z", cande, candeSays, "x".repeat(700));
+  const closing = mindMsg("d50", "2026-07-19T10:50:00Z", "visto", true, "T1");
+  const again = worldMsg("d51", "2026-07-19T10:51:00Z", cande, candeSays, "¿lo viste?");
+  const more = worldMsg("d52", "2026-07-19T10:52:00Z", busy, leo, "y otra cosa");
+  // under twice the long line: its share cannot buy it, and the next WUM's lines leave room
+  const budget = Math.floor(estTokens([long]) * 1.9);
+  const { messages } = render({
+    events: [long, ...loud, closing, again, more],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: "2026-07-19T11:00:00Z",
+    compactAt: budget,
+  });
+  const blocks = blocksOf(messages).map(txt);
+  // the first WUM drew Equipo and left Cande out whole…
+  assert(!blocks[0].includes('name="Cande"'), blocks[0]);
+  // …so Cande's first drawn appearance opens on what that cap hid
+  const second = blocks.find((s) => s.includes("¿lo viste?"))!;
+  assertStringIncludes(
+    second,
+    '<conv kind="direct" name="Cande" address="111">\n<before>\n<msg id="d01"',
+  );
+  // Equipo was drawn before: its past is in view, no `<before>`
+  assertEquals(second.split("<before>").length - 1, 1);
+});
+
+Deno.test("media weighs what the API counts: an image at its tier's cap, a PDF by its pages", () => {
+  const image = fileMsg("e1", "2026-07-21T10:00:00Z", "/m/a.png");
+  const pdf = fileMsg("e2", "2026-07-21T10:01:00Z", "/m/r.pdf", {
+    mime: "application/pdf",
+    size: 250 * 1024, // three pages, as its size guesses
+  });
+  const ours = {
+    ...fileMsg("e3", "2026-07-21T10:02:00Z", "/m/b.png"),
+    agent: SELF,
+    payload: { turn_id: "T1" },
+  };
+  assertEquals(mediaTokens([image], SESSION), IMAGE_TOKENS);
+  assertEquals(mediaTokens([pdf], SESSION), 3 * PDF_PAGE_TOKENS);
+  assertEquals(mediaTokens([ours], SESSION), 0); // the agent's own are never re-shown
 });

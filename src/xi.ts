@@ -260,7 +260,11 @@ function needsCheckpoint(events: Event[], session: Session, wake: Wake): boolean
  * poke (main's tick) re-asks this same question until it is due.
  */
 function attention(events: Event[], session: Session, wake: Wake, now: number): Decision {
-  const news = newsOf(events, session).filter((e) => !sealed(e, events, wake, now) && !quiet(e));
+  // news that is no reason to wake waits for a turn something else opens: a late result its
+  // tool marked quiet, and a lapse
+  const news = newsOf(events, session).filter((e) =>
+    !sealed(e, events, wake, now) && !quiet(e) && !lapse(e)
+  );
   if (news.length === 0) return "ignore";
   // a NAMED session is REACTIVE (§4): only its own rooms reach it at all — its window is
   // its enrollments — so every piece of news is addressed to it, and the ladder below
@@ -704,12 +708,14 @@ function newsOf(events: Event[], session: Session): News[] {
   return events.slice(from + 1).filter(news);
 }
 
-/** News that is no reason to wake: a send's update (`Payload.quiet`) and a lapse, which no
- *  one gave. A running turn reads it at its next step, or else the next turn, whatever opens
- *  it. */
-function quiet(e: News): boolean {
-  return (e.type === "tool_result" && e.payload.quiet === true) ||
-    (e.type === "permission_response" && e.parts[0].data.lapsed === true);
+/** A late result its tool marked quiet (`Payload.quiet`): news, no reason to wake. */
+function quiet(e: Event): boolean {
+  return e.type === "tool_result" && e.payload.quiet === true;
+}
+
+/** A lapse: the deny nobody gave. News, no reason to wake. */
+function lapse(e: Event): boolean {
+  return e.type === "permission_response" && e.parts[0].data.lapsed === true;
 }
 
 /** A deny someone else gave one of this session's asks: the principal's, or the lapse's.
@@ -744,8 +750,9 @@ export function aboutOf(events: Event[], session: Session): About[] {
 }
 
 /** All our uses have results but no turn output followed ⇒ the closing think is owed.
- *  Turn output = our thinking / tool_use / home message; a directed peer send is not. An
- *  update is no answer the chain waits on: it is news, and `attention` weighs it. */
+ *  Turn output = our thinking / tool_use / home message; a directed peer send is not. Any
+ *  result counts, a late one too — an errand's outcome, an update — but one its tool marked
+ *  quiet: that waits for a turn something else opens. */
 function unclosedChain(events: Event[], session: Session): boolean {
   const uses = new Set(
     events
@@ -756,7 +763,7 @@ function unclosedChain(events: Event[], session: Session): boolean {
   let lastResult = -1;
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
-    if (e.type === "tool_result" && !e.payload.update && uses.has(e.payload.ref_id)) {
+    if (e.type === "tool_result" && !quiet(e) && uses.has(e.payload.ref_id)) {
       lastResult = i;
     }
   }
@@ -804,6 +811,9 @@ export interface ExecOutcome {
   /** The answer is a failure that still has work going on: an error that can be async,
    *  where a throw cannot. */
   is_error?: true;
+  /** What this call tells after its answer wakes nobody (`Payload.quiet`): a tool's own
+   *  word on its late results — the outcome an errand runs, the updates that follow. */
+  quiet?: true;
 }
 
 /** The call an executor runs: its `tool_use` and the step that made it, which is what an
@@ -1036,72 +1046,78 @@ export async function windowOf(log: Pick<Reader, "read">, since?: string): Promi
 }
 
 /**
- * What `<before>` draws from (§5), read below the checkpoint's floor: each room the window
- * shows past the floor, its newest rows there; the rows a line points at that the window
- * lacks, however far back; and for each of those older than its room's newest rows, how
- * many lie between. All of it is chosen by id below a floor that stands still, so the
- * same window reads the same pool. None before the first checkpoint.
+ * What `<before>` and `re` draw from beyond the window (§5): past a checkpoint, each room
+ * the window shows, its newest rows below the floor; the rows a line points at that the
+ * window lacks, wherever the log holds them; and for each of those older than every row of
+ * its room in view, how many lie between. Rooms are read by id below a floor that stands
+ * still, so the same window reads the same pool.
  */
 export async function beforePool(
   log: Pick<Reader, "read">,
   window: Event[],
   session: Session,
   since?: string,
-): Promise<BeforePool | undefined> {
+): Promise<BeforePool> {
   const floor = window.findLast((e): e is SummaryEvent => e.type === "summary");
-  if (!floor) return undefined;
-  const end = floor.payload.covers[1];
-  // `id ≤ end`: ids are fixed-width, so nothing sorts between `end` and `end` + "0"
-  const below = { beforeId: `${end}0`, ...(since ? { after: since } : {}) };
+  const end = floor?.payload.covers[1];
   const room = (e: Event) => ({
     service: e.envelope.service,
     connection: e.envelope.connection_address,
     conversation: e.envelope.conversation.address,
   });
   const shown = window.filter((e): e is MessageEvent =>
-    e.type === "message" && e.id > end && !silenced(e) &&
+    e.type === "message" && (end === undefined || e.id > end) && !silenced(e) &&
     e.envelope.conversation.address !== session.conversation
   );
-  const rooms = new Map(shown.map((e) => [roomKey(e), e]));
   const newest = new Map<string, MessageEvent[]>();
-  await Promise.all([...rooms].map(async ([k, e]) => {
-    const rows = await log.read({
-      ...room(e),
-      ...below,
-      types: ["message"],
-      copies: false, // the room never saw a mirror's copy
-      limit: BEFORE_READ,
-    });
-    newest.set(k, rows as MessageEvent[]);
-  }));
+  if (end !== undefined) {
+    // `id ≤ end`: ids are fixed-width, so nothing sorts between `end` and `end` + "0"
+    const rooms = new Map(shown.map((e) => [roomKey(e), e]));
+    await Promise.all([...rooms].map(async ([k, e]) => {
+      const rows = await log.read({
+        ...room(e),
+        beforeId: `${end}0`,
+        ...(since ? { after: since } : {}),
+        types: ["message"],
+        copies: false, // the room never saw a mirror's copy
+        limit: BEFORE_READ,
+      });
+      newest.set(k, rows as MessageEvent[]);
+    }));
+  }
+  const rows = [...newest.values()].flat();
   // the referents nothing read yet: of the window's lines, and of the rooms' newest rows
-  const had = new Set(
-    [...window, ...[...newest.values()].flat()].map((e) => e.envelope.external_id),
-  );
+  const had = new Set([...window, ...rows].map((e) => e.envelope.external_id));
   const wanted = new Set<string>();
-  for (const e of [...shown, ...[...newest.values()].flat()]) {
+  for (const e of [...shown, ...rows]) {
     const ref = e.payload?.ref_external_id;
     if (typeof ref === "string" && !had.has(ref)) wanted.add(ref);
   }
-  const far: MessageEvent[] = [];
+  // the oldest row of each room in view: where a far referent's gap is counted to
+  const oldest = new Map<string, Event>();
+  for (const e of [...rows, ...shown]) {
+    const held = oldest.get(roomKey(e));
+    if (!held || e.id < held.id) oldest.set(roomKey(e), e);
+  }
+  const refs: MessageEvent[] = [];
   const between: Record<EventId, number> = {};
   await Promise.all([...wanted].map(async (externalId) => {
-    const [r] = await log.read({ externalId, ...below, types: ["message"], limit: 1 });
+    const [r] = await log.read({ externalId, types: ["message"], limit: 1 });
     if (r?.type !== "message") return;
-    far.push(r);
-    const oldest = newest.get(roomKey(r))?.[0];
+    refs.push(r);
+    const after = oldest.get(roomKey(r));
+    if (!after || after.id < r.id) return;
     const gap = await log.read({
       ...room(r),
       afterId: r.id,
-      beforeId: oldest?.id ?? below.beforeId,
-      ...(since ? { after: since } : {}),
+      beforeId: after.id,
       types: ["message"],
       copies: false,
       first: GAP_READ,
     });
     between[r.id] = gap.length;
   }));
-  return { rows: [...[...newest.values()].flat(), ...far], between };
+  return { rows, refs, between };
 }
 
 /** One xi invocation: poke → owed → (think/act: acquire-or-exit → work) → return what it
@@ -1675,9 +1691,9 @@ async function act(
     /** An exec tool's run (§9): its facts and its wall time, for `extra.exec`. */
     run?: { facts: ExecFacts; ms: number },
   ): Promise<Draft<ToolResultEvent>> => {
-    const { output: raw, files, async, is_error } = isOutcome(outcome)
+    const { output: raw, files, async, is_error, quiet } = isOutcome(outcome)
       ? outcome
-      : { output: outcome, files: [], async: undefined, is_error: undefined };
+      : { output: outcome, files: [], async: undefined, is_error: undefined, quiet: undefined };
     const { parts, pinned, refused } = await attachmentsOf(files, ports.files ?? localFiles());
     const output = refused.length && typeof raw === "string"
       ? `${raw}${raw ? "\n" : ""}${refused.map((r) => `[attachment refused: ${r}]`).join("\n")}`
@@ -1699,6 +1715,8 @@ async function act(
         ref_id: use.id,
         ...(call !== undefined ? { gated: true as const } : {}),
         ...(async ? { async: true as const } : {}),
+        // the tool's word on what it tells late; the answer inside the step is the chain's
+        ...(call !== undefined && quiet ? { quiet: true as const } : {}),
       },
       agent: self,
       envelope: here,
@@ -3283,8 +3301,11 @@ async function execute(
     const sent = await ports.log.publish(msg);
     const output = { sent: true, event_id: sent!.id }; // a full draft (parts present) always stores
     // a wire row is born an offer (store/events.ts `offerOf`): its dispatcher delivers it
-    // after this answer, and an update says so when it never will (update.ts)
-    return envelope.service === "local" ? output : { output, files: [], async: true };
+    // after this answer, and an update says so when it never will (update.ts). Whatever a
+    // send tells late is the world's tale like any reply: quiet
+    return envelope.service === "local"
+      ? { output, files: [], quiet: true }
+      : { output, files: [], async: true, quiet: true };
   }
   if (name === "contact") {
     // the address book (§9): `who` points at a person the way `send(to:)` points at a
