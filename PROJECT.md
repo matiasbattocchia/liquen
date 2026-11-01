@@ -6013,6 +6013,39 @@ Open: switching an org from files to the table copies nothing across, on either 
 The system docs are laid again, but what the agents wrote under `agents/<name>/` stays
 behind as files they no longer see. A one-time carry-over on the switch is parked.
 
+### The window only grows, and the event log says what the model read (2026-11-01) — LANDED
+
+The "mem" batch, its first half: the event log and render. Every request is now the one
+before plus new rows, until a checkpoint moves the floor; CHANGES.md holds the decisions.
+
+- **Nothing collapses at a turn's close.** Thinking (closing steps' too), tool pairs, late
+  results and inlined media stay until the checkpoint, as in pi and Claude Code. Past a
+  checkpoint the turns it kept lose their thinking, whose signatures bind a prefix it
+  replaced. Every cache mark is an hour: the last request's tail and this one's.
+- **A turn is opener, steps, closing.** The world waits for the closing: a world line
+  that lands mid-turn, the agent's own send rows among them, opens the next turn's WUM.
+  One WUM per turn, its narration (rulings, late results) before it. A silent closing
+  renders as said.
+- **The anchor is an event** (`anchor`), written with a step when its text moved, `now`
+  to the minute, and drawn where it was read as the sections that moved. A job's age
+  reads in whole minutes.
+- **Permission events.** Only the ruling renders; the ask is its tool_use and its
+  `pending_approval` result, which carries the handle. A deny owes no errand and wakes the
+  turn that redrafts; a lapse wakes nobody.
+- **Quiet is a tool's word on its late results.** A send's outcome and updates wake
+  nobody; any other tool's late result opens a turn like any result.
+- **`<before>`.** A room's first drawn `<conv>` since the checkpoint opens on the lines
+  the model never saw drawn, below the floor or hidden by an earlier cap; a reference to
+  anything undrawn is pulled from wherever the log holds it. `<checkpoint before="<id>">`,
+  and `search` takes a line's id as a bound.
+- **Sends end with a final word**: a withdrawal is told to the sending session, and any
+  session that may send to a room may withdraw what waits there.
+- `compactAt` and `keepRecent` are each agent's (`organization.agents`).
+
+Open: whether the API keeps every anchor and thinking block through a long day is measured
+on `liquen start`'s stderr (`[anthropic] turn …` drops). Memory (cards, compaction, memory
+instructions, unloading) is the batch after.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

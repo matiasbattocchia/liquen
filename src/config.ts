@@ -362,8 +362,8 @@ const AGENT: Entry[] = [
   {
     key: "compactAt",
     value: DEFAULT_COMPACT_AT,
-    doc: "est. tokens of raw event JSON (~1.8x the prompt) before a checkpoint runs, " +
-      "between turns; input never waits for one. Also the most a run of world lines between " +
+    doc: "est. tokens of raw event JSON and the pictures it inlines before a checkpoint " +
+      "runs, between turns; input never waits for one. Also the most a run of world lines between " +
       "two turns may weigh in the prompt: past it, its rooms share it equally, newest lines " +
       "first, and the rest is left for search",
   },
