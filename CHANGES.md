@@ -6,34 +6,37 @@ unloading need more discussion and are listed under [Out of this batch](#out-of-
 
 ## 1. Permission events
 
-The model sees the ask and the verdict as events in its own room, the same on every surface.
+The model sees the verdict as an event in its own room, the same on every surface.
 
-- `<permission_request>` and `<permission_response>` render in the agent's conversation with
-  its principal (the session room), and stay like any line until the checkpoint:
+- `<permission_response>` renders in the agent's conversation with its principal (the
+  session room), and stays like any line until the checkpoint. The ask needs no line of its
+  own: the `tool_use` shows the draft whole, and its `pending_approval` result says it
+  waits. The response points back at the call with `re`, the handle the pending list shows:
 
   ```xml
-  <permission_request id="5b0d1b" tool="send" at="29 Oct 17:40">send(to: Recepción Torres, text: "Hola, a las 18 llega Tete…")</permission_request>
   <permission_response re="5b0d1b" principal="Matías Battocchia" verdict="deny" at="29 Oct 17:41">a ver... recepción ya sabe donde vivo…</permission_response>
   ```
 
 - Verdicts: `allow` (with `scope="once|conversation"`), `deny`, `lapsed`, `withdrawn`. A
   withdrawal is marked `self`, since the agent withdrew it.
-- The request shows a `send` in full, because the draft is half of every correction. Other
-  tools keep the clipped call the card already uses.
-- Turn shape: `tool_use`, then the `pending_approval` result with the request beside it; later
-  the response; on `allow`, the errand's gated result reports what the call did.
+- Turn shape: `tool_use`, then the `pending_approval` result; later the response; on
+  `allow`, the errand's gated result reports what the call did.
 - The anchor's pending list stays: it answers what is still open. The events are the record.
 - **The errand's deny result goes away** (`xi.ts:1697`): the tool never ran, and the verdict
   is the event. The inline denies stay (`xi.ts:1680`, and `xi.ts:1633` for policy): there the
   `tool_use` has no answer yet, and "refused" is its result.
   - `owedOf` (`xi.ts:565`) and the store's `owed` skip deny verdicts, lapses included. Only
     `allow` makes an errand.
-  - A deny response is news (`newsOf`) and wakes a turn, so the agent can redraft.
+  - The principal's deny is news (`newsOf`) and wakes a turn, so the agent can redraft.
+  - An allow wakes through its outcome: the errand's gated result leaves the chain without
+    a closing (`unclosedChain`).
   - A standing deny (`/n conv|conn|always`) is remembered when that turn opens
     (`standingDenies`), since no errand runs to remember it.
 - A lapse is a deny with `lapsed: true`, settled by the harness, so it wears no author key.
   Like any deny it leaves no errand: a call that never ran owes no outcome. The mirror does
-  not relay it.
+  not relay it. **It wakes nothing:** it is news, never a reason to wake. A running turn
+  reads it at its next step, or else the next turn, whatever opens it. `attention` wakes on anything in the session room, so this
+  is a rule of its own.
 
   ```xml
   <permission_response re="5b0d1b" verdict="lapsed" at="30 Oct 17:40">unanswered for 24h</permission_response>
@@ -98,8 +101,8 @@ Tool pairs and thinking stay until the floor, as in pi and Claude Code. The cont
 cached, and reasoning carries across turns.
 
 - Until the floor, the closed region keeps what the trailing region welds: thinking, tool
-  pairs, late results and step anchors. Nothing is collapsed at close: the region is
-  append-only.
+  pairs, late results, anchors and inlined media. Nothing is collapsed at close: every
+  request is the previous one plus new rows.
 - Preserved thinking binds every block to everything before it, so **nothing in the closed
   region may re-render.** The prerequisites:
   - permission events ignore `status` (change 1);
@@ -112,15 +115,80 @@ cached, and reasoning carries across turns.
     its hits share `msgLine`, but a tool result is written once, a snapshot of the moment it
     was asked, so a mark there never re-renders. A search reads every message row, unsent
     ones included, and without the mark a withdrawn line would read as said.
-- **At close,** a turn whose rendering changes drops its thinking: inlined media becoming
-  markers (`shed` of `extra.media`, world images). This is allowed, since no later block exists
-  yet.
+- **The anchor is an event.** nu writes it, in the session room, with a step's first event
+  and stamped just before it, so a failed call leaves none and a retry reads afresh. It
+  replaces `extra.anchor` (`nu.ts:368`) and render's replay map.
+  - It is written when its text differs from the session's last anchor, with `now` at
+    minute precision. Every line counts, a job's last line included. Closing steps too:
+    kept thinking binds them as well. A turn's first step nearly always writes one, since
+    time has passed.
+  - Anchors are written only at steps, so a job printing a hundred lines a second still
+    adds at most one per step. A quiet job shows once a minute, when its age moves.
+  - The event holds the whole snapshot. Render shows the sections that changed since the
+    previous anchor in the window; the first anchor in the window shows whole. A section
+    that empties says so (`background — nothing running`), or the last listing would stand.
+  - It is a `mid_conv_system` block where it was written, the last block of that step's
+    request. Not a message: search and the WUM caps do not see it.
+  - A job's age rounds to the minute, `running 0m` in its first (`took`, `exec/jobs.ts:192`,
+    shows seconds there). A job's end needs nothing new: it already arrives as a late update
+    against its call, and wakes the session.
+
+  ```
+  ── user
+  [tool_result] started in the background · pid 48211
+  [system] background — 1 job:
+  · vite — running 0m, last line "ready in 412 ms" · pid 48211
+  ── assistant
+  [tool_use read] {"path":"src/Login.tsx"}
+  ── user
+  [tool_result] …the file…
+  [system] background — 1 job:
+  · vite — running 0m, last line "hmr update /src/Login.tsx" · pid 48211
+  ── assistant
+  [tool_use edit] {"path":"src/Login.tsx", …}
+  ── user
+  [tool_result] edited
+  [system] now: Thursday 29 October, 2026 - 15:41
+  background — 1 job:
+  · vite — running 1m, last line "GET /login 200" · pid 48211
+  ```
+
+- **Inlined media stays** until the checkpoint, like thinking. Turning it into a marker at
+  close would rewrite a block mid-history: the cache misses from there and every later
+  thinking block drops.
+  - `MEDIA_BUDGET` (`render.ts:242`) becomes a window budget, newest first. When the
+    window's media would pass it, the oldest falls back to its marker: one rewrite,
+    accepted as rare. Holding back the newest picture would be worse.
+  - The window's size estimate counts media, so a window heavy with it reaches `compactAt`
+    sooner.
+- **Every cache mark is 1h.** The tail's five minutes (`render.ts:966`) suited an entry that
+  died at close; now the tail is what the next turn reads back, often more than five minutes
+  later. The marks: tools and the system prefix, the previous request's tail, the new tail.
+  A 1h write costs 2x input against 1.25x, paid only on each step's new rows.
 - **At a checkpoint,** the turns `keepRecent` retains keep their tool pairs and lose their
   thinking. A block's signature binds everything before it, and the summary replaced that
   prefix, so the API would drop each block on every request (or refuse it, on enforced
   accounts). Tool pairs carry no signature: they stay valid after any prefix.
 - Accepted as rare, each costing one turn of dropped thinking: an echo absorbed after it
-  rendered, an upsert re-statement, Teams `relabel`, the mail thread move.
+  rendered, an upsert re-statement, Teams `relabel`, the mail thread move, media past the
+  window budget.
+- **The world waits for the closing.** A turn is its opener (the WUM, the principal's
+  lines, the session's news, the anchor), then its steps, then its closing: an assistant
+  message, always. A WUM renders once per turn, at its opening. Between steps the turn
+  reads everything but world lines: the principal's lines and verdicts, shell and send
+  updates, lapses, alarms. A world line is any message in a world room, the agent's own
+  send rows included (`message`, `ref_id` → the send's `tool_use`). One that lands while a
+  turn is open, past its first step's horizon (`extra.consumed`) and before its closing,
+  renders after that closing, in the next turn's WUM. Today `weldOrder` floats such a line past the step it interrupted, and the turn's
+  next step reads it. `deferredInput` already moves what lands while the closing's call is
+  in flight; this widens it to the whole turn, and does it before `byEventTime`, so the line
+  never joins the run the turn read: a run forms only between turns, and each WUM is capped
+  once.
+- **A silent closing renders verbatim:** the assistant's `<|SILENCE|>`, with its thinking.
+  Today render draws nothing for it (`render.ts:536`, the `silent` skip in the weld), and
+  keeps thinking only for steps that called a tool, so the opener before it and the one after
+  run together in one user message. It was a response like any other, and every request
+  replays the last one. The mirror still carries nothing to any surface.
 - Keep `prefix_mismatch_behavior: "drop_block"` (`transport/anthropic.ts:24`). Each drop the
   response reports is stamped on `liquen start`'s stderr as `[anthropic] turn …`; that is
   where the change is measured.
@@ -130,6 +198,10 @@ cached, and reasoning carries across turns.
 Every send ends with a `final` word: out in its result, or delivered after all, undelivered,
 or withdrawn.
 
+- **A send's updates wake nothing,** like world news: stalled, undelivered, withdrawn,
+  delivered after all. Each is news, never a reason to wake: a running turn reads it at its
+  next step, or else the next turn, whatever opens it. A shell's updates keep waking: they
+  are work in progress.
 - **A withdrawal writes a late update** against the send, to the session that sent it,
   `final`: "taken back before it went out, by <who>". Without it, the stalled update's promise
   ("you are told when it goes out or is given up") is broken.
@@ -149,18 +221,21 @@ or withdrawn.
   they belong to a session's own calls.
 - `cancel.md` says: a message not yet out, in a room you can write to. `referent`'s hint
   ("to take it back: cancel <re>") is right for any session that can write, and stays.
-- **A send's row in the WUM:** never in the turn of its `tool_use` (the welded-send skip at
-  `render.ts:938` stays); from the next turn on it shows. With the region append-only, the row
-  cannot slip back into its closed turn, so it renders in the first WUM after that turn closes.
-  Seeing it twice, as the kept pair and as the line, is accepted.
+- **A send's row in the WUM:** never in the turn that reads its result, since the
+  `tool_use` already shows the text (the welded-send skip at `render.ts:938` stays). It
+  renders in the WUM after that turn's closing. An ungated send's result is read in the turn
+  of its `tool_use`. A gated send's outcome comes from the errand and opens a turn of its
+  own, so its row waits for that turn's closing: the row the errand writes is a mid-turn
+  arrival like any other. Seeing it twice, as the kept pair and as the line, is accepted.
   - `capRun` and the elision counts count the row only where it is drawn, so every render of
     a WUM keeps its bytes.
 
 ## Templates and docs
 
 - `src/seed/system/`: `cancel.md` (scope), `search.md` (`before`/`after` take a line id),
-  `system.md` where it describes the window (permission events, `<before>`, kept tool
-  results). The running org's live copies follow; check with `diff -q`.
+  `system.md` where it describes the window (permission responses, no requests, `<before>`,
+  kept tool results, and the anchor: a section stands until a later anchor restates it).
+  The running org's live copies follow; check with `diff -q`.
 - `DESIGN.md` (regions and collapse, 1500-1545) and a `PROJECT.md` entry when it lands.
 
 ## Out of this batch
