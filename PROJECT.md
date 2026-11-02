@@ -6130,6 +6130,32 @@ Open: a prefix written on a version upgrade carries the new templates only as no
 until the next checkpoint; whether that ever misleads the model is to be seen. Tool
 definitions stay live, and a changed tool doc still moves the cache.
 
+### Search folds accents and takes a list of phrases (2026-11-02) — LANDED
+
+`new`'s log held 201 searches from 11 Aug to 2 Nov, and 55 came back empty or named
+nobody. None wanted a wildcard. Most were right to miss: the name lived only in the
+principal's request, or the send asked about was still waiting for approval. Others named
+the wrong room. One burst in "Gira Norte" spent 34 calls in five minutes guessing the
+words for trip costs (`nafta`, `peaje`, `pago`, `plata`, `pesos`…), 20 of them empty, and
+was answered at last by reading the group by time. The literal match also split the org's
+Spanish in two: before 8 Sep at least 50 messages say `cuánto` and 44 say `cuanto`.
+
+- **`text` folds case and accents**, by the name rule's `fold`, so `cuanto` finds `CUÁNTO`.
+  A run of whitespace folds to one space, so a phrase matches across a line break.
+- **`text` is a list**, any phrase a hit; a bare string is a list of one. The calls page
+  matches the same way.
+- **`%` and `_` are themselves.** The text needles never pass through a LIKE pattern on
+  SQLite, and Postgres escapes them; the name columns escape them on both.
+- **A row is folded once per search**, however many phrases: `holds(text, …)` on SQLite,
+  `fold(text) LIKE ANY` on Postgres. On SQLite that costs about a quarter of a second over
+  `new`'s 59,000 messages, against 75 ms for `lower()`, and half of it is the whitespace
+  fold.
+- The tool doc says to guess words together in one call, and to read the conversation by
+  time when they all miss.
+
+Open: no index serves `text`; every search scans. A stored folded column, or FTS5 with
+its trigram tokenizer beside `pg_trgm`, is the step when a search grows slow.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

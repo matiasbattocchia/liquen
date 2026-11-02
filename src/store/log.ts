@@ -113,7 +113,9 @@ export interface ReadQuery {
    *  stamped on the same instant. */
   afterId?: EventId;
   beforeId?: EventId;
-  text?: string; // case-insensitive substring over text parts
+  /** Rows whose text parts hold this fragment, or any one of these: literal, case and
+   *  accents folded (`fold`, the name rule's form). */
+  text?: string | string[];
   types?: Event["type"][]; // restrict to these event types
   /** Rows whose lifecycle stands at this stage (`status.state`, indexed). A dispatcher
    *  opens on `queued`: every offer made before it existed, read off the rows. */
@@ -396,6 +398,10 @@ const SQLITE: Dialect = {
   state: "json_extract(status, '$.state')",
   unflagged: (key) => `json_extract(extra, '$.${key}') IS NOT 1`,
   lacks: (key) => `json_extract(extra, '$.${key}') IS NULL`,
+  holds: (needles) => ({
+    sql: `holds(text, ${needles.map(() => "?").join(", ")})`,
+    params: needles,
+  }),
 };
 // how often a subscription looks past its cursor: the latency of a row another process
 // wrote. A publish in this process wakes this process's subscriptions at once.
@@ -421,6 +427,12 @@ export async function openLog(
   // the name rule (`store/names.ts`), bound so the name columns are filtered in the engine:
   // case and accents folded, so `Álvaro` and `ALVARO` are one needle
   db.function("fold", { deterministic: true }, (s) => (s == null ? null : foldName(String(s))));
+  // the text rule over that fold: the row folded once, then each needle looked for in it
+  db.function("holds", { deterministic: true, varargs: true }, (s, ...needles) => {
+    if (s == null) return 0;
+    const folded = foldName(String(s));
+    return needles.some((n) => folded.includes(String(n))) ? 1 : 0;
+  });
   // the routing function (`session.ts`) bound, so the law asks the ONE decision (§4) in SQL
   db.function(
     "routed",

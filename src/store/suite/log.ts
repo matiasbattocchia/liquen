@@ -79,6 +79,28 @@ export function logSuite(s: Substrate): void {
     });
   });
 
+  Deno.test("read by text: literal fragments, any one a hit, case and accents folded (§6)", async () => {
+    await withLog(async (log) => {
+      await log.publish(msg("01", "c1", "¿CUÁNTO salió la nafta?"));
+      await log.publish(msg("02", "c1", "cuanto antes"));
+      await log.publish(msg("03", "c1", "pagué el peaje"));
+      await log.publish(msg("04", "c1", "subió 50% el hotel"));
+      await log.publish(msg("05", "c1", "subió 500 el hotel"));
+      await log.publish(msg("06", "c1", "foo_bar y fooXbar"));
+      await log.publish(msg("07", "c1", "una línea\n  y otra"));
+
+      const found = async (text: string | string[]) => (await log.read({ text })).map((e) => e.id);
+      assertEquals(await found("cuánto"), ["01", "02"]); // the accent either side has or not
+      assertEquals(await found("PAGUE"), ["03"]);
+      assertEquals(await found(["nafta", "peaje"]), ["01", "03"]); // any one of them
+      assertEquals(await found(["nafta", "", "zzz"]), ["01"]); // an empty phrase holds nothing
+      assertEquals(await found("50%"), ["04"]); // `%` is a percent sign, not a pattern
+      assertEquals(await found("o_b"), ["06"]); // `_` is an underscore
+      assertEquals(await found("\\"), []);
+      assertEquals(await found("línea y otra"), ["07"]); // whitespace runs fold to one space
+    });
+  });
+
   Deno.test("read by a name follows the name rule: case, accents and word order aside (§6)", async () => {
     await withLog(async (log) => {
       const named = (id: string, address: string, name: string): MessageEvent => ({

@@ -3849,6 +3849,16 @@ async function seenBy(
   return out;
 }
 
+/** `text` as the model sent it, one phrase or a list of them: always a list, of strings. */
+function phrasesOf(text: unknown): string[] | undefined {
+  if (text === undefined) return undefined;
+  const list = Array.isArray(text) ? text : [text];
+  if (list.length === 0 || list.some((t) => typeof t !== "string")) {
+    throw new Error(`text must be a phrase or a list of phrases, got ${JSON.stringify(text)}`);
+  }
+  return list;
+}
+
 /**
  * `search` (§6) — the tool's implementation, reached only through act: a script's door
  * search is a tool_use like any other (§9), so this runs for both under the same gate.
@@ -3889,6 +3899,7 @@ async function search(
     );
   }
   if (args.id !== undefined) return await searchId(log, String(args.id), around, view);
+  args = { ...args, text: phrasesOf(args.text) };
   if (args.calls) return await searchCalls(log, self, args, limit, view);
   // the filters narrow by ADDRESS; a name is only ever a way to find one (§6). The account
   // is the agent's own, named as `send` names it, and an ambiguous name is refused there
@@ -4054,8 +4065,15 @@ async function searchCalls(
     afterId: after.id,
     limit: limit + 1,
   };
-  const needle = args.text?.toLowerCase();
-  const has = (s: string) => needle === undefined || s.toLowerCase().includes(needle);
+  // the store's text rule, in JS: these rows are matched on what render makes of them
+  const needles = args.text === undefined
+    ? undefined
+    : [args.text].flat().map(foldName).filter((n) => n.length > 0);
+  const has = (s: string) => {
+    if (needles === undefined || needles.length === 0) return true;
+    const folded = foldName(s);
+    return needles.some((n) => folded.includes(n));
+  };
   const text = (output: Json) => typeof output === "string" ? output : JSON.stringify(output);
   // a search is what the agent read, not what it did: its page quotes other rows, and the
   // search asking would match its own words
@@ -4067,7 +4085,7 @@ async function searchCalls(
       filter: (e) =>
         e.type === "tool_use" && done(e) && has(describeCall(e.parts[0].data, { full: true })),
     }) as Promise<ToolUseEvent[]>,
-    needle === undefined ? Promise.resolve([] as ToolResultEvent[]) : log.read({
+    needles === undefined ? Promise.resolve([] as ToolResultEvent[]) : log.read({
       ...bounds,
       types: ["tool_result"],
       filter: (e) =>
@@ -4352,7 +4370,7 @@ export const OWN_TOOLS: ToolShape[] = [
           connection: { type: "string" },
           before: { type: "string" },
           after: { type: "string" },
-          text: { type: "string" },
+          text: { type: "array", items: { type: "string" } },
           limit: { type: "integer" },
           around: { type: "integer" },
           calls: { type: "boolean" },

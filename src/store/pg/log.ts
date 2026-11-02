@@ -37,6 +37,7 @@ import { egressOf, usageOf } from "../log.ts";
 import { createLocker, type Lease, LeaseLost } from "../lock.ts";
 import {
   build,
+  contains,
   cutOf,
   type Dialect,
   eventOf,
@@ -68,6 +69,11 @@ const PG: Dialect = {
   state: "status ->> 'state'",
   unflagged: (key) => `NOT flag(extra, '${key}')`,
   lacks: (key) => `coalesce(jsonb_typeof(extra -> '${key}'), 'null') = 'null'`,
+  // LIKE's own escape is the backslash, which `contains` writes
+  holds: (needles) => ({
+    sql: `fold(text) LIKE ANY (ARRAY[${needles.map(() => "?").join(", ")}]::text[])`,
+    params: needles.map(contains),
+  }),
 };
 
 const POLL_MS = 300; // the backstop: a notification can be missed across a reconnect

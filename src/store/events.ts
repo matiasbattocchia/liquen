@@ -9,7 +9,7 @@
 
 import type { Conversation, Draft, Envelope, Event } from "../types.ts";
 import type { ReadQuery } from "./log.ts";
-import { nameWords } from "./names.ts";
+import { foldName, nameWords } from "./names.ts";
 import { turnLockOf } from "./lock.ts";
 
 /** An event as a row of the `events` table, as either engine hands it back: JSON columns
@@ -121,6 +121,15 @@ export interface Dialect {
   unflagged(key: string): string;
   /** `extra.<key>` is absent (or null). */
   lacks(key: string): string;
+  /** The row's text holds any one of these folded needles, each literal — the row folded
+   *  once, however many needles there are. */
+  holds(needles: string[]): { sql: string; params: string[] };
+}
+
+/** A LIKE pattern for "holds `s` anywhere", `s` literal: its `%`, `_` and `\` escaped, read
+ *  under `ESCAPE '\'`, which both engines take. */
+export function contains(s: string): string {
+  return `%${s.replace(/[\\%_]/g, "\\$&")}%`;
 }
 
 /** The ReadQuery pushed into WHERE (privacy and filters at the source). Positional
@@ -167,8 +176,8 @@ export function build(
       return;
     }
     for (const w of words) {
-      where.push(`${column} IS NOT NULL AND fold(${column}) LIKE '%' || ? || '%'`);
-      params.push(w);
+      where.push(`${column} IS NOT NULL AND fold(${column}) LIKE ? ESCAPE '\\'`);
+      params.push(contains(w));
     }
   };
   like("conversation_name", q.conversationName);
@@ -185,9 +194,17 @@ export function build(
     params.push(...q.types);
   }
   eq(dialect.state, q.state);
+  // the text rule is the name rule's fold without its word split: each needle a literal
+  // fragment, case and accents gone, so `cuanto` finds `CUÁNTO`; a row holding any one is in
   if (q.text !== undefined) {
-    where.push("text IS NOT NULL AND lower(text) LIKE '%' || lower(?) || '%'");
-    params.push(q.text);
+    const needles = (typeof q.text === "string" ? [q.text] : q.text).map(foldName)
+      .filter((n) => n.length > 0);
+    where.push("text IS NOT NULL");
+    if (needles.length > 0) {
+      const held = dialect.holds(needles);
+      where.push(held.sql);
+      params.push(...held.params);
+    }
   }
   // in SQL, not in a `filter`: that field is the §6 scope's, and it runs in JS over every
   // materialized row — an import would be paged into memory only to be dropped

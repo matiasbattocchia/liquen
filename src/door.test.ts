@@ -245,6 +245,15 @@ Deno.test({
           .split("\n").length,
         1,
       );
+      // `text` is a list too, any phrase a hit, accents aside — for calls and lines alike
+      const juan = (await mu.search({ calls: true, text: ["JUÁN", "zzz"] })).output as string;
+      assertEquals(juan.split("\n").length, 1);
+      assertStringIncludes(juan, "hola Juan");
+      const said = (await mu.search({ text: ["zzz", "juán"] })).output as string;
+      assertStringIncludes(said, ">hola Juan</msg>");
+      const none = await mu.search({ text: [] });
+      assertEquals(none.is_error, true);
+      assertStringIncludes(String(none.output), "a list of phrases");
       // messages' own filters are not a call's
       const wrong = await mu.search({ calls: true, in: "wa:+34600" });
       assertEquals(wrong.is_error, true);

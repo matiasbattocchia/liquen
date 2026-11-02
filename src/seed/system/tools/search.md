@@ -36,10 +36,13 @@ calls a script made are there too. With `id`, the page is that one line or call,
   `2026-09-01` or `2026-09-01T17:00` (your org's clock unless it carries an offset), or a
   stamp as your lines show it, `1 Sep 17:00`
 - after: only messages after this one, same form as `before`
-- text: a phrase the message contains (in its words, an attachment's caption or its
-  filename), matched literally as one contiguous string, case-insensitive: no word splitting,
-  no fuzziness, no wildcards. Keep it short and distinctive: one word or a fragment you are
-  sure of beats a whole sentence
+- text: phrases the message contains (in its words, an attachment's caption or its
+  filename), any one of them: `["nafta", "peaje"]` finds the lines that hold either. Each
+  matches literally as one contiguous string, with case and accents set aside (`cuanto` finds
+  `Cuánto`): no word splitting, no fuzziness, no wildcards. Keep each short and distinctive:
+  one word or a fragment you are sure of beats a whole sentence. Words you are guessing at go
+  in one call together, and when they all miss, read the conversation itself: `in` with
+  `after`/`before`
 - limit: how many of the most recent matches to return (optional; default {{search_limit}})
 - around: lines of the conversation to show either side of each match (0–{{around_max}};
   optional, default 0). With it, each match wears `match` after its stamp, and a `…` line
