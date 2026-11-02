@@ -92,6 +92,7 @@ import {
   sessionAddress,
 } from "./session.ts";
 import {
+  actedOn,
   AUTHOR_KEYS,
   authorKeyOf,
   BEFORE_READ,
@@ -1128,7 +1129,27 @@ export async function beforePool(
     });
     between[r.id] = gap.length;
   }));
-  return { rows, refs, between };
+  // the session's own room points by `ref_id`, at a row of the room: what its principal's
+  // lines act on that the window lacks, read by id (`id ≤ id`, as above)
+  const held = new Set(window.map((e) => e.id));
+  const acted = new Set(
+    window.flatMap((e) =>
+      e.type === "message" && e.envelope.conversation.address === session.conversation
+        ? [actedOn(e)]
+        : []
+    ).filter((id): id is EventId => id !== undefined && !held.has(id)),
+  );
+  const home: Event[] = [];
+  await Promise.all([...acted].map(async (id) => {
+    const [r] = await log.read({ beforeId: `${id}0`, limit: 1 });
+    if (r?.id !== id || r.envelope.conversation.address !== session.conversation) return;
+    if (r.type === "message") home.push(r);
+    if (r.type !== "tool_use") return;
+    const answer = await answerOf(log, r);
+    home.push(r, ...(answer ? [answer] : []));
+  }));
+  home.sort((a, b) => a.id < b.id ? -1 : 1);
+  return { rows, refs, between, home };
 }
 
 /** One xi invocation: poke → owed → (think/act: acquire-or-exit → work) → return what it

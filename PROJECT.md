@@ -6156,6 +6156,19 @@ Spanish in two: before 8 Sep at least 50 messages say `cuánto` and 44 say `cuan
 Open: no index serves `text`; every search scans. A stored folded column, or FTS5 with
 its trigram tokenizer beside `pg_trgm`, is the step when a search grows slow.
 
+### A principal's reply names what it answers, a call or a line out of view (2026-11-02) — LANDED
+
+On `new`, Matías replied on WhatsApp to the `[agente usa] bash(echo)` notice, "cuál fue la
+intención de esto?". The mirror pointed the mind's copy at the echo's `tool_use` row, but
+the quote came out empty, because a call has no text parts. The model read a bare
+question, took it to mean the send it had just made to Luciano, and explained that.
+
+- **A call's quote is its notice's words**, `describeCall`'s one line: `on="bash(echo)"`.
+- **A row of the room the window lacks is pulled.** `beforePool` reads by id what the
+  room's principal lines act on (`actedOn`: a reply, edit, delete or reaction; a plain
+  line's `ref_id` is provenance). Render draws it in a `<before>` ahead of the line, a call
+  as `callLine` does with its answer, and the line points at it by `re`.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

@@ -988,6 +988,7 @@ Deno.test("beforePool: each room's newest rows below the floor, and a far refere
       rows: [],
       refs: [],
       between: {},
+      home: [],
     });
     await log.publish(checkpointOver([rows[0].id, rows[50].id]));
     await log.publish([
@@ -1021,6 +1022,50 @@ Deno.test("beforePool: a referent is found wherever the log holds it, a checkpoi
     ]);
     const again = await beforePool(log, await windowOf(log, since), SESSION, since);
     assertEquals(again.refs.map((e) => e.id), [old.id]);
+  });
+});
+
+Deno.test("beforePool: what the principal's lines act on in the session's room, a call with its answer", async () => {
+  await withLog(async (log) => {
+    await log.upsertConnections([{ service: "slack", address: "T1" }]);
+    const ts = (i: number) => new Date(T0 + i * 60_000).toISOString();
+    const [use] = await log.publish([{
+      ts: ts(0),
+      type: "tool_use",
+      ...SELF,
+      envelope: env(MIND),
+      payload: { turn_id: "t1" },
+      parts: [{
+        type: "data",
+        kind: "tool_use",
+        data: { name: "bash", input: { command: "echo" } },
+      }],
+    } as Draft<Event>]);
+    const [answer, own, world] = await log.publish([
+      {
+        ts: ts(0),
+        type: "tool_result",
+        ...SELF,
+        envelope: env(MIND),
+        payload: { turn_id: "t1", ref_id: use.id },
+        parts: [{ type: "data", kind: "tool_result", data: { output: "(no output)" } }],
+      },
+      { ...lineAt(1), ...SELF, payload: { turn_id: "t2" } },
+      { ...lineAt(2), envelope: env("C1") },
+    ] as Draft<Event>[]);
+    await log.publish(checkpointOver([use.id, world.id]));
+    const acting = (i: number, ref: string, action?: string): Draft<Event> =>
+      ({ ...lineAt(i), payload: { ref_id: ref, ...(action ? { action } : {}) } }) as Draft<Event>;
+    await log.publish([
+      acting(10, use.id, "reply"),
+      acting(11, own.id, "reply"),
+      // a row of another room is the world's, and `ref_external_id` is how a line points there
+      acting(12, world.id, "reply"),
+      // a plain line's `ref_id` is its provenance: it acts on nothing
+      acting(13, own.id),
+    ]);
+    const pool = await beforePool(log, await windowOf(log), SESSION);
+    assertEquals(pool.home.map((e) => e.id), [use.id, answer.id, own.id]);
   });
 });
 

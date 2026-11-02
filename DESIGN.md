@@ -1380,8 +1380,11 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   identity, same element either way); the agent's replies are bare `assistant` text. The
   room's lines wear no ids, so a principal's line that acts on another quotes it:
   `<principal action="edit|delete|reply" on="…">` (an edit carries the new words, a
-  deletion nothing), and a reaction is a `<reaction on="…">` inside the element; `on` is
-  left off when the line acted on is outside the window. The element is the mark of
+  deletion nothing), and a reaction is a `<reaction on="…">` inside the element. A call's
+  quote is the call as its notice named it, `bash(echo)`: the notice is the line the
+  principal acted on. A row of the room the window lacks is read by id and drawn in a
+  `<before>` just ahead of the line, a call as a search page draws it (`<call>` with its
+  answer) and a line as a `<msg>`; the line then points at it by `re` in place of `on`. The element is the mark of
   the one voice that outranks everything else — the model reads "answer in your own text"
   off its shape, and world text that types the tag arrives escaped, so an unescaped
   `<principal>` can only be render's own. A `/y` · `/n` is no line here: it is a

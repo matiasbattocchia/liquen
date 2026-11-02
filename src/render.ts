@@ -744,6 +744,9 @@ export interface BeforePool {
   rows: MessageEvent[];
   /** The rows a line points at that the window lacks, wherever the log holds them. */
   refs: MessageEvent[];
+  /** The rows of the session's own room that a principal's line there acts on
+   *  (`actedOn`) and the window lacks: a line, or a call with its answer. */
+  home: Event[];
   /** For a referent older than every row of its room the window and `rows` hold: how many
    *  rows lie between them (`GAP_READ` at most). */
   between: Record<EventId, number>;
@@ -1128,10 +1131,29 @@ function renderMessages(
     pulled.add(target.id);
     (run.past ??= []).push(pastLine(target as MessageEvent, false));
   };
-  // the room's own references: a principal's line points by `ref_id`, at a row of the room
+  // the room's own references: a principal's line points by `ref_id`, at a row of the room.
+  // The room's lines wear no ids, so a row the window holds is quoted (`on`); one it lacks
+  // is drawn in a `<before>` ahead of the line, which points at it by `re`
   const byId = new Map(window.map((e) => [e.id, e]));
-  const principalLine = (e: MessageEvent) =>
-    principalEl(e, who, zone, e.payload?.ref_id ? byId.get(e.payload.ref_id) : undefined);
+  const far = new Map((pool?.home ?? []).map((e) => [e.id, e]));
+  const answers = new Map(
+    (pool?.home ?? []).filter((e): e is ToolResultEvent => e.type === "tool_result")
+      .map((r) => [r.payload.ref_id, r]),
+  );
+  const farLine = (e: Event) =>
+    e.type === "tool_use"
+      ? callLine(e, answers.get(e.id), zone, { clip: CALL_CLIP })
+      : msgLine(e as MessageEvent, me, who, zone, { marks: false });
+  const principalLine = (e: MessageEvent) => {
+    const id = actedOn(e);
+    const near = id ? byId.get(id) : undefined;
+    if (near || !id) return principalEl(e, who, zone, near ? onAttr(near) : "");
+    const target = far.get(id);
+    if (!target) return principalEl(e, who, zone, "");
+    return `${beforeEl([{ line: farLine(target) }])}\n${
+      principalEl(e, who, zone, ` re="${shortId(target.id)}"`)
+    }`;
+  };
   let cur: { role: Role; content: ContentBlockParam[] } | null = null;
 
   // a message's inlineable attachments → real API blocks. Local bytes become base64
@@ -2491,18 +2513,32 @@ function mediaMarker(p: FilePart, head = ""): string {
   return `<${tag}${head ? ` ${head}` : ""}${name} path="${escAttr(handle)}"/>`;
 }
 
+/** The row a principal's line in the session's own room acts on: the line or call it
+ *  replies to, edits, deletes or reacts to. A copy that quoted nothing names its own
+ *  surface row as `ref_id`: provenance, no line. */
+export function actedOn(e: MessageEvent): EventId | undefined {
+  const action = e.payload?.action;
+  const acts = action === "reply" || action === "edit" || action === "delete" ||
+    e.parts.some((p) => p.type === "data" && p.kind === "reaction");
+  const id = e.payload?.ref_id;
+  return acts && typeof id === "string" && id !== e.id ? id : undefined;
+}
+
 /** The principal's own line in the session's room (§5): a `<principal>` element, never
  *  bare text. Every voice in the user role wears a tag render writes and escapes — the
  *  world, the harness, the summary, the principal — so the model reads who is speaking off
  *  the element's shape, and bare text is the model's own voice alone. Composed like a
- *  world line (escaped text, then markers), stamped with the org clock. The room's lines
- *  wear no ids (the agent's own are bare text), so a line that acts on another quotes it
- *  in `on` (`target`, the row its `ref_id` names): an edit, a deletion or a reply wears
- *  `action` and `on` on the element (an edit's words are the new ones, a deletion says
- *  nothing), a reaction is a `<reaction on>` inside it. */
-function principalEl(e: MessageEvent, roster: Roster, zone?: string, target?: Event): string {
-  // a copy that quoted nothing names its own surface row as `ref_id`: provenance, no line
-  const on = target && target.id !== e.id ? onAttr(target) : "";
+ *  world line (escaped text, then markers), stamped with the org clock. A line that acts on
+ *  another names it in `on`: the quote (`onAttr`) of a row the window holds, or ` re="…"`
+ *  for one drawn just ahead in a `<before>`, empty when nothing names it. An edit, a
+ *  deletion or a reply wears `action` and `on` on the element (an edit's words are the new
+ *  ones, a deletion says nothing), a reaction is a `<reaction on>` inside it. */
+function principalEl(
+  e: MessageEvent,
+  roster: Roster,
+  zone: string | undefined,
+  on: string,
+): string {
   const action = e.payload?.action;
   const r = e.parts.find((p): p is ReactionPart => p.type === "data" && p.kind === "reaction");
   const body = action === "delete" ? "" : [
@@ -2535,9 +2571,13 @@ function principalEl(e: MessageEvent, roster: Roster, zone?: string, target?: Ev
  *  reports apart. */
 const ON_QUOTE = 80;
 
-/** ` on="…"`: the line acted on, quoted; empty when it says nothing. */
+/** ` on="…"`: the line acted on, quoted, or the call as its notice named it; empty when it
+ *  says nothing. */
 function onAttr(target: Event): string {
-  const said = textOf(target).replace(/\s+/g, " ").trim();
+  const text = target.type === "tool_use"
+    ? describeCall((target as ToolUseEvent).parts[0].data)
+    : textOf(target);
+  const said = text.replace(/\s+/g, " ").trim();
   const quote = said.length > ON_QUOTE ? `${clipEnd(said, ON_QUOTE - 1)}…` : said;
   return quote ? ` on="${escAttr(quote)}"` : "";
 }

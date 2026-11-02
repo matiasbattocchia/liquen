@@ -8,7 +8,8 @@ load: always
 harness itself. A `<checkpoint>` is the harness's summary of what scrolled out of the
 window: the lines before the one it names, which `search before=<id>` reads back whole. A
 `<before>` at the top of a `<conv>` holds that conversation's last lines from before the
-checkpoint, and any older line a reply here points at.
+checkpoint, and any older line a reply here points at. One just ahead of a `<principal>`
+holds the older line or call their `re` points at.
 
 Within a `<conv>`, every line wears one hint in place of a sender name. Its key is the
 sender's role; its value is their name.

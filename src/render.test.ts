@@ -985,6 +985,78 @@ Deno.test("a principal's edit, deletion and reply in the room wear action and qu
   ]);
 });
 
+Deno.test("a principal's reply to a call's notice quotes the call as the notice named it", () => {
+  const t = "2026-08-07T10:00:00Z";
+  const events: Event[] = [
+    toolUseE("u1", t, "t1", "bash", { command: "echo" }),
+    toolResultE("r1", t, "t1", "(no output)", "u1"),
+    {
+      ...mindMsg("e1", "2026-08-07T10:05:00Z", "cuál fue la intención de esto?", false),
+      payload: { ref_id: "u1", action: "reply" },
+    },
+  ];
+  const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t });
+  assertEquals(
+    userText(messages).split("\n").find((s) => s.startsWith("<principal")),
+    '<principal name="Ana" at="7 Aug 10:05" action="reply" on="bash(echo)">' +
+      "cuál fue la intención de esto?</principal>",
+  );
+});
+
+Deno.test("a principal's line acting on a row the window lacks draws it in a <before> it points at", () => {
+  const at = (m: number) => `2026-08-07T10:0${m}:00Z`;
+  const acting = (id: string, m: number, text: string, ref: string): MessageEvent => ({
+    ...mindMsg(id, at(m), text, false),
+    payload: { ref_id: ref, action: "reply" },
+  });
+  const pool: BeforePool = {
+    rows: [],
+    refs: [],
+    between: {},
+    home: [
+      toolUseE("u1", "2026-08-07T09:00:00Z", "t1", "bash", { command: "echo" }),
+      toolResultE("r1", "2026-08-07T09:00:00Z", "t1", "(no output)", "u1"),
+      mindMsg("m1", "2026-08-07T09:10:00Z", "Le escribo hoy.", true),
+    ],
+  };
+  const events: Event[] = [
+    summaryE("c1", "2026-08-07T09:30:00Z", ["a0", "a9"], "Ana pidió escribirle a Lucas."),
+    acting("e1", 1, "cuál fue la intención de esto?", "u1"),
+    acting("e2", 2, "dale", "m1"),
+    // a row the log does not hold: the line reads plain
+    acting("e3", 3, "y esto?", "gone"),
+  ];
+  const { messages } = render({
+    events,
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: at(4),
+    before: pool,
+  });
+  const text = userText(messages);
+  assertStringIncludes(
+    text,
+    [
+      "<before>",
+      '<call id="u1" at="7 Aug 2026 9:00">bash(echo) → (no output)</call>',
+      "</before>",
+      '<principal name="Ana" at="7 Aug 10:01" action="reply" re="u1">' +
+      "cuál fue la intención de esto?</principal>",
+    ].join("\n"),
+  );
+  assertStringIncludes(
+    text,
+    [
+      "<before>",
+      '<msg id="m1" self at="7 Aug 9:10">Le escribo hoy.</msg>',
+      "</before>",
+      '<principal name="Ana" at="7 Aug 10:02" action="reply" re="m1">dale</principal>',
+    ].join("\n"),
+  );
+  assertStringIncludes(text, '<principal name="Ana" at="7 Aug 10:03">y esto?</principal>');
+});
+
 Deno.test("a failed delivery: the window draws the line once and plain, a search page marks it", () => {
   const t = "2026-08-07T11:00:00Z";
   const events: Event[] = [
@@ -3003,6 +3075,7 @@ const lastTwo: BeforePool = {
   ],
   refs: [],
   between: {},
+  home: [],
 };
 const userText = (ms: Anthropic.MessageParam[]) => blocksOf(ms).map(txt).join("\n");
 
@@ -3047,7 +3120,7 @@ Deno.test("<before>: a newest turn longer than the cap keeps its newest lines", 
     session: SESSION,
     zone: "UTC",
     now: "2026-07-19T11:00:00Z",
-    before: { rows, refs: [], between: {} },
+    before: { rows, refs: [], between: {}, home: [] },
   });
   const block = userText(messages).split("<before>\n")[1].split("\n</before>")[0];
   assertEquals(block.split("\n").length, 12);
@@ -3069,6 +3142,7 @@ Deno.test("<before>: a row the room never saw by the floor's moment is no line o
     rows: [lastTwo.rows[1], taken, lastTwo.rows[3], later],
     refs: [],
     between: {},
+    home: [],
   };
   const { messages } = render({
     events: pastWindow(worldMsg("d01", "2026-07-19T10:30:00Z", cande, candeSays, "¿y?")),
@@ -3093,7 +3167,7 @@ Deno.test("<before>: a reply's referent is pulled however far back, once, with t
     ...worldMsg(id, `2026-07-19T10:${mm}:00Z`, cande, candeSays, "este"),
     payload: { ref_external_id: "wa:far" },
   });
-  const pool: BeforePool = { rows: lastTwo.rows, refs: [far], between: { a00: 30 } };
+  const pool: BeforePool = { rows: lastTwo.rows, refs: [far], between: { a00: 30 }, home: [] };
   const events = pastWindow(
     reply("d01", "30"),
     mindMsg("d02", "2026-07-19T10:31:00Z", "lo busco", true),
