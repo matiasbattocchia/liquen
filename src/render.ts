@@ -34,6 +34,8 @@ import type {
   Json,
   MessageEvent,
   PermissionResponseEvent,
+  PrefixEvent,
+  PrefixSection,
   ReactionPart,
   Session,
   SessionRef,
@@ -181,25 +183,48 @@ function envBody(env: Env): string | undefined {
 const RULE = "\n\n---\n\n";
 
 export function renderSystem(docs: DocEntry[], env: Env = {}): TextBlockParam[] {
+  return systemBlocks(systemSections(docs, env));
+}
+
+/** The prefix's sections in reading order: the always-docs' bodies, each under its handle,
+ *  then the harness's own. What a `prefix` event holds, and what its notice compares. */
+export function systemSections(docs: DocEntry[], env: Env = {}): PrefixSection[] {
   // a tool doc is the tool's words, which the request's `tools` carry (tooldoc.ts)
   const ordered = docs.filter((d) => d.header.kind !== "tool").sort(byCascade);
-  const blocks: TextBlockParam[] = [];
-  const add = (text: string) =>
-    blocks.push({ type: "text", text: (blocks.length ? RULE : "") + text.trimEnd() });
-
-  const bodies = ordered.filter((d) => d.body !== undefined);
-  if (bodies.length > 0) add(bodies.map(section).join("\n\n"));
+  const out: PrefixSection[] = ordered.filter((d) => d.body !== undefined)
+    .map((d) => ({ key: d.header.handle, text: section(d), doc: true as const }));
 
   const pointers = ordered.filter((d) => d.body === undefined);
-  if (pointers.length > 0) add(`# On-demand docs\n\n${renderIndex(pointers, env.docs)}`);
+  if (pointers.length > 0) {
+    out.push({
+      key: "On-demand docs",
+      text: `# On-demand docs\n\n${renderIndex(pointers, env.docs)}`,
+    });
+  }
 
   if (env.bins?.length) {
-    add(`# Programs\n\n${BINS_NOTE}\n\n${env.bins.map(binLines).join("\n\n")}`);
+    out.push({
+      key: "Programs",
+      text: `# Programs\n\n${BINS_NOTE}\n\n${env.bins.map(binLines).join("\n\n")}`,
+    });
   }
 
   // the facts close the prefix, under the words that spend them
   const body = envBody(env);
-  if (body) add(`# Environment\n\n${body}`);
+  if (body) out.push({ key: "Environment", text: `# Environment\n\n${body}` });
+  return out;
+}
+
+/** The sections as the request's `system`: the docs' bodies one block, each harness
+ *  section its own under a rule, one cache mark at the end. */
+export function systemBlocks(sections: PrefixSection[]): TextBlockParam[] {
+  const blocks: TextBlockParam[] = [];
+  const add = (text: string) =>
+    blocks.push({ type: "text", text: (blocks.length ? RULE : "") + text.trimEnd() });
+
+  const bodies = sections.filter((s) => s.doc);
+  if (bodies.length > 0) add(bodies.map((s) => s.text).join("\n\n"));
+  for (const s of sections.filter((s) => !s.doc)) add(s.text);
 
   const last = blocks.at(-1);
   // caches tools + the full system prefix. The hour TTL, not the default five minutes: docs
@@ -298,7 +323,88 @@ export interface RenderedRequest {
 
 /** DESIGN §5: a log window → the request `mu` sees. Pure — nu resolves the inputs. */
 export function render(input: RenderInput): RenderedRequest {
-  return { system: renderSystem(input.docs, input.env), messages: renderMessages(input) };
+  return { system: systemOf(input), messages: renderMessages(input) };
+}
+
+/** The request's `system` (§5): the prefix the first `prefix` since the checkpoint holds,
+ *  else the live one, which nu then writes. Every request until the next checkpoint reads
+ *  the same bytes, so the cache and every replayed signature hold through a doc edit. */
+export function systemOf(input: Pick<RenderInput, "events" | "docs" | "env">): TextBlockParam[] {
+  const [frozen] = prefixesOf(input.events);
+  return systemBlocks(frozen?.parts[0].data.sections ?? systemSections(input.docs, input.env));
+}
+
+/** The window's `prefix` events since the checkpoint: one written before it stands for a
+ *  prefix the checkpoint already replaced. */
+function prefixesOf(window: Event[]): PrefixEvent[] {
+  const events = applySummary(window);
+  const floor = events[0]?.type === "summary" ? events[0].id : "";
+  return events.filter((e): e is PrefixEvent => e.type === "prefix" && e.id > floor);
+}
+
+/** Whether a step's request was made with a prefix of its own: none since the checkpoint,
+ *  or the live sections differ from the last the window holds. nu writes one exactly when
+ *  render reads it. */
+export function prefixDue(window: Event[], live: PrefixSection[]): boolean {
+  const last = prefixesOf(window).at(-1);
+  return !last || !sameSections(last.parts[0].data.sections, live);
+}
+
+const sameSections = (a: PrefixSection[], b: PrefixSection[]) =>
+  a.length === b.length && a.every((s, i) => s.key === b[i].key && s.text === b[i].text);
+
+/** What a prefix says after the one before it: each section that changed as its key and
+ *  the changed lines, each added one whole, each removed one by its key. */
+export function prefixDelta(prev: PrefixSection[], next: PrefixSection[]): string {
+  const was = new Map(prev.map((s) => [s.key, s.text]));
+  const is = new Set(next.map((s) => s.key));
+  return [
+    ...next.flatMap((s) => {
+      const old = was.get(s.key);
+      if (old === undefined) return [`${s.key} — added\n${s.text}`];
+      return old === s.text ? [] : [`${s.key} — edited\n${lineDiff(old, s.text)}`];
+    }),
+    ...prev.filter((s) => !is.has(s.key)).map((s) => `${s.key} — removed`),
+  ].join("\n\n");
+}
+
+/** Lines of context kept around each change. */
+const DIFF_CONTEXT = 1;
+
+/** A line diff: `+ ` added, `- ` removed, two spaces for context, `…` between hunks. */
+function lineDiff(a: string, b: string): string {
+  const x = a.split("\n");
+  const y = b.split("\n");
+  // longest common subsequence, from the ends
+  const n = x.length;
+  const m = y.length;
+  const lcs = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i][j] = x[i] === y[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const ops: { mark: " " | "+" | "-"; line: string }[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && x[i] === y[j]) {
+      ops.push({ mark: " ", line: x[i++] });
+      j++;
+    } else if (j < m && (i === n || lcs[i][j + 1] >= lcs[i + 1][j])) {
+      ops.push({ mark: "+", line: y[j++] });
+    } else ops.push({ mark: "-", line: x[i++] });
+  }
+  const near = ops.map((_, k) =>
+    ops.slice(Math.max(0, k - DIFF_CONTEXT), k + DIFF_CONTEXT + 1).some((o) => o.mark !== " ")
+  );
+  const out: string[] = [];
+  ops.forEach((o, k) => {
+    if (!near[k]) return;
+    if (out.length > 0 && !near[k - 1]) out.push("…");
+    out.push(`${o.mark} ${o.line}`);
+  });
+  return out.join("\n");
 }
 
 /** The last closing assistant message in the session's own conversation — a step that
@@ -446,14 +552,33 @@ export function worldCapped(events: Event[], session: Session, compactAt: number
 
 /** chars/4 over the event as stored, minus the wire sidecar (`extra`, where a connector
  *  keeps the raw delivery, which never reaches the prompt) — crude but monotone: the unit
- *  of `compactAt`, `keepRecent` and the WUM cap alike, all order-of-magnitude knobs. */
+ *  of `compactAt`, `keepRecent` and the WUM cap alike, all order-of-magnitude knobs. A
+ *  `prefix` weighs nothing: the system holds it, and the window only what changed. */
 export const estTokens = (events: Event[]): number =>
-  Math.ceil(JSON.stringify(events, (k, v) => k === "extra" ? undefined : v).length / 4);
+  Math.ceil(
+    JSON.stringify(
+      events.filter((e) => e.type !== "prefix"),
+      (k, v) => k === "extra" ? undefined : v,
+    ).length / 4,
+  );
 
-/** What an inlined image weighs to the model, est. tokens: one per 28×28 patch, which the
- *  API caps at 4,784 on the high-resolution tier the current models read at (1,568 on the
- *  standard one). The part carries no dimensions, so the cap stands for every image. */
+/** What an inlined image weighs to the model at most, est. tokens: one per 28×28 patch,
+ *  which the API caps at 4,784 on the high-resolution tier the current models read at
+ *  (1,568 on the standard one), scaling a larger picture down to fit. */
 export const IMAGE_TOKENS = 4784;
+/** The side of a 28×28 patch, in pixels. */
+const PATCH = 28;
+/** A sticker's side, in pixels, when its part carries no size: WhatsApp's are 512×512. */
+const STICKER_SIDE = 512;
+
+/** One image's weight: its patches when the part knows its pixels, the cap when not. */
+function imageTokens(p: FilePart): number {
+  const side = p.kind === "sticker" ? STICKER_SIDE : undefined;
+  const width = p.file.width ?? side;
+  const height = p.file.height ?? side;
+  if (width === undefined || height === undefined) return IMAGE_TOKENS;
+  return Math.min(IMAGE_TOKENS, Math.ceil(width / PATCH) * Math.ceil(height / PATCH));
+}
 /** A PDF page reads as its text, 1,500 to 3,000 tokens, and as an image of the page… */
 export const PDF_PAGE_TOKENS = 3000 + IMAGE_TOKENS;
 /** …and the page count, which the part does not carry either, is guessed from its size. */
@@ -470,7 +595,7 @@ export function mediaTokens(events: Event[], session: SessionRef): number {
       if (!inlineable(p.file.mime_type)) continue;
       n += p.file.mime_type === "application/pdf"
         ? Math.max(1, Math.ceil((p.file.size ?? 0) / PDF_PAGE_BYTES)) * PDF_PAGE_TOKENS
-        : IMAGE_TOKENS;
+        : imageTokens(p);
     }
   }
   return n;
@@ -894,6 +1019,8 @@ export function pinnedMedia(e: Event): Record<string, MediaBlock> {
 function renderMessages(
   {
     events: window,
+    docs,
+    env,
     session,
     now,
     zone,
@@ -1011,11 +1138,13 @@ function renderMessages(
   const emit = (role: Role, ...blocks: ContentBlockParam[]) => {
     if (cur && cur.role !== role) flush();
     if (!cur) cur = { role, content: [] };
-    // the API takes `mid_conv_system` only last in its message: an anchor that more user
-    // content follows (its step drew nothing of its own, an error alone) reads as text
-    const last = cur.content.at(-1);
-    if (last?.type === "mid_conv_system") {
-      cur.content[cur.content.length - 1] = { type: "text", text: last.content[0].text };
+    // the API takes `mid_conv_system` only last in its message: a notice or an anchor that
+    // more user content follows (its step drew nothing of its own, an error alone) reads
+    // as text
+    for (let i = cur.content.length - 1; i >= 0; i--) {
+      const b = cur.content[i];
+      if (b.type !== "mid_conv_system") break;
+      cur.content[i] = { type: "text", text: b.content[0].text };
     }
     cur.content.push(...blocks);
   };
@@ -1143,8 +1272,17 @@ function renderMessages(
   // Weld faithfully. `weldOrder` makes each step contiguous (its uses, then its results)
   // and floats what landed in flight after it, so a tool_result is always FIRST in its user
   // message (openbsp's sortToolMessages rule); the emit builder handles role alternation.
+  // the prefix as the model read it (§5): the first since the checkpoint is the system,
+  // each later one is drawn where it was read, as what changed
+  const prefixes = new Set(prefixesOf(window).map((e) => e.id));
+  let prefixed: PrefixSection[] | undefined;
   for (const e of weldOrder(events)) {
-    if (e.type === "anchor") {
+    if (e.type === "prefix") {
+      if (!prefixes.has(e.id)) continue;
+      const sections = e.parts[0].data.sections;
+      if (prefixed) placeAnchor(prefixDelta(prefixed, sections));
+      prefixed = sections;
+    } else if (e.type === "anchor") {
       placeAnchor(anchorDelta(anchored, e.parts[0].text));
       anchored = e.parts[0].text;
     } else if (e.type === "summary") {
@@ -1201,10 +1339,13 @@ function renderMessages(
   if (previous > 0) mark(markable(all[previous - 1].content as ContentBlockParam[]));
   if (cur) mark(markable((cur as { content: ContentBlockParam[] }).content));
 
-  // the request's own anchor, when the state moved since the last one the window holds —
-  // nu writes it with the step, where it renders from then on — or the caller's tail
+  // the request's own prefix and anchor, each when it moved since the last the window
+  // holds — nu writes them with the step, where they render from then on — or the
+  // caller's tail
   if (tail !== undefined) place("user", { type: "text", text: tail });
   else {
+    const live = systemSections(docs, env);
+    if (prefixed && !sameSections(prefixed, live)) placeAnchor(prefixDelta(prefixed, live));
     const text = anchorText(now, zone, ambient);
     if (text !== anchored) placeAnchor(anchorDelta(anchored, text));
   }
@@ -1270,8 +1411,8 @@ export function anchorDue(window: Event[], text: string): boolean {
  * what that request held. nu records the request's horizon on the step (`extra.consumed`,
  * its first event); an event newer than the horizon and older than the step is placed after
  * the step — the first request that could carry it, and where every later request keeps it
- * (§5). The step's own anchor is no such event: nu writes it with the step, as the last
- * thing its request held.
+ * (§5). The step's own prefix and anchor are no such events: nu writes them with the step,
+ * as the last things its request held.
  */
 function weldOrder(events: Event[]): Event[] {
   const groups = new Map<string, Event[]>();
@@ -1299,7 +1440,7 @@ function weldOrder(events: Event[]): Event[] {
   // what landed in flight, by the step it must follow
   const late = new Map<string, Event[]>();
   const inFlight = (e: Event): string | undefined => {
-    if (e.type === "anchor") return undefined;
+    if (e.type === "anchor" || e.type === "prefix") return undefined;
     for (const [turn, h] of horizons) {
       if (h.seen && e.id > h.seen && e.id < h.first) return turn;
     }
@@ -1912,7 +2053,8 @@ function escAttr(s: string): string {
 }
 
 /** The API accepts `mid_conv_system` only as the TRAILING block(s) of a user message — so
- *  this is reserved for the anchor, the last block of the request that read it. */
+ *  this is reserved for the prefix notice and the anchor, the last blocks of the request
+ *  that read them. */
 function sys(text: string): Anthropic.MidConversationSystemBlockParam {
   return { type: "mid_conv_system", content: [{ type: "text", text }] };
 }

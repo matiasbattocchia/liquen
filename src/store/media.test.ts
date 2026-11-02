@@ -7,6 +7,7 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { openCredentials } from "./credentials.ts";
 import {
   filePartOf,
+  imageSize,
   kindOf,
   loadMediaBlock,
   localFiles,
@@ -17,6 +18,70 @@ import {
   serveMedia,
   signMediaPath,
 } from "./media.ts";
+
+Deno.test("imageSize: the pixels off a PNG, GIF, WebP or JPEG header, and none off anything else", () => {
+  const bytes = (...xs: (number | string)[]) =>
+    new Uint8Array(
+      xs.flatMap((x) => typeof x === "string" ? [...x].map((c) => c.charCodeAt(0)) : [x]),
+    );
+  const be32 = (n: number) => [n >>> 24, (n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const le16 = (n: number) => [n & 255, n >> 8];
+  const le24 = (n: number) => [n & 255, (n >> 8) & 255, n >> 16];
+  const png = bytes(0x89, "PNG\r\n", 0x1a, "\n", ...be32(13), "IHDR", ...be32(1600), ...be32(1200));
+  assertEquals(imageSize(png), { width: 1600, height: 1200 });
+  assertEquals(imageSize(bytes("GIF89a", ...le16(320), ...le16(240))), { width: 320, height: 240 });
+  const riff = (chunk: string, ...body: number[]) =>
+    bytes("RIFF", 0, 0, 0, 0, "WEBP", chunk, 0, 0, 0, 0, ...body, 0, 0, 0, 0);
+  assertEquals(imageSize(riff("VP8X", 0, 0, 0, 0, ...le24(511), ...le24(511))), {
+    width: 512,
+    height: 512,
+  });
+  const vp8l = (511 | 511 << 14) >>> 0;
+  assertEquals(
+    imageSize(riff("VP8L", 0x2f, vp8l & 255, (vp8l >> 8) & 255, (vp8l >> 16) & 255, vp8l >>> 24)),
+    {
+      width: 512,
+      height: 512,
+    },
+  );
+  assertEquals(imageSize(riff("VP8 ", 0, 0, 0, 0x9d, 0x01, 0x2a, ...le16(800), ...le16(600))), {
+    width: 800,
+    height: 600,
+  });
+  // a JPEG's frame header comes after whatever segments precede it
+  const jpeg = bytes(
+    0xff,
+    0xd8,
+    0xff,
+    0xe0,
+    0,
+    16,
+    "JFIF",
+    0,
+    1,
+    1,
+    0,
+    0,
+    1,
+    0,
+    1,
+    0,
+    0,
+    0xff,
+    0xc0,
+    0,
+    17,
+    8,
+    0x04,
+    0xb0,
+    0x06,
+    0x40,
+    3,
+  );
+  assertEquals(imageSize(jpeg), { width: 1600, height: 1200 });
+  assertEquals(imageSize(bytes("%PDF-1.7")), null);
+  assertEquals(imageSize(png.subarray(0, 20)), null); // cut short
+});
 
 Deno.test("saveMedia: content-named and idempotent — same bytes, same path, one file", async () => {
   const root = await Deno.makeTempDir();

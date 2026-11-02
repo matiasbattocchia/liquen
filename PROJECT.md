@@ -6046,6 +6046,34 @@ Open: whether the API keeps every anchor and thinking block through a long day i
 on `liquen start`'s stderr (`[anthropic] turn …` drops). Memory (cards, compaction, memory
 instructions, unloading) is the batch after.
 
+### The system prefix holds between checkpoints; pictures weigh their pixels (2026-11-02) — LANDED
+
+A day of the growing window on Matías' org (1 Nov) showed what it costs. At 18:16 an
+`aedit` of `memories/grabaciones.md`, a `load: always` doc, rewrote the system prefix
+mid-turn: the API dropped every thinking block the window held (messages 11, 17 and 21),
+on the next step and again on the checkpoint. A replay of each step's request from the log
+showed render's own prefix held byte for byte from 15:52 to 18:17, so the edit was the
+whole cause. Three checkpoints landed in 22 minutes (15:51, 16:09, 16:13) while a family
+group posted photos and stickers, each weighed at the 4,784-token cap; the week's 1,677
+JPEGs average 1,707 tokens by their headers, its 405 stickers 346. And every turn's log
+line read `opened by unknown`, since the anchor became the step's first row and carried no
+horizon.
+
+- **The prefix is an event** (`prefix`), the anchor's shape. The first since the
+  checkpoint is the system until the next one; a doc edit, a new surface, a roster change
+  is a notice where its step read it, `<handle> — edited` and a line diff. Claude Code
+  does the same with `CLAUDE.md` and its memory: loaded once, changes appended, all of it
+  read again at compaction.
+- **A picture weighs its pixels.** `file.width` and `file.height` are read off the header
+  where the bytes land (`saveMedia`, `filePartOf`, the WhatsApp webhook); a sticker without
+  them weighs 512×512.
+- **The step's first row carries the horizon**, whatever it is, so `turnsOf` names the
+  opener again. The closing keeps its own, where xi measures what is owed.
+
+Open: a prefix written on a version upgrade carries the new templates only as notices
+until the next checkpoint; whether that ever misleads the model is to be seen. Tool
+definitions stay live, and a changed tool doc still moves the cache.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
@@ -6116,4 +6144,3 @@ their entries.
 - Whether a digest wake gets its own framing in the prompt (2026-08-21).
 - A final `failed` stamp reaching the mind as a wake (2026-09-08).
 - Slack's twin of the member sign-in door (2026-09-11).
-- A docs change mid-turn rebuilding the system prompt (2026-09-26).

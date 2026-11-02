@@ -48,6 +48,7 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections, ConnectionState } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
+import { imageSizeOf } from "../../store/media.ts";
 import type {
   Conversation,
   DataPart,
@@ -277,9 +278,18 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
       }]);
     }
 
+    // the images' pixels, off the files the bridge landed through /media before it sent
+    // the batch: what a picture weighs to the model
+    const sizes = new Map<string, { width: number; height: number }>();
+    await Promise.all((batch.messages ?? []).map(async (m) => {
+      const f = m.content.file;
+      if (!f || !f.mime_type.startsWith("image/")) return;
+      const size = await imageSizeOf(f.uri);
+      if (size) sizes.set(f.uri, size);
+    }));
     const drafts: Draft<MessageEvent>[] = [
       ...(batch.messages ?? []).map((m) =>
-        mapMessage(m, connection, groupNames, pushnames, now, batch.history === true)
+        mapMessage(m, connection, groupNames, pushnames, sizes, now, batch.history === true)
       ),
       ...(batch.edits ?? []).map((e) => mapEdit(e, connection, pushnames, now)),
       ...(batch.revokes ?? []).flatMap((r) => mapRevoke(r, connection, now)),
@@ -329,7 +339,10 @@ export function kindOf(address: string): NonNullable<Conversation["kind"]> {
 /** The bridge's file kinds are already liquen's `MediaKind` vocabulary (both open-bsp's). */
 const MEDIA = new Set<string>(["audio", "image", "video", "document", "sticker"]);
 
-function partOf(c: WAContent): Part | null {
+/** An image's pixels by uri: what its header said when the batch arrived. */
+type Sizes = ReadonlyMap<string, { width: number; height: number }>;
+
+function partOf(c: WAContent, sizes: Sizes): Part | null {
   switch (c.type) {
     case "text":
       return {
@@ -348,6 +361,7 @@ function partOf(c: WAContent): Part | null {
           uri: c.file.uri, // already local: the bridge landed the bytes via /media first
           ...(c.file.name ? { name: c.file.name } : {}),
           ...(c.file.size !== undefined ? { size: c.file.size } : {}),
+          ...sizes.get(c.file.uri),
         },
         ...(c.text ? { text: c.text } : {}), // caption
       };
@@ -424,10 +438,11 @@ function mapMessage(
   connection: string,
   groupNames: Map<string, string>,
   pushnames: Map<string, string>,
+  sizes: Sizes,
   now: () => string,
   backfill = false,
 ): Draft<MessageEvent> | null {
-  const part = partOf(m.content);
+  const part = partOf(m.content, sizes);
   if (!part || !m.external_id || !m.conversation_address) return null;
   if (m.content.mentions?.length && part.type !== "data" && part.text) {
     part.text = nameMentionTokens(part.text, m.content.mentions, pushnames);

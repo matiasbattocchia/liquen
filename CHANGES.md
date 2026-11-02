@@ -246,6 +246,49 @@ or withdrawn.
   - `capRun` and the elision counts count the row only where it is drawn, so every render of
     a WUM keeps its bytes.
 
+## 6. The prefix holds between checkpoints
+
+Decided 1 and 2 Nov 2026, after a day of the growing window on Matías' org: an edit to a
+`load: always` memory rewrote the system prefix, and the API dropped every thinking block
+the window held.
+
+- `prefix` is an event, the anchor's shape: nu writes it with a step's first row, whole,
+  when the live prefix differs from the window's last since the checkpoint, or none is
+  there. Its data is the sections: each always-doc's body under its handle, then
+  `On-demand docs`, `Programs`, `Environment` (`systemSections`, `systemBlocks`).
+- The first since the checkpoint is the request's `system` (`systemOf`), the checkpoint
+  call's too. Each later one renders where its step read it, in the anchor's block, as
+  what changed:
+
+  ```
+  /home/matias/new/data/agents/matias/memories/grabaciones.md — edited
+    - (Mars no es grabación: es el profe de inglés de Matías, clase martes 18:00 desde la semana que viene.)
+  + - 5 Nov jue 17:30 Ringo Gustavo Obregón (5492615737049): set ~50 min de bandas 60/70s. …
+    - 3 Nov mar 15:00 Franco Giudice (DGB): reprogramado (29/10 no pudo, Galileo con alergia). …
+  ```
+
+  `— added` shows the section whole, `— removed` its key alone. A notice and an anchor
+  share the tail block, notice first; the emit guard turns the whole trailing run to text
+  when more content follows.
+- One written before the checkpoint renders nothing. A `prefix` weighs nothing toward
+  `compactAt`.
+- Tool definitions stay live. A version upgrade is no special case: its templates reach
+  an org through the live copies, so they arrive as notices too.
+
+## 7. A picture weighs its pixels
+
+- `FilePart.file` carries `width` and `height`, read off the header (`imageSize`: PNG, GIF,
+  WebP, JPEG) where the bytes land: `saveMedia`, `filePartOf`, and the WhatsApp webhook,
+  which reads the files the bridge landed through `/media` before their batch.
+- `mediaTokens` weighs an image its patches, `ceil(w/28) × ceil(h/28)`, capped at 4,784; a
+  sticker without a size 512×512; any other image the cap.
+
+## 8. The turn's opener
+
+- The step's first row, whichever it is (a `prefix`, an anchor, a word, a call), carries
+  `extra.consumed`, so `turnsOf` names what opened the turn. The step's first word or call
+  keeps its own, where xi reads the closing's horizon.
+
 ## Templates and docs
 
 - `src/seed/system/`: `cancel.md` (scope), `search.md` (`before`/`after` take a line id),

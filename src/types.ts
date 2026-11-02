@@ -98,8 +98,17 @@ export interface FilePart {
    *  harness's canonical form; bare paths are tolerated on input), `http(s)://` =
    *  external link, passed through untouched — never downloaded or uploaded broker-side
    *  (connectors whose platform takes links send it as-is; the API reads it via a
-   *  url-source block). `size` is unknowable for external uris. */
-  file: { mime_type: string; uri: string; name?: string; size?: number };
+   *  url-source block). `size` is unknowable for external uris. `width` and `height` are
+   *  an image's pixels, read off its header when the bytes landed: what it weighs to the
+   *  model. */
+  file: {
+    mime_type: string;
+    uri: string;
+    name?: string;
+    size?: number;
+    width?: number;
+    height?: number;
+  };
   text?: string; // caption
 }
 
@@ -424,7 +433,8 @@ export type EventType =
   | "alarm"
   | "error"
   | "delta"
-  | "anchor";
+  | "anchor"
+  | "prefix";
 
 export interface EventBase {
   id: EventId;
@@ -679,6 +689,24 @@ export interface AnchorEvent extends EventBase {
   parts: [TextPart & { kind: "anchor" }];
 }
 
+/** One section of the system prefix: an always-doc's body under its handle, or one of the
+ *  harness's own sections (`On-demand docs`, `Programs`, `Environment`) under its title. */
+export interface PrefixSection {
+  key: string;
+  text: string;
+  doc?: true;
+}
+
+/** The system prefix a step's request was made with (§5), whole. nu writes it with the
+ *  step's first row when the live prefix differs from the window's last: the first since the
+ *  checkpoint is the system every request reads until the next one, and each later one is
+ *  drawn where it was read, as the sections that changed. The session's own record, like
+ *  the anchor: not news, not a message, and it crosses to no surface. */
+export interface PrefixEvent extends EventBase {
+  type: "prefix";
+  parts: [DataPart<"prefix", { sections: PrefixSection[] }>];
+}
+
 export type Event =
   | MessageEvent
   | ControlEvent
@@ -691,7 +719,8 @@ export type Event =
   | AlarmEvent
   | ErrorEvent
   | DeltaEvent
-  | AnchorEvent;
+  | AnchorEvent
+  | PrefixEvent;
 
 /**
  * An event as PRODUCERS build it: everything but the id. The id belongs to the STORE —

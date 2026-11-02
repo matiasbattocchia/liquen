@@ -530,7 +530,7 @@ export function relevant(config: AgentConfig, event: Event): boolean {
     // starts one; standing, it closes the turn it cut, and `decide` idles on it from the
     // window side (`cutStands`).
     default:
-      return false; // thinking · error · permission_request · control · delta · anchor · unknown
+      return false; // thinking · error · permission_request · control · delta · anchor · prefix · unknown
   }
 }
 

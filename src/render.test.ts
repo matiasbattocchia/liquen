@@ -14,10 +14,13 @@ import {
   IMAGE_TOKENS,
   mediaTokens,
   PDF_PAGE_TOKENS,
+  prefixDelta,
+  prefixDue,
   render,
   renderHits,
   renderSystem,
   SILENCE,
+  systemSections,
   wantedMedia,
 } from "./render.ts";
 import type { DocEntry, DocKind, DocLoad, DocScope } from "./store/docs.ts";
@@ -1139,6 +1142,96 @@ Deno.test("every request appends: an anchor stands where its step read it, and s
     now: t(9),
   }).messages;
   assertStringIncludes(JSON.stringify(closed), "cwd: /a");
+});
+
+/** A prefix row, as nu writes it with a step (§5). */
+const prefixE = (id: string, ts: string, docs: DocEntry[]): Event => ({
+  id,
+  ts,
+  type: "prefix",
+  agent: SELF,
+  envelope: inbox,
+  parts: [{ type: "data", kind: "prefix", data: { sections: systemSections(docs) } }],
+});
+
+const agenda = (body: string) => doc("agent", "memory", "agenda", { load: "always" }, body);
+
+Deno.test("a doc edit leaves the system as the checkpoint froze it, and stands where it was read", () => {
+  const t = (m: number) => `2026-07-21T10:0${m}:00Z`;
+  const before = [agenda("- mar 15:00 Franco")];
+  const after = [agenda("- jue 17:30 Ringo\n- mar 15:00 Franco")];
+  const opened: Event[] = [mindMsg("e1", t(0), "anotá a Ringo", false)];
+  const first: Event[] = [
+    ...opened,
+    prefixE("e1a", t(1), before),
+    thinkingE("e2", t(1), "T1", "lo anoto", "s1"),
+    toolUseE("e3", t(1), "T1", "bash", { command: "aedit agenda.md" }),
+    toolResultE("e4", t(2), "T1", "applied 1 edit(s)", "e3"),
+  ];
+  const ask = (events: Event[], docs: DocEntry[]) =>
+    render({ docs, session: SESSION, zone: "UTC", events, now: t(3) });
+  const one = ask(first, before);
+  // the edit landed: the request still reads the frozen system, and is told what changed
+  const two = ask(first, after);
+  assertEquals(two.system, one.system);
+  assertEquals(
+    blocksOf(two.messages).filter((b) => b.type === "mid_conv_system").map(sysText)[0],
+    "/org/data/agents/a1/agenda.md — edited\n  [/org/data/agents/a1/agenda.md]\n" +
+      "+ - jue 17:30 Ringo\n  - mar 15:00 Franco",
+  );
+  assert(prefixDue(first, systemSections(after)));
+  assert(!prefixDue(first, systemSections(before)));
+
+  // the step wrote the prefix it was told of: the next request keeps the notice where it
+  // was read, and says nothing more at its tail
+  const second: Event[] = [
+    ...first,
+    prefixE("e4a", t(3), after),
+    anchorE("e4b", t(3), anchorText(t(3), "UTC")),
+    mindMsg("e5", t(3), "listo", true, "T2"),
+  ];
+  const three = ask(second, after);
+  assertEquals(three.system, one.system);
+  assertEquals(strip(three.messages).slice(0, two.messages.length), strip(two.messages));
+  const notices = blocksOf(three.messages).filter((b) =>
+    (b.type === "mid_conv_system" || b.type === "text") && JSON.stringify(b).includes("— edited")
+  );
+  assertEquals(notices.length, 1);
+
+  // past a checkpoint the system is the live one, and a prefix the checkpoint covered
+  // freezes nothing
+  const floor = summaryE("e9", t(9), ["e1", "e4"], "## Open\n- Ringo jue 17:30");
+  const refreshed = ask([...second, floor], after);
+  assertStringIncludes(JSON.stringify(refreshed.system), "Ringo");
+  assert(prefixDue([...second, floor], systemSections(after)));
+});
+
+Deno.test("a prefix names a doc that came and one that went", () => {
+  const was = systemSections([agenda("- a")]);
+  const is = systemSections([doc("agent", "memory", "people", { load: "always" }, "- Ana")]);
+  assertEquals(
+    prefixDelta(was, is),
+    "/org/data/agents/a1/people.md — added\n[/org/data/agents/a1/people.md]\n- Ana\n\n" +
+      "/org/data/agents/a1/agenda.md — removed",
+  );
+});
+
+Deno.test("an image weighs its patches, a sticker its known side, an unknown picture the cap", () => {
+  const pic = (kind: "image" | "sticker", size?: { width: number; height: number }): Event => ({
+    id: `e-${kind}-${size?.width ?? 0}`,
+    ts: "2026-07-21T10:00:00Z",
+    type: "message",
+    envelope: inbox,
+    parts: [{
+      type: "file",
+      kind,
+      file: { mime_type: "image/jpeg", uri: "file:///p.jpg", size: 1000, ...size },
+    }],
+  });
+  assertEquals(mediaTokens([pic("image", { width: 1600, height: 1200 })], SESSION), 58 * 43);
+  assertEquals(mediaTokens([pic("image", { width: 8000, height: 6000 })], SESSION), IMAGE_TOKENS);
+  assertEquals(mediaTokens([pic("sticker")], SESSION), 19 * 19);
+  assertEquals(mediaTokens([pic("image")], SESSION), IMAGE_TOKENS);
 });
 
 Deno.test("an anchor names a section that emptied, so the last listing does not stand", () => {

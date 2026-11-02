@@ -456,6 +456,58 @@ Deno.test("file content maps to a FilePart with caption; data to a DataPart", as
   });
 });
 
+Deno.test("an image the bridge landed carries its pixels, read off the file's header", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    // a PNG's signature and IHDR: 1600×1200
+    const be32 = (n: number) => [n >>> 24, (n >> 16) & 255, (n >> 8) & 255, n & 255];
+    const ihdr = [..."IHDR"].map((c) => c.charCodeAt(0));
+    const png = new Uint8Array([
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+      ...be32(13),
+      ...ihdr,
+      ...be32(1600),
+      ...be32(1200),
+    ]);
+    const uri = `file://${dir}/shot.png`;
+    await Deno.writeFile(`${dir}/shot.png`, png);
+    const { handler, published } = harness();
+    await handler(
+      post(
+        "/whatsapp-web-webhook",
+        batch({
+          messages: [
+            textMessage({
+              external_id: "wmw.f.2",
+              content: {
+                version: "1",
+                type: "file",
+                kind: "image",
+                file: { mime_type: "image/png", uri, size: png.length },
+              },
+            }),
+          ],
+        }),
+      ),
+    );
+    const [f] = published as MessageEvent[];
+    assertEquals(f.parts[0], {
+      type: "file",
+      kind: "image",
+      file: { mime_type: "image/png", uri, size: png.length, width: 1600, height: 1200 },
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("inline mention tokens get named: @<digits> → @name, unnamed stays digits", async () => {
   const { handler, published } = harness();
   await handler(post(
