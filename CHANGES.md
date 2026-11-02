@@ -267,7 +267,11 @@ the window held.
     - 3 Nov mar 15:00 Franco Giudice (DGB): reprogramado (29/10 no pudo, Galileo con alergia). …
   ```
 
-  `— added` shows the section whole, `— removed` its key alone. A notice and an anchor
+  `— added` shows the section whole, `— removed` its key alone. A change whose every
+  line, blanks aside, stands as a line in the input of one of the agent's own calls that
+  ran since the prefix before is its head alone, `— edited by you` or `— added by you`:
+  an `aedit` heredoc, an `edit` spec, a `write`'s content. Whatever else changed, or a
+  call that failed, draws the diff. A notice and an anchor
   share the tail block, notice first; the emit guard turns the whole trailing run to text
   when more content follows.
 - One written before the checkpoint renders nothing. A `prefix` weighs nothing toward

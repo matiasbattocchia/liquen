@@ -1206,6 +1206,43 @@ Deno.test("a doc edit leaves the system as the checkpoint froze it, and stands w
   assert(prefixDue([...second, floor], systemSections(after)));
 });
 
+Deno.test("a doc edit the agent's own call wrote out is named alone", () => {
+  const t = (m: number) => `2026-07-21T10:0${m}:00Z`;
+  const before = [agenda("- mar 15:00 Franco")];
+  const after = [agenda("- jue 17:30 Ringo\n- mar 15:00 Franco")];
+  const spec =
+    "<<<<<<<\n- mar 15:00 Franco\n=======\n- jue 17:30 Ringo\n- mar 15:00 Franco\n>>>>>>>";
+  const step = (result: string, isError = false): Event[] => {
+    const res = toolResultE("e4", t(2), "T1", result, "e3");
+    if (isError) res.parts[0].data.is_error = true;
+    return [
+      mindMsg("e1", t(0), "anotá a Ringo", false),
+      prefixE("e1a", t(1), before),
+      toolUseE("e3", t(1), "T1", "bash", { command: `aedit agenda.md <<'EOF'\n${spec}\nEOF` }),
+      res,
+    ];
+  };
+  const notice = (events: Event[], docs: DocEntry[]) =>
+    blocksOf(render({ docs, session: SESSION, zone: "UTC", events, now: t(3) }).messages)
+      .filter((b) => b.type === "mid_conv_system").map(sysText)[0];
+  const path = "/org/data/agents/a1/agenda.md";
+
+  assertEquals(notice(step("applied 1 edit(s)"), after), `${path} — edited by you`);
+  // a call that failed changed nothing: the change is someone else's, drawn whole
+  assertStringIncludes(notice(step("no match", true), after), "+ - jue 17:30 Ringo");
+  // a line the call never wrote shows the whole change
+  const more = [agenda("- jue 17:30 Ringo\n- mar 15:00 Franco\n- vie 9:00 Ana")];
+  assertStringIncludes(notice(step("applied 1 edit(s)"), more), "+ - vie 9:00 Ana");
+
+  // a doc a call wrote whole is named alone too
+  const people = doc("agent", "memory", "people", { load: "always" }, "- Ana\n\n- Beto");
+  const said = new Set(["---", "load: always", "---", "- Ana", "", "- Beto"]);
+  assertEquals(
+    prefixDelta(systemSections(before), systemSections([...before, people]), said),
+    "/org/data/agents/a1/people.md — added by you",
+  );
+});
+
 Deno.test("a prefix names a doc that came and one that went", () => {
   const was = systemSections([agenda("- a")]);
   const is = systemSections([doc("agent", "memory", "people", { load: "always" }, "- Ana")]);

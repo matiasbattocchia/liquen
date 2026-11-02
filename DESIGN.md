@@ -1547,7 +1547,10 @@ before plus new rows, until a checkpoint moves the floor:
   since the checkpoint, or none is there yet. The first since the checkpoint is the
   request's `system` until the next one, so a doc edit moves no byte the window was signed
   over. Each later one renders where it was written, in the anchor's block, as the sections
-  that changed: `<handle> — edited` and a line diff, `— added` whole, `— removed`. One
+  that changed: `<handle> — edited` and a line diff, `— added` whole, `— removed`. A
+  change whose every line the agent's own calls since the prefix before wrote out (a call
+  that ran: no error, no refusal, no `pending_approval`) is its head alone, `— edited by
+  you` or `— added by you`: the call above it already shows the lines. One
   written before the checkpoint stands for a prefix the checkpoint replaced, and renders
   nothing. It weighs nothing toward `compactAt`: the system holds it.
 - **A line draws no delivery state.** A failure or a withdrawal lands late, and a line is

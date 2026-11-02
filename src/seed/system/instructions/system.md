@@ -46,8 +46,9 @@ section stands until a later note restates it, and `— none` says it emptied.
 
 Your docs above stand as they were at the last checkpoint. A doc changed since shows in a
 system note under its path: `— edited` with the lines it gained (`+`) and lost (`-`),
-`— added` whole, or `— removed`. The doc reads that way now; the copy above catches up at
-the next checkpoint.
+`— added` whole, or `— removed`; a change your own call wrote out reads `— edited by you`
+or `— added by you`, and nothing more. The doc reads that way now; the copy above catches
+up at the next checkpoint.
 
 Your principal reads every approval card, and the harness shows them every failure. A call
 that waits on them, or one that ran as asked, is news they already have: leave it unsaid,

@@ -355,25 +355,74 @@ const sameSections = (a: PrefixSection[], b: PrefixSection[]) =>
   a.length === b.length && a.every((s, i) => s.key === b[i].key && s.text === b[i].text);
 
 /** What a prefix says after the one before it: each section that changed as its key and
- *  the changed lines, each added one whole, each removed one by its key. */
-export function prefixDelta(prev: PrefixSection[], next: PrefixSection[]): string {
+ *  the changed lines, each added one whole, each removed one by its key. A change whose
+ *  every line the agent's own calls already wrote out (`said`) is named alone: the call
+ *  above it is the change. */
+export function prefixDelta(
+  prev: PrefixSection[],
+  next: PrefixSection[],
+  said: ReadonlySet<string> = new Set(),
+): string {
   const was = new Map(prev.map((s) => [s.key, s.text]));
   const is = new Set(next.map((s) => s.key));
+  // a section's first line is its heading, which no call writes
+  const told = (lines: string[]) => {
+    const solid = lines.filter((l) => l.trim());
+    return solid.length > 0 && solid.every((l) => said.has(l.trimEnd()));
+  };
   return [
     ...next.flatMap((s) => {
       const old = was.get(s.key);
-      if (old === undefined) return [`${s.key} — added\n${s.text}`];
-      return old === s.text ? [] : [`${s.key} — edited\n${lineDiff(old, s.text)}`];
+      if (old === undefined) {
+        return [
+          told(s.text.split("\n").slice(1))
+            ? `${s.key} — added by you`
+            : `${s.key} — added\n${s.text}`,
+        ];
+      }
+      if (old === s.text) return [];
+      const ops = diffOps(old, s.text);
+      return [
+        told(ops.filter((o) => o.mark !== " ").map((o) => o.line))
+          ? `${s.key} — edited by you`
+          : `${s.key} — edited\n${lineDiff(ops)}`,
+      ];
     }),
     ...prev.filter((s) => !is.has(s.key)).map((s) => `${s.key} — removed`),
   ].join("\n\n");
 }
 
+/** Every line a call's input holds, its strings split and right-trimmed: what the agent
+ *  wrote out in it. */
+function linesOf(input: Json, into: Set<string>): void {
+  if (typeof input === "string") { for (const l of input.split("\n")) into.add(l.trimEnd()); }
+  else if (Array.isArray(input)) { for (const v of input) linesOf(v, into); }
+  else if (input && typeof input === "object") {
+    for (const v of Object.values(input)) linesOf(v, into);
+  }
+}
+
 /** Lines of context kept around each change. */
 const DIFF_CONTEXT = 1;
 
+type DiffOp = { mark: " " | "+" | "-"; line: string };
+
 /** A line diff: `+ ` added, `- ` removed, two spaces for context, `…` between hunks. */
-function lineDiff(a: string, b: string): string {
+function lineDiff(ops: DiffOp[]): string {
+  const near = ops.map((_, k) =>
+    ops.slice(Math.max(0, k - DIFF_CONTEXT), k + DIFF_CONTEXT + 1).some((o) => o.mark !== " ")
+  );
+  const out: string[] = [];
+  ops.forEach((o, k) => {
+    if (!near[k]) return;
+    if (out.length > 0 && !near[k - 1]) out.push("…");
+    out.push(`${o.mark} ${o.line}`);
+  });
+  return out.join("\n");
+}
+
+/** Each line of `a` and `b` kept, added or removed: the longest common subsequence. */
+function diffOps(a: string, b: string): DiffOp[] {
   const x = a.split("\n");
   const y = b.split("\n");
   // longest common subsequence, from the ends
@@ -385,7 +434,7 @@ function lineDiff(a: string, b: string): string {
       lcs[i][j] = x[i] === y[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
     }
   }
-  const ops: { mark: " " | "+" | "-"; line: string }[] = [];
+  const ops: DiffOp[] = [];
   let i = 0;
   let j = 0;
   while (i < n || j < m) {
@@ -396,16 +445,7 @@ function lineDiff(a: string, b: string): string {
       ops.push({ mark: "+", line: y[j++] });
     } else ops.push({ mark: "-", line: x[i++] });
   }
-  const near = ops.map((_, k) =>
-    ops.slice(Math.max(0, k - DIFF_CONTEXT), k + DIFF_CONTEXT + 1).some((o) => o.mark !== " ")
-  );
-  const out: string[] = [];
-  ops.forEach((o, k) => {
-    if (!near[k]) return;
-    if (out.length > 0 && !near[k - 1]) out.push("…");
-    out.push(`${o.mark} ${o.line}`);
-  });
-  return out.join("\n");
+  return ops;
 }
 
 /** The last closing assistant message in the session's own conversation — a step that
@@ -1280,12 +1320,23 @@ function renderMessages(
   // each later one is drawn where it was read, as what changed
   const prefixes = new Set(prefixesOf(window).map((e) => e.id));
   let prefixed: PrefixSection[] | undefined;
+  // the lines the agent's calls that ran wrote out since the last prefix
+  let said = new Set<string>();
+  const ran = (e: ToolResultEvent) => {
+    const use = useById.get(e.payload.ref_id);
+    const out = e.parts[0].data;
+    const asked = (out.output as { status?: unknown } | null)?.status === "pending_approval";
+    if (use && !out.is_error && !out.cancelled && !out.refused && !asked) {
+      linesOf(use.parts[0].data.input, said);
+    }
+  };
   for (const e of weldOrder(events.filter((e) => scripted(e) === undefined))) {
     if (e.type === "prefix") {
       if (!prefixes.has(e.id)) continue;
       const sections = e.parts[0].data.sections;
-      if (prefixed) placeAnchor(prefixDelta(prefixed, sections));
+      if (prefixed) placeAnchor(prefixDelta(prefixed, sections, said));
       prefixed = sections;
+      said = new Set();
     } else if (e.type === "anchor") {
       placeAnchor(anchorDelta(anchored, e.parts[0].text));
       anchored = e.parts[0].text;
@@ -1309,8 +1360,10 @@ function renderMessages(
       // a call's outcome after its answer (§9): the principal ruled and the harness ran
       // it, or what it set in motion went on — told in the harness's own voice, because
       // the tool_use it answers is spent. Narration, so it can stand alone in any position.
+      if (e.payload.gated) ran(e);
       place("user", { type: "text", text: lateLine(e, folds.get(e.id)) });
     } else if (e.type === "tool_result" && welded.has(e.payload.ref_id)) {
+      ran(e);
       place(
         "user",
         toolResultBlock(e, useById.get(e.payload.ref_id)!, mediaBlocks(e), folds.get(e.id)),
@@ -1352,7 +1405,7 @@ function renderMessages(
   if (tail !== undefined) place("user", { type: "text", text: tail });
   else {
     const live = systemSections(docs, env);
-    if (prefixed && !sameSections(prefixed, live)) placeAnchor(prefixDelta(prefixed, live));
+    if (prefixed && !sameSections(prefixed, live)) placeAnchor(prefixDelta(prefixed, live, said));
     const text = anchorText(now, zone, ambient);
     if (text !== anchored) placeAnchor(anchorDelta(anchored, text));
   }

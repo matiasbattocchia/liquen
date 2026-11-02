@@ -6115,6 +6115,11 @@ horizon.
   is a notice where its step read it, `<handle> — edited` and a line diff. Claude Code
   does the same with `CLAUDE.md` and its memory: loaded once, changes appended, all of it
   read again at compaction.
+- **The agent's own edit is named, not repeated.** When every changed line stands in the
+  input of one of its own calls that ran since the prefix before, the notice is its head
+  alone, `— edited by you`. The test is lines, not a replay of the tool: on the files
+  substrate the agent edits through `aedit` in bash, or any script, so no `edit` call
+  exists to replay. A change the calls don't account for draws the diff.
 - **A picture weighs its pixels.** `file.width` and `file.height` are read off the header
   where the bytes land (`saveMedia`, `filePartOf`, the WhatsApp webhook); a sticker without
   them weighs 512×512.
